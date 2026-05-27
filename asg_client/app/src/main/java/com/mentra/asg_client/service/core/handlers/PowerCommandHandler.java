@@ -7,6 +7,7 @@ import com.mentra.asg_client.SysControl;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
+import com.mentra.asg_client.service.utils.ServiceConstants;
 
 import org.json.JSONObject;
 
@@ -23,6 +24,7 @@ public class PowerCommandHandler implements ICommandHandler {
 
     private static final String CMD_SHUTDOWN = "shutdown";
     private static final String CMD_REBOOT = "reboot";
+    private static final String CMD_SET_SYSTEM_TIME = ServiceConstants.COMMAND_SET_SYSTEM_TIME;
 
     private final Context context;
     private final AsgClientServiceManager serviceManager;
@@ -34,7 +36,7 @@ public class PowerCommandHandler implements ICommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of(CMD_SHUTDOWN, CMD_REBOOT);
+        return Set.of(CMD_SHUTDOWN, CMD_REBOOT, CMD_SET_SYSTEM_TIME);
     }
 
     @Override
@@ -45,6 +47,8 @@ public class PowerCommandHandler implements ICommandHandler {
                     return handleShutdown();
                 case CMD_REBOOT:
                     return handleReboot();
+                case CMD_SET_SYSTEM_TIME:
+                    return handleSetSystemTime(data);
                 default:
                     Log.e(TAG, "Unsupported power command: " + commandType);
                     return false;
@@ -85,6 +89,25 @@ public class PowerCommandHandler implements ICommandHandler {
             return true;
         } catch (Exception e) {
             Log.e(TAG, "❌ Error initiating reboot", e);
+            return false;
+        }
+    }
+
+    /**
+     * Set glasses system clock from phone (only sent when phone detects clock skew during gallery sync).
+     */
+    private boolean handleSetSystemTime(JSONObject data) {
+        long timestampMs = data != null ? data.optLong("timestamp_ms", 0L) : 0L;
+        if (timestampMs <= 0L) {
+            Log.w(TAG, "set_system_time ignored: missing or invalid timestamp_ms");
+            return false;
+        }
+        Log.i(TAG, "⏰ Setting system time from phone: " + timestampMs);
+        try {
+            SysControl.setSystemTime(context, timestampMs);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error setting system time", e);
             return false;
         }
     }

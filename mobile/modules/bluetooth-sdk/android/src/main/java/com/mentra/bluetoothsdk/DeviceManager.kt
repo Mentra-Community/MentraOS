@@ -192,6 +192,7 @@ class DeviceManager {
     // Guard against duplicate ready callbacks firing back-to-back.
     private var lastReadyHandledAtMs: Long = 0L
     private var lastReadyHandledKey: String = ""
+    private var lastSystemTimeSyncConnectionKey: String = ""
 
     private var systemMicUnavailable: Boolean
         get() = DeviceStore.store.get("bluetooth", "systemMicUnavailable") as? Boolean ?: false
@@ -974,6 +975,7 @@ class DeviceManager {
             Bridge.log("MAN: Cleaning up previous sgc type: ${sgc?.type}")
             sgc?.cleanup()
             sgc = null
+            lastSystemTimeSyncConnectionKey = ""
         }
 
         if (sgc != null) {
@@ -1048,6 +1050,8 @@ class DeviceManager {
         defaultWearable = sgc?.type ?: ""
         searching = false
 
+        syncSystemTimeOnceForConnection(readyKey)
+
         // Apply dashboard position before any boot text so content doesn't jump.
         sgc?.setDashboardPosition(dashboardHeight, dashboardDepth)
 
@@ -1084,6 +1088,21 @@ class DeviceManager {
         Bridge.saveSetting("device_address", deviceAddress)
     }
 
+    private fun syncSystemTimeOnceForConnection(connectionKey: String) {
+        val activeSgc = sgc ?: return
+        if (activeSgc.type.contains(DeviceTypes.SIMULATED)) {
+            return
+        }
+        if (connectionKey == lastSystemTimeSyncConnectionKey) {
+            return
+        }
+
+        lastSystemTimeSyncConnectionKey = connectionKey
+        val timestampMs = System.currentTimeMillis()
+        Bridge.log("MAN: Syncing glasses system time once for connection: $timestampMs")
+        activeSgc.sendSetSystemTime(timestampMs)
+    }
+
     private fun handleG1Ready() {
         // G1-specific setup (if any needed in the future)
         // Note: G1-specific settings like silent mode, battery status,
@@ -1096,6 +1115,7 @@ class DeviceManager {
 
     fun handleDeviceDisconnected() {
         Bridge.log("MAN: Device disconnected")
+        lastSystemTimeSyncConnectionKey = ""
         DeviceStore.apply("glasses", "headUp", false)
         DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", true)
     }
@@ -1232,6 +1252,11 @@ class DeviceManager {
         sgc?.sendHotspotState(enabled)
     }
 
+    fun setSystemTime(timestampMs: Long) {
+        Bridge.log("MAN: Setting glasses system time: $timestampMs")
+        sgc?.sendSetSystemTime(timestampMs)
+    }
+
     fun queryGalleryStatus() {
         Bridge.log("MAN: Querying gallery status from glasses")
         sgc?.queryGalleryStatus()
@@ -1249,6 +1274,11 @@ class DeviceManager {
     fun sendOtaQueryStatus() {
         Bridge.log("MAN: 📱 Sending OTA query status command to glasses")
         (sgc as? MentraLive)?.sendOtaQueryStatus()
+    }
+
+    fun retryOtaVersionCheck() {
+        Bridge.log("MAN: ⏰ Retrying glasses OTA version check after clock sync")
+        (sgc as? MentraLive)?.sendOtaRetryVersionCheck()
     }
 
     /**
@@ -1493,6 +1523,7 @@ class DeviceManager {
         sgc?.clearDisplay()
         sgc?.disconnect()
         sgc = null // Clear the SGC reference after disconnect
+        lastSystemTimeSyncConnectionKey = ""
         searching = false
         micEnabled = false
         updateMicState()

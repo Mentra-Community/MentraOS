@@ -375,6 +375,10 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.setHotspotState(enabled)
     }
 
+    func setSystemTime(timestampMs: Int64) {
+        DeviceManager.shared.setSystemTime(timestampMs)
+    }
+
     public func requestPhoto(_ request: PhotoRequest) {
         Bridge.log(
             "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=\(request.requestId) appId=\(request.appId)"
@@ -442,6 +446,10 @@ public final class MentraBluetoothSDK {
 
     func sendOtaQueryStatus() {
         DeviceManager.shared.sendOtaQueryStatus()
+    }
+
+    func retryOtaVersionCheck() {
+        DeviceManager.shared.retryOtaVersionCheck()
     }
 
     func sendShutdown() {

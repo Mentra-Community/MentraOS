@@ -1,11 +1,4 @@
-import BluetoothSdk, {
-  ButtonPressEvent,
-  BluetoothStatus,
-  GlassesStatus,
-  OtaStatus,
-  OtaProgress,
-  OtaUpdateInfo,
-} from "@mentra/bluetooth-sdk-internal"
+import BluetoothSdk, {ButtonPressEvent, BluetoothStatus, OtaStatus} from "@mentra/bluetooth-sdk-internal"
 import CrustModule from "crust"
 import * as Calendar from "expo-calendar"
 import * as Location from "expo-location"
@@ -19,6 +12,7 @@ import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
+import {handleOtaClockSkewFromGlasses} from "@/services/asg/glassesClockSync"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
 import {
   appRegistry,
@@ -919,6 +913,20 @@ class MantleManager {
             useGlassesStore.getState().setOtaProgress(legacyOtaProgressFromOtaStatusEvent(normalized))
           } catch (err) {
             console.warn("MANTLE: ota_status legacy otaProgress mapping failed", err)
+          }
+
+          if (status.status === "failed") {
+            const raw = event as Record<string, unknown>
+            const glassesTimeMs = Number(raw.glasses_time_ms ?? raw.glassesTimeMs ?? 0) || undefined
+            const errorCode = normalized.error_message
+            if (
+              errorCode === "clock_skew" ||
+              (errorCode === "ssl_error" && typeof glassesTimeMs === "number" && Number.isFinite(glassesTimeMs))
+            ) {
+              handleOtaClockSkewFromGlasses(errorCode, glassesTimeMs).catch((err) => {
+                console.warn("MANTLE: OTA clock skew auto-fix failed", err)
+              })
+            }
           }
 
           if (status.status === "complete" || status.status === "failed") {

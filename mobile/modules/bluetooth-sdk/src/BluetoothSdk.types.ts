@@ -694,6 +694,8 @@ export interface GlassesStatus {
   leftMacAddress: string
   rightMacAddress: string
   buildNumber: string
+  /** Glasses System.currentTimeMillis() from last version_info (clock skew detection). */
+  systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
   bluetoothName: string
