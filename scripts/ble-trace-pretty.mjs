@@ -65,23 +65,26 @@ function compactLabel(direction, layer) {
   if (direction === 'phone_to_app') {
     return color('SDK -> APP', 'cyan');
   }
+  if (direction === 'phone_to_wifi') {
+    return color('PHONE -> WIFI', 'red');
+  }
+  if (direction === 'wifi_to_phone') {
+    return color('WIFI -> PHONE', 'red');
+  }
   if (direction === 'glasses_to_wifi') {
-    return color('GLASSES -> WIFI', 'green');
+    return color('GLASSES -> WIFI', 'red');
   }
   if (direction === 'wifi_to_glasses') {
-    return color('WIFI -> GLASSES', 'red');
+    return color('WIFI -> GLASSES', 'green');
   }
   if (direction === 'glasses_network') {
     return color('GLASSES NET', 'yellow');
   }
   if (direction === 'asg_to_bes') {
-    return color('ASG -> BES', 'green');
-  }
-  if (direction === 'bes_to_asg' && layer === 'bes_trace_log') {
-    return color('BES TRACE', 'magenta');
+    return color('ASG -> BES', 'red');
   }
   if (direction === 'bes_to_asg') {
-    return color('BES -> ASG', 'red');
+    return color('BES -> ASG', 'green');
   }
   if (layer === 'asg_command_router') {
     return color('ASG ROUTER', 'yellow');
@@ -218,8 +221,17 @@ function summarize(trace) {
       'success',
       'durationMs',
       'fileBytes',
+      'imageBytes',
+      'jpegBytes',
+      'photoBytes',
+      'contentLength',
+      'remoteHost',
+      'remotePort',
       'urlHost',
       'urlPath',
+      'method',
+      'path',
+      'source',
       'wifiConnected',
       'internetValidated',
       'fallback',
