@@ -24,10 +24,31 @@ function withSettingsGradleModifications(config: any) {
     let settingsGradle = config.modResults.contents
     const bluetoothSdkRoot = getBluetoothSdkRoot()
 
+    if (!settingsGradle.includes("def mentraBluetoothSdkRoot =")) {
+      settingsGradle += `
+  def mentraBluetoothSdkRoot = System.getenv("MENTRA_BLUETOOTH_SDK_PACKAGE_PATH")
+  if (!mentraBluetoothSdkRoot) {
+    mentraBluetoothSdkRoot = ${toGroovyString(bluetoothSdkRoot)}
+  }
+  `
+    }
+
+    if (!settingsGradle.includes("project(':mentra-bluetooth-sdk').projectDir")) {
+      const bluetoothSdkProjectBlock = `
+  if (findProject(':mentra-bluetooth-sdk') != null) {
+    project(':mentra-bluetooth-sdk').projectDir = new File(mentraBluetoothSdkRoot, 'android')
+  }
+`
+      const lc3Include = "  include ':lc3Lib'"
+      settingsGradle = settingsGradle.includes(lc3Include)
+        ? settingsGradle.replace(lc3Include, `${bluetoothSdkProjectBlock}\n${lc3Include}`)
+        : `${settingsGradle}${bluetoothSdkProjectBlock}`
+    }
+
     if (!settingsGradle.includes("include ':lc3Lib'")) {
       settingsGradle += `
   include ':lc3Lib'
-  project(':lc3Lib').projectDir = new File(${toGroovyString(bluetoothSdkRoot)}, 'android/lc3Lib')
+  project(':lc3Lib').projectDir = new File(mentraBluetoothSdkRoot, 'android/lc3Lib')
   `
     }
 
