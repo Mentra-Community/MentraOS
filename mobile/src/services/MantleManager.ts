@@ -170,9 +170,9 @@ class MantleManager {
     // iOS: require a second swipe across the bottom edge to invoke the Home
     // indicator / app switcher, so users don't accidentally background the
     // app mid-glasses-session. No-op on Android.
-    CrustModule.setDeferredSystemGestures(["bottom"]).catch((e) =>
-      console.warn("MANTLE: setDeferredSystemGestures failed", e),
-    )
+    // CrustModule.setDeferredSystemGestures(["bottom"]).catch((e) =>
+    //   console.warn("MANTLE: setDeferredSystemGestures failed", e),
+    // )
 
     // Wire host-side adapters into the island runtime. Must run before any
     // island service that reads settings / glasses status / sockets / audio

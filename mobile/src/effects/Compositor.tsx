@@ -20,9 +20,7 @@ import {useEffect, useRef, useState} from "react"
 import {BackHandler, Dimensions, Platform, View} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import Animated, {
-  cancelAnimation,
   runOnJS,
-  useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
@@ -215,7 +213,6 @@ export default function Compositor() {
     } else {
       // only animate out if we didn't swipe to exit:
       if (!didSwipeToExit.current) {
-        console.log("Compositor: fading out: didSwipeToExit.current", didSwipeToExit.current)
         fadeOpacity.value = withTiming(0, {duration: FADE_OUT_DURATION_MS}, (finished) => {
           // Unmount (tear down the WebView) only after the fade-out has played.
           if (finished) runOnJS(setRenderedApp)(null)
