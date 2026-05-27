@@ -204,7 +204,6 @@ describe("MantleManager", () => {
         core_token: "server-token",
         auth_email: "from-server@example.com",
         power_saving_mode: false,
-        voice_activity_detection_enabled: true,
       }),
     )
     expect(coreModuleMock.updateBluetoothSettings).not.toHaveBeenCalledWith(

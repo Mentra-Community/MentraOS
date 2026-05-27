@@ -279,9 +279,8 @@ export default function NexDeveloperSettings() {
   // LC3 Audio Control state
   const [lc3AudioEnabled, setLc3AudioEnabled] = useState(true)
 
-  // VAD (Voice Activity Detection) — stored as `bypass_vad_for_debugging` (inverted).
-  const [bypassVad, setBypassVad] = useSetting<boolean>(SETTINGS.bypass_vad_for_debugging.key)
-  const vadEnabled = !bypassVad
+  // VAD (Voice Activity Detection) — sourced from native DeviceStore via glasses status.
+  const vadEnabled = useGlassesStore((state) => state.voiceActivityDetectionEnabled)
 
   // // // Get both protobuf versions from core status
   // const protobufSchemaVersion = status.core_info.protobuf_schema_version || "Unknown"
@@ -399,7 +398,6 @@ export default function NexDeveloperSettings() {
   }
 
   const onVadToggle = async (enabled: boolean) => {
-    await setBypassVad(!enabled)
     if (glassesConnected) {
       await BluetoothSdk.setVoiceActivityDetectionEnabled(enabled)
     }
