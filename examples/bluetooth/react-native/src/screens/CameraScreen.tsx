@@ -804,6 +804,11 @@ function withBarcodePositionLabels<T extends {barcode: BluetoothSdkExampleModel[
   });
 }
 
+function barcodeScannerLabel(barcode: BluetoothSdkExampleModel['barcodeScan']['barcodes'][number]) {
+  const scanner = (barcode as typeof barcode & {scanner?: unknown}).scanner;
+  return typeof scanner === 'string' ? scanner : null;
+}
+
 function BarcodeResult({scan}: {scan: BluetoothSdkExampleModel['barcodeScan']}) {
   if (scan.state === 'idle') {
     return null;
@@ -867,7 +872,7 @@ function BarcodeResult({scan}: {scan: BluetoothSdkExampleModel['barcodeScan']}) 
                 <View style={styles.barcodeResultTextWrap}>
                   <Text style={styles.barcodeValue}>{value}</Text>
                   <Text style={styles.barcodeMeta}>
-                    {[barcode.format, positionLabel].filter(Boolean).join(' · ')}
+                    {[barcode.format, barcodeScannerLabel(barcode), positionLabel].filter(Boolean).join(' · ')}
                   </Text>
                 </View>
                 <Pressable

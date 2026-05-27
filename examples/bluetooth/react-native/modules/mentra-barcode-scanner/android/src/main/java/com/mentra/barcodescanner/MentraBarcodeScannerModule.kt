@@ -13,6 +13,7 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.zxing.BarcodeFormat as ZxingBarcodeFormat
 import com.google.zxing.oned.Code128Writer
 import expo.modules.kotlin.exception.Exceptions
+import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.ByteArrayInputStream
@@ -45,7 +46,7 @@ class MentraBarcodeScannerModule : Module() {
 
     AsyncFunction("openImage") { imageUri: String ->
       openImage(imageUri)
-    }
+    }.runOnQueue(Queues.MAIN)
   }
 
   private fun scanImage(imageUri: String): List<Map<String, Any?>> {

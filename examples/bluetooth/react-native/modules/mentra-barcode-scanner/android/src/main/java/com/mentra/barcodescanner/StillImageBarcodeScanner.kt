@@ -2,6 +2,8 @@ package com.mentra.barcodescanner
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color
+import android.graphics.Point
 import android.graphics.Rect
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
@@ -10,7 +12,11 @@ import com.google.mlkit.vision.barcode.BarcodeScanner
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import java.io.ByteArrayInputStream
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
+import zxingcpp.BarcodeReader as ZxingCppBarcodeReader
 
 internal class StillImageBarcodeScanner(
   private val imageBytes: ByteArray,
@@ -27,7 +33,12 @@ internal class StillImageBarcodeScanner(
         return fullImageResults
       }
 
-      scanFallbackVariants(scanner, bitmap)
+      val mlKitFallbackResults = scanFallbackVariants(scanner, bitmap)
+      if (mlKitFallbackResults.isNotEmpty()) {
+        return mlKitFallbackResults
+      }
+
+      scanZxingFallbackVariants(bitmap)
     } finally {
       bitmap.recycle()
     }
@@ -64,6 +75,133 @@ internal class StillImageBarcodeScanner(
     return emptyList()
   }
 
+  private fun scanZxingFallbackVariants(bitmap: Bitmap): List<Map<String, Any?>> {
+    val reader = createZxingReader() ?: return emptyList()
+    val fullImageResults = readZxing(reader, bitmap, ScanTransform(), "full-image")
+    if (fullImageResults.isNotEmpty()) {
+      return fullImageResults
+    }
+
+    for (variant in ZXING_FALLBACK_VARIANTS) {
+      val cropRect = variant.cropRect(bitmap.width, bitmap.height)
+      if (cropRect.width() < MIN_CROP_SIZE_PX || cropRect.height() < MIN_CROP_SIZE_PX) {
+        continue
+      }
+
+      val crop = Bitmap.createBitmap(bitmap, cropRect.left, cropRect.top, cropRect.width(), cropRect.height())
+      val scale = boundedScale(crop, variant.scale)
+      val image = if (scale > 1) {
+        Bitmap.createScaledBitmap(crop, crop.width * scale, crop.height * scale, true)
+      } else {
+        crop
+      }
+
+      try {
+        val transform = ScanTransform(cropRect.left, cropRect.top, scale.toFloat())
+        val results = readZxing(reader, image, transform, variant.name, tryContrast = true)
+        if (results.isNotEmpty()) {
+          return results
+        }
+      } finally {
+        if (image !== crop) {
+          image.recycle()
+        }
+        crop.recycle()
+      }
+    }
+
+    return emptyList()
+  }
+
+  private fun createZxingReader(): ZxingCppBarcodeReader? {
+    return try {
+      ZxingCppBarcodeReader(
+        ZxingCppBarcodeReader.Options(
+          formats = ZXING_LINEAR_FORMATS,
+          tryHarder = true,
+          tryRotate = true,
+          tryInvert = true,
+          tryDenoise = true,
+          maxNumberOfSymbols = MAX_ZXING_SYMBOLS,
+        ),
+      )
+    } catch (error: UnsatisfiedLinkError) {
+      Log.w(TAG, "ZXing-C++ native library unavailable", error)
+      null
+    }
+  }
+
+  private fun readZxing(
+    reader: ZxingCppBarcodeReader,
+    bitmap: Bitmap,
+    transform: ScanTransform,
+    variantName: String,
+    tryContrast: Boolean = false,
+  ): List<Map<String, Any?>> {
+    val mapped = readZxingOnce(reader, bitmap, transform, variantName)
+    if (mapped.isNotEmpty() || !tryContrast) {
+      return mapped
+    }
+
+    val contrastBitmap = runCatching { createContrastBitmap(bitmap) }.getOrElse { error ->
+      Log.w(TAG, "ZXing-C++ contrast preprocessing failed for $variantName", error)
+      return emptyList()
+    }
+
+    return try {
+      readZxingOnce(reader, contrastBitmap, transform, "$variantName contrast")
+    } finally {
+      contrastBitmap.recycle()
+    }
+  }
+
+  private fun readZxingOnce(
+    reader: ZxingCppBarcodeReader,
+    bitmap: Bitmap,
+    transform: ScanTransform,
+    variantName: String,
+  ): List<Map<String, Any?>> {
+    val cropRect = Rect(0, 0, bitmap.width, bitmap.height)
+    val results = try {
+      reader.read(bitmap, cropRect, rotationDegrees)
+    } catch (error: RuntimeException) {
+      Log.w(TAG, "ZXing-C++ scan failed for $variantName", error)
+      return emptyList()
+    }
+
+    val mapped = results
+      .asSequence()
+      .filter { result -> result.error == null && !result.text.isNullOrBlank() }
+      .map { result -> zxingResultToMap(result, transform) }
+      .toList()
+
+    if (mapped.isNotEmpty()) {
+      Log.d(TAG, "Barcode decoded from ZXing-C++ crop $variantName")
+    }
+
+    return mapped
+  }
+
+  private fun createContrastBitmap(bitmap: Bitmap): Bitmap {
+    val width = bitmap.width
+    val height = bitmap.height
+    val pixels = IntArray(width * height)
+    bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+    for (index in pixels.indices) {
+      val color = pixels[index]
+      val gray = (
+        (Color.red(color) * 0.299f) +
+          (Color.green(color) * 0.587f) +
+          (Color.blue(color) * 0.114f)
+        ).roundToInt()
+      val adjusted = (((gray - 128) * ZXING_CONTRAST) + 128).roundToInt().coerceIn(0, 255)
+      pixels[index] = Color.rgb(adjusted, adjusted, adjusted)
+    }
+    return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
+      setPixels(pixels, 0, width, 0, 0, width, height)
+    }
+  }
+
   private fun process(
     scanner: BarcodeScanner,
     bitmap: Bitmap,
@@ -78,6 +216,7 @@ internal class StillImageBarcodeScanner(
       put("rawValue", barcode.rawValue)
       put("displayValue", barcode.displayValue)
       put("format", formatName(barcode.format))
+      put("scanner", "mlkit")
       put("valueType", valueTypeName(barcode.valueType))
       barcode.boundingBox?.let { rect ->
         put(
@@ -101,6 +240,62 @@ internal class StillImageBarcodeScanner(
           },
         )
       }
+    }
+  }
+
+  private fun zxingResultToMap(result: ZxingCppBarcodeReader.Result, transform: ScanTransform): Map<String, Any?> {
+    val value = result.text
+    return buildMap {
+      put("rawValue", value)
+      put("displayValue", value)
+      put("format", zxingFormatName(result.format))
+      put("scanner", "zxing-cpp")
+      put("valueType", "TEXT")
+      put("orientation", result.orientation)
+      put("lineCount", result.lineCount)
+      put("bounds", zxingBounds(result.position, transform))
+      put(
+        "cornerPoints",
+        zxingPoints(result.position).map { point ->
+          mapOf(
+            "x" to transform.x(point.x),
+            "y" to transform.y(point.y),
+          )
+        },
+      )
+    }
+  }
+
+  private fun zxingBounds(position: ZxingCppBarcodeReader.Position, transform: ScanTransform): Map<String, Int> {
+    val points = zxingPoints(position)
+    val left = points.minOf { point -> transform.x(point.x) }
+    val top = points.minOf { point -> transform.y(point.y) }
+    val right = points.maxOf { point -> transform.x(point.x) }
+    val bottom = points.maxOf { point -> transform.y(point.y) }
+    return mapOf(
+      "x" to left,
+      "y" to top,
+      "width" to max(1, right - left),
+      "height" to max(1, bottom - top),
+    )
+  }
+
+  private fun zxingPoints(position: ZxingCppBarcodeReader.Position): List<Point> {
+    return listOf(position.topLeft, position.topRight, position.bottomRight, position.bottomLeft)
+  }
+
+  private fun zxingFormatName(format: ZxingCppBarcodeReader.Format): String {
+    return when (format) {
+      ZxingCppBarcodeReader.Format.CODE_128 -> "CODE_128"
+      ZxingCppBarcodeReader.Format.CODE_39 -> "CODE_39"
+      ZxingCppBarcodeReader.Format.CODE_93 -> "CODE_93"
+      ZxingCppBarcodeReader.Format.CODABAR -> "CODABAR"
+      ZxingCppBarcodeReader.Format.EAN_13 -> "EAN_13"
+      ZxingCppBarcodeReader.Format.EAN_8 -> "EAN_8"
+      ZxingCppBarcodeReader.Format.ITF -> "ITF"
+      ZxingCppBarcodeReader.Format.UPC_A -> "UPC_A"
+      ZxingCppBarcodeReader.Format.UPC_E -> "UPC_E"
+      else -> format.name
     }
   }
 
@@ -153,6 +348,17 @@ internal class StillImageBarcodeScanner(
     fun size(value: Int): Int = (value / scale).roundToInt()
   }
 
+  private fun boundedScale(bitmap: Bitmap, requestedScale: Int): Int {
+    val pixels = bitmap.width.toLong() * bitmap.height.toLong()
+    if (pixels <= 0) {
+      return 1
+    }
+    val maxScale = sqrt(MAX_ZXING_SCALED_PIXELS.toDouble() / pixels.toDouble())
+      .toInt()
+      .coerceAtLeast(1)
+    return min(requestedScale, maxScale)
+  }
+
   private data class CropVariant(
     val name: String,
     val left: Float,
@@ -173,6 +379,9 @@ internal class StillImageBarcodeScanner(
   private companion object {
     const val TAG = "MentraBarcodeScanner"
     const val MIN_CROP_SIZE_PX = 160
+    const val MAX_ZXING_SCALED_PIXELS = 12_000_000
+    const val MAX_ZXING_SYMBOLS = 4
+    const val ZXING_CONTRAST = 1.8f
 
     // Keep this fallback plan isolated: the normal API stays scanImage(uri), and these
     // crops can be removed if ML Kit becomes reliable enough on distant 1D barcodes.
@@ -193,6 +402,48 @@ internal class StillImageBarcodeScanner(
       CropVariant("bottom-middle-2x", 0.25f, 0.50f, 0.50f, 0.50f, 2),
       CropVariant("bottom-right-2x", 0.50f, 0.50f, 0.50f, 0.50f, 2),
     )
+
+    val ZXING_LINEAR_FORMATS = setOf(
+      ZxingCppBarcodeReader.Format.CODABAR,
+      ZxingCppBarcodeReader.Format.CODE_39,
+      ZxingCppBarcodeReader.Format.CODE_93,
+      ZxingCppBarcodeReader.Format.CODE_128,
+      ZxingCppBarcodeReader.Format.EAN_13,
+      ZxingCppBarcodeReader.Format.EAN_8,
+      ZxingCppBarcodeReader.Format.ITF,
+      ZxingCppBarcodeReader.Format.UPC_A,
+      ZxingCppBarcodeReader.Format.UPC_E,
+    )
+
+    val ZXING_FALLBACK_VARIANTS = mutableListOf<CropVariant>().apply {
+      add(CropVariant("tight-center-label-strip-10x", 0.36f, 0.38f, 0.12f, 0.05f, 10))
+      add(CropVariant("lower-left-label-strip-8x", 0.25f, 0.56f, 0.24f, 0.08f, 8))
+      add(CropVariant("lower-center-product-label-8x", 0.22f, 0.54f, 0.32f, 0.11f, 8))
+
+      val tightHorizontalLefts = listOf(0.24f, 0.30f, 0.36f, 0.42f, 0.48f)
+      val tightHorizontalTops = listOf(0.34f, 0.38f, 0.42f, 0.46f, 0.50f, 0.54f, 0.58f)
+      for (top in tightHorizontalTops) {
+        for (left in tightHorizontalLefts) {
+          add(CropVariant("tight-horizontal-strip-${left}-${top}-10x", left, top, 0.14f, 0.06f, 10))
+        }
+      }
+
+      val horizontalLefts = listOf(0.02f, 0.20f, 0.38f, 0.56f, 0.70f)
+      val horizontalTops = listOf(0.18f, 0.32f, 0.46f, 0.56f, 0.68f, 0.82f)
+      for (top in horizontalTops) {
+        for (left in horizontalLefts) {
+          add(CropVariant("horizontal-strip-${left}-${top}-8x", left, top, 0.28f, 0.10f, 8))
+        }
+      }
+
+      val verticalLefts = listOf(0.08f, 0.24f, 0.40f, 0.56f, 0.72f, 0.86f)
+      val verticalTops = listOf(0.08f, 0.32f, 0.56f)
+      for (top in verticalTops) {
+        for (left in verticalLefts) {
+          add(CropVariant("vertical-strip-${left}-${top}-7x", left, top, 0.12f, 0.32f, 7))
+        }
+      }
+    }
 
     fun rotationDegrees(imageBytes: ByteArray): Int {
       val exif = runCatching { ExifInterface(ByteArrayInputStream(imageBytes)) }.getOrNull()

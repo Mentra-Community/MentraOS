@@ -413,6 +413,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const previewHealthTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const directStreamFrameStaleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const barcodeScanTokenRef = useRef(0);
+  const photoPreviewOpeningRef = useRef(false);
   const lastMicFileUriRef = useRef<string | null>(null);
   const micElapsedSecondsRef = useRef(0);
   const micElapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -737,6 +738,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   }
 
   async function captureAndUpload() {
+    resetBarcodeScan();
     await runAction('Capture & upload', async () => {
       requireConnected('capture photos');
       requireGlassesWifi('capture photos');
@@ -1186,11 +1188,20 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   }
 
   async function openPhotoPreview() {
+    if (photoPreviewOpeningRef.current) {
+      return;
+    }
+    photoPreviewOpeningRef.current = true;
+    resetBarcodeScan();
     await runAction('Open photo preview', async () => {
-      if (!photoPreviewUrl) {
-        throw new Error('Capture or load a photo preview first.');
+      try {
+        if (!photoPreviewUrl) {
+          throw new Error('Capture or load a photo preview first.');
+        }
+        await MentraBarcodeScanner.openImage(photoPreviewUrl);
+      } finally {
+        photoPreviewOpeningRef.current = false;
       }
-      await MentraBarcodeScanner.openImage(photoPreviewUrl);
     });
   }
 

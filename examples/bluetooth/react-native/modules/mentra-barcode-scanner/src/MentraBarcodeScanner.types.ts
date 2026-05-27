@@ -15,6 +15,7 @@ export type BarcodeScanResult = {
   cornerPoints?: BarcodeCornerPoint[];
   displayValue?: string | null;
   format: string;
+  scanner?: 'mlkit' | 'zxing-cpp';
   rawValue?: string | null;
   valueType?: string;
 };
