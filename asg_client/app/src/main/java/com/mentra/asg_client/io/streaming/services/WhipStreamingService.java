@@ -395,7 +395,9 @@ public class WhipStreamingService extends Service {
   }
 
   private void setupCamera() {
-    mVideoCapturer = new WhipCameraCapturer();
+    WhipCameraCapturer whipCapturer = new WhipCameraCapturer();
+    whipCapturer.setCameraFpsListener(fps -> mStreamConfig.setStatusVideoFps(fps));
+    mVideoCapturer = whipCapturer;
 
     mSurfaceTextureHelper = SurfaceTextureHelper.create(
         "WhipCaptureThread", mEglBase.getEglBaseContext());

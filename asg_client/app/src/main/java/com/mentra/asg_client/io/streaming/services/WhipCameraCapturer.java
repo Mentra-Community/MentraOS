@@ -10,6 +10,8 @@ import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.CaptureResult;
+import android.hardware.camera2.TotalCaptureResult;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -60,6 +62,7 @@ public class WhipCameraCapturer implements VideoCapturer {
   private SurfaceTextureHelper mSurfaceTextureHelper;
   private Context mContext;
   private CapturerObserver mObserver;
+  private CameraFpsListener mCameraFpsListener;
 
   private HandlerThread mCameraThread;
   private Handler mCameraHandler;
@@ -89,12 +92,20 @@ public class WhipCameraCapturer implements VideoCapturer {
   private long mOutputFrameIntervalNs;
   private int mDroppedFrameCount;
 
+  public interface CameraFpsListener {
+    void onCameraFpsChanged(double fps);
+  }
+
   @Override
   public void initialize(SurfaceTextureHelper surfaceTextureHelper, Context context,
       CapturerObserver observer) {
     mSurfaceTextureHelper = surfaceTextureHelper;
     mContext = context;
     mObserver = observer;
+  }
+
+  public void setCameraFpsListener(CameraFpsListener listener) {
+    mCameraFpsListener = listener;
   }
 
   @Override
@@ -160,6 +171,7 @@ public class WhipCameraCapturer implements VideoCapturer {
 
       Log.i(TAG, "Resolved WHIP capture fps: requested=" + mRequestedFps
           + ", output=" + mOutputFps + ", camera=" + mCameraFps);
+      notifyCameraFps(mCameraFps);
 
       cameraManager.openCamera(cameraId, new CameraDevice.StateCallback() {
         @Override
@@ -277,7 +289,16 @@ public class WhipCameraCapturer implements VideoCapturer {
       builder.set(CaptureRequest.HOT_PIXEL_MODE,
           CaptureRequest.HOT_PIXEL_MODE_OFF);
 
-      mCaptureSession.setRepeatingRequest(builder.build(), null, mCameraHandler);
+      mCaptureSession.setRepeatingRequest(builder.build(), new CameraCaptureSession.CaptureCallback() {
+        @Override
+        public void onCaptureCompleted(@NonNull CameraCaptureSession session,
+            @NonNull CaptureRequest request, @NonNull TotalCaptureResult result) {
+          Long frameDurationNs = result.get(CaptureResult.SENSOR_FRAME_DURATION);
+          if (frameDurationNs != null && frameDurationNs > 0) {
+            notifyCameraFps(1_000_000_000.0 / frameDurationNs);
+          }
+        }
+      }, mCameraHandler);
 
       // Match the stock WebRTC Camera2 session semantics:
       // 1. Apply a texture transform for sensor/front-camera correction.
@@ -391,7 +412,7 @@ public class WhipCameraCapturer implements VideoCapturer {
     return Math.round(1_000_000_000.0 / Math.max(1, fps));
   }
 
-  private static int resolveCameraFps(CameraCharacteristics chars, int outputFps) {
+  public static int resolveCameraFps(CameraCharacteristics chars, int outputFps) {
     Range<Integer>[] ranges =
         chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
     if (ranges == null || ranges.length == 0) {
@@ -459,6 +480,13 @@ public class WhipCameraCapturer implements VideoCapturer {
       mNextForwardFrameTimestampNs += mOutputFrameIntervalNs;
     }
     return false;
+  }
+
+  private void notifyCameraFps(double fps) {
+    CameraFpsListener listener = mCameraFpsListener;
+    if (listener != null) {
+      listener.onCameraFpsChanged(fps);
+    }
   }
 
   private Matrix createTextureTransformMatrix() {
