@@ -78,9 +78,28 @@ Listen for `photo_status` to render progress and inspect the effective settings 
 import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
 
 useBluetoothEvent('photo_status', (event) => {
-  console.log(event.status, event.resolvedConfig);
+  if (event.status === 'configuring') {
+    console.log('effective JPEG config', event.resolvedConfig);
+  }
+  if (event.status === 'capturing') {
+    console.log('requested still config', event.requestedCaptureConfig);
+    console.log('latest metered preview', event.meteredPreview);
+  }
+  if (event.status === 'captured') {
+    console.log('actual still capture', event.captureMetadata);
+  }
 });
 ```
+
+`photo_status` metadata is stage-specific:
+
+| Status | Optional metadata | When to use it |
+| --- | --- | --- |
+| `configuring` | `resolvedConfig` | Show the effective JPEG dimensions, quality, requested size, source, transfer method, compression, and manual exposure fields when present. |
+| `capturing` | `requestedCaptureConfig`, `meteredPreview` | Compare the Camera2 still request with the latest auto-exposure preview estimate before the capture is fired. |
+| `captured` | `captureMetadata` | Read the actual HAL-applied still capture values, including exposure time, ISO, frame duration, AE state/name, noise reduction mode, edge mode, sensor timestamp, and MFNR hint when available. |
+
+Upload and BLE transfer statuses such as `uploading`, `compressing`, `ready_for_transfer`, and `transferring` are transport progress only. They do not carry capture metadata, so use the `captured` event when you need the actual exposure/ISO/frame data for debugging or UI.
 
 ## Gallery Mode
 
@@ -123,6 +142,8 @@ try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: 0))
 </Tabs>
 
 Use `setGalleryModeEnabled(false)` when you want the action button to report events without triggering local gallery capture while the glasses are connected.
+
+Action-button photos emitted by the glasses use the same `photo_status` metadata shape when the phone SDK is connected. These local captures report `resolvedConfig.source: "button"` and `resolvedConfig.transferMethod: "local"`, then expose `requestedCaptureConfig` / `meteredPreview` on `capturing` and `captureMetadata` on `captured`.
 
 `setCameraFov` accepts FOV degrees from 82 to 118 and ROI position `0` center, `1` bottom, or `2` top. On Mentra Live, applying FOV/ROI restarts the camera for about 5 seconds; wait for that restart before requesting a photo.
 

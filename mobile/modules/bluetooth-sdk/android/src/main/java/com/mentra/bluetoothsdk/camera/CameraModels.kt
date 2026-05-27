@@ -241,6 +241,9 @@ data class PhotoStatusEvent(
     val status: String get() = stringValue(values, "status").orEmpty()
     val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()
     val resolvedConfig: Map<String, Any>? get() = stringMapValue(values["resolvedConfig"])
+    val requestedCaptureConfig: Map<String, Any>? get() = stringMapValue(values["requestedCaptureConfig"])
+    val meteredPreview: Map<String, Any>? get() = stringMapValue(values["meteredPreview"])
+    val captureMetadata: Map<String, Any>? get() = stringMapValue(values["captureMetadata"])
     val errorCode: String? get() = stringValue(values, "errorCode")
     val errorMessage: String? get() = stringValue(values, "errorMessage")
 }

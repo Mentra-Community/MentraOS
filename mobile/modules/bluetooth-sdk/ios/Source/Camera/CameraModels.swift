@@ -287,6 +287,18 @@ public struct PhotoStatusEvent: CustomStringConvertible {
         values["resolvedConfig"] as? [String: Any]
     }
 
+    public var requestedCaptureConfig: [String: Any]? {
+        values["requestedCaptureConfig"] as? [String: Any]
+    }
+
+    public var meteredPreview: [String: Any]? {
+        values["meteredPreview"] as? [String: Any]
+    }
+
+    public var captureMetadata: [String: Any]? {
+        values["captureMetadata"] as? [String: Any]
+    }
+
     public var errorCode: String? {
         stringValue(values, "errorCode")
     }
