@@ -22,14 +22,29 @@ Only tools whose credentials are configured are registered, plus `console_auth_s
 
 ## Cursor configuration
 
-Add to `~/.cursor/mcp.json` or project `.cursor/mcp.json`:
+Add to `~/.cursor/mcp.json` or project `.cursor/mcp.json`.
+
+**Recommended:** use `scripts/run-mcp.sh`. It resolves Bun when Cursor spawns MCP with a minimal `PATH`, and can load `MENTRA_*` exports from `~/.zshrc` (without sourcing the whole file, which would break stdio JSON-RPC).
 
 ```json
 {
   "mcpServers": {
     "mentra-console": {
-      "command": "bun",
-      "args": ["run", "/absolute/path/to/MentraOS/cloud/packages/console-mcp/src/index.ts"],
+      "command": "/absolute/path/to/MentraOS/cloud/packages/console-mcp/scripts/run-mcp.sh",
+      "args": []
+    }
+  }
+}
+```
+
+Or pass credentials explicitly in `env` (useful for CI or when keys are not in `~/.zshrc`):
+
+```json
+{
+  "mcpServers": {
+    "mentra-console": {
+      "command": "/absolute/path/to/MentraOS/cloud/packages/console-mcp/scripts/run-mcp.sh",
+      "args": [],
       "env": {
         "MENTRA_API_HOST": "https://api.mentra.glass",
         "MENTRA_CLI_TOKEN": "your-cli-key",
@@ -40,7 +55,22 @@ Add to `~/.cursor/mcp.json` or project `.cursor/mcp.json`:
 }
 ```
 
-Restart Cursor after changing MCP config.
+For local cloud dev, set `MENTRA_API_HOST` to `http://localhost:8002` and ensure `MENTRA_AGENT_API_KEY` matches `cloud/.env`.
+
+Restart Cursor after changing MCP config. In **Cursor Settings → MCP**, `mentra-console` should show as connected (not errored).
+
+### Verify in Cursor
+
+Ask the agent to call `console_auth_status`. You should see your API host and which capability groups are enabled (`developer`, `incidents`, `admin`) — never secrets.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| MCP server **errored** / `bun: not found` | Use `run-mcp.sh` (not bare `bun`), or set `"env": { "BUN": "/Users/you/.bun/bin/bun" }` |
+| Only `console_auth_status` + incident tools | Set `MENTRA_AGENT_API_KEY` for incidents; `MENTRA_CLI_TOKEN` for app/org tools |
+| Incident tools return 401 | Key must match server `MENTRA_AGENT_API_KEY` (see `cloud/.env` locally) |
+| `run-mcp.sh` loads nothing from shell | Keys must be `export MENTRA_AGENT_API_KEY=...` lines in `~/.zshrc` |
 
 ## Run locally
 
@@ -77,18 +107,32 @@ bun run start
 **Unit tests** (no API):
 
 ```bash
-bun test test/
+cd cloud/packages/console-mcp
+bun test
 ```
 
-**Integration smoke test** (needs running cloud + credentials):
+**Integration smoke test** (hits live API; needs credentials):
 
 ```bash
-# Local
-export MENTRA_API_HOST=http://localhost:8002
-export MENTRA_CLI_TOKEN=...
-export MENTRA_AGENT_API_KEY=...   # must match cloud/.env
+cd cloud/packages/console-mcp
+export MENTRA_API_HOST=https://api.mentra.glass   # or http://localhost:8002
+export MENTRA_AGENT_API_KEY=...                   # must match cloud/.env when local
+export MENTRA_CLI_TOKEN=...                       # optional, for app/org checks
 
 bun run smoke
 ```
 
-Or use `scripts/run-mcp.sh` in Cursor config to load vars from `~/.zshrc` automatically.
+Smoke test prints capability detection, API reachability, and skips groups whose env vars are unset.
+
+**Manual stdio check** (optional):
+
+```bash
+cd cloud/packages/console-mcp
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"console_auth_status","arguments":{}}}' \
+  | bash scripts/run-mcp.sh
+```
+
+The last JSON line should be a `console_auth_status` result with `host` and `capabilities`.
