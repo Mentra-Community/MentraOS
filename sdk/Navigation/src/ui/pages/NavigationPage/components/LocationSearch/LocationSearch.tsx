@@ -7,6 +7,7 @@ import "@/shared/channels"
 import type {Channels} from "@/shared/channels"
 import type {PlaceDetails, PlaceSuggestion, SavedPlace} from "@/shared/types"
 import {useNavStore} from "@/ui/store/navStore"
+import {suppressNextRouterPopOnce} from "@/ui/router"
 import { safeHeadingSearchPill, safeHeadingSearchResults } from "@/ui/components/SafeHeading/SafeHeading"
 
 type Props = {
@@ -170,6 +171,65 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
   // Show suggestions overlay whenever focused and no selection
   const showSuggestions = (focused || devFrozen) && !selected
 
+  // ── Back-button + tap-to-close coordination ──────────────────────────
+  // Android's first back press dismisses the soft keyboard on its own
+  // (OS-level, before popstate). To get the second back press to close
+  // *only* the search drawer (and leave the underlying map intact), we
+  // push a history entry while the drawer is open. The router's
+  // popstate handler is told via suppressNextRouterPopOnce() to skip
+  // its route-stack mutation when our entry is the one being consumed.
+  const searchEntryPushedRef = useRef(false)
+
+  function closeSearch() {
+    inputRef.current?.blur()
+    setFocused(false)
+    setOpen(false)
+  }
+
+  useEffect(() => {
+    if (showSuggestions && !searchEntryPushedRef.current) {
+      try {
+        history.pushState({searchDrawer: true}, "")
+        searchEntryPushedRef.current = true
+      } catch {
+        /* WebView may forbid pushState in some sandboxes — degrade
+           gracefully: the drawer will simply close on first back. */
+      }
+    } else if (!showSuggestions && searchEntryPushedRef.current) {
+      // Drawer closed programmatically (pick/clear/tap-outside). Pop
+      // our entry so history depth matches the drawer state.
+      searchEntryPushedRef.current = false
+      suppressNextRouterPopOnce()
+      try {
+        history.back()
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [showSuggestions])
+
+  useEffect(() => {
+    function onPopState() {
+      // Only react when *our* entry is the one being consumed.
+      if (!searchEntryPushedRef.current) return
+      searchEntryPushedRef.current = false
+      suppressNextRouterPopOnce()
+      closeSearch()
+    }
+    // Capture phase so the suppress flag is set before the router's
+    // bubble-phase listener checks it.
+    window.addEventListener("popstate", onPopState, true)
+    return () => window.removeEventListener("popstate", onPopState, true)
+  }, [])
+
+  function onBackdropMouseDown(e: React.MouseEvent<HTMLElement>) {
+    // Only fire when the user taps the panel background itself, not a
+    // bubbled click from the input, a suggestion row, or a saved chip.
+    if (e.target !== e.currentTarget) return
+    e.preventDefault()
+    closeSearch()
+  }
+
   return (
     <div className="relative mt-4 mx-3 flex flex-col mr-14">
       <div className="relative flex flex-col">
@@ -228,7 +288,13 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
               animate={{opacity: 1, y: 0}}
               exit={{opacity: 0, y: -8}}
               transition={{duration: 0.15, ease: "easeOut"}}
-              className={`fixed z-40 inset-x-0 bottom-0 top-0 bg-white overflow-auto ${safeHeadingSearchResults}`}>
+              onMouseDown={onBackdropMouseDown}
+              // `select-none` + webkit-touch-callout block long-press
+              // selection / copy on place names and addresses. The
+              // <input> is exempt — browsers always allow selection
+              // inside form controls so the user can still edit their
+              // query normally.
+              className={`fixed z-40 inset-x-0 bottom-0 top-0 bg-white overflow-auto select-none [-webkit-touch-callout:none] [-webkit-user-select:none] ${safeHeadingSearchResults}`}>
               {loading ? (
                 <div className="flex items-center justify-center gap-2 px-3 py-8 text-neutral-500">
                   <Loader2 size={16} className="animate-spin" />

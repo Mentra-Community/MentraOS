@@ -176,20 +176,57 @@ export function NavMap({
         target.dispatchEvent(new Event("touchcancel", {bubbles: true}))
       }
     }
+    // Tracks last-known number of fingers on the map. Used to detect
+    // pinch→single-finger transitions even when Android skips the
+    // intermediate `touchend` with touches.length===1 during fast
+    // gestures (cause of the "zoom freezes mid-pinch, then surviving
+    // finger keeps zooming" bug — Google Maps' recognizer stays in
+    // zoom mode because the OS never told us a finger left).
+    let lastTouchCount = 0
+    let pinchResetTimer: ReturnType<typeof setTimeout> | null = null
+    const armPinchResetWatchdog = () => {
+      if (pinchResetTimer) clearTimeout(pinchResetTimer)
+      pinchResetTimer = setTimeout(() => {
+        // If we've been "pinching" but haven't seen a real multi-touch
+        // event for a while, the OS likely dropped the touchend. Force
+        // a recognizer reset so the next move starts cleanly.
+        if (pinching && lastTouchCount <= 1) {
+          cancelGesture(new TouchEvent("touchcancel", {bubbles: true}))
+          pinching = false
+        }
+      }, 120)
+    }
     const onTouchStart = (e: TouchEvent) => {
+      lastTouchCount = e.touches.length
       if (e.touches.length >= 2) pinching = true
     }
-    const onTouchEnd = (e: TouchEvent) => {
+    const onTouchMove = (e: TouchEvent) => {
+      // If we thought we were pinching but only one finger is reporting
+      // movement, Android dropped the second finger's touchend. Reset
+      // immediately so this move isn't interpreted as continued zoom.
       if (pinching && e.touches.length === 1) {
-        // Pinch ended but a finger remains. Reset the recognizer so the
-        // surviving finger starts a fresh single-touch gesture.
         cancelGesture(e)
         pinching = false
-      } else if (e.touches.length === 0) {
+      }
+      lastTouchCount = e.touches.length
+      if (e.touches.length >= 2) armPinchResetWatchdog()
+    }
+    const onTouchEnd = (e: TouchEvent) => {
+      // Any transition out of pinching: dispatch a reset. Safe even
+      // when both fingers genuinely lifted — touchcancel on a clean
+      // recognizer is a no-op.
+      if (pinching) {
+        cancelGesture(e)
         pinching = false
+      }
+      lastTouchCount = e.touches.length
+      if (pinchResetTimer) {
+        clearTimeout(pinchResetTimer)
+        pinchResetTimer = null
       }
     }
     container.addEventListener("touchstart", onTouchStart, {passive: true, capture: true})
+    container.addEventListener("touchmove", onTouchMove, {passive: true, capture: true})
     container.addEventListener("touchend", onTouchEnd, {passive: true, capture: true})
     container.addEventListener("touchcancel", onTouchEnd, {passive: true, capture: true})
 

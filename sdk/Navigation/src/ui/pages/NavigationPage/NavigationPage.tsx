@@ -18,6 +18,7 @@ import {NavigationRunningDrawer} from "@/ui/pages/NavigationPage/components/Navi
 import {DeviateButton} from "@/ui/pages/NavigationPage/components/DeviateButton/DeviateButton"
 import {LiveLog} from "@/ui/pages/NavigationPage/components/LiveLog/LiveLog"
 import {LocationSearch} from "@/ui/pages/NavigationPage/components/LocationSearch/LocationSearch"
+import {RawMapPage} from "@/ui/pages/RawMapPage/RawMapPage"
 import {OrientationCard} from "@/ui/pages/NavigationPage/components/OrientationCard/OrientationCard"
 import {MyLocationCard} from "@/ui/pages/NavigationPage/components/MyLocationCard/MyLocationCard"
 import {NavMap} from "@/ui/pages/NavigationPage/components/NavMap/NavMap"
@@ -85,6 +86,18 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [simulatorMode, setSimulatorMode] = useState(false)
   const [searchFrozen, setSearchFrozen] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
+  const [rawMapOpen, setRawMapOpen] = useState(false)
+
+  // Swallow every long-press-derived `contextmenu` event app-wide
+  // while the search drawer is open. Kills the map's drop-pin
+  // gesture, the OS's copy/share callout, and any other long-press
+  // behavior in one shot — no per-component plumbing needed.
+  useEffect(() => {
+    if (!isSearching) return
+    const swallow = (e: Event) => e.preventDefault()
+    window.addEventListener("contextmenu", swallow, {capture: true})
+    return () => window.removeEventListener("contextmenu", swallow, {capture: true} as any)
+  }, [isSearching])
   const [devDrawer, setDevDrawer] = useState<"auto" | "idle" | "preview" | "running" | "arrived">("auto")
   const [simulate, setSimulate] = useState(false)
   const [speedMultiplier, setSpeedMultiplier] = useState(5)
@@ -261,7 +274,10 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           // while running so they don't compete with the active route.
           savedPlaces={running ? [] : savedPlaces}
           autoFollow={running}
-          onLongPress={handleMapLongPress}
+          // Suppress long-press-to-drop-pin while the search drawer is
+          // open. Otherwise a press through the (semi-transparent) panel
+          // edges or before the drawer animates in can drop a stray pin.
+          onLongPress={isSearching ? undefined : handleMapLongPress}
         />
 
         {/* Top floating stack — search bar, then orientation card while running. */}
@@ -365,6 +381,15 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 }
                 className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
                 Send
+              </button>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700">Raw map (no overlays)</span>
+              <button
+                type="button"
+                onClick={() => setRawMapOpen(true)}
+                className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-neutral-800 text-white">
+                Open
               </button>
             </div>
             <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
@@ -502,6 +527,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           </FloatingDevPanel>
         ) : null}
       </div>
+      {rawMapOpen ? <RawMapPage onClose={() => setRawMapOpen(false)} /> : null}
     </DrawerOffsetProvider>
   )
 }

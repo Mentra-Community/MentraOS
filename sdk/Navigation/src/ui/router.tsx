@@ -23,6 +23,16 @@ export type Route =
   | {name: "navigation"}
   | {name: "add-place"; presetType?: "home" | "work"}
 
+// Lets feature-level popstate handlers (e.g. LocationSearch's
+// back-to-close-drawer) tell the router "I just consumed this back
+// press — don't pop the route stack." Set this from a capture-phase
+// popstate listener; the router's bubble-phase listener checks and
+// clears it before deciding whether to mutate the stack.
+let suppressNextRouterPop = false
+export function suppressNextRouterPopOnce(): void {
+  suppressNextRouterPop = true
+}
+
 type RouterContextValue = {
   route: Route
   push: (r: Route) => void
@@ -89,6 +99,10 @@ export function RouterProvider({children}: {children: ReactNode}) {
   // match the new history cursor.
   useEffect(() => {
     function onPopState() {
+      if (suppressNextRouterPop) {
+        suppressNextRouterPop = false
+        return
+      }
       setStack((s) => (s.length > 1 ? s.slice(0, -1) : s))
     }
     window.addEventListener("popstate", onPopState)
