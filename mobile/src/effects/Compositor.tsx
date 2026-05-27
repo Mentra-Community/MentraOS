@@ -20,7 +20,9 @@ import {useEffect, useRef, useState} from "react"
 import {BackHandler, Dimensions, Platform, View} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import Animated, {
+  cancelAnimation,
   runOnJS,
+  useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
@@ -82,7 +84,7 @@ function handleBack() {
 export default function Compositor() {
   const foregroundApp = useForegroundApp()
   const viewRef = useRef<LocalMiniappViewHandle | null>(null)
-
+  const didSwipeToExit = useRef(false)
   // Keep the app mounted through the exit animation. `foregroundApp` flips to
   // null the instant clearForeground runs, but we hold `renderedApp` until the
   // fade-out completes so the overlay can animate off-screen before unmount.
@@ -141,6 +143,10 @@ export default function Compositor() {
     transform: [{translateX: swipeTranslateX.value}, {scale: fadeScale.value}],
   }))
 
+  const markSwipedToExit = () => {
+    didSwipeToExit.current = true
+  }
+
   const swipeGesture = Gesture.Pan()
     .activeOffsetX(10)
     .failOffsetY([-15, 15])
@@ -155,8 +161,7 @@ export default function Compositor() {
       // fast rightward flick (past a small minimum travel) — same dual
       // criterion UIKit's interactive pop uses.
       let committed =
-        e.translationX > commitThreshold ||
-        (e.velocityX > COMMIT_VELOCITY && e.translationX > MIN_FLICK_TRANSLATION)
+        e.translationX > commitThreshold || (e.velocityX > COMMIT_VELOCITY && e.translationX > MIN_FLICK_TRANSLATION)
 
       if (e.velocityX < -100) {
         committed = false
@@ -171,23 +176,35 @@ export default function Compositor() {
         // Continue off-screen carrying the release velocity so finger → spring
         // is seamless. Clamp the seed so a violent flick doesn't overshoot.
         const velocity = Math.min(Math.max(e.velocityX, 0), MAX_COMMIT_VELOCITY)
-        // swipeTranslateX.value = withSpring(screenWidth, {...SWIPE_SPRING, damping: 0, stiffness: 1000, velocity}, (finished) => {
+        runOnJS(markSwipedToExit)()
+        swipeTranslateX.value = withSpring(
+          screenWidth,
+          {damping: 50, stiffness: 800, velocity, overshootClamping: true},
+          (finished) => {
+            if (finished) runOnJS(handleBack)()
+          },
+        )
+
+        // swipeTranslateX.value = withTiming(screenWidth*1.1, {duration: 100}, (finished) => {
         //   if (finished) runOnJS(handleBack)()
         // })
-
-        swipeTranslateX.value = withTiming(screenWidth*1.1, {duration: 100}, (finished) => {
-          if (finished) runOnJS(handleBack)()
-        })
       } else {
         // Snap back to rest, also respecting the release velocity (which may be
         // negative — leftward — when the user reverses to cancel).
-        swipeTranslateX.value = withSpring(0, {...SWIPE_SPRING, velocity: e.velocityX})
+        swipeTranslateX.value = withSpring(0, {
+          // ...SWIPE_SPRING,
+          velocity: e.velocityX,
+          damping: 50,
+          stiffness: 800,
+          overshootClamping: true,
+        })
       }
     })
 
   // Drive fade-in(foreground) and fade-out + shrink (clear).
   useEffect(() => {
     if (isForeground) {
+      didSwipeToExit.current = false // reset the flag so we can animate out again
       swipeTranslateX.value = 0
       fadeOpacity.value = 0
       // Zoom-in on launch: scale up from FADE_IN_SCALE_FROM → 1 alongside the
@@ -196,11 +213,15 @@ export default function Compositor() {
       fadeOpacity.value = withDelay(FADE_IN_DELAY_MS, withTiming(1, {duration: FADE_IN_DURATION_MS}))
       fadeScale.value = withDelay(FADE_IN_DELAY_MS, withTiming(1, {duration: FADE_IN_DURATION_MS}))
     } else {
-      fadeOpacity.value = withTiming(0, {duration: FADE_OUT_DURATION_MS}, (finished) => {
-        // Unmount (tear down the WebView) only after the fade-out has played.
-        if (finished) runOnJS(setRenderedApp)(null)
-      })
-      fadeScale.value = withTiming(FADE_OUT_SCALE_TO, {duration: FADE_OUT_DURATION_MS})
+      // only animate out if we didn't swipe to exit:
+      if (!didSwipeToExit.current) {
+        console.log("Compositor: fading out: didSwipeToExit.current", didSwipeToExit.current)
+        fadeOpacity.value = withTiming(0, {duration: FADE_OUT_DURATION_MS}, (finished) => {
+          // Unmount (tear down the WebView) only after the fade-out has played.
+          if (finished) runOnJS(setRenderedApp)(null)
+        })
+        fadeScale.value = withTiming(FADE_OUT_SCALE_TO, {duration: FADE_OUT_DURATION_MS})
+      }
     }
   }, [isForeground, swipeTranslateX, fadeOpacity, fadeScale])
 
