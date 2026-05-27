@@ -109,6 +109,10 @@ class BluetoothSdkModule : Module() {
                     sendEvent("photo_response", event.values)
                 }
 
+                override fun onPhotoStatus(event: PhotoStatusEvent) {
+                    sendEvent("photo_status", event.values)
+                }
+
                 override fun onStreamStatus(event: StreamStatusEvent) {
                     sendEvent("stream_status", event.values)
                 }
@@ -165,6 +169,7 @@ class BluetoothSdkModule : Module() {
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
+            "photo_status",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",

@@ -26,6 +26,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
+            "photo_status",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",
@@ -607,6 +608,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             sendEvent("hotspot_error", error.values)
         case let .photoResponse(response):
             sendEvent("photo_response", response.values)
+        case let .photoStatus(status):
+            sendEvent("photo_status", status.values)
         case let .streamStatus(status):
             sendEvent("stream_status", status.values)
         case let .keepAliveAck(ack):

@@ -39,6 +39,9 @@ import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.concurrent.Executor;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 /**
  * Owns photo capture lifecycle: queue dispatch, AE precapture, still/HDR capture, image save,
  * and metering timestamps. Bridges to {@link CameraNeoService} via {@link Hooks}.
@@ -341,6 +344,7 @@ public final class PhotoSession {
                 Log.d(TAG, "Dispatching queued photo with configured camera: " + request.requestId);
                 hooks.cancelKeepAliveTimer();
                 activateQueuedRequest(request);
+                notifyCurrentPhotoConfigured();
                 shotState = AeStateMachine.ShotState.WAITING_AE;
                 // Arm AE wait on this thread so the camera Handler sees a published true
                 // immediately (Bluetooth thread is not the preview callback looper).
@@ -388,6 +392,7 @@ public final class PhotoSession {
                 Log.d(TAG, "Camera config unchanged, taking photo immediately");
                 hooks.cancelKeepAliveTimer();
 
+                notifyCurrentPhotoConfigured();
                 shotState = AeStateMachine.ShotState.WAITING_AE;
                 if (!shouldUseManualExposure()) {
                     aeStateMachine.beginWaitingForAe();
@@ -555,6 +560,55 @@ public final class PhotoSession {
         CameraNeoService.PhotoCaptureCallback callback = activeCapture != null ? activeCapture.callback : null;
         if (callback != null) {
             hooks.executor().execute(() -> callback.onPhotoError(errorMessage));
+        }
+    }
+
+    private void notifyPhotoCapturing() {
+        CameraNeoService.PhotoCaptureCallback callback = activeCapture != null ? activeCapture.callback : null;
+        if (callback != null) {
+            hooks.executor().execute(callback::onPhotoCapturing);
+        }
+    }
+
+    private void notifyCurrentPhotoConfigured() {
+        Size size = jpegSize();
+        if (size != null) {
+            notifyPhotoConfigured(size, previewJpegQuality());
+        }
+    }
+
+    public void notifyPhotoConfigured(Size size, int jpegQuality) {
+        CameraNeoService.PhotoCaptureCallback callback = activeCapture != null ? activeCapture.callback : null;
+        if (callback == null || size == null) {
+            return;
+        }
+
+        try {
+            JSONObject resolvedConfig = new JSONObject();
+            resolvedConfig.put("format", "jpeg");
+            resolvedConfig.put("width", size.getWidth());
+            resolvedConfig.put("height", size.getHeight());
+            resolvedConfig.put("quality", jpegQuality);
+
+            String requestedSize = currentSize();
+            if (requestedSize != null) {
+                resolvedConfig.put("requestedSize", requestedSize);
+            }
+            resolvedConfig.put("source", currentIsFromSdk() ? "sdk" : "button");
+
+            Long exposureTimeNs = currentExposureTimeNs();
+            if (exposureTimeNs != null) {
+                resolvedConfig.put("exposureTimeNs", exposureTimeNs);
+            }
+
+            Integer iso = currentIso();
+            if (iso != null) {
+                resolvedConfig.put("iso", iso);
+            }
+
+            hooks.executor().execute(() -> callback.onPhotoConfigured(resolvedConfig));
+        } catch (JSONException e) {
+            Log.e(TAG, "Error building resolved photo config", e);
         }
     }
 
@@ -870,6 +924,7 @@ public final class PhotoSession {
                         reqFps);
             } catch (Throwable t) { /* never let logging crash capture */ }
 
+            notifyPhotoCapturing();
             activeSession.capture(captureRequest, new StillCaptureCallback(new StillCaptureCallback.Hooks() {
                 @Override
                 public void recordStillSensorTimestampNs(Long timestampNs) {

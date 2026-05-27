@@ -40,6 +40,8 @@ import java.util.Locale;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
+import org.json.JSONObject;
+
 import com.mentra.asg_client.camera.lifecycle.CameraCoordinator;
 import com.mentra.asg_client.camera.lifecycle.CameraOpener;
 import com.mentra.asg_client.camera.lifecycle.CameraRecoveryHelper;
@@ -141,6 +143,8 @@ public class CameraNeoService extends LifecycleService {
 
     // Callback interface for photo capture
     public interface PhotoCaptureCallback {
+        default void onPhotoConfigured(JSONObject resolvedConfig) {}
+        default void onPhotoCapturing() {}
         void onPhotoCaptured(String filePath);
         void onPhotoError(String errorMessage);
     }
@@ -722,6 +726,7 @@ public class CameraNeoService extends LifecycleService {
                 // small YUV preview reader, so manual-exposure captures no longer compete with auto-exposed
                 // preview frames in the same buffer queue.
                 photoSession.setJpegSize(chosenJpeg);
+                photoSession.notifyPhotoConfigured(chosenJpeg, photoSession.previewJpegQuality());
                 photoSession.prepareStillReaders(filePath, chosenJpeg, backgroundHandler);
             }
 

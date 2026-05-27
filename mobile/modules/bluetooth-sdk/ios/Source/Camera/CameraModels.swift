@@ -257,3 +257,45 @@ public struct PhotoResponseEvent: CustomStringConvertible {
         "PhotoResponseEvent(requestId: \(requestId), state: \(response.state.rawValue))"
     }
 }
+
+public struct PhotoStatusEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        var values = values
+        values["type"] = "photo_status"
+        self.values = values
+    }
+
+    public var requestId: String {
+        stringValue(values, "requestId") ?? ""
+    }
+
+    public var status: String {
+        stringValue(values, "status") ?? ""
+    }
+
+    public var timestamp: Int64 {
+        if let value = values["timestamp"] as? Int64 { return value }
+        if let value = values["timestamp"] as? Int { return Int64(value) }
+        if let value = values["timestamp"] as? Double { return Int64(value) }
+        if let value = values["timestamp"] as? NSNumber { return value.int64Value }
+        return Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    public var resolvedConfig: [String: Any]? {
+        values["resolvedConfig"] as? [String: Any]
+    }
+
+    public var errorCode: String? {
+        stringValue(values, "errorCode")
+    }
+
+    public var errorMessage: String? {
+        stringValue(values, "errorMessage")
+    }
+
+    public var description: String {
+        "PhotoStatusEvent(requestId: \(requestId), status: \(status))"
+    }
+}

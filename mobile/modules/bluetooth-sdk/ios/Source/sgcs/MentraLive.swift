@@ -1866,6 +1866,9 @@ class MentraLive: NSObject, SGCManager {
         case "stream_status":
             emitRtmpStreamStatus(json)
 
+        case "photo_status":
+            emitPhotoStatus(json)
+
         case "gallery_status":
             let photoCount = json["photos"] as? Int ?? 0
             let videoCount = json["videos"] as? Int ?? 0
@@ -3885,6 +3888,10 @@ class MentraLive: NSObject, SGCManager {
 
     private func emitRtmpStreamStatus(_ json: [String: Any]) {
         Bridge.sendTypedMessage("stream_status", body: json)
+    }
+
+    private func emitPhotoStatus(_ json: [String: Any]) {
+        Bridge.sendPhotoStatus(json)
     }
 
     private func emitButtonPress(buttonId: String, pressType: String, timestamp: Int64) {
