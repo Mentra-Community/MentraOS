@@ -360,7 +360,6 @@ cliRouter.use("*", authenticateCLI);
 cliRouter.use("*", transformCLIToConsole);
 cliRouter.route("/apps", consoleAppsApi);
 cliRouter.route("/orgs", consoleOrgsApi);
-cliRouter.route("/cli-keys", cliKeysApi);
 app.route("/api/cli", cliRouter);
 
 // ============================================================================

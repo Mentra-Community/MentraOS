@@ -104,13 +104,6 @@ async function main(): Promise<void> {
     }
 
     try {
-      await cli.listCliKeys();
-      pass("CLI cli_key_list (/api/cli/cli-keys)");
-    } catch (e) {
-      fail("CLI cli_key_list", e instanceof Error ? e.message : String(e));
-    }
-
-    try {
       requireConfirm(undefined, "app_delete");
       fail("confirm gate", "should have thrown without confirm");
     } catch {

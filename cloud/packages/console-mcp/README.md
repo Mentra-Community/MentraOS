@@ -14,7 +14,7 @@ This is separate from the [docs MCP](https://docs.mentraglass.com/mcp) (`mentrao
 | Variable | Required for | Description |
 |----------|--------------|-------------|
 | `MENTRA_API_HOST` | No | API base URL. Default: `https://api.mentra.glass`. Local dev: `http://localhost:8002` |
-| `MENTRA_CLI_TOKEN` | App/org/CLI-key tools | CLI key from [Developer Console → CLI Keys](https://console.mentra.glass/cli-keys). Sent as `Authorization: Bearer …` to `/api/cli/*` |
+| `MENTRA_CLI_TOKEN` | App/org tools | CLI key from [Developer Console → CLI Keys](https://console.mentra.glass/cli-keys). Sent as `Authorization: Bearer …` to `/api/cli/*`. Create keys in the dashboard only — not via MCP. |
 | `MENTRA_AGENT_API_KEY` | Incident tools | Agent API key (must match server `MENTRA_AGENT_API_KEY`). Sent as `X-Agent-Key` to `/api/agent/incidents` |
 | `MENTRA_ADMIN_JWT` or `MENTRA_ADMIN_TOKEN` | Admin tools | Core/session JWT for a Mentra admin email (`@mentra.glass` / `ADMIN_EMAILS`). **Not** a CLI key |
 
@@ -56,7 +56,6 @@ bun run start
 
 - **Apps:** `app_list`, `app_get`, `app_create`, `app_update`, `app_delete` (needs `confirm: true`), `app_publish`, `app_regenerate_api_key`, `app_move_org`
 - **Orgs:** `org_list`, `org_get`, `org_create`, `org_update`, `org_delete`, `org_invite_member`, `org_change_member_role`, `org_remove_member`, `org_resend_invite`, `org_rescind_invite`, `org_accept_invite`
-- **CLI keys:** `cli_key_list`, `cli_key_create`, `cli_key_get`, `cli_key_update`, `cli_key_revoke` (needs `confirm: true`)
 
 `app_create` only accepts fields allowed by the backend: `packageName`, `name`, `description`, `publicUrl`, `appType`, `tools`, `permissions`, `settings`, `hardwareRequirements`, `onboardingInstructions`, `orgId`.
 
@@ -93,7 +92,3 @@ bun run smoke
 ```
 
 Or use `scripts/run-mcp.sh` in Cursor config to load vars from `~/.zshrc` automatically.
-
-## Backend note
-
-CLI key routes are mounted at `/api/cli/cli-keys` (same handlers as `/api/console/cli-keys`) so MCP/CLI can manage keys without browser session auth.

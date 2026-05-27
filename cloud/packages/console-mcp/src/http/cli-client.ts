@@ -149,33 +149,6 @@ export function createCliClient(config: ConsoleMcpConfig) {
         "POST",
         `/api/cli/orgs/accept/${encodeURIComponent(token)}`,
       ),
-
-    listCliKeys: () =>
-      request<{ success?: boolean; data?: unknown }>("GET", "/api/cli/cli-keys"),
-
-    createCliKey: (body: { name: string; expiresInDays?: number }) =>
-      request<{ success?: boolean; data?: unknown }>("POST", "/api/cli/cli-keys", {
-        body,
-      }),
-
-    getCliKey: (keyId: string) =>
-      request<{ success?: boolean; data?: unknown }>(
-        "GET",
-        `/api/cli/cli-keys/${encodeURIComponent(keyId)}`,
-      ),
-
-    updateCliKey: (keyId: string, body: Record<string, unknown>) =>
-      request<{ success?: boolean; data?: unknown }>(
-        "PATCH",
-        `/api/cli/cli-keys/${encodeURIComponent(keyId)}`,
-        { body },
-      ),
-
-    revokeCliKey: (keyId: string) =>
-      request<{ success?: boolean; data?: unknown }>(
-        "DELETE",
-        `/api/cli/cli-keys/${encodeURIComponent(keyId)}`,
-      ),
   };
 }
 

@@ -6,7 +6,6 @@ import { registerAuthTools } from "./tools/auth.ts";
 import { registerAppTools } from "./tools/apps.ts";
 import { registerOrgTools } from "./tools/orgs.ts";
 import { registerIncidentTools } from "./tools/incidents.ts";
-import { registerCliKeyTools } from "./tools/cli-keys.ts";
 import { registerAdminTools } from "./tools/admin.ts";
 
 export function createMcpServer(config: ConsoleMcpConfig): McpServer {
@@ -20,7 +19,6 @@ export function createMcpServer(config: ConsoleMcpConfig): McpServer {
   if (config.capabilities.developer) {
     registerAppTools(server, config);
     registerOrgTools(server, config);
-    registerCliKeyTools(server, config);
   }
 
   if (config.capabilities.incidents) {
