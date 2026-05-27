@@ -80,6 +80,10 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const wifiRequired = connected && !glassesWifiConnected;
   const cameraStatusFailed = isCameraStatusFailure(sdk.cameraStatus);
   const photoStatusOverlay = photoStatusOverlayInfo(sdk.photoStatus, sdk.photoPreviewUrl);
+  const bleFallbackWarning = sdk.photoPreviewDetails?.bleFallbackUsed
+    ? sdk.photoPreviewDetails.bleFallbackMessage ??
+      'Wi-Fi upload failed; photo was compressed and delivered through Bluetooth.'
+    : null;
   const setupHint = sdk.photoCloudServerEnabled ? localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus) : null;
   const sdkCall = cameraSdkCall(
     sdk.photoSize,
@@ -170,6 +174,12 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             ) : null}
           </LinearGradient>
         </View>
+        {bleFallbackWarning ? (
+          <View style={styles.previewFallbackWarning}>
+            <Text style={styles.previewFallbackWarningTitle}>Bluetooth fallback</Text>
+            <Text style={styles.previewFallbackWarningText}>{bleFallbackWarning}</Text>
+          </View>
+        ) : null}
 
         <BarcodeResult scan={sdk.barcodeScan} />
 
@@ -342,8 +352,12 @@ function PhotoDetailsCard({
         <View style={styles.detailsBody}>
           {rows.map((row) => (
             <View key={row.label} style={styles.detailsRow}>
-              <Text style={styles.detailsLabel}>{row.label}</Text>
-              <Text style={styles.detailsValue}>{row.value}</Text>
+              <Text style={[styles.detailsLabel, row.tone === 'warning' && styles.detailsLabelWarning]}>
+                {row.label}
+              </Text>
+              <Text style={[styles.detailsValue, row.tone === 'warning' && styles.detailsValueWarning]}>
+                {row.value}
+              </Text>
             </View>
           ))}
         </View>
@@ -354,23 +368,9 @@ function PhotoDetailsCard({
 
 type PhotoStatusEvent = NonNullable<BluetoothSdkExampleModel['photoStatus']>;
 type PhotoStatusExtras = {
-  requestedCaptureConfig?: {
-    manual?: boolean;
-    exposureTimeNs?: number;
-    iso?: number;
-    frameDurationNs?: number;
-    aeTargetFpsRange?: {min?: number; max?: number};
-  };
-  meteredPreview?: {
-    exposureTimeNs?: number;
-    iso?: number;
-  };
-  captureMetadata?: {
-    exposureTimeNs?: number;
-    iso?: number;
-    frameDurationNs?: number;
-    aeStateName?: string;
-  };
+  requestedCaptureConfig?: PhotoPreviewDetails['requestedCaptureConfig'];
+  meteredPreview?: PhotoPreviewDetails['meteredPreview'];
+  captureMetadata?: PhotoPreviewDetails['captureMetadata'];
 };
 
 function photoStatusOverlayInfo(status: PhotoStatusEvent | null, previewUrl: string | null) {
@@ -406,6 +406,8 @@ function photoStatusTitle(status: PhotoStatusEvent) {
       return 'Photo captured';
     case 'compressing':
       return 'Compressing photo';
+    case 'ble_fallback_compression':
+      return 'Bluetooth fallback';
     case 'uploading':
       return 'Uploading photo';
     case 'uploaded':
@@ -900,23 +902,34 @@ function photoDetailsSummary(details: PhotoPreviewDetails | null) {
     details.source,
     details.byteCount ? formatBytes(details.byteCount) : null,
     details.width && details.height ? `${details.width} x ${details.height}` : null,
+    details.captureMetadata ? photoCaptureMetadataDetail(details.captureMetadata) : null,
     details.state === 'acknowledged' ? 'acknowledged' : 'preview ready',
   ].filter(Boolean).join(' · ');
 }
+
+type DetailRow = {label: string; value: string};
+type DetailRowTone = 'default' | 'warning';
 
 function photoDetailsRows(details: PhotoPreviewDetails | null) {
   if (!details) {
     return [{label: 'Status', value: 'No photo metadata received yet'}];
   }
-  const rows: Array<{label: string; value: string}> = [
+  const rows: Array<DetailRow & {tone?: DetailRowTone}> = [
     {label: 'Source', value: details.source},
     {label: 'State', value: details.state},
   ];
+  if (details.bleFallbackMessage) {
+    rows.push({label: 'Bluetooth fallback', value: details.bleFallbackMessage, tone: 'warning'});
+  }
   if (details.requestId) rows.push({label: 'Request ID', value: details.requestId});
   if (details.byteCount) rows.push({label: 'Size', value: formatBytes(details.byteCount)});
   if (details.width && details.height) rows.push({label: 'Dimensions', value: `${details.width} x ${details.height}`});
   if (details.estimatedFov) rows.push({label: 'Estimated FOV', value: formatFovEstimate(details.estimatedFov)});
   else if (details.focalLength35mm) rows.push({label: 'Focal length', value: `${details.focalLength35mm}mm equiv.`});
+  addActualCaptureRows(rows, details.captureMetadata);
+  addRequestedCaptureRows(rows, details.requestedCaptureConfig);
+  addMeteredPreviewRows(rows, details.meteredPreview);
+  addResolvedConfigRows(rows, details.resolvedConfig);
   if (details.contentType) rows.push({label: 'Content type', value: details.contentType});
   if (details.uploadUrl) rows.push({label: 'Upload URL', value: details.uploadUrl});
   if (details.previewUrl) rows.push({label: 'Preview URL', value: details.previewUrl});
@@ -924,6 +937,106 @@ function photoDetailsRows(details: PhotoPreviewDetails | null) {
   if (details.uploadedAt) rows.push({label: 'Uploaded at', value: details.uploadedAt});
   if (details.error) rows.push({label: 'Error', value: details.error});
   return rows;
+}
+
+const AE_MODE_LABELS: Record<number, string> = {
+  0: 'OFF',
+  1: 'ON',
+  2: 'ON_AUTO_FLASH',
+  3: 'ON_ALWAYS_FLASH',
+  4: 'ON_AUTO_FLASH_REDEYE',
+  5: 'ON_EXTERNAL_FLASH',
+};
+
+const AF_MODE_LABELS: Record<number, string> = {
+  0: 'OFF',
+  1: 'AUTO',
+  2: 'MACRO',
+  3: 'CONTINUOUS_VIDEO',
+  4: 'CONTINUOUS_PICTURE',
+  5: 'EDOF',
+};
+
+const EDGE_MODE_LABELS: Record<number, string> = {
+  0: 'OFF',
+  1: 'FAST',
+  2: 'HIGH_QUALITY',
+  3: 'ZERO_SHUTTER_LAG',
+};
+
+const NOISE_REDUCTION_MODE_LABELS: Record<number, string> = {
+  0: 'OFF',
+  1: 'FAST',
+  2: 'HIGH_QUALITY',
+  3: 'MINIMAL',
+  4: 'ZERO_SHUTTER_LAG',
+};
+
+function addResolvedConfigRows(rows: DetailRow[], config: PhotoPreviewDetails['resolvedConfig']) {
+  if (!config) {
+    return;
+  }
+  if (config.format) rows.push({label: 'Resolved format', value: String(config.format)});
+  if (config.width && config.height) rows.push({label: 'Resolved dimensions', value: `${config.width} x ${config.height}`});
+  if (config.quality != null) rows.push({label: 'Resolved quality', value: String(config.quality)});
+  if (config.requestedSize) rows.push({label: 'Requested size', value: String(config.requestedSize)});
+  if (config.source) rows.push({label: 'Request source', value: String(config.source)});
+  if (config.transferMethod) rows.push({label: 'Transfer method', value: String(config.transferMethod)});
+  if (config.compression) rows.push({label: 'Compression', value: String(config.compression)});
+  if (config.saveToGallery != null) rows.push({label: 'Save to gallery', value: boolLabel(config.saveToGallery)});
+  if (config.exposureTimeNs != null) rows.push({label: 'Resolved exposure', value: formatExposureNs(config.exposureTimeNs)});
+  if (config.iso != null) rows.push({label: 'Resolved ISO', value: String(config.iso)});
+}
+
+function addRequestedCaptureRows(rows: DetailRow[], config: PhotoPreviewDetails['requestedCaptureConfig']) {
+  if (!config) {
+    return;
+  }
+  if (config.manual != null) rows.push({label: 'Requested mode', value: config.manual ? 'manual' : 'auto'});
+  if (config.exposureTimeNs != null) rows.push({label: 'Requested exposure', value: formatExposureNs(config.exposureTimeNs)});
+  if (config.iso != null) rows.push({label: 'Requested ISO', value: String(config.iso)});
+  if (config.frameDurationNs != null) rows.push({label: 'Requested frame', value: formatFrameDurationNs(config.frameDurationNs)});
+  if (config.aeMode != null) rows.push({label: 'Requested AE mode', value: cameraModeLabel(config.aeMode, AE_MODE_LABELS)});
+  if (config.aeLock != null) rows.push({label: 'Requested AE lock', value: boolLabel(config.aeLock)});
+  if (config.aeExposureCompensation != null) rows.push({label: 'Requested AE comp', value: String(config.aeExposureCompensation)});
+  if (config.aeTargetFpsRange?.min != null && config.aeTargetFpsRange?.max != null) {
+    rows.push({label: 'Requested AE FPS', value: `${config.aeTargetFpsRange.min}-${config.aeTargetFpsRange.max} fps`});
+  }
+  if (config.noiseReductionMode != null) {
+    rows.push({label: 'Requested NR mode', value: cameraModeLabel(config.noiseReductionMode, NOISE_REDUCTION_MODE_LABELS)});
+  }
+  if (config.edgeMode != null) rows.push({label: 'Requested edge mode', value: cameraModeLabel(config.edgeMode, EDGE_MODE_LABELS)});
+  if (config.afMode != null) rows.push({label: 'Requested AF mode', value: cameraModeLabel(config.afMode, AF_MODE_LABELS)});
+  if (config.zsl != null) rows.push({label: 'Requested ZSL', value: boolLabel(config.zsl)});
+}
+
+function addMeteredPreviewRows(rows: DetailRow[], config: PhotoPreviewDetails['meteredPreview']) {
+  if (!config) {
+    return;
+  }
+  if (config.exposureTimeNs != null) rows.push({label: 'Metered exposure', value: formatExposureNs(config.exposureTimeNs)});
+  if (config.iso != null) rows.push({label: 'Metered ISO', value: String(config.iso)});
+  if (config.totalLightProxy != null) rows.push({label: 'Metered light proxy', value: formatDecimal(config.totalLightProxy)});
+}
+
+function addActualCaptureRows(rows: DetailRow[], config: PhotoPreviewDetails['captureMetadata']) {
+  if (!config) {
+    return;
+  }
+  if (config.manual != null) rows.push({label: 'Actual mode', value: config.manual ? 'manual' : 'auto'});
+  if (config.exposureTimeNs != null) rows.push({label: 'Actual exposure', value: formatExposureNs(config.exposureTimeNs)});
+  if (config.iso != null) rows.push({label: 'Actual ISO', value: String(config.iso)});
+  if (config.frameDurationNs != null) rows.push({label: 'Actual frame', value: formatFrameDurationNs(config.frameDurationNs)});
+  if (config.aeMode != null) rows.push({label: 'Actual AE mode', value: cameraModeLabel(config.aeMode, AE_MODE_LABELS)});
+  if (config.aeStateName || config.aeState != null) rows.push({label: 'Actual AE state', value: aeStateLabel(config)});
+  if (config.noiseReductionMode != null) {
+    rows.push({label: 'Actual NR mode', value: cameraModeLabel(config.noiseReductionMode, NOISE_REDUCTION_MODE_LABELS)});
+  }
+  if (config.edgeMode != null) rows.push({label: 'Actual edge mode', value: cameraModeLabel(config.edgeMode, EDGE_MODE_LABELS)});
+  if (config.zsl != null) rows.push({label: 'Actual ZSL', value: boolLabel(config.zsl)});
+  if (config.sensorTimestampNs != null) rows.push({label: 'Sensor timestamp', value: `${config.sensorTimestampNs} ns`});
+  if (config.totalLightProxy != null) rows.push({label: 'Actual light proxy', value: formatDecimal(config.totalLightProxy)});
+  if (config.mfnrLikely != null) rows.push({label: 'MFNR likely', value: boolLabel(config.mfnrLikely)});
 }
 
 function formatBytes(bytes: number) {
@@ -940,6 +1053,34 @@ function formatFovEstimate(fov: NonNullable<PhotoPreviewDetails['estimatedFov']>
     `${Math.round(fov.verticalDegrees)}° V`,
     `${fov.focalLength35mm}mm equiv.`,
   ].join(' · ');
+}
+
+function boolLabel(value: boolean) {
+  return value ? 'yes' : 'no';
+}
+
+function cameraModeLabel(value: number, labels: Record<number, string>) {
+  return labels[value] ? `${labels[value]} (${value})` : String(value);
+}
+
+function aeStateLabel(config: NonNullable<PhotoPreviewDetails['captureMetadata']>) {
+  if (config.aeStateName && config.aeState != null) {
+    return `${config.aeStateName} (${config.aeState})`;
+  }
+  return config.aeStateName ?? String(config.aeState);
+}
+
+function formatExposureNs(ns: number) {
+  return `${compactExposureLabel(ns)} · ${(ns / 1_000_000).toFixed(2)}ms`;
+}
+
+function formatFrameDurationNs(ns: number) {
+  const fps = ns > 0 ? 1_000_000_000 / ns : 0;
+  return `${(ns / 1_000_000).toFixed(2)}ms · ${fps.toFixed(1)} fps`;
+}
+
+function formatDecimal(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
 function isCameraStatusFailure(status: string) {
@@ -1009,6 +1150,9 @@ const styles = StyleSheet.create({
   previewStatusLine: { flexDirection: 'row', alignItems: 'center', gap: 9 },
   previewStatusText: { flex: 1, color: '#fff', fontSize: 13, fontWeight: '800' },
   previewStatusDetail: { color: 'rgba(255,255,255,0.82)', fontSize: 11, fontWeight: '600', lineHeight: 15, marginTop: 5 },
+  previewFallbackWarning: { marginTop: 10, marginHorizontal: 6, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,59,48,0.3)', backgroundColor: 'rgba(255,59,48,0.1)', paddingVertical: 10, paddingHorizontal: 12 },
+  previewFallbackWarningTitle: { color: colors.red, fontSize: 12, fontWeight: '800' },
+  previewFallbackWarningText: { color: colors.red, fontSize: 11, fontWeight: '600', lineHeight: 15, marginTop: 3 },
   barcodeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 10, marginHorizontal: 6, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(15,42,29,0.08)', backgroundColor: 'rgba(15,42,29,0.04)', paddingVertical: 10, paddingHorizontal: 12 },
   barcodeRowScanning: { borderColor: 'rgba(52,199,89,0.24)', backgroundColor: 'rgba(52,199,89,0.08)' },
   barcodeRowFound: { borderColor: 'rgba(52,199,89,0.32)', backgroundColor: 'rgba(52,199,89,0.12)' },
@@ -1048,7 +1192,9 @@ const styles = StyleSheet.create({
   detailsBody: { marginTop: 12, borderTopWidth: 1, borderTopColor: 'rgba(15,42,29,0.08)', paddingTop: 8 },
   detailsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 5, gap: 12 },
   detailsLabel: { color: colors.muted, fontSize: 11, fontWeight: '600' },
+  detailsLabelWarning: { color: colors.red },
   detailsValue: { color: colors.ink, fontSize: 12, fontWeight: '600', textAlign: 'right', flexShrink: 1 },
+  detailsValueWarning: { color: colors.red },
 
   uploadCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 18, gap: 12, borderWidth: 1, borderColor: colors.borderSoft },
   eyebrow: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 1.2 },

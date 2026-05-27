@@ -73,7 +73,43 @@ export type StreamResolvedConfig = {
     noiseSuppression?: boolean;
   };
 };
+export type PhotoRequestedCaptureConfigDetails = {
+  manual?: boolean;
+  exposureTimeNs?: number;
+  iso?: number;
+  frameDurationNs?: number;
+  aeMode?: number;
+  aeLock?: boolean;
+  aeExposureCompensation?: number;
+  aeTargetFpsRange?: {min?: number; max?: number};
+  noiseReductionMode?: number;
+  edgeMode?: number;
+  afMode?: number;
+  zsl?: boolean;
+};
+export type PhotoMeteredPreviewDetails = {
+  exposureTimeNs?: number;
+  iso?: number;
+  totalLightProxy?: number;
+};
+export type PhotoCaptureMetadataDetails = {
+  manual?: boolean;
+  exposureTimeNs?: number;
+  iso?: number;
+  frameDurationNs?: number;
+  aeMode?: number;
+  aeState?: number;
+  aeStateName?: string;
+  noiseReductionMode?: number;
+  edgeMode?: number;
+  zsl?: boolean;
+  sensorTimestampNs?: number;
+  totalLightProxy?: number;
+  mfnrLikely?: boolean;
+};
 export type PhotoPreviewDetails = {
+  bleFallbackMessage?: string;
+  bleFallbackUsed?: boolean;
   byteCount?: number;
   contentType?: string;
   error?: string;
@@ -82,7 +118,11 @@ export type PhotoPreviewDetails = {
   height?: number;
   previewUrl?: string;
   requestId?: string | null;
-  source: 'Cloud server' | 'Phone receiver';
+  resolvedConfig?: PhotoStatusEvent['resolvedConfig'];
+  requestedCaptureConfig?: PhotoRequestedCaptureConfigDetails;
+  meteredPreview?: PhotoMeteredPreviewDetails;
+  captureMetadata?: PhotoCaptureMetadataDetails;
+  source: 'Cloud server' | 'Phone receiver' | 'Action button';
   state: 'acknowledged' | 'error' | 'preview';
   timestamp?: number;
   uploadUrl?: string;
@@ -849,6 +889,9 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     setPhotoStatus(null);
     setPhotoPreviewDetails((current) => ({
       ...current,
+      bleFallbackMessage: current?.bleFallbackUsed
+        ? 'Wi-Fi upload failed; photo was compressed and delivered through Bluetooth.'
+        : current?.bleFallbackMessage,
       byteCount: payload.byteCount,
       previewUrl: payload.fileUri,
       requestId: payload.requestId ?? activeRequestId ?? current?.requestId ?? null,
@@ -905,6 +948,52 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     setPhotoStatus(payload);
     const label = photoStatusLabel(payload);
     setCameraStatus(`Camera: ${label}`);
+    if (photoStatusStartsNewCapture(payload.status)) {
+      setPhotoPreviewDetails((current) => {
+        if (!current || current.requestId === payload.requestId) {
+          return current;
+        }
+        return clearPhotoBleFallbackWarning(current);
+      });
+    }
+    const payloadWithExtras = payload as PhotoStatusEvent & PhotoStatusExtras;
+    const fallbackMessage = photoBleFallbackMessage(payload.status);
+    const bleTransferStatus =
+      payload.status === 'ready_for_transfer' || payload.status === 'transferring';
+    if (
+      payload.resolvedConfig ||
+      payloadWithExtras.requestedCaptureConfig ||
+      payloadWithExtras.meteredPreview ||
+      payloadWithExtras.captureMetadata ||
+      fallbackMessage ||
+      bleTransferStatus
+    ) {
+      setPhotoPreviewDetails((current) => {
+        const bleFallbackUsed =
+          current?.bleFallbackUsed || payload.status === 'ble_fallback_compression';
+        return {
+          ...current,
+          bleFallbackMessage:
+            fallbackMessage ??
+            (bleFallbackUsed
+              ? photoBleFallbackProgressMessage(payload.status, current?.bleFallbackMessage)
+              : current?.bleFallbackMessage),
+          bleFallbackUsed,
+          requestId: payload.requestId,
+          source:
+            payload.resolvedConfig?.source === 'button'
+              ? 'Action button'
+              : current?.source ?? (photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver'),
+          state: current?.state === 'preview' ? 'preview' : 'acknowledged',
+          timestamp: payload.timestamp,
+          resolvedConfig: payload.resolvedConfig ?? current?.resolvedConfig,
+          requestedCaptureConfig:
+            payloadWithExtras.requestedCaptureConfig ?? current?.requestedCaptureConfig,
+          meteredPreview: payloadWithExtras.meteredPreview ?? current?.meteredPreview,
+          captureMetadata: payloadWithExtras.captureMetadata ?? current?.captureMetadata,
+        };
+      });
+    }
 
     if (payload.status === 'failed') {
       clearPhotoUploadTimeout();
@@ -1043,6 +1132,9 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
             setPhotoStatus(null);
             setPhotoPreviewDetails((current) => ({
               ...current,
+              bleFallbackMessage: current?.bleFallbackUsed
+                ? 'Wi-Fi upload failed; photo was compressed and delivered through Bluetooth.'
+                : current?.bleFallbackMessage,
               byteCount: typeof json.bytes === 'number' ? json.bytes : current?.byteCount,
               contentType: json.contentType ?? current?.contentType,
               previewUrl: json.photoUrl,
@@ -2542,23 +2634,9 @@ function androidRuntimePermissions() {
 }
 
 type PhotoStatusExtras = {
-  requestedCaptureConfig?: {
-    manual?: boolean;
-    exposureTimeNs?: number;
-    iso?: number;
-    frameDurationNs?: number;
-    aeTargetFpsRange?: {min?: number; max?: number};
-  };
-  meteredPreview?: {
-    exposureTimeNs?: number;
-    iso?: number;
-  };
-  captureMetadata?: {
-    exposureTimeNs?: number;
-    iso?: number;
-    frameDurationNs?: number;
-    aeStateName?: string;
-  };
+  requestedCaptureConfig?: PhotoRequestedCaptureConfigDetails;
+  meteredPreview?: PhotoMeteredPreviewDetails;
+  captureMetadata?: PhotoCaptureMetadataDetails;
 };
 
 function photoStatusLabel(event: PhotoStatusEvent) {
@@ -2576,6 +2654,8 @@ function photoStatusLabel(event: PhotoStatusEvent) {
         return 'photo captured';
       case 'compressing':
         return 'compressing photo';
+      case 'ble_fallback_compression':
+        return 'Wi-Fi upload failed; Bluetooth fallback compression';
       case 'uploading':
         return 'uploading photo';
       case 'uploaded':
@@ -2592,6 +2672,38 @@ function photoStatusLabel(event: PhotoStatusEvent) {
   })();
   const configSummary = photoStatusDetailSummary(event);
   return configSummary ? `${base} (${configSummary})` : base;
+}
+
+function photoBleFallbackMessage(status: string) {
+  return status === 'ble_fallback_compression'
+    ? 'Wi-Fi upload failed; compressing photo for Bluetooth fallback.'
+    : null;
+}
+
+function photoBleFallbackProgressMessage(status: string, currentMessage?: string) {
+  switch (status) {
+    case 'ready_for_transfer':
+      return 'Wi-Fi upload failed; compressed photo is ready for Bluetooth fallback.';
+    case 'transferring':
+      return 'Wi-Fi upload failed; sending compressed photo over Bluetooth.';
+    default:
+      return currentMessage;
+  }
+}
+
+function photoStatusStartsNewCapture(status: string) {
+  return status === 'accepted' || status === 'queued' || status === 'configuring';
+}
+
+function clearPhotoBleFallbackWarning(details: PhotoPreviewDetails) {
+  if (!details.bleFallbackUsed && !details.bleFallbackMessage) {
+    return details;
+  }
+  return {
+    ...details,
+    bleFallbackMessage: undefined,
+    bleFallbackUsed: false,
+  };
 }
 
 function photoStatusDetailSummary(event: PhotoStatusEvent) {
