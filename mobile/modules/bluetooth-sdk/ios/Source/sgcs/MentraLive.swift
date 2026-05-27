@@ -768,9 +768,12 @@ extension MentraLive: CBPeripheralDelegate {
             // Keep state as connecting until glasses are ready
             updateConnectionState(ConnTypes.CONNECTING)
 
-            // Request MTU size
-            let mtuSize = peripheral.maximumWriteValueLength(for: .withResponse)
-            Bridge.log("LIVE: Current MTU size: \(mtuSize + 3) bytes")
+            let withResponseMtu = peripheral.maximumWriteValueLength(for: .withResponse) + 3
+            let withoutResponseMtu = peripheral.maximumWriteValueLength(for: .withoutResponse) + 3
+            currentMtu = max(23, min(withResponseMtu, withoutResponseMtu))
+            Bridge.log(
+                "LIVE: Current MTU estimate: withResponse=\(withResponseMtu), withoutResponse=\(withoutResponseMtu), selected=\(currentMtu)"
+            )
 
             // Enable notifications on RX characteristic
             peripheral.setNotifyValue(true, for: rx)
@@ -1072,6 +1075,7 @@ class MentraLive: NSObject, SGCManager {
     private var connectedPeripheral: CBPeripheral?
     private var txCharacteristic: CBCharacteristic?
     private var rxCharacteristic: CBCharacteristic?
+    private let bes2700MtuLimit = 256
     private var currentMtu: Int = 23 // Default BLE MTU
 
     // State Tracking
@@ -2585,6 +2589,7 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
 
         stopReadinessCheckLoop()
+        sendBleMtuConfig()
 
         // Invalidate any version fields from a prior link session so the next version_info
         // cannot leave a stale build number in RN (ASG is source of truth for PackageInfo).
@@ -3245,6 +3250,20 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
         Bridge.log(
             "\(success ? "✅" : "❌") Sent transfer completion confirmation for: \(fileName) (success: \(success))"
+        )
+    }
+
+    private func sendBleMtuConfig() {
+        let effectiveMtu = min(currentMtu, bes2700MtuLimit)
+        let json: [String: Any] = [
+            "type": "set_ble_mtu",
+            "mtu": effectiveMtu,
+            "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+        ]
+
+        sendJson(json)
+        Bridge.log(
+            "LIVE: Sent BLE MTU config to glasses: negotiated=\(currentMtu), BES2700 limit=\(bes2700MtuLimit), effective=\(effectiveMtu)"
         )
     }
 
