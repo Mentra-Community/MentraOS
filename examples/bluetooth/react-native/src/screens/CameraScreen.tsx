@@ -26,6 +26,10 @@ import {
   type PhotoSize,
 } from '../useBluetoothSdkExample';
 
+const PHOTO_EXPOSURE_STEP_NS = 500_000;
+const PHOTO_ISO_STEP = 50;
+const CAMERA_FOV_STEP = 1;
+
 function cameraSdkCall(
   size: PhotoSize,
   compression: PhotoCompression,
@@ -458,6 +462,7 @@ function ExposureControl({
         max={PHOTO_EXPOSURE_MAX_NS}
         min={PHOTO_EXPOSURE_MIN_NS}
         onChange={onValueChange}
+        step={PHOTO_EXPOSURE_STEP_NS}
         value={value}
       />
       <View style={styles.settingRangeRow}>
@@ -478,6 +483,7 @@ function ExposureControl({
         max={PHOTO_ISO_MAX}
         min={PHOTO_ISO_MIN}
         onChange={onIsoChange}
+        step={PHOTO_ISO_STEP}
         value={iso}
       />
       <View style={styles.settingRangeRow}>
@@ -523,6 +529,7 @@ function CameraSettingsControl({
         max={CAMERA_FOV_MAX}
         min={CAMERA_FOV_MIN}
         onChange={onFovChange}
+        step={CAMERA_FOV_STEP}
         value={fov}
       />
       <View style={styles.settingRangeRow}>
@@ -553,47 +560,108 @@ function RangeSlider({
   max,
   min,
   onChange,
+  step,
   value,
 }: {
   disabled: boolean;
   max: number;
   min: number;
   onChange: (value: number) => void;
+  step: number;
   value: number;
 }) {
+  const trackRef = React.useRef<React.ElementRef<typeof View>>(null);
+  const trackLeftRef = React.useRef(0);
+  const trackWidthRef = React.useRef(0);
   const [trackWidth, setTrackWidth] = React.useState(0);
   const progress = (value - min) / (max - min);
   const clampedProgress = Math.max(0, Math.min(1, progress));
-  const updateFromX = React.useCallback(
-    (x: number) => {
-      if (disabled || trackWidth <= 0) {
+  const clampAndSnap = React.useCallback(
+    (nextValue: number) => {
+      const snapped = min + Math.round((nextValue - min) / step) * step;
+      return Math.max(min, Math.min(max, snapped));
+    },
+    [max, min, step],
+  );
+  const updateFromPageX = React.useCallback(
+    (pageX: number, measuredLeft = trackLeftRef.current, measuredWidth = trackWidthRef.current || trackWidth) => {
+      if (disabled || measuredWidth <= 0) {
         return;
       }
-      const ratio = Math.max(0, Math.min(1, x / trackWidth));
-      onChange(min + ratio * (max - min));
+      const x = pageX - measuredLeft;
+      const ratio = Math.max(0, Math.min(1, x / measuredWidth));
+      onChange(clampAndSnap(min + ratio * (max - min)));
     },
-    [disabled, max, min, onChange, trackWidth],
+    [clampAndSnap, disabled, max, min, onChange, trackWidth],
+  );
+  const measureAndUpdate = React.useCallback(
+    (pageX: number) => {
+      trackRef.current?.measureInWindow((left, _top, width) => {
+        trackLeftRef.current = left;
+        trackWidthRef.current = width;
+        setTrackWidth(width);
+        updateFromPageX(pageX, left, width);
+      });
+    },
+    [updateFromPageX],
+  );
+  const adjust = React.useCallback(
+    (delta: number) => {
+      if (!disabled) {
+        onChange(clampAndSnap(value + delta));
+      }
+    },
+    [clampAndSnap, disabled, onChange, value],
   );
   const panResponder = React.useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => !disabled,
         onMoveShouldSetPanResponder: () => !disabled,
-        onPanResponderGrant: (event) => updateFromX(event.nativeEvent.locationX),
-        onPanResponderMove: (event) => updateFromX(event.nativeEvent.locationX),
+        onPanResponderGrant: (event) => measureAndUpdate(event.nativeEvent.pageX),
+        onPanResponderMove: (_event, gestureState) => updateFromPageX(gestureState.moveX),
       }),
-    [disabled, updateFromX],
+    [disabled, measureAndUpdate, updateFromPageX],
   );
 
   return (
-    <View
-      {...panResponder.panHandlers}
-      onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
-      style={[styles.sliderTrack, disabled && styles.sliderDisabled]}>
-      <View style={styles.sliderTrackBase} />
-      <View style={[styles.sliderTrackFill, {width: `${clampedProgress * 100}%`}]} />
-      <View style={[styles.sliderThumb, {left: `${clampedProgress * 100}%`}]} />
+    <View style={[styles.sliderControlRow, disabled && styles.sliderDisabled]}>
+      <SliderStepButton disabled={disabled || value <= min} label="-" onPress={() => adjust(-step)} />
+      <View
+        ref={trackRef}
+        {...panResponder.panHandlers}
+        onLayout={(event) => {
+          const width = event.nativeEvent.layout.width;
+          trackWidthRef.current = width;
+          setTrackWidth(width);
+        }}
+        style={styles.sliderTrack}>
+        <View style={styles.sliderTrackBase} />
+        <View style={[styles.sliderTrackFill, {width: `${clampedProgress * 100}%`}]} />
+        <View style={[styles.sliderThumb, {left: `${clampedProgress * 100}%`}]} />
+      </View>
+      <SliderStepButton disabled={disabled || value >= max} label="+" onPress={() => adjust(step)} />
     </View>
+  );
+}
+
+function SliderStepButton({
+  disabled,
+  label,
+  onPress,
+}: {
+  disabled: boolean;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={({pressed}) => [styles.sliderStepButton, disabled && styles.sliderStepButtonDisabled, pressed && styles.copyChipPressed]}>
+      <Text style={[styles.sliderStepText, disabled && styles.sliderStepTextDisabled]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -862,9 +930,14 @@ const styles = StyleSheet.create({
   settingRangeText: { color: colors.muted, fontSize: 11, fontWeight: '600' },
   applyChip: { borderRadius: 999, backgroundColor: 'rgba(52,199,89,0.16)', borderWidth: 1, borderColor: 'rgba(52,199,89,0.28)', paddingHorizontal: 12, paddingVertical: 8 },
   applyChipText: { color: colors.greenAccent, fontSize: 12, fontWeight: '800' },
-  sliderTrack: { height: 28, justifyContent: 'center' },
+  sliderControlRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  sliderTrack: { flex: 1, height: 40, justifyContent: 'center' },
   sliderDisabled: { opacity: 0.45 },
-  sliderTrackBase: { position: 'absolute', left: 0, right: 0, height: 6, borderRadius: 999, backgroundColor: 'rgba(15,42,29,0.12)' },
-  sliderTrackFill: { position: 'absolute', left: 0, height: 6, borderRadius: 999, backgroundColor: colors.greenAccent },
-  sliderThumb: { position: 'absolute', marginLeft: -10, width: 20, height: 20, borderRadius: 999, backgroundColor: '#fff', borderWidth: 2, borderColor: colors.greenAccent, shadowColor: '#000', shadowOpacity: 0.14, shadowRadius: 5, shadowOffset: {width: 0, height: 2} },
+  sliderTrackBase: { position: 'absolute', left: 0, right: 0, height: 8, borderRadius: 999, backgroundColor: 'rgba(15,42,29,0.12)' },
+  sliderTrackFill: { position: 'absolute', left: 0, height: 8, borderRadius: 999, backgroundColor: colors.greenAccent },
+  sliderThumb: { position: 'absolute', marginLeft: -14, width: 28, height: 28, borderRadius: 999, backgroundColor: '#fff', borderWidth: 2, borderColor: colors.greenAccent, shadowColor: '#000', shadowOpacity: 0.14, shadowRadius: 5, shadowOffset: {width: 0, height: 2} },
+  sliderStepButton: { width: 34, height: 34, borderRadius: 999, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.78)', borderWidth: 1, borderColor: 'rgba(15,42,29,0.08)' },
+  sliderStepButtonDisabled: { opacity: 0.4 },
+  sliderStepText: { color: colors.ink, fontSize: 18, lineHeight: 20, fontWeight: '800' },
+  sliderStepTextDisabled: { color: colors.muted },
 });

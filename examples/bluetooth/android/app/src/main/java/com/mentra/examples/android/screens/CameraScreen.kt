@@ -66,6 +66,7 @@ import com.mentra.examples.android.ui.scrollBottomPadding
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 fun CameraScreen(controller: MentraExampleController) {
@@ -362,12 +363,21 @@ private fun ExposureSettingsCard(controller: MentraExampleController) {
             }
             Switch(checked = state.photoExposureManual, onCheckedChange = controller::setPhotoExposureManual)
         }
-        Slider(
-            enabled = state.photoExposureManual,
-            value = state.photoExposureTimeNs.toFloat(),
-            onValueChange = { controller.setPhotoExposureTimeNs(it.toInt()) },
-            valueRange = PHOTO_EXPOSURE_MIN_NS.toFloat()..PHOTO_EXPOSURE_MAX_NS.toFloat(),
-        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SliderNudgeButton("-", enabled = state.photoExposureManual && state.photoExposureTimeNs > PHOTO_EXPOSURE_MIN_NS) {
+                controller.setPhotoExposureTimeNs(state.photoExposureTimeNs - 500_000)
+            }
+            Slider(
+                enabled = state.photoExposureManual,
+                value = state.photoExposureTimeNs.toFloat(),
+                onValueChange = { controller.setPhotoExposureTimeNs((it / 500_000f).roundToInt() * 500_000) },
+                valueRange = PHOTO_EXPOSURE_MIN_NS.toFloat()..PHOTO_EXPOSURE_MAX_NS.toFloat(),
+                modifier = Modifier.weight(1f),
+            )
+            SliderNudgeButton("+", enabled = state.photoExposureManual && state.photoExposureTimeNs < PHOTO_EXPOSURE_MAX_NS) {
+                controller.setPhotoExposureTimeNs(state.photoExposureTimeNs + 500_000)
+            }
+        }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Text("1/1000s", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             Text(
@@ -389,12 +399,21 @@ private fun ExposureSettingsCard(controller: MentraExampleController) {
                 fontWeight = FontWeight.Bold,
             )
         }
-        Slider(
-            enabled = state.photoExposureManual,
-            value = state.photoIso.toFloat(),
-            onValueChange = { controller.setPhotoIso(it.toInt()) },
-            valueRange = PHOTO_ISO_MIN.toFloat()..PHOTO_ISO_MAX.toFloat(),
-        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SliderNudgeButton("-", enabled = state.photoExposureManual && state.photoIso > PHOTO_ISO_MIN) {
+                controller.setPhotoIso(state.photoIso - 50)
+            }
+            Slider(
+                enabled = state.photoExposureManual,
+                value = state.photoIso.toFloat(),
+                onValueChange = { controller.setPhotoIso((it / 50f).roundToInt() * 50) },
+                valueRange = PHOTO_ISO_MIN.toFloat()..PHOTO_ISO_MAX.toFloat(),
+                modifier = Modifier.weight(1f),
+            )
+            SliderNudgeButton("+", enabled = state.photoExposureManual && state.photoIso < PHOTO_ISO_MAX) {
+                controller.setPhotoIso(state.photoIso + 50)
+            }
+        }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Text("ISO $PHOTO_ISO_MIN", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             Text(
@@ -444,12 +463,21 @@ private fun CameraFovSettingsCard(controller: MentraExampleController) {
                     .padding(horizontal = 12.dp, vertical = 8.dp)
             )
         }
-        Slider(
-            value = state.cameraFov.toFloat(),
-            onValueChange = { controller.setCameraFov(it.toInt()) },
-            valueRange = CAMERA_FOV_MIN.toFloat()..CAMERA_FOV_MAX.toFloat(),
-            steps = CAMERA_FOV_MAX - CAMERA_FOV_MIN - 1,
-        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SliderNudgeButton("-", enabled = state.cameraFov > CAMERA_FOV_MIN) {
+                controller.setCameraFov(state.cameraFov - 1)
+            }
+            Slider(
+                value = state.cameraFov.toFloat(),
+                onValueChange = { controller.setCameraFov(it.toInt()) },
+                valueRange = CAMERA_FOV_MIN.toFloat()..CAMERA_FOV_MAX.toFloat(),
+                steps = CAMERA_FOV_MAX - CAMERA_FOV_MIN - 1,
+                modifier = Modifier.weight(1f),
+            )
+            SliderNudgeButton("+", enabled = state.cameraFov < CAMERA_FOV_MAX) {
+                controller.setCameraFov(state.cameraFov + 1)
+            }
+        }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Text("${CAMERA_FOV_MIN}°", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             Text(
@@ -591,6 +619,23 @@ private fun localCameraSetupHint(webhookUrl: String, status: String): String? {
 private fun exposureLabel(ns: Int): String {
     val denominator = (1_000_000_000.0 / ns).toInt()
     return "${"%,d".format(ns)} ns · 1/${denominator}s"
+}
+
+@Composable
+private fun SliderNudgeButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (enabled) AppColor.ink else AppColor.muted,
+        fontSize = 18.sp,
+        fontWeight = FontWeight.ExtraBold,
+        modifier = Modifier
+            .size(width = 34.dp, height = 34.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color.White.copy(alpha = 0.78f))
+            .border(1.dp, AppColor.ink.copy(alpha = 0.08f), RoundedCornerShape(999.dp))
+            .clickable(enabled = enabled) { onClick() }
+            .wrapContentSize(Alignment.Center)
+    )
 }
 
 @Composable

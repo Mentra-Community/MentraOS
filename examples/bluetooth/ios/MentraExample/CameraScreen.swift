@@ -378,15 +378,24 @@ private struct ExposureSettingsCard: View {
                 .labelsHidden()
                 .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
             }
-            Slider(
-                value: Binding(
-                    get: { Double(model.photoExposureTimeNs) },
-                    set: { model.setPhotoExposureTimeNs(Int($0.rounded())) }
-                ),
-                in: Double(photoExposureMinNs) ... Double(photoExposureMaxNs),
-                step: 1
-            )
-            .disabled(!model.photoExposureManual)
+            HStack(spacing: 10) {
+                CameraSliderNudgeButton(label: "-", disabled: !model.photoExposureManual || model.photoExposureTimeNs <= photoExposureMinNs) {
+                    model.setPhotoExposureTimeNs(model.photoExposureTimeNs - 500_000)
+                }
+                Slider(
+                    value: Binding(
+                        get: { Double(model.photoExposureTimeNs) },
+                        set: { model.setPhotoExposureTimeNs(Int(($0 / 500_000).rounded()) * 500_000) }
+                    ),
+                    in: Double(photoExposureMinNs) ... Double(photoExposureMaxNs),
+                    step: 500_000
+                )
+                .tint(AppColor.greenAccent)
+                .disabled(!model.photoExposureManual)
+                CameraSliderNudgeButton(label: "+", disabled: !model.photoExposureManual || model.photoExposureTimeNs >= photoExposureMaxNs) {
+                    model.setPhotoExposureTimeNs(model.photoExposureTimeNs + 500_000)
+                }
+            }
             .opacity(model.photoExposureManual ? 1 : 0.45)
             HStack {
                 Text("1/1000s")
@@ -410,15 +419,24 @@ private struct ExposureSettingsCard: View {
                     .foregroundColor(AppColor.greenAccent)
             }
             .padding(.top, 4)
-            Slider(
-                value: Binding(
-                    get: { Double(model.photoIso) },
-                    set: { model.setPhotoIso(Int($0.rounded())) }
-                ),
-                in: Double(photoIsoMin) ... Double(photoIsoMax),
-                step: 1
-            )
-            .disabled(!model.photoExposureManual)
+            HStack(spacing: 10) {
+                CameraSliderNudgeButton(label: "-", disabled: !model.photoExposureManual || model.photoIso <= photoIsoMin) {
+                    model.setPhotoIso(model.photoIso - 50)
+                }
+                Slider(
+                    value: Binding(
+                        get: { Double(model.photoIso) },
+                        set: { model.setPhotoIso(Int(($0 / 50).rounded()) * 50) }
+                    ),
+                    in: Double(photoIsoMin) ... Double(photoIsoMax),
+                    step: 50
+                )
+                .tint(AppColor.greenAccent)
+                .disabled(!model.photoExposureManual)
+                CameraSliderNudgeButton(label: "+", disabled: !model.photoExposureManual || model.photoIso >= photoIsoMax) {
+                    model.setPhotoIso(model.photoIso + 50)
+                }
+            }
             .opacity(model.photoExposureManual ? 1 : 0.45)
             HStack {
                 Text("ISO \(photoIsoMin)")
@@ -465,14 +483,23 @@ private struct CameraFovSettingsCard: View {
                     .clipShape(Capsule())
                     .buttonStyle(.plain)
             }
-            Slider(
-                value: Binding(
-                    get: { Double(model.cameraFov) },
-                    set: { model.setCameraFov(Int($0.rounded())) }
-                ),
-                in: Double(cameraFovMin) ... Double(cameraFovMax),
-                step: 1
-            )
+            HStack(spacing: 10) {
+                CameraSliderNudgeButton(label: "-", disabled: model.cameraFov <= cameraFovMin) {
+                    model.setCameraFov(model.cameraFov - 1)
+                }
+                Slider(
+                    value: Binding(
+                        get: { Double(model.cameraFov) },
+                        set: { model.setCameraFov(Int($0.rounded())) }
+                    ),
+                    in: Double(cameraFovMin) ... Double(cameraFovMax),
+                    step: 1
+                )
+                .tint(AppColor.greenAccent)
+                CameraSliderNudgeButton(label: "+", disabled: model.cameraFov >= cameraFovMax) {
+                    model.setCameraFov(model.cameraFov + 1)
+                }
+            }
             HStack {
                 Text("\(cameraFovMin)°")
                 Spacer()
@@ -503,6 +530,27 @@ private struct CameraFovSettingsCard: View {
         .padding(14)
         .background(AppColor.ink.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+private struct CameraSliderNudgeButton: View {
+    let label: String
+    let disabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 22, weight: .heavy))
+                .foregroundColor(disabled ? AppColor.muted : AppColor.ink)
+                .frame(width: 34, height: 34)
+                .background(Color.white.opacity(0.78))
+                .overlay(Capsule().stroke(AppColor.ink.opacity(0.08), lineWidth: 1))
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.4 : 1)
     }
 }
 

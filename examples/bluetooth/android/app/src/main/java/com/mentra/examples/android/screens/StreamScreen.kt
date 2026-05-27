@@ -641,16 +641,27 @@ private fun StreamFpsSlider(enabled: Boolean, value: Int, onValueChange: (Int) -
             Text("STREAM FPS", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
             Text("$value fps", color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
-        Slider(
-            enabled = enabled,
-            value = value.toFloat(),
-            onValueChange = { onValueChange(it.roundToInt()) },
-            valueRange = 1f..24f,
-            steps = 22,
-        )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            SliderNudgeButton("-", enabled = enabled && value > 1) {
+                onValueChange(value - 1)
+            }
+            Slider(
+                enabled = enabled,
+                value = value.toFloat(),
+                onValueChange = { onValueChange(it.roundToInt()) },
+                valueRange = 1f..24f,
+                steps = 22,
+                modifier = Modifier.weight(1f),
+            )
+            SliderNudgeButton("+", enabled = enabled && value < 24) {
+                onValueChange(value + 1)
+            }
+        }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("1", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-            Text(if (enabled) "Set before starting" else "Read-only while streaming", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+            if (!enabled) {
+                Text("Read-only while streaming", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+            }
             Text("24", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         }
     }
@@ -676,6 +687,23 @@ private fun CloudServerToggle(enabled: Boolean, onEnabledChange: (Boolean) -> Un
         )
         Switch(checked = enabled, onCheckedChange = onEnabledChange)
     }
+}
+
+@Composable
+private fun SliderNudgeButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (enabled) AppColor.ink else AppColor.muted,
+        fontSize = 18.sp,
+        fontWeight = FontWeight.ExtraBold,
+        modifier = Modifier
+            .size(width = 34.dp, height = 34.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(Color.White.copy(alpha = 0.78f))
+            .border(1.dp, AppColor.ink.copy(alpha = 0.08f), RoundedCornerShape(999.dp))
+            .clickable(enabled = enabled) { onClick() }
+            .wrapContentSize(Alignment.Center)
+    )
 }
 
 @Composable

@@ -276,28 +276,55 @@ function FpsSlider({
   onChange: (value: number) => void;
   value: number;
 }) {
+  const trackRef = React.useRef<React.ElementRef<typeof View>>(null);
+  const trackLeftRef = React.useRef(0);
+  const trackWidthRef = React.useRef(0);
   const [trackWidth, setTrackWidth] = React.useState(0);
   const progress = (value - min) / (max - min);
   const clampedProgress = Math.max(0, Math.min(1, progress));
-  const updateFromX = React.useCallback(
-    (x: number) => {
-      if (disabled || trackWidth <= 0) {
+  const clampAndSnap = React.useCallback(
+    (nextValue: number) => Math.max(min, Math.min(max, Math.round(nextValue))),
+    [max, min],
+  );
+  const updateFromPageX = React.useCallback(
+    (pageX: number, measuredLeft = trackLeftRef.current, measuredWidth = trackWidthRef.current || trackWidth) => {
+      if (disabled || measuredWidth <= 0) {
         return;
       }
-      const ratio = Math.max(0, Math.min(1, x / trackWidth));
-      onChange(min + ratio * (max - min));
+      const x = pageX - measuredLeft;
+      const ratio = Math.max(0, Math.min(1, x / measuredWidth));
+      onChange(clampAndSnap(min + ratio * (max - min)));
     },
-    [disabled, max, min, onChange, trackWidth],
+    [clampAndSnap, disabled, max, min, onChange, trackWidth],
+  );
+  const measureAndUpdate = React.useCallback(
+    (pageX: number) => {
+      trackRef.current?.measureInWindow((left, _top, width) => {
+        trackLeftRef.current = left;
+        trackWidthRef.current = width;
+        setTrackWidth(width);
+        updateFromPageX(pageX, left, width);
+      });
+    },
+    [updateFromPageX],
+  );
+  const adjust = React.useCallback(
+    (delta: number) => {
+      if (!disabled) {
+        onChange(clampAndSnap(value + delta));
+      }
+    },
+    [clampAndSnap, disabled, onChange, value],
   );
   const panResponder = React.useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => !disabled,
         onMoveShouldSetPanResponder: () => !disabled,
-        onPanResponderGrant: (event) => updateFromX(event.nativeEvent.locationX),
-        onPanResponderMove: (event) => updateFromX(event.nativeEvent.locationX),
+        onPanResponderGrant: (event) => measureAndUpdate(event.nativeEvent.pageX),
+        onPanResponderMove: (_event, gestureState) => updateFromPageX(gestureState.moveX),
       }),
-    [disabled, updateFromX],
+    [disabled, measureAndUpdate, updateFromPageX],
   );
 
   return (
@@ -306,20 +333,49 @@ function FpsSlider({
         <Text style={styles.fpsLabel}>STREAM FPS</Text>
         <Text style={styles.fpsValue}>{value} fps</Text>
       </View>
-      <View
-        {...panResponder.panHandlers}
-        onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
-        style={styles.fpsTrack}>
-        <View style={styles.fpsTrackBase} />
-        <View style={[styles.fpsTrackFill, {width: `${clampedProgress * 100}%`}]} />
-        <View style={[styles.fpsThumb, {left: `${clampedProgress * 100}%`}]} />
+      <View style={styles.fpsControlRow}>
+        <SliderStepButton disabled={disabled || value <= min} label="-" onPress={() => adjust(-1)} />
+        <View
+          ref={trackRef}
+          {...panResponder.panHandlers}
+          onLayout={(event) => {
+            const width = event.nativeEvent.layout.width;
+            trackWidthRef.current = width;
+            setTrackWidth(width);
+          }}
+          style={styles.fpsTrack}>
+          <View style={styles.fpsTrackBase} />
+          <View style={[styles.fpsTrackFill, {width: `${clampedProgress * 100}%`}]} />
+          <View style={[styles.fpsThumb, {left: `${clampedProgress * 100}%`}]} />
+        </View>
+        <SliderStepButton disabled={disabled || value >= max} label="+" onPress={() => adjust(1)} />
       </View>
       <View style={styles.fpsRangeRow}>
         <Text style={styles.fpsRangeText}>{min}</Text>
-        <Text style={styles.fpsHint}>{disabled ? 'Read-only while streaming' : 'Drag to set before starting'}</Text>
+        {disabled ? <Text style={styles.fpsHint}>Read-only while streaming</Text> : <View />}
         <Text style={styles.fpsRangeText}>{max}</Text>
       </View>
     </View>
+  );
+}
+
+function SliderStepButton({
+  disabled,
+  label,
+  onPress,
+}: {
+  disabled: boolean;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={disabled}
+      onPress={onPress}
+      style={({pressed}) => [styles.sliderStepButton, disabled && styles.sliderStepButtonDisabled, pressed && styles.copyChipPressed]}>
+      <Text style={[styles.sliderStepText, disabled && styles.sliderStepTextDisabled]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -587,11 +643,16 @@ const styles = StyleSheet.create({
   fpsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   fpsLabel: { color: colors.muted, fontSize: 10, fontWeight: '700', letterSpacing: 1.1 },
   fpsValue: { color: colors.ink, fontSize: 13, fontWeight: '700' },
-  fpsTrack: { height: 28, marginTop: 8, justifyContent: 'center' },
-  fpsTrackBase: { position: 'absolute', left: 0, right: 0, height: 6, borderRadius: 999, backgroundColor: 'rgba(15,42,29,0.12)' },
-  fpsTrackFill: { position: 'absolute', left: 0, height: 6, borderRadius: 999, backgroundColor: colors.greenAccent },
-  fpsThumb: { position: 'absolute', marginLeft: -10, width: 20, height: 20, borderRadius: 999, backgroundColor: '#fff', borderWidth: 2, borderColor: colors.greenAccent, shadowColor: '#000', shadowOpacity: 0.14, shadowRadius: 5, shadowOffset: {width: 0, height: 2} },
+  fpsControlRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
+  fpsTrack: { flex: 1, height: 40, justifyContent: 'center' },
+  fpsTrackBase: { position: 'absolute', left: 0, right: 0, height: 8, borderRadius: 999, backgroundColor: 'rgba(15,42,29,0.12)' },
+  fpsTrackFill: { position: 'absolute', left: 0, height: 8, borderRadius: 999, backgroundColor: colors.greenAccent },
+  fpsThumb: { position: 'absolute', marginLeft: -14, width: 28, height: 28, borderRadius: 999, backgroundColor: '#fff', borderWidth: 2, borderColor: colors.greenAccent, shadowColor: '#000', shadowOpacity: 0.14, shadowRadius: 5, shadowOffset: {width: 0, height: 2} },
   fpsRangeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   fpsRangeText: { color: colors.muted, fontSize: 11, fontWeight: '600' },
   fpsHint: { color: colors.muted, fontSize: 11, fontWeight: '500' },
+  sliderStepButton: { width: 34, height: 34, borderRadius: 999, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.78)', borderWidth: 1, borderColor: 'rgba(15,42,29,0.08)' },
+  sliderStepButtonDisabled: { opacity: 0.4 },
+  sliderStepText: { color: colors.ink, fontSize: 18, lineHeight: 20, fontWeight: '800' },
+  sliderStepTextDisabled: { color: colors.muted },
 });

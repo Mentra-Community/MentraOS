@@ -411,20 +411,30 @@ struct StreamScreen: View {
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(AppColor.ink)
             }
-            Slider(
-                value: Binding(
-                    get: { Double(model.streamFps) },
-                    set: { model.setStreamFps(Int($0.rounded())) }
-                ),
-                in: 1 ... 24,
-                step: 1
-            )
-            .tint(AppColor.greenAccent)
-            .disabled(streamActive)
+            HStack(spacing: 10) {
+                StreamSliderNudgeButton(label: "-", disabled: streamActive || model.streamFps <= 1) {
+                    model.setStreamFps(model.streamFps - 1)
+                }
+                Slider(
+                    value: Binding(
+                        get: { Double(model.streamFps) },
+                        set: { model.setStreamFps(Int($0.rounded())) }
+                    ),
+                    in: 1 ... 24,
+                    step: 1
+                )
+                .tint(AppColor.greenAccent)
+                .disabled(streamActive)
+                StreamSliderNudgeButton(label: "+", disabled: streamActive || model.streamFps >= 24) {
+                    model.setStreamFps(model.streamFps + 1)
+                }
+            }
             HStack {
                 Text("1")
                 Spacer()
-                Text(streamActive ? "Read-only while streaming" : "Set before starting")
+                if streamActive {
+                    Text("Read-only while streaming")
+                }
                 Spacer()
                 Text("24")
             }
@@ -448,6 +458,27 @@ struct StreamScreen: View {
                 scrollProxy.scrollTo(streamUrlFieldId, anchor: .bottom)
             }
         }
+    }
+}
+
+private struct StreamSliderNudgeButton: View {
+    let label: String
+    let disabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 22, weight: .heavy))
+                .foregroundColor(disabled ? AppColor.muted : AppColor.ink)
+                .frame(width: 34, height: 34)
+                .background(Color.white.opacity(0.78))
+                .overlay(Capsule().stroke(AppColor.ink.opacity(0.08), lineWidth: 1))
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.4 : 1)
     }
 }
 
