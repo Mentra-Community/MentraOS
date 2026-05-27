@@ -81,8 +81,8 @@ static GstElement *on_request_encoded_filter(GstElement *source,
 	    NSString *pipelineDescription = [NSString stringWithFormat:
 	        @"whipserversrc name=src signaller::host-addr=%@ stun-server=stun://stun.l.google.com:19302 "
 	        "src. ! queue name=video_queue leaky=downstream max-size-buffers=2 max-size-bytes=0 max-size-time=0 "
-	        "! videorate ! videoscale ! videoconvert "
-	        "! video/x-raw,format=BGRA,width=480,height=270,framerate=15/1 "
+	        "! videoscale ! videoconvert "
+	        "! video/x-raw,format=BGRA,width=480,height=270 "
 	        "! appsink name=video_sink emit-signals=false max-buffers=1 drop=true sync=false wait-on-eos=false "
 	        "src. ! queue name=audio_queue ! audio/x-raw ! fakesink sync=false",
 	        bindAddress

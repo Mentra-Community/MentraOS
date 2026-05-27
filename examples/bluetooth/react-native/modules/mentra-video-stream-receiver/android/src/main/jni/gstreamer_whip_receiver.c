@@ -90,8 +90,8 @@ Java_com_mentra_examples_android_media_GStreamerWhipReceiver_nativeStart(JNIEnv 
     gchar *pipeline_description = g_strdup_printf(
         "whipserversrc name=src signaller::host-addr=%s stun-server=stun://stun.l.google.com:19302 "
         "src. ! queue name=video_queue leaky=downstream max-size-buffers=1 max-size-bytes=0 max-size-time=0 "
-        "! videorate ! videoscale ! videoconvert "
-        "! video/x-raw,format=RGBA,width=480,height=270,framerate=15/1 "
+        "! videoscale ! videoconvert "
+        "! video/x-raw,format=RGBA,width=480,height=270 "
         "! appsink name=video_sink emit-signals=false max-buffers=1 drop=true sync=false wait-on-eos=false "
         "src. ! queue name=audio_queue leaky=downstream max-size-buffers=1 max-size-bytes=0 max-size-time=0 "
         "! audio/x-opus ! fakesink sync=false",
