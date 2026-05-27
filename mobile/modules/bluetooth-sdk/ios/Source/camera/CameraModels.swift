@@ -40,7 +40,7 @@ public struct ButtonVideoRecordingSettings {
 }
 
 public struct CameraFov {
-    public static let minFov = 82
+    public static let minFov = 50
     public static let maxFov = 118
     public static let defaultFov = 102
     public static let minRoiPosition = 0

@@ -198,7 +198,7 @@ setGalleryModeEnabled(enabled: boolean)
 type PhotoSize = "small" | "medium" | "large" | "full"
 type ButtonPhotoSize = "small" | "medium" | "large"
 type PhotoCompression = "none" | "medium" | "heavy"
-const CAMERA_FOV_MIN = 82
+const CAMERA_FOV_MIN = 50
 const CAMERA_FOV_MAX = 118
 const CAMERA_FOV_DEFAULT = 102
 type CameraRoiPosition = 0 | 1 | 2
