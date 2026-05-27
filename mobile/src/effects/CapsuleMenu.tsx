@@ -58,8 +58,8 @@ function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
   // )
   return (
     <GlassView
-      transparent={true}
-      className="flex-row justify-between rounded-full h-8 w-20 items-center"
+      transparent={false}
+      className="flex-row justify-between rounded-full h-8 w-20 items-center bg-background/30"
       style={androidStyle}>
       <Pressable
         hitSlop={10}

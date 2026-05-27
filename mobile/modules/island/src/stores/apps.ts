@@ -343,9 +343,9 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     // already-running app and enforces the foreground-only-one rule for
     // standard apps. Fire-and-forget after the flag flip so it doesn't block
     // paint.
-    if (!app.running) {
-      get().start(app)
-    }
+    // if (!app.running) {
+    //   get().start(app)
+    // }
   },
 
   clearForeground: () => {
