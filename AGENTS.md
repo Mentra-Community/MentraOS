@@ -166,3 +166,45 @@ export MENTRA_AGENT_API_KEY=your-api-key
 
 - Architecture specs and design docs: `/docs/`
 - Module-specific implementation details: See module-specific `AGENTS.md` files
+
+## Cursor Cloud specific instructions
+
+### Docker limitation
+
+Docker `docker compose up` does **not** work in Cloud Agent VMs due to cgroup v2 "threaded mode" conflicts in the nested container environment. Run the cloud backend directly instead:
+
+```bash
+cd cloud/packages/cloud && bun run dev
+```
+
+This uses `bun --watch` for hot reloading, matching the Docker dev behavior.
+
+### Cloud backend direct run (non-Docker)
+
+When running the cloud backend directly (without Docker), you need:
+
+1. **Symlink `.env`**: `ln -sf /workspace/cloud/.env /workspace/cloud/packages/cloud/.env` -- `dotenv.config()` reads from cwd, and `bun run dev` runs from `packages/cloud/`.
+2. **Set `PORT=8002`** in `cloud/.env` (the default `PORT=80` requires root).
+3. **Add required secrets** to `cloud/.env` beyond `.env.example` defaults:
+   - `AUGMENTOS_AUTH_JWT_SECRET` (any string for local dev)
+   - `RESEND_API_KEY` (any placeholder)
+   - `SUPABASE_SERVICE_KEY` (any placeholder; real key needed for auth flows)
+4. MongoDB timeouts are expected without a real MongoDB instance -- the server still starts and serves HTTP/WebSocket traffic.
+
+### Running services
+
+| Service | Command | Port | Notes |
+|---|---|---|---|
+| Cloud backend | `cd cloud/packages/cloud && bun run dev` | 8002 | Requires `.env` symlink and secrets above |
+| MentraOS Store | `cd cloud/websites/store && bun run dev` | 5173 | Pure frontend, works out of box |
+| Developer Console | `cd cloud/websites/console && bun run dev` | 5174 | Pure frontend, works out of box |
+| Account Portal | `cd cloud/websites/account && bun run dev` | 5175 | Pure frontend |
+
+### Key commands reference
+
+- **Build cloud packages**: `cd cloud && bun run build`
+- **Lint cloud backend**: `cd cloud/packages/cloud && bun run lint` (pre-existing warnings/errors expected)
+- **Lint store**: `cd cloud/websites/store && bun run lint`
+- **Lint console**: `cd cloud/websites/console && bun run lint`
+- **Run cloud tests**: `cd cloud && bun run test`
+- **Copy env files**: Copy `.env.example` to `.env` in `cloud/`, `cloud/websites/store/`, `cloud/websites/console/`
