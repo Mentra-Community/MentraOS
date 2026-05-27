@@ -147,6 +147,7 @@ export type PhotoStatusState =
   | "capturing"
   | "captured"
   | "compressing"
+  | "ble_fallback_compression"
   | "uploading"
   | "uploaded"
   | "ready_for_transfer"

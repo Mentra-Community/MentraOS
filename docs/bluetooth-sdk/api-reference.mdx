@@ -409,7 +409,7 @@ Public React Native event payload fields use camelCase. For example, touch event
 | `capturing` | `meteredPreview` | Latest preview auto-exposure estimate before the still capture, including exposure time, ISO, and a light proxy when available. |
 | `captured` | `captureMetadata` | Actual still capture result returned by the HAL, including applied exposure time, ISO, frame duration, AE state/name, noise reduction mode, edge mode, sensor timestamp, and MFNR hint when available. |
 
-Transport statuses such as `uploading`, `compressing`, `ready_for_transfer`, and `transferring` describe upload or BLE progress only and do not carry capture metadata. This means apps should read actual capture values from `event.captureMetadata` on the `captured` status, not from upload statuses.
+Transport statuses such as `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring` describe upload or BLE progress only and do not carry capture metadata. `ble_fallback_compression` means the direct Wi-Fi/webhook upload failed and the glasses are compressing the already-captured photo for Bluetooth fallback delivery. Apps should read actual capture values from `event.captureMetadata` on the `captured` status, not from upload statuses.
 
 Local action-button photos emitted by the glasses use the same `photo_status` shape when the phone SDK is connected. Those local captures set `resolvedConfig.source` to `button` and `resolvedConfig.transferMethod` to `local`.
 

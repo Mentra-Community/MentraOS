@@ -3059,16 +3059,24 @@ public class MediaCaptureService {
         }
 
         // Compress and send via BLE using the existing photo
-        compressAndSendViaBle(existingPhotoPath, requestId, bleImgId);
+        compressAndSendViaBle(existingPhotoPath, requestId, bleImgId, true);
     }
 
     /** Compress photo and send via BLE */
     private void compressAndSendViaBle(String originalPath, String requestId, String bleImgId) {
+        compressAndSendViaBle(originalPath, requestId, bleImgId, false);
+    }
+
+    /** Compress photo and send via BLE */
+    private void compressAndSendViaBle(
+            String originalPath, String requestId, String bleImgId, boolean isWifiFallback) {
         new Thread(
                         () -> {
                             long startTime = System.currentTimeMillis();
                             recordTiming(requestId, "ble_compress_start");
-                            sendPhotoStatus(requestId, "compressing");
+                            sendPhotoStatus(
+                                    requestId,
+                                    isWifiFallback ? "ble_fallback_compression" : "compressing");
                             Log.d(TAG, "🚀 BLE photo transfer started for " + bleImgId);
 
                             // TESTING: Check for fake compression failure
