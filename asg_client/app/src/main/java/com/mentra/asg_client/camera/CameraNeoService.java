@@ -898,10 +898,12 @@ public class CameraNeoService extends LifecycleService {
                 @Override
                 public void onConfigureFailed(@NonNull CameraCaptureSession session) {
                     Handler handler;
+                    CameraDevice device;
                     synchronized (SERVICE_LOCK) {
                         handler = backgroundHandler;
+                        device = cameraCoordinator.device();
                     }
-                    if (handler == null) {
+                    if (handler == null || device == null) {
                         Log.w(TAG, "onConfigureFailed after camera teardown; ignoring");
                         session.close();
                         return;
