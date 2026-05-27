@@ -34,9 +34,30 @@ import {useCapsuleStore} from "@/stores/capsule"
 import {useAppStatusStore, useForegroundApp} from "@mentra/island"
 
 const EDGE_HIT_WIDTH = 24
-const COMMIT_FRACTION = 0.4
-const COMMIT_DURATION_MS = 220
-const FADE_IN_DELAY_MS = 100
+// Distance past which a slow drag commits the back gesture (fraction of screen
+// width). UIKit's interactive pop commits at ~50%; we sit a hair under that.
+const COMMIT_FRACTION = 0.5
+// Rightward fling speed (px/s) that commits regardless of how far the drag got,
+// matching the native "flick to go back" feel. Tuned to ignore slow drags.
+const COMMIT_VELOCITY = 500
+// Below this translation a fast flick is treated as an accidental swipe, not a
+// deliberate back gesture — guards against twitchy taps near the edge.
+const MIN_FLICK_TRANSLATION = 12
+// Near-critically-damped spring shared by the commit (→ off-screen) and cancel
+// (→ rest) animations. Seeding it with the gesture's release velocity makes the
+// hand-off from finger to animation continuous, like UIKit's pop.
+const SWIPE_SPRING = {
+  damping: 30,
+  stiffness: 260,
+  mass: 1,
+  overshootClamping: true,
+  restDisplacementThreshold: 0.5,
+  restSpeedThreshold: 2,
+} as const
+// Cap the velocity we hand to the commit spring so a frantic flick doesn't
+// blow past the off-screen target and snap back visibly.
+const MAX_COMMIT_VELOCITY = 3000
+const FADE_IN_DELAY_MS = 0
 const FADE_IN_DURATION_MS = 500
 const FADE_IN_SCALE_FROM = 0.4
 const FADE_OUT_DURATION_MS = 300
@@ -125,21 +146,42 @@ export default function Compositor() {
     .failOffsetY([-15, 15])
     .onUpdate((e) => {
       if (Platform.OS !== "ios") return
-      swipeTranslateX.value = Math.max(0, e.translationX)
+      // Track the finger, clamped to [0, screenWidth] so the release spring
+      // starts from a sane position.
+      swipeTranslateX.value = Math.min(screenWidth, Math.max(0, e.translationX))
     })
     .onEnd((e) => {
+      // Commit when the drag passed the distance threshold OR was released as a
+      // fast rightward flick (past a small minimum travel) — same dual
+      // criterion UIKit's interactive pop uses.
+      let committed =
+        e.translationX > commitThreshold ||
+        (e.velocityX > COMMIT_VELOCITY && e.translationX > MIN_FLICK_TRANSLATION)
+
+      if (e.velocityX < -100) {
+        committed = false
+      }
+
       if (Platform.OS !== "ios") {
-        if (e.translationX > commitThreshold) {
-          runOnJS(handleBack)()
-        }
+        if (committed) runOnJS(handleBack)()
         return
       }
-      if (e.translationX > commitThreshold) {
-        swipeTranslateX.value = withTiming(screenWidth, {duration: COMMIT_DURATION_MS}, (finished) => {
+
+      if (committed) {
+        // Continue off-screen carrying the release velocity so finger → spring
+        // is seamless. Clamp the seed so a violent flick doesn't overshoot.
+        const velocity = Math.min(Math.max(e.velocityX, 0), MAX_COMMIT_VELOCITY)
+        // swipeTranslateX.value = withSpring(screenWidth, {...SWIPE_SPRING, damping: 0, stiffness: 1000, velocity}, (finished) => {
+        //   if (finished) runOnJS(handleBack)()
+        // })
+
+        swipeTranslateX.value = withTiming(screenWidth*1.1, {duration: 100}, (finished) => {
           if (finished) runOnJS(handleBack)()
         })
       } else {
-        swipeTranslateX.value = withSpring(0, {damping: 20, stiffness: 200, overshootClamping: true})
+        // Snap back to rest, also respecting the release velocity (which may be
+        // negative — leftward — when the user reverses to cancel).
+        swipeTranslateX.value = withSpring(0, {...SWIPE_SPRING, velocity: e.velocityX})
       }
     })
 

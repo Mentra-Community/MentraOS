@@ -187,7 +187,7 @@ export function validateManifest(manifest: unknown): { valid: boolean; errors: s
   // Optional entry object. When set, entry.background is required.
   if (m.entry !== undefined) {
     if (typeof m.entry !== 'object' || m.entry === null || Array.isArray(m.entry)) {
-      errors.push('entry must be an object like {"background": "dist/background/index.js", "ui": "dist/ui/index.html"}');
+      errors.push('entry must be an object like {"background": "background/index.js", "ui": "ui/index.html"}');
     } else {
       const e = m.entry as Record<string, unknown>;
       if (typeof e.background !== 'string' || !e.background) {

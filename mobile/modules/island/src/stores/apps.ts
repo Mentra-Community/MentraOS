@@ -328,17 +328,24 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       return
     }
 
-    // Ensure the JSContext exists before foregrounding. start() is
-    // idempotent for an already-running app and enforces the
-    // foreground-only-one rule for standard apps.
-    if (!app.running) {
-      await get().start(app)
-    }
-
+    // Flip the foreground flag synchronously so the Compositor's open
+    // animation starts on the same frame as the tap. We do NOT await start()
+    // first — that gated the flag (and thus the animation) behind the whole
+    // JSContext-spawn chain, which was the perceived launch delay. The
+    // Compositor/LocalMiniappView already handle the spawn being in-flight
+    // (the phase machine), so foregrounding needn't wait for it.
     saveLastOpenTime(packageName)
     set((s) => ({
       apps: s.apps.map((a) => ({...a, foregrounded: a.packageName === packageName})),
     }))
+
+    // Ensure the JSContext exists. start() is idempotent for an
+    // already-running app and enforces the foreground-only-one rule for
+    // standard apps. Fire-and-forget after the flag flip so it doesn't block
+    // paint.
+    if (!app.running) {
+      get().start(app)
+    }
   },
 
   clearForeground: () => {

@@ -353,7 +353,7 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
   const injectedJS = `${globalsScript}\n${uiShim}`
 
   return (
-    <View ref={viewShotRef} className="flex-1 bg-background">
+    <View ref={viewShotRef} className="flex-1 bg-transparent rounded-2xl">
       <WebView
         ref={handleRef}
         source={{uri: uiUri}}
@@ -383,9 +383,10 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
         setBuiltInZoomControls={false}
         setDisplayZoomControls={false}
         webviewDebuggingEnabled={__DEV__}
-        style={{flex: 1, backgroundColor: theme.colors.background}}
+        style={{flex: 1, borderRadius: theme.spacing.s12}}
       />
       <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={isLoaded} />
+      {/* <View className="flex-1 bg-red-500"/> */}
     </View>
   )
 })
