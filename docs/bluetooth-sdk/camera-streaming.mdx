@@ -64,6 +64,15 @@ sdk.requestPhoto(
 
 The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
 
+Listen for `photo_status` to render progress and inspect the effective settings the glasses used:
+
+```ts
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+useBluetoothEvent('photo_status', (event) => {
+  console.log(event.status, event.resolvedConfig);
+});
+```
 ## Gallery Mode
 
 Mentra Live has gallery mode for the right action button. When gallery mode is enabled, a short press takes a photo, a long press starts video recording, and a short press stops the active video recording. Button and touch events are still reported to your app.
@@ -207,6 +216,33 @@ The starter kit examples also include direct phone photo and WebRTC receive flow
 - React Native includes local native companion modules for Android and iOS direct phone photo and WebRTC demos.
 
 Use real hardware for these flows. Keep the glasses Wi-Fi active and make sure the phone and glasses are on a reachable local network.
+
+For direct phone photo upload in React Native, start the phone receiver first and pass its `uploadUrl` as the photo webhook:
+
+```ts
+import BluetoothSdk from '@mentra/bluetooth-sdk';
+import MentraPhotoReceiver from '@mentra/bluetooth-sdk/photo-receiver';
+
+const receiver = await MentraPhotoReceiver.startPhotoReceiver();
+
+const uploadSubscription = MentraPhotoReceiver.addListener('photoUpload', (event) => {
+  console.log(event.requestId, event.fileUri, event.byteCount);
+});
+
+await BluetoothSdk.requestPhoto({
+  requestId: `photo-${Date.now()}`,
+  appId: 'com.example.app',
+  size: 'medium',
+  webhookUrl: receiver.uploadUrl,
+  authToken: null,
+  compress: 'medium',
+  sound: true,
+});
+
+// Later:
+uploadSubscription.remove();
+await MentraPhotoReceiver.stopPhotoReceiver();
+```
 
 ## Stream Status
 

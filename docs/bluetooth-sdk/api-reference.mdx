@@ -20,6 +20,7 @@ The Mentra Bluetooth SDK exposes the same core glasses lifecycle across Android,
 | iOS | `MentraBluetoothSDK` CocoaPod | `import MentraBluetoothSDK` |
 | React Native / Expo | `@mentra/bluetooth-sdk` | `import BluetoothSdk, {DeviceModels} from '@mentra/bluetooth-sdk'` |
 | React Native hooks | `@mentra/bluetooth-sdk` | `import {useMentraBluetooth} from '@mentra/bluetooth-sdk/react'` |
+| React Native photo receiver | `@mentra/bluetooth-sdk` | `import MentraPhotoReceiver from '@mentra/bluetooth-sdk/photo-receiver'` |
 
 Only documented imports are part of the supported app developer API. Undocumented package subpaths or symbols with a leading underscore can change without notice.
 
@@ -301,6 +302,7 @@ export function HardwareEventLogger() {
   useBluetoothEvent('touch_event', (event) => console.log(event));
   useBluetoothEvent('photo_response', (event) => console.log(event));
   useBluetoothEvent('stream_status', (event) => console.log(event));
+  useBluetoothEvent('photo_status', (event) => console.log(event.resolvedConfig));
   useBluetoothEvent('speaking_status', (event) => console.log(event.speaking));
   useBluetoothEvent('mic_pcm', (event) => {
     console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding);
@@ -376,6 +378,7 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `hotspot_status_change` | `HotspotStatusChangeEvent` | Glasses hotspot state changes. |
 | `hotspot_error` | `HotspotErrorEvent` | Hotspot operation fails. |
 | `photo_response` | `PhotoResponseEvent` | Photo request succeeds or fails. |
+| `photo_status` | `PhotoStatusEvent` | Photo capture progress changes. May include `resolvedConfig` with effective size, compression, transfer method, exposure, and ISO. |
 | `gallery_status` | `GalleryStatusEvent` | Gallery content/camera-busy status changes. |
 | `compatible_glasses_search_stop` | `CompatibleGlassesSearchStopEvent` | Compatible-glasses search stops for a model. |
 | `swipe_volume_status` | `SwipeVolumeStatusEvent` | Swipe-volume setting changes. |
@@ -394,7 +397,7 @@ For example, `useBluetoothEvent('photo_response', ...)` receives a `PhotoRespons
 
 Public React Native event payload fields use camelCase. For example, touch events expose `deviceModel` and `gestureName`, successful photo responses expose `uploadUrl`, hotspot errors expose `errorMessage`, and gallery status exposes `hasContent` and `cameraBusy`.
 
-Android and iOS expose typed callbacks/delegate methods instead of the React Native string event API. Android uses `MentraBluetoothSdkListener` methods such as `onStateChanged`, `onGlassesChanged`, `onSdkStateChanged`, `onScanChanged`, `onDeviceDiscovered`, `onButtonPress`, `onSpeakingStatus`, `onPhotoResponse`, `onMicPcm`, and `onStreamStatus`. iOS uses `MentraBluetoothSDKDelegate` methods such as `mentraBluetoothSDK(_:didUpdate:)`, `mentraBluetoothSDK(_:didUpdateGlasses:)`, `mentraBluetoothSDK(_:didUpdateSdkState:)`, `mentraBluetoothSDK(_:didUpdateScan:)`, `mentraBluetoothSDK(_:didDiscover:)`, `mentraBluetoothSDK(_:didReceive:)`, `mentraBluetoothSDK(_:didReceiveMicPcm:)`, and `mentraBluetoothSDK(_:didReceiveMicLc3:)`. Microphone audio callbacks use `MicPcmEvent` and `MicLc3Event` objects with the same metadata as React Native.
+Android and iOS expose typed callbacks/delegate methods instead of the React Native string event API. Android uses `MentraBluetoothSdkListener` methods such as `onStateChanged`, `onGlassesChanged`, `onSdkStateChanged`, `onScanChanged`, `onDeviceDiscovered`, `onButtonPress`, `onSpeakingStatus`, `onPhotoResponse`, `onPhotoStatus`, `onMicPcm`, and `onStreamStatus`. iOS uses `MentraBluetoothSDKDelegate` methods such as `mentraBluetoothSDK(_:didUpdate:)`, `mentraBluetoothSDK(_:didUpdateGlasses:)`, `mentraBluetoothSDK(_:didUpdateSdkState:)`, `mentraBluetoothSDK(_:didUpdateScan:)`, `mentraBluetoothSDK(_:didDiscover:)`, `mentraBluetoothSDK(_:didReceive:)`, `mentraBluetoothSDK(_:didReceiveMicPcm:)`, and `mentraBluetoothSDK(_:didReceiveMicLc3:)`. Microphone audio callbacks use `MicPcmEvent` and `MicLc3Event` objects with the same metadata as React Native.
 
 | Event area | Examples |
 | --- | --- |
