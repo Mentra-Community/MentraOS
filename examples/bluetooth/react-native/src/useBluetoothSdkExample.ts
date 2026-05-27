@@ -13,6 +13,7 @@ import BluetoothSdk, {
   type MicLc3Event,
   type MicPcmEvent,
   type PhotoResponseEvent,
+  type PhotoStatusEvent,
   type RgbLedControlResponseEvent,
   type SpeakingStatusEvent,
   type StreamStatusEvent,
@@ -196,6 +197,7 @@ export type BluetoothSdkExampleState = {
   photoExposureTimeNs: number;
   photoPreviewDetails: PhotoPreviewDetails | null;
   photoPreviewUrl: string | null;
+  photoStatus: PhotoStatusEvent | null;
   photoSize: PhotoSize;
   cameraFov: number;
   cameraRoiPosition: CameraRoiPosition;
@@ -318,6 +320,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const [photoPreviewDetails, setPhotoPreviewDetails] =
     useState<PhotoPreviewDetails | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [photoStatus, setPhotoStatus] = useState<PhotoStatusEvent | null>(null);
   const [photoSize, setPhotoSize] = useState<PhotoSize>('full');
   const [photoCompression, setPhotoCompression] = useState<PhotoCompression>('none');
   const [photoExposureManual, setPhotoExposureManual] = useState(false);
@@ -469,6 +472,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       MentraVideoStreamReceiver.addListener('receiverStatus', handleVideoStreamReceiverStatus),
       MentraVideoStreamReceiver.addListener('streamFrame', handleDirectStreamFrame),
       MentraVideoStreamReceiver.addListener('streamFirstFrame', handleDirectStreamFirstFrame),
+      BluetoothSdk.addListener('photo_status', handlePhotoStatus),
       BluetoothSdk.addListener('photo_response', handlePhotoResponse),
       BluetoothSdk.addListener('stream_status', (payload: StreamStatusEvent) => {
         applyStreamStatus(payload);
@@ -732,19 +736,25 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
 
       setPhotoPreviewUrl(null);
       setPhotoPreviewDetails(null);
+      markPhotoRequestStarted(requestId);
       resetBarcodeScan();
       setCameraStatus(`Camera: webhook upload requested (${requestId})`);
-      await BluetoothSdk.requestPhoto({
-        requestId,
-        appId: PHOTO_APP_ID,
-        size: photoSize,
-        webhookUrl: uploadUrlText,
-        authToken: null,
-        compress: photoCompression,
-        sound: true,
-        exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
-        iso: photoExposureManual ? photoIso : null,
-      });
+      try {
+        await BluetoothSdk.requestPhoto({
+          requestId,
+          appId: PHOTO_APP_ID,
+          size: photoSize,
+          webhookUrl: uploadUrlText,
+          authToken: null,
+          compress: photoCompression,
+          sound: true,
+          exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
+          iso: photoExposureManual ? photoIso : null,
+        });
+      } catch (error) {
+        markPhotoRequestFailed(requestId, 'REQUEST_FAILED', formatError(error));
+        throw error;
+      }
       void pollPhotoPreview(requestId, statusUrl, pollGeneration);
   }
 
@@ -759,6 +769,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
 
     setPhotoPreviewUrl(null);
     setPhotoPreviewDetails(null);
+    markPhotoRequestStarted(requestId);
     resetBarcodeScan();
     setCameraStatus(`Camera: phone upload requested (${requestId})`);
     clearPhotoUploadTimeout();
@@ -766,21 +777,28 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       if (activePhotoRequestIdRef.current === requestId) {
         activePhotoRequestIdRef.current = null;
         setCameraStatus('Camera: timed out waiting for phone upload');
+        markPhotoRequestFailed(requestId, 'UPLOAD_TIMEOUT', 'Timed out waiting for phone upload');
         addEvent('TX', `phone photo upload timed out ${requestId}`);
       }
     }, DIRECT_PHOTO_UPLOAD_TIMEOUT_MS);
 
-    await BluetoothSdk.requestPhoto({
-      requestId,
-      appId: PHOTO_APP_ID,
-      size: photoSize,
-      webhookUrl: receiver.uploadUrl,
-      authToken: null,
-      compress: photoCompression,
-      sound: true,
-      exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
-      iso: photoExposureManual ? photoIso : null,
-    });
+    try {
+      await BluetoothSdk.requestPhoto({
+        requestId,
+        appId: PHOTO_APP_ID,
+        size: photoSize,
+        webhookUrl: receiver.uploadUrl,
+        authToken: null,
+        compress: photoCompression,
+        sound: true,
+        exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
+        iso: photoExposureManual ? photoIso : null,
+      });
+    } catch (error) {
+      clearPhotoUploadTimeout();
+      markPhotoRequestFailed(requestId, 'REQUEST_FAILED', formatError(error));
+      throw error;
+    }
   }
 
   async function testWebhook() {
@@ -830,6 +848,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     activePhotoRequestIdRef.current = null;
     setPhonePhotoReceiverRunning(true);
     setPhotoPreviewUrl(payload.fileUri);
+    setPhotoStatus(null);
     setPhotoPreviewDetails((current) => ({
       ...current,
       byteCount: payload.byteCount,
@@ -852,6 +871,61 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       setPhonePhotoReceiverRunning(false);
     }
     addEvent('LIVE', `photo receiver ${payload.message}`);
+  }
+
+  function markPhotoRequestStarted(requestId: string) {
+    setPhotoStatus({
+      type: 'photo_status',
+      requestId,
+      status: 'accepted',
+      timestamp: Date.now(),
+    });
+  }
+
+  function markPhotoRequestFailed(
+    requestId: string,
+    errorCode: string,
+    errorMessage: string,
+  ) {
+    setPhotoStatus({
+      type: 'photo_status',
+      requestId,
+      status: 'failed',
+      timestamp: Date.now(),
+      errorCode,
+      errorMessage,
+    });
+  }
+
+  function handlePhotoStatus(payload: PhotoStatusEvent) {
+    const activeRequestId = activePhotoRequestIdRef.current;
+    if (activeRequestId && payload.requestId !== activeRequestId) {
+      addEvent('LIVE', `ignoring stale photo status ${payload.requestId}`);
+      return;
+    }
+
+    setPhotoStatus(payload);
+    const label = photoStatusLabel(payload);
+    setCameraStatus(`Camera: ${label}`);
+
+    if (payload.status === 'failed') {
+      clearPhotoUploadTimeout();
+      activePhotoRequestIdRef.current = null;
+      setPhotoPreviewDetails({
+        error: payload.errorCode ?? payload.errorMessage,
+        requestId: payload.requestId,
+        source: photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver',
+        state: 'error',
+        timestamp: payload.timestamp,
+      });
+      resetBarcodeScan();
+    }
+
+    const configSummary = photoResolvedConfigSummary(payload.resolvedConfig);
+    addEvent(
+      'LIVE',
+      `photo status ${payload.status}${configSummary ? ` · ${configSummary}` : ''}`,
+    );
   }
 
   function handleVideoStreamReceiverStatus(payload: VideoStreamReceiverStatusEvent) {
@@ -903,6 +977,14 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       return;
     }
     if (payload.state === 'error') {
+      setPhotoStatus({
+        type: 'photo_status',
+        requestId: payload.requestId,
+        status: 'failed',
+        timestamp: payload.timestamp,
+        errorCode: payload.errorCode,
+        errorMessage: payload.errorMessage,
+      });
       setPhotoPreviewDetails({
         error: payload.errorCode ?? payload.errorMessage,
         requestId: payload.requestId,
@@ -960,6 +1042,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
           };
           if (json.photoUrl) {
             setPhotoPreviewUrl(json.photoUrl);
+            setPhotoStatus(null);
             setPhotoPreviewDetails((current) => ({
               ...current,
               byteCount: typeof json.bytes === 'number' ? json.bytes : current?.byteCount,
@@ -1020,6 +1103,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
 
       const testImage = await MentraBarcodeScanner.createTestBarcodeImage(TEST_BARCODE_VALUE);
       setPhotoPreviewUrl(testImage.fileUri);
+      setPhotoStatus(null);
       setPhotoPreviewDetails({
         byteCount: testImage.byteCount,
         previewUrl: testImage.fileUri,
@@ -1153,6 +1237,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       setPhotoCloudServerEnabledState(enabled);
       activePhotoRequestIdRef.current = null;
       clearPhotoUploadTimeout();
+      setPhotoStatus(null);
       pollGenerationRef.current += 1;
       if (enabled) {
         await MentraPhotoReceiver.stopPhotoReceiver().catch(() => undefined);
@@ -1760,11 +1845,20 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     clearPhotoUploadTimeout();
     void MentraVideoStreamReceiver.stopWebRtcReceiver().catch(() => undefined);
     activeStreamIdRef.current = null;
-    const hadPhotoRequest = activePhotoRequestIdRef.current !== null;
+    const disconnectedPhotoRequestId = activePhotoRequestIdRef.current;
+    const hadPhotoRequest = disconnectedPhotoRequestId !== null;
     activePhotoRequestIdRef.current = null;
     if (hadPhotoRequest) {
       pollGenerationRef.current += 1;
       setCameraStatus('Disconnected before photo upload completed');
+      setPhotoStatus({
+        type: 'photo_status',
+        requestId: disconnectedPhotoRequestId ?? 'disconnected',
+        status: 'failed',
+        timestamp: Date.now(),
+        errorCode: 'DISCONNECTED',
+        errorMessage: 'Disconnected before photo upload completed',
+      });
     }
     setStreamRequested(false);
     setDirectStreamReceiverRunning(false);
@@ -1893,6 +1987,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     photoExposureTimeNs,
     photoPreviewDetails,
     photoPreviewUrl,
+    photoStatus,
     photoSize,
     playMicRecording,
     rawJsonExpanded,
@@ -2469,6 +2564,63 @@ function androidRuntimePermissions() {
   }
 
   return permissions;
+}
+
+function photoStatusLabel(event: PhotoStatusEvent) {
+  const base = (() => {
+    switch (event.status) {
+      case 'accepted':
+        return 'photo request accepted';
+      case 'queued':
+        return 'photo queued on glasses';
+      case 'configuring':
+        return 'camera configured';
+      case 'capturing':
+        return 'capturing photo';
+      case 'captured':
+        return 'photo captured';
+      case 'compressing':
+        return 'compressing photo';
+      case 'uploading':
+        return 'uploading photo';
+      case 'uploaded':
+        return 'photo uploaded';
+      case 'ready_for_transfer':
+        return 'photo ready for transfer';
+      case 'transferring':
+        return 'transferring photo';
+      case 'failed':
+        return event.errorCode ?? event.errorMessage ?? 'photo failed';
+      default:
+        return String(event.status).replace(/_/g, ' ');
+    }
+  })();
+  const configSummary = photoResolvedConfigSummary(event.resolvedConfig);
+  return configSummary ? `${base} (${configSummary})` : base;
+}
+
+function photoResolvedConfigSummary(config: PhotoStatusEvent['resolvedConfig']) {
+  if (!config) {
+    return null;
+  }
+  const values = [
+    config.width && config.height ? `${config.width}x${config.height}` : null,
+    config.quality ? `q${config.quality}` : null,
+    config.requestedSize ? `requested ${config.requestedSize}` : null,
+    config.transferMethod ? config.transferMethod : null,
+    config.compression ? `compress ${config.compression}` : null,
+    config.exposureTimeNs ? exposureTimeSummary(config.exposureTimeNs) : null,
+    config.iso ? `ISO ${config.iso}` : null,
+  ].filter(Boolean);
+  return values.length > 0 ? values.join(' · ') : null;
+}
+
+function exposureTimeSummary(exposureTimeNs: number) {
+  const seconds = exposureTimeNs / 1_000_000_000;
+  if (seconds <= 0) {
+    return `${Math.round(exposureTimeNs)} ns`;
+  }
+  return `1/${Math.round(1 / seconds)}s`;
 }
 
 function summarizeMap(values: object) {

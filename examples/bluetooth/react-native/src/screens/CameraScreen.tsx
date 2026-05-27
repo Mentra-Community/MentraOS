@@ -75,6 +75,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const glassesWifiConnected = isGlassesWifiConnected(sdk.glasses);
   const wifiRequired = connected && !glassesWifiConnected;
   const cameraStatusFailed = isCameraStatusFailure(sdk.cameraStatus);
+  const photoStatusOverlay = photoStatusOverlayInfo(sdk.photoStatus, sdk.photoPreviewUrl);
   const setupHint = sdk.photoCloudServerEnabled ? localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus) : null;
   const sdkCall = cameraSdkCall(
     sdk.photoSize,
@@ -130,13 +131,39 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
               <>
                 <View style={styles.previewGlow} />
                 <View style={styles.previewBottomShade} />
-                <View style={styles.previewBadge}>
-                  <View style={{ width: 5, height: 5, borderRadius: 999, backgroundColor: colors.greenSoft }} />
-                  <Text style={styles.previewBadgeText}>JPEG · waiting</Text>
-                </View>
-                <Text style={styles.previewMeta}>ready</Text>
+                {!photoStatusOverlay ? (
+                  <>
+                    <View style={styles.previewBadge}>
+                      <View style={{ width: 5, height: 5, borderRadius: 999, backgroundColor: colors.greenSoft }} />
+                      <Text style={styles.previewBadgeText}>JPEG · waiting</Text>
+                    </View>
+                    <Text style={styles.previewMeta}>ready</Text>
+                  </>
+                ) : null}
               </>
             )}
+            {photoStatusOverlay ? (
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.previewStatusOverlay,
+                  photoStatusOverlay.failed && styles.previewStatusOverlayFailed,
+                ]}>
+                <View style={styles.previewStatusLine}>
+                  {photoStatusOverlay.busy ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+                      {photoStatusOverlay.failed ? <Path d="M18 6 6 18M6 6l12 12" /> : <Polyline points="20 6 9 17 4 12" />}
+                    </Svg>
+                  )}
+                  <Text style={styles.previewStatusText}>{photoStatusOverlay.title}</Text>
+                </View>
+                {photoStatusOverlay.detail ? (
+                  <Text style={styles.previewStatusDetail}>{photoStatusOverlay.detail}</Text>
+                ) : null}
+              </View>
+            ) : null}
           </LinearGradient>
         </View>
 
@@ -329,6 +356,71 @@ function PhotoDetailsCard({
       ) : null}
     </LinearGradient>
   );
+}
+
+type PhotoStatusEvent = NonNullable<BluetoothSdkExampleModel['photoStatus']>;
+
+function photoStatusOverlayInfo(status: PhotoStatusEvent | null, previewUrl: string | null) {
+  if (!status) {
+    return null;
+  }
+  if (previewUrl && status.status !== 'failed') {
+    return null;
+  }
+
+  const failed = status.status === 'failed';
+  return {
+    busy: !failed,
+    detail: failed
+      ? status.errorMessage
+      : photoResolvedConfigDetail(status.resolvedConfig),
+    failed,
+    title: photoStatusTitle(status),
+  };
+}
+
+function photoStatusTitle(status: PhotoStatusEvent) {
+  switch (status.status) {
+    case 'accepted':
+      return 'Request accepted';
+    case 'queued':
+      return 'Queued on glasses';
+    case 'configuring':
+      return 'Camera configured';
+    case 'capturing':
+      return 'Capturing photo';
+    case 'captured':
+      return 'Photo captured';
+    case 'compressing':
+      return 'Compressing photo';
+    case 'uploading':
+      return 'Uploading photo';
+    case 'uploaded':
+      return 'Photo uploaded';
+    case 'ready_for_transfer':
+      return 'Ready for transfer';
+    case 'transferring':
+      return 'Transferring photo';
+    case 'failed':
+      return status.errorCode ?? 'Photo failed';
+    default:
+      return String(status.status).replace(/_/g, ' ');
+  }
+}
+
+function photoResolvedConfigDetail(config: PhotoStatusEvent['resolvedConfig']) {
+  if (!config) {
+    return null;
+  }
+  const values = [
+    config.width && config.height ? `${config.width} x ${config.height}` : null,
+    config.quality ? `q${config.quality}` : null,
+    config.requestedSize ? String(config.requestedSize) : null,
+    config.transferMethod ? String(config.transferMethod) : null,
+    config.compression ? `compress ${config.compression}` : null,
+    config.iso ? `ISO ${config.iso}` : null,
+  ].filter(Boolean);
+  return values.length > 0 ? values.join(' · ') : null;
 }
 
 function ExposureControl({
@@ -697,6 +789,11 @@ const styles = StyleSheet.create({
   previewMeta: { position: 'absolute', bottom: 14, right: 14, color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '500' },
   previewOpenBadge: { position: 'absolute', right: 12, bottom: 12, zIndex: 3, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.42)', borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)', paddingVertical: 7, paddingHorizontal: 11 },
   previewOpenText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  previewStatusOverlay: { position: 'absolute', left: 12, right: 12, bottom: 12, zIndex: 4, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', backgroundColor: 'rgba(8,24,16,0.74)', paddingVertical: 10, paddingHorizontal: 12 },
+  previewStatusOverlayFailed: { backgroundColor: 'rgba(95,18,18,0.76)', borderColor: 'rgba(255,255,255,0.22)' },
+  previewStatusLine: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  previewStatusText: { flex: 1, color: '#fff', fontSize: 13, fontWeight: '800' },
+  previewStatusDetail: { color: 'rgba(255,255,255,0.82)', fontSize: 11, fontWeight: '600', lineHeight: 15, marginTop: 5 },
   barcodeRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10, marginHorizontal: 6, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(15,42,29,0.08)', backgroundColor: 'rgba(15,42,29,0.04)', paddingVertical: 10, paddingHorizontal: 12 },
   barcodeRowScanning: { borderColor: 'rgba(52,199,89,0.24)', backgroundColor: 'rgba(52,199,89,0.08)' },
   barcodeRowFound: { borderColor: 'rgba(52,199,89,0.32)', backgroundColor: 'rgba(52,199,89,0.12)' },
