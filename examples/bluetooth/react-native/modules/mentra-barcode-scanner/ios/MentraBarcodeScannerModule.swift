@@ -3,8 +3,9 @@ import ExpoModulesCore
 import ImageIO
 import UIKit
 
-public class MentraBarcodeScannerModule: Module, UIDocumentInteractionControllerDelegate {
+public class MentraBarcodeScannerModule: Module {
   private var documentInteractionController: UIDocumentInteractionController?
+  private var documentInteractionDelegate: DocumentInteractionPreviewDelegate?
 
   public func definition() -> ModuleDefinition {
     Name("MentraBarcodeScanner")
@@ -104,8 +105,12 @@ public class MentraBarcodeScannerModule: Module, UIDocumentInteractionController
       throw BarcodeScannerError("Could not find a view controller to open the image.")
     }
     let controller = UIDocumentInteractionController(url: url)
-    controller.delegate = self
+    let delegate = DocumentInteractionPreviewDelegate { [weak self] in
+      self?.appContext?.utilities?.currentViewController()
+    }
+    controller.delegate = delegate
     documentInteractionController = controller
+    documentInteractionDelegate = delegate
     if !controller.presentPreview(animated: true) {
       if !controller.presentOptionsMenu(from: viewController.view.bounds, in: viewController.view, animated: true) {
         throw BarcodeScannerError("No image viewer is available for this file.")
@@ -149,14 +154,23 @@ public class MentraBarcodeScannerModule: Module, UIDocumentInteractionController
     2.0 * atan(sensorMm / (2.0 * focalLengthMm)) * 180.0 / Double.pi
   }
 
-  public func documentInteractionControllerViewControllerForPreview(
-    _ controller: UIDocumentInteractionController
-  ) -> UIViewController {
-    appContext?.utilities?.currentViewController() ?? UIViewController()
-  }
 }
 
 private let fullFrameDiagonalMm = 43.266615305567875
+
+private final class DocumentInteractionPreviewDelegate: NSObject, UIDocumentInteractionControllerDelegate {
+  private let viewControllerProvider: () -> UIViewController?
+
+  init(viewControllerProvider: @escaping () -> UIViewController?) {
+    self.viewControllerProvider = viewControllerProvider
+  }
+
+  func documentInteractionControllerViewControllerForPreview(
+    _ controller: UIDocumentInteractionController
+  ) -> UIViewController {
+    viewControllerProvider() ?? UIViewController()
+  }
+}
 
 final class BarcodeScannerError: Exception, @unchecked Sendable {
   private let message: String
