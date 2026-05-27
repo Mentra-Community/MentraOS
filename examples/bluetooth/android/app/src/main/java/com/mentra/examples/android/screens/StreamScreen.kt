@@ -168,25 +168,23 @@ fun StreamScreen(controller: MentraExampleController) {
                 }
                 Text(uptime, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.TopEnd).padding(14.dp))
 
-                Text(
-                    if (directPhoneWebRtc && previewReady) {
-                        "WebRTC · phone receiver · SDK keep-alive"
-                    } else if (directPhoneWebRtc && streamActive) {
-                        "Waiting for first frame"
-                    } else if (previewReady) {
-                        "${state.streamProtocol.uppercase()} · SDK keep-alive"
-                    } else if (streamActive) {
-                        "Waiting for preview"
-                    } else if (directPhoneWebRtc) {
-                        "Ready · phone receiver starts on stream"
-                    } else {
-                        "Ready · enter stream URL"
-                    },
-                    color = Color.White.copy(alpha = 0.85f),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(14.dp)
-                )
+                if (!previewReady) {
+                    Text(
+                        if (directPhoneWebRtc && streamActive) {
+                            "Waiting for first frame"
+                        } else if (streamActive) {
+                            "Waiting for preview"
+                        } else if (directPhoneWebRtc) {
+                            "Ready · phone receiver starts on stream"
+                        } else {
+                            "Ready · enter stream URL"
+                        },
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.align(Alignment.BottomStart).padding(14.dp)
+                    )
+                }
             }
 
             Spacer(Modifier.height(14.dp))

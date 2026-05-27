@@ -106,17 +106,15 @@ export function StreamScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
               <Text style={styles.liveText}>{previewReady ? 'LIVE' : streamActive ? 'STARTING' : 'READY'}</Text>
             </View>
             <Text style={styles.timer}>{uptime}</Text>
-            <Text style={styles.previewMeta}>
-              {previewReady
-                ? sdk.streamCloudServerEnabled
-                  ? `${sdk.streamProtocol.toUpperCase()} · SDK keep-alive`
-                  : 'WEBRTC · phone receiver · SDK keep-alive'
-                : streamActive
+            {!previewReady ? (
+              <Text style={styles.previewMeta}>
+                {streamActive
                   ? 'Waiting for preview'
                   : sdk.streamCloudServerEnabled
                     ? 'Ready · enter stream URL'
                     : 'Ready · WebRTC to phone'}
-            </Text>
+              </Text>
+            ) : null}
           </View>
         </View>
 

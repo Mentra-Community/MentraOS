@@ -138,7 +138,7 @@ struct StreamScreen: View {
                 }
                 previewChrome(
                     label: model.streamPreviewReady ? "LIVE" : "STARTING",
-                    detail: model.streamPreviewReady ? "WebRTC · phone receiver · SDK keep-alive" : "Waiting for first frame"
+                    detail: model.streamPreviewReady ? nil : "Waiting for first frame"
                 )
             }
         } else if let livePreviewUrl {
@@ -154,7 +154,7 @@ struct StreamScreen: View {
                         .background(Color.black)
                         .clipShape(RoundedRectangle(cornerRadius: 22))
                 }
-                previewChrome(label: "LIVE", detail: previewDetail)
+                previewChrome(label: "LIVE")
             }
         } else {
             ZStack {
@@ -190,17 +190,7 @@ struct StreamScreen: View {
         }
     }
 
-    private var previewDetail: String {
-        if directPhoneWebRtc {
-            return "WebRTC · phone receiver · SDK keep-alive"
-        }
-        if model.streamProtocol == .srt {
-            return "SRT · web preview · SDK keep-alive"
-        }
-        return "\(model.streamProtocol.rawValue.uppercased()) · SDK keep-alive"
-    }
-
-    private func previewChrome(label: String, detail: String) -> some View {
+    private func previewChrome(label: String, detail: String? = nil) -> some View {
         VStack {
             HStack {
                 HStack(spacing: 6) {
@@ -216,13 +206,15 @@ struct StreamScreen: View {
             }
             .padding(.horizontal, 14).padding(.top, 14)
             Spacer()
-            HStack {
-                Text(detail)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(Color.white.opacity(0.85))
-                Spacer()
+            if let detail {
+                HStack {
+                    Text(detail)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(Color.white.opacity(0.85))
+                    Spacer()
+                }
+                .padding(.horizontal, 14).padding(.bottom, 14)
             }
-            .padding(.horizontal, 14).padding(.bottom, 14)
         }
         .frame(height: 160)
     }
