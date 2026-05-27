@@ -3088,6 +3088,7 @@ public class MentraLive extends SGCManager {
                 BlePhotoTransfer photoTransfer = blePhotoTransfers.remove(bleImgId);
                 if (photoTransfer != null) {
                     Bridge.log("LIVE: 🧹 Cleaned up timed out BLE photo transfer for: " + bleImgId);
+                    Bridge.sendPhotoError(photoTransfer.requestId, "TRANSFER_TIMEOUT", "Transfer timed out for: " + fileName);
                 }
 
                 // Reset stale session on incident log relay so a retry starts fresh.
@@ -3120,8 +3121,19 @@ public class MentraLive extends SGCManager {
                 return;
             }
 
+            String bleImgId = fileName;
+            int dotIndex = bleImgId.lastIndexOf('.');
+            if (dotIndex > 0) {
+                bleImgId = bleImgId.substring(0, dotIndex);
+            }
+            BlePhotoTransfer photoTransfer = blePhotoTransfers.get(bleImgId);
+            String effectiveRequestId = requestId;
+            if (effectiveRequestId.isEmpty() && photoTransfer != null) {
+                effectiveRequestId = photoTransfer.requestId;
+            }
+
             Log.e(TAG, "❌ Transfer failed for: " + fileName + " (reason: " + reason + ")");
-            Bridge.sendPhotoError(requestId, "TRANSFER_FAILED", "Transfer failed for: " + fileName + " (reason: " + reason + ")");
+            Bridge.sendPhotoError(effectiveRequestId, "TRANSFER_FAILED", "Transfer failed for: " + fileName + " (reason: " + reason + ")");
 
             // Clean up any active transfer for this file
             FileTransferSession session = activeFileTransfers.remove(fileName);
@@ -3130,12 +3142,7 @@ public class MentraLive extends SGCManager {
             }
 
             // Clean up any BLE photo transfer
-            String bleImgId = fileName;
-            int dotIndex = bleImgId.lastIndexOf('.');
-            if (dotIndex > 0) {
-                bleImgId = bleImgId.substring(0, dotIndex);
-            }
-            BlePhotoTransfer photoTransfer = blePhotoTransfers.remove(bleImgId);
+            photoTransfer = blePhotoTransfers.remove(bleImgId);
             if (photoTransfer != null) {
                 Bridge.log("LIVE: 🧹 Cleaned up failed BLE photo transfer for: " + bleImgId + " (requestId: " + photoTransfer.requestId + ")");
             }
@@ -6219,9 +6226,10 @@ public class MentraLive extends SGCManager {
                     Log.e(TAG, "❌ BLE photo transfer incomplete after final packet. Missing " + missingPackets.size() + " packets: " + missingPackets);
                     Log.e(TAG, "❌ Telling glasses to retry entire transfer");
 
-                    // Tell glasses transfer failed, they will retry
+                    // Tell glasses transfer failed, they will retry. Keep the photo transfer
+                    // entry so the retry still maps back to the original requestId.
                     sendTransferCompleteConfirmation(packetInfo.fileName, false);
-                    blePhotoTransfers.remove(bleImgId);
+                    photoTransfer.session = null;
                 }
             }
 

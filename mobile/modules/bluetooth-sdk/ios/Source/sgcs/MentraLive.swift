@@ -2853,8 +2853,12 @@ class MentraLive: NSObject, SGCManager {
         activeFileTransfers.removeValue(forKey: fileName)
 
         let bleImgId = fileName.split(separator: ".").first.map(String.init) ?? ""
-        if blePhotoTransfers.removeValue(forKey: bleImgId) != nil {
+        if let transfer = blePhotoTransfers.removeValue(forKey: bleImgId) {
             Bridge.log("LIVE: 🧹 Cleaned up timed out BLE photo transfer for: \(bleImgId)")
+            Bridge.sendPhotoError(
+                requestId: transfer.requestId, errorCode: "TRANSFER_TIMEOUT",
+                errorMessage: "Transfer timed out for: \(fileName)"
+            )
         }
         if bleIncidentLogRelays.removeValue(forKey: bleImgId) != nil {
             Bridge.log("LIVE: 🧹 Cleaned up timed out BLE incident log relay for: \(bleImgId)")
@@ -2876,8 +2880,11 @@ class MentraLive: NSObject, SGCManager {
         }
 
         Bridge.log("LIVE: ❌ Transfer failed for: \(fileName) (reason: \(reason))")
+        let bleImgId = fileName.split(separator: ".").first.map(String.init) ?? ""
+        let transfer = blePhotoTransfers[bleImgId]
+        let effectiveRequestId = requestId.isEmpty ? transfer?.requestId ?? "" : requestId
         Bridge.sendPhotoError(
-            requestId: requestId, errorCode: "TRANSFER_FAILED",
+            requestId: effectiveRequestId, errorCode: "TRANSFER_FAILED",
             errorMessage: "Transfer failed for: \(fileName) (reason: \(reason))"
         )
 
@@ -2887,7 +2894,6 @@ class MentraLive: NSObject, SGCManager {
             )
         }
 
-        let bleImgId = fileName.split(separator: ".").first.map(String.init) ?? ""
         if let transfer = blePhotoTransfers.removeValue(forKey: bleImgId) {
             Bridge.log(
                 "LIVE: 🧹 Cleaned up failed BLE photo transfer for: \(bleImgId) (requestId: \(transfer.requestId))"
@@ -3024,11 +3030,13 @@ class MentraLive: NSObject, SGCManager {
                             )
                             Bridge.log("❌ Telling glasses to retry entire transfer")
 
-                            // Tell glasses transfer failed, they will retry
+                            // Tell glasses transfer failed, they will retry. Keep the photo
+                            // transfer entry so the retry maps back to the original requestId.
                             sendTransferCompleteConfirmation(
                                 fileName: packetInfo.fileName, success: false
                             )
-                            blePhotoTransfers.removeValue(forKey: bleImgId)
+                            photoTransfer.session = nil
+                            blePhotoTransfers[bleImgId] = photoTransfer
                         }
                     }
                 }

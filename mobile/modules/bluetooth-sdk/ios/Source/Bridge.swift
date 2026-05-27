@@ -280,11 +280,12 @@ class Bridge {
     }
 
     static func sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
+        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
         var event: [String: Any] = [
             "type": "photo_response",
             "state": "error",
             "requestId": requestId,
-            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+            "timestamp": timestamp,
         ]
         if !errorCode.isEmpty {
             event["errorCode"] = errorCode
@@ -293,6 +294,20 @@ class Bridge {
             event["errorMessage"] = errorMessage
         }
         Bridge.sendTypedMessage("photo_response", body: event)
+
+        var status: [String: Any] = [
+            "type": "photo_status",
+            "status": "failed",
+            "requestId": requestId,
+            "timestamp": timestamp,
+        ]
+        if !errorCode.isEmpty {
+            status["errorCode"] = errorCode
+        }
+        if !errorMessage.isEmpty {
+            status["errorMessage"] = errorMessage
+        }
+        Bridge.sendTypedMessage("photo_status", body: status)
     }
 
     static func sendMiniappSelected(packageName: String) {

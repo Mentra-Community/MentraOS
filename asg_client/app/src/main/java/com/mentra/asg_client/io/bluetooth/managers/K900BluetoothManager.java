@@ -24,6 +24,7 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -719,6 +720,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         
         if (packet == null) {
             Log.e(TAG, "Failed to pack file packet " + packetIndex);
+            notifyTransferFailedToPhone("packet_pack_failed");
             currentFileTransfer = null;
             return;
         }
@@ -774,7 +776,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 
                 notificationManager.showDebugNotification("File Transfer Failed", 
                     "Packet " + packetIndex + " timeout");
-                
+
+                notifyTransferFailedToPhone("packet_timeout");
+
                 // Cancel transfer
                 comManager.setFastMode(false);
                 currentFileTransfer = null;
@@ -856,6 +860,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
                 notificationManager.showDebugNotification("Transfer Failed",
                     "BLE TX stuck after " + consecutiveFailures + " failures at packet " + zeroBasedIndex);
+
+                notifyTransferFailedToPhone("ble_tx_stuck_consecutive_failures");
 
                 // Abort the transfer
                 comManager.setFastMode(false);
@@ -980,11 +986,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     "Max retries exceeded for " + currentFileTransfer.fileName);
 
                 // Clean up but DON'T delete file (might be useful for debugging)
+                notifyTransferFailedToPhone("max_transfer_retries_exceeded");
                 comManager.setFastMode(false);
                 currentFileTransfer = null;
                 pendingPackets.clear();
-
-                // TODO: Notify phone we gave up (send transfer_failed message)
             }
         }
     }
@@ -1028,6 +1033,26 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
             // Treat timeout as failure (phone might have crashed or disconnected)
             handlePhoneConfirmation(currentFileTransfer.fileName, false);
+        }
+    }
+
+    private void notifyTransferFailedToPhone(String reason) {
+        if (currentFileTransfer == null) {
+            return;
+        }
+
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "transfer_failed");
+            json.put("fileName", currentFileTransfer.fileName);
+            json.put("reason", reason);
+            json.put("timestamp", System.currentTimeMillis());
+
+            boolean sent = sendData(json.toString().getBytes(StandardCharsets.UTF_8));
+            Log.i(TAG, "📤 transfer_failed sent to phone for " + currentFileTransfer.fileName
+                    + " (reason=" + reason + ", sent=" + sent + ")");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to notify phone about transfer failure", e);
         }
     }
 

@@ -29,7 +29,8 @@ public class K900ProtocolUtils {
     public static final byte CMD_TYPE_DATA = 0x35; // Generic data type
     
     // File transfer constants
-    public static final int FILE_PACK_SIZE_DEFAULT = 400; // Default max data size per packet
+    public static final int FILE_PACK_SIZE_MAX = 221; // 256 MTU - 3 ATT bytes - 32 protocol overhead
+    public static final int FILE_PACK_SIZE_DEFAULT = FILE_PACK_SIZE_MAX; // Safe default before phone MTU config arrives
     public static final int FILE_PACK_SIZE_MIN = 100; // Minimum safe packet size
     private static int filePackSize = FILE_PACK_SIZE_DEFAULT; // Configurable packet size
     public static final int LENGTH_FILE_START = 2;
@@ -55,8 +56,8 @@ public class K900ProtocolUtils {
         // Clamp to valid range
         if (newPackSize < FILE_PACK_SIZE_MIN) {
             newPackSize = FILE_PACK_SIZE_MIN;
-        } else if (newPackSize > FILE_PACK_SIZE_DEFAULT) {
-            newPackSize = FILE_PACK_SIZE_DEFAULT;
+        } else if (newPackSize > FILE_PACK_SIZE_MAX) {
+            newPackSize = FILE_PACK_SIZE_MAX;
         }
 
         filePackSize = newPackSize;
@@ -64,7 +65,7 @@ public class K900ProtocolUtils {
     }
 
     /**
-     * Reset file pack size to default (400 bytes)
+     * Reset file pack size to default safe BLE payload size.
      */
     public static void resetFilePackSize() {
         filePackSize = FILE_PACK_SIZE_DEFAULT;
