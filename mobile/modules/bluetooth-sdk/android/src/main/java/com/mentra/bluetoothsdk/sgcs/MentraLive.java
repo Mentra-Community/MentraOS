@@ -2287,6 +2287,13 @@ public class MentraLive extends SGCManager {
             case "ble_photo_ready":
                 processBlePhotoReady(json);
                 break;
+            case "photo_status":
+                try {
+                    Bridge.sendPhotoStatus(jsonObjectToMap(json));
+                } catch (JSONException e) {
+                    Log.e(TAG, "Error converting photo status to Map", e);
+                }
+                break;
             case "stream_status":
                 // Process streaming status update from ASG client
                 Bridge.log("LIVE: Received stream status update from glasses: " + json.toString());
@@ -2321,13 +2328,7 @@ public class MentraLive extends SGCManager {
 
                 // Forward to websocket system via Bridge (matches iOS emitRtmpStreamStatus)
                 try {
-                    Map<String, Object> rtmpMap = new HashMap<>();
-                    Iterator<String> keys = json.keys();
-                    while (keys.hasNext()) {
-                        String key = keys.next();
-                        rtmpMap.put(key, json.get(key));
-                    }
-                    Bridge.sendStreamStatus(rtmpMap);
+                    Bridge.sendStreamStatus(jsonObjectToMap(json));
                 } catch (JSONException e) {
                     Log.e(TAG, "Error converting RTMP status to Map", e);
                 }
@@ -3001,6 +3002,61 @@ public class MentraLive extends SGCManager {
         }
     }
 
+    private Map<String, Object> jsonObjectToMap(JSONObject json) throws JSONException {
+        Map<String, Object> map = new HashMap<>();
+        Iterator<String> keys = json.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            Object value = json.get(key);
+            if (value == JSONObject.NULL) {
+                continue;
+            }
+            map.put(key, jsonValueToBridgeValue(value));
+        }
+        return map;
+    }
+
+    private Object jsonValueToBridgeValue(Object value) throws JSONException {
+        if (value instanceof JSONObject) {
+            return jsonObjectToMap((JSONObject) value);
+        }
+        if (value instanceof JSONArray) {
+            JSONArray array = (JSONArray) value;
+            List<Object> list = new ArrayList<>();
+            for (int i = 0; i < array.length(); i++) {
+                Object item = array.get(i);
+                if (item != JSONObject.NULL) {
+                    list.add(jsonValueToBridgeValue(item));
+                }
+            }
+            return list;
+        }
+        return value;
+    }
+
+    private void processChunkedJsonMessage(JSONObject json) {
+        try {
+            MessageChunker.ChunkInfo chunkInfo = MessageChunker.getChunkInfo(json);
+            if (chunkInfo == null) {
+                Log.w(TAG, "LIVE: Received malformed chunked message: " + json);
+                return;
+            }
+
+            String reassembled = incomingChunkReassembler.addChunk(
+                    chunkInfo.chunkId,
+                    chunkInfo.chunkIndex,
+                    chunkInfo.totalChunks,
+                    chunkInfo.data);
+            if (reassembled == null) {
+                return;
+            }
+
+            JSONObject reassembledJson = new JSONObject(reassembled);
+            processJsonMessage(reassembledJson);
+        } catch (Exception e) {
+            Log.e(TAG, "Error processing chunked JSON message", e);
+        }
+    }
     /**
      * Process K900 command format JSON messages (messages with "C" field)
      */

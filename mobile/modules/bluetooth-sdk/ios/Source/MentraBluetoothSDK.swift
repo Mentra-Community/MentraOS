@@ -618,6 +618,8 @@ public final class MentraBluetoothSDK {
             delegate?.mentraBluetoothSDK(self, didReceive: .hotspotError(HotspotErrorEvent(values: data)))
         case "photo_response":
             delegate?.mentraBluetoothSDK(self, didReceive: .photoResponse(PhotoResponseEvent(values: data)))
+        case "photo_status":
+            delegate?.mentraBluetoothSDK(self, didReceive: .photoStatus(PhotoStatusEvent(values: data)))
         case "stream_status":
             delegate?.mentraBluetoothSDK(self, didReceive: .streamStatus(StreamStatusEvent(values: data)))
         case "keep_alive_ack":

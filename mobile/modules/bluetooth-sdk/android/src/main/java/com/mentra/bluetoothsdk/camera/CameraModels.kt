@@ -223,3 +223,14 @@ data class PhotoResponseEvent(
     val requestId: String get() = response.requestId
     val values: Map<String, Any> get() = response.toEventMap()
 }
+
+data class PhotoStatusEvent(
+    val values: Map<String, Any>,
+) {
+    val requestId: String get() = stringValue(values, "requestId").orEmpty()
+    val status: String get() = stringValue(values, "status").orEmpty()
+    val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()
+    val resolvedConfig: Map<String, Any>? get() = stringMapValue(values["resolvedConfig"])
+    val errorCode: String? get() = stringValue(values, "errorCode")
+    val errorMessage: String? get() = stringValue(values, "errorMessage")
+}
