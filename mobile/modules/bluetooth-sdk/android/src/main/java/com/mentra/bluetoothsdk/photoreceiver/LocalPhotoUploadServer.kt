@@ -1,6 +1,7 @@
 package com.mentra.bluetoothsdk.photoreceiver
 
 import android.content.Context
+import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,6 +21,7 @@ import java.net.Socket
 import java.net.SocketException
 import java.nio.charset.StandardCharsets
 import java.util.Locale
+import org.json.JSONObject
 
 data class PhotoUpload(
     val requestId: String?,
@@ -89,33 +91,78 @@ class LocalPhotoUploadServer(
 
     private fun handleClient(socket: Socket) {
         socket.use { client ->
+            val requestStartMs = System.currentTimeMillis()
             client.soTimeout = 20_000
             val input = BufferedInputStream(client.getInputStream())
             val output = client.getOutputStream()
+            var request: HttpRequest? = null
+            var requestId: String? = null
+            var contentLength: Long? = null
+
+            traceWifiInput(
+                "photo_receiver_connection",
+                client,
+                requestStartMs,
+                mutableMapOf(
+                    "timestampMs" to requestStartMs,
+                ),
+            )
+
+            fun respond(status: Int, body: String) {
+                writeJson(output, status, body)
+                traceWifiOutput(
+                    "photo_receiver_response",
+                    client,
+                    requestStartMs,
+                    mutableMapOf(
+                        "method" to request?.method,
+                        "path" to request?.path,
+                        "requestId" to requestId,
+                        "contentLength" to contentLength,
+                        "statusCode" to status,
+                        "success" to (status in 200..299),
+                        "responseBytes" to body.toByteArray(StandardCharsets.UTF_8).size,
+                        "durationMs" to (System.currentTimeMillis() - requestStartMs),
+                    ),
+                )
+            }
+
             try {
                 val headerBytes = readHeaders(input)
                 val headerText = headerBytes.toString(StandardCharsets.ISO_8859_1)
-                val request = HttpRequest.parse(headerText)
+                request = HttpRequest.parse(headerText)
                 onLog("${request.method} ${request.path} from ${client.inetAddress.hostAddress}")
+                contentLength = request.headers["content-length"]?.toLongOrNull()
+                traceWifiInput(
+                    "photo_receiver_request",
+                    client,
+                    requestStartMs,
+                    mutableMapOf(
+                        "method" to request.method,
+                        "path" to request.path,
+                        "contentType" to request.headers["content-type"].orEmpty(),
+                        "contentLength" to contentLength,
+                        "userAgent" to request.headers["user-agent"].orEmpty(),
+                    ),
+                )
 
                 if (request.method == "GET" && (request.path == "/" || request.path == "/health")) {
-                    writeJson(output, 200, """{"ok":true,"service":"mentra-photo-upload-receiver"}""")
+                    respond(200, """{"ok":true,"service":"mentra-photo-upload-receiver"}""")
                     return
                 }
 
                 if (request.method != "POST" || request.path != "/upload") {
-                    writeJson(output, 404, """{"ok":false,"error":"not_found"}""")
+                    respond(404, """{"ok":false,"error":"not_found"}""")
                     return
                 }
 
                 val contentType = request.headers["content-type"].orEmpty()
-                val contentLength = request.headers["content-length"]?.toLongOrNull()
                 if (contentLength == null || contentLength <= 0) {
-                    writeJson(output, 411, """{"ok":false,"error":"content_length_required"}""")
+                    respond(411, """{"ok":false,"error":"content_length_required"}""")
                     return
                 }
                 if (contentLength > MAX_UPLOAD_BYTES) {
-                    writeJson(output, 413, """{"ok":false,"error":"upload_too_large"}""")
+                    respond(413, """{"ok":false,"error":"upload_too_large"}""")
                     return
                 }
                 if (request.headers["expect"]?.contains("100-continue", ignoreCase = true) == true) {
@@ -127,20 +174,36 @@ class LocalPhotoUploadServer(
                 val body = readExact(input, contentLength.toInt())
                 val boundary = multipartBoundary(contentType)
                 if (boundary == null) {
-                    writeJson(output, 400, """{"ok":false,"error":"multipart_boundary_required"}""")
+                    respond(400, """{"ok":false,"error":"multipart_boundary_required"}""")
                     return
                 }
                 val parsed = parseMultipart(body, boundary)
                 val photoBytes = parsed.files["photo"] ?: parsed.files.values.firstOrNull()
                 if (photoBytes == null) {
-                    writeJson(output, 400, """{"ok":false,"error":"photo_field_required"}""")
+                    respond(400, """{"ok":false,"error":"photo_field_required"}""")
                     return
                 }
 
-                val requestId = parsed.fields["requestId"] ?: parsed.fields["request_id"]
+                requestId = parsed.fields["requestId"] ?: parsed.fields["request_id"]
                 val file = File(uploadDir, "${safeFilePart(requestId ?: "photo-${System.currentTimeMillis()}")}.jpg")
                 file.writeBytes(photoBytes)
                 onLog("upload fields=${parsed.fields.keys.joinToString(",")} requestId=${requestId.orEmpty()} bytes=${photoBytes.size} saved=${file.absolutePath}")
+                traceWifiInput(
+                    "photo_receiver_upload_received",
+                    client,
+                    requestStartMs,
+                    mutableMapOf(
+                        "method" to request.method,
+                        "path" to request.path,
+                        "requestId" to requestId,
+                        "source" to parsed.fields["source"],
+                        "contentLength" to contentLength,
+                        "photoBytes" to photoBytes.size,
+                        "savedFileName" to file.name,
+                        "durationMs" to (System.currentTimeMillis() - requestStartMs),
+                    ),
+                )
+                respond(200, """{"ok":true,"requestId":"${jsonEscape(requestId.orEmpty())}","bytes":${photoBytes.size}}""")
                 onUpload(
                     PhotoUpload(
                         requestId = requestId,
@@ -149,10 +212,23 @@ class LocalPhotoUploadServer(
                         fields = parsed.fields,
                     ),
                 )
-                writeJson(output, 200, """{"ok":true,"requestId":"${jsonEscape(requestId.orEmpty())}","bytes":${photoBytes.size}}""")
             } catch (error: Throwable) {
                 onLog("request failed: ${error.message ?: error::class.java.simpleName}")
-                writeJson(output, 500, """{"ok":false,"error":"${jsonEscape(error.message ?: "server_error")}"}""")
+                traceWifiInput(
+                    "photo_receiver_request_error",
+                    client,
+                    requestStartMs,
+                    mutableMapOf(
+                        "method" to request?.method,
+                        "path" to request?.path,
+                        "requestId" to requestId,
+                        "contentLength" to contentLength,
+                        "durationMs" to (System.currentTimeMillis() - requestStartMs),
+                        "errorClass" to error::class.java.simpleName,
+                        "errorMessage" to (error.message ?: error::class.java.simpleName),
+                    ),
+                )
+                respond(500, """{"ok":false,"error":"${jsonEscape(error.message ?: "server_error")}"}""")
             }
         }
     }
@@ -288,6 +364,54 @@ class LocalPhotoUploadServer(
 
     private fun jsonEscape(value: String): String {
         return value.replace("\\", "\\\\").replace("\"", "\\\"")
+    }
+
+    private fun traceWifiInput(
+        type: String,
+        client: Socket,
+        startMs: Long,
+        values: MutableMap<String, Any?> = mutableMapOf(),
+    ) {
+        traceWifi("wifi_to_phone", "wifi_http_input", type, client, startMs, values)
+    }
+
+    private fun traceWifiOutput(
+        type: String,
+        client: Socket,
+        startMs: Long,
+        values: MutableMap<String, Any?> = mutableMapOf(),
+    ) {
+        traceWifi("phone_to_wifi", "wifi_http_output", type, client, startMs, values)
+    }
+
+    private fun traceWifi(
+        direction: String,
+        layer: String,
+        type: String,
+        client: Socket,
+        startMs: Long,
+        values: MutableMap<String, Any?>,
+    ) {
+        val payload = JSONObject()
+        putJson(payload, "type", type)
+        putJson(payload, "remoteHost", client.inetAddress?.hostAddress)
+        putJson(payload, "remotePort", client.port)
+        putJson(payload, "localHost", client.localAddress?.hostAddress)
+        putJson(payload, "localPort", client.localPort)
+        putJson(payload, "startMs", startMs)
+        values.forEach { (key, value) -> putJson(payload, key, value) }
+        try {
+            BleTraceLogger.logJson(direction, layer, payload, null)
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun putJson(payload: JSONObject, key: String, value: Any?) {
+        if (value == null) return
+        try {
+            payload.put(key, value)
+        } catch (_: Throwable) {
+        }
     }
 
     companion object {
