@@ -2,6 +2,9 @@ package com.mentra.asg_client.io.streaming.config;
 
 import org.json.JSONObject;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+
 /**
  * Configuration class for WebRTC / WHIP streaming parameters.
  */
@@ -21,6 +24,7 @@ public class WhipStreamConfig {
   private int videoHeight = DEFAULT_VIDEO_HEIGHT;
   private int videoFps = DEFAULT_VIDEO_FPS;
   private int videoBitrate = DEFAULT_VIDEO_BITRATE;
+  private volatile double statusVideoFps = Double.NaN;
 
   private boolean echoCancellation = DEFAULT_ECHO_CANCELLATION;
   private boolean noiseSuppression = DEFAULT_NOISE_SUPPRESSION;
@@ -68,6 +72,52 @@ public class WhipStreamConfig {
     return Math.max(min, Math.min(max, value));
   }
 
+  private static double clamp(double value, double min, double max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  private static Number oneDecimal(double value) {
+    return new OneDecimalNumber(BigDecimal.valueOf(value).setScale(1, RoundingMode.HALF_UP));
+  }
+
+  /**
+   * Android JSONObject strips ".0" from regular numeric values. This keeps fps as a JSON
+   * number while preserving the requested one-decimal wire representation.
+   */
+  private static final class OneDecimalNumber extends Number {
+    private final BigDecimal value;
+
+    OneDecimalNumber(BigDecimal value) {
+      this.value = value;
+    }
+
+    @Override
+    public int intValue() {
+      return value.intValue();
+    }
+
+    @Override
+    public long longValue() {
+      return value.longValue();
+    }
+
+    @Override
+    public float floatValue() {
+      return value.floatValue();
+    }
+
+    @Override
+    public double doubleValue() {
+      double doubleValue = value.doubleValue();
+      return doubleValue == (double) value.longValue() ? Math.nextUp(doubleValue) : doubleValue;
+    }
+
+    @Override
+    public String toString() {
+      return value.toPlainString();
+    }
+  }
+
   // Getters
   public int getVideoWidth() { return videoWidth; }
   public int getVideoHeight() { return videoHeight; }
@@ -93,6 +143,17 @@ public class WhipStreamConfig {
     return this;
   }
 
+  public WhipStreamConfig setStatusVideoFps(double fps) {
+    if (!Double.isNaN(fps) && !Double.isInfinite(fps)) {
+      this.statusVideoFps = clamp(fps, 1.0, 30.0);
+    }
+    return this;
+  }
+
+  private double getStatusVideoFps() {
+    return Double.isNaN(statusVideoFps) ? getVideoFps() : statusVideoFps;
+  }
+
   /** Returns the effective stream settings reported back through stream status events. */
   public JSONObject toStatusJson(String transport) {
     JSONObject resolvedConfig = new JSONObject();
@@ -102,7 +163,7 @@ public class WhipStreamConfig {
       video.put("width", getVideoWidth());
       video.put("height", getVideoHeight());
       video.put("bitrate", getVideoBitrate());
-      video.put("fps", getVideoFps());
+      video.put("fps", oneDecimal(getStatusVideoFps()));
       resolvedConfig.put("video", video);
     } catch (Exception ignored) {
       // JSONObject writes above are deterministic for primitive values.

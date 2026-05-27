@@ -2,10 +2,13 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
 import android.hardware.camera2.CameraAccessException;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraManager;
 import android.util.Log;
 
 import com.mentra.asg_client.io.streaming.config.RtmpStreamConfig;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
+import com.mentra.asg_client.io.streaming.services.WhipCameraCapturer;
 import com.mentra.asg_client.io.streaming.services.WhipCameraFormatSelector;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
@@ -195,7 +198,7 @@ public class StreamCommandHandler implements ICommandHandler {
                 }
                 case WHIP: {
                     WhipStreamConfig config = WhipStreamConfig.fromJson(videoJson, audioJson);
-                    if (!preflightCameraCaptureForWhip(config.getVideoWidth(), config.getVideoHeight())) {
+                    if (!preflightCameraCaptureForWhip(config)) {
                         return false;
                     }
                     applyEisForStreaming(config.getVideoWidth(), config.getVideoHeight());
@@ -289,19 +292,43 @@ public class StreamCommandHandler implements ICommandHandler {
     /**
      * WHIP: reject upscale-only requests. On validation failure, match legacy behavior and allow.
      */
-    private boolean preflightCameraCaptureForWhip(int width, int height) {
+    private boolean preflightCameraCaptureForWhip(WhipStreamConfig config) {
         try {
-            if (!WhipCameraFormatSelector.canSatisfyWithoutUpscale(context, width, height)) {
+            CameraManager cameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
+            if (cameraManager == null) {
+                Log.w(TAG, "Rejecting WHIP stream request because camera manager is unavailable");
+                restoreEisAfterStreaming();
+                streamingManager.sendStreamStatusResponse(false, ServiceConstants.STATUS_ERROR,
+                        "Could not access camera");
+                return false;
+            }
+
+            String cameraId = WhipCameraFormatSelector.selectBackCamera(cameraManager);
+            if (cameraId == null) {
+                Log.w(TAG, "Rejecting WHIP stream request because no camera is available");
+                restoreEisAfterStreaming();
+                streamingManager.sendStreamStatusResponse(false, ServiceConstants.STATUS_ERROR,
+                        "Could not access camera");
+                return false;
+            }
+
+            CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(cameraId);
+            if (!WhipCameraFormatSelector.canSatisfyWithoutUpscale(characteristics,
+                    config.getVideoWidth(), config.getVideoHeight())) {
                 Log.w(TAG, "Rejecting WHIP stream request that cannot be satisfied without upscaling: "
-                        + width + "x" + height);
+                        + config.getVideoWidth() + "x" + config.getVideoHeight());
                 restoreEisAfterStreaming();
                 streamingManager.sendStreamStatusResponse(false, ServiceConstants.STATUS_ERROR,
                         "Resolution not supported by camera");
                 return false;
             }
+
+            config.setStatusVideoFps(
+                    WhipCameraCapturer.resolveCameraFps(characteristics, config.getVideoFps()));
             return true;
         } catch (Exception e) {
             Log.w(TAG, "Unable to validate WHIP stream resolution; allowing request", e);
+            config.setStatusVideoFps(config.getVideoFps());
             return true;
         }
     }
