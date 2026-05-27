@@ -85,7 +85,6 @@ class MentraBluetoothSdk private constructor(
     fun requestPhoto(request: MentraPhotoRequest)
     fun queryGalleryStatus()
     fun startStream(request: MentraStreamRequest)
-    fun keepStreamAlive(request: MentraStreamKeepAliveRequest)
     fun stopStream()
     fun startVideoRecording(request: MentraVideoRecordingRequest)
     fun stopVideoRecording(requestId: String)

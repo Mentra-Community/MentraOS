@@ -568,7 +568,6 @@ export type BluetoothSdkEventMap = {
   mic_pcm: MicPcmEvent
   mic_lc3: MicLc3Event
   stream_status: StreamStatusEvent
-  keep_alive_ack: KeepAliveAckEvent
   extraction_progress: ExtractionProgressEvent
 }
 
@@ -630,7 +629,6 @@ export interface BluetoothSdkPublicModule {
 
   startStream(params: StreamStartRequest): Promise<void>
   stopStream(): Promise<void>
-  keepStreamAlive(params: StreamKeepAliveRequest): Promise<void>
 
   setMicState(
     enabled: boolean,

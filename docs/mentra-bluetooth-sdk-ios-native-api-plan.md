@@ -72,7 +72,6 @@ public final class MentraBluetoothSDK {
     public func requestPhoto(_ request: MentraPhotoRequest)
     public func queryGalleryStatus()
     public func startStream(_ request: MentraStreamRequest)
-    public func keepStreamAlive(_ request: MentraStreamKeepAliveRequest)
     public func stopStream()
     public func startVideoRecording(_ request: MentraVideoRecordingRequest)
     public func stopVideoRecording(requestId: String)
