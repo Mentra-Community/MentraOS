@@ -3860,6 +3860,8 @@
 
     "@mentra/v3-smoke-test/react-dom": ["react-dom@19.2.4", "", { "dependencies": { "scheduler": "^0.27.0" }, "peerDependencies": { "react": "^19.2.4" } }, "sha512-AXJdLo8kgMbimY95O2aKQqsz2iWi9jMgKJhRBAxECE4IFxfcazB2LmzloIoibJI3C12IlY20+KFaLv+71bUJeQ=="],
 
+    "@mentra/v3-stream-example/@mentra/sdk": ["@mentra/sdk@file:packages/sdk", { "dependencies": { "@logtail/pino": "^0.5.4", "@mentra/types": "^1.0.0-beta.1", "axios": "^1.8.1", "chalk": "^5.6.2", "dotenv": "^16.4.0", "hono": "^4.11.3", "jimp": "^1.6.0", "jsonwebtoken": "^8.5.1", "jsrsasign": "^11.1.0", "lamejs": "^1.2.1", "pino": "^9.6.0", "strip-ansi": "^7.1.2", "ws": "^8.18.2" }, "devDependencies": { "@types/babel__core": "^7.20.5", "@types/jsonwebtoken": "^9.0.2", "@types/jsrsasign": "^10.5.15", "@types/node": "^20.0.0", "@types/ws": "^8.5.12", "typescript": "^5.0.0" }, "optionalDependencies": { "pino-pretty": "^13.0.0" } }],
+
     "@mentra/v3-stream-example/@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 
     "@mentra/v3-stream-example/@types/react": ["@types/react@19.2.14", "", { "dependencies": { "csstype": "^3.2.2" } }, "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w=="],
@@ -4380,6 +4382,14 @@
 
     "@mentra/v3-smoke-test/react-dom/scheduler": ["scheduler@0.27.0", "", {}, "sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q=="],
 
+    "@mentra/v3-stream-example/@mentra/sdk/@mentra/types": ["@mentra/types@workspace:packages/types"],
+
+    "@mentra/v3-stream-example/@mentra/sdk/hono": ["hono@4.12.12", "", {}, "sha512-p1JfQMKaceuCbpJKAPKVqyqviZdS0eUxH9v82oWo1kb9xjQ5wA6iP3FNVAPDFlz5/p7d45lO+BpSk1tuSZMF4Q=="],
+
+    "@mentra/v3-stream-example/@mentra/sdk/jsonwebtoken": ["jsonwebtoken@8.5.1", "", { "dependencies": { "jws": "^3.2.2", "lodash.includes": "^4.3.0", "lodash.isboolean": "^3.0.3", "lodash.isinteger": "^4.0.4", "lodash.isnumber": "^3.0.3", "lodash.isplainobject": "^4.0.6", "lodash.isstring": "^4.0.1", "lodash.once": "^4.0.0", "ms": "^2.1.1", "semver": "^5.6.0" } }, "sha512-XjwVfRS6jTMsqYs0EsuJ4LGxXV14zQybNd4L2r0UvbVnSF9Af8x7p5MzbJ90Ioz/9TI41/hTCvznF/loiSzn8w=="],
+
+    "@mentra/v3-stream-example/@mentra/sdk/typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
+
     "@mentra/v3-stream-example/@types/bun/bun-types": ["bun-types@1.3.14", "", { "dependencies": { "@types/node": "*" } }, "sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ=="],
 
     "@mentra/v3-stream-example/react-dom/scheduler": ["scheduler@0.27.0", "", {}, "sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q=="],
@@ -4714,6 +4724,10 @@
 
     "@mentra/sdk/jsonwebtoken/jws/jwa": ["jwa@1.4.2", "", { "dependencies": { "buffer-equal-constant-time": "^1.0.1", "ecdsa-sig-formatter": "1.0.11", "safe-buffer": "^5.0.1" } }, "sha512-eeH5JO+21J78qMvTIDdBXidBd6nG2kZjg5Ohz/1fpa28Z4CcsWUzJ1ZZyFq/3z3N17aZy+ZuBoHljASbL1WfOw=="],
 
+    "@mentra/v3-stream-example/@mentra/sdk/jsonwebtoken/jws": ["jws@3.2.3", "", { "dependencies": { "jwa": "^1.4.2", "safe-buffer": "^5.0.1" } }, "sha512-byiJ0FLRdLdSVSReO/U4E7RoEyOCKnEnEPMjq3HxWtvzLsV08/i5RQKsFVNkCldrCaPr2vDNAOMsfs8T/Hze7g=="],
+
+    "@mentra/v3-stream-example/@mentra/sdk/jsonwebtoken/semver": ["semver@5.7.2", "", { "bin": { "semver": "bin/semver" } }, "sha512-cBznnQ9KjJqU67B52RMC65CMarK2600WFnbkcaiwWq3xy/5haFJlshgnpjovMVJ+Hff49d8GEn0b87C5pDQ10g=="],
+
     "@mentra/v3-stream-example/@types/bun/bun-types/@types/node": ["@types/node@22.19.17", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-wGdMcf+vPYM6jikpS/qhg6WiqSV/OhG+jeeHT/KlVqxYfD40iYJf9/AE1uQxVWFvU7MipKRkRv8NSHiCGgPr8Q=="],
 
     "@modelcontextprotocol/sdk/express/accepts/negotiator": ["negotiator@1.0.0", "", {}, "sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg=="],
@@ -4823,6 +4837,8 @@
     "@mentra/appstore-webview/@mentra/sdk/jsonwebtoken/jws/jwa": ["jwa@1.4.2", "", { "dependencies": { "buffer-equal-constant-time": "^1.0.1", "ecdsa-sig-formatter": "1.0.11", "safe-buffer": "^5.0.1" } }, "sha512-eeH5JO+21J78qMvTIDdBXidBd6nG2kZjg5Ohz/1fpa28Z4CcsWUzJ1ZZyFq/3z3N17aZy+ZuBoHljASbL1WfOw=="],
 
     "@mentra/debugger/eslint/chalk/supports-color/has-flag": ["has-flag@4.0.0", "", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
+
+    "@mentra/v3-stream-example/@mentra/sdk/jsonwebtoken/jws/jwa": ["jwa@1.4.2", "", { "dependencies": { "buffer-equal-constant-time": "^1.0.1", "ecdsa-sig-formatter": "1.0.11", "safe-buffer": "^5.0.1" } }, "sha512-eeH5JO+21J78qMvTIDdBXidBd6nG2kZjg5Ohz/1fpa28Z4CcsWUzJ1ZZyFq/3z3N17aZy+ZuBoHljASbL1WfOw=="],
 
     "@typescript-eslint/eslint-plugin/@typescript-eslint/utils/@typescript-eslint/typescript-estree/@typescript-eslint/visitor-keys/eslint-visitor-keys": ["eslint-visitor-keys@3.4.3", "", {}, "sha512-wpc+LXeiyiisxPlEkUzU6svyS1frIO3Mgxj1fdy7Pm8Ygzguax2N3Fa/D/ag1WqbOprdI+uY6wMUl8/a2G+iag=="],
 
