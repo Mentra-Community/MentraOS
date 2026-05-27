@@ -5,6 +5,7 @@ import {useNavStore} from "@/ui/store/navStore"
 import {bearingDeg, detectCrossings, haversineMeters, rdpSmooth} from "@/ui/lib/geometry"
 import type {LatLng} from "@/shared/types"
 import {isDev} from "@/ui/lib/env"
+import {getGoogleMaps} from "@/ui/lib/googleMaps"
 
 export function NavMap({
   me,
@@ -31,10 +32,29 @@ export function NavMap({
    */
   onLongPress?: (coord: LatLng) => void
 }) {
-  const ready = useNavStore((s) => s.mapsReady)
+  // Map readiness is local — driven directly by the Google Maps script
+  // load. Decoupled from `useNavStore` so a stalled background handshake
+  // (no CONNECT_ACK, no snapshot push) can't keep the map grey.
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    let alive = true
+    getGoogleMaps()
+      .whenReady()
+      .then(
+        () => {
+          if (alive) setReady(true)
+        },
+        () => {
+          if (alive) setReady(false)
+        },
+      )
+    return () => {
+      alive = false
+    }
+  }, [])
   const compassHeading = useNavStore((s) => s.heading)
-  // mapsError is no longer tracked separately — mapsReady=false implies
-  // either still-loading or failed; the loading spinner covers both.
+  // mapsError is no longer tracked separately — ready=false covers
+  // both "still-loading" and "failed"; the loading overlay handles both.
   const error: string | null = null
 
   // Right-rail buttons are pinned vertically near the middle of the

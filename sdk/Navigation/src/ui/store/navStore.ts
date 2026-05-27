@@ -24,7 +24,6 @@ type NavStore = NavSnapshot & {
 const initialSnapshot: NavSnapshot = {
   coords: null,
   heading: null,
-  mapsReady: false,
   trip: {
     status: "idle",
     running: false,
@@ -53,11 +52,6 @@ export const useNavStore = create<NavStore>((set) => ({
   appendLog: (entry) => set((s) => ({log: [entry, ...s.log].slice(0, 100)})),
   clearLog: () => set({log: []}),
 }))
-
-/** Mark Google Maps as ready/failed from the UI side (background-agnostic). */
-export function setMapsReady(ready: boolean): void {
-  useNavStore.setState({mapsReady: ready})
-}
 
 let installed = false
 export function installChannelSubscribers(): void {

@@ -39,7 +39,6 @@ export class NavigationController {
   // Canonical state (mirrored to UI).
   private coords: Coords | null = null
   private heading: number | null = null
-  private mapsReady = false
   private trip: TripState = {
     status: "idle",
     running: false,
@@ -433,7 +432,6 @@ export class NavigationController {
     return {
       coords: this.coords,
       heading: this.heading,
-      mapsReady: this.mapsReady,
       trip: this.trip,
       activePivot: this.activePivot,
       upcomingPivot: this.upcomingPivot,

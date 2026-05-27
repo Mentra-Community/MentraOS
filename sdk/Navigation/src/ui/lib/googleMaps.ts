@@ -7,8 +7,6 @@
  * `define` in build.ts; dev fetches `/api/config` from the local server.
  */
 
-import {setMapsReady} from "../store/navStore"
-
 declare global {
   interface Window {
     google?: any
@@ -28,10 +26,9 @@ export class GoogleMapsManager {
       },
       (err: unknown) => {
         this._error = err instanceof Error ? err.message : "load failed"
-        // Re-throw so `whenReady()` rejects. Callers wire it through
-        // `.then(...).catch(...)` to set `mapsReady=false`; if we
-        // swallow here, the store flips to `mapsReady=true` even on
-        // failure and NavMap will crash trying to read window.google.
+        // Re-throw so `whenReady()` rejects. NavMap's local hook treats
+        // rejection as "stay grey"; swallowing here would make `_ready`
+        // flip true and crash on the first window.google access.
         throw err
       },
     )
@@ -74,18 +71,24 @@ export class GoogleMapsManager {
     // undefined in the WebView, so fall through to /api/config.
     try {
       const fromEnv = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY
-      if (fromEnv) return fromEnv
+      if (fromEnv) {
+        console.log("[NAV-MINI] map key from build-time env")
+        return fromEnv
+      }
     } catch {
       // process is not defined in the dev WebView — fall through.
     }
     try {
+      console.log("[NAV-MINI] map key: fetching /api/config from origin", window.location.origin)
       const res = await fetch("/api/config")
       if (res.ok) {
         const {googleMapsApiKey} = (await res.json()) as {googleMapsApiKey?: string}
+        if (!googleMapsApiKey) console.warn("[NAV-MINI] /api/config returned no googleMapsApiKey")
         return googleMapsApiKey ?? ""
       }
-    } catch {
-      // /api/config not reachable — give up.
+      console.warn("[NAV-MINI] /api/config returned status", res.status)
+    } catch (err) {
+      console.warn("[NAV-MINI] /api/config fetch failed:", err)
     }
     return ""
   }
@@ -116,13 +119,9 @@ export class GoogleMapsManager {
 /** Singleton — one Maps load per WebView mount. */
 let singleton: GoogleMapsManager | null = null
 
-/** Lazy initialiser. Pushes `mapsReady` into the store once the script loads. */
+/** Lazy initialiser. Callers await `whenReady()` directly. */
 export function getGoogleMaps(): GoogleMapsManager {
   if (singleton) return singleton
   singleton = new GoogleMapsManager()
-  singleton
-    .whenReady()
-    .then(() => setMapsReady(true))
-    .catch(() => setMapsReady(false))
   return singleton
 }

@@ -59,7 +59,6 @@ export type DevSettings = {
 export type NavSnapshot = {
   coords: Coords | null
   heading: number | null
-  mapsReady: boolean
   trip: TripState
   activePivot: Pivot | null
   upcomingPivot: Pivot | null
