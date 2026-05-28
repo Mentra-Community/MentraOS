@@ -831,12 +831,17 @@ public class K900CommandHandler {
             .getAsgSettings()
             .isSaveInGalleryMode();
 
-        // Check if glasses are connected to phone
-        boolean isConnected = serviceManager.isConnected();
+        boolean isBluetoothConnected =
+                serviceManager.getBluetoothManager() != null
+                        && serviceManager.getBluetoothManager().isConnected();
+        boolean isHeartbeatConnected = serviceManager.isConnected();
+        boolean isConnected = isBluetoothConnected || isHeartbeatConnected;
 
         // LOG CONNECTION STATE FOR DEBUGGING
         Log.i(TAG, "📸 Photo capture decision - Gallery Mode: " + (isSaveInGalleryMode ? "ACTIVE" : "INACTIVE") +
-                   ", Connection State: " + (isConnected ? "CONNECTED" : "DISCONNECTED"));
+                   ", Connection State: " + (isConnected ? "CONNECTED" : "DISCONNECTED") +
+                   ", BLE Transport: " + (isBluetoothConnected ? "CONNECTED" : "DISCONNECTED") +
+                   ", Heartbeat: " + (isHeartbeatConnected ? "CONNECTED" : "DISCONNECTED"));
 
         // Skip capture only if: camera app NOT running AND phone IS connected
         if (!isSaveInGalleryMode && isConnected) {
