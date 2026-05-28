@@ -3,16 +3,13 @@ package com.mentra.asg_client.service.core.handlers;
 import static org.mockito.Mockito.verify;
 
 import android.content.Context;
-
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
-
+import java.lang.reflect.Method;
 import org.junit.Test;
 import org.mockito.Mockito;
-
-import java.lang.reflect.Method;
 
 public class PhotoCommandHandlerTest {
 

@@ -2,9 +2,7 @@ package com.mentra.asg_client.service.legacy.managers;
 
 import android.content.Context;
 import android.util.Log;
-
 import androidx.annotation.NonNull;
-
 import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.io.bluetooth.core.BluetoothManagerFactory;
 import com.mentra.asg_client.io.bluetooth.core.ComManager;
@@ -24,7 +22,6 @@ import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.settings.AsgSettings;
-
 import java.util.Objects;
 import java.util.Set;
 
@@ -351,7 +348,7 @@ public class AsgClientServiceManager {
                                         Log.d(
                                                 TAG,
                                                 "🔧 Attempting to get CommandProcessor for BES"
-                                                    + " system version request");
+                                                        + " system version request");
                                         com.mentra.asg_client.service.core.processors
                                                         .CommandProcessor
                                                 commandProcessor = service.getCommandProcessor();
@@ -359,14 +356,14 @@ public class AsgClientServiceManager {
                                             Log.d(
                                                     TAG,
                                                     "🔧 Requesting BES system version via"
-                                                        + " CommandProcessor");
+                                                            + " CommandProcessor");
                                             commandProcessor.requestSystemVersion();
                                         } else {
                                             Log.w(
                                                     TAG,
                                                     "⚠️ CommandProcessor not available yet - BES"
-                                                        + " version will be requested when"
-                                                        + " available");
+                                                            + " version will be requested when"
+                                                            + " available");
                                         }
                                     } catch (Exception e) {
                                         Log.w(TAG, "⚠️ Could not request BES system version", e);

@@ -2,16 +2,13 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
 import android.util.Log;
-
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
-
-import org.json.JSONObject;
-
 import java.util.Set;
+import org.json.JSONObject;
 
 /**
  * Handler for photo-related commands. Follows Single Responsibility Principle by handling only

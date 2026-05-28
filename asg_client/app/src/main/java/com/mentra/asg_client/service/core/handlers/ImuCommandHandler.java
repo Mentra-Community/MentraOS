@@ -1,19 +1,16 @@
 package com.mentra.asg_client.service.core.handlers;
 
 import android.util.Log;
-
 import com.mentra.asg_client.sensors.ImuManager;
 import com.mentra.asg_client.service.core.processors.ResponseSender;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
-
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
  * Handles IMU-related commands from the phone. Processes requests for single readings, streaming,
