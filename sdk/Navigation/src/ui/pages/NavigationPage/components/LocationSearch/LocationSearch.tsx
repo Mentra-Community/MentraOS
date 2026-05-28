@@ -231,7 +231,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
   }
 
   return (
-    <div className="relative mt-4 mx-3 flex flex-col mr-14">
+    <div className="relative mt-4 mx-3 flex flex-col mr-26">
       <div className="relative flex flex-col">
         {/* Search pill */}
         <div className={`relative z-90 flex items-center h-[52px] rounded-[20px] px-3.5 gap-2.5 bg-[#FFFFFFA6] border border-[#FFFFFF99] [backdrop-filter:blur(30px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#0000001A_0px_6px_22px] ${safeHeadingSearchPill}`}>
