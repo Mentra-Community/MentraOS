@@ -18,7 +18,7 @@ export function LocationInput({inputRef, query, loading, onChange, onFocus, onBl
         <div className="tracking-[0.16em] uppercase font-sans font-semibold text-[#0000008C] text-[11px]/3.5">Location</div>
       </div>
       <div
-        className="flex items-center rounded-[18px] py-3.5 px-4 gap-3 [backdrop-filter:blur(30px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#00000014_0px_4px_16px] bg-[#FFFFFFA6] border border-solid border-[#FFFFFF99]"
+        className="flex items-center rounded-[18px] py-3.5 px-4 gap-3 [box-shadow:#00000014_0px_6px_10px_-4px,#0000000A_0px_-3px_6px_-3px] bg-white"
         onClick={() => inputRef.current?.focus()}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
           <path d="M12 2C7.58 2 4 5.58 4 10c0 6 8 12 8 12s8-6 8-12C20 5.58 16.42 2 12 2z" stroke="#1A1A1A" strokeWidth="2" fill="none" />

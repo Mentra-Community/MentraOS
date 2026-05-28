@@ -6,6 +6,8 @@ import "@/shared/channels"
 import type {Channels} from "@/shared/channels"
 import type {PlaceDetails, PlaceSuggestion} from "@/shared/types"
 import {useNavStore} from "@/ui/store/navStore"
+import {registerBackInterceptor} from "@/ui/router"
+import {reverseGeocode} from "@/ui/lib/reverseGeocode"
 import {LocationInput} from "./components/LocationInput/LocationInput"
 import {SuggestionsList} from "./components/SuggestionsList/SuggestionsList"
 import { safeHeadingAddPlaces } from "@/ui/components/SafeHeading/SafeHeading"
@@ -38,6 +40,140 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
   const [loading, setLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
+  // ── Two-step back: dismiss search first, then close the page ────
+  // While the input is focused OR the suggestions overlay is actually
+  // rendered (results in flight), OS back press should blur + collapse
+  // the overlay; only a second back (when search isn't active)
+  // propagates to the router and pops this page. We push a history
+  // entry while search is active and intercept its popstate to close
+  // the search instead of letting the router pop the route. Mirrors
+  // LocationSearch on NavigationPage.
+  //
+  // The `suggestions.length > 0` check matches the SuggestionsList
+  // render condition (`open && suggestions.length > 0`) — without it,
+  // a stray blur (e.g. tap on the page background) would silently
+  // drop the history entry 150ms before the user could press back, so
+  // back would pop the page even though suggestions were still showing.
+  const searchActive = focused || (searchOpen && suggestions.length > 0)
+  const searchEntryPushedRef = useRef(false)
+  console.log("[AddPlace] render", {
+    focused,
+    searchOpen,
+    suggestionsLen: suggestions.length,
+    queryLen: query.length,
+    searchActive,
+    entryPushed: searchEntryPushedRef.current,
+  })
+  function closeSearch() {
+    console.log("[AddPlace] closeSearch() called", {
+      focused,
+      searchOpen,
+      suggestionsLen: suggestions.length,
+    })
+    inputRef.current?.blur()
+    setFocused(false)
+    setSearchOpen(false)
+    setSuggestions([])
+    popOurEntry()
+  }
+  // Track the latest state values inside the interceptor without
+  // re-registering it on every keystroke / focus change.
+  const queryRef = useRef(query)
+  queryRef.current = query
+  const focusedRef = useRef(focused)
+  focusedRef.current = focused
+  const searchOpenRef = useRef(searchOpen)
+  searchOpenRef.current = searchOpen
+
+  // Rising edge only: push a history entry the first time searchActive
+  // becomes true. We deliberately do NOT pop on the falling edge — any
+  // transient false (e.g. input briefly loses focus during a state
+  // update on Android WebView) would otherwise call history.back() and
+  // bubble up to pop the page. Programmatic close paths (suggestion
+  // pick, the back interceptor's empty-query branch) call
+  // popOurEntry() explicitly when they actually mean to clean up.
+  useEffect(() => {
+    console.log("[AddPlace] searchActive effect", {
+      searchActive,
+      entryPushed: searchEntryPushedRef.current,
+    })
+    if (searchActive && !searchEntryPushedRef.current) {
+      try {
+        history.pushState({searchDrawer: true}, "")
+        searchEntryPushedRef.current = true
+        console.log("[AddPlace] pushState(searchDrawer) — entry pushed")
+      } catch (err) {
+        console.warn("[AddPlace] pushState failed:", err)
+      }
+    }
+  }, [searchActive])
+
+  // Explicit cleanup helper for paths that genuinely close search —
+  // suggestion pick, etc. Drains our pushed history entry. Used by
+  // `pick(...)` below via `closeSearch()`.
+  function popOurEntry() {
+    if (!searchEntryPushedRef.current) return
+    searchEntryPushedRef.current = false
+    console.log("[AddPlace] popOurEntry — history.back()")
+    try {
+      history.back()
+    } catch (err) {
+      console.warn("[AddPlace] history.back() failed:", err)
+    }
+  }
+
+  // Register with the router's interceptor registry instead of adding
+  // our own window popstate listener. This avoids the popstate ordering
+  // race: events dispatched on window don't honor capture/bubble phase
+  // when both listeners are also on window, so listeners fire in
+  // registration order — and the router (mounted first) always won,
+  // popping the route before we could set the suppress flag.
+  useEffect(() => {
+    console.log("[AddPlace] back interceptor registered")
+    const unregister = registerBackInterceptor(() => {
+      console.log("[AddPlace] interceptor called", {
+        entryPushed: searchEntryPushedRef.current,
+        currentQuery: queryRef.current,
+        focused: focusedRef.current,
+        searchOpen: searchOpenRef.current,
+      })
+      if (!searchEntryPushedRef.current) {
+        console.log("[AddPlace] interceptor — no entry pushed, letting router pop")
+        return false
+      }
+      searchEntryPushedRef.current = false
+      // Case 1: there's a query to clear. Clear it and stay in search.
+      if (queryRef.current.trim().length > 0) {
+        console.log("[AddPlace] interceptor — query non-empty, clearing query + re-pushing entry")
+        setQuery("")
+        try {
+          history.pushState({searchDrawer: true}, "")
+          searchEntryPushedRef.current = true
+        } catch (err) {
+          console.warn("[AddPlace] re-pushState failed:", err)
+        }
+        return true
+      }
+      // Case 2: search has something visible to dismiss (focused input
+      // or open suggestions panel). Close it and consume the back.
+      if (focusedRef.current || searchOpenRef.current) {
+        console.log("[AddPlace] interceptor — empty query, dismissing focus/suggestions")
+        closeSearch()
+        return true
+      }
+      // Case 3: there's nothing meaningful to dismiss (the user
+      // already blurred the input via keyboard-hide, and we still had
+      // a stale history entry). Let the back propagate to the router
+      // so the page exits — saves the user a redundant tap.
+      console.log("[AddPlace] interceptor — nothing to dismiss, letting router pop")
+      return false
+    })
+    return () => {
+      console.log("[AddPlace] back interceptor unregistered")
+      unregister()
+    }
+  }, [])
+
   useEffect(() => {
     if (selectedPlace || !focused) return
     const trimmed = query.trim()
@@ -68,6 +204,7 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
     setSearchOpen(false)
     setLoading(true)
     inputRef.current?.blur()
+    popOurEntry()
     try {
       const place = await details({placeId: s.placeId})
       setSelectedPlace(place)
@@ -79,15 +216,35 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
 
   function useCurrentLocation() {
     if (!coords) return
-    const place: PlaceDetails = {
-      placeId: `current:${coords.lat},${coords.lng}`,
+    const lat = coords.lat
+    const lng = coords.lng
+    const placeId = `current:${lat},${lng}`
+    // Optimistic: select immediately with a coords placeholder so the
+    // field fills without waiting on the network. Then reverse-geocode
+    // and upgrade to the real street address.
+    const initial: PlaceDetails = {
+      placeId,
       name: "Current location",
-      address: `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`,
-      lat: coords.lat,
-      lng: coords.lng,
+      address: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+      lat,
+      lng,
+      isGeocoding: true,
     }
-    setSelectedPlace(place)
-    setQuery(place.name)
+    setSelectedPlace(initial)
+    setQuery(initial.name)
+    void reverseGeocode(lat, lng).then((formatted) => {
+      // Bail if the user picked something else in the meantime.
+      setSelectedPlace((prev) => {
+        if (!prev || prev.placeId !== placeId) return prev
+        if (!formatted) return {...prev, isGeocoding: false}
+        const shortName = formatted.split(",")[0]?.trim() || formatted
+        return {...prev, name: shortName, address: formatted, isGeocoding: false}
+      })
+      if (formatted) {
+        const shortName = formatted.split(",")[0]?.trim() || formatted
+        setQuery((q) => (q === "Current location" ? shortName : q))
+      }
+    })
   }
 
   return (
@@ -106,10 +263,6 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
       animate={{x: 0}}
       transition={{type: "spring", stiffness: 300, damping: 34, mass: 0.85}}
       className="[font-synthesis:none] fixed inset-0 z-50 flex flex-col bg-white antialiased overflow-hidden">
-
-      {/* Background gradients */}
-      <div className="pointer-events-none absolute -top-25 -right-25 w-90 h-90 rounded-full" style={{backgroundImage: "radial-gradient(circle farthest-corner at 50% 50% in oklab, oklab(0% 0 0 / 6%) 0%, oklab(0% 0 0 / 0%) 70%)"}} />
-      <div className="pointer-events-none absolute -bottom-37.5 -left-25 w-100 h-100 rounded-full" style={{backgroundImage: "radial-gradient(circle farthest-corner at 50% 50% in oklab, oklab(73% -0.164 0.105 / 6%) 0%, oklab(73% -0.164 0.105 / 0%) 70%)"}} />
 
       {/* Header */}
       <div className={`flex items-center gap-3 px-4 ${safeHeadingAddPlaces} pb-4`}>

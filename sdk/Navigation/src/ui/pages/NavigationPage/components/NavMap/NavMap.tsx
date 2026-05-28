@@ -1,11 +1,12 @@
 import {useEffect, useRef, useState} from "react"
-import {motion} from "motion/react"
+import {motion, useMotionValue, useTransform} from "motion/react"
 
 import {useNavStore} from "@/ui/store/navStore"
 import {bearingDeg, detectCrossings, haversineMeters, rdpSmooth} from "@/ui/lib/geometry"
 import type {LatLng} from "@/shared/types"
 import {isDev} from "@/ui/lib/env"
 import {getGoogleMaps} from "@/ui/lib/googleMaps"
+import {useDrawerOffset} from "@/ui/components/Drawer/DrawerOffsetContext"
 
 export function NavMap({
   me,
@@ -13,6 +14,7 @@ export function NavMap({
   routePoints,
   savedPlaces = [],
   autoFollow = true,
+  hideControls = false,
   onLongPress,
 }: {
   me: LatLng | null
@@ -24,6 +26,9 @@ export function NavMap({
    *  a trip is running so the route stays uncluttered. */
   savedPlaces?: Array<{lat: number; lng: number; placeId: string; type?: "home" | "work"; savedName?: string}>
   autoFollow?: boolean
+  /** Hide the floating zoom/recenter rail — e.g. while a full-screen
+   *  search overlay is covering the map. */
+  hideControls?: boolean
   /**
    * Fires when the user holds a single finger on the map for ~2s
    * without panning. Receives the lat/lng under the pressed point.
@@ -36,6 +41,16 @@ export function NavMap({
   // load. Decoupled from `useNavStore` so a stalled background handshake
   // (no CONNECT_ACK, no snapshot push) can't keep the map grey.
   const [ready, setReady] = useState(false)
+
+  // Anchor the floating right-rail (zoom / recenter buttons) just
+  // above whichever drawer is currently mounted. `useDrawerOffset()`
+  // publishes the drawer's visible height as a MotionValue, so we
+  // can bind the rail's `bottom` directly without re-rendering each
+  // drag frame. The 12px adds a small breathing gap between the rail
+  // and the drawer's top edge.
+  const drawerOffset = useDrawerOffset()
+  const fallbackZero = useMotionValue(0)
+  const railBottom = useTransform(drawerOffset ?? fallbackZero, (h: number) => h + 12)
   useEffect(() => {
     let alive = true
     getGoogleMaps()
@@ -624,13 +639,15 @@ export function NavMap({
 
 
 
-      {ready ? (
-        <div
-          // Vertical center on the map. Drawer is z-40 and overlays the
-          // rail when expanded; we sit at z-30 so the drawer naturally
-          // hides us when it covers this region rather than chasing it.
-          className="absolute right-3 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-2">
-          
+      {ready && !hideControls ? (
+        <motion.div
+          // Anchored to the drawer's top edge via `bottom={railBottom}`
+          // (a MotionValue that tracks drawer height + 12px gap). z-50
+          // keeps the rail above every drawer (drawers are z-40) so
+          // the buttons stay tappable no matter which drawer is open.
+          style={{bottom: railBottom}}
+          className="absolute right-3 z-50 flex flex-col gap-2">
+
 
           <button
             type="button"
@@ -676,7 +693,7 @@ export function NavMap({
               <path d="M12 1V4M12 20V23M1 12H4M20 12H23" stroke="#000000D9" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </button>
-        </div>
+        </motion.div>
       ) : null}
     </div>
   )

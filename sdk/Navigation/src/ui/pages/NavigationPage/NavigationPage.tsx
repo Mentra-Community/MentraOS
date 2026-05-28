@@ -7,6 +7,7 @@ import type {Channels} from "@/shared/channels"
 import type {LatLng, LogEntry, NavStatus, PlaceDetails, SavedPlace} from "@/shared/types"
 import {useRouter} from "@/ui/router"
 import {useNavStore} from "@/ui/store/navStore"
+import {reverseGeocode} from "@/ui/lib/reverseGeocode"
 import {DrawerOffsetProvider} from "@/ui/components/Drawer/DrawerOffsetContext"
 import {FloatingDevPanel} from "@/ui/components/FloatingDevPanel/FloatingDevPanel"
 import {isDev} from "@/ui/lib/env"
@@ -214,8 +215,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
       placeId: pinId,
       lat: coord.lat,
       lng: coord.lng,
-      name: coordStr,
-      address: "Dropped pin",
+      name: "Dropped pin",
+      address: coordStr,
       // Flag the pin as awaiting geocoding so the preview drawer
       // renders a skeleton instead of the placeholder strings — avoids
       // the 1-2s flash of bare lat/lng coords before the real address
@@ -224,40 +225,28 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     }
     append(`dropped pin @ ${coordStr}`)
     setDestination(pin)
-    // Reverse-geocode in the background. Upgrade the pin's name to the
-    // formatted address when it lands; demote the coords to the
-    // subtitle (address) so the preview card reads like
-    //   100 Van Ness Ave
-    //   37.795600, -122.393300
-    // If geocoding fails or returns nothing, fall back to coord-as-name.
-    // Either way we clear `isGeocoding` so the skeleton stops showing.
+    // Reverse-geocode in the background. When it lands, populate the
+    // pin with the SAME field convention as a searched place — `name`
+    // is a short label (the street line), `address` is the full
+    // formatted address — so the preview drawer's grouped-address +
+    // copy rendering works uniformly for both. If geocoding fails,
+    // fall back to coords-as-name. Either way we clear `isGeocoding`
+    // so the skeleton stops showing.
     const finalize = (next: Partial<PlaceDetails>) => {
       // Only apply the upgrade if the same pin is still selected —
       // user may have dropped another one in the meantime.
       setDestination((prev) => (prev && prev.placeId === pinId ? {...prev, ...next, isGeocoding: false} : prev))
     }
-    const g = (window as unknown as {google?: {maps?: {Geocoder?: new () => GeocoderLike}}}).google
-    if (g?.maps?.Geocoder) {
-      try {
-        const geocoder = new g.maps.Geocoder()
-        geocoder.geocode(
-          {location: {lat: coord.lat, lng: coord.lng}},
-          (results: GeocoderResultLike[] | null, statusStr: string) => {
-            const formatted = statusStr === "OK" && results?.[0]?.formatted_address
-            if (formatted) {
-              finalize({name: formatted, address: coordStr})
-            } else {
-              finalize({})
-            }
-          },
-        )
-      } catch (err) {
-        console.warn("[NAV-MINI] reverse-geocode failed:", err)
+    void reverseGeocode(coord.lat, coord.lng).then((formatted) => {
+      if (formatted) {
+        // Use the first comma-segment (street) as the short name, the
+        // full string as the address.
+        const shortName = formatted.split(",")[0]?.trim() || formatted
+        finalize({name: shortName, address: formatted})
+      } else {
         finalize({})
       }
-    } else {
-      finalize({})
-    }
+    })
   }
 
   const me = coords ? {lat: coords.lat, lng: coords.lng} : null
@@ -274,6 +263,10 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           // while running so they don't compete with the active route.
           savedPlaces={running ? [] : savedPlaces}
           autoFollow={running}
+          // Hide the floating zoom/recenter rail while the full-screen
+          // search overlay is up — it would otherwise float on top of
+          // the results list.
+          hideControls={isSearching}
           // Suppress long-press-to-drop-pin while the search drawer is
           // open. Otherwise a press through the (semi-transparent) panel
           // edges or before the drawer animates in can drop a stray pin.
@@ -367,7 +360,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           onDone={handleStop}
         />
 
-        {isDev ? (
+        {isDev && !isSearching ? (
           <FloatingDevPanel title="Navigation Dev" storageKey="NavigationPage:dev">
             <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
               <span className="text-[13px] font-medium text-neutral-700">Show test text on glasses</span>
@@ -530,16 +523,4 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
       {rawMapOpen ? <RawMapPage onClose={() => setRawMapOpen(false)} /> : null}
     </DrawerOffsetProvider>
   )
-}
-
-/* -------------------------------------------------------------------------- */
-/* Minimal structural shims for the global google.maps.Geocoder API used by
- * the drop-pin reverse-geocode path. The real types live in
- * @types/google.maps; mirroring just the shape we touch here keeps this
- * file standalone without pulling that dependency into the WebView bundle. */
-
-type GeocoderResultLike = {formatted_address?: string}
-type GeocoderRequestLike = {location: {lat: number; lng: number}}
-type GeocoderLike = {
-  geocode(request: GeocoderRequestLike, callback: (results: GeocoderResultLike[] | null, status: string) => void): void
 }

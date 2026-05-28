@@ -36,7 +36,7 @@ export function IdleDrawer({onSelect, onAddPlace, refreshKey}: Props) {
       peekHeight={163}
       expanded={expanded}
       onExpandedChange={setExpanded}
-      className="[font-synthesis:none] pointer-events-auto mx-auto max-w-md flex flex-col rounded-tl-[28px] rounded-tr-[28px] bg-[#FFFFFFB3] border-t border-t-solid border-t-[#FFFFFF99] [backdrop-filter:blur(40px)_saturate(180%)] [box-shadow:#0000001A_0px_-8px_28px] antialiased overflow-hidden">
+      className="[font-synthesis:none] pointer-events-auto w-full flex flex-col rounded-tl-[28px] rounded-tr-[28px] bg-[#FFFFFFB3] border-t border-t-solid border-t-[#FFFFFF99] [backdrop-filter:blur(40px)_saturate(180%)] [box-shadow:#0000001A_0px_-8px_28px] antialiased overflow-hidden">
 
       {/* Sticky top: Home + Work quick-access cards, then Add Place. */}
       <div className="flex gap-2.5 px-5 pb-3 shrink-0">

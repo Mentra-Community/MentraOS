@@ -17,7 +17,7 @@ export function SuggestionsList({open, suggestions, onPick}: Props) {
           animate={{opacity: 1, y: 0}}
           exit={{opacity: 0, y: -8}}
           transition={{duration: 0.15, ease: "easeOut"}}
-          className="absolute inset-x-0 top-36 bottom-0 z-10 bg-white overflow-auto pt-4">
+          className="absolute inset-x-0 top-36 bottom-0 z-10 bg-white overflow-auto mx-4 pt-4">
           <ul>
             {suggestions.map((s, i) => (
               <motion.li
