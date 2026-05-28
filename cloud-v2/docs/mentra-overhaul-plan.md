@@ -3,13 +3,24 @@
 ## Intro / TL;DR
 
 **What this is**
-The plan for the next six weeks of MentraOS work. Three things land at once. A new way for developers to build mini apps. A new cloud backend that scales. A new on-phone runtime for executing apps. They are tied together. This doc explains how.
+How the overhaul's related efforts fit together. They overlap heavily but do not all ship at once:
+
+- **Local SDK**: a new way for developers to build mini apps. Shipping first, even on today's Cloud 1: we are back-porting what it needs so the next major app update can ship Local SDK versions of Mentra AI, Captions, and Maps while still on Cloud 1.
+- **Cloud V2**: a new cloud backend that scales. Replaces Cloud 1 once it is ready; the Local SDK does not wait on it.
+- **Mentra Runtime (Core Engine)**: all of MentraOS's mobile logic as a library OEMs embed in their own phone app.
+- **Self-hostable Cloud Audio**: OEMs can run their own audio (STT and translation) stack or use Mentra's, whichever they prefer.
+- **Cloud Proxy**: a way for OEMs to proxy their app's requests through their own cloud to ours.
+
+This doc explains how they connect.
 
 **What changes for users**
 Faster mini apps (no cloud round-trip for most features). Mini apps work offline for local-only features. New mini apps in the App Store that install onto the phone instead of running on a remote server.
 
 **What changes for developers**
 A new SDK (`@mentra/miniapp`) and CLI (`@mentra/miniapp-cli`). Write a static web app, build a bundle, publish through the Dev Console. No more running your own server.
+
+**What changes for OEMs**
+OEMs can ship MentraOS inside their own phone app instead of sending users to the Mentra app. The Core Engine packages all of MentraOS's mobile logic into a library they embed; OEM Auth signs their users in through the OEM's own identity; and Cloud Proxy lets them choose how much of the cloud to run themselves while still reaching our central Cloud Core.
 
 **What changes for us**
 Cloud V1's mini-app server protocol goes away. The cloud gets smaller and more scalable. OEM auth becomes a first-class flow. The mobile app talks to the same cloud regardless of v1 or v2 (wire-shape parity at the seam).
@@ -18,11 +29,11 @@ Cloud V1's mini-app server protocol goes away. The cloud gets smaller and more s
 
 Naming has been inconsistent across docs. This is the canonical set.
 
-**Mentra Runtime**
-The on-phone JavaScript execution environment for mini apps. Was called "Mentra Core Engine" until yesterday.
+**Mentra Runtime (Core Engine)**
+All of MentraOS's mobile logic packaged as a library OEMs embed in their own phone app: BLE transport, glasses management, the on-phone mini-app execution runtime, display, audio routing. "Mentra Runtime" and "Core Engine" are the same thing, used interchangeably.
 
 **Mentra Local SDK**
-The developer-facing API (`@mentra/miniapp`) that runs on top of the Runtime.
+The developer-facing API (`@mentra/miniapp`) mini-app developers write against. Apps built with it run in the Core Engine's mini-app runtime (which is what actually executes them on the phone).
 
 **Mentra CLI**
 The developer-facing build and publish tool (`@mentra/miniapp-cli`).
@@ -31,7 +42,7 @@ The developer-facing build and publish tool (`@mentra/miniapp-cli`).
 The next generation of Mentra Cloud Core plus Cloud Audio. Replaces v1 in production. Defined by the absence of cloud-mini-app infrastructure.
 
 **Mentra Cloud Core**
-The cloud backend product (Hono on Bun) that hosts the APIs and services for the Mobile App, App Store, Dev Console, and the OEM APIs and Portal. "Cloud Core" for short. Its services are collectively the Cloud Core Services: the Cloud Storage Service, Cloud Streaming Service, Cloud Runtime Service, plus User Auth and OEM Auth. They take a "Cloud" prefix rather than "Core" so the names do not collide with the client-side core, and "Cloud Runtime Service" stays distinct from the on-phone Mentra Runtime. Mentra runs one central Cloud Core for the whole ecosystem; OEMs reach it through Cloud Proxy and never host their own.
+The cloud backend product (Hono on Bun) that hosts the APIs and services for the Mobile App, App Store, Dev Console, and the OEM APIs and Portal. "Cloud Core" for short. Its services are collectively the Cloud Core Services: the Cloud Storage Service, Cloud Streaming Service, Cloud Runtime Service, plus User Auth and OEM Auth. They take a "Cloud" prefix rather than "Core" so the names do not collide with the client-side Core Engine. Mentra runs one central Cloud Core for the whole ecosystem; OEMs reach it through Cloud Proxy and never host their own.
 
 **Local JS SDK**
 Older name for Mentra Local SDK. Same thing.
@@ -46,20 +57,17 @@ The cloud is **three products, not one**, and they are hosted differently:
 - **Cloud Audio can be theirs.** An OEM that needs to (data residency, cost, sovereignty) can run its own Cloud Audio instead of using ours.
 - **Cloud Proxy is the OEM-side connector.** It is the piece an OEM deploys in their own infrastructure. Their apps reach our central Cloud Core through it (with OEM-scoped auth), and if the OEM runs its own Cloud Audio, the proxy routes audio there instead of to ours.
 
-**Cloud Core is the spine.** It provides the Cloud Core Services (Cloud Storage Service, Cloud Streaming Service, Cloud Runtime Service, User Auth, OEM Auth) to every other product that needs the cloud: the Mobile App, the Mentra Runtime, the OEM APIs and Portal, the App Store, the Dev Console, and the CLI.
+**Cloud Core is the spine.** It provides the Cloud Core Services (Cloud Storage Service, Cloud Streaming Service, Cloud Runtime Service, User Auth, OEM Auth) to every other product that needs the cloud: the Mobile App, the Mentra Runtime (Core Engine), the OEM APIs and Portal, the App Store, the Dev Console, and the CLI.
 
 ```mermaid
 graph TB
-  subgraph "Products people and developers use"
-    MobileApp[Mobile App]
+  subgraph "Websites"
     AppStore[App Store]
     DevConsole[Dev Console]
     OEMPortal[OEM APIs and Portal]
-    LocalSDK[Mentra Local SDK]
-    CLI[Mentra CLI]
   end
 
-  subgraph "Cloud products"
+  subgraph "Cloud"
     CloudCore[Cloud Core - always Mentra-hosted]
     CloudAudio[Cloud Audio - Mentra or OEM-hosted]
     CloudProxy[Cloud Proxy - OEM-hosted connector]
@@ -73,10 +81,13 @@ graph TB
     OEMAuth[OEM Auth]
   end
 
-  subgraph "Device products"
-    Runtime[Mentra Runtime]
+  subgraph "Client"
+    MobileApp[Mobile App]
+    CoreEngine["Mentra Runtime (Core Engine)"]
+    LocalSDK[Mentra Local SDK]
+    CLI[Mentra CLI]
     BTSDK[Mentra Bluetooth SDK]
-    Firmware[Glasses clients - ASG / SGC]
+    Glasses[Glasses clients - ASG / SGC]
   end
 
   subgraph "Third-party providers"
@@ -92,7 +103,7 @@ graph TB
   DevConsole --> CloudCore
   OEMPortal --> CloudCore
   CLI --> CloudCore
-  Runtime --> CloudCore
+  CoreEngine --> CloudCore
   CloudProxy --> CloudCore
   CloudProxy --> CloudAudio
   CloudCore --> StorageSvc
@@ -107,13 +118,13 @@ graph TB
   CloudCore --> Cache
   CloudAudio --> STT
   CloudAudio --> Cache
-  LocalSDK --> Runtime
-  Runtime --> BTSDK
-  BTSDK --> Firmware
+  LocalSDK --> CoreEngine
+  CoreEngine --> BTSDK
+  BTSDK --> Glasses
 
-  style CloudCore fill:#cce5ff
-  style CloudAudio fill:#cce5ff
-  style CloudProxy fill:#cce5ff
+  style CloudCore fill:#1f6feb,color:#ffffff
+  style CloudAudio fill:#1f6feb,color:#ffffff
+  style CloudProxy fill:#1f6feb,color:#ffffff
 ```
 
 ## Mini App Platform
@@ -122,7 +133,7 @@ graph TB
 Third-party developers need a way to ship apps onto Mentra glasses without standing up their own servers. Mini App Platform is the loop that gets them from `mentra init` to "user wearing it on their glasses."
 
 **What it does**
-Provides the end-to-end developer journey. Write code with the Local SDK. Build a bundle with the CLI. Upload through the Dev Console. Get listed in the App Store. Install onto the phone. Execute on the Runtime. Use cloud features (STT, translation, photo, streams) through a thin cloud bridge.
+Provides the end-to-end developer journey. Write code with the Local SDK. Build a bundle with the CLI. Upload through the Dev Console. Get listed in the App Store. Install onto the phone. Execute on-device via the Local SDK runtime. Use cloud features (STT, translation, photo, streams) through a thin cloud bridge.
 
 **Products and pieces it contains**
 
@@ -131,7 +142,7 @@ Provides the end-to-end developer journey. Write code with the Local SDK. Build 
 - Dev Console (the publish UI)
 - App Store mini-apps collection (the discovery UI)
 - On-phone install flow
-- Mentra Runtime (the execution environment)
+- The on-phone execution runtime (part of the Local SDK)
 
 **Status**
 SDK and CLI mostly feature-complete. Runtime landed on phone. STT bridge through Cloud Core's `__phone__` session running on v1. Bundle distribution loop not built (Dev Console, store collection, Cloud Storage Service wiring). Internal-only until Phase 3.
@@ -192,7 +203,7 @@ That layout is the architecture. New product, new folder. No cross-product coupl
 
 - Cloud Storage Service: signed-URL blob storage; used for bundles, photos, and any other Mentra-owned blobs
 - Cloud Streaming Service: managed live-stream provisioning
-- Cloud Runtime Service: cloud-side coordinator for the on-glasses Mentra Runtime; orchestrates photo capture, stream lifecycle, and the `__phone__` subscription path
+- Cloud Runtime Service: cloud-side coordinator for the on-phone Local SDK runtime; orchestrates photo capture, stream lifecycle, and the `__phone__` subscription path
 - User Auth: Mentra account authentication
 - OEM Auth: RFC 8693 token exchange for OEM users
 
@@ -238,7 +249,7 @@ v1 implementation lives in `mentra-miniapp-sdk-2` (PR #2841). v2 needs the same 
 
 #### Cloud Runtime Service
 **Why it exists**
-The on-glasses Mentra Runtime needs cloud-side coordination for capabilities that cannot be done purely on-device. Photo capture has to land in cloud storage and come back as a signed URL. Managed live streams have to be provisioned by a video provider. Transcripts have to flow back from Cloud Audio to the phone WS so the local mini app receives them. Cloud Runtime Service is the cloud-side coordinator that owns all of this in one place.
+The on-phone Local SDK runtime needs cloud-side coordination for capabilities that cannot be done purely on-device. Photo capture has to land in cloud storage and come back as a signed URL. Managed live streams have to be provisioned by a video provider. Transcripts have to flow back from Cloud Audio to the phone WS so the local mini app receives them. Cloud Runtime Service is the cloud-side coordinator that owns all of this in one place.
 
 **What it does**
 Orchestrates the cloud-side half of on-glasses Runtime calls. Specifically: the photo capture flow (mints upload tokens via the Cloud Storage Service, sends `PHOTO_REQUEST` to glasses, signs the response URL when the upload lands); managed-stream lifecycle (delegates provisioning to the Cloud Streaming Service, tracks ownership); phone WS routing (accepts `PHONE_SUBSCRIPTION_UPDATE`, demuxes Cloud Audio events back to the right user). Anything new the on-glasses Runtime needs from the cloud lands here.
@@ -306,21 +317,36 @@ Stub. The detailed design (transport, auth flow, per-service mode configuration,
 
 ## Client
 
+These nest: the Mentra app is built on the Core Engine, which is built on the Bluetooth SDK. Each layer out is a wider audience.
+
+```mermaid
+graph TB
+  subgraph App["Mentra App, React Native (Mentra's consumer app)"]
+    UI["Mentra-specific UI layer"]
+    subgraph CE["Mentra Runtime / Core Engine, RN library (what OEMs embed)"]
+      CElogic["Downloads mini apps from cloud, client/cloud data flow, mini-app runtime, subscriptions"]
+      subgraph BT["Bluetooth SDK, native library (direct glasses access for enterprise partners)"]
+        BTlogic["Direct connection to the glasses"]
+      end
+    end
+  end
+```
+
 ### Mobile App
 
 **What it is**
-The MentraOS phone app. Picks up the Mentra Runtime plus Local SDK runtime support. Cloud URL is runtime-configurable so the same build talks to v1 or v2 by setting.
+Mentra's consumer app: the Mentra-specific UI layer, built on the Core Engine. Cloud URL is runtime-configurable so the same build talks to v1 or v2 by setting.
 
 **Status**
-Runtime bundled. Local SDK runtime support landing on `mentra-miniapp-sdk-2`. No cloud-v2-aware code, by design. Routing is parity-based.
+Built on the Core Engine. No cloud-v2-aware code, by design; routing is parity-based.
 
-### Mentra Runtime
+### Mentra Runtime (Core Engine)
 
 **What it is**
-The on-phone JavaScript execution environment for mini apps. Apple JavaScriptCore on iOS, QuickJS (via dokar3/quickjs-kt) on Android. Per-mini-app contexts of about 1 to 5 MB each. Always running while the mini app is enabled. A background layer with no DOM handles glasses and cloud access. A UI layer is a static web app that spawns on demand.
+A React Native library containing all of MentraOS's mobile logic. The Mentra app is built on it, and OEMs embed it in their own phone app. It connects to Mentra's cloud to download mini apps, carries the client/cloud data flow, hosts the **mini-app runtime** (each mini app runs in its own JS context, JavaScriptCore on iOS and QuickJS via dokar3/quickjs-kt on Android), manages subscriptions, and drives the glasses through the Mentra Bluetooth SDK. This is the OEM-integration product. ("Mentra Runtime" and "Core Engine" are the same thing.)
 
 **Status**
-Landed on phone. Bundle install, WebView host, request dispatch, mic coordination, online and offline STT fallback all working.
+Runs in the Mentra app today; the mini-app runtime works on the phone (bundle install, request dispatch, mic coordination, online and offline STT fallback) on `mentra-miniapp-sdk-2`. Packaging it as a standalone embeddable library for OEMs is the remaining work.
 
 **Reference**
 Linear: Mentra Runtime project.
@@ -328,7 +354,7 @@ Linear: Mentra Runtime project.
 ### Mentra Local SDK
 
 **What it is**
-The developer-facing API surface (`@mentra/miniapp`). Typed `session.camera`, `session.transcription`, `session.stream`, and so on. Wraps the Runtime.
+The developer-facing API (`@mentra/miniapp`) mini-app developers write against: typed `session.camera`, `session.transcription`, `session.stream`, and so on. Apps built with it run in the Core Engine's mini-app runtime (a no-DOM background layer handles glasses and cloud access; a static-web-app UI layer spawns on demand).
 
 **Status**
 All hardware modules implemented. Photo, transcription, translation, and streams bridged through cloud (via the `__phone__` session for streams, dedicated routes for photo and managed streams).
@@ -347,7 +373,7 @@ Feature-complete for dev. Publish-to-cloud flow waits on Dev Console backend.
 ### Mentra Bluetooth SDK
 
 **What it is**
-Mobile to glasses BLE transport.
+A native library that handles the direct connection to the glasses. The Core Engine uses it; enterprise partners who only need to talk to the glasses directly can use it on its own.
 
 ### Glasses clients
 
