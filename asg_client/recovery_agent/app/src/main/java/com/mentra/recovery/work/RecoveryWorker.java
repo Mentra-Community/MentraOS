@@ -39,20 +39,24 @@ public class RecoveryWorker extends Worker {
 
     store.setState(RecoveryConstants.STATE_REINSTALLING_BACKUP, "RESTART_FAILED");
     telemetry.emit("mentra_recovery_reinstall_attempted", RecoveryConstants.STATE_REINSTALLING_BACKUP, "RESTART_FAILED", attempt);
+    context.sendBroadcast(new Intent(RecoveryConstants.ACTION_INSTALL_IN_PROGRESS).setPackage(RecoveryConstants.RECOVERY_PACKAGE));
 
     ReinstallStrategy reinstall = new ReinstallStrategy(context);
     if (!reinstall.execute()) {
+      context.sendBroadcast(new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED).setPackage(RecoveryConstants.RECOVERY_PACKAGE));
       store.setState(RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "NO_VALID_BACKUP");
       telemetry.emit("mentra_recovery_failed", RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "NO_VALID_BACKUP", attempt);
       return Result.failure();
     }
 
     if (waitForPong(context, RecoveryConstants.REINSTALL_GRACE_MS)) {
+      context.sendBroadcast(new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED).setPackage(RecoveryConstants.RECOVERY_PACKAGE));
       store.setState(RecoveryConstants.STATE_COOLDOWN, "REINSTALL_SUCCESS");
       telemetry.emit("mentra_recovery_recovered", RecoveryConstants.STATE_HEALTHY, "REINSTALL_SUCCESS", attempt);
       return Result.success();
     }
 
+    context.sendBroadcast(new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED).setPackage(RecoveryConstants.RECOVERY_PACKAGE));
     store.setState(RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "REINSTALL_NO_HEARTBEAT");
     telemetry.emit("mentra_recovery_failed", RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "REINSTALL_NO_HEARTBEAT", attempt);
     return Result.failure();
@@ -79,7 +83,14 @@ public class RecoveryWorker extends Worker {
           new IntentFilter(RecoveryConstants.ACTION_PONG),
           Context.RECEIVER_NOT_EXPORTED);
       synchronized (lock) {
-        lock.wait(timeoutMs);
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (!gotAck[0]) {
+          long remaining = deadline - System.currentTimeMillis();
+          if (remaining <= 0) {
+            break;
+          }
+          lock.wait(remaining);
+        }
       }
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();

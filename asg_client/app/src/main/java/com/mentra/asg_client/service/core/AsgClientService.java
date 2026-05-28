@@ -1267,7 +1267,7 @@ public class AsgClientService extends Service
 
                                 try {
                                     Intent ackIntent = new Intent(ACTION_HEARTBEAT_ACK);
-                                    ackIntent.setPackage("com.mentra.recovery");
+                                    ackIntent.setPackage("com.augmentos.otaupdater");
                                     sendBroadcast(ackIntent);
                                     Intent pongIntent = new Intent("com.mentra.recovery.ACTION_PONG");
                                     pongIntent.setPackage("com.mentra.recovery");

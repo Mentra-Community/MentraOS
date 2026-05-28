@@ -40,15 +40,15 @@ public class AsgClientRestartReceiver extends BroadcastReceiver {
                     context.startService(serviceIntent);
                 }
 
-                // Send restart complete broadcast
+                // Keep legacy completion signal for one release while old updater may still be present.
                 Intent completeIntent = new Intent(AsgClientService.ACTION_RESTART_COMPLETE);
-                completeIntent.setPackage("com.mentra.recovery");
+                completeIntent.setPackage("com.augmentos.otaupdater");
                 context.sendBroadcast(completeIntent);
                 Log.i(TAG, "Sent restart complete broadcast from receiver");
 
-                // Also send heartbeat ack
+                // Keep legacy heartbeat ACK for one release while old updater may still be present.
                 Intent ackIntent = new Intent("com.mentra.asg_client.ACTION_HEARTBEAT_ACK");
-                ackIntent.setPackage("com.mentra.recovery");
+                ackIntent.setPackage("com.augmentos.otaupdater");
                 context.sendBroadcast(ackIntent);
                 Log.i(TAG, "Sent heartbeat ack from receiver");
             } catch (Exception e) {

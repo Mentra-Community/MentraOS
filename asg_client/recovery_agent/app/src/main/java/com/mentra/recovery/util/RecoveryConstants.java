@@ -7,13 +7,17 @@ public final class RecoveryConstants {
   public static final String CHANNEL_ID = "mentra_recovery_channel";
   public static final int NOTIFICATION_ID = 2101;
 
+  public static final String RECOVERY_PACKAGE = "com.mentra.recovery";
   public static final String ASG_PACKAGE = "com.mentra.asg_client";
+  public static final String ASG_TELEMETRY_PERMISSION =
+      "com.mentra.asg_client.permission.RECOVERY_TELEMETRY";
   public static final String ASG_SERVICE_CLASS = "com.mentra.asg_client.service.core.AsgClientService";
   public static final String ACTION_RESTART_SERVICE = "com.mentra.asg_client.ACTION_RESTART_SERVICE";
 
   public static final String ACTION_PING = "com.mentra.recovery.ACTION_PING";
   public static final String ACTION_PONG = "com.mentra.recovery.ACTION_PONG";
   public static final String ACTION_INSTALL_IN_PROGRESS = "com.mentra.recovery.ACTION_INSTALL_IN_PROGRESS";
+  public static final String ACTION_INSTALL_COMPLETED = "com.mentra.recovery.ACTION_INSTALL_COMPLETED";
   public static final String ACTION_TELEMETRY = "com.mentra.recovery.ACTION_TELEMETRY";
 
   public static final String STATE_PREFS = "mentra_recovery_state";

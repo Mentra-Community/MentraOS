@@ -41,7 +41,7 @@ public class ServiceHeartbeatReceiver extends BroadcastReceiver {
 
                 // Keep legacy ack for one release window
                 Intent ackIntent = new Intent(ACTION_HEARTBEAT_ACK);
-                ackIntent.setPackage("com.mentra.recovery");
+                ackIntent.setPackage("com.augmentos.otaupdater");
                 context.sendBroadcast(ackIntent);
                 Log.d(TAG, "Sent heartbeat acknowledgment");
             } catch (Exception e) {

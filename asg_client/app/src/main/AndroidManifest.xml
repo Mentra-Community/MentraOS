@@ -3,6 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.mentra.asg_client">
 
+    <permission
+        android:name="com.mentra.asg_client.permission.RECOVERY_TELEMETRY"
+        android:protectionLevel="signature" />
+
     <uses-feature
         android:name="android.hardware.telephony"
         android:required="false" />
@@ -162,7 +166,8 @@
         <receiver
             android:name="com.mentra.asg_client.receiver.RecoveryTelemetryReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:permission="com.mentra.asg_client.permission.RECOVERY_TELEMETRY">
             <intent-filter>
                 <action android:name="com.mentra.recovery.ACTION_TELEMETRY" />
             </intent-filter>

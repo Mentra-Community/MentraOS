@@ -21,6 +21,6 @@ public class RecoveryTelemetry {
     intent.putExtra("state", state);
     intent.putExtra("reason", reason);
     intent.putExtra("attempt", attempt);
-    context.sendBroadcast(intent);
+    context.sendBroadcast(intent, RecoveryConstants.ASG_TELEMETRY_PERMISSION);
   }
 }

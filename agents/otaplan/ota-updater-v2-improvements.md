@@ -236,7 +236,7 @@ Add this note to the implementation:
  * ASG Client can start the service with:
  * Intent serviceIntent = new Intent();
  * serviceIntent.setClassName("com.mentra.recovery",
- *                           "com.mentra.recovery.OtaUpdaterService");
+ *                           "com.mentra.recovery.service.RecoveryService");
  * startForegroundService(serviceIntent);
  */
 ```

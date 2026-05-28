@@ -85,13 +85,15 @@ public class RecoveryService extends Service {
           public void onReceive(Context context, Intent intent) {
             if (RecoveryConstants.ACTION_INSTALL_IN_PROGRESS.equals(intent.getAction())) {
               healthMonitor.setPaused(true);
+            } else if (RecoveryConstants.ACTION_INSTALL_COMPLETED.equals(intent.getAction())) {
+              healthMonitor.setPaused(false);
             }
           }
         };
-    registerReceiver(
-        installStateReceiver,
-        new IntentFilter(RecoveryConstants.ACTION_INSTALL_IN_PROGRESS),
-        Context.RECEIVER_NOT_EXPORTED);
+    IntentFilter installFilter = new IntentFilter();
+    installFilter.addAction(RecoveryConstants.ACTION_INSTALL_IN_PROGRESS);
+    installFilter.addAction(RecoveryConstants.ACTION_INSTALL_COMPLETED);
+    registerReceiver(installStateReceiver, installFilter, Context.RECEIVER_NOT_EXPORTED);
   }
 
   private void unregisterReceivers() {

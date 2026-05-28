@@ -23,6 +23,12 @@ public class ResetController {
   }
 
   public void onAsgUnresponsive() {
+    String currentState = stateStore.getState();
+    if (RecoveryConstants.STATE_RESTARTING.equals(currentState)
+        || RecoveryConstants.STATE_REINSTALLING_BACKUP.equals(currentState)
+        || RecoveryConstants.STATE_FAILED_NEEDS_MANUAL.equals(currentState)) {
+      return;
+    }
     long now = System.currentTimeMillis();
     long windowStart = stateStore.getWindowStartMs();
     int attempts = stateStore.getAttempts();
@@ -49,6 +55,8 @@ public class ResetController {
   }
 
   public void onAsgHealthy() {
-    stateStore.setState(RecoveryConstants.STATE_HEALTHY, "HEARTBEAT_OK");
+    if (!RecoveryConstants.STATE_HEALTHY.equals(stateStore.getState())) {
+      stateStore.setState(RecoveryConstants.STATE_HEALTHY, "HEARTBEAT_OK");
+    }
   }
 }
