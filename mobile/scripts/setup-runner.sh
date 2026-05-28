@@ -283,14 +283,52 @@ if [[ ! -L "/Library/Java/JavaVirtualMachines/openjdk-17.jdk" ]]; then
         "/Library/Java/JavaVirtualMachines/openjdk-17.jdk"
 fi
 
-# Ruby for fastlane / cocoapods. Use system Ruby + bundler.
+# Ruby via rbenv. macOS ships an Apple-deprecated Ruby 2.6 whose
+# bundler is too old (<2.0) to read modern Gemfile.lock files. Modern
+# fastlane and bundler require Ruby >=3. Pin to RUBY_VERSION so every
+# runner matches what developers use locally — avoids "works on my
+# machine" version drift in CI.
+RUBY_VERSION="3.4.2"
+
+if ! command -v rbenv >/dev/null 2>&1; then
+    info "Installing rbenv + ruby-build"
+    brew install rbenv ruby-build
+fi
+
+# Persist rbenv shims on PATH for future shells AND the runner service.
+# Use raw PATH prepend instead of `eval rbenv init` here to avoid a
+# `complete: command not found` zsh-completion warning under bash (which
+# tripped `set -e` when first written).
+if ! grep -q 'rbenv init' "$ZPROFILE" 2>/dev/null; then
+    cat >> "$ZPROFILE" <<'EOF'
+
+# rbenv (added by setup-runner.sh)
+eval "$(rbenv init - --no-rehash zsh)"
+EOF
+fi
+export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
+
+if ! rbenv versions --bare 2>/dev/null | grep -qx "$RUBY_VERSION"; then
+    info "Installing Ruby $RUBY_VERSION (this can take ~5 minutes)"
+    rbenv install -s "$RUBY_VERSION"
+fi
+rbenv global "$RUBY_VERSION"
+rbenv rehash
+
+ok "Ruby $(ruby -v)"
+
+# Bundler matching the one used to generate mobile/Gemfile.lock. Modern
+# rbenv-installed Rubies ship a recent bundler by default; gem install is
+# idempotent and brings it forward if needed.
 gem install bundler --no-document || true
 
-# fastlane is gem-installed (no longer in homebrew-core).
+# fastlane is gem-installed (no longer in homebrew-core). With rbenv
+# managing Ruby we never need sudo here.
 if ! command -v fastlane >/dev/null 2>&1; then
     info "Installing fastlane via RubyGems"
-    gem install fastlane --no-document || sudo gem install fastlane --no-document
+    gem install fastlane --no-document
 fi
+rbenv rehash
 
 # Required by mobile/scripts/set-build-env.mjs (called at the top of
 # release-android.mjs / release-ios.mjs). The script reads `git config
@@ -484,8 +522,10 @@ else
 
         # Bake env vars the runner should see at job time. The runner reads
         # ./.env on startup. Keep this in sync with what the workflows expect.
+        # rbenv shims must come first on PATH so `ruby` / `bundle` / `gem`
+        # resolve to the rbenv-installed 3.4.x, not Apple's system 2.6.
         {
-            echo "PATH=$HOME/.bun/bin:$HOME/.maestro/bin:$BREW_PREFIX/bin:$BREW_PREFIX/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+            echo "PATH=$HOME/.rbenv/shims:$HOME/.bun/bin:$HOME/.maestro/bin:$BREW_PREFIX/bin:$BREW_PREFIX/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
             echo "LANG=en_US.UTF-8"
             echo "JAVA_HOME=$BREW_PREFIX/opt/openjdk@17"
             if [[ "${SKIP_ANDROID:-0}" != "1" ]]; then

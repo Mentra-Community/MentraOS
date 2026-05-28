@@ -242,13 +242,9 @@ jobs:
         # Mentra-Community/match-certs, decrypts with MATCH_PASSWORD, installs
         # into the runner's login keychain. --readonly guarantees we never
         # accidentally regenerate certs from CI (only your laptop should).
-        #
-        # `bundle update --bundler` retargets Gemfile.lock to whatever
-        # bundler the runner has, instead of requiring the exact 2.x.y the
-        # lockfile was generated against. Avoids "Could not find bundler
-        # (2.6.9) required by Gemfile.lock" on runners with older system Ruby.
+        # Assumes the runner has rbenv-managed Ruby 3.4+ on PATH (handled by
+        # setup-runner.sh); macOS's system Ruby 2.6 + bundler <2 won't work.
         run: |
-          bundle update --bundler
           bundle install
           bundle exec fastlane match appstore --readonly
 
