@@ -56,3 +56,31 @@ struct DashboardMenuItem {
         values.merging(["title": title, "packageName": packageName]) { _, new in new }
     }
 }
+
+/// Mirrors the TS `CalendarEvent` shape: { title, location?, time, endDate }
+/// where `endDate` is unix seconds.
+struct CalendarEvent {
+    let title: String
+    let location: String?
+    let time: String
+    let endDate: Double
+
+    init(title: String, location: String? = nil, time: String, endDate: Double) {
+        self.title = title
+        self.location = location
+        self.time = time
+        self.endDate = endDate
+    }
+
+    var dictionary: [String: Any] {
+        var dict: [String: Any] = [
+            "title": title,
+            "time": time,
+            "endDate": endDate,
+        ]
+        if let location {
+            dict["location"] = location
+        }
+        return dict
+    }
+}
