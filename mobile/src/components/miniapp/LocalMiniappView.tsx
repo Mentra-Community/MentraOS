@@ -10,7 +10,17 @@ import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {useStressTestStore} from "@/stores/stressTest"
 import {storage} from "@/utils/storage/storage"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
-import {appRegistry, buildMentraUiShim, buildMiniappGlobalsScript, devServerBridge} from "@mentra/island"
+import {
+  appRegistry,
+  buildMentraUiShim,
+  buildMiniappGlobalsScript,
+  devServerBridge,
+  useAppStatusStore,
+} from "@mentra/island"
+import {useNavigationStore} from "@/stores/navigation"
+import CapsuleMenu, {captureScreenshot} from "@/effects/CapsuleMenu"
+import {useRegisterCapsule} from "@/stores/capsule"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
 /**
  * LocalMiniappView — the UI half of a local (or dev) miniapp.
@@ -47,21 +57,29 @@ interface LocalMiniappViewProps {
   onExit: () => void
   /** Notified whenever the WebView's in-app back history availability changes. */
   onCanGoBackChange?: (canGoBack: boolean) => void
+  onShouldCapture: () => void
 }
 
-const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProps>(function LocalMiniappView(
-  {packageName, appName, version, devUrl, iconUrl, devPort, onExit, onCanGoBackChange},
-  ref,
-) {
+const LocalMiniappView = ({
+  packageName,
+  appName,
+  version,
+  devUrl,
+  iconUrl,
+  devPort,
+  onExit,
+  onCanGoBackChange,
+  onShouldCapture,
+}: LocalMiniappViewProps) => {
   const {theme} = useAppTheme()
-  const insets = useSafeAreaInsets()
+  const insets = useSaferAreaInsets()
   const colorScheme = theme.isDark ? "dark" : "light"
 
   const onExitRef = useRef(onExit)
   onExitRef.current = onExit
 
-  const webViewRef = useRef<WebView | null>(null)
   const viewShotRef = useRef<View | null>(null)
+  const webViewRef = useRef<WebView | null>(null)
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
   const [uiUri, setUiUri] = useState<string | null>(null)
   const [uiBaseDir, setUiBaseDir] = useState<string | null>(null)
@@ -75,22 +93,76 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
   )
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  // Expose an imperative handle so the Compositor's back-swipe can pop
-  // in-WebView history before committing to backgrounding the app.
-  useImperativeHandle(
-    ref,
-    () => ({
-      goBack: () => {
-        if (webViewCanGoBack && webViewRef.current) {
-          webViewRef.current.goBack()
-          return true
-        }
-        return false
-      },
-      canGoBack: webViewCanGoBack,
-    }),
-    [webViewCanGoBack],
-  )
+  // // Expose an imperative handle so the Compositor's back-swipe can pop
+  // // in-WebView history before committing to backgrounding the app.
+  // useImperativeHandle(
+  //   ref,
+  //   () => ({
+  //     goBack: () => {
+  //       if (webViewCanGoBack && webViewRef.current) {
+  //         webViewRef.current.goBack()
+  //         return true
+  //       }
+  //       return false
+  //     },
+  //     canGoBack: webViewCanGoBack,
+  //   }),
+  //   [webViewCanGoBack],
+  // )
+
+  const {setForceGestureEnabled} = useNavigationStore.getState()
+
+  // Back press handler for CapsuleMenu/Header buttons and Android back button.
+  const handleWebViewBack = useCallback(async () => {
+    console.log("WEBVIEW: handleWebViewBack()")
+    if (Platform.OS === "ios") {
+      // await captureScreenshot(viewShotRef, packageName.toString(), insets.top)
+      onShouldCapture()
+    }
+    // if (!hasValidParams) {
+    //   if (Platform.OS === "android") {
+    //     goBack()
+    //   }
+    //   return
+    // }
+    if (webViewCanGoBack && webViewRef.current) {
+      webViewRef.current.goBack()
+    } else {
+      if (Platform.OS === "android") {
+        // captureScreenshot(viewShotRef, packageName.toString(), insets.top)
+        onShouldCapture()
+        useAppStatusStore.getState().clearForeground()
+      }
+    }
+  }, [webViewCanGoBack])
+
+  // Block native back gesture/button — route through handleWebViewBack for Android.
+  // focusEffectPreventBack(handleWebViewBack, false)
+
+  // Dynamically toggle gesture handling based on webview navigation state:
+  // - Page 0 (no history): disable WebView's gesture, force-enable React Navigation's
+  //   native swipe-back so user can exit miniapp with the real iOS animation.
+  // - Has history: enable WebView's gesture for in-webview navigation,
+  //   React Navigation's gesture stays blocked by focusEffectPreventBack.
+  useEffect(() => {
+    if (!webViewCanGoBack) {
+      // Page 0: force React Navigation gesture on, WebView gesture off
+      setForceGestureEnabled(true)
+    } else {
+      // Has history: let focusEffectPreventBack handle it (gesture disabled),
+      // WebView's allowsBackForwardNavigationGestures handles in-webview swipe
+      setForceGestureEnabled(false)
+    }
+
+    return () => setForceGestureEnabled(false)
+  }, [webViewCanGoBack, setForceGestureEnabled])
+
+  useRegisterCapsule({
+    packageName: packageName as string,
+    viewShotRef,
+    visibleOnRoutes: ["/intentionally-not-a-real-route"],
+    onBackPress: handleWebViewBack,
+  })
 
   useEffect(() => {
     if (!packageName) return
@@ -353,7 +425,7 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
   const injectedJS = `${globalsScript}\n${uiShim}`
 
   return (
-    <View ref={viewShotRef} className="flex-1 bg-transparent rounded-2xl">
+    <View className="flex-1 bg-black" style={{borderRadius: theme.spacing.s12}}>
       <WebView
         ref={handleRef}
         source={{uri: uiUri}}
@@ -387,9 +459,10 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
       />
       <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={isLoaded} />
       {/* <View className="flex-1 bg-red-500"/> */}
+      <CapsuleMenu forceShow={true} />
     </View>
   )
-})
+}
 
 export default LocalMiniappView
 

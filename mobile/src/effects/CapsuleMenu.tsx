@@ -59,7 +59,7 @@ function CapsuleButton({onRightPress, onLeftPress}: CapsuleButtonProps) {
   return (
     <GlassView
       transparent={false}
-      className="flex-row justify-between rounded-full h-8 w-20 items-center bg-background/30"
+      className="flex-row justify-between rounded-full h-8 w-20 items-center bg-background/60"
       style={androidStyle}>
       <Pressable
         hitSlop={10}
@@ -149,11 +149,8 @@ export default function CapsuleMenu({forceShow}: {forceShow: boolean}) {
       style={{top: top, right: right}}
       pointerEvents="box-none">
       <CapsuleButton
-        onRightPress={() => active?.handleExit(true)}
-        onLeftPress={() => {
-          // active?.handleMinimize(true)
-          // bottomSheetRef.current?.present()
-        }}
+        onRightPress={() => active?.handleRightPress(true)}
+        onLeftPress={() => active?.handleLeftPress(true)}
       />
       <MiniAppMoreActionsSheet
         ref={bottomSheetRef}
@@ -170,6 +167,11 @@ export async function captureScreenshot(
   packageName: string,
   topInsetOffset: number = 0,
 ) {
+  if (!viewShotRef.current) {
+    console.warn(`captureScreenshot: viewShotRef is null ${viewShotRef.current}`)
+    return
+  }
+
   if (Platform.OS === "ios") {
     captureRef(viewShotRef, {
       format: "jpg",

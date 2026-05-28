@@ -16,7 +16,7 @@
  * mounted while the miniapp is foreground.
  */
 
-import {useEffect, useRef, useState} from "react"
+import {useCallback, useEffect, useRef, useState} from "react"
 import {BackHandler, Dimensions, Platform, View} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import Animated, {
@@ -28,11 +28,12 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated"
 
-import LocalMiniappView, {type LocalMiniappViewHandle} from "@/components/miniapp/LocalMiniappView"
-import CapsuleMenu from "@/effects/CapsuleMenu"
+import LocalMiniappView from "@/components/miniapp/LocalMiniappView"
+import CapsuleMenu, {captureScreenshot} from "@/effects/CapsuleMenu"
 import {useCapsuleStore} from "@/stores/capsule"
-import {useAppStatusStore, useForegroundApp} from "@mentra/island"
-
+import {BgTimer, useAppStatusStore, useForegroundApp} from "@mentra/island"
+import {Screen} from "@/components/ignite/Screen"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 const EDGE_HIT_WIDTH = 24
 // Distance past which a slow drag commits the back gesture (fraction of screen
 // width). UIKit's interactive pop commits at ~50%; we sit a hair under that.
@@ -63,26 +64,12 @@ const FADE_IN_SCALE_FROM = 0.4
 const FADE_OUT_DURATION_MS = 300
 const FADE_OUT_SCALE_TO = 0.4
 
-function clearForeground() {
-  useAppStatusStore.getState().clearForeground()
-}
-
-// Module-level handle to the foregrounded view's in-WebView goBack(), so the
-// gesture's module-level handleBack (called via runOnJS) can reach it without
-// closing over component scope. Returns true if it popped in-app history.
-const viewBackRef: {current: (() => boolean) | null} = {current: null}
-
-function handleBack() {
-  const wentBack = viewBackRef.current?.() ?? false
-  if (!wentBack) {
-    clearForeground()
-  }
-}
-
 export default function Compositor() {
   const foregroundApp = useForegroundApp()
-  const viewRef = useRef<LocalMiniappViewHandle | null>(null)
   const didSwipeToExit = useRef(false)
+  const viewShotRef = useRef<View | null>(null)
+  const insets = useSaferAreaInsets()
+
   // Keep the app mounted through the exit animation. `foregroundApp` flips to
   // null the instant clearForeground runs, but we hold `renderedApp` until the
   // fade-out completes so the overlay can animate off-screen before unmount.
@@ -95,43 +82,16 @@ export default function Compositor() {
   const screenWidth = Dimensions.get("window").width
   const commitThreshold = screenWidth * COMMIT_FRACTION
 
-  // Keep the module-level back handle pointed at the current view's goBack so
-  // the gesture's handleBack (and the Android/capsule paths) can pop in-WebView
-  // history before backgrounding.
-  viewBackRef.current = () => viewRef.current?.goBack() ?? false
+  const handleBack = useCallback(() => {
+    console.log("handleBack", insets.top)
+    captureScreenshot(viewShotRef as any, foregroundApp?.packageName ?? "", insets.top)
+    useAppStatusStore.getState().clearForeground()
+  }, [foregroundApp?.packageName])
 
-  // Register a capsule handler whenever a miniapp is foregrounded so the
-  // global house/X button reflects the Compositor-managed app. The X press
-  // backgrounds the app (clearForeground), same as the swipe gesture.
-  useEffect(() => {
-    if (!foregroundApp) return
-    const {setActive} = useCapsuleStore.getState()
-    setActive({
-      packageName: foregroundApp.packageName,
-      viewShotRef: {current: null},
-      appNameOverride: foregroundApp.name,
-      iconUrlOverride: foregroundApp.logoUrl,
-      handleExit: () => {
-        handleBack()
-      },
-    })
-    return () => {
-      const current = useCapsuleStore.getState().active
-      if (current?.packageName === foregroundApp.packageName) {
-        setActive(null)
-      }
-    }
-  }, [foregroundApp])
-
-  // Android hardware back: pop in-WebView history, else background the app.
-  useEffect(() => {
-    if (!isForeground || Platform.OS !== "android") return
-    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-      handleBack()
-      return true
-    })
-    return () => sub.remove()
-  }, [isForeground])
+  const handleShouldCapture = useCallback(() => {
+    console.log("handleShouldCapture()")
+    captureScreenshot(viewShotRef, foregroundApp?.packageName ?? "", insets.top)
+  }, [foregroundApp?.packageName, insets.top])
 
   const swipeTranslateX = useSharedValue(0)
   const fadeOpacity = useSharedValue(0)
@@ -199,6 +159,35 @@ export default function Compositor() {
       }
     })
 
+  //   // Register a capsule handler whenever a miniapp is foregrounded so the
+  // // global house/X button reflects the Compositor-managed app. The X press
+  // // backgrounds the app (clearForeground), same as the swipe gesture.
+  // useEffect(() => {
+  //   if (!foregroundApp) return
+  //   const {setActive} = useCapsuleStore.getState()
+  //   setActive({
+  //     packageName: foregroundApp.packageName,
+  //     viewShotRef: {current: null},
+  //     appNameOverride: foregroundApp.name,
+  //     iconUrlOverride: foregroundApp.logoUrl,
+  //     handleLeftPress: () => {
+  //       handleBack()
+  //     },
+  //     handleRightPress: () => {
+  //       handleBack()
+  //       BgTimer.setTimeout(() => {
+  //         useAppStatusStore.getState().stop(foregroundApp.packageName)
+  //       }, 100)
+  //     },
+  //   })
+  //   return () => {
+  //     const current = useCapsuleStore.getState().active
+  //     if (current?.packageName === foregroundApp.packageName) {
+  //       setActive(null)
+  //     }
+  //   }
+  // }, [foregroundApp, viewShotRef])
+
   // Drive fade-in(foreground) and fade-out + shrink (clear).
   useEffect(() => {
     if (isForeground) {
@@ -228,15 +217,25 @@ export default function Compositor() {
     <Animated.View
       pointerEvents={isForeground ? "auto" : "box-none"}
       style={[{position: "absolute", top: 0, bottom: 0, left: 0, right: 0, zIndex: 10}, animatedStyle]}>
-      <LocalMiniappView
-        ref={viewRef}
-        packageName={renderedApp.packageName}
-        appName={renderedApp.name}
-        version={renderedApp.version}
-        devUrl={renderedApp.devUrl}
-        iconUrl={renderedApp.logoUrl}
-        onExit={clearForeground}
-      />
+      {/* <View ref={viewShotRef} className="h-30 w-30 absolute inset-0"> */}
+      <Screen
+        preset="fixed"
+        backgroundColor="transparent"
+        // safeAreaEdges={Platform.OS === "android" ? ["top", "bottom"] : ["top"]}
+        KeyboardAvoidingViewProps={{enabled: false}}
+        className="px-0"
+        ref={viewShotRef}>
+        <LocalMiniappView
+          packageName={renderedApp.packageName}
+          appName={renderedApp.name}
+          version={renderedApp.version}
+          devUrl={renderedApp.devUrl}
+          iconUrl={renderedApp.logoUrl}
+          onExit={handleBack}
+          onShouldCapture={handleShouldCapture}
+        />
+      </Screen>
+      {/* </View> */}
       {isForeground && (
         <GestureDetector gesture={swipeGesture}>
           <View
@@ -251,7 +250,7 @@ export default function Compositor() {
           />
         </GestureDetector>
       )}
-      {isForeground && <CapsuleMenu forceShow={true} />}
+      {/* {isForeground && <CapsuleMenu forceShow={true} />} */}
     </Animated.View>
   )
 }
