@@ -241,6 +241,13 @@ object DeviceStore {
                     DeviceManager.getInstance().sgc?.setDashboardMenu(items)
                 }
             }
+            // `core` category is normalized to `bluetooth` before reaching this switch.
+            "bluetooth" to "calendar_events" -> {
+                @Suppress("UNCHECKED_CAST")
+                (value as? List<Map<String, Any>>)?.let { events ->
+                    DeviceManager.getInstance().sgc?.sendCalendarEvents(events)
+                }
+            }
             "bluetooth" to "gallery_mode" -> {
                 DeviceManager.getInstance().sgc?.sendGalleryMode()
             }

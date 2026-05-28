@@ -824,6 +824,100 @@ private object MenuProto {
     }
 }
 
+/**
+ * Builders for the dashboard calendar widget (service 0x01, command Dashboard_Receive = 2).
+ * Field numbers come from the extracted dashboard.proto v2.1.0_beta_v3 and mirror the iOS
+ * DashboardProto.calendarPush builder so both platforms produce the same wire payload.
+ */
+private object CalendarProto {
+    // Dashboard_Receive — phone → glasses widget/config push.
+    const val DASHBOARD_RECEIVE = 2
+
+    /**
+     * Build a Schedule submessage (the calendar event payload).
+     *   f1 = scheduleId (int32, required)
+     *   f2 = title (string, optional)
+     *   f3 = location (string, optional)
+     *   f4 = time (string, optional — display text e.g. "10:00 AM")
+     *   f5 = endTimestamp (int32, Unix seconds — pre-shifted by TZ so the glasses,
+     *        which treat timestamps as already-local, display local time)
+     */
+    private fun schedule(
+            scheduleId: Int,
+            title: String?,
+            location: String?,
+            time: String?,
+            endTimestamp: Int
+    ): ByteArray {
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, scheduleId)
+        title?.let { w.writeStringField(2, it) }
+        location?.let { w.writeStringField(3, it) }
+        time?.let { w.writeStringField(4, it) }
+        w.writeInt32Field(5, endTimestamp)
+        return w.toByteArray()
+    }
+
+    /**
+     * Build the full calendar-push DashboardDataPackage:
+     *   DashboardDataPackage {
+     *     commandId = Dashboard_Receive (2)
+     *     magicRandom
+     *     dashboardReceive = DashboardReceiveFromApp {
+     *       packageId = 1
+     *       bashboardConfig = DashboardContent {
+     *         widgetComponents = rWidgetComponent {
+     *           schedule = rScheduleWidget {
+     *             scheduleTotal, scheduleNum (0-based), Schedule, scheduleAuthority
+     *           }
+     *         }
+     *       }
+     *     }
+     *   }
+     */
+    fun calendarPush(
+            magicRandom: Int,
+            packageId: Int,
+            scheduleId: Int,
+            title: String?,
+            location: String?,
+            time: String?,
+            endTimestamp: Int,
+            scheduleAuthority: Int,
+            scheduleTotal: Int,
+            scheduleNum: Int
+    ): ByteArray {
+        val sched = schedule(scheduleId, title, location, time, endTimestamp)
+
+        // rScheduleWidget { f1 = scheduleTotal, f2 = scheduleNum, f3 = Schedule, f4 = scheduleAuthority }
+        val rSchedW = ProtobufWriter()
+        rSchedW.writeInt32Field(1, scheduleTotal)
+        rSchedW.writeInt32Field(2, scheduleNum)
+        rSchedW.writeMessageField(3, sched)
+        rSchedW.writeInt32Field(4, scheduleAuthority)
+
+        // rWidgetComponent { f3 = rScheduleWidget }
+        val rWidgetW = ProtobufWriter()
+        rWidgetW.writeMessageField(3, rSchedW.toByteArray())
+
+        // DashboardContent { f2 = rWidgetComponent }
+        val contentW = ProtobufWriter()
+        contentW.writeMessageField(2, rWidgetW.toByteArray())
+
+        // DashboardReceiveFromApp { f1 = packageId, f3 = DashboardContent }
+        val receiveW = ProtobufWriter()
+        receiveW.writeInt32Field(1, packageId)
+        receiveW.writeMessageField(3, contentW.toByteArray())
+
+        // DashboardDataPackage { f1 = commandId, f2 = magicRandom, f4 = dashboardReceive }
+        val pkgW = ProtobufWriter()
+        pkgW.writeInt32Field(1, DASHBOARD_RECEIVE)
+        pkgW.writeInt32Field(2, magicRandom)
+        pkgW.writeMessageField(4, receiveW.toByteArray())
+        return pkgW.toByteArray()
+    }
+}
+
 // ---------- EvenBLE Transport Layer ----------
 
 private object EvenBLETransport {
@@ -2178,6 +2272,45 @@ class G2 : SGCManager() {
         menuAppIdToPackageName = appIdMap.toMutableMap()
         activeMenuAppId = appIdMap.keys.sorted().firstOrNull()
         sendMenuCommand(msg)
+    }
+
+    /**
+     * Bridge entry for `calendar_events` store updates. Each map is expected to match
+     * the TS `CalendarEvent` shape: { title, location?, time, endDate } where `endDate`
+     * is Unix seconds.
+     *
+     * Sends one BLE push per event, with `scheduleTotal` set to the batch size and
+     * `scheduleNum` set to this event's 0-based slot. The widget pages through them on
+     * the glasses — without paging info the firmware overwrites slot 0 on each push and
+     * only the last event survives.
+     */
+    override fun sendCalendarEvents(events: List<Map<String, Any>>) {
+        Bridge.log("G2: sendCalendarEvents -- ${events.size} events")
+        val total = events.size
+        // Fold the local TZ offset into the timestamp so the glasses (which treat
+        // timestamps as already-local) display the correct time — same hack as time-sync.
+        val tzSec = TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1000
+        events.forEachIndexed { i, ev ->
+            val title = ev["title"] as? String ?: return@forEachIndexed
+            val time = ev["time"] as? String ?: return@forEachIndexed
+            val endTs = (ev["endDate"] as? Number)?.toLong() ?: return@forEachIndexed
+            val location = ev["location"] as? String
+
+            val payload =
+                    CalendarProto.calendarPush(
+                            magicRandom = sendManager.nextMagicRandom(),
+                            packageId = 1,
+                            scheduleId = i + 1,
+                            title = title,
+                            location = location,
+                            time = time,
+                            endTimestamp = (endTs + tzSec).toInt(),
+                            scheduleAuthority = 1,
+                            scheduleTotal = total,
+                            scheduleNum = i
+                    )
+            sendDashboardCommand(payload)
+        }
     }
 
     /**
