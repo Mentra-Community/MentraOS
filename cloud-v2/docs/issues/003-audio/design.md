@@ -306,6 +306,46 @@ gets structured-cloned, which adds CPU and GC pressure.
   `{ kind: "shutdown" }`; worker stops accepting new audio, finishes
   in-flight transcripts, exits.
 
+## Cloud is passive on connection liveness
+
+**Load-bearing invariant.** Cloud-v2 audio never closes a WebSocket because
+of inactivity. No `idleTimeout` short enough to fire on silence, no
+server-initiated pings driving a close, no VAD-aware disconnect logic.
+The client owns connection liveness.
+
+How the responsibility splits:
+
+- **Client.** Sends `{"type":"ping"}` on a short interval (5 seconds in
+  the v1 mobile SDK). If a `{"type":"pong"}` doesn't arrive within a
+  timeout (5 seconds), the client closes its WS and reconnects.
+- **Cloud.** Responds to client pings with pongs. That's all it does
+  for liveness. The cloud's only triggers for releasing an ownership
+  claim are the WS `close` event (client closed) or the Redis TTL
+  expiring (pod died).
+
+Why so cautious about this: v1 burned weeks debugging a "the WS keeps
+dying after ~60 seconds of silence" symptom. Root cause was Kubernetes
+nginx-ingress's `proxy-send-timeout: 60s` default, which closes the
+connection when the **client** is silent — server-initiated pings only
+reset the server→client direction and don't help. Once VAD started
+suppressing audio during silence, the upstream pipeline of "client
+sends nothing" → "ingress kills connection" → "session torn down" → "apps
+killed and respawned" became a cascade. See v1 issues
+`034-ws-liveness/` and `035-nginx-ws-timeout/`. The fix that worked was
+client-driven app-level pings + lifting the ingress timeout to one
+hour — same model we carry forward in cloud-v2.
+
+What this rules out, even when it looks tempting:
+
+- Closing a WS because VAD has reported silence for N seconds.
+- Closing a WS because no UDP packets have arrived for N seconds.
+- Setting `Bun.serve`'s `idleTimeout` to anything that fires during
+  ordinary silence intervals (defaults to 120s in Bun; we either leave
+  it alone or push it up).
+- Tearing down provider connections (Soniox, etc.) on silence — pause
+  them instead. v1 issue `044-cloud-prod-error-storm/` covered the
+  same lesson for the provider layer.
+
 ## Audio packet header format
 
 **Carry forward unchanged from v1.** The v1 packet format already

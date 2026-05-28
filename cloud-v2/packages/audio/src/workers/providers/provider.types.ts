@@ -1,0 +1,59 @@
+/**
+ * @fileoverview Transcription provider interface.
+ *
+ * Abstracts the "PCM in, transcript out" pipeline so we can swap between:
+ *   - `MockProvider` for tests + local dev (no API key needed)
+ *   - `SonioxProvider` (next iteration) wrapping `@soniox/node`
+ *   - Future: alternative ASR vendors as failover or for specific languages
+ *
+ * Lifecycle:
+ *   const provider = await createMockProvider({ onTranscript: handler });
+ *   provider.writeAudio(pcm);           // many times
+ *   await provider.close();             // on detach
+ *
+ * Callbacks are passed at construction time (set-and-forget). Providers
+ * don't expose subscribe/unsubscribe — there's one handler per provider
+ * instance, owned by the worker that created it.
+ */
+
+export interface TranscriptEvent {
+  /** Transcribed text. May be a partial token or a complete word/phrase. */
+  text: string;
+  /** Whether the provider considers this finalized (vs. interim/in-progress). */
+  isFinal: boolean;
+  /** Audio timeline window this transcript covers, in milliseconds. */
+  startMs?: number;
+  endMs?: number;
+  /** ISO language code if the provider reports it (e.g. `"en"`). */
+  language?: string;
+  /** Provider-specific token-level data, for clients that want it. */
+  tokens?: Array<{
+    text: string;
+    isFinal: boolean;
+    startMs?: number;
+    endMs?: number;
+    speaker?: string;
+  }>;
+}
+
+export interface ProviderOptions {
+  /** Identifier for logging — typically the user's `mentraUserId`. */
+  scope: string;
+  /** Source language (`"auto"` for detection, otherwise BCP-47 code). */
+  language: string;
+  /** Fired when the provider has a transcript event to emit. */
+  onTranscript: (event: TranscriptEvent) => void;
+  /** Fired on provider-side errors. Worker logs + decides whether to recreate. */
+  onError?: (err: Error) => void;
+}
+
+export interface TranscriptionProvider {
+  /** Feed a PCM (Int16 mono, 16kHz) chunk. Non-blocking. */
+  writeAudio(pcm: Int16Array): void;
+
+  /** Close cleanly. Best-effort flushes any pending interim transcripts. */
+  close(): Promise<void>;
+
+  /** Provider identifier for diagnostics — `"mock"`, `"soniox"`, etc. */
+  readonly name: string;
+}

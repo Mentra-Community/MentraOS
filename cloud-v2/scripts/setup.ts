@@ -2,8 +2,12 @@
 /**
  * Cloud V2 local dev setup pre-flight.
  *
- * Checks the host has everything it needs, then starts the local Redis
- * container. Idempotent — safe to run repeatedly.
+ * Checks the host has everything it needs, then starts the local containers.
+ * Idempotent — safe to run repeatedly.
+ *
+ * Modes:
+ *   `bun scripts/setup.ts`        — dev (Redis only, Mongo via Atlas)
+ *   `bun scripts/setup.ts --test` — test (Redis + Mongo locally)
  *
  * Future additions (tracked under their own tickets):
  * - OS-1490: Doppler auth check + secrets pull
@@ -12,7 +16,10 @@
 
 import { $ } from "bun";
 
-const REDIS_CONTAINER = "cloud-v2-redis-dev";
+const TEST_MODE = process.argv.includes("--test");
+const COMPOSE_FILE = TEST_MODE ? "docker-compose.test.yml" : "docker-compose.dev.yml";
+const REDIS_CONTAINER = TEST_MODE ? "cloud-v2-redis-test" : "cloud-v2-redis-dev";
+const MONGO_CONTAINER = "cloud-v2-mongo-test";
 const MIN_BUN_MAJOR = 1;
 const MIN_BUN_MINOR = 2;
 
@@ -56,45 +63,81 @@ async function checkDocker() {
   ok("Docker available");
 }
 
-async function startRedis() {
-  step("starting Redis container (docker-compose.dev.yml)");
+async function startContainers() {
+  step(`starting containers from ${COMPOSE_FILE}`);
   try {
-    await $`docker compose -f docker-compose.dev.yml up -d redis`.quiet();
+    await $`docker compose -f ${COMPOSE_FILE} up -d`.quiet();
   } catch (err) {
     fail(`docker compose failed: ${err}`);
   }
 
   step("waiting for Redis to respond to PING");
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
+  const redisDeadline = Date.now() + 10_000;
+  while (Date.now() < redisDeadline) {
     try {
       const result = await $`docker exec ${REDIS_CONTAINER} redis-cli PING`
         .quiet()
         .text();
       if (result.trim() === "PONG") {
-        ok("Redis ready at localhost:6379");
-        return;
+        ok(`Redis ready at localhost:6379`);
+        break;
       }
     } catch {
       // not ready yet, retry
     }
     await Bun.sleep(200);
   }
-  fail("Redis did not respond to PING within 10s. Check `docker ps` and `docker logs cloud-v2-redis-dev`.");
+  if (Date.now() >= redisDeadline) {
+    fail(
+      `Redis did not respond to PING within 10s. Check \`docker logs ${REDIS_CONTAINER}\`.`,
+    );
+  }
+
+  if (TEST_MODE) {
+    step("waiting for Mongo to respond to ping");
+    const mongoDeadline = Date.now() + 15_000;
+    while (Date.now() < mongoDeadline) {
+      try {
+        const result = await $`docker exec ${MONGO_CONTAINER} mongosh --quiet --eval "db.runCommand({ping:1}).ok"`
+          .quiet()
+          .text();
+        if (result.trim() === "1") {
+          ok(`Mongo ready at localhost:27017`);
+          return;
+        }
+      } catch {
+        // not ready
+      }
+      await Bun.sleep(300);
+    }
+    fail(
+      `Mongo did not respond within 15s. Check \`docker logs ${MONGO_CONTAINER}\`.`,
+    );
+  }
 }
 
 async function main() {
-  console.log("\nCloud V2 dev setup\n");
+  console.log(`\nCloud V2 ${TEST_MODE ? "test" : "dev"} setup\n`);
   await checkBunVersion();
   await checkDocker();
-  await startRedis();
-  console.log(
-    "\n\x1b[32mReady.\x1b[0m Next:\n" +
-      "  \x1b[2m# in separate terminals\x1b[0m\n" +
-      "  bun run dev:core\n" +
-      "  bun run dev:audio\n" +
-      "  bun run dev:proxy\n",
-  );
+  await startContainers();
+
+  if (TEST_MODE) {
+    console.log(
+      "\n\x1b[32mReady.\x1b[0m Run tests:\n" +
+        "  bun test                       # whole suite\n" +
+        "  bun test tests/audio*          # just audio tests\n" +
+        "\n  When done: \x1b[2mdocker compose -f docker-compose.test.yml down\x1b[0m\n",
+    );
+  } else {
+    console.log(
+      "\n\x1b[32mReady.\x1b[0m Next:\n" +
+        "  \x1b[2m# in separate terminals\x1b[0m\n" +
+        "  bun run dev:core\n" +
+        "  bun run dev:audio\n" +
+        "  bun run dev:proxy\n",
+    );
+  }
 }
 
 main().catch((err) => {

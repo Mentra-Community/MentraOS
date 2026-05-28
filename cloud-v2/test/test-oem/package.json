@@ -1,17 +1,15 @@
 {
-  "name": "@mentra/cloud-audio",
+  "name": "@mentra/test-oem",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
   "scripts": {
     "dev": "bun --watch src/index.ts",
-    "test": "bun test"
+    "start": "bun src/index.ts"
   },
   "dependencies": {
-    "@mentra/cloud-shared": "workspace:*",
-    "@soniox/node": "^2.1.0",
-    "ioredis": "^5.4.1",
-    "ulid": "^3.0.2"
+    "hono": "^4.11.1",
+    "jose": "^5.9.6"
   }
 }

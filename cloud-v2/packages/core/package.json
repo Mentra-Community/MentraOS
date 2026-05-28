@@ -9,6 +9,11 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@mentra/cloud-shared": "workspace:*"
+    "@mentra/cloud-shared": "workspace:*",
+    "hono": "^4.11.1",
+    "jose": "^5.9.6",
+    "mongoose": "^8.8.4",
+    "ulid": "^2.4.0",
+    "zod": "^3.24.1"
   }
 }

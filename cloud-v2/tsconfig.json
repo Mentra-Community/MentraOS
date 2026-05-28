@@ -4,6 +4,8 @@
     { "path": "./packages/shared" },
     { "path": "./packages/core" },
     { "path": "./packages/audio" },
-    { "path": "./packages/proxy" }
+    { "path": "./packages/proxy" },
+    { "path": "./test/test-oem" },
+    { "path": "./test/test-client" }
   ]
 }

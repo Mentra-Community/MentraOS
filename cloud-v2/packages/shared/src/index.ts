@@ -9,5 +9,11 @@ export {
   type HealthAppOptions,
   type ReadinessCheck,
 } from "./health";
+export {
+  verifyAccessTokenSignature,
+  AccessTokenError,
+  resetMentraKeyCache,
+  type VerifiedAccessToken,
+} from "./auth";
 
 export const PACKAGE_NAME = "@mentra/cloud-shared";

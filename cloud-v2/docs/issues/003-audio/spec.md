@@ -102,23 +102,38 @@ optional translation streams.
 
 Main thread responsibilities:
 - WebSocket accept and lifecycle
+- Ownership claim / refresh / release
 - UDP ingress (parse header, write to Redis Stream)
-- Redis Stream subscription for owned users (read entries, dispatch
-  to the right worker)
+- User assignment to workers (least-loaded picker)
+- Forwarding transcripts from workers back over the WebSocket
 - Worker pool lifecycle (spawn, monitor, replace on death)
-- Sending results back over the WebSocket
 
 Worker responsibilities:
-- Receive audio chunks via `postMessage` (transferred, not copied)
+- Own a slice of users (assigned by main thread via `postMessage`)
+- Maintain a Redis streams client; XREADGROUP the assigned users'
+  audio streams, XAUTOCLAIM for failover replay, XACK after processing
 - LC3 decode → PCM
 - Maintain provider connections (Soniox, etc.) per active
   subscription
 - Emit transcripts and translations back to main thread via
   `postMessage`
 
-Workers do not talk to Redis. The main thread brokers all I/O on
-their behalf. Keeps the worker IPC surface small and isolates
-failure modes.
+**Workers handle their own stream reads.** This is a revision from the
+earlier draft, which had main thread brokering every entry. The earlier
+rule was motivated by IPC-surface minimization, but at the scale we
+want to hit (target ~200–300 users/pod comfortable, ceiling ~1000),
+routing every entry through the main thread makes it the bottleneck
+(one event loop doing WS accept + UDP ingress + ownership refresh +
+per-entry postMessage routing). Splitting stream reads to workers
+keeps the main thread lean — it only sees user-assignment changes
+and transcripts going out — while parallelism scales with worker
+count. ioredis client per worker is cheap (a few hundred connections
+to the Redis cluster across the fleet) and worker death stays local
+(ioredis cleans up on thread exit).
+
+The IPC surface that the earlier rule wanted to keep small is still
+small: main↔worker messages are `ATTACH_USER`, `DETACH_USER`, and
+`TRANSCRIPT`. No per-audio-frame shuttling.
 
 ## Fault tolerance model
 

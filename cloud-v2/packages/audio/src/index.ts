@@ -2,25 +2,157 @@
  * `@mentra/cloud-audio` — Audio Stack. UDP ingress, workers, Redis-routed
  * ownership, transcription + translation providers.
  *
+ * Boot order:
+ *   1. Connect Redis (main + streams clients).
+ *   2. Start UDP listener on `udpPort`.
+ *   3. Start Bun.serve for HTTP health + WS session.
+ *   4. (Pending) Worker pool, ownership refresh.
+ *
+ * When imported, nothing runs — call `startAudio(...)`. When executed
+ * directly, the bottom block drives boot from env vars.
+ *
  * Spec + design: cloud-v2/docs/issues/003-audio/.
  */
 
 import { createHealthApp, createLogger } from "@mentra/cloud-shared";
+import {
+  connectRedis,
+  disconnectRedis,
+  redisReadinessCheck,
+} from "./connections/redis.connection";
+import os from "node:os";
+import {
+  configureAudioSession,
+  forwardToUserSessions,
+  getOwnedUserIds,
+  HTTP_FALLTHROUGH,
+  tryWsUpgrade,
+  wsHandlers,
+} from "./services/session.service";
+import {
+  startUdpIngress,
+  stopUdpIngress,
+} from "./services/udp-ingress.service";
+import {
+  startOwnershipRefreshLoop,
+  stopOwnershipRefreshLoop,
+} from "./services/ownership.service";
+import {
+  onTranscript,
+  startWorkerPool,
+  stopWorkerPool,
+} from "./services/worker-pool.service";
 
 const logger = createLogger("audio");
-const PORT = Number.parseInt(process.env.PORT ?? "3001", 10);
 
-const app = createHealthApp({
-  packageName: "audio",
-  // Readiness checks are added as dependencies come online:
-  // - Redis connection (lands with OS-1503 — Redis Streams audio bus)
-  // - At least one worker alive (lands with OS-1505 — worker pool)
-  readinessChecks: [],
-});
+export interface StartAudioOptions {
+  /** HTTP/WS port. Default: `process.env.PORT ?? 3001`. */
+  httpPort?: number;
+  /** UDP port. Default: `process.env.AUDIO_UDP_PORT ?? 8000`. */
+  udpPort?: number;
+  /** Redis URL. Default: env or `redis://127.0.0.1:6379`. */
+  redisUrl?: string;
+  /**
+   * Host advertised in CONNECTION_ACK's `udp.host`. Default: env or
+   * `127.0.0.1`. In prod this is the LB / NLB hostname clients should dial.
+   */
+  udpAdvertisedHost?: string;
+  /**
+   * Port advertised in CONNECTION_ACK's `udp.port`. Default: env or
+   * matches `udpPort`. May differ from the bound port if the LB does
+   * port translation.
+   */
+  udpAdvertisedPort?: number;
+  /**
+   * Number of audio workers to spawn. Default: env `AUDIO_WORKERS` or 2.
+   * Each is a Bun Worker holding its own Redis streams connection,
+   * processing audio for a slice of assigned users.
+   */
+  workerCount?: number;
+}
 
-const server = Bun.serve({
-  port: PORT,
-  fetch: app.fetch,
-});
+export interface AudioHandle {
+  httpPort: number;
+  udpPort: number;
+  wsUrl: string;
+  stop(): Promise<void>;
+}
 
-logger.info({ port: server.port }, "cloud-v2 audio listening (HTTP only; UDP + WS pending)");
+export async function startAudio(opts: StartAudioOptions = {}): Promise<AudioHandle> {
+  const httpPort = opts.httpPort ?? Number.parseInt(process.env.PORT ?? "3001", 10);
+  const udpPort =
+    opts.udpPort ?? Number.parseInt(process.env.AUDIO_UDP_PORT ?? "8000", 10);
+  const redisUrl =
+    opts.redisUrl ?? process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
+  const udpAdvertisedHost =
+    opts.udpAdvertisedHost ?? process.env.AUDIO_UDP_ADVERTISED_HOST ?? "127.0.0.1";
+  const udpAdvertisedPort =
+    opts.udpAdvertisedPort ??
+    Number.parseInt(process.env.AUDIO_UDP_ADVERTISED_PORT ?? String(udpPort), 10);
+
+  configureAudioSession({ udpAdvertisedHost, udpAdvertisedPort });
+
+  await connectRedis(redisUrl);
+  await startUdpIngress(udpPort);
+
+  const podId = process.env.POD_ID ?? process.env.HOSTNAME ?? os.hostname();
+
+  const workerCount =
+    opts.workerCount ??
+    Number.parseInt(process.env.AUDIO_WORKERS ?? "2", 10);
+  startWorkerPool({ podId, count: workerCount });
+  // Route worker-emitted transcripts to the user's WS sessions on this pod.
+  onTranscript((msg) => {
+    forwardToUserSessions(msg.mentraUserId, msg);
+  });
+
+  // Refresh-owned-claims loop: keeps each owned user's Redis claim alive
+  // while this pod holds their WS. Idempotent in case startAudio is called
+  // twice in a test.
+  startOwnershipRefreshLoop({ podId, getOwnedUserIds });
+
+  const healthApp = createHealthApp({
+    packageName: "audio",
+    readinessChecks: [redisReadinessCheck],
+  });
+
+  const server = Bun.serve({
+    port: httpPort,
+    async fetch(req, srv) {
+      const wsResult = await tryWsUpgrade(req, srv);
+      if (wsResult !== HTTP_FALLTHROUGH) return wsResult;
+      return healthApp.fetch(req);
+    },
+    websocket: wsHandlers,
+  });
+
+  const boundHttpPort = server.port!;
+  logger.info(
+    { httpPort: boundHttpPort, udpPort },
+    "cloud-v2 audio listening (UDP + WS ready; workers + streams pending)",
+  );
+
+  return {
+    httpPort: boundHttpPort,
+    udpPort,
+    wsUrl: `ws://localhost:${boundHttpPort}/ws/session`,
+    async stop() {
+      stopOwnershipRefreshLoop();
+      await stopWorkerPool();
+      server.stop();
+      await stopUdpIngress();
+      await disconnectRedis();
+    },
+  };
+}
+
+if (import.meta.main) {
+  const handle = await startAudio();
+  const shutdown = async (signal: string) => {
+    logger.info({ signal }, "shutdown requested");
+    await handle.stop();
+    process.exit(0);
+  };
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+}
