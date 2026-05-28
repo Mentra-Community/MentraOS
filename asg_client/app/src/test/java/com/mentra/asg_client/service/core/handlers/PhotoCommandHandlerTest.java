@@ -29,23 +29,23 @@ public class PhotoCommandHandlerTest {
         PhotoCommandHandler handler = createHandler();
         MediaCaptureService captureService = Mockito.mock(MediaCaptureService.class);
 
-        Method method = PhotoCommandHandler.class.getDeclaredMethod(
-                "processPhotoCapture",
-                MediaCaptureService.class,
-                String.class,
-                String.class,
-                String.class,
-                String.class,
-                String.class,
-                boolean.class,
-                String.class,
-                String.class,
-                boolean.class,
-                boolean.class,
-                String.class,
-                boolean.class,
-                Long.class
-        );
+        Method method =
+                PhotoCommandHandler.class.getDeclaredMethod(
+                        "processPhotoCapture",
+                        MediaCaptureService.class,
+                        String.class,
+                        String.class,
+                        String.class,
+                        String.class,
+                        String.class,
+                        boolean.class,
+                        String.class,
+                        String.class,
+                        boolean.class,
+                        boolean.class,
+                        String.class,
+                        boolean.class,
+                        Long.class);
         method.setAccessible(true);
         method.invoke(
                 handler,
@@ -62,20 +62,11 @@ public class PhotoCommandHandlerTest {
                 true,
                 "none",
                 true,
-                null
-        );
+                null);
 
-        verify(captureService).takePhotoForBleTransfer(
-                "/tmp/p.jpg",
-                "req-1",
-                "ble-1",
-                false,
-                "medium",
-                true,
-                true,
-                true,
-                null
-        );
+        verify(captureService)
+                .takePhotoForBleTransfer(
+                        "/tmp/p.jpg", "req-1", "ble-1", false, "medium", true, true, true, null);
     }
 
     @Test
@@ -83,23 +74,23 @@ public class PhotoCommandHandlerTest {
         PhotoCommandHandler handler = createHandler();
         MediaCaptureService captureService = Mockito.mock(MediaCaptureService.class);
 
-        Method method = PhotoCommandHandler.class.getDeclaredMethod(
-                "processPhotoCapture",
-                MediaCaptureService.class,
-                String.class,
-                String.class,
-                String.class,
-                String.class,
-                String.class,
-                boolean.class,
-                String.class,
-                String.class,
-                boolean.class,
-                boolean.class,
-                String.class,
-                boolean.class,
-                Long.class
-        );
+        Method method =
+                PhotoCommandHandler.class.getDeclaredMethod(
+                        "processPhotoCapture",
+                        MediaCaptureService.class,
+                        String.class,
+                        String.class,
+                        String.class,
+                        String.class,
+                        String.class,
+                        boolean.class,
+                        String.class,
+                        String.class,
+                        boolean.class,
+                        boolean.class,
+                        String.class,
+                        boolean.class,
+                        Long.class);
         method.setAccessible(true);
         method.invoke(
                 handler,
@@ -116,21 +107,20 @@ public class PhotoCommandHandlerTest {
                 false,
                 "medium",
                 false,
-                1000L
-        );
+                1000L);
 
-        verify(captureService).takePhotoAndUpload(
-                "/tmp/p2.jpg",
-                "req-2",
-                "https://example.com",
-                "token",
-                true,
-                "large",
-                true,
-                false,
-                "medium",
-                false,
-                1000L
-        );
+        verify(captureService)
+                .takePhotoAndUpload(
+                        "/tmp/p2.jpg",
+                        "req-2",
+                        "https://example.com",
+                        "token",
+                        true,
+                        "large",
+                        true,
+                        false,
+                        "medium",
+                        false,
+                        1000L);
     }
 }
