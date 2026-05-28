@@ -55,7 +55,7 @@ class CameraFov @JvmOverloads constructor(
     val roiPosition: Int = roiPosition.coerceIn(MIN_ROI_POSITION, MAX_ROI_POSITION)
 
     companion object {
-        const val MIN_FOV = 50
+        const val MIN_FOV = 82
         const val MAX_FOV = 118
         const val DEFAULT_FOV = 102
         const val MIN_ROI_POSITION = 0
