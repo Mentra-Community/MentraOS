@@ -541,13 +541,8 @@ class SocketComms {
     const sound = msg.sound ?? true
     const rawExp = msg.exposureTimeNs
     const exposureTimeNs = typeof rawExp === "number" && Number.isFinite(rawExp) && rawExp > 0 ? rawExp : null
-    const rawIso = msg.iso
-    const iso =
-      exposureTimeNs != null && typeof rawIso === "number" && Number.isFinite(rawIso) && rawIso > 0
-        ? Math.round(rawIso)
-        : null
     console.log(
-      `SOCKET: PHOTO PIPELINE [1/6] Received photo_request requestId=${requestId} appId=${appId} webhookUrl=${webhookUrl} size=${size} compress=${compress} sound=${sound} exposureTimeNs=${exposureTimeNs ?? "none"} iso=${iso ?? "auto"} authToken=${authToken ? "set" : "none"}`,
+      `SOCKET: PHOTO PIPELINE [1/6] Received photo_request requestId=${requestId} appId=${appId} webhookUrl=${webhookUrl} size=${size} compress=${compress} sound=${sound} exposureTimeNs=${exposureTimeNs ?? "none"} authToken=${authToken ? "set" : "none"}`,
     )
     if (!requestId || !appId) {
       console.log(
@@ -565,7 +560,6 @@ class SocketComms {
       compress,
       sound,
       exposureTimeNs,
-      iso,
     })
       .then(() => {
         console.log(`SOCKET: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto resolved requestId=${requestId}`)

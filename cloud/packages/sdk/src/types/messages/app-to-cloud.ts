@@ -61,10 +61,6 @@ export interface PhotoRequest extends BaseMessage {
    * When omitted or invalid, glasses use auto exposure as today.
    */
   exposureTimeNs?: number;
-  /**
-   * Optional sensor ISO for this photo only. Only used with manual exposureTimeNs.
-   */
-  iso?: number;
 }
 
 /**

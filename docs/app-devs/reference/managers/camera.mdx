@@ -48,8 +48,6 @@ interface PhotoRequestOptions {
   compress?: "none" | "medium" | "heavy";
   /** Sensor exposure time in nanoseconds for this photo only. Omit for auto exposure. */
   exposureTimeNs?: number;
-  /** Sensor ISO for this photo only. Only used when exposureTimeNs enables manual exposure. */
-  iso?: number;
 }
 ```
 
@@ -135,11 +133,10 @@ const compressedPhoto = await session.camera.requestPhoto({
   compress: 'medium'
 });
 
-// Manual exposure and ISO for this photo only
+// Manual exposure for this photo only
 const manualPhoto = await session.camera.requestPhoto({
   size: 'full',
-  exposureTimeNs: 8_333_333,
-  iso: 200
+  exposureTimeNs: 8_333_333
 });
 
 // Custom webhook with authentication and compression
