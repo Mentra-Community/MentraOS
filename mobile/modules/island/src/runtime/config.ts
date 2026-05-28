@@ -61,7 +61,6 @@ export interface MicRequirements {
   shouldSendPcm: boolean
   shouldSendLc3: boolean
   shouldSendTranscript: boolean
-  voiceActivityDetectionEnabled?: boolean
 }
 
 /**
