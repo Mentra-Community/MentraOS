@@ -10,7 +10,6 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -61,11 +60,17 @@ public class RecoveryAgentManager {
   }
 
   private void purgeLegacyUpdaterIfNeeded() {
-    if (context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_PURGED_LEGACY, false)) {
+    if (context
+        .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .getBoolean(KEY_PURGED_LEGACY, false)) {
       return;
     }
     if (getInstalledVersion(LEGACY_UPDATER_PACKAGE) == -1) {
-      context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_PURGED_LEGACY, true).apply();
+      context
+          .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+          .edit()
+          .putBoolean(KEY_PURGED_LEGACY, true)
+          .apply();
       return;
     }
     try {
@@ -79,7 +84,11 @@ public class RecoveryAgentManager {
     } catch (Exception e) {
       Log.w(TAG, "Failed to purge legacy OTA updater package", e);
     } finally {
-      context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(KEY_PURGED_LEGACY, true).apply();
+      context
+          .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+          .edit()
+          .putBoolean(KEY_PURGED_LEGACY, true)
+          .apply();
     }
   }
 
@@ -167,10 +176,12 @@ public class RecoveryAgentManager {
     @Override
     public void onReceive(Context context, Intent intent) {
       String action = intent.getAction();
-      if (!Intent.ACTION_PACKAGE_ADDED.equals(action) && !Intent.ACTION_PACKAGE_REPLACED.equals(action)) {
+      if (!Intent.ACTION_PACKAGE_ADDED.equals(action)
+          && !Intent.ACTION_PACKAGE_REPLACED.equals(action)) {
         return;
       }
-      String packageName = intent.getData() != null ? intent.getData().getSchemeSpecificPart() : null;
+      String packageName =
+          intent.getData() != null ? intent.getData().getSchemeSpecificPart() : null;
       if (RECOVERY_PACKAGE.equals(packageName)) {
         handler.postDelayed(RecoveryAgentManager.this::launchRecoveryAgent, 2000);
       }

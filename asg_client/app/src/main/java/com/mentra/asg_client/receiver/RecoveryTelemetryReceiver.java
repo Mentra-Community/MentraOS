@@ -4,7 +4,6 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
-
 import com.mentra.asg_client.reporting.domains.GeneralReporting;
 
 public class RecoveryTelemetryReceiver extends BroadcastReceiver {
@@ -31,6 +30,7 @@ public class RecoveryTelemetryReceiver extends BroadcastReceiver {
             + attempt);
     boolean success = event != null && !event.contains("failed");
     String version = state == null ? "unknown" : state;
-    GeneralReporting.reportOtaEvent(context, event == null ? "recovery_event" : event, version, success);
+    GeneralReporting.reportOtaEvent(
+        context, event == null ? "recovery_event" : event, version, success);
   }
 }
