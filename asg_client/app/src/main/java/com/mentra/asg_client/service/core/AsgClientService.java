@@ -114,6 +114,7 @@ public class AsgClientService extends Service
     private static AsgClientService instance;
     private boolean lastI2sPlaying = false;
     private boolean isConnected = false; // Track connection state based on heartbeat
+    private boolean isBleTransportConnected = false; // Track phone BLE datapath state reported by BES
 
     // ---------------------------------------------
     // WiFi State Management
@@ -1374,6 +1375,30 @@ public class AsgClientService extends Service
     /** Get current connection state */
     public boolean isConnected() {
         return isConnected;
+    }
+
+    /** Get current phone BLE datapath state as reported by BES. */
+    public boolean isBleTransportConnected() {
+        return isBleTransportConnected;
+    }
+
+    /** Handle phone BLE datapath state updates forwarded by BES. */
+    public void onBleTransportStateChanged(boolean connected) {
+        boolean changed = isBleTransportConnected != connected;
+        isBleTransportConnected = connected;
+
+        if (!connected) {
+            isConnected = false;
+            if (heartbeatTimeoutHandler != null && heartbeatTimeoutRunnable != null) {
+                heartbeatTimeoutHandler.removeCallbacks(heartbeatTimeoutRunnable);
+            }
+        }
+
+        Log.i(
+                TAG,
+                "🔌 BLE transport state reported by BES: "
+                        + (connected ? "CONNECTED" : "DISCONNECTED")
+                        + (changed ? "" : " (unchanged)"));
     }
 
     /** Handle the phone_ready/glasses_ready handshake completing over Bluetooth. */

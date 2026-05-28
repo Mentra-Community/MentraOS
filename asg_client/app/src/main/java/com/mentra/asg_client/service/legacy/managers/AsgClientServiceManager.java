@@ -649,6 +649,24 @@ public class AsgClientServiceManager {
     }
 
     /**
+     * Get the current phone BLE datapath status reported by BES.
+     * @return true if the phone BLE datapath is connected, false otherwise
+     */
+    public boolean isBleTransportConnected() {
+        boolean connected = service.isBleTransportConnected();
+        Log.d(TAG, "🔌 BLE transport status: " + (connected ? "CONNECTED" : "DISCONNECTED"));
+        return connected;
+    }
+
+    /**
+     * Update the phone BLE datapath status reported by BES.
+     */
+    public void onBleTransportStateChanged(boolean connected) {
+        Log.d(TAG, "🔌 BLE transport state update from BES: " + (connected ? "CONNECTED" : "DISCONNECTED"));
+        service.onBleTransportStateChanged(connected);
+    }
+
+    /**
      * Mark the phone connection active after the phone_ready/glasses_ready handshake completes.
      */
     public void onPhoneReadyHandshakeComplete() {

@@ -144,6 +144,11 @@ public class K900CommandHandler {
                     handleBesLogPacket(bData);
                     break;
 
+                case "ble_transport_state":
+                    // Phone BLE datapath state forwarded by BES
+                    handleBleTransportState(bData);
+                    break;
+
                 case "cs_shut":
                     // BES requesting graceful shutdown - send acknowledgment and shutdown MTK
                     handleShutdownCommand();
@@ -223,6 +228,69 @@ public class K900CommandHandler {
         } else {
             Log.d(TAG, "🎤 Voice Activity Detection event received");
         }
+    }
+
+    /** Handle phone BLE datapath state reports forwarded by BES. */
+    private void handleBleTransportState(JSONObject bData) {
+        if (bData == null) {
+            Log.w(TAG, "🔌 BLE transport state received without body");
+            return;
+        }
+
+        boolean connected = optBooleanLike(bData, "connected", false);
+        int conidx = bData.optInt("conidx", -1);
+        String source = bData.optString("source", "datapath");
+        boolean heartbeatConnected = serviceManager != null && serviceManager.isConnected();
+
+        if (serviceManager != null) {
+            serviceManager.onBleTransportStateChanged(connected);
+        }
+
+        Log.i(
+                TAG,
+                "🔌 BES BLE transport state: "
+                        + (connected ? "CONNECTED" : "DISCONNECTED")
+                        + ", source="
+                        + source
+                        + ", conidx="
+                        + conidx
+                        + ", heartbeat="
+                        + (heartbeatConnected ? "CONNECTED" : "DISCONNECTED"));
+
+        try {
+            JSONObject payload = new JSONObject();
+            payload.put("connected", connected);
+            payload.put("source", source);
+            payload.put("conidx", conidx);
+            payload.put("heartbeatConnected", heartbeatConnected);
+            BleTraceLogger.logEvent(
+                    "bes_to_asg",
+                    "ble_transport_state",
+                    connected ? "connected" : "disconnected",
+                    payload);
+        } catch (JSONException e) {
+            Log.d(TAG, "BLE transport trace log failed", e);
+        }
+    }
+
+    private boolean optBooleanLike(JSONObject data, String key, boolean defaultValue) {
+        Object value = data.opt(key);
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue() != 0;
+        }
+        if (value instanceof String) {
+            String normalized = ((String) value).trim().toLowerCase();
+            if ("true".equals(normalized) || "1".equals(normalized) || "yes".equals(normalized)) {
+                return true;
+            }
+            if ("false".equals(normalized) || "0".equals(normalized) || "no".equals(normalized)) {
+                return false;
+            }
+        }
+        return defaultValue;
     }
 
     /**
@@ -894,9 +962,7 @@ public class K900CommandHandler {
             .getAsgSettings()
             .isSaveInGalleryMode();
 
-        boolean isBluetoothConnected =
-                serviceManager.getBluetoothManager() != null
-                        && serviceManager.getBluetoothManager().isConnected();
+        boolean isBluetoothConnected = serviceManager.isBleTransportConnected();
         boolean isHeartbeatConnected = serviceManager.isConnected();
         boolean isConnected = isBluetoothConnected || isHeartbeatConnected;
 
