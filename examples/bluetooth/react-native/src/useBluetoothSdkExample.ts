@@ -127,7 +127,7 @@ export type PhotoPreviewDetails = {
   requestedCaptureConfig?: PhotoRequestedCaptureConfigDetails;
   meteredPreview?: PhotoMeteredPreviewDetails;
   captureMetadata?: PhotoCaptureMetadataDetails;
-  source: 'Cloud server' | 'Phone receiver' | 'Action button';
+  source: 'Cloud server' | 'Phone receiver' | 'Action button' | 'Glasses gallery';
   state: 'acknowledged' | 'error' | 'preview';
   timestamp?: number;
   uploadUrl?: string;
@@ -424,11 +424,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const galleryModeEnabledRef = useRef(false);
   const captureAndUploadRef = useRef<() => Promise<void>>(async () => undefined);
   const photoUploadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cameraButtonNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewHealthTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const directStreamFrameStaleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const barcodeScanTokenRef = useRef(0);
   const photoPreviewOpeningRef = useRef(false);
+  const galleryModePhotoRequestIdsRef = useRef(new Set<string>());
   const lastMicFileUriRef = useRef<string | null>(null);
   const micElapsedSecondsRef = useRef(0);
   const micElapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -597,7 +597,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     return () => {
       subscriptions.forEach((subscription) => subscription.remove());
       clearPhotoUploadTimeout();
-      clearCameraButtonNoticeTimer();
       stopPreviewHealthPoll();
       stopDirectStreamFrameWatchdog();
       void MentraPhotoReceiver.stopPhotoReceiver().catch(() => undefined);
@@ -830,7 +829,10 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   async function captureAndUploadToPhone() {
+    setCameraStatus('Camera: starting phone photo receiver');
+    addEvent('LIVE', 'starting phone photo receiver');
     const receiver = await MentraPhotoReceiver.startPhotoReceiver();
+    addEvent('LIVE', `phone photo receiver ready ${receiver.uploadUrl}`);
     setPhonePhotoReceiverRunning(true);
     setPhonePhotoUploadUrl(receiver.uploadUrl);
 
@@ -978,8 +980,22 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       return;
     }
 
+    const isGalleryModeButtonPhoto =
+      galleryModePhotoRequestIdsRef.current.has(payload.requestId) ||
+      (galleryModeEnabledRef.current &&
+        !activeRequestId &&
+        payload.resolvedConfig?.source === 'button');
+    if (isGalleryModeButtonPhoto) {
+      galleryModePhotoRequestIdsRef.current.add(payload.requestId);
+      showCameraButtonNotice(CAMERA_BUTTON_GALLERY_MODE_NOTICE);
+    }
+    if (!activeRequestId && !isGalleryModeButtonPhoto) {
+      addEvent('LIVE', `ignoring external photo status ${payload.requestId}`);
+      return;
+    }
+
     setPhotoStatus(payload);
-    const label = photoStatusLabel(payload);
+    const label = photoStatusLabel(payload, isGalleryModeButtonPhoto);
     setCameraStatus(`Camera: ${label}`);
     if (photoStatusStartsNewCapture(payload.status)) {
       setPhotoPreviewDetails((current) => {
@@ -1014,8 +1030,10 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           bleFallbackUsed,
           requestId: payload.requestId,
           source:
-            payload.resolvedConfig?.source === 'button'
-              ? 'Action button'
+            isGalleryModeButtonPhoto
+              ? 'Glasses gallery'
+              : payload.resolvedConfig?.source === 'button'
+                ? 'Action button'
               : current?.source ?? (photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver'),
           state: current?.state === 'preview' ? 'preview' : 'acknowledged',
           timestamp: payload.timestamp,
@@ -1029,6 +1047,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }
 
     if (payload.status === 'failed') {
+      galleryModePhotoRequestIdsRef.current.delete(payload.requestId);
       clearPhotoUploadTimeout();
       activePhotoRequestIdRef.current = null;
       setPhotoPreviewDetails({
@@ -1242,24 +1261,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function showCameraButtonNotice(message: string) {
-    clearCameraButtonNotice();
     setCameraButtonNotice(message);
-    cameraButtonNoticeTimerRef.current = setTimeout(() => {
-      setCameraButtonNotice(null);
-      cameraButtonNoticeTimerRef.current = null;
-    }, 6000);
   }
 
   function clearCameraButtonNotice() {
-    clearCameraButtonNoticeTimer();
     setCameraButtonNotice(null);
-  }
-
-  function clearCameraButtonNoticeTimer() {
-    if (cameraButtonNoticeTimerRef.current) {
-      clearTimeout(cameraButtonNoticeTimerRef.current);
-      cameraButtonNoticeTimerRef.current = null;
-    }
   }
 
   async function scanPreviewBarcode(sourceUri: string, expectedValue?: string) {
@@ -2703,8 +2709,27 @@ type PhotoStatusExtras = {
   captureMetadata?: PhotoCaptureMetadataDetails;
 };
 
-function photoStatusLabel(event: PhotoStatusEvent) {
+function photoStatusLabel(event: PhotoStatusEvent, galleryModeButtonPhoto = false) {
   const base = (() => {
+    if (galleryModeButtonPhoto) {
+      switch (event.status) {
+        case 'accepted':
+        case 'queued':
+          return 'gallery photo queued on glasses';
+        case 'configuring':
+          return 'gallery camera configured';
+        case 'capturing':
+          return 'saving photo on glasses';
+        case 'captured':
+        case 'uploading':
+        case 'uploaded':
+          return 'photo saved on glasses';
+        case 'failed':
+          return event.errorCode ?? event.errorMessage ?? 'gallery photo failed';
+        default:
+          return String(event.status).replace(/_/g, ' ');
+      }
+    }
     switch (event.status) {
       case 'accepted':
         return 'photo request accepted';

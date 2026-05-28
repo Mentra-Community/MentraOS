@@ -79,7 +79,11 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const glassesWifiConnected = isGlassesWifiConnected(sdk.glasses);
   const wifiRequired = connected && !glassesWifiConnected;
   const cameraStatusFailed = isCameraStatusFailure(sdk.cameraStatus);
-  const photoStatusOverlay = photoStatusOverlayInfo(sdk.photoStatus, sdk.photoPreviewUrl);
+  const photoStatusOverlay = photoStatusOverlayInfo(
+    sdk.photoStatus,
+    sdk.photoPreviewUrl,
+    sdk.photoPreviewDetails,
+  );
   const bleFallbackWarning = sdk.photoPreviewDetails?.bleFallbackUsed
     ? sdk.photoPreviewDetails.bleFallbackMessage ??
       'Wi-Fi upload failed; photo was compressed and delivered through Bluetooth.'
@@ -380,7 +384,11 @@ type PhotoStatusExtras = {
   captureMetadata?: PhotoPreviewDetails['captureMetadata'];
 };
 
-function photoStatusOverlayInfo(status: PhotoStatusEvent | null, previewUrl: string | null) {
+function photoStatusOverlayInfo(
+  status: PhotoStatusEvent | null,
+  previewUrl: string | null,
+  details: PhotoPreviewDetails | null,
+) {
   if (!status) {
     return null;
   }
@@ -393,13 +401,34 @@ function photoStatusOverlayInfo(status: PhotoStatusEvent | null, previewUrl: str
     busy: !failed,
     detail: failed
       ? status.errorMessage
-      : photoStatusDetail(status),
+      : details?.source === 'Glasses gallery'
+        ? 'Gallery mode is on, so the photo remains on the glasses and is not previewed.'
+        : photoStatusDetail(status),
     failed,
-    title: photoStatusTitle(status),
+    title: photoStatusTitle(status, details),
   };
 }
 
-function photoStatusTitle(status: PhotoStatusEvent) {
+function photoStatusTitle(status: PhotoStatusEvent, details: PhotoPreviewDetails | null) {
+  if (details?.source === 'Glasses gallery') {
+    switch (status.status) {
+      case 'accepted':
+      case 'queued':
+        return 'Queued for glasses gallery';
+      case 'configuring':
+        return 'Preparing glasses capture';
+      case 'capturing':
+      case 'captured':
+      case 'uploading':
+        return 'Saving on glasses';
+      case 'uploaded':
+        return 'Saved on glasses';
+      case 'failed':
+        return status.errorCode ?? 'Gallery photo failed';
+      default:
+        return String(status.status).replace(/_/g, ' ');
+    }
+  }
   switch (status.status) {
     case 'accepted':
       return 'Request accepted';
@@ -915,7 +944,11 @@ function photoDetailsSummary(details: PhotoPreviewDetails | null) {
     details.byteCount ? formatBytes(details.byteCount) : null,
     details.width && details.height ? `${details.width} x ${details.height}` : null,
     details.captureMetadata ? photoCaptureMetadataDetail(details.captureMetadata) : null,
-    details.state === 'acknowledged' ? 'acknowledged' : 'preview ready',
+    details.source === 'Glasses gallery'
+      ? 'saved on glasses'
+      : details.state === 'acknowledged'
+        ? 'acknowledged'
+        : 'preview ready',
   ].filter(Boolean).join(' · ');
 }
 
@@ -928,8 +961,21 @@ function photoDetailsRows(details: PhotoPreviewDetails | null) {
   }
   const rows: Array<DetailRow & {tone?: DetailRowTone}> = [
     {label: 'Source', value: details.source},
-    {label: 'State', value: details.state},
+    {
+      label: 'State',
+      value:
+        details.source === 'Glasses gallery' && details.state === 'acknowledged'
+          ? 'saved on glasses'
+          : details.state,
+    },
   ];
+  if (details.source === 'Glasses gallery') {
+    rows.push({
+      label: 'Gallery mode',
+      value: 'Photo stayed on the glasses and was not previewed on the phone.',
+      tone: 'warning',
+    });
+  }
   if (details.bleFallbackMessage) {
     rows.push({label: 'Bluetooth fallback', value: details.bleFallbackMessage, tone: 'warning'});
   }
