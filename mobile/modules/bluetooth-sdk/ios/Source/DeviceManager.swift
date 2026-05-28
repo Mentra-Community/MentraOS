@@ -595,6 +595,8 @@ struct ViewState {
             sgc = G2()
         } else if wearable.contains(DeviceTypes.LIVE) {
             sgc = MentraLive()
+        } else if wearable.contains(DeviceTypes.NEX) {
+            sgc = MentraNexSGC.getInstance()
         } else if wearable.contains(DeviceTypes.MACH1) {
             sgc = Mach1()
         } else if wearable.contains(DeviceTypes.Z100) {

@@ -840,7 +840,6 @@ export const useSettingsStore = create<SettingsState>()(
           coreSettings[setting.key] = state.getSetting(setting.key)
         }
       })
-      coreSettings.voice_activity_detection_enabled = !state.getSetting(SETTINGS.bypass_vad_for_debugging.key)
       return coreSettings
     },
     resetAllSettingsLocally: () => {

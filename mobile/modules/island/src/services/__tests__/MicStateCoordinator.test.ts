@@ -36,7 +36,6 @@ describe("MicStateCoordinator", () => {
       pcm: true,
       lc3: false,
       transcript: true,
-      voiceActivityDetectionEnabled: false,
     })
     MicStateCoordinator.setLocalRequirements({pcm: false, lc3: true})
     const lastCall = mockSetMicRequirements.mock.calls[mockSetMicRequirements.mock.calls.length - 1]
@@ -45,7 +44,6 @@ describe("MicStateCoordinator", () => {
         shouldSendPcm: false,
         shouldSendLc3: true,
         shouldSendTranscript: true,
-        voiceActivityDetectionEnabled: false,
       }),
     )
   })
