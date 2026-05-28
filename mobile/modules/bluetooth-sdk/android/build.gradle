@@ -6,6 +6,8 @@ apply plugin: 'maven-publish'
 apply plugin: 'signing'
 
 def packageJson = new JsonSlurper().parse(file("../package.json"))
+def mavenGroupId = 'com.mentraglass'
+def mavenPublishVersion = (findProperty('mentraMavenVersion') ?: System.getenv('MENTRA_MAVEN_VERSION') ?: '0.1.7').toString()
 
 // Download Sherpa-ONNX Android AAR from the upstream GitHub release and stage
 // it as a Maven artifact in a tiny on-disk repository under libs/maven/.
@@ -103,8 +105,69 @@ repositories {
 }
 
 
-group = 'com.mentra'
-version = packageJson.version
+group = mavenGroupId
+version = mavenPublishVersion
+
+def credentialValue = { List<String> propertyNames, List<String> envNames ->
+  for (propertyName in propertyNames) {
+    def value = findProperty(propertyName)
+    if (value != null && value.toString().trim()) {
+      return value.toString()
+    }
+  }
+  for (envName in envNames) {
+    def value = System.getenv(envName)
+    if (value != null && value.trim()) {
+      return value
+    }
+  }
+  return null
+}
+
+def centralTokenParts = {
+  def token = credentialValue(['sonatypeTokenBase64', 'mavenCentralTokenBase64'], ['SONATYPE_TOKEN_BASE64', 'MAVEN_CENTRAL_TOKEN_BASE64'])
+  if (!token) {
+    return null
+  }
+  def decoded = new String(token.decodeBase64(), 'UTF-8')
+  def separator = decoded.indexOf(':')
+  if (separator <= 0) {
+    throw new GradleException('Sonatype token must decode to username:password')
+  }
+  return [decoded.substring(0, separator), decoded.substring(separator + 1)]
+}
+
+def centralUsername = {
+  credentialValue(['sonatypeUsername', 'mavenCentralUsername'], ['SONATYPE_USERNAME', 'MAVEN_CENTRAL_USERNAME']) ?: centralTokenParts()?.get(0)
+}
+
+def centralPassword = {
+  credentialValue(['sonatypePassword', 'mavenCentralPassword'], ['SONATYPE_PASSWORD', 'MAVEN_CENTRAL_PASSWORD']) ?: centralTokenParts()?.get(1)
+}
+
+def signingKey = {
+  credentialValue(['signingKey'], ['SIGNING_KEY'])
+}
+
+def signingPassword = {
+  credentialValue(['signingPassword'], ['SIGNING_PASSWORD'])
+}
+
+def shouldUseGpgCmd = {
+  (credentialValue(['signing.useGpgCmd'], ['SIGNING_USE_GPG_CMD']) ?: 'false').toBoolean()
+}
+
+def isPublishTask = {
+  gradle.taskGraph.allTasks.any { it.name.toLowerCase().contains('publish') }
+}
+
+def isCentralPublishTask = {
+  gradle.taskGraph.allTasks.any { it.name.toLowerCase().contains('sonatypecentral') }
+}
+
+def hasSigningCredentials = {
+  findProperty('signing.keyId') || signingKey() || shouldUseGpgCmd()
+}
 
 def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
 apply from: expoModulesCorePlugin
@@ -137,7 +200,7 @@ android {
   namespace "com.mentra.bluetoothsdk"
   defaultConfig {
     versionCode 1
-    versionName packageJson.version
+    versionName project.version
   }
   publishing {
     singleVariant("release") {
@@ -231,7 +294,7 @@ afterEvaluate {
   publishing {
     publications {
       release(MavenPublication) {
-        groupId = 'com.mentra'
+        groupId = mavenGroupId
         artifactId = 'bluetooth-sdk'
         version = project.version
 
@@ -262,13 +325,58 @@ afterEvaluate {
         }
       }
     }
+    repositories {
+      maven {
+        name = 'sonatypeCentral'
+        url = uri('https://ossrh-staging-api.central.sonatype.com/service/local/staging/deploy/maven2/')
+        credentials {
+          username = centralUsername()
+          password = centralPassword()
+        }
+      }
+    }
   }
 
   signing {
+    def inMemorySigningKey = signingKey()
+    if (inMemorySigningKey) {
+      useInMemoryPgpKeys(inMemorySigningKey, signingPassword())
+    } else if (shouldUseGpgCmd()) {
+      useGpgCmd()
+    }
     required {
-      gradle.taskGraph.allTasks.any { it.name.toLowerCase().contains("publish") } &&
-        (findProperty("signing.keyId") || findProperty("signingKey"))
+      isCentralPublishTask() || (isPublishTask() && hasSigningCredentials())
     }
     sign publishing.publications.release
+  }
+}
+
+tasks.register('uploadSonatypeCentralDeployment') {
+  group = 'publishing'
+  description = "Uploads the ${mavenGroupId} OSSRH compatibility repository to the Central Portal."
+  dependsOn ':lc3Lib:publishReleasePublicationToSonatypeCentralRepository',
+    ':mentra-bluetooth-sdk:publishReleasePublicationToSonatypeCentralRepository'
+
+  doLast {
+    def username = centralUsername()
+    def password = centralPassword()
+    if (!username || !password) {
+      throw new GradleException('Set sonatypeTokenBase64 or sonatypeUsername/sonatypePassword before uploading to Central.')
+    }
+
+    def publishingType = (findProperty('sonatypePublishingType') ?: System.getenv('SONATYPE_PUBLISHING_TYPE') ?: 'user_managed').toString()
+    def endpoint = new URL("https://ossrh-staging-api.central.sonatype.com/manual/upload/defaultRepository/${mavenGroupId}?publishing_type=${publishingType}")
+    def connection = endpoint.openConnection()
+    connection.requestMethod = 'POST'
+    connection.setRequestProperty('Authorization', "Bearer ${"${username}:${password}".bytes.encodeBase64()}")
+    connection.setRequestProperty('Content-Length', '0')
+
+    def statusCode = connection.responseCode
+    def responseBody = statusCode >= 400 ? connection.errorStream?.text : connection.inputStream?.text
+    if (statusCode < 200 || statusCode >= 300) {
+      throw new GradleException("Central deployment upload failed with HTTP ${statusCode}: ${responseBody ?: ''}")
+    }
+
+    println "Sonatype Central deployment upload requested for ${mavenGroupId} (${publishingType})."
   }
 }
