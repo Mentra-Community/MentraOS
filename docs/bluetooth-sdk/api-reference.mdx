@@ -256,7 +256,7 @@ Important defaults:
 - `requestPhoto({authToken, ...})` omits the `Authorization` header when `authToken` is `null` or empty.
 - `requestPhoto({exposureTimeNs, ...})` uses auto exposure when `exposureTimeNs` is omitted or `null`; pass a positive nanosecond value for one-shot manual exposure.
 - `requestPhoto({exposureTimeNs, iso, ...})` uses `iso` only when `exposureTimeNs` enables one-shot manual exposure. Omit `iso` / pass `null` for auto ISO selection.
-- `setCameraFov({fov, roiPosition})` clamps `fov` to 50-118 degrees and `roiPosition` to `0` center, `1` bottom, or `2` top. On Mentra Live this persists the setting and restarts the camera for about 5 seconds before the next capture should run.
+- `setCameraFov({fov, roiPosition})` clamps `fov` to 82-118 degrees and `roiPosition` to `0` center, `1` bottom, or `2` top. On Mentra Live this persists the setting and restarts the camera for about 5 seconds before the next capture should run.
 - `startStream` optional `video` and `audio` configs are omitted unless supplied, so the connected glasses use their model defaults. The SDK sends stream keep-alives automatically and reports timeout/error state through `stream_status`.
 - Photo capture, video recording, and streaming always enable the camera light as a privacy indicator.
 
