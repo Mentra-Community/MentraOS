@@ -78,7 +78,6 @@ export class PhotoManager {
         hasCustomWebhook: !!customWebhookUrl,
         hasAuthToken: !!authToken,
         rawExposureTimeNs: appRequest.exposureTimeNs,
-        rawIso: appRequest.iso,
       },
       "Processing App photo request.",
     );
@@ -128,8 +127,6 @@ export class PhotoManager {
 
     const expNs = appRequest.exposureTimeNs;
     const includeExposure = typeof expNs === "number" && Number.isFinite(expNs) && expNs > 0;
-    const iso = appRequest.iso;
-    const includeIso = includeExposure && typeof iso === "number" && Number.isFinite(iso) && iso > 0;
 
     // Message to glasses based on CloudToGlassesMessageType.PHOTO_REQUEST
     // Include webhook URL so ASG can upload directly to the app
@@ -146,7 +143,6 @@ export class PhotoManager {
       sound, // Controls shutter sound (app-controllable via SDK)
       timestamp: new Date(),
       ...(includeExposure ? { exposureTimeNs: expNs } : {}),
-      ...(includeIso ? { iso: Math.round(iso) } : {}),
     };
 
     try {
@@ -161,7 +157,6 @@ export class PhotoManager {
           flash,
           sound,
           exposureTimeNs: includeExposure ? expNs : undefined,
-          iso: includeIso ? Math.round(iso) : undefined,
         },
         `PHOTO PIPELINE [cloud] PHOTO_REQUEST sent to phone websocket (flash=${flash}, sound=${sound}).`,
       );

@@ -57,11 +57,6 @@ export interface PhotoRequestOptions {
    * Invalid values are ignored on the wire; device falls back to auto exposure.
    */
   exposureTimeNs?: number;
-  /**
-   * Sensor ISO for this photo request only.
-   * Only used when exposureTimeNs enables manual exposure.
-   */
-  iso?: number;
 }
 
 /**
@@ -205,8 +200,6 @@ export class CameraModule {
         // Create photo request message
         const expNs = options?.exposureTimeNs;
         const includeExp = typeof expNs === "number" && Number.isFinite(expNs) && expNs > 0;
-        const iso = options?.iso;
-        const includeIso = includeExp && typeof iso === "number" && Number.isFinite(iso) && iso > 0;
 
         const message: PhotoRequest = {
           type: AppToCloudMessageType.PHOTO_REQUEST,
@@ -221,7 +214,6 @@ export class CameraModule {
           compress: options?.compress || "none",
           sound: options?.sound,
           ...(includeExp ? { exposureTimeNs: expNs } : {}),
-          ...(includeIso ? { iso: Math.round(iso) } : {}),
         };
 
         // Send request to cloud
@@ -234,7 +226,6 @@ export class CameraModule {
             hasCustomWebhook: !!options?.customWebhookUrl,
             hasAuthToken: !!options?.authToken,
             exposureTimeNs: includeExp ? expNs : undefined,
-            iso: includeIso ? Math.round(iso) : undefined,
           },
           `📸 Photo request sent`,
         );

@@ -30,10 +30,9 @@ describe("CameraManager takePhoto exposureTimeNs", () => {
   });
 
   test("includes exposureTimeNs when valid positive number", async () => {
-    const p = manager.takePhoto({ exposureTimeNs: 33_333_333, iso: 800 });
+    const p = manager.takePhoto({ exposureTimeNs: 33_333_333 });
     expect(lastOutbound?.type).toBe(AppToCloudMessageType.PHOTO_REQUEST);
     expect(lastOutbound?.exposureTimeNs).toBe(33_333_333);
-    expect(lastOutbound?.iso).toBe(800);
     const rid = lastOutbound?.requestId as string;
     manager.handlePhotoResponse({
       requestId: rid,
@@ -51,25 +50,6 @@ describe("CameraManager takePhoto exposureTimeNs", () => {
     const p = manager.takePhoto({});
     expect(lastOutbound?.type).toBe(AppToCloudMessageType.PHOTO_REQUEST);
     expect(Object.prototype.hasOwnProperty.call(lastOutbound ?? {}, "exposureTimeNs")).toBe(false);
-    expect(Object.prototype.hasOwnProperty.call(lastOutbound ?? {}, "iso")).toBe(false);
-    const rid = lastOutbound?.requestId as string;
-    manager.handlePhotoResponse({
-      requestId: rid,
-      success: true,
-      photoUrl: "https://x/u.jpg",
-      width: 1,
-      height: 1,
-      timestamp: new Date(),
-      savedToGallery: false,
-    });
-    await p;
-  });
-
-  test("omits iso when manual exposure is absent", async () => {
-    const p = manager.takePhoto({ iso: 800 });
-    expect(lastOutbound?.type).toBe(AppToCloudMessageType.PHOTO_REQUEST);
-    expect(Object.prototype.hasOwnProperty.call(lastOutbound ?? {}, "exposureTimeNs")).toBe(false);
-    expect(Object.prototype.hasOwnProperty.call(lastOutbound ?? {}, "iso")).toBe(false);
     const rid = lastOutbound?.requestId as string;
     manager.handlePhotoResponse({
       requestId: rid,

@@ -109,8 +109,6 @@ export interface PhotoRequestToGlasses extends BaseMessage {
    * When omitted or invalid, device uses auto exposure.
    */
   exposureTimeNs?: number;
-  /** Optional sensor ISO. Only used with manual exposureTimeNs. */
-  iso?: number;
 }
 
 /**

@@ -41,9 +41,9 @@ await app.start();
 | Dashboard     | `session.dashboard`     | Write to the system dashboard view    |
 | Time          | `session.time`          | Timezone-aware time utilities         |
 
-### Manual shutter and ISO
+### Manual shutter
 
-`await session.camera.takePhoto({ exposureTimeNs: 8_333_333, iso: 200 })` sets sensor exposure time in **nanoseconds** and sensor ISO for that shot only. It is **not** saved as a camera preference. Omit both fields, or pass invalid / non-positive values, for normal auto exposure. `iso` is only used when `exposureTimeNs` enables manual exposure. Unsupported hardware falls back to auto exposure on the glasses.
+`await session.camera.takePhoto({ exposureTimeNs: 8_333_333 })` sets sensor exposure time in **nanoseconds** for that shot only. It is **not** saved as a camera preference. Omit the field, or pass an invalid / non-positive value, for normal auto exposure. Unsupported hardware falls back to auto exposure on the glasses.
 
 ## Migrating from v2?
 
