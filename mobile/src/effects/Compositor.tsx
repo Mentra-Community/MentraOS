@@ -17,7 +17,7 @@
  */
 
 import {useCallback, useEffect, useRef, useState} from "react"
-import {BackHandler, Dimensions, Platform, View} from "react-native"
+import {Dimensions, Platform, View} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import Animated, {
   runOnJS,
@@ -29,9 +29,8 @@ import Animated, {
 } from "react-native-reanimated"
 
 import LocalMiniappView from "@/components/miniapp/LocalMiniappView"
-import CapsuleMenu, {captureScreenshot} from "@/effects/CapsuleMenu"
-import {useCapsuleStore} from "@/stores/capsule"
-import {BgTimer, useAppStatusStore, useForegroundApp} from "@mentra/island"
+import {captureScreenshot} from "@/effects/CapsuleMenu"
+import {useAppStatusStore, useForegroundApp} from "@mentra/island"
 import {Screen} from "@/components/ignite/Screen"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 const EDGE_HIT_WIDTH = 24
@@ -44,17 +43,6 @@ const COMMIT_VELOCITY = 500
 // Below this translation a fast flick is treated as an accidental swipe, not a
 // deliberate back gesture — guards against twitchy taps near the edge.
 const MIN_FLICK_TRANSLATION = 12
-// Near-critically-damped spring shared by the commit (→ off-screen) and cancel
-// (→ rest) animations. Seeding it with the gesture's release velocity makes the
-// hand-off from finger to animation continuous, like UIKit's pop.
-const SWIPE_SPRING = {
-  damping: 30,
-  stiffness: 260,
-  mass: 1,
-  overshootClamping: true,
-  restDisplacementThreshold: 0.5,
-  restSpeedThreshold: 2,
-} as const
 // Cap the velocity we hand to the commit spring so a frantic flick doesn't
 // blow past the off-screen target and snap back visibly.
 const MAX_COMMIT_VELOCITY = 3000
