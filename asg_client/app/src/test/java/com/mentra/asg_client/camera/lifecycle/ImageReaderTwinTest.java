@@ -2,7 +2,6 @@ package com.mentra.asg_client.camera.lifecycle;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -56,18 +55,22 @@ public class ImageReaderTwinTest {
 
         imageReaderStatic = org.mockito.Mockito.mockStatic(ImageReader.class);
         imageReaderStatic
-                .when(() -> ImageReader.newInstance(
-                        ImageReaderTwin.PREVIEW_WIDTH,
-                        ImageReaderTwin.PREVIEW_HEIGHT,
-                        ImageFormat.YUV_420_888,
-                        ImageReaderTwin.BUFFER_COUNT))
+                .when(
+                        () ->
+                                ImageReader.newInstance(
+                                        ImageReaderTwin.PREVIEW_WIDTH,
+                                        ImageReaderTwin.PREVIEW_HEIGHT,
+                                        ImageFormat.YUV_420_888,
+                                        ImageReaderTwin.BUFFER_COUNT))
                 .thenReturn(previewReaderMock);
         imageReaderStatic
-                .when(() -> ImageReader.newInstance(
-                        eq(1920),
-                        eq(1080),
-                        eq(ImageFormat.JPEG),
-                        eq(ImageReaderTwin.BUFFER_COUNT)))
+                .when(
+                        () ->
+                                ImageReader.newInstance(
+                                        eq(1920),
+                                        eq(1080),
+                                        eq(ImageFormat.JPEG),
+                                        eq(ImageReaderTwin.BUFFER_COUNT)))
                 .thenReturn(stillReaderMock);
     }
 
@@ -80,13 +83,17 @@ public class ImageReaderTwinTest {
     public void createsBothReadersWithCorrectSizesAndFormats() {
         new ImageReaderTwin(new Size(1920, 1080), backgroundHandler, stillListener);
 
-        imageReaderStatic.verify(() -> ImageReader.newInstance(
-                ImageReaderTwin.PREVIEW_WIDTH,
-                ImageReaderTwin.PREVIEW_HEIGHT,
-                ImageFormat.YUV_420_888,
-                ImageReaderTwin.BUFFER_COUNT));
-        imageReaderStatic.verify(() -> ImageReader.newInstance(
-                1920, 1080, ImageFormat.JPEG, ImageReaderTwin.BUFFER_COUNT));
+        imageReaderStatic.verify(
+                () ->
+                        ImageReader.newInstance(
+                                ImageReaderTwin.PREVIEW_WIDTH,
+                                ImageReaderTwin.PREVIEW_HEIGHT,
+                                ImageFormat.YUV_420_888,
+                                ImageReaderTwin.BUFFER_COUNT));
+        imageReaderStatic.verify(
+                () ->
+                        ImageReader.newInstance(
+                                1920, 1080, ImageFormat.JPEG, ImageReaderTwin.BUFFER_COUNT));
     }
 
     @Test
@@ -103,7 +110,8 @@ public class ImageReaderTwinTest {
     public void stillReaderListenerIsTheCallerProvided() {
         new ImageReaderTwin(new Size(1920, 1080), backgroundHandler, stillListener);
 
-        verify(stillReaderMock).setOnImageAvailableListener(eq(stillListener), eq(backgroundHandler));
+        verify(stillReaderMock)
+                .setOnImageAvailableListener(eq(stillListener), eq(backgroundHandler));
     }
 
     @Test
@@ -112,7 +120,8 @@ public class ImageReaderTwinTest {
 
         ArgumentCaptor<ImageReader.OnImageAvailableListener> drainCaptor =
                 ArgumentCaptor.forClass(ImageReader.OnImageAvailableListener.class);
-        verify(previewReaderMock).setOnImageAvailableListener(drainCaptor.capture(), eq(backgroundHandler));
+        verify(previewReaderMock)
+                .setOnImageAvailableListener(drainCaptor.capture(), eq(backgroundHandler));
 
         ImageReader.OnImageAvailableListener drain = drainCaptor.getValue();
         assertThat(drain).isNotNull();
@@ -127,16 +136,16 @@ public class ImageReaderTwinTest {
 
     @Test
     public void surfacesAreDistinct() {
-        ImageReaderTwin twin = new ImageReaderTwin(
-                new Size(1920, 1080), backgroundHandler, stillListener);
+        ImageReaderTwin twin =
+                new ImageReaderTwin(new Size(1920, 1080), backgroundHandler, stillListener);
 
         assertThat(twin.getPreviewSurface()).isNotSameAs(twin.getStillSurface());
     }
 
     @Test
     public void closesBothReadersOnDispose() {
-        ImageReaderTwin twin = new ImageReaderTwin(
-                new Size(1920, 1080), backgroundHandler, stillListener);
+        ImageReaderTwin twin =
+                new ImageReaderTwin(new Size(1920, 1080), backgroundHandler, stillListener);
 
         twin.close();
 
@@ -146,8 +155,8 @@ public class ImageReaderTwinTest {
 
     @Test
     public void surfacesReturnsBothInPredictableOrder() {
-        ImageReaderTwin twin = new ImageReaderTwin(
-                new Size(1920, 1080), backgroundHandler, stillListener);
+        ImageReaderTwin twin =
+                new ImageReaderTwin(new Size(1920, 1080), backgroundHandler, stillListener);
 
         assertThat(twin.surfaces())
                 .containsExactly(twin.getPreviewSurface(), twin.getStillSurface());
@@ -159,11 +168,13 @@ public class ImageReaderTwinTest {
 
         ArgumentCaptor<ImageReader.OnImageAvailableListener> drainCaptor =
                 ArgumentCaptor.forClass(ImageReader.OnImageAvailableListener.class);
-        verify(previewReaderMock).setOnImageAvailableListener(drainCaptor.capture(), eq(backgroundHandler));
+        verify(previewReaderMock)
+                .setOnImageAvailableListener(drainCaptor.capture(), eq(backgroundHandler));
         ImageReader.OnImageAvailableListener drain = drainCaptor.getValue();
 
         ImageReader closedReader = mock(ImageReader.class);
-        when(closedReader.acquireLatestImage()).thenThrow(new IllegalStateException("reader closed"));
+        when(closedReader.acquireLatestImage())
+                .thenThrow(new IllegalStateException("reader closed"));
 
         drain.onImageAvailable(closedReader); // Must not propagate.
     }
@@ -172,7 +183,9 @@ public class ImageReaderTwinTest {
     public void stillListenerInvokedOnStillReaderOnly() {
         new ImageReaderTwin(new Size(1920, 1080), backgroundHandler, stillListener);
 
-        verify(stillReaderMock, times(1)).setOnImageAvailableListener(eq(stillListener), any(Handler.class));
-        verify(previewReaderMock, never()).setOnImageAvailableListener(eq(stillListener), any(Handler.class));
+        verify(stillReaderMock, times(1))
+                .setOnImageAvailableListener(eq(stillListener), any(Handler.class));
+        verify(previewReaderMock, never())
+                .setOnImageAvailableListener(eq(stillListener), any(Handler.class));
     }
 }
