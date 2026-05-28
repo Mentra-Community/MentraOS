@@ -96,7 +96,9 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             Bridge.log("NEX: Failed to convert UIImage to bitmap bytes")
             return false
         }
-        displayBitmapData(bmpData, width: Int(image.size.width), height: Int(image.size.height))
+        let pixelWidth = image.cgImage?.width ?? Int(image.size.width * image.scale)
+        let pixelHeight = image.cgImage?.height ?? Int(image.size.height * image.scale)
+        displayBitmapData(bmpData, width: pixelWidth, height: pixelHeight)
         return true
     }
 
@@ -321,9 +323,10 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     // MARK: - Singleton Access
 
     @objc static func getInstance() -> MentraNexSGC {
-        if instance == nil {
-            instance = MentraNexSGC()
+        if let existing = instance, existing.centralManager != nil {
+            return existing
         }
+        instance = MentraNexSGC()
         return instance!
     }
 
@@ -450,6 +453,11 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     private func setServicesReady(_ ready: Bool) {
         servicesReady = ready
+        guard ready else { return }
+        releaseServiceWaiters()
+    }
+
+    private func releaseServiceWaiters() {
         let waiters = serviceReadyWaiters
         serviceReadyWaiters.removeAll()
         waiters.forEach { $0.resume() }
@@ -814,6 +822,8 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             return "connecting"
         case ConnTypes.CONNECTED:
             return "connected"
+        case ConnTypes.SCANNING:
+            return "scanning"
         default:
             return "disconnected"
         }
@@ -1995,6 +2005,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             centralManager?.cancelPeripheralConnection(peripheral)
         }
         setServicesReady(false)
+        releaseServiceWaiters()
         Task { await commandQueue.clear() }
         resumePendingWrite()
         stopReconnectionTimer()
@@ -2037,6 +2048,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // Clear discovery cache
         discoveredPeripherals.removeAll()
         setServicesReady(false)
+        releaseServiceWaiters()
         Task { await commandQueue.clear() }
         resumePendingWrite()
 
@@ -2300,6 +2312,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         isConnecting = false
         connectionState = ConnTypes.DISCONNECTED
         setServicesReady(false)
+        releaseServiceWaiters()
         Task { await commandQueue.clear() }
         resumePendingWrite()
         self.peripheral = nil // Reset peripheral on failure to allow reconnection
@@ -2325,6 +2338,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // Save microphone state before disconnection (like Java implementation)
         saveMicrophoneStateBeforeDisconnection()
         setServicesReady(false)
+        releaseServiceWaiters()
         Task { await commandQueue.clear() }
         resumePendingWrite()
 
