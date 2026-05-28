@@ -62,6 +62,7 @@ public struct PhotoRequest {
     public let compress: PhotoCompression?
     public let flash: Bool
     public let sound: Bool
+    public let includeImu: Bool
     /// Sensor exposure time for this capture only (ns), or nil for auto exposure
     public let exposureTimeNs: Double?
 
@@ -74,6 +75,7 @@ public struct PhotoRequest {
         compress: PhotoCompression? = nil,
         flash: Bool = true,
         sound: Bool,
+        includeImu: Bool = false,
         exposureTimeNs: Double? = nil
     ) {
         self.requestId = requestId
@@ -84,6 +86,7 @@ public struct PhotoRequest {
         self.compress = compress
         self.flash = flash
         self.sound = sound
+        self.includeImu = includeImu
         self.exposureTimeNs = exposureTimeNs
     }
 }
@@ -244,5 +247,21 @@ public struct PhotoResponseEvent: CustomStringConvertible {
 
     public var description: String {
         "PhotoResponseEvent(requestId: \(requestId), state: \(response.state.rawValue))"
+    }
+}
+
+public struct PhotoImuEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        self.values = values
+    }
+
+    public var requestId: String {
+        stringValue(values, "requestId") ?? ""
+    }
+
+    public var description: String {
+        "PhotoImuEvent(requestId: \(requestId))"
     }
 }

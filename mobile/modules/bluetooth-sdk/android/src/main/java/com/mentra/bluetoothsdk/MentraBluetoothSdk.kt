@@ -426,6 +426,7 @@ class MentraBluetoothSdk private constructor(
             request.compress.value,
             request.flash,
             request.sound,
+            request.includeImu,
             request.exposureTimeNs,
         )
     }
@@ -644,6 +645,7 @@ class MentraBluetoothSdk private constructor(
             "hotspot_error" -> dispatchToListeners { it.onHotspotError(HotspotErrorEvent(data)) }
             "gallery_status" -> dispatchToListeners { it.onGalleryStatus(GalleryStatusEvent(data)) }
             "photo_response" -> dispatchToListeners { it.onPhotoResponse(PhotoResponseEvent(data)) }
+            "photo_imu" -> dispatchToListeners { it.onPhotoImu(PhotoImuEvent(data)) }
             "stream_status" -> dispatchToListeners { it.onStreamStatus(StreamStatusEvent(data)) }
             "keep_alive_ack" -> dispatchToListeners { it.onKeepAliveAck(KeepAliveAckEvent(data)) }
             "mic_pcm" -> {

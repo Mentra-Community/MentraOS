@@ -1312,10 +1312,10 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, sound: Bool, exposureTimeNs: Double?
+        compress: String?, flash: Bool, sound: Bool, includeImu: Bool, exposureTimeNs: Double?
     ) {
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(requestId) appId=\(appId) flash=\(flash) sound=\(sound)"
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(requestId) appId=\(appId) flash=\(flash) sound=\(sound) includeImu=\(includeImu)"
         )
 
         var json: [String: Any] = [
@@ -1362,6 +1362,7 @@ class MentraLive: NSObject, SGCManager {
 
         json["flash"] = flash
         json["sound"] = sound
+        json["includeImu"] = includeImu
 
         if let e = exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
             Bridge.log("LIVE: Using manual exposure time for photo request \(requestId): \(Int64(e)) ns")
@@ -1932,6 +1933,9 @@ class MentraLive: NSObject, SGCManager {
 
         case "ble_photo_ready":
             processBlePhotoReady(json)
+
+        case "photo_imu":
+            handlePhotoImu(json)
 
         case "ble_photo_complete":
             processBlePhotoComplete(json)
@@ -3535,6 +3539,23 @@ class MentraLive: NSObject, SGCManager {
             ],
         ]
         Bridge.sendTypedMessage("imu_gesture_event", body: eventBody)
+    }
+
+    private func handlePhotoImu(_ json: [String: Any]) {
+        let requestId = json["requestId"] as? String ?? ""
+        let imuStatus = json["imuStatus"] as? String ?? "unavailable"
+        let timestamp = parseTimestamp(json["timestamp"])
+        var eventBody: [String: Any] = [
+            "requestId": requestId,
+            "imuStatus": imuStatus,
+            "timestamp": timestamp,
+        ]
+        if let accel = json["accel"] as? [Double] { eventBody["accel"] = accel }
+        if let gyro = json["gyro"] as? [Double] { eventBody["gyro"] = gyro }
+        if let mag = json["mag"] as? [Double] { eventBody["mag"] = mag }
+        if let quat = json["quat"] as? [Double] { eventBody["quat"] = quat }
+        if let euler = json["euler"] as? [Double] { eventBody["euler"] = euler }
+        Bridge.sendTypedMessage("photo_imu", body: eventBody)
     }
 
     // MARK: - Update Methods

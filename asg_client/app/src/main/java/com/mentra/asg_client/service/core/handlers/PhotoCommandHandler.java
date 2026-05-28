@@ -79,6 +79,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             String compress = data.optString("compress", "none"); // Default to none (no compression)
             boolean flash = data.optBoolean("flash", true);
             boolean sound = data.optBoolean("sound", true);
+            boolean includeImu = data.optBoolean("includeImu", false);
             Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
             if (exposureTimeNs != null) {
                 Log.i(TAG, "Mentra Live using manual exposure time for take_photo request "
@@ -151,9 +152,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
 
             // Process photo capture based on transfer method
             Log.i(TAG, "PHOTO PIPELINE [ASG 3/3] Starting capture requestId=" + requestId
-                    + " transferMethod=" + transferMethod + " size=" + size);
+                    + " transferMethod=" + transferMethod + " size=" + size + " includeImu=" + includeImu);
             boolean success = processPhotoCapture(captureService, photoFilePath, requestId, webhookUrl, authToken,
-                                                 bleImgId, save, size, transferMethod, flash, sound, compress, exposureTimeNs);
+                                                 bleImgId, save, size, transferMethod, flash, sound, compress, includeImu, exposureTimeNs);
             logCommandResult("take_photo", success, success ? null : "Photo capture failed");
             if (success) {
                 Log.i(TAG, "PHOTO PIPELINE [ASG 3/3] Capture accepted requestId=" + requestId);
@@ -187,21 +188,21 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
     private boolean processPhotoCapture(MediaCaptureService captureService, String photoFilePath,
                                       String requestId, String webhookUrl, String authToken, String bleImgId,
                                       boolean save, String size, String transferMethod, boolean flash, boolean sound, String compress,
-                                      Long exposureTimeNs) {
+                                      boolean includeImu, Long exposureTimeNs) {
         Log.d(TAG, "Processing photo capture with transfer method: " + transferMethod);
         switch (transferMethod) {
             case "ble":
-                captureService.takePhotoForBleTransfer(photoFilePath, requestId, bleImgId, save, size, flash, sound, exposureTimeNs);
+                captureService.takePhotoForBleTransfer(photoFilePath, requestId, bleImgId, save, size, flash, sound, includeImu, exposureTimeNs);
                 return true;
             case "auto":
                 if (bleImgId.isEmpty()) {
                     Log.e(TAG, "Auto mode requires bleImgId for fallback");
                     return false;
                 }
-                captureService.takePhotoAutoTransfer(photoFilePath, requestId, webhookUrl, authToken, bleImgId, save, size, flash, sound, compress, exposureTimeNs);
+                captureService.takePhotoAutoTransfer(photoFilePath, requestId, webhookUrl, authToken, bleImgId, save, size, flash, sound, compress, includeImu, exposureTimeNs);
                 return true;
             default:
-                captureService.takePhotoAndUpload(photoFilePath, requestId, webhookUrl, authToken, save, size, flash, sound, compress, exposureTimeNs);
+                captureService.takePhotoAndUpload(photoFilePath, requestId, webhookUrl, authToken, save, size, flash, sound, compress, includeImu, exposureTimeNs);
                 return true;
         }
     }

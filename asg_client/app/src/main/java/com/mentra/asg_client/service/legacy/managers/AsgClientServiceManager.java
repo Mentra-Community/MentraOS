@@ -18,6 +18,7 @@ import com.mentra.asg_client.io.server.core.DefaultServerFactory;
 import com.mentra.asg_client.io.server.managers.AsgServerManager;
 import com.mentra.asg_client.io.server.services.AsgCameraServer;
 import com.mentra.asg_client.logging.Logger;
+import com.mentra.asg_client.sensors.ImuManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
@@ -46,6 +47,7 @@ public class AsgClientServiceManager {
     private IBluetoothManager bluetoothManager;
     private MediaUploadQueueManager mediaQueueManager;
     private MediaCaptureService mediaCaptureService;
+    private ImuManager imuManager;
     private AsgServerManager serverManager;
     private AsgCameraServer cameraServer;
     private BesOtaManager besOtaManager;
@@ -108,10 +110,13 @@ public class AsgClientServiceManager {
             Log.d(TAG, "📁 Step 4: Initializing media queue manager");
             initializeMediaQueueManager();
 
-            Log.d(TAG, "📸 Step 5: Initializing media capture service");
+            Log.d(TAG, "🧭 Step 5: Initializing IMU manager");
+            initializeImuManager();
+
+            Log.d(TAG, "📸 Step 6: Initializing media capture service");
             initializeMediaCaptureService();
 
-            Log.d(TAG, "🌐 Step 6: Initializing camera web server");
+            Log.d(TAG, "🌐 Step 7: Initializing camera web server");
             initializeCameraWebServer();
 
             isInitialized = true;
@@ -181,6 +186,16 @@ public class AsgClientServiceManager {
             Log.d(TAG, "✅ Bluetooth manager shut down and nullified");
         } else {
             Log.d(TAG, "⏭️ Bluetooth manager already null - skipping");
+        }
+
+        // Shutdown IMU manager
+        if (imuManager != null) {
+            Log.d(TAG, "🧭 Shutting down IMU manager");
+            imuManager.shutdown();
+            imuManager = null;
+            Log.d(TAG, "✅ IMU manager shut down and nullified");
+        } else {
+            Log.d(TAG, "⏭️ IMU manager already null - skipping");
         }
 
         // Clean up media capture service
@@ -390,7 +405,8 @@ public class AsgClientServiceManager {
             }
 
             try {
-                mediaCaptureService = new MediaCaptureService(context, mediaQueueManager, fileManager, stateManager) {
+                mediaCaptureService = new MediaCaptureService(
+                        context, mediaQueueManager, fileManager, stateManager, imuManager) {
                     @Override
                     protected void sendMediaSuccessResponse(String requestId, String mediaUrl, int mediaType) {
                         Log.d(TAG, "📤 Sending media success response - ID: " + requestId +
@@ -428,6 +444,16 @@ public class AsgClientServiceManager {
         }
 
         Log.d(TAG, "✅ Media capture service initialization completed");
+    }
+
+    private void initializeImuManager() {
+        Log.d(TAG, "🧭 initializeImuManager() started");
+        if (imuManager != null) {
+            Log.d(TAG, "⏭️ ImuManager already exists - skipping creation");
+            return;
+        }
+        imuManager = new ImuManager(context);
+        Log.d(TAG, "✅ ImuManager initialized");
     }
 
     public void initializeCameraWebServer() {
@@ -543,6 +569,13 @@ public class AsgClientServiceManager {
     public MediaCaptureService getMediaCaptureService() {
         Log.d(TAG, "📸 getMediaCaptureService() called - returning: " + (mediaCaptureService != null ? "valid" : "null"));
         return mediaCaptureService;
+    }
+
+    public ImuManager getImuManager() {
+        if (imuManager == null) {
+            initializeImuManager();
+        }
+        return imuManager;
     }
 
     public AsgCameraServer getCameraServer() {

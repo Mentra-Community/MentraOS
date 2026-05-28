@@ -140,6 +140,18 @@ export type PhotoResponseEvent =
       errorMessage: string
     }
 
+export type PhotoImuEvent = {
+  type: "photo_imu"
+  requestId: string
+  imuStatus: "available" | "unavailable"
+  timestamp: number
+  accel?: [number, number, number]
+  gyro?: [number, number, number]
+  mag?: [number, number, number]
+  quat?: [number, number, number, number]
+  euler?: [number, number, number]
+}
+
 export type GalleryStatusEvent = {
   type: "gallery_status"
   photos: number
@@ -244,6 +256,7 @@ export type PhotoRequestParams = {
   authToken: string | null
   compress: PhotoCompression
   sound: boolean
+  includeImu?: boolean
   exposureTimeNs?: number | null
 }
 
@@ -479,6 +492,7 @@ export type BluetoothSdkModuleEvents = {
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
   hotspot_error: (event: HotspotErrorEvent) => void
   photo_response: (event: PhotoResponseEvent) => void
+  photo_imu: (event: PhotoImuEvent) => void
   gallery_status: (event: GalleryStatusEvent) => void
   compatible_glasses_search_stop: (event: CompatibleGlassesSearchStopEvent) => void
   heartbeat_sent: (event: HeartbeatSentEvent) => void
@@ -541,6 +555,7 @@ export type BluetoothSdkEventMap = {
   hotspot_status_change: HotspotStatusChangeEvent
   hotspot_error: HotspotErrorEvent
   photo_response: PhotoResponseEvent
+  photo_imu: PhotoImuEvent
   gallery_status: GalleryStatusEvent
   compatible_glasses_search_stop: CompatibleGlassesSearchStopEvent
   swipe_volume_status: SwipeVolumeStatusEvent

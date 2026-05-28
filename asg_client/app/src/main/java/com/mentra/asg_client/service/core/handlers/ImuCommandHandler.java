@@ -1,6 +1,5 @@
 package com.mentra.asg_client.service.core.handlers;
 
-import android.content.Context;
 import android.util.Log;
 
 import com.mentra.asg_client.sensors.ImuManager;
@@ -31,39 +30,32 @@ public class ImuCommandHandler implements ICommandHandler {
     private static final String CMD_IMU_SUBSCRIBE_GESTURE = "imu_subscribe_gesture";
     private static final String CMD_IMU_UNSUBSCRIBE_GESTURE = "imu_unsubscribe_gesture";
     
-    private final Context context;
     private final ResponseSender responseSender;
-    private ImuManager imuManager;
+    private final ImuManager imuManager;
     
-    public ImuCommandHandler(Context context, ResponseSender responseSender) {
-        this.context = context;
+    public ImuCommandHandler(ImuManager imuManager, ResponseSender responseSender) {
+        this.imuManager = imuManager;
         this.responseSender = responseSender;
-        initializeImuManager();
-    }
-    
-    private void initializeImuManager() {
         if (imuManager == null) {
-            Log.d(TAG, "Initializing ImuManager");
-            imuManager = new ImuManager(context);
-            
-            // Set up callbacks for IMU data
-            imuManager.setDataCallback(new ImuManager.ImuDataCallback() {
-                @Override
-                public void onSingleReading(JSONObject data) {
-                    sendResponse(data);
-                }
-                
-                @Override
-                public void onStreamData(JSONObject data) {
-                    sendResponse(data);
-                }
-                
-                @Override
-                public void onGestureDetected(String gesture) {
-                    sendGestureResponse(gesture);
-                }
-            });
+            Log.w(TAG, "ImuManager is null - IMU commands will fail");
+            return;
         }
+        imuManager.setDataCallback(new ImuManager.ImuDataCallback() {
+            @Override
+            public void onSingleReading(JSONObject data) {
+                sendResponse(data);
+            }
+
+            @Override
+            public void onStreamData(JSONObject data) {
+                sendResponse(data);
+            }
+
+            @Override
+            public void onGestureDetected(String gesture) {
+                sendGestureResponse(gesture);
+            }
+        });
     }
     
     @Override

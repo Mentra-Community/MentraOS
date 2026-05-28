@@ -90,6 +90,7 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 | `compress`       | string  | `"none"`            | Compression preset passed to capture pipeline               |
 | `flash`          | boolean | `true`              | Fire the privacy LED during capture                         |
 | `sound`          | boolean | `true`              | Play shutter sound                                          |
+| `includeImu`     | boolean | `false`             | Capture a single IMU reading at shutter and return metadata |
 
 **Constraints (all enforced in `PhotoCommandHandler`):**
 
@@ -129,6 +130,22 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 ```
 
 Error codes the handler can emit: `BATTERY_LOW`, `VIDEO_RECORDING_ACTIVE`, `BLE_TRANSFER_BUSY`, `CAMERA_BUSY`, `INSUFFICIENT_STORAGE`, `UPLOAD_SYSTEM_BUSY`, `CAPTURE_TIMEOUT`, `CAMERA_CAPTURE_FAILED`, `BLE_TRANSFER_BUSY`, `BLE_TRANSFER_FAILED`, `BLE_TRANSFER_FAILED_TO_START`.
+
+`photo_imu` — IMU metadata for photo requests with `includeImu=true`:
+
+```json
+{
+  "type": "photo_imu",
+  "requestId": "photo_001",
+  "imuStatus": "available",
+  "timestamp": 1708963201234,
+  "accel": [0.0, 0.0, 9.8],
+  "gyro": [0.0, 0.0, 0.0],
+  "mag": [30.0, 5.0, -40.0],
+  "quat": [1.0, 0.0, 0.0, 0.0],
+  "euler": [0.0, 0.0, 0.0]
+}
+```
 
 ---
 

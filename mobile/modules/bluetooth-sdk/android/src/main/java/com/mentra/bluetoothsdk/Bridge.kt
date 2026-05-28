@@ -594,6 +594,29 @@ public class Bridge private constructor() {
             sendTypedMessage("imu_data_event", eventBody as Map<String, Any>)
         }
 
+        @JvmStatic
+        fun sendPhotoImuEvent(
+                requestId: String,
+                imuStatus: String,
+                timestamp: Long,
+                accel: DoubleArray?,
+                gyro: DoubleArray?,
+                mag: DoubleArray?,
+                quat: DoubleArray?,
+                euler: DoubleArray?
+        ) {
+            val eventBody = HashMap<String, Any>()
+            eventBody["requestId"] = requestId
+            eventBody["imuStatus"] = imuStatus
+            eventBody["timestamp"] = timestamp
+            accel?.takeIf { it.isNotEmpty() }?.let { eventBody["accel"] = it.toList() }
+            gyro?.takeIf { it.isNotEmpty() }?.let { eventBody["gyro"] = it.toList() }
+            mag?.takeIf { it.isNotEmpty() }?.let { eventBody["mag"] = it.toList() }
+            quat?.takeIf { it.isNotEmpty() }?.let { eventBody["quat"] = it.toList() }
+            euler?.takeIf { it.isNotEmpty() }?.let { eventBody["euler"] = it.toList() }
+            sendTypedMessage("photo_imu", eventBody as Map<String, Any>)
+        }
+
         /** Send IMU gesture event - matches iOS MentraLive.swift emitImuGestureEvent */
         @JvmStatic
         fun sendImuGestureEvent(gesture: String, timestamp: Long) {

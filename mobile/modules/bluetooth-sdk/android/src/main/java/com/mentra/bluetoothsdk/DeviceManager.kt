@@ -1352,6 +1352,7 @@ class DeviceManager {
             compress: String,
             flash: Boolean,
             sound: Boolean,
+            includeImu: Boolean,
             exposureTimeNs: Double? = null,
     ) {
         val exposureNs: Long? =
@@ -1362,7 +1363,7 @@ class DeviceManager {
                     }
                 }
         Bridge.log(
-                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=$requestId appId=$appId size=$size compress=$compress flash=$flash sound=$sound exposureTimeNs=$exposureNs sgc=${sgc?.javaClass?.simpleName ?: "null"}"
+                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=$requestId appId=$appId size=$size compress=$compress flash=$flash sound=$sound includeImu=$includeImu exposureTimeNs=$exposureNs sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
         val activeSgc = sgc
         if (activeSgc == null) {
@@ -1371,7 +1372,7 @@ class DeviceManager {
             )
             return
         }
-        activeSgc.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, sound, exposureNs)
+        activeSgc.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, sound, includeImu, exposureNs)
     }
 
     fun rgbLedControl(

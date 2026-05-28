@@ -340,7 +340,8 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new OtaCommandHandler());
             Log.d(TAG, "✅ Registered OtaCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new ImuCommandHandler(context, responseSender));
+            commandHandlerRegistry.registerHandler(
+                    new ImuCommandHandler(serviceManager.getImuManager(), responseSender));
             Log.d(TAG, "✅ Registered ImuCommandHandler");
             
             commandHandlerRegistry.registerHandler(new GalleryCommandHandler(serviceManager, communicationManager));

@@ -20,6 +20,7 @@ import com.mentra.asg_client.io.storage.StorageManager;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
 import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
+import com.mentra.asg_client.sensors.ImuManager;
 import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
@@ -155,6 +156,8 @@ public class MediaCaptureService {
     private Map<String, String> photoOriginalPaths = new HashMap<>();
     // Track requested photo size per request for proper fallback handling
     private Map<String, String> photoRequestedSizes = new HashMap<>();
+    // Track whether IMU metadata should be sent for each request
+    private final Map<String, Boolean> photoIncludeImuFlags = new ConcurrentHashMap<>();
 
     // Photo job state tracking - one photo job (capture + upload/BLE-handoff) in flight at a time.
     // Set on entry to takePhotoAndUpload / takePhotoForBleTransfer; cleared only at terminal
@@ -186,6 +189,7 @@ public class MediaCaptureService {
     private final Map<String, Map<String, Long>> photoTimings = new HashMap<>();
 
     private final FileManager fileManager;
+    private final ImuManager mImuManager;
 
     /** Interface for listening to media capture and upload events */
     public interface MediaCaptureListener {
@@ -223,11 +227,13 @@ public class MediaCaptureService {
             @NonNull Context context,
             @NonNull MediaUploadQueueManager mediaQueueManager,
             FileManager fileManager,
-            @NonNull IStateManager stateManager) {
+            @NonNull IStateManager stateManager,
+            ImuManager imuManager) {
         mContext = context.getApplicationContext();
         mMediaQueueManager = mediaQueueManager;
         this.fileManager = fileManager;
         this.mStateManager = stateManager;
+        this.mImuManager = imuManager;
 
         // Initialize hardware manager
         hardwareManager = HardwareManagerFactory.getInstance(context);
@@ -1324,6 +1330,7 @@ public class MediaCaptureService {
             boolean enableFlash,
             boolean enableSound,
             String compress,
+            boolean includeImu,
             Long exposureTimeNs) {
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
@@ -1393,6 +1400,7 @@ public class MediaCaptureService {
         photoSaveFlags.put(requestId, save);
         // Track requested size for potential fallbacks
         photoRequestedSizes.put(requestId, size);
+        photoIncludeImuFlags.put(requestId, includeImu);
 
         Log.d(TAG, "Taking photo and uploading to " + webhookUrl);
 
@@ -1483,6 +1491,7 @@ public class MediaCaptureService {
                                 mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
                                 mMediaCaptureListener.onPhotoUploading(requestId);
                             }
+                            maybeSendPhotoImu(requestId);
 
                             // Choose upload destination based on webhookUrl
                             if (webhookUrl != null && !webhookUrl.isEmpty()) {
@@ -1499,6 +1508,7 @@ public class MediaCaptureService {
                         @Override
                         public void onPhotoError(String errorMessage) {
                             releasePhotoJob(requestId);
+                            photoIncludeImuFlags.remove(requestId);
 
                             Log.e(TAG, "Failed to capture photo: " + errorMessage);
 
@@ -1549,6 +1559,7 @@ public class MediaCaptureService {
     }
 
     private void releasePhotoJob(String requestId) {
+        photoIncludeImuFlags.remove(requestId);
         if (activePhotoJobRequestId.compareAndSet(requestId, null)) {
             cancelCaptureSafetyTimeout(requestId);
         } else {
@@ -1610,6 +1621,41 @@ public class MediaCaptureService {
                 captureSafetyTimeoutRequestId = null;
             }
         }
+    }
+
+    private void maybeSendPhotoImu(String requestId) {
+        Boolean includeImu = photoIncludeImuFlags.get(requestId);
+        if (includeImu == null || !includeImu) {
+            return;
+        }
+        if (mImuManager == null) {
+            sendPhotoImuUnavailable(requestId, "imu_manager_unavailable");
+            return;
+        }
+        final ImuManager.ImuDataCallback priorCallback = mImuManager.getDataCallback();
+        mImuManager.setDataCallback(
+                new ImuManager.ImuDataCallback() {
+                    @Override
+                    public void onSingleReading(JSONObject data) {
+                        sendPhotoImuJson(requestId, data);
+                        mImuManager.setDataCallback(priorCallback);
+                    }
+
+                    @Override
+                    public void onStreamData(JSONObject data) {
+                        if (priorCallback != null) {
+                            priorCallback.onStreamData(data);
+                        }
+                    }
+
+                    @Override
+                    public void onGestureDetected(String gesture) {
+                        if (priorCallback != null) {
+                            priorCallback.onGestureDetected(gesture);
+                        }
+                    }
+                });
+        mImuManager.requestSingleReading();
     }
 
     /**
@@ -2554,6 +2600,7 @@ public class MediaCaptureService {
             boolean enableFlash,
             boolean enableSound,
             String compress,
+            boolean includeImu,
             Long exposureTimeNs) {
         // Check if camera HAL is restarting after FOV change
         if (CameraRestartCooldown.isActive()) {
@@ -2587,6 +2634,7 @@ public class MediaCaptureService {
             photoBleIds.put(requestId, bleImgId);
             photoOriginalPaths.put(requestId, photoFilePath);
             photoRequestedSizes.put(requestId, size);
+            photoIncludeImuFlags.put(requestId, includeImu);
 
             Log.d(TAG, "📶 WiFi connected - attempting direct upload for " + requestId);
             takePhotoAndUpload(
@@ -2599,6 +2647,7 @@ public class MediaCaptureService {
                     enableFlash,
                     enableSound,
                     compress,
+                    includeImu,
                     exposureTimeNs);
         } else {
             // No WiFi - skip webhook entirely, go straight to BLE (saves 2-5s timeout wait)
@@ -2611,6 +2660,7 @@ public class MediaCaptureService {
                     size,
                     enableFlash,
                     enableSound,
+                    includeImu,
                     exposureTimeNs);
         }
     }
@@ -2631,6 +2681,7 @@ public class MediaCaptureService {
             String size,
             boolean enableFlash,
             boolean enableSound,
+            boolean includeImu,
             Long exposureTimeNs) {
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
@@ -2698,6 +2749,7 @@ public class MediaCaptureService {
         photoSaveFlags.put(requestId, save);
         // Track requested size for BLE compression
         photoRequestedSizes.put(requestId, size);
+        photoIncludeImuFlags.put(requestId, includeImu);
         // Notify that we're about to take a photo
         if (mMediaCaptureListener != null) {
             mMediaCaptureListener.onPhotoCapturing(requestId);
@@ -2773,6 +2825,7 @@ public class MediaCaptureService {
                             if (mMediaCaptureListener != null) {
                                 mMediaCaptureListener.onPhotoCaptured(requestId, filePath);
                             }
+                            maybeSendPhotoImu(requestId);
 
                             // Compress and send via BLE
                             recordTiming(requestId, "start_compress_for_ble");
@@ -2782,6 +2835,7 @@ public class MediaCaptureService {
                         @Override
                         public void onPhotoError(String errorMessage) {
                             releasePhotoJob(requestId);
+                            photoIncludeImuFlags.remove(requestId);
 
                             Log.e(TAG, "Failed to capture photo for BLE: " + errorMessage);
 
@@ -3197,6 +3251,44 @@ public class MediaCaptureService {
             }
         } catch (JSONException e) {
             Log.e(TAG, "❌ Error creating photo error response", e);
+        }
+    }
+
+    private void sendPhotoImuJson(String requestId, JSONObject imu) {
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "photo_imu");
+            json.put("requestId", requestId);
+            json.put("imuStatus", "available");
+            json.put("timestamp", System.currentTimeMillis());
+            if (imu != null) {
+                json.put("accel", imu.optJSONArray("accel"));
+                json.put("gyro", imu.optJSONArray("gyro"));
+                json.put("mag", imu.optJSONArray("mag"));
+                json.put("quat", imu.optJSONArray("quat"));
+                json.put("euler", imu.optJSONArray("euler"));
+            }
+            if (mServiceCallback != null) {
+                mServiceCallback.sendThroughBluetooth(json.toString().getBytes());
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "❌ Error creating photo IMU response", e);
+        }
+    }
+
+    private void sendPhotoImuUnavailable(String requestId, String reason) {
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "photo_imu");
+            json.put("requestId", requestId);
+            json.put("imuStatus", "unavailable");
+            json.put("reason", reason);
+            json.put("timestamp", System.currentTimeMillis());
+            if (mServiceCallback != null) {
+                mServiceCallback.sendThroughBluetooth(json.toString().getBytes());
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "❌ Error creating unavailable photo IMU response", e);
         }
     }
 

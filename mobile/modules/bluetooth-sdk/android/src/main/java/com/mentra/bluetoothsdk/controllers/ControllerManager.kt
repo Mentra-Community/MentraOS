@@ -23,6 +23,7 @@ abstract class ControllerManager {
         compress: String?,
         flash: Boolean,
         sound: Boolean,
+        includeImu: Boolean,
         exposureTimeNs: Long?,
     )
     abstract fun startStream(message: Map<String, Any>)
