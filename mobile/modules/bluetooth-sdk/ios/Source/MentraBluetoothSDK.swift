@@ -264,7 +264,7 @@ public final class MentraBluetoothSDK {
         )
     }
 
-    public func setCalendarEvents(_ events: [CalendarEvent]) async throws {
+    func setCalendarEvents(_ events: [CalendarEvent]) async throws {
         DeviceStore.shared.apply(
             "core",
             "calendar_events",
