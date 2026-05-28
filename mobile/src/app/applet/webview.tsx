@@ -493,6 +493,11 @@ export default function AppWebView() {
               scalesPageToFit={false}
               scrollEnabled={true}
               bounces={false}
+              // Android: forces requestDisallowInterceptTouchEvent(true)
+              // on every touch so the RN parent can't steal multi-touch
+              // events mid-gesture. Fixes pinch-zoom freeze on JS-driven
+              // maps. Mirrored from local.tsx.
+              nestedScrollEnabled={true}
               allowsBackForwardNavigationGestures={true}
               onNavigationStateChange={(navState) => setWebViewCanGoBack(navState.canGoBack)}
               automaticallyAdjustContentInsets={false}
