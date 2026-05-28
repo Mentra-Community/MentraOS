@@ -13,9 +13,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
-
 import androidx.core.app.NotificationCompat;
-
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
@@ -24,7 +22,6 @@ import com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
-
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;

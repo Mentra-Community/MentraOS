@@ -6,7 +6,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-
 import com.mentra.asg_client.RecoveryAgentManager;
 import com.mentra.asg_client.SysControl;
 import com.mentra.asg_client.io.ota.services.OtaService;

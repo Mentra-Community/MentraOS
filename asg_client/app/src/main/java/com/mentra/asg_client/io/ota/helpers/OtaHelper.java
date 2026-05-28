@@ -14,7 +14,6 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
@@ -25,14 +24,6 @@ import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.service.utils.SysProp;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
-
-import org.greenrobot.eventbus.EventBus;
-import org.greenrobot.eventbus.Subscribe;
-import org.greenrobot.eventbus.ThreadMode;
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
@@ -50,6 +41,12 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
+import org.greenrobot.eventbus.EventBus;
+import org.greenrobot.eventbus.Subscribe;
+import org.greenrobot.eventbus.ThreadMode;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 public class OtaHelper {
 

@@ -17,7 +17,6 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
 import android.util.Size;
-
 import com.dev.api.DevApi;
 import com.mentra.asg_client.SysControl;
 import com.mentra.asg_client.io.bluetooth.interfaces.BluetoothStateListener;
@@ -38,15 +37,13 @@ import com.mentra.asg_client.service.system.interfaces.IServiceLifecycle;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 import com.mentra.asg_client.service.utils.SysProp;
-
+import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 import org.json.JSONException;
 import org.json.JSONObject;
-
-import java.nio.charset.StandardCharsets;
-import java.util.Objects;
 
 /**
  * Fully refactored AsgClientService that follows SOLID principles.

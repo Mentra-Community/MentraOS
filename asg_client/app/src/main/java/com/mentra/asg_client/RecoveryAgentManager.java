@@ -10,7 +10,6 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;

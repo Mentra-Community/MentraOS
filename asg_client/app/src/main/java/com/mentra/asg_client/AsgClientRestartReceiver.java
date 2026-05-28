@@ -5,7 +5,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.util.Log;
-
 import com.mentra.asg_client.service.core.AsgClientService;
 
 /** Broadcast receiver for handling service restart requests from OTA updater */
