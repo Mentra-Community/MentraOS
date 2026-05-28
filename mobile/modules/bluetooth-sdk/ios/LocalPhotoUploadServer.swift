@@ -14,6 +14,7 @@ final class LocalPhotoUploadServer {
   private let onLog: (String) -> Void
   private let onUpload: (PhotoUpload) -> Void
   private var listener: NWListener?
+  private var activePort: UInt16?
 
   init(onLog: @escaping (String) -> Void, onUpload: @escaping (PhotoUpload) -> Void) {
     self.onLog = onLog
@@ -23,6 +24,10 @@ final class LocalPhotoUploadServer {
   }
 
   func start(port: UInt16) throws -> UInt16 {
+    if listener != nil, activePort == port {
+      onLog("Already listening on 0.0.0.0:\(port)")
+      return port
+    }
     stop()
     try FileManager.default.createDirectory(
       at: uploadDirectory,
@@ -44,6 +49,7 @@ final class LocalPhotoUploadServer {
       switch state {
       case .ready:
         isReady = true
+        self?.activePort = port
         self?.onLog("Listening on 0.0.0.0:\(port)")
         started.signal()
       case .failed(let error):
@@ -82,6 +88,7 @@ final class LocalPhotoUploadServer {
   func stop() {
     listener?.cancel()
     listener = nil
+    activePort = nil
   }
 
   private func handle(_ connection: NWConnection) {
