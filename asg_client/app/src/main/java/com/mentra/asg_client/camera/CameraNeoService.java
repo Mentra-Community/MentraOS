@@ -19,10 +19,8 @@ import android.util.Range;
 import android.util.Rational;
 import android.util.Size;
 import android.view.Surface;
-
 import androidx.annotation.NonNull;
 import androidx.lifecycle.LifecycleService;
-
 import com.mentra.asg_client.SysControl;
 import com.mentra.asg_client.camera.lifecycle.CameraCoordinator;
 import com.mentra.asg_client.camera.lifecycle.CameraOpener;
@@ -43,7 +41,6 @@ import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.settings.VideoSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
-
 import java.io.File;
 import java.io.IOException;
 import java.text.SimpleDateFormat;

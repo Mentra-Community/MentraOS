@@ -10,9 +10,7 @@ import android.os.Handler;
 import android.util.Log;
 import android.util.Range;
 import android.util.Size;
-
 import androidx.annotation.Nullable;
-
 import com.mentra.asg_client.camera.CameraConstants;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.CameraSettings;
@@ -30,7 +28,6 @@ import com.mentra.asg_client.camera.request.HdrBurstBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureCallback;
 import com.mentra.asg_client.sensors.ImuRecorder;
-
 import java.io.File;
 import java.io.FileOutputStream;
 import java.nio.ByteBuffer;

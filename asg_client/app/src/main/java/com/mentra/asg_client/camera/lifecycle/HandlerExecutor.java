@@ -1,9 +1,7 @@
 package com.mentra.asg_client.camera.lifecycle;
 
 import android.os.Handler;
-
 import androidx.annotation.NonNull;
-
 import java.util.concurrent.Executor;
 
 /** Runs tasks on a {@link Handler}'s looper (required for Camera2 session callbacks). */

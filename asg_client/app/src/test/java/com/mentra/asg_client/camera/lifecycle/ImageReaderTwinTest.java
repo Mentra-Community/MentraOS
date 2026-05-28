@@ -8,13 +8,11 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-
 import android.graphics.ImageFormat;
 import android.media.ImageReader;
 import android.os.Handler;
 import android.util.Size;
 import android.view.Surface;
-
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
