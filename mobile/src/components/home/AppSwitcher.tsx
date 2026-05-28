@@ -580,12 +580,12 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
 
   const goToIndex = useCallback(
     (index: number, instant: boolean = false) => {
-      console.log("APPSWITCHER: goToIndex()", index, instant)
       index = index - 1
       const cardWidth = CARD_WIDTH + CARD_SPACING
       const clamped = Math.max(-1, Math.min(index, apps.length - 1))
+      console.log("APPSWITCHER: goToIndex()", index, clamped, instant)
       if (clamped === targetIndex.value) {
-        console.log("APPSWITCHER: goToIndex() - already at index", index)
+        // console.log("APPSWITCHER: goToIndex() - already at index", index)
         return
       }
       targetIndex.value = clamped

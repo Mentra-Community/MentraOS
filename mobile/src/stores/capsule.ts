@@ -17,8 +17,9 @@ export interface CapsuleRegistration {
   iconUrlOverride?: string
   /** Routes on which the visible capsule button should render. Empty/undefined = always visible while registered. */
   visibleOnRoutes?: string[]
-  /** Called when the user taps the house/minus button. Captures screenshot + navigates back. */
-  handleExit: (shouldGoBack?: boolean) => Promise<void> | void
+  /** Called when the user taps the close button. Captures screenshot + navigates back. */
+  handleRightPress: (shouldGoBack?: boolean) => Promise<void> | void
+  handleLeftPress: (shouldGoBack?: boolean) => Promise<void> | void
   offsetTop?: number
   offsetRight?: number
 }
@@ -66,13 +67,28 @@ export function useRegisterCapsule({
   const insets = useSaferAreaInsets()
   const {goBack} = useNavigationStore.getState()
 
-  // Stable ref to insets.top so handleExit doesn't reallocate on every render.
+  // Stable ref to insets.top so handleRightPress doesn't reallocate on every render.
   const insetsTopRef = useRef(insets.top)
   insetsTopRef.current = insets.top
 
-  const handleExit = useCallback(
+  const handleRightPress = useCallback(
     async (shouldGoBack?: boolean) => {
-      console.log("CAPSULE MENU: handleExit() called")
+      console.log("CAPSULE MENU: handleRightPress() called")
+
+      captureScreenshot(viewShotRef, packageName, insets.top)
+
+      console.log("CAPSULE MENU: screenshot captured")
+
+      if (shouldGoBack) {
+        goBack()
+      }
+    },
+    [packageName, viewShotRef, goBack],
+  )
+
+  const handleLeftPress = useCallback(
+    async (shouldGoBack?: boolean) => {
+      console.log("CAPSULE MENU: handleRightPress() called")
 
       captureScreenshot(viewShotRef, packageName, insets.top)
 
@@ -94,7 +110,7 @@ export function useRegisterCapsule({
         }
       : () => {
           let shouldGoBack = Platform.OS === "android"
-          handleExit(shouldGoBack)
+          handleRightPress(shouldGoBack)
         },
     onBackPress ? false : true,
   )
@@ -108,7 +124,8 @@ export function useRegisterCapsule({
       appNameOverride,
       iconUrlOverride,
       visibleOnRoutes,
-      handleExit,
+      handleRightPress,
+      handleLeftPress,
       offsetTop,
       offsetRight,
     })
@@ -119,14 +136,5 @@ export function useRegisterCapsule({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    packageName,
-    viewShotRef,
-    appNameOverride,
-    iconUrlOverride,
-    routesKey,
-    handleExit,
-    offsetTop,
-    offsetRight,
-  ])
+  }, [packageName, viewShotRef, appNameOverride, iconUrlOverride, routesKey, handleRightPress, handleLeftPress, offsetTop, offsetRight])
 }

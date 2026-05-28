@@ -91,18 +91,17 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
               {/* <View className="h-px bg-border my-4" /> */}
             </View>
             <View className="h-2" />
-            {isOpen && (
-              <AppsGrid
-                showAllApps={true}
-                searchQuery={searchQuery}
-                onOpenApp={() => {
-                  bottomSheetRef.current?.close()
-                }}
-                onAddToHome={() => {
-                  bottomSheetRef.current?.close()
-                }}
-              />
-            )}
+            <AppsGrid
+              showPlaceholders={!isOpen}
+              showAllApps={true}
+              searchQuery={searchQuery}
+              onOpenApp={() => {
+                bottomSheetRef.current?.close()
+              }}
+              onAddToHome={() => {
+                bottomSheetRef.current?.close()
+              }}
+            />
           </View>
         </BottomSheetScrollView>
       </BottomSheet>

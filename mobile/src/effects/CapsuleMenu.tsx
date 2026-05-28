@@ -19,11 +19,11 @@ import {useNavigationStore} from "@/stores/navigation"
 import {SYSTEM_APPS} from "@/constants/miniapps"
 
 interface CapsuleButtonProps {
-  onMinusPress?: () => void
-  onEllipsisPress?: () => void
+  onRightPress?: () => void
+  onLeftPress?: () => void
 }
 
-function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
+function CapsuleButton({onRightPress, onLeftPress}: CapsuleButtonProps) {
   const {theme} = useAppTheme()
 
   // On Android, GlassView is just a plain View with no blur, so the capsule
@@ -38,7 +38,7 @@ function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
   //     style={androidStyle}>
   //     <Pressable
   //       hitSlop={10}
-  //       onPress={onMinusPress}
+  //       onPress={onRightPress}
   //       style={({pressed}) => [
   //         pressed && {backgroundColor: theme.colors.input},
   //         {
@@ -63,7 +63,7 @@ function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
       style={androidStyle}>
       <Pressable
         hitSlop={10}
-        onPress={onEllipsisPress}
+        onPress={onLeftPress}
         // className="w-8 h-full items-center justify-center rounded-l-full bg-red-500"
         style={({pressed}) => [
           pressed && {backgroundColor: theme.colors.input},
@@ -87,7 +87,7 @@ function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
       <View className="h-4 w-px bg-primary-foreground/80 absolute left-1/2 -translate-x-1/2" />
       <Pressable
         hitSlop={10}
-        onPress={onMinusPress}
+        onPress={onRightPress}
         style={({pressed}) => [
           pressed && {backgroundColor: theme.colors.input},
           {
@@ -149,9 +149,10 @@ export default function CapsuleMenu({forceShow}: {forceShow: boolean}) {
       style={{top: top, right: right}}
       pointerEvents="box-none">
       <CapsuleButton
-        onMinusPress={() => active?.handleExit(true)}
-        onEllipsisPress={() => {
-          bottomSheetRef.current?.present()
+        onRightPress={() => active?.handleExit(true)}
+        onLeftPress={() => {
+          // active?.handleMinimize(true)
+          // bottomSheetRef.current?.present()
         }}
       />
       <MiniAppMoreActionsSheet
