@@ -92,20 +92,19 @@ public class RecoveryAgentManager {
 
     private void deployRecoveryAgentFromAssets() {
         try {
-            InputStream assetStream = context.getAssets().open(RECOVERY_APK_ASSET_NAME);
             File recoveryFile = new File(RECOVERY_APK_FILE_PATH);
             File parentDir = recoveryFile.getParentFile();
             if (parentDir != null && !parentDir.exists()) {
                 parentDir.mkdirs();
             }
-            try (FileOutputStream fos = new FileOutputStream(recoveryFile)) {
+            try (InputStream assetStream = context.getAssets().open(RECOVERY_APK_ASSET_NAME);
+                    FileOutputStream fos = new FileOutputStream(recoveryFile)) {
                 byte[] buffer = new byte[8192];
                 int bytesRead;
                 while ((bytesRead = assetStream.read(buffer)) != -1) {
                     fos.write(buffer, 0, bytesRead);
                 }
             }
-            assetStream.close();
 
             Intent install = new Intent("com.xy.xsetting.action");
             install.setPackage("com.android.systemui");

@@ -41,11 +41,13 @@ public class ResetController {
     stateStore.setAttempts(attempts);
     if (attempts > RecoveryConstants.MAX_RECOVERIES_PER_WINDOW) {
       stateStore.setState(RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "TOO_MANY_ATTEMPTS");
-      telemetry.emit("mentra_recovery_failed", RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "TOO_MANY_ATTEMPTS", attempts);
+      telemetry.emit(
+          "mentra_recovery_failed", RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "TOO_MANY_ATTEMPTS", attempts, false);
       return;
     }
     stateStore.setState(RecoveryConstants.STATE_RESTARTING, "HEARTBEAT_TIMEOUT");
-    telemetry.emit("mentra_recovery_state_changed", RecoveryConstants.STATE_RESTARTING, "HEARTBEAT_TIMEOUT", attempts);
+    telemetry.emit(
+        "mentra_recovery_state_changed", RecoveryConstants.STATE_RESTARTING, "HEARTBEAT_TIMEOUT", attempts, false);
     OneTimeWorkRequest request =
         new OneTimeWorkRequest.Builder(RecoveryWorker.class)
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)

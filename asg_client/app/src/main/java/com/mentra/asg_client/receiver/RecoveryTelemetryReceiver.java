@@ -28,7 +28,7 @@ public class RecoveryTelemetryReceiver extends BroadcastReceiver {
                         + reason
                         + " attempt="
                         + attempt);
-        boolean success = event != null && !event.contains("failed");
+        boolean success = intent.getBooleanExtra("success", false);
         String version = state == null ? "unknown" : state;
         GeneralReporting.reportOtaEvent(
                 context, event == null ? "recovery_event" : event, version, success);

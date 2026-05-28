@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -33,32 +34,43 @@ public class RecoveryWorker extends Worker {
     restartStrategy.execute();
     if (waitForPong(context, RecoveryConstants.RESTART_GRACE_MS)) {
       store.setState(RecoveryConstants.STATE_COOLDOWN, "RESTART_SUCCESS");
-      telemetry.emit("mentra_recovery_recovered", RecoveryConstants.STATE_HEALTHY, "RESTART_SUCCESS", attempt);
+      telemetry.emit("mentra_recovery_recovered", RecoveryConstants.STATE_HEALTHY, "RESTART_SUCCESS", attempt, true);
       return Result.success();
     }
 
     store.setState(RecoveryConstants.STATE_REINSTALLING_BACKUP, "RESTART_FAILED");
-    telemetry.emit("mentra_recovery_reinstall_attempted", RecoveryConstants.STATE_REINSTALLING_BACKUP, "RESTART_FAILED", attempt);
+    telemetry.emit(
+        "mentra_recovery_reinstall_attempted",
+        RecoveryConstants.STATE_REINSTALLING_BACKUP,
+        "RESTART_FAILED",
+        attempt,
+        false);
     context.sendBroadcast(new Intent(RecoveryConstants.ACTION_INSTALL_IN_PROGRESS).setPackage(RecoveryConstants.RECOVERY_PACKAGE));
 
     ReinstallStrategy reinstall = new ReinstallStrategy(context);
     if (!reinstall.execute()) {
       context.sendBroadcast(new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED).setPackage(RecoveryConstants.RECOVERY_PACKAGE));
       store.setState(RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "NO_VALID_BACKUP");
-      telemetry.emit("mentra_recovery_failed", RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "NO_VALID_BACKUP", attempt);
+      telemetry.emit(
+          "mentra_recovery_failed", RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "NO_VALID_BACKUP", attempt, false);
       return Result.failure();
     }
 
     if (waitForPong(context, RecoveryConstants.REINSTALL_GRACE_MS)) {
       context.sendBroadcast(new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED).setPackage(RecoveryConstants.RECOVERY_PACKAGE));
       store.setState(RecoveryConstants.STATE_COOLDOWN, "REINSTALL_SUCCESS");
-      telemetry.emit("mentra_recovery_recovered", RecoveryConstants.STATE_HEALTHY, "REINSTALL_SUCCESS", attempt);
+      telemetry.emit("mentra_recovery_recovered", RecoveryConstants.STATE_HEALTHY, "REINSTALL_SUCCESS", attempt, true);
       return Result.success();
     }
 
     context.sendBroadcast(new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED).setPackage(RecoveryConstants.RECOVERY_PACKAGE));
     store.setState(RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "REINSTALL_NO_HEARTBEAT");
-    telemetry.emit("mentra_recovery_failed", RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "REINSTALL_NO_HEARTBEAT", attempt);
+    telemetry.emit(
+        "mentra_recovery_failed",
+        RecoveryConstants.STATE_FAILED_NEEDS_MANUAL,
+        "REINSTALL_NO_HEARTBEAT",
+        attempt,
+        false);
     return Result.failure();
   }
 
@@ -83,9 +95,9 @@ public class RecoveryWorker extends Worker {
           new IntentFilter(RecoveryConstants.ACTION_PONG),
           Context.RECEIVER_NOT_EXPORTED);
       synchronized (lock) {
-        long deadline = System.currentTimeMillis() + timeoutMs;
+        long deadline = SystemClock.elapsedRealtime() + timeoutMs;
         while (!gotAck[0]) {
-          long remaining = deadline - System.currentTimeMillis();
+          long remaining = deadline - SystemClock.elapsedRealtime();
           if (remaining <= 0) {
             break;
           }

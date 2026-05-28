@@ -3,6 +3,7 @@ package com.mentra.recovery.backup;
 import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.Signature;
 import android.os.Build;
 import android.util.Log;
@@ -11,6 +12,8 @@ import com.mentra.recovery.util.RecoveryConstants;
 
 import java.io.File;
 import java.security.MessageDigest;
+import java.util.Set;
+import java.util.TreeSet;
 
 public class BackupStore {
   private final Context context;
@@ -37,43 +40,54 @@ public class BackupStore {
       if (archiveInfo == null || !RecoveryConstants.ASG_PACKAGE.equals(archiveInfo.packageName)) {
         return false;
       }
-      String archiveSigner = getSignerDigest(archiveInfo);
-      PackageInfo installedInfo =
-          pm.getPackageInfo(RecoveryConstants.ASG_PACKAGE, PackageManager.GET_SIGNING_CERTIFICATES);
-      String installedSigner = getSignerDigest(installedInfo);
-      return archiveSigner != null
-          && installedSigner != null
-          && archiveSigner.equals(installedSigner);
+      Set<String> archiveSigners = getSignerDigests(archiveInfo);
+      if (archiveSigners.isEmpty()) {
+        return false;
+      }
+
+      try {
+        PackageInfo installedInfo =
+            pm.getPackageInfo(RecoveryConstants.ASG_PACKAGE, PackageManager.GET_SIGNING_CERTIFICATES);
+        Set<String> installedSigners = getSignerDigests(installedInfo);
+        return !installedSigners.isEmpty() && archiveSigners.equals(installedSigners);
+      } catch (NameNotFoundException e) {
+        // ASG may be uninstalled during recovery; archive signer presence is the best check.
+        Log.w(RecoveryConstants.TAG, "ASG not installed; validating backup package and signature only");
+        return true;
+      }
     } catch (Exception e) {
       Log.e(RecoveryConstants.TAG, "Failed to validate backup", e);
       return false;
     }
   }
 
-  private String getSignerDigest(PackageInfo info) {
+  private Set<String> getSignerDigests(PackageInfo info) {
+    Set<String> digests = new TreeSet<>();
     try {
-      Signature signature = null;
+      Signature[] signers = null;
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && info.signingInfo != null) {
-        Signature[] signers = info.signingInfo.getApkContentsSigners();
-        if (signers != null && signers.length > 0) {
-          signature = signers[0];
-        }
-      } else if (info.signatures != null && info.signatures.length > 0) {
-        signature = info.signatures[0];
+        signers = info.signingInfo.getApkContentsSigners();
+      } else if (info.signatures != null) {
+        signers = info.signatures;
       }
-      if (signature == null) {
-        return null;
+      if (signers == null) {
+        return digests;
       }
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      byte[] hash = digest.digest(signature.toByteArray());
-      StringBuilder sb = new StringBuilder(hash.length * 2);
-      for (byte b : hash) {
-        sb.append(String.format("%02x", b));
+      for (Signature signature : signers) {
+        if (signature == null) {
+          continue;
+        }
+        byte[] hash = digest.digest(signature.toByteArray());
+        StringBuilder sb = new StringBuilder(hash.length * 2);
+        for (byte b : hash) {
+          sb.append(String.format("%02x", b));
+        }
+        digests.add(sb.toString());
       }
-      return sb.toString();
     } catch (Exception e) {
       Log.e(RecoveryConstants.TAG, "Failed to hash signer", e);
-      return null;
     }
+    return digests;
   }
 }

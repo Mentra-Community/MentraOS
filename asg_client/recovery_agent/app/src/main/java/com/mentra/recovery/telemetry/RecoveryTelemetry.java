@@ -13,7 +13,7 @@ public class RecoveryTelemetry {
     this.context = context.getApplicationContext();
   }
 
-  public void emit(String event, String state, String reason, int attempt) {
+  public void emit(String event, String state, String reason, int attempt, boolean success) {
     Log.i(RecoveryConstants.TAG, "event=" + event + " state=" + state + " reason=" + reason + " attempt=" + attempt);
     Intent intent = new Intent(RecoveryConstants.ACTION_TELEMETRY);
     intent.setPackage(RecoveryConstants.ASG_PACKAGE);
@@ -21,6 +21,7 @@ public class RecoveryTelemetry {
     intent.putExtra("state", state);
     intent.putExtra("reason", reason);
     intent.putExtra("attempt", attempt);
+    intent.putExtra("success", success);
     context.sendBroadcast(intent, RecoveryConstants.ASG_TELEMETRY_PERMISSION);
   }
 }
