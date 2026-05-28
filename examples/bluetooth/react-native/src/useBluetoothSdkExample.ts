@@ -366,6 +366,10 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     barcodes: [],
     state: 'idle',
   });
+  const barcodeScanRef = useRef<BarcodeScanDetails>({
+    barcodes: [],
+    state: 'idle',
+  });
   const [photoPreviewDetails, setPhotoPreviewDetails] =
     useState<PhotoPreviewDetails | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
@@ -1257,7 +1261,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   function resetBarcodeScan() {
     barcodeScanTokenRef.current += 1;
-    setBarcodeScan({barcodes: [], state: 'idle'});
+    updateBarcodeScan({barcodes: [], state: 'idle'});
   }
 
   function showCameraButtonNotice(message: string) {
@@ -1269,9 +1273,17 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   async function scanPreviewBarcode(sourceUri: string, expectedValue?: string) {
+    const currentScan = barcodeScanRef.current;
+    if (
+      currentScan.sourceUri === sourceUri &&
+      (currentScan.state === 'scanning' || currentScan.state === 'found')
+    ) {
+      return;
+    }
+
     const token = barcodeScanTokenRef.current + 1;
     barcodeScanTokenRef.current = token;
-    setBarcodeScan({
+    updateBarcodeScan({
       barcodes: [],
       expectedValue,
       sourceUri,
@@ -1287,7 +1299,17 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         return;
       }
       const scannedAt = new Date().toISOString();
-      setBarcodeScan({
+      const latestScan = barcodeScanRef.current;
+      if (
+        barcodes.length === 0 &&
+        latestScan.sourceUri === sourceUri &&
+        latestScan.state === 'found' &&
+        latestScan.barcodes.length > 0
+      ) {
+        addEvent('LIVE', 'ignored empty duplicate barcode scan');
+        return;
+      }
+      updateBarcodeScan({
         barcodes,
         expectedValue,
         scannedAt,
@@ -1304,7 +1326,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         return;
       }
       const message = formatError(error);
-      setBarcodeScan({
+      updateBarcodeScan({
         barcodes: [],
         error: message,
         expectedValue,
@@ -1316,6 +1338,10 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }
   }
 
+  function updateBarcodeScan(next: BarcodeScanDetails) {
+    barcodeScanRef.current = next;
+    setBarcodeScan(next);
+  }
   function setPhotoExposureTimeNsAction(exposureTimeNs: number) {
     setPhotoExposureTimeNsState(clampRounded(exposureTimeNs, PHOTO_EXPOSURE_MIN_NS, PHOTO_EXPOSURE_MAX_NS));
   }
