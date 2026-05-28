@@ -232,17 +232,12 @@ class MantleManager {
       sendDisplayEvent: (event) => BluetoothSdk.displayEvent(event),
       subscribeGlassesStatus: (onChange) => BluetoothSdk.onGlassesStatus(onChange),
       restartTranscriber: () => BluetoothSdk.restartTranscriber(),
-      setMicRequirements: (requirements) => {
-        const values: Record<string, unknown> = {
+      setMicRequirements: (requirements) =>
+        BluetoothSdk.update("core", {
           should_send_pcm: requirements.shouldSendPcm,
           should_send_lc3: requirements.shouldSendLc3,
           should_send_transcript: requirements.shouldSendTranscript,
-        }
-        if (requirements.voiceActivityDetectionEnabled !== undefined) {
-          values.voice_activity_detection_enabled = requirements.voiceActivityDetectionEnabled
-        }
-        return BluetoothSdk.update("core", values)
-      },
+        }),
       requestMiniappSdkPhoto: (params) => requestMiniappSdkPhoto(params),
       // Google Nav SDK adapter — the island runtime fan-outs nav events to
       // miniapps subscribed to navigation_*. Delegates straight to the host's
@@ -615,6 +610,26 @@ class MantleManager {
           // TODO: remove the global event emitter and sub directly in the component where needed
           GlobalEventEmitter.emit("heartbeat_received", {
             timestamp: event.heartbeat_received.timestamp,
+          })
+        }),
+      )
+
+      this.subs.push(
+        BluetoothSdk.addListener("send_command_to_ble", (event) => {
+          GlobalEventEmitter.emit("send_command_to_ble", {
+            command: event.command,
+            commandText: event.commandText,
+            timestamp: event.timestamp,
+          })
+        }),
+      )
+
+      this.subs.push(
+        BluetoothSdk.addListener("receive_command_from_ble", (event) => {
+          GlobalEventEmitter.emit("receive_command_from_ble", {
+            command: event.command,
+            commandText: event.commandText,
+            timestamp: event.timestamp,
           })
         }),
       )

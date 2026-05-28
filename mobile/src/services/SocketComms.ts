@@ -443,9 +443,7 @@ class SocketComms {
     // bypass it from the cloud side. The cloud's bypassVad hint is ignored.
     const bypassVad = false
     const requiredDataStrings = msg.requiredData || []
-    console.log(
-      `SOCKET: mic_state_change: requiredData = [${requiredDataStrings}], bypass_vad = ${bypassVad}`,
-    )
+    console.log(`SOCKET: mic_state_change: requiredData = [${requiredDataStrings}]`)
     let shouldSendPcmData = false
     let shouldSendTranscript = false
     if (requiredDataStrings.includes("pcm")) {
@@ -475,7 +473,7 @@ class SocketComms {
       pcm: !!shouldSendPcmData,
       lc3: !!shouldSendPcmData, // online apps always want lc3
       transcript: !!shouldSendTranscript,
-      bypass_vad: bypassVad,
+      voiceActivityDetectionEnabled: !bypassVad,
     })
   }
 
