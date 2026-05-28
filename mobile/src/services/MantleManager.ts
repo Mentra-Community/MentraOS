@@ -29,6 +29,7 @@ import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugRepor
 import {
   appRegistry,
   configureRuntime,
+  displayProcessor,
   localMiniappRuntime,
   localSttFallbackCoordinator,
   micStateCoordinator,
@@ -262,6 +263,12 @@ class MantleManager {
         setLocationTier: (rate) => this.setLocationTier(rate),
       },
     })
+
+    // DisplayProcessor's singleton was constructed at module load — before runtime
+    // hooks existed — so its initial deviceModel read and glasses-status subscription
+    // silently no-op'd. Re-attach now that hooks are wired so captions are wrapped with
+    // the correct profile (e.g. NEX_PROFILE for Mentra Display) instead of the G1 default.
+    displayProcessor.attachToRuntime()
 
     // Register the offline-app catalog with island's AppRegistry before
     // anything triggers an apps refresh.
