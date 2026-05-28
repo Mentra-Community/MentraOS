@@ -46,6 +46,11 @@ class LocalPhotoUploadServer(
         private set
 
     fun start(port: Int): Int {
+        val activeSocket = serverSocket
+        if (running && activeSocket != null && !activeSocket.isClosed && activeSocket.localPort == port) {
+            onLog("Already listening on 0.0.0.0:${activeSocket.localPort}")
+            return activeSocket.localPort
+        }
         stop()
         uploadDir.mkdirs()
         val socket = ServerSocket()
