@@ -243,7 +243,9 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
                   : 'Preview loaded from phone receiver'
                 : sdk.photoCloudServerEnabled
                   ? 'Waiting for cloud upload'
-                  : 'Waiting for capture'}
+                  : sdk.phonePhotoReceiverRunning
+                    ? 'Phone receiver ready'
+                    : 'Preparing phone receiver'}
             </Text>
           </View>
         </View>
@@ -301,7 +303,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           </>
         ) : (
           <Text style={styles.setupHint}>
-            The phone starts a local upload receiver before each capture and previews the JPEG when the glasses upload it.
+            The phone keeps a local upload receiver ready on this tab and previews the JPEG when the glasses upload it.
           </Text>
         )}
         <OptionGroup label="size">

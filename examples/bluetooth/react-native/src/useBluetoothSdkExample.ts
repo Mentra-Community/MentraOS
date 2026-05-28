@@ -31,6 +31,7 @@ import MentraBarcodeScanner, {
   type ImageFovEstimate,
 } from '@mentra/react-native-barcode-scanner';
 import MentraPhotoReceiver, {
+  type PhotoReceiverResult,
   type PhotoReceiverStatusEvent,
   type PhotoReceiverUploadEvent,
 } from '@mentra/bluetooth-sdk/photo-receiver';
@@ -433,6 +434,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const barcodeScanTokenRef = useRef(0);
   const photoPreviewOpeningRef = useRef(false);
   const galleryModePhotoRequestIdsRef = useRef(new Set<string>());
+  const phonePhotoReceiverRef = useRef<PhotoReceiverResult | null>(null);
+  const phonePhotoReceiverStartPromiseRef = useRef<Promise<PhotoReceiverResult> | null>(null);
+  const lastCameraInputCaptureAtRef = useRef(0);
   const lastMicFileUriRef = useRef<string | null>(null);
   const micElapsedSecondsRef = useRef(0);
   const micElapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -488,13 +492,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   useEffect(() => {
     const subscriptions = [
       BluetoothSdk.addListener('button_press', handleButtonPress),
-      BluetoothSdk.addListener('touch_event', (payload: TouchEvent) => {
-        const gesture = payload.gestureName ?? payload.deviceModel ?? 'event';
-        addEvent(
-          'LIVE',
-          `${gesture.toLowerCase().includes('swipe') ? 'swipe' : 'touch'} ${gesture}`,
-        );
-      }),
+      BluetoothSdk.addListener('touch_event', handleTouchEvent),
       BluetoothSdk.addListener('voice_activity_detection_status', (payload: VoiceActivityDetectionStatusEvent) => {
         setVoiceActivityDetectionEnabledState(payload.voiceActivityDetectionEnabled);
         if (!payload.voiceActivityDetectionEnabled) {
@@ -603,7 +601,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       clearPhotoUploadTimeout();
       stopPreviewHealthPoll();
       stopDirectStreamFrameWatchdog();
-      void MentraPhotoReceiver.stopPhotoReceiver().catch(() => undefined);
+      void stopPhonePhotoReceiver().catch(() => undefined);
       void MentraVideoStreamReceiver.stopWebRtcReceiver().catch(() => undefined);
       activeStreamIdRef.current = null;
       activePhotoRequestIdRef.current = null;
@@ -612,6 +610,15 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       stopMicPlaybackSync();
     };
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'camera' || photoCloudServerEnabled || !glassesConnected) {
+      return;
+    }
+    void ensurePhonePhotoReceiver('camera tab').catch((error) => {
+      addEvent('TX', `photo receiver prewarm failed: ${formatError(error)}`);
+    });
+  }, [activeTab, photoCloudServerEnabled, glassesConnected]);
 
   useEffect(() => {
     if (glassesConnected) {
@@ -633,11 +640,38 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     if (activeTabRef.current !== 'camera' || !isCameraActionButtonPress(payload)) {
       return;
     }
+    triggerCameraInputCapture('button');
+  }
+
+  function handleTouchEvent(payload: TouchEvent) {
+    const gesture = payload.gestureName ?? payload.deviceModel ?? 'event';
+    addEvent(
+      'LIVE',
+      `${gesture.toLowerCase().includes('swipe') ? 'swipe' : 'touch'} ${gesture}`,
+    );
+    if (activeTabRef.current !== 'camera' || !isCameraActionTouchEvent(payload)) {
+      return;
+    }
+    triggerCameraInputCapture(gesture);
+  }
+
+  function triggerCameraInputCapture(source: string) {
     if (galleryModeEnabledRef.current) {
       showCameraButtonNotice(CAMERA_BUTTON_GALLERY_MODE_NOTICE);
       addEvent('TX', 'gallery mode kept button photo on glasses');
       return;
     }
+    if (activePhotoRequestIdRef.current) {
+      addEvent('LIVE', `ignoring ${source}; photo already in progress`);
+      return;
+    }
+    const now = Date.now();
+    if (now - lastCameraInputCaptureAtRef.current < 1000) {
+      addEvent('LIVE', `ignoring duplicate camera input ${source}`);
+      return;
+    }
+    lastCameraInputCaptureAtRef.current = now;
+    addEvent('TX', `camera input capture ${source}`);
     void captureAndUploadRef.current();
   }
 
@@ -833,12 +867,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   async function captureAndUploadToPhone() {
-    setCameraStatus('Camera: starting phone photo receiver');
-    addEvent('LIVE', 'starting phone photo receiver');
-    const receiver = await MentraPhotoReceiver.startPhotoReceiver();
-    addEvent('LIVE', `phone photo receiver ready ${receiver.uploadUrl}`);
-    setPhonePhotoReceiverRunning(true);
-    setPhonePhotoUploadUrl(receiver.uploadUrl);
+    const receiver = await ensurePhonePhotoReceiver('capture');
 
     const requestId = `photo-${Date.now()}`;
     activePhotoRequestIdRef.current = requestId;
@@ -948,9 +977,47 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       setPhonePhotoReceiverRunning(true);
     }
     if (payload.message.toLowerCase().includes('stopped')) {
+      phonePhotoReceiverRef.current = null;
+      phonePhotoReceiverStartPromiseRef.current = null;
       setPhonePhotoReceiverRunning(false);
     }
     addEvent('LIVE', `photo receiver ${payload.message}`);
+  }
+
+  async function ensurePhonePhotoReceiver(reason: 'camera tab' | 'capture'): Promise<PhotoReceiverResult> {
+    if (phonePhotoReceiverRef.current) {
+      return phonePhotoReceiverRef.current;
+    }
+    if (phonePhotoReceiverStartPromiseRef.current) {
+      return phonePhotoReceiverStartPromiseRef.current;
+    }
+
+    const startedAt = Date.now();
+    if (reason === 'capture') {
+      setCameraStatus('Camera: preparing phone photo receiver');
+    }
+    addEvent('LIVE', `starting phone photo receiver (${reason})`);
+    const promise = MentraPhotoReceiver.startPhotoReceiver()
+      .then((receiver) => {
+        phonePhotoReceiverRef.current = receiver;
+        setPhonePhotoReceiverRunning(true);
+        setPhonePhotoUploadUrl(receiver.uploadUrl);
+        addEvent('LIVE', `phone photo receiver ready ${receiver.uploadUrl} (${Date.now() - startedAt}ms)`);
+        return receiver;
+      })
+      .finally(() => {
+        phonePhotoReceiverStartPromiseRef.current = null;
+      });
+    phonePhotoReceiverStartPromiseRef.current = promise;
+    return promise;
+  }
+
+  async function stopPhonePhotoReceiver() {
+    phonePhotoReceiverRef.current = null;
+    phonePhotoReceiverStartPromiseRef.current = null;
+    await MentraPhotoReceiver.stopPhotoReceiver();
+    setPhonePhotoReceiverRunning(false);
+    setPhonePhotoUploadUrl(null);
   }
 
   function markPhotoRequestStarted(requestId: string) {
@@ -1403,9 +1470,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       setPhotoStatus(null);
       pollGenerationRef.current += 1;
       if (enabled) {
-        await MentraPhotoReceiver.stopPhotoReceiver().catch(() => undefined);
-        setPhonePhotoReceiverRunning(false);
-        setPhonePhotoUploadUrl(null);
+        await stopPhonePhotoReceiver().catch(() => undefined);
         setCameraStatus('Camera: enter the cloud Photo upload URL');
         return;
       }
@@ -2828,6 +2893,15 @@ function photoStatusStartsNewCapture(status: string) {
 
 function isCameraActionButtonPress(payload: ButtonPressEvent) {
   return payload.pressType === 'short' && CAMERA_ACTION_BUTTON_IDS.has(payload.buttonId.toLowerCase());
+}
+
+function isCameraActionTouchEvent(payload: TouchEvent) {
+  const gestureName = payload.gestureName?.trim();
+  if (!gestureName) {
+    return false;
+  }
+  const normalized = gestureName.toLowerCase().replace(/[\s-]+/g, '_');
+  return normalized === 'tap' || normalized === 'single_tap';
 }
 
 function clearPhotoBleFallbackWarning(details: PhotoPreviewDetails) {
