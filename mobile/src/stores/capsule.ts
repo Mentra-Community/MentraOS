@@ -82,8 +82,6 @@ export function useRegisterCapsule({
       useAppStatusStore.getState().clearForeground()
       // Stop the app after a short delay to ensure the screenshot is captured and navigation went smooth:
       useAppStatusStore.getState().stop(packageName)
-      // BgTimer.setTimeout(() => {
-      // }, 100)
     },
     [packageName, viewShotRef, goBack],
   )

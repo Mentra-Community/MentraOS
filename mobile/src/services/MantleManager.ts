@@ -19,6 +19,7 @@ import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import navigationService from "@/services/NavigationService"
 import {requestMiniappSdkPhoto} from "@/services/miniapp/MiniappSdkPhotoHandler"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
+import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
@@ -59,19 +60,17 @@ const LOCATION_TASK_NAME = "handleLocationUpdates"
 
 /**
  * Miniapp bundles shipped inside the app binary, installed on first launch by
- * MantleManager.installBundledMiniapps(). Each must be a literal
- * `require("@assets/miniapps/<packageName>-<version>.zip")` so Metro can
- * statically resolve and bundle the asset.
+ * MantleManager.installBundledMiniapps(). BUNDLED_MINIAPPS is code-generated
+ * from every *.zip in assets/miniapps/ by scripts/generate-bundled-miniapps.mjs
+ * (Metro can only bundle assets referenced by a literal string require(), so the
+ * list must be static) — to ship an update, just drop a new zip in that
+ * directory; the generator runs on `bun start`/prebuild.
  *
  * The filename encodes packageName + version (e.g.
  * `com.mentra.navigation-1.0.2.zip`), so we read those straight off the asset
  * name to decide whether the bundle is already installed and up to date — no
- * need to unzip just to check. Ship an update by dropping a new zip with a
- * bumped version and adding its require() here.
+ * need to unzip just to check. See src/generated/bundledMiniapps.ts.
  */
-const BUNDLED_MINIAPPS: number[] = [
-  require("@assets/miniapps/com.mentra.navigation-1.0.2.zip"),
-]
 
 /**
  * Parse `<packageName>-<version>` out of a bundled miniapp asset name like
@@ -372,8 +371,9 @@ class MantleManager {
 
   /**
    * Install the miniapp zips bundled into the app binary under
-   * @assets/miniapps. Metro's `require` needs static string literals, so each
-   * bundle is listed explicitly in BUNDLED_MINIAPPS rather than globbed.
+   * @assets/miniapps. Metro's `require` needs static string literals, so the
+   * BUNDLED_MINIAPPS require() list is code-generated from the directory
+   * (see src/generated/bundledMiniapps.ts) rather than globbed at runtime.
    *
    * The asset name carries packageName + version, so we read those off the
    * filename and skip the bundle entirely when that exact version is already

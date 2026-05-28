@@ -37,6 +37,7 @@
     "release-all": "zx ./scripts/release-all.mjs",
     "release-android": "zx ./scripts/release-android.mjs",
     "release-ios": "zx ./scripts/release-ios.mjs",
+    "generate-bundled-miniapps": "zx ./scripts/generate-bundled-miniapps.mjs",
     "compile": "tsc --noEmit -p . --pretty",
     "lint": "eslint . --fix",
     "lint:check": "eslint .",
