@@ -108,6 +108,13 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
       ) : wifiRequired ? (
         <OfflineNotice message="Connect the glasses to Wi-Fi from the System tab before capturing photos. Photos are uploaded over the glasses network connection." />
       ) : null}
+      {sdk.cameraButtonNotice ? (
+        <View pointerEvents="none" style={styles.cameraButtonNoticeWrap}>
+          <View style={styles.cameraButtonNotice}>
+            <Text style={styles.cameraButtonNoticeText}>{sdk.cameraButtonNotice}</Text>
+          </View>
+        </View>
+      ) : null}
 
       {/* Preview card */}
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.card}>
@@ -1138,6 +1145,9 @@ function Chip({ active, disabled = false, onPress, value }: { active: boolean; d
 }
 
 const styles = StyleSheet.create({
+  cameraButtonNoticeWrap: { alignItems: 'flex-end', marginTop: -2, marginHorizontal: 16, marginBottom: 6 },
+  cameraButtonNotice: { maxWidth: 260, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,59,48,0.28)', backgroundColor: 'rgba(255,59,48,0.1)', paddingVertical: 8, paddingHorizontal: 10 },
+  cameraButtonNoticeText: { color: colors.red, fontSize: 11, fontWeight: '800', lineHeight: 15, textAlign: 'right' },
   card: { marginHorizontal: 16, marginTop: 8, borderRadius: 28, paddingTop: 8, paddingBottom: 14, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 8 },
   previewWrap: { borderRadius: 22, overflow: 'hidden', height: 160 },
   preview: { flex: 1 },

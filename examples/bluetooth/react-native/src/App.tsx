@@ -13,7 +13,7 @@ import { useBluetoothSdkExample } from './useBluetoothSdkExample';
 export default function App() {
   const [tab, setTab] = useState<TabKey>('device');
   const [keyboardVisible, setKeyboardVisible] = useState(false);
-  const sdk = useBluetoothSdkExample();
+  const sdk = useBluetoothSdkExample({activeTab: tab});
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';

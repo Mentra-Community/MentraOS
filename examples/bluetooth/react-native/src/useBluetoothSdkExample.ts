@@ -51,6 +51,11 @@ import {
   supportsDisplay,
 } from './sdkFormat';
 
+export type ExampleTabKey = 'device' | 'camera' | 'stream' | 'system' | 'console';
+export type BluetoothSdkExampleOptions = {
+  activeTab?: ExampleTabKey;
+};
+
 export type StreamProtocol = 'rtmp' | 'srt' | 'webrtc';
 export type StreamPreviewTarget = {
   kind: 'hls' | 'web';
@@ -189,6 +194,9 @@ export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
 export const PHOTO_UPLOAD_DEFAULT_URL = 'http://<computer-ip>:8787/upload';
 
 const STREAM_DEFAULT_URL_VALUES = new Set(Object.values(STREAM_DEFAULT_URLS));
+const CAMERA_BUTTON_GALLERY_MODE_NOTICE =
+  'Gallery mode is on. Photo stays on glasses and is not previewed.';
+const CAMERA_ACTION_BUTTON_IDS = new Set(['action', 'camera', 'main', 'primary']);
 
 type MicPcmChunk = {
   data: Uint8Array;
@@ -204,6 +212,7 @@ export type SdkConsoleEvent = {
 export type BluetoothSdkExampleState = {
   activeAction: string | null;
   barcodeScan: BarcodeScanDetails;
+  cameraButtonNotice: string | null;
   cameraStatus: string;
   defaultDevice: Device | null;
   discoveredDevices: Device[];
@@ -333,7 +342,8 @@ declare const process: {
   };
 };
 
-export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
+export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {}): BluetoothSdkExampleModel {
+  const activeTab = options.activeTab ?? 'device';
   const [events, setEvents] = useState<SdkConsoleEvent[]>([
     event('LIVE', 'SDK ready. Scan to discover glasses.'),
   ]);
@@ -351,6 +361,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const [phonePhotoReceiverRunning, setPhonePhotoReceiverRunning] = useState(false);
   const [phonePhotoUploadUrl, setPhonePhotoUploadUrl] = useState<string | null>(null);
   const [cameraStatus, setCameraStatus] = useState('Camera: ready to capture to phone');
+  const [cameraButtonNotice, setCameraButtonNotice] = useState<string | null>(null);
   const [barcodeScan, setBarcodeScan] = useState<BarcodeScanDetails>({
     barcodes: [],
     state: 'idle',
@@ -409,7 +420,11 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const pollGenerationRef = useRef(0);
   const photoCloudServerEnabledRef = useRef(false);
   const streamCloudServerEnabledRef = useRef(false);
+  const activeTabRef = useRef<ExampleTabKey>('device');
+  const galleryModeEnabledRef = useRef(false);
+  const captureAndUploadRef = useRef<() => Promise<void>>(async () => undefined);
   const photoUploadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cameraButtonNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewHealthTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const directStreamFrameStaleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const barcodeScanTokenRef = useRef(0);
@@ -447,6 +462,8 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const hotspotEnabled = enabledHotspotStatus(glasses) !== null;
   const selectedDiscoveredDevice = bluetooth.scan.selectedDevice;
   const selectedScanModel = scanModelFromDeviceModel(bluetooth.scan.model);
+  activeTabRef.current = activeTab;
+  galleryModeEnabledRef.current = galleryModeEnabled;
 
   useEffect(() => {
     if (didAutoConnectDefaultRef.current || glassesConnected) {
@@ -466,9 +483,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
 
   useEffect(() => {
     const subscriptions = [
-      BluetoothSdk.addListener('button_press', (payload: ButtonPressEvent) => {
-        addEvent('LIVE', `button ${payload.buttonId}: ${payload.pressType}`);
-      }),
+      BluetoothSdk.addListener('button_press', handleButtonPress),
       BluetoothSdk.addListener('touch_event', (payload: TouchEvent) => {
         const gesture = payload.gestureName ?? payload.deviceModel ?? 'event';
         addEvent(
@@ -582,6 +597,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     return () => {
       subscriptions.forEach((subscription) => subscription.remove());
       clearPhotoUploadTimeout();
+      clearCameraButtonNoticeTimer();
       stopPreviewHealthPoll();
       stopDirectStreamFrameWatchdog();
       void MentraPhotoReceiver.stopPhotoReceiver().catch(() => undefined);
@@ -607,6 +623,19 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
 
   function addEvent(tag: SdkConsoleEvent['tag'], text: string) {
     setEvents((current) => [event(tag, text), ...current].slice(0, 30));
+  }
+
+  function handleButtonPress(payload: ButtonPressEvent) {
+    addEvent('LIVE', `button ${payload.buttonId}: ${payload.pressType}`);
+    if (activeTabRef.current !== 'camera' || !isCameraActionButtonPress(payload)) {
+      return;
+    }
+    if (galleryModeEnabledRef.current) {
+      showCameraButtonNotice(CAMERA_BUTTON_GALLERY_MODE_NOTICE);
+      addEvent('TX', 'gallery mode kept button photo on glasses');
+      return;
+    }
+    void captureAndUploadRef.current();
   }
 
   async function runAction(label: string, action: () => Promise<void> | void) {
@@ -738,6 +767,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   }
 
   async function captureAndUpload() {
+    clearCameraButtonNotice();
     resetBarcodeScan();
     await runAction('Capture & upload', async () => {
       requireConnected('capture photos');
@@ -752,6 +782,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       await captureAndUploadToCloud();
     });
   }
+  captureAndUploadRef.current = captureAndUpload;
 
   async function captureAndUploadToCloud() {
       const uploadUrlText = webhookUrl.trim();
@@ -1208,6 +1239,27 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   function resetBarcodeScan() {
     barcodeScanTokenRef.current += 1;
     setBarcodeScan({barcodes: [], state: 'idle'});
+  }
+
+  function showCameraButtonNotice(message: string) {
+    clearCameraButtonNotice();
+    setCameraButtonNotice(message);
+    cameraButtonNoticeTimerRef.current = setTimeout(() => {
+      setCameraButtonNotice(null);
+      cameraButtonNoticeTimerRef.current = null;
+    }, 6000);
+  }
+
+  function clearCameraButtonNotice() {
+    clearCameraButtonNoticeTimer();
+    setCameraButtonNotice(null);
+  }
+
+  function clearCameraButtonNoticeTimer() {
+    if (cameraButtonNoticeTimerRef.current) {
+      clearTimeout(cameraButtonNoticeTimerRef.current);
+      cameraButtonNoticeTimerRef.current = null;
+    }
   }
 
   async function scanPreviewBarcode(sourceUri: string, expectedValue?: string) {
@@ -2012,6 +2064,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   return {
     activeAction,
     barcodeScan,
+    cameraButtonNotice,
     phone,
     cameraStatus,
     cameraFov,
@@ -2704,6 +2757,10 @@ function photoBleFallbackProgressMessage(status: string, currentMessage?: string
 
 function photoStatusStartsNewCapture(status: string) {
   return status === 'accepted' || status === 'queued' || status === 'configuring';
+}
+
+function isCameraActionButtonPress(payload: ButtonPressEvent) {
+  return payload.pressType === 'short' && CAMERA_ACTION_BUTTON_IDS.has(payload.buttonId.toLowerCase());
 }
 
 function clearPhotoBleFallbackWarning(details: PhotoPreviewDetails) {
