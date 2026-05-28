@@ -34,6 +34,14 @@ export function suppressNextRouterPopOnce(): void {
   console.log("[router] suppressNextRouterPopOnce() called")
   suppressNextRouterPop = true
 }
+// Reset the suppress flag without consuming a popstate. For callers that
+// set the flag in anticipation of a history.back() that then throws (or
+// otherwise never fires popstate) — leaving the flag armed would swallow
+// the user's next genuine back press.
+export function clearSuppressNextRouterPop(): void {
+  console.log("[router] clearSuppressNextRouterPop() called")
+  suppressNextRouterPop = false
+}
 
 /**
  * Back-press interceptor. Registered handlers run inside the router's

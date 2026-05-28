@@ -6,7 +6,7 @@ import "@/shared/channels"
 import type {Channels} from "@/shared/channels"
 import type {PlaceDetails, PlaceSuggestion} from "@/shared/types"
 import {useNavStore} from "@/ui/store/navStore"
-import {registerBackInterceptor} from "@/ui/router"
+import {registerBackInterceptor, suppressNextRouterPopOnce, clearSuppressNextRouterPop} from "@/ui/router"
 import {reverseGeocode} from "@/ui/lib/reverseGeocode"
 import {LocationInput} from "./components/LocationInput/LocationInput"
 import {SuggestionsList} from "./components/SuggestionsList/SuggestionsList"
@@ -85,13 +85,22 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
   const searchOpenRef = useRef(searchOpen)
   searchOpenRef.current = searchOpen
 
-  // Rising edge only: push a history entry the first time searchActive
-  // becomes true. We deliberately do NOT pop on the falling edge — any
-  // transient false (e.g. input briefly loses focus during a state
-  // update on Android WebView) would otherwise call history.back() and
-  // bubble up to pop the page. Programmatic close paths (suggestion
-  // pick, the back interceptor's empty-query branch) call
-  // popOurEntry() explicitly when they actually mean to clean up.
+  // Push a history entry when search becomes active; drain it when
+  // search collapses. The falling edge matters on Android: pressing the
+  // system back while the keyboard is open is consumed by the IME (no
+  // popstate fires) and only blurs the input. That blur collapses search
+  // here without popping our pushed entry — leaving an orphaned
+  // `searchDrawer` entry in history. The next back then lands on that
+  // stale entry instead of popping the page, so the user gets stranded
+  // (extra taps, or the interceptor re-clearing an already-cleared
+  // query). Reconciling on the falling edge keeps history depth matched
+  // to the visible state, so one back from a collapsed AddPlace pops the
+  // page back to navigation.
+  //
+  // Transient-blur safety: `searchActive` only goes false once `focused`
+  // is cleared, which happens inside onBlur's 150ms timeout. That delay
+  // already absorbs the momentary WebView blur/refocus during a state
+  // update, so draining here won't double-pop.
   useEffect(() => {
     console.log("[AddPlace] searchActive effect", {
       searchActive,
@@ -105,20 +114,37 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
       } catch (err) {
         console.warn("[AddPlace] pushState failed:", err)
       }
+    } else if (!searchActive && searchEntryPushedRef.current) {
+      console.log("[AddPlace] searchActive false — draining orphaned entry")
+      popOurEntry()
     }
   }, [searchActive])
 
   // Explicit cleanup helper for paths that genuinely close search —
-  // suggestion pick, etc. Drains our pushed history entry. Used by
-  // `pick(...)` below via `closeSearch()`.
+  // suggestion pick, blur-driven collapse, etc. Drains our pushed
+  // history entry. Used by `pick(...)`, `closeSearch()`, and the
+  // searchActive falling-edge effect.
+  //
+  // We MUST suppress the router pop before calling history.back():
+  // the back fires popstate, the router runs our interceptor, and by
+  // then `searchEntryPushedRef` is already false — so the interceptor
+  // would hit its "no entry, let router pop" branch and pop the *route*,
+  // exiting AddPlace. suppressNextRouterPopOnce() tells the router to
+  // skip exactly the next stack mutation, so this back only drains our
+  // own entry. (Mirrors LocationSearch's programmatic-close path.)
   function popOurEntry() {
     if (!searchEntryPushedRef.current) return
     searchEntryPushedRef.current = false
-    console.log("[AddPlace] popOurEntry — history.back()")
+    console.log("[AddPlace] popOurEntry — suppress + history.back()")
+    suppressNextRouterPopOnce()
     try {
       history.back()
     } catch (err) {
       console.warn("[AddPlace] history.back() failed:", err)
+      // history.back() never fired popstate, so the suppress flag we set
+      // would otherwise leak and swallow the user's next real back.
+      // Clear it so the next genuine back press pops the route normally.
+      clearSuppressNextRouterPop()
     }
   }
 
@@ -137,36 +163,29 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
         focused: focusedRef.current,
         searchOpen: searchOpenRef.current,
       })
+      // No entry of ours on the stack → this back belongs to the router;
+      // let it pop the page back to navigation.
       if (!searchEntryPushedRef.current) {
         console.log("[AddPlace] interceptor — no entry pushed, letting router pop")
         return false
       }
+      // Our searchDrawer entry is the one being consumed. The back press
+      // means "dismiss search" — collapse the input + suggestions and
+      // consume the press so the page stays mounted. A *second* back then
+      // finds no entry pushed and pops the page (above). We do NOT clear
+      // the query and re-push here: that turned one logical "close
+      // search" into two back presses, and on Android the soft keyboard
+      // is dismissed by the IME on the first back anyway (which blurs the
+      // input and drains this entry via the searchActive falling-edge
+      // effect — so this popstate path is the keyboard-already-down case).
+      //
+      // closeSearch() calls popOurEntry(), but our entry is already being
+      // consumed by *this* popstate — so flip the ref to false first to
+      // make popOurEntry() a no-op and avoid a spurious second back.
       searchEntryPushedRef.current = false
-      // Case 1: there's a query to clear. Clear it and stay in search.
-      if (queryRef.current.trim().length > 0) {
-        console.log("[AddPlace] interceptor — query non-empty, clearing query + re-pushing entry")
-        setQuery("")
-        try {
-          history.pushState({searchDrawer: true}, "")
-          searchEntryPushedRef.current = true
-        } catch (err) {
-          console.warn("[AddPlace] re-pushState failed:", err)
-        }
-        return true
-      }
-      // Case 2: search has something visible to dismiss (focused input
-      // or open suggestions panel). Close it and consume the back.
-      if (focusedRef.current || searchOpenRef.current) {
-        console.log("[AddPlace] interceptor — empty query, dismissing focus/suggestions")
-        closeSearch()
-        return true
-      }
-      // Case 3: there's nothing meaningful to dismiss (the user
-      // already blurred the input via keyboard-hide, and we still had
-      // a stale history entry). Let the back propagate to the router
-      // so the page exits — saves the user a redundant tap.
-      console.log("[AddPlace] interceptor — nothing to dismiss, letting router pop")
-      return false
+      console.log("[AddPlace] interceptor — dismissing search, consuming back")
+      closeSearch()
+      return true
     })
     return () => {
       console.log("[AddPlace] back interceptor unregistered")

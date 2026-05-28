@@ -202,8 +202,14 @@ export default function LocalMiniAppPage() {
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
       if (!packageName) return
+      const raw = event.nativeEvent.data
+      // Console-tap shim (miniappGlobals.ts) posts {payload:{type:"dev_log",...}}.
+      // The UI router only understands top-level {type:...} frames and drops
+      // anything else, so intercept dev_log here and forward it to the
+      // `mentra-miniapp dev` sidecar (source="ui") plus the RN console.
+      if (forwardWebViewDevLog(packageName, raw)) return
       const mj = getMentraJS()
-      mj?.uiRouter.routeFromWebView(packageName, event.nativeEvent.data)
+      mj?.uiRouter.routeFromWebView(packageName, raw)
     },
     [packageName],
   )
@@ -423,4 +429,34 @@ function buildSidecarBaseUrl(devUrl: string, sidecarPort: number): string | null
   } catch {
     return null
   }
+}
+
+/**
+ * Intercept the WebView's console-tap `dev_log` envelope. The shim in
+ * miniappGlobals.ts posts `{payload:{type:"dev_log", level, args, ...}}`;
+ * the UI router only routes top-level `{type:...}` frames and would drop
+ * this. Forward to the dev sidecar (source="ui") and mirror to the RN
+ * console. Returns true when the frame was a dev_log (caller should stop).
+ */
+function forwardWebViewDevLog(packageName: string, raw: string): boolean {
+  let env: {payload?: {type?: string; level?: string; args?: unknown; timestamp?: number}}
+  try {
+    env = JSON.parse(raw)
+  } catch {
+    return false
+  }
+  const payload = env.payload
+  if (!payload || payload.type !== "dev_log") return false
+  const level = typeof payload.level === "string" ? payload.level : "log"
+  const args = Array.isArray(payload.args) ? (payload.args as unknown[]) : []
+  const timestamp = typeof payload.timestamp === "number" ? payload.timestamp : Date.now()
+  devServerBridge.forwardLog(packageName, level, args, timestamp, "ui")
+  const tag = `[MINIAPP ${packageName}]`
+  const fn = (console as unknown as Record<string, (...a: unknown[]) => void>)[level] ?? console.log
+  try {
+    fn(tag, ...args)
+  } catch {
+    console.log(tag, ...args)
+  }
+  return true
 }

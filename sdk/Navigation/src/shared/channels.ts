@@ -52,6 +52,7 @@ export interface Channels {
   "nav:compute-route": Rpc<ComputeRouteOptions, ComputeRouteResult>
   "nav:request-permission": Rpc<void, NavPermissionResult>
   "nav:get-snapshot": Rpc<void, NavSnapshot>
+  "nav:get-pivots": Rpc<void, Pivot[]>     // full turn list for dev debug dots
 
   "places:autocomplete": Rpc<{query: string; near?: {lat: number; lng: number}}, PlaceSuggestion[]>
   "places:details": Rpc<{placeId: string}, PlaceDetails>

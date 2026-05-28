@@ -201,6 +201,7 @@ export class NavigationController {
     this.unsubs.push(this.ui.handle("nav:compute-route", (opts) => this.navigation.computeRoute(opts)))
     this.unsubs.push(this.ui.handle("nav:request-permission", () => this.navigation.requestPermission()))
     this.unsubs.push(this.ui.handle("nav:get-snapshot", () => this.buildSnapshot()))
+    this.unsubs.push(this.ui.handle("nav:get-pivots", () => this.navigation.getPivots()))
 
     this.unsubs.push(
       this.ui.handle("places:autocomplete", ({query, near}, ctx) => this.places.autocomplete(query, near, ctx?.signal)),

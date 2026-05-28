@@ -8,6 +8,7 @@ import type {LatLng, LogEntry, NavStatus, PlaceDetails, SavedPlace} from "@/shar
 import {useRouter} from "@/ui/router"
 import {useNavStore} from "@/ui/store/navStore"
 import {reverseGeocode} from "@/ui/lib/reverseGeocode"
+import {bearingDeg, haversineMeters, signedAngleDiff} from "@/ui/lib/geometry"
 import {DrawerOffsetProvider} from "@/ui/components/Drawer/DrawerOffsetContext"
 import {FloatingDevPanel} from "@/ui/components/FloatingDevPanel/FloatingDevPanel"
 import {isDev} from "@/ui/lib/env"
@@ -32,6 +33,106 @@ const DEV_DESTINATION: PlaceDetails = {
   lat: 37.7955,
   lng: -122.3937,
 }
+
+// A previewed turn point plus the road name to label it with (dev dots).
+type PreviewTurn = {lat: number; lng: number; label: string | null}
+
+// Pull a short road name out of a Routes-API instruction for the dev
+// turn labels. Instructions look like:
+//   "Turn left onto Octavia Blvd"
+//   "Slight right onto Octavia St"
+//   "Head northeast on Market St toward Octavia St"
+//   "Turn right onto Haight St\nDestination will be on the right"
+//
+// Pitfalls this guards against (seen in real data):
+//   - Multi-line: the API appends a second line like "Destination will
+//     be on the right". We ONLY look at the first line, otherwise the
+//     greedy match grabs "on the right" → "the right".
+//   - Trailing clauses on the first line ("… toward Octavia St",
+//     "… and continue"): cut at the first such keyword.
+//   - Unit suffixes: "Hayes St #116" → "Hayes St".
+//   - Direction-only leftovers ("the right", "right", "left"): rejected
+//     so a parse miss returns null (caller hides the label / geocodes)
+//     instead of showing a direction word.
+const DIRECTION_WORDS = new Set(["right", "left", "the right", "the left", "north", "south", "east", "west"])
+function roadNameFromInstruction(instruction?: string): string | null {
+  if (!instruction) return null
+  // Only the first line — drop "Destination will be on the right" etc.
+  const firstLine = instruction.split("\n")[0] ?? ""
+  // Prefer "onto" (always immediately precedes the road); fall back to
+  // "on" for depart steps ("Head north on Market St").
+  const m = firstLine.match(/\bonto\s+(.+)$/i) ?? firstLine.match(/\bon\s+(.+)$/i)
+  let raw = (m ? m[1] : "").trim()
+  if (!raw) return null
+  // Cut trailing direction/continuation clauses the API appends.
+  raw = raw.split(/\s+(?:toward|towards|to|and|then|for)\b/i)[0]?.trim() ?? ""
+  // Strip a unit/suite suffix ("Hayes St #116" → "Hayes St").
+  raw = raw.replace(/\s+#.*$/, "").trim()
+  if (!raw) return null
+  // Reject a bare direction word that slipped through.
+  if (DIRECTION_WORDS.has(raw.toLowerCase())) return null
+  return raw
+}
+
+// Build the "fromRoad → toRoad" label for a turn dot. Both sides are
+// always present by the time we call this (the caller drops turns with a
+// missing or same-road side), so this is just the join.
+function joinRoads(fromRoad: string, toRoad: string): string {
+  return `${fromRoad} → ${toRoad}`
+}
+
+// Normalize a road name for equality checks so "Gough St" and "Gough
+// Street" (or trailing punctuation/case) compare equal. Used to drop
+// "stay on the same road" turns like "Turn right to stay on Gough St".
+const ROAD_SUFFIXES =
+  /\b(st|street|ave|avenue|blvd|boulevard|rd|road|dr|drive|ln|lane|way|ct|court|pl|place|ter|terrace|hwy|highway)\b\.?/g
+function normalizeRoad(road: string): string {
+  return road.toLowerCase().replace(ROAD_SUFFIXES, "").replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim()
+}
+function sameRoad(a: string, b: string): boolean {
+  return normalizeRoad(a) === normalizeRoad(b)
+}
+
+// How sharply the drawn route actually bends at `junction`, in degrees
+// [0, 180]. We trust the POLYLINE, not the step instructions: the Routes
+// API names "turns" (Market → Gough → Market) at complex interchanges
+// where the path is visually one straight line. Measuring the real bend
+// lets us drop those phantom turns and keep only places the line clearly
+// changes direction.
+//
+// Method: find the polyline point nearest the junction, then walk
+// outward in each direction until we're ~PROBE_METERS away (so a dense
+// cluster of points right at the junction doesn't make every tiny jog
+// look like a turn). Compare the incoming bearing to the outgoing one.
+// Returns null when the polyline is too short to measure.
+const PROBE_METERS = 12
+function bendAngleAt(points: LatLng[], junction: LatLng): number | null {
+  if (points.length < 3) return null
+  // Nearest point to the junction.
+  let mid = 0
+  let bestDist = Infinity
+  for (let i = 0; i < points.length; i++) {
+    const d = haversineMeters(points[i], junction)
+    if (d < bestDist) {
+      bestDist = d
+      mid = i
+    }
+  }
+  // Walk back until ~PROBE_METERS before the junction.
+  let before = mid
+  while (before > 0 && haversineMeters(points[before], points[mid]) < PROBE_METERS) before--
+  // Walk forward until ~PROBE_METERS after.
+  let after = mid
+  while (after < points.length - 1 && haversineMeters(points[after], points[mid]) < PROBE_METERS) after++
+  if (before === mid || after === mid) return null
+  const incoming = bearingDeg(points[before], points[mid])
+  const outgoing = bearingDeg(points[mid], points[after])
+  return Math.abs(signedAngleDiff(outgoing, incoming))
+}
+
+// Minimum bend (degrees) for a junction to count as a real turn worth a
+// dot. Below this the route is effectively straight through the point.
+const MIN_TURN_ANGLE_DEG = 35
 
 let logIdSeq = 0
 
@@ -107,6 +208,12 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [travelMode, setTravelMode] = useState<TravelMode>("walking")
 
   const [previewRoutePoints, setPreviewRoutePoints] = useState<LatLng[] | null>(null)
+  // Dev-only: turn points along the previewed route, used to draw red
+  // debug dots (with a road-name label) on the map. Derived from the
+  // computed route's step list (available at computeRoute time, before a
+  // trip starts — unlike the SDK's getPivots(), which only populates
+  // once navigation is running).
+  const [previewTurns, setPreviewTurns] = useState<PreviewTurn[] | null>(null)
   // Route-aware totals from computeRoute (mode-correct, follows the actual
   // walking path rather than crow-flies). Cleared when destination changes
   // or trip ends. Drawers prefer these over recomputing.
@@ -128,8 +235,13 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     if (running || !destination || !coords) {
       setPreviewRoutePoints(null)
       setPreviewRouteSummary(null)
+      setPreviewTurns(null)
       return
     }
+    // Guards the async geocode fallback below: a newer preview (or trip
+    // start) can land while reverse-geocoding is in flight, and we must
+    // not let a stale result overwrite the current turns.
+    let cancelled = false
     computeRoute.abort()
     const origin = {lat: coords.lat, lng: coords.lng}
     computeRoute({
@@ -138,6 +250,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
       mode: "walking",
     })
       .then((result) => {
+        if (cancelled) return
         const route = result.routes?.[0]
         const pts = route?.points ?? null
         setPreviewRoutePoints(pts)
@@ -149,10 +262,68 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         } else {
           setPreviewRouteSummary(null)
         }
+        if (!route?.steps || route.steps.length === 0) {
+          setPreviewTurns(null)
+          return
+        }
+        // Dev debug dots: a red dot at each real turn, labeled "fromRoad
+        // → toRoad". A Routes-API step's `instruction` describes the
+        // maneuver that BEGINS that step ("Turn left onto Guerrero St").
+        // The dot sits at step[i].end — the junction where you leave
+        // step[i]'s road and turn onto step[i+1]'s road. So:
+        //   fromRoad = road parsed from THIS step's instruction
+        //   toRoad   = road parsed from the NEXT step's instruction
+        //
+        // A dot survives THREE filters:
+        //   1. Both roads named in the instruction. Roadless micro-turns
+        //      ("Slight right") parse to null — nothing to label, skip.
+        //   2. The roads differ. "Turn right to stay on Gough St" is
+        //      Gough → Gough; not a road change a human would mark.
+        //   3. The DRAWN POLYLINE actually bends ≥ MIN_TURN_ANGLE_DEG at
+        //      the junction. This is the key one: at complex interchanges
+        //      the API names turns (Market → Gough → Market) where the
+        //      path is visually one straight line. We trust the geometry,
+        //      not the instruction, and drop those phantom turns.
+        // The LAST step (the destination) is dropped by slice(0, -1).
+        const steps = route.steps
+        const polyline = pts ?? []
+        const turns = steps
+          .slice(0, -1)
+          .map((s, i) => {
+            const fromRoad = roadNameFromInstruction(s.instruction)
+            const toRoad = roadNameFromInstruction(steps[i + 1].instruction)
+            return {s, fromRoad, toRoad}
+          })
+          .filter(
+            (
+              t,
+            ): t is {s: (typeof steps)[number]; fromRoad: string; toRoad: string} =>
+              t.fromRoad != null &&
+              t.toRoad != null &&
+              !sameRoad(t.fromRoad, t.toRoad) &&
+              Number.isFinite(t.s.endLat) &&
+              Number.isFinite(t.s.endLng),
+          )
+          .filter((t) => {
+            const bend = bendAngleAt(polyline, {lat: t.s.endLat, lng: t.s.endLng})
+            // No polyline to measure → keep (don't hide a labeled turn
+            // just because geometry was unavailable).
+            return bend == null || bend >= MIN_TURN_ANGLE_DEG
+          })
+          .map((t) => ({
+            lat: t.s.endLat,
+            lng: t.s.endLng,
+            label: joinRoads(t.fromRoad, t.toRoad),
+          }))
+        if (cancelled) return
+        setPreviewTurns(turns)
       })
       .catch(() => {
         // Aborted or failed — preview just stays blank.
       })
+    return () => {
+      cancelled = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, destination?.lat, destination?.lng, coords?.lat, coords?.lng])
 
@@ -258,6 +429,11 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           me={me}
           destination={activeDestination ?? (destination ? {lat: destination.lat, lng: destination.lng} : null)}
           routePoints={running ? routePoints : previewRoutePoints}
+          // Dev-only red turn dots. While previewing, the SDK's pivot
+          // list is empty (no active trip), so we feed turns derived
+          // from the computed route's steps. While running, NavMap pulls
+          // the live pivot list via the nav:get-pivots RPC.
+          previewTurns={running ? null : previewTurns}
           // Idle map shows saved-place pins so the user can see their
           // home / work / starred locations at a glance. Hide them
           // while running so they don't compete with the active route.

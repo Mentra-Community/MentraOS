@@ -12,6 +12,7 @@ export function NavMap({
   me,
   destination,
   routePoints,
+  previewTurns,
   savedPlaces = [],
   autoFollow = true,
   hideControls = false,
@@ -22,6 +23,12 @@ export function NavMap({
   /** Full walking-route polyline emitted by Nav SDK. If null, falls back
    *  to a straight me→destination line so the map has *something*. */
   routePoints?: Array<LatLng> | null
+  /** Dev-only turn points for the previewed route, drawn as red debug
+   *  dots with a hovering road-name label. Supplied while previewing
+   *  (the SDK's live pivot list is empty until a trip starts). When
+   *  null/running, NavMap fetches the live pivot list via the
+   *  nav:get-pivots RPC instead (those have no label). */
+  previewTurns?: Array<{lat: number; lng: number; label?: string | null}> | null
   /** Stars / home / work pins to drop while the map is idle. Empty while
    *  a trip is running so the route stays uncluttered. */
   savedPlaces?: Array<{lat: number; lng: number; placeId: string; type?: "home" | "work"; savedName?: string}>
@@ -106,6 +113,8 @@ export function NavMap({
   const pastRouteRef = useRef<any | null>(null)
   /** Debug: red dots at each detected pivot (turn point). */
   const pivotDotsRef = useRef<any[]>([])
+  /** Debug: hovering road-name labels paired with the pivot dots. */
+  const pivotLabelsRef = useRef<any[]>([])
   // One Polyline per detected crossing leg. Blue, semi-transparent,
   // thicker than the route line so it visually highlights the crossing
   // segment we'd skip when "Skip crossings" is on.
@@ -223,7 +232,6 @@ export function NavMap({
       downAt = Date.now()
       armed = true
       cancelled = false
-      console.log("[NavMap] pointerdown — armed for long-press")
     }
     const onMove = (e: PointerEvent) => {
       if (!armed) return
@@ -232,7 +240,6 @@ export function NavMap({
       if (dx * dx + dy * dy > MAX_MOVE_PX * MAX_MOVE_PX) {
         armed = false
         cancelled = true
-        console.log("[NavMap] long-press disarmed — finger moved >", MAX_MOVE_PX, "px")
       }
     }
     // The WebView's `contextmenu` event IS the OS-level long-press
@@ -566,46 +573,121 @@ export function NavMap({
     }
   }, [ready, routePoints])
 
-  // Debug overlay: render a red dot at each detected pivot. Lets us
-  // visually verify that the SDK placed turn points where they belong.
+  // Debug overlay: render a red dot at each turn point. Lets us visually
+  // verify that turns land where they belong.
   //
-  // The full pivot list previously came from `user.navigation.getPivots()`
-  // (background-owned). Now that the UI lives behind a channel boundary,
-  // the background only broadcasts the active + upcoming pivots — not
-  // the full list. Falling back to an empty array keeps the rest of the
-  // map rendering correctly; adding a `nav:get-pivots` RPC would restore
-  // the full debug markers.
+  // Two sources, depending on trip phase:
+  //   - Previewing (not yet started): `previewTurns` carries turns the
+  //     parent derived from the computed route's step list. The SDK's
+  //     getPivots() is empty here because no trip is active.
+  //   - Running: we pull the live pivot list via the `nav:get-pivots`
+  //     RPC (the `nav:pivots` broadcast only ships active + upcoming).
+  //
+  // Refetch whenever the route or preview turns change. `cancelled`
+  // guards against an async RPC resolve landing after teardown.
   useEffect(() => {
     if (!isDev) return
     if (!ready || !mapRef.current) return
-    const pivots: Array<LatLng> = []
 
-    // Tear down previous markers
-    for (const dot of pivotDotsRef.current) dot.setMap(null)
-    pivotDotsRef.current = []
-
-    if (pivots.length === 0) return
-    const g = window.google
-    for (const p of pivots) {
-      const dot = new g.maps.Circle({
-        map: mapRef.current,
-        center: {lat: p.lat, lng: p.lng},
-        radius: 3, // 3m visual marker
-        fillColor: "#FF3030",
-        fillOpacity: 1,
-        strokeColor: "#FFFFFF",
-        strokeOpacity: 1,
-        strokeWeight: 1.5,
-        clickable: false,
-        zIndex: 5,
-      })
-      pivotDotsRef.current.push(dot)
-    }
-    return () => {
+    function teardown() {
       for (const dot of pivotDotsRef.current) dot.setMap(null)
       pivotDotsRef.current = []
+      for (const label of pivotLabelsRef.current) label.setMap(null)
+      pivotLabelsRef.current = []
     }
-  }, [ready, routePoints])
+
+    // Tear down previous markers up front so a stale route's dots clear
+    // immediately, before any new dots are drawn.
+    teardown()
+
+    // A small square badge anchored above a turn dot, showing the road
+    // name. Defined here (like MeOverlay) because OverlayView only exists
+    // once the Maps script has loaded — which `ready` guarantees.
+    const g = window.google
+    class PivotLabelOverlay extends g.maps.OverlayView {
+      private pos: any
+      private text: string
+      private div: HTMLDivElement | null = null
+      constructor(pos: any, text: string) {
+        super()
+        this.pos = pos
+        this.text = text
+      }
+      onAdd() {
+        const div = document.createElement("div")
+        div.style.cssText =
+          "position:absolute;transform:translate(-50%,calc(-100% - 8px));pointer-events:none;" +
+          "padding:2px 6px;border-radius:6px;background:#FF3030;color:#FFFFFF;" +
+          "font:600 11px/1.3 system-ui,sans-serif;white-space:nowrap;" +
+          "box-shadow:0 2px 6px #00000040;border:1px solid #FFFFFF99;z-index:6"
+        div.textContent = this.text
+        this.div = div
+        this.getPanes()!.overlayMouseTarget.appendChild(div)
+      }
+      draw() {
+        if (!this.div) return
+        const proj = this.getProjection()
+        const pt = proj?.fromLatLngToDivPixel(this.pos)
+        if (!pt) return
+        this.div.style.left = `${pt.x}px`
+        this.div.style.top = `${pt.y}px`
+      }
+      onRemove() {
+        this.div?.parentNode?.removeChild(this.div)
+        this.div = null
+      }
+    }
+
+    function drawDots(turns: Array<{lat: number; lng: number; label?: string | null}>) {
+      if (!mapRef.current) return
+      for (const p of turns) {
+        const dot = new g.maps.Circle({
+          map: mapRef.current,
+          center: {lat: p.lat, lng: p.lng},
+          radius: 3, // 3m visual marker
+          fillColor: "#FF3030",
+          fillOpacity: 1,
+          strokeColor: "#FFFFFF",
+          strokeOpacity: 1,
+          strokeWeight: 1.5,
+          clickable: false,
+          zIndex: 5,
+        })
+        pivotDotsRef.current.push(dot)
+
+        // Hovering square label with the road name, offset above the dot.
+        if (p.label) {
+          const label = new PivotLabelOverlay(new g.maps.LatLng(p.lat, p.lng), p.label)
+          label.setMap(mapRef.current)
+          pivotLabelsRef.current.push(label)
+        }
+      }
+    }
+
+    // Preview path: parent supplied turns synchronously, draw immediately.
+    if (previewTurns && previewTurns.length > 0) {
+      drawDots(previewTurns)
+      return teardown
+    }
+
+    // Running path: fetch the live pivot list over the channel boundary.
+    // These pivots carry no label, so dots render without squares.
+    let cancelled = false
+    mentra
+      .request("nav:get-pivots", undefined)
+      .then((pivots) => {
+        if (cancelled) return
+        drawDots(pivots)
+      })
+      .catch((err) => {
+        console.warn("[NavMap] nav:get-pivots failed:", err)
+      })
+
+    return () => {
+      cancelled = true
+      teardown()
+    }
+  }, [ready, routePoints, previewTurns])
 
   if (error) {
     return <div className="p-3 text-red-700 text-[13px]">Map failed to load: {error}</div>
