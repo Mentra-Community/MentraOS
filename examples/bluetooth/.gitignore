@@ -38,6 +38,7 @@ examples/react-native-elevenlabs-audio/.env*
 
 # Local webhook demo uploads.
 examples/photo-webhook-server/uploads/
+examples/react-native/.barcode-debug/
 
 # iOS example generated files.
 examples/ios/Pods/
