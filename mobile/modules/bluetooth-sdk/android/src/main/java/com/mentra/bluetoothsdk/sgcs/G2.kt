@@ -2467,7 +2467,7 @@ class G2 : SGCManager() {
                 return@postDelayed
             }
             if (!pageCreated || !pageHasTextContainer) {
-                CoreManager.getInstance().sendCurrentState() // should re-create the page if needed
+                DeviceManager.getInstance().sendCurrentState() // should re-create the page if needed
             }
             val msg = EvenHubProto.audioControlMessage(true)
             sendEvenHubCommand(msg)
@@ -3600,7 +3600,7 @@ class G2 : SGCManager() {
             val useNativeDashboard = DeviceStore.get("core", "use_native_dashboard") as? Boolean ?: false
             if (!useNativeDashboard) {
                 // make sure the container exists:
-                CoreManager.getInstance().sendCurrentState()
+                DeviceManager.getInstance().sendCurrentState()
                 // re-send mic on / if it's enabled:
                 val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
                 if (micEnabled) {
@@ -3612,7 +3612,7 @@ class G2 : SGCManager() {
                 if (dashboardShowing <= 1) {
                     dashboardShowing = 0
                     // make sure the container exists:
-                    CoreManager.getInstance().sendCurrentState()
+                    DeviceManager.getInstance().sendCurrentState()
                     // set the mic back on if it should be on
                     val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
                     if (micEnabled) {
