@@ -101,7 +101,7 @@ const LocalMiniappView = ({
     // before attempting to load the webview or we'll get visual jank
     BgTimer.setTimeout(() => {
       setAndroidGatePassed(true)
-    }, 700)
+    }, 1000)
   }, [])
 
   const {setForceGestureEnabled} = useNavigationStore.getState()
@@ -362,57 +362,59 @@ const LocalMiniappView = ({
   // Loading affordance: the WebView only mounts once entry resolution +
   // JSContext spawn complete. The splash covers the early frames where the
   // WebView is mounted but hasn't painted yet.
+  let androidGateNotPassed = Platform.OS === "android" && !androidGatePassed
+
   if (phase !== "ready" || !uiUri) {
-    return (
-      <View className="flex-1">
-        <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} />
-      </View>
-    )
-    // let label
-    // switch (phase) {
-    //   case "installing":
-    //     label = "Downloading..."
-    //     break
-    //   case "spawning":
-    //     label = "Starting…"
-    //     break
-    //   case "opening":
-    //     label = "Opening…"
-    //     break
-    //   default:
-    //     label = "Couldn't open"
-    //     break
-    // }
     // return (
-    //   <View className="flex-1 items-center justify-center px-8 bg-background">
-    //     <View className="items-center gap-4">
-    //       {iconUrl ? (
-    //         <Image source={{uri: iconUrl}} style={{width: 72, height: 72, borderRadius: 16}} resizeMode="cover" />
-    //       ) : (
-    //         <View
-    //           style={{
-    //             width: 72,
-    //             height: 72,
-    //             borderRadius: 16,
-    //             backgroundColor: "rgba(120,120,120,0.2)",
-    //           }}
-    //         />
-    //       )}
-    //       {appName ? <Text className="text-base font-semibold text-center" text={appName} /> : null}
-    //       {phase === "error" ? (
-    //         <Text
-    //           className="text-[13px] text-center text-red-500 max-w-[280px]"
-    //           text={errorMessage ?? "Couldn't open"}
-    //         />
-    //       ) : (
-    //         <View className="flex-row items-center gap-2">
-    //           <ActivityIndicator />
-    //           <Text className="text-[13px] text-muted-foreground" text={label} />
-    //         </View>
-    //       )}
-    //     </View>
+    //   <View className="flex-1">
+    //     <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} />
     //   </View>
     // )
+    let label
+    switch (phase) {
+      case "installing":
+        label = "Downloading..."
+        break
+      case "spawning":
+        label = "Starting…"
+        break
+      case "opening":
+        label = "Opening…"
+        break
+      default:
+        label = "Couldn't open"
+        break
+    }
+    return (
+      <View className="flex-1 items-center justify-center px-8 bg-background">
+        <View className="items-center gap-4">
+          {iconUrl ? (
+            <Image source={{uri: iconUrl}} style={{width: 72, height: 72, borderRadius: 16}} resizeMode="cover" />
+          ) : (
+            <View
+              style={{
+                width: 72,
+                height: 72,
+                borderRadius: 16,
+                backgroundColor: "rgba(120,120,120,0.2)",
+              }}
+            />
+          )}
+          {appName ? <Text className="text-base font-semibold text-center" text={appName} /> : null}
+          {phase === "error" ? (
+            <Text
+              className="text-[13px] text-center text-red-500 max-w-[280px]"
+              text={errorMessage ?? "Couldn't open"}
+            />
+          ) : (
+            <View className="flex-row items-center gap-2">
+              <ActivityIndicator />
+              <Text className="text-[13px] text-muted-foreground" text={label} />
+            </View>
+          )}
+        </View>
+      </View>
+    )
   }
 
   const globalsScript = buildMiniappGlobalsScript({
@@ -431,7 +433,7 @@ const LocalMiniappView = ({
   const uiShim = buildMentraUiShim({packageName})
   const injectedJS = `${globalsScript}\n${uiShim}`
 
-  if (Platform.OS === "android" && !androidGatePassed) {
+  if (androidGateNotPassed) {
     return (
       <View className="flex-1 bg-transparent" style={{borderRadius: theme.spacing.s12}}>
         <View className="w-1 h-1">
@@ -450,11 +452,6 @@ const LocalMiniappView = ({
             onContentProcessDidTerminate={handleTerminate}
             onError={handleError}
             onNavigationStateChange={handleNavStateChange}
-            // ALWAYS true — matches /applet/webview. WKWebView only arms its
-            // back-forward snapshot system when this is true at *mount* time.
-            // The Compositor's back-swipe gesture pops in-WebView history first
-            // (via the imperative goBack handle) and only backgrounds the app
-            // once there's no history left.
             allowsBackForwardNavigationGestures={true}
             bounces={false}
             overScrollMode="never"
@@ -468,7 +465,6 @@ const LocalMiniappView = ({
           />
         </View>
         <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} />
-        {/* <View className="flex-1 bg-red-500"/> */}
         <CapsuleMenu forceShow={true} />
       </View>
     )
