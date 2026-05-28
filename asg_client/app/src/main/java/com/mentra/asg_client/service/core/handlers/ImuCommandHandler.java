@@ -321,7 +321,6 @@ public class ImuCommandHandler implements ICommandHandler {
         
         if (imuManager != null) {
             imuManager.shutdown();
-            imuManager = null;
         }
     }
 }
