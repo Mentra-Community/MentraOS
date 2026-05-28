@@ -226,7 +226,7 @@ public class OtaService extends Service {
                         Log.i(
                                 TAG,
                                 "📱 MTK complete (no session) - notifying phone via legacy"
-                                    + " broadcast");
+                                        + " broadcast");
                         sendMtkUpdateCompleteMessage();
                     }
                 } else {
@@ -349,14 +349,14 @@ public class OtaService extends Service {
                     Log.i(
                             TAG,
                             "📱 Active APK install session found without restart guard — resuming"
-                                + " next step");
+                                    + " next step");
                     resumeFromSession(sessionManager);
                     return;
                 }
                 Log.i(
                         TAG,
                         "📱 Active OTA session found without restart guard but not APK install"
-                            + " restart (step="
+                                + " restart (step="
                                 + currentStepIndex
                                 + " type="
                                 + currentStepType
@@ -383,7 +383,7 @@ public class OtaService extends Service {
                     Log.i(
                             TAG,
                             "📱 Triggering background OTA pre-download check (first boot or update"
-                                + " from old version)");
+                                    + " from old version)");
                     otaHelper.startVersionCheck(this);
                 }
             } else if (currentVersion > previousVersion) {
@@ -399,7 +399,7 @@ public class OtaService extends Service {
                     Log.i(
                             TAG,
                             "📱 Auto-resuming background OTA pre-download check for MTK/BES"
-                                + " updates");
+                                    + " updates");
                     otaHelper.startVersionCheck(this);
                 }
             } else {

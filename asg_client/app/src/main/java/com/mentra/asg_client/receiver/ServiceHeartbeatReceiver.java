@@ -32,7 +32,7 @@ public class ServiceHeartbeatReceiver extends BroadcastReceiver {
                         TAG,
                         String.format(
                                 "Received service heartbeat at %s (%.1f seconds since last"
-                                    + " heartbeat)",
+                                        + " heartbeat)",
                                 timestamp, timeSinceLastHeartbeat / 1000.0));
             } else {
                 Log.i(TAG, "Received first service heartbeat at " + timestamp);

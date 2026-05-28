@@ -304,7 +304,7 @@ public class OtaHelper {
                             Log.i(
                                     TAG,
                                     "Skipping autonomous initial check — recent version check"
-                                        + " (elapsedSinceLastStamp="
+                                            + " (elapsedSinceLastStamp="
                                             + elapsedSinceLastStamp
                                             + "ms, cooldown="
                                             + AUTONOMOUS_INITIAL_CHECK_COOLDOWN_MS
@@ -753,7 +753,7 @@ public class OtaHelper {
             Log.i(
                     TAG,
                     "📱 OTA prefetch in progress - queuing install to fire after prefetch"
-                        + " completes");
+                            + " completes");
             pendingPhoneInstall = true;
             isPhoneInitiatedOta = true;
             // Acquire wakelock early so CPU stays awake for the queued install pass
@@ -785,7 +785,7 @@ public class OtaHelper {
             Log.i(
                     TAG,
                     "📱 Cache fast-path: reusing prefetched version JSON (skipping network"
-                        + " re-fetch)");
+                            + " re-fetch)");
             startInstallFromCachedJson(context, cachedVersionJson);
             return;
         }
@@ -808,7 +808,7 @@ public class OtaHelper {
                                     Log.w(
                                             TAG,
                                             "📱 Cache fast-path: version check lock held — falling"
-                                                + " back to full check");
+                                                    + " back to full check");
                                     startVersionCheck(context);
                                     return;
                                 }
@@ -816,14 +816,14 @@ public class OtaHelper {
                                     Log.i(
                                             TAG,
                                             "📱 Cache fast-path: processing cached version JSON"
-                                                + " (installNow=true)");
+                                                    + " (installNow=true)");
                                     if (json.has("apps")) {
                                         processAppsSequentially(json, context, true);
                                     } else {
                                         Log.d(
                                                 TAG,
                                                 "Using legacy version.json format (cache"
-                                                    + " fast-path)");
+                                                        + " fast-path)");
                                         boolean apkUpdated =
                                                 checkAndUpdateApp(
                                                         "com.mentra.asg_client",
@@ -838,7 +838,7 @@ public class OtaHelper {
                                                     0,
                                                     "FAILED",
                                                     "APK update failed after retries. Please check"
-                                                        + " WiFi and try again.");
+                                                            + " WiFi and try again.");
                                         }
                                     }
                                 } catch (Exception e) {
@@ -853,7 +853,7 @@ public class OtaHelper {
                                     Log.d(
                                             TAG,
                                             "Version check completed (cache fast-path), ready for"
-                                                + " next check");
+                                                    + " next check");
                                 }
                             } catch (Exception e) {
                                 Log.e(TAG, "Failed to acquire lock for cache fast-path", e);
@@ -940,7 +940,7 @@ public class OtaHelper {
                             Log.d(
                                     TAG,
                                     "WiFi network became available, OTA check suppressed by"
-                                        + " policy");
+                                            + " policy");
                         }
                     }
                 };
@@ -1090,7 +1090,7 @@ public class OtaHelper {
                                         Log.i(
                                                 TAG,
                                                 "📦 Skipping background OTA check - WiFi"
-                                                    + " unavailable");
+                                                        + " unavailable");
                                         return;
                                     }
                                 }
@@ -1136,7 +1136,7 @@ public class OtaHelper {
                                         Log.e(
                                                 TAG,
                                                 "Legacy OTA flow: APK update failed for"
-                                                    + " com.mentra.asg_client");
+                                                        + " com.mentra.asg_client");
                                         sendProgressToPhone(
                                                 "download",
                                                 0,
@@ -1144,7 +1144,7 @@ public class OtaHelper {
                                                 0,
                                                 "FAILED",
                                                 "APK update failed after retries. Please check WiFi"
-                                                    + " and try again.");
+                                                        + " and try again.");
                                         return;
                                     }
                                 }
@@ -1160,12 +1160,12 @@ public class OtaHelper {
                                         Log.i(
                                                 TAG,
                                                 "📱 Background pre-download ready - prompted phone"
-                                                    + " to install");
+                                                        + " to install");
                                     } else {
                                         Log.i(
                                                 TAG,
                                                 "📦 Background pre-download complete - updates not"
-                                                    + " fully cache-ready yet");
+                                                        + " fully cache-ready yet");
                                     }
                                 }
                                 otaCheckReachedSuccessLog[0] = true;
@@ -1234,7 +1234,7 @@ public class OtaHelper {
                                     Log.i(
                                             TAG,
                                             "📱 Notified phone of version-check OTA failure"
-                                                + " (background path): "
+                                                    + " (background path): "
                                                     + errorCode);
                                 }
                             } finally {
@@ -1259,7 +1259,7 @@ public class OtaHelper {
                                     Log.i(
                                             TAG,
                                             "📱 Phone-initiated install was queued during prefetch"
-                                                + " - firing install pass now");
+                                                    + " - firing install pass now");
                                     isPhoneInitiatedOta = true;
                                     startVersionCheckWithUrl(
                                             context, lastVersionJsonUrl); // fresh pass: same URL,
@@ -1501,7 +1501,7 @@ public class OtaHelper {
                     Log.e(
                             TAG,
                             "DEBUG: BES firmware install failed - check if file exists and"
-                                + " BesOtaManager is available");
+                                    + " BesOtaManager is available");
                 }
             }
             // Normal firmware update flow with new patch matching logic
@@ -1515,7 +1515,7 @@ public class OtaHelper {
                     Log.i(
                             TAG,
                             "📱 MTK already updated this session - skipping MTK check (reboot"
-                                + " required to apply)");
+                                    + " required to apply)");
                     mtkPatch = null;
                 } else if (isMtkOtaInProgress()) {
                     Log.i(TAG, "📱 MTK update currently in progress - skipping MTK check");
@@ -1558,14 +1558,14 @@ public class OtaHelper {
                         Log.i(
                                 TAG,
                                 "Both MTK and BES updates available - applying MTK first, phone"
-                                    + " will handle BES next");
+                                        + " will handle BES next");
 
                         boolean mtkStarted = checkAndUpdateMtkFirmware(mtkPatch, context, true);
                         if (mtkStarted) {
                             Log.i(
                                     TAG,
                                     "MTK firmware update started - BES will be handled by phone in"
-                                        + " next round");
+                                            + " next round");
                         } else {
                             Log.e(TAG, "MTK firmware update failed to start");
                         }
@@ -1575,7 +1575,7 @@ public class OtaHelper {
                         Log.i(
                                 TAG,
                                 "Both MTK and BES updates available - pre-downloading both"
-                                    + " artifacts");
+                                        + " artifacts");
                         boolean mtkPrefetched = checkAndUpdateMtkFirmware(mtkPatch, context, false);
                         boolean besPrefetched =
                                 checkAndUpdateBesFirmware(
@@ -1601,7 +1601,7 @@ public class OtaHelper {
                             Log.i(
                                     TAG,
                                     "BES update available but MTK system still processing - MTK in"
-                                        + " progress");
+                                            + " progress");
                             if (isPhoneInitiatedOta) {
                                 sendProgressToPhone("install", -1, 0, 0, "IN_PROGRESS", "mtk");
                             }
@@ -1611,7 +1611,7 @@ public class OtaHelper {
                             Log.i(
                                     TAG,
                                     "BES update available but MTK in progress - phone will start"
-                                        + " BES after MTK completes");
+                                            + " BES after MTK completes");
                             if (isPhoneInitiatedOta) {
                                 sendProgressToPhone("install", -1, 0, 0, "IN_PROGRESS", "mtk");
                             }
@@ -1642,7 +1642,7 @@ public class OtaHelper {
             Log.i(
                     TAG,
                     "APK update performed - firmware already pre-downloaded in Phase 0, install"
-                        + " will happen after restart");
+                            + " will happen after restart");
         }
 
         Log.d(TAG, "Sequential updates completed (APK → MTK → BES)");
@@ -1740,7 +1740,7 @@ public class OtaHelper {
                         Log.i(
                                 TAG,
                                 "⚡ Cache hit + installNow: jumping straight to install (no download"
-                                    + " UI shown to user)");
+                                        + " UI shown to user)");
                     }
                 }
 
@@ -1776,7 +1776,7 @@ public class OtaHelper {
                     Log.w(
                             TAG,
                             "installApk did not kick install — rolling back restart guard and"
-                                + " reporting FAILED");
+                                    + " reporting FAILED");
                     if (sessionManager != null) {
                         sessionManager.clearRestartGuard();
                     }
@@ -1981,7 +1981,7 @@ public class OtaHelper {
         Log.w(
                 TAG,
                 "WARNING: OTA APK SHA256 hash verification is DISABLED. APK is not"
-                    + " integrity-checked.");
+                        + " integrity-checked.");
         return true;
     }
 
@@ -3553,7 +3553,7 @@ public class OtaHelper {
                 Log.w(
                         TAG,
                         "No OTA session and cannot build minimal ota_status — phone will not see"
-                            + " progress");
+                                + " progress");
                 return;
             }
             Log.w(
@@ -3777,7 +3777,7 @@ public class OtaHelper {
             Log.i(
                     TAG,
                     "DEBUG: MTK firmware install command sent - monitor MtkOtaReceiver for"
-                        + " progress");
+                            + " progress");
             return true;
 
         } catch (Exception e) {
@@ -3836,7 +3836,7 @@ public class OtaHelper {
                 Log.i(
                         TAG,
                         "DEBUG: BES firmware install initiated - monitor BesOtaProgressEvent for"
-                            + " progress");
+                                + " progress");
                 return true;
             } else {
                 Log.e(TAG, "DEBUG: BesOtaManager.startFirmwareUpdate() returned false");

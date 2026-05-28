@@ -531,7 +531,7 @@ public class AsgClientService extends Service
                 Log.w(
                         TAG,
                         "⚠️ Bluetooth not connected; RGB LED authority will be sent when"
-                            + " connected");
+                                + " connected");
                 return;
             }
 
@@ -837,7 +837,7 @@ public class AsgClientService extends Service
                     Log.w(
                             TAG,
                             "📡 🔥 Cannot send hotspot error - communication manager not"
-                                + " available");
+                                    + " available");
                 }
             }
         } catch (Exception e) {
@@ -1095,7 +1095,7 @@ public class AsgClientService extends Service
                 Log.w(
                         TAG,
                         "⚠️ Bluetooth manager not available or not connected - cannot send version"
-                            + " info");
+                                + " info");
             }
         } catch (JSONException e) {
             Log.e(TAG, "💥 Error creating version info JSON", e);
@@ -1338,7 +1338,7 @@ public class AsgClientService extends Service
                             Log.i(
                                     TAG,
                                     "🔌 Connection state changed to DISCONNECTED due to heartbeat"
-                                        + " timeout");
+                                            + " timeout");
                         };
             }
 
@@ -1350,7 +1350,7 @@ public class AsgClientService extends Service
             Log.d(
                     TAG,
                     "🔌 Connection state initialized as DISCONNECTED - waiting for first"
-                        + " heartbeat");
+                            + " heartbeat");
 
             // Schedule initial timeout to detect if no heartbeat comes
             heartbeatTimeoutHandler.postDelayed(heartbeatTimeoutRunnable, HEARTBEAT_TIMEOUT_MS);

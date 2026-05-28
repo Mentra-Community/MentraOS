@@ -141,7 +141,7 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
                         Log.d(
                                 TAG,
                                 "Skipping recovery agent init because lifecycle is not"
-                                    + " initialized");
+                                        + " initialized");
                         return;
                     }
                     Log.d(TAG, "Ensuring recovery agent after delay");
