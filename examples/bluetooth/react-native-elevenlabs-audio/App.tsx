@@ -130,6 +130,7 @@ export default function App() {
   const closeSourceRef = useRef<CloseSource>('none');
   const firstPcmTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const websocketOpenedAtMsRef = useRef<number | null>(null);
+  const voiceActivityDetectionDisabledByAppRef = useRef(false);
 
   const canStartConversation =
     connectedDevice && conversationState !== 'Signing' && conversationState !== 'Streaming';
@@ -326,8 +327,7 @@ export default function App() {
           websocketState: 'Closed',
         });
         wsRef.current = null;
-        stopPcmSubscription();
-        await BluetoothSdk.setMicState(false).catch(() => undefined);
+        await stopGlassesPcm();
         setConversationState('Idle');
       };
     } catch (error) {
@@ -346,8 +346,7 @@ export default function App() {
     closeSourceRef.current = reason;
     clearFirstPcmTimeout();
     updateDiagnostics({micStage: 'Stopping'});
-    stopPcmSubscription();
-    await BluetoothSdk.setMicState(false).catch(() => undefined);
+    await stopGlassesPcm();
     wsRef.current?.close();
     wsRef.current = null;
     setConversationState('Idle');
@@ -357,6 +356,9 @@ export default function App() {
     stopPcmSubscription();
     pcmSubscriptionRef.current = BluetoothSdk.addListener('mic_pcm', handlePcmFrame);
     appendLog('requesting continuous glasses PCM');
+    updateDiagnostics({micStage: 'Disabling glasses VAD'});
+    await BluetoothSdk.setVoiceActivityDetectionEnabled(false);
+    voiceActivityDetectionDisabledByAppRef.current = true;
     updateDiagnostics({micStage: 'Setting preferred mic'});
     await BluetoothSdk.setPreferredMic('glasses');
     updateDiagnostics({micStage: 'Enabling mic stream'});
@@ -365,6 +367,15 @@ export default function App() {
     await BluetoothSdk.setMicState(true, true);
     updateDiagnostics({micStage: 'Mic requested; waiting for PCM'});
     startFirstPcmWatchdog();
+  }
+
+  async function stopGlassesPcm() {
+    stopPcmSubscription();
+    await BluetoothSdk.setMicState(false).catch(() => undefined);
+    if (voiceActivityDetectionDisabledByAppRef.current) {
+      await BluetoothSdk.setVoiceActivityDetectionEnabled(true).catch(() => undefined);
+      voiceActivityDetectionDisabledByAppRef.current = false;
+    }
   }
 
   function stopPcmSubscription() {

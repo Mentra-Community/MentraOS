@@ -29,6 +29,7 @@ If multiple Android devices are connected, set `ANDROID_SERIAL`.
 
 - Glasses microphone PCM from `BluetoothSdk.addListener('mic_pcm', ...)`
 - `BluetoothSdk.setMicState(true, true)` for continuous Mentra Live glasses PCM
+- `BluetoothSdk.setVoiceActivityDetectionEnabled(false)` while streaming so the glasses do not VAD-gate PCM before ElevenLabs receives it
 - Base64 encoded `pcm_s16le`, 16 kHz, 16-bit, mono audio chunks
 - ElevenLabs WebSocket messages shaped as `{ "user_audio_chunk": "..." }`
 
