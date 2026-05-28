@@ -279,6 +279,9 @@ export default function NexDeveloperSettings() {
   // LC3 Audio Control state
   const [lc3AudioEnabled, setLc3AudioEnabled] = useState(true)
 
+  // VAD (Voice Activity Detection) — sourced from native DeviceStore via glasses status.
+  const vadEnabled = useGlassesStore((state) => state.voiceActivityDetectionEnabled)
+
   // // // Get both protobuf versions from core status
   // const protobufSchemaVersion = status.core_info.protobuf_schema_version || "Unknown"
   // const glassesProtobufVersion = status.core_info.glasses_protobuf_version || "Unknown"
@@ -391,6 +394,12 @@ export default function NexDeveloperSettings() {
     if (glassesConnected) {
       console.log("setLc3AudioEnabled", enabled)
       console.warn("setLc3AudioEnabled not yet implemented in Bluetooth SDK API")
+    }
+  }
+
+  const onVadToggle = async (enabled: boolean) => {
+    if (glassesConnected) {
+      await BluetoothSdk.setVoiceActivityDetectionEnabled(enabled)
     }
   }
 
@@ -668,6 +677,21 @@ export default function NexDeveloperSettings() {
                 subtitle="Play audio received from glasses through LC3 codec"
                 value={lc3AudioEnabled}
                 onValueChange={onLc3AudioToggle}
+              />
+            </View>
+
+            {/* Voice Activity Detection */}
+            <View style={themed($settingsGroup)}>
+              <Text style={themed($sectionTitle)}>🎤 Voice Activity Detection</Text>
+              <Text style={themed($description)}>
+                Toggle on-glasses VAD. Sends the set_vad_enabled protobuf command to the glasses.
+              </Text>
+
+              <ToggleSetting
+                label="VAD Enabled"
+                subtitle="When off, glasses stream mic audio continuously (no VAD gating)"
+                value={vadEnabled}
+                onValueChange={onVadToggle}
               />
             </View>
 

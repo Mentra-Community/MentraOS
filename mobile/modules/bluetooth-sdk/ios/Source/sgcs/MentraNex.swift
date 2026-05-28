@@ -388,6 +388,16 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     private func queueDataWithOptimalChunking(
         _ data: Data, packetType: UInt8 = 0x02, waitTimeMs: Int = 0
     ) {
+        // Emit BLE trace for debug overlays (mirrors Android NexEventUtils.sendBleCommandSentEvent).
+        if packetType == PACKET_TYPE_PROTOBUF,
+           let phoneToGlasses = try? Mentraos_Ble_PhoneToGlasses(serializedData: data) {
+            Bridge.sendTypedMessage("send_command_to_ble", body: [
+                "command": String(describing: phoneToGlasses.payload),
+                "commandText": data.toHexString(),
+                "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+            ])
+        }
+
         var chunks: [[UInt8]] = []
         let effectiveChunkSize = maxChunkSize - 1 // Reserve 1 byte for packet type
 
@@ -1135,6 +1145,28 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         queueDataWithOptimalChunking(protobufData, packetType: PACKET_TYPE_PROTOBUF)
     }
 
+    func sendVoiceActivityDetectionSetting() {
+        let enabled = DeviceStore.shared.get("bluetooth", "voice_activity_detection_enabled") as? Bool ?? true
+        Bridge.log("NEX: 🎤 Sending Voice Activity Detection setting to glasses: \(enabled)")
+
+        guard nexReady else {
+            Bridge.log("NEX: Not ready to send VAD setting. Device not initialized.")
+            return
+        }
+
+        let vadConfig = Mentraos_Ble_VadEnabledConfig.with {
+            $0.enabled = enabled
+        }
+
+        let phoneToGlasses = Mentraos_Ble_PhoneToGlasses.with {
+            $0.vadEnabled = vadConfig
+        }
+
+        let protobufData = try! phoneToGlasses.serializedData()
+        queueDataWithOptimalChunking(protobufData, packetType: PACKET_TYPE_PROTOBUF)
+        Bridge.sendVoiceActivityDetectionStatus(enabled)
+    }
+
     @objc func setMicrophoneEnabled(_ enabled: Bool) {
         guard nexReady else {
             Bridge.log("NEX: Not ready to set microphone state. Device not initialized.")
@@ -1341,6 +1373,13 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         do {
             let glassesToPhone = try Mentraos_Ble_GlassesToPhone(serializedData: protobufData)
             Bridge.log("NEX: Processing protobuf payload case: \(glassesToPhone.payload)")
+
+            // Emit BLE trace for debug overlays (mirrors Android NexEventUtils.sendBleCommandReceivedEvent).
+            Bridge.sendTypedMessage("receive_command_from_ble", body: [
+                "command": String(describing: glassesToPhone.payload),
+                "commandText": protobufData.toHexString(),
+                "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+            ])
 
             switch glassesToPhone.payload {
             case let .batteryStatus(batteryStatus):
@@ -2345,6 +2384,11 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // 6. Query glasses protobuf version from firmware (Java line 690)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { // 150ms delay
             self.queryGlassesInfo()
+        }
+
+        // 7. Push current glasses-side Voice Activity Detection setting
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            self.sendVoiceActivityDetectionSetting()
         }
 
         Bridge.log("NEX-CONN: ✅ Java-compatible initialization sequence started")
