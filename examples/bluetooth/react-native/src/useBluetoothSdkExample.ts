@@ -1294,7 +1294,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       return;
     }
     try {
-      const barcodes = await MentraBarcodeScanner.scanImage(sourceUri);
+      const barcodes = dedupeBarcodeResults(await MentraBarcodeScanner.scanImage(sourceUri));
       if (barcodeScanTokenRef.current !== token) {
         return;
       }
@@ -2227,6 +2227,22 @@ function barcodeScanSummary(barcodes: BarcodeScanResult[]) {
       return `${barcode.format}: ${value}`;
     })
     .join(' · ');
+}
+
+function dedupeBarcodeResults(barcodes: BarcodeScanResult[]) {
+  const seen = new Set<string>();
+  return barcodes.filter((barcode) => {
+    const value = barcode.rawValue ?? barcode.displayValue;
+    if (!value) {
+      return true;
+    }
+    const key = `${barcode.format ?? 'unknown'}:${value}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function waitForNextFrame() {
