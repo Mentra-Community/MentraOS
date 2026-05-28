@@ -7,6 +7,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import com.mentra.asg_client.RecoveryAgentManager;
 import com.mentra.asg_client.SysControl;
 import com.mentra.asg_client.io.ota.services.OtaService;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
@@ -25,6 +26,7 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
     private final AsgClientServiceManager serviceManager;
     private final CommandProcessor commandProcessor;
     private final AsgNotificationManager notificationManager;
+    private final RecoveryAgentManager recoveryAgentManager;
     
     private boolean isInitialized = false;
     
@@ -36,6 +38,7 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
         this.serviceManager = serviceManager;
         this.commandProcessor = commandProcessor;
         this.notificationManager = notificationManager;
+        this.recoveryAgentManager = new RecoveryAgentManager(context);
     }
     
     @Override
@@ -52,6 +55,7 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
         
         // Schedule OTA service start
         scheduleOtaServiceStart();
+        scheduleRecoveryAgentStart();
         
         // Clean up system packages
         // cleanupSystemPackages(); Not needed anymore
@@ -102,6 +106,7 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
         if (serviceManager != null) {
             serviceManager.cleanup();
         }
+        recoveryAgentManager.cleanup();
         
         isInitialized = false;
         Log.d(TAG, "Service lifecycle cleanup completed");
@@ -122,6 +127,13 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
                 context.startService(otaIntent);
             }
         }, 5000);
+    }
+
+    private void scheduleRecoveryAgentStart() {
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            Log.d(TAG, "Ensuring recovery agent after delay");
+            recoveryAgentManager.initialize();
+        }, 6000);
     }
     
     private void cleanupSystemPackages() {

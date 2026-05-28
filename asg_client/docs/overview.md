@@ -76,9 +76,9 @@ Selected at runtime by `HardwareManagerFactory`.
 
 - `FileManager` interface plus `PackageOperations` — namespaces media by requesting app's package name. Both the gallery commands and the camera web server use this.
 
-### OTA (`io/ota/`, `io/bes/`)
+### OTA and recovery (`io/ota/`, `io/bes/`, `recovery_agent/`)
 
-- `OtaUpdaterManager` — APK self-update for the ASG client
+- `RecoveryAgentManager` — deploys and starts the `com.mentra.recovery` sidecar that revives ASG if it crashes
 - `BesOtaManager` — pushes new BES MCU firmware over UART. See [features/bes-ota.md](features/bes-ota.md).
 
 ## Configuration

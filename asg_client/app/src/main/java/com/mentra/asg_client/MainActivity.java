@@ -455,15 +455,13 @@ public class MainActivity extends AppCompatActivity {
      */
     private void sendHeartbeatAck() {
         try {
-            // Send both versions to ensure compatibility
             Intent ackIntent = new Intent(ACTION_HEARTBEAT_ACK);
-            ackIntent.setPackage("com.augmentos.otaupdater");
+            ackIntent.setPackage("com.mentra.recovery");
             sendBroadcast(ackIntent);
 
-            // Also send the OTA updater's expected version
-            Intent otaAckIntent = new Intent("com.augmentos.otaupdater.ACTION_HEARTBEAT_ACK");
-            otaAckIntent.setPackage("com.augmentos.otaupdater");
-            sendBroadcast(otaAckIntent);
+            Intent pongIntent = new Intent("com.mentra.recovery.ACTION_PONG");
+            pongIntent.setPackage("com.mentra.recovery");
+            sendBroadcast(pongIntent);
 
             Log.i(TAG, "Sent heartbeat acknowledgments to OTA updater");
         } catch (Exception e) {
@@ -477,7 +475,7 @@ public class MainActivity extends AppCompatActivity {
     private void sendRestartComplete() {
         try {
             Intent completeIntent = new Intent(ACTION_RESTART_COMPLETE);
-            completeIntent.setPackage("com.augmentos.otaupdater");
+            completeIntent.setPackage("com.mentra.recovery");
             sendBroadcast(completeIntent);
             Log.i(TAG, "Sent restart complete notification to OTA updater");
         } catch (Exception e) {

@@ -24,7 +24,6 @@ import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.events.BatteryStatusEvent;
-import com.mentra.asg_client.SysControl;
 
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
@@ -47,16 +46,6 @@ public class OtaService extends Service {
         
         // Start as foreground service
         startForeground(NOTIFICATION_ID, createNotification("OTA Service Running"));
-        
-        // TEMPORARY: Kill external OTA updater app if it's running
-        // This prevents dual OTA checks when updating from older versions
-        try {
-            Log.w(TAG, "Stopping external OTA updater app to prevent conflicts");
-            SysControl.stopApp(this, "com.augmentos.otaupdater");
-            Log.i(TAG, "External OTA updater stopped");
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to stop external OTA updater", e);
-        }
         
         // Initialize OTA helper singleton
         otaHelper = OtaHelper.initialize(this);

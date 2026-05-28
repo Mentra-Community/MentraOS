@@ -80,10 +80,10 @@ public class AsgClientService extends Service
 
     // OTA Update progress actions
     public static final String ACTION_DOWNLOAD_PROGRESS =
-            "com.augmentos.otaupdater.ACTION_DOWNLOAD_PROGRESS";
+            "com.mentra.recovery.ACTION_DOWNLOAD_PROGRESS";
     public static final String ACTION_INSTALLATION_PROGRESS =
-            "com.augmentos.otaupdater.ACTION_INSTALLATION_PROGRESS";
-    public static final String ACTION_OTA_HEARTBEAT = "com.augmentos.otaupdater.ACTION_HEARTBEAT";
+            "com.mentra.recovery.ACTION_INSTALLATION_PROGRESS";
+    public static final String ACTION_OTA_HEARTBEAT = "com.mentra.recovery.ACTION_PING";
 
     // Service health monitoring
     private static final String ACTION_HEARTBEAT = "com.mentra.asg_client.ACTION_HEARTBEAT";
@@ -1260,14 +1260,18 @@ public class AsgClientService extends Service
                             Log.d(TAG, "💓 Heartbeat receiver triggered - Action: " + action);
 
                             if (ACTION_HEARTBEAT.equals(action)
-                                    || "com.augmentos.otaupdater.ACTION_HEARTBEAT".equals(action)) {
+                                    || "com.augmentos.otaupdater.ACTION_HEARTBEAT".equals(action)
+                                    || "com.mentra.recovery.ACTION_PING".equals(action)) {
 
                                 Log.i(TAG, "💓 Heartbeat received - sending acknowledgment");
 
                                 try {
                                     Intent ackIntent = new Intent(ACTION_HEARTBEAT_ACK);
-                                    ackIntent.setPackage("com.augmentos.otaupdater");
+                                    ackIntent.setPackage("com.mentra.recovery");
                                     sendBroadcast(ackIntent);
+                                    Intent pongIntent = new Intent("com.mentra.recovery.ACTION_PONG");
+                                    pongIntent.setPackage("com.mentra.recovery");
+                                    sendBroadcast(pongIntent);
 
                                     Log.i(TAG, "✅ Heartbeat acknowledgment sent successfully");
                                 } catch (Exception e) {

@@ -124,7 +124,7 @@ public class OtaHelper {
     private static final String CACHE_FIELD_TIMESTAMP = "timestamp";
     private static final String CACHE_FIELD_SIZE = "size";
     private static final String CACHE_KEY_APK_ASG = "apk_com.mentra.asg_client";
-    private static final String CACHE_KEY_APK_UPDATER = "apk_com.augmentos.otaupdater";
+    private static final String CACHE_KEY_APK_RECOVERY = "apk_com.mentra.recovery";
     private static final String CACHE_KEY_MTK = "mtk_main";
     private static final String CACHE_KEY_BES = "bes_main";
 
@@ -445,13 +445,13 @@ public class OtaHelper {
     private String getApkFilename(String packageName) {
         return packageName.equals("com.mentra.asg_client")
                 ? "asg_client_update.apk"
-                : "ota_updater_update.apk";
+                : "recovery_agent_update.apk";
     }
 
     private String getApkCacheKey(String packageName) {
         return packageName.equals("com.mentra.asg_client")
                 ? CACHE_KEY_APK_ASG
-                : CACHE_KEY_APK_UPDATER;
+                : CACHE_KEY_APK_RECOVERY;
     }
 
     private void markCachedArtifactReady(
@@ -564,7 +564,7 @@ public class OtaHelper {
     public void clearCachedArtifactsForType(String updateType) {
         if (UPDATE_TYPE_APK.equals(updateType)) {
             clearCachedArtifact(CACHE_KEY_APK_ASG, UPDATE_TYPE_APK);
-            clearCachedArtifact(CACHE_KEY_APK_UPDATER, UPDATE_TYPE_APK);
+            clearCachedArtifact(CACHE_KEY_APK_RECOVERY, UPDATE_TYPE_APK);
             return;
         }
         if (UPDATE_TYPE_MTK.equals(updateType)) {
@@ -593,7 +593,7 @@ public class OtaHelper {
     public void pruneInvalidCachedArtifactsOnStartup() {
         try {
             pruneOneCacheEntry(CACHE_KEY_APK_ASG, UPDATE_TYPE_APK);
-            pruneOneCacheEntry(CACHE_KEY_APK_UPDATER, UPDATE_TYPE_APK);
+            pruneOneCacheEntry(CACHE_KEY_APK_RECOVERY, UPDATE_TYPE_APK);
             pruneOneCacheEntry(CACHE_KEY_MTK, UPDATE_TYPE_MTK);
             if (!BesOtaManager.isBesOtaInProgress) {
                 pruneOneCacheEntry(CACHE_KEY_BES, UPDATE_TYPE_BES);
@@ -673,7 +673,7 @@ public class OtaHelper {
     private List<String> buildStepSequence(JSONObject rootJson, JSONObject apps, Context context) {
         List<String> steps = new ArrayList<>();
         try {
-            String[] orderedPackages = {"com.mentra.asg_client", "com.augmentos.otaupdater"};
+            String[] orderedPackages = {"com.mentra.asg_client"};
             for (String pkg : orderedPackages) {
                 if (!apps.has(pkg)) continue;
                 long current = getInstalledVersion(pkg, context);
@@ -1342,7 +1342,7 @@ public class OtaHelper {
         // Process apps in order - important for sequential updates
         String[] orderedPackages = {
             "com.mentra.asg_client", // Update ASG client first
-            // "com.augmentos.otaupdater"      // Then OTA updater
+            // "com.mentra.recovery"      // Then recovery agent
         };
 
         // PHASE 0: Pre-download firmware artifacts BEFORE any APK install.
@@ -1796,6 +1796,17 @@ public class OtaHelper {
             }
             fis.close();
             fos.close();
+
+            JSONObject backupMetadata = new JSONObject();
+            backupMetadata.put("packageName", packageName);
+            backupMetadata.put("versionCode", info.getLongVersionCode());
+            backupMetadata.put("versionName", info.versionName);
+            backupMetadata.put("createdAtMs", System.currentTimeMillis());
+            backupMetadata.put("path", backupFile.getAbsolutePath());
+            File metadataFile = new File(OtaConstants.BASE_DIR, "asg_client_backup.json");
+            FileWriter metadataWriter = new FileWriter(metadataFile);
+            metadataWriter.write(backupMetadata.toString());
+            metadataWriter.close();
 
             Log.i(
                     TAG,
@@ -3150,16 +3161,6 @@ public class OtaHelper {
                     }
                 }
 
-                // Check ota_updater
-                JSONObject otaUpdater = apps.optJSONObject("com.augmentos.otaupdater");
-                if (otaUpdater != null) {
-                    long currentVersion = getInstalledVersion("com.augmentos.otaupdater", context);
-                    long serverVersion = otaUpdater.getLong("versionCode");
-                    if (serverVersion > currentVersion) {
-                        // Include in APK updates (don't add separate entry, just size)
-                        totalSize += otaUpdater.optLong("apkSize", 0);
-                    }
-                }
             }
 
             // Check MTK firmware patches (sequential updates)
@@ -3261,19 +3262,6 @@ public class OtaHelper {
                         }
                     }
 
-                    JSONObject updaterInfo = apps.optJSONObject("com.augmentos.otaupdater");
-                    if (updaterInfo != null
-                            && updaterInfo.optLong("versionCode", 0)
-                                    > getInstalledVersion("com.augmentos.otaupdater", context)) {
-                        String updaterPath =
-                                OtaConstants.BASE_DIR
-                                        + "/"
-                                        + getApkFilename("com.augmentos.otaupdater");
-                        if (!isCachedArtifactValid(
-                                CACHE_KEY_APK_UPDATER, UPDATE_TYPE_APK, updaterPath, updaterInfo)) {
-                            return false;
-                        }
-                    }
                     continue;
                 }
 

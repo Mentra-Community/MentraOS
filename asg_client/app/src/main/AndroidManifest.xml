@@ -159,6 +159,15 @@
             </intent-filter>
         </receiver>
 
+        <receiver
+            android:name="com.mentra.asg_client.receiver.RecoveryTelemetryReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.mentra.recovery.ACTION_TELEMETRY" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name="com.mentra.asg_client.service.core.AsgClientService"
             android:enabled="true"
@@ -277,7 +286,7 @@
 
     <queries>
         <package android:name="com.mentra.augmentos" />
-        <package android:name="com.mentra.otaupdater" />
+        <package android:name="com.mentra.recovery" />
     </queries>
 
 </manifest>
