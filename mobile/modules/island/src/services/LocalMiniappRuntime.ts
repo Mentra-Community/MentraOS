@@ -1714,10 +1714,11 @@ class LocalMiniappRuntime {
 
     try {
       const result = await photo.takePhoto(packageName, {
-        size: payload.size as "small" | "medium" | "large" | undefined,
+        size: payload.size as "small" | "medium" | "large" | "full" | undefined,
         compress: payload.compress as "none" | "low" | "medium" | "high" | undefined,
         sound: payload.sound as boolean | undefined,
         saveToGallery: payload.saveToGallery as boolean | undefined,
+        exposureTimeNs: payload.exposureTimeNs as number | undefined,
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {

@@ -143,6 +143,34 @@ describe("PhonePhotoCoordinator", () => {
       expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({save: true})
     })
 
+    test("passes exposureTimeNs through to the native take_photo command", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {exposureTimeNs: 12_000_000})
+
+      expect(requestPhotoNative).toHaveBeenCalledTimes(1)
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({
+        exposureTimeNs: 12_000_000,
+      })
+    })
+
+    test("defaults exposureTimeNs to null (auto-exposure) when omitted", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {})
+
+      expect(requestPhotoNative).toHaveBeenCalledTimes(1)
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({
+        exposureTimeNs: null,
+      })
+    })
+
+    test("passes size 'full' through to the native take_photo command", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {size: "full"})
+
+      expect(requestPhotoNative).toHaveBeenCalledTimes(1)
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({size: "full"})
+    })
+
     test("owns(requestId) true mid-flight, false after completion", async () => {
       const coord = new PhonePhotoCoordinator()
       let observedDuring = false

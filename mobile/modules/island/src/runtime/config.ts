@@ -319,10 +319,11 @@ export interface PhotoAdapter {
   takePhoto: (
     packageName: string,
     opts: {
-      size?: "small" | "medium" | "large"
+      size?: "small" | "medium" | "large" | "full"
       compress?: "none" | "low" | "medium" | "high"
       sound?: boolean
       saveToGallery?: boolean
+      exposureTimeNs?: number
     },
   ) => Promise<{
     photoUrl: string

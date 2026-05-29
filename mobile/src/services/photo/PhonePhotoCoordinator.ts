@@ -23,10 +23,11 @@ import {getRuntimeHooks} from "@mentra/island"
 import {freePhoto, pollUntilReady, requestPhoto, type PhotoResult} from "./v2PhotoApi"
 
 export interface PhotoOpts {
-  size?: "small" | "medium" | "large"
+  size?: "small" | "medium" | "large" | "full"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
+  exposureTimeNs?: number
 }
 
 export interface PhotoTaken {
@@ -114,6 +115,7 @@ export class PhonePhotoCoordinator {
         compress: toNativeCompression(opts.compress),
         save: opts.saveToGallery ?? false,
         sound: opts.sound ?? true,
+        exposureTimeNs: opts.exposureTimeNs ?? null,
       })
     } catch (err) {
       this.activeRequests.delete(requestId)

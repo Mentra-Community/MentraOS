@@ -13,10 +13,16 @@ export interface SetCameraFovOptions {
 }
 
 export interface TakePhotoOptions {
-  size?: "small" | "medium" | "large"
+  size?: "small" | "medium" | "large" | "full"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
+  /**
+   * Manual shutter / exposure time in nanoseconds. Omit (or pass undefined)
+   * to let the glasses auto-expose. Honored only on cameras that support
+   * manual exposure; ignored otherwise.
+   */
+  exposureTimeNs?: number
 }
 
 export interface PhotoTaken {
@@ -58,6 +64,7 @@ export class CameraModule {
       compress: options.compress ?? "none",
       sound: options.sound ?? true,
       saveToGallery: options.saveToGallery ?? false,
+      exposureTimeNs: options.exposureTimeNs,
     })
   }
 }
