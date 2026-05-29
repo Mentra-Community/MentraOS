@@ -248,6 +248,10 @@ object DeviceStore {
                     DeviceManager.getInstance().sgc?.sendCalendarEvents(events)
                 }
             }
+            "bluetooth" to "metric_system",
+            "bluetooth" to "twelve_hour_time" -> {
+                DeviceManager.getInstance().sgc?.sendDashboardDisplaySettings()
+            }
             "bluetooth" to "gallery_mode" -> {
                 DeviceManager.getInstance().sgc?.sendGalleryMode()
             }

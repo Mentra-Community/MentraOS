@@ -916,6 +916,30 @@ private object CalendarProto {
         pkgW.writeMessageField(4, receiveW.toByteArray())
         return pkgW.toByteArray()
     }
+
+    fun calendarClear(magicRandom: Int, packageId: Int, scheduleAuthority: Int): ByteArray {
+        // rScheduleWidget with scheduleTotal=0 clears the widget without sending a stale Schedule.
+        val rSchedW = ProtobufWriter()
+        rSchedW.writeInt32Field(1, 0)
+        rSchedW.writeInt32Field(2, 0)
+        rSchedW.writeInt32Field(4, scheduleAuthority)
+
+        val rWidgetW = ProtobufWriter()
+        rWidgetW.writeMessageField(3, rSchedW.toByteArray())
+
+        val contentW = ProtobufWriter()
+        contentW.writeMessageField(2, rWidgetW.toByteArray())
+
+        val receiveW = ProtobufWriter()
+        receiveW.writeInt32Field(1, packageId)
+        receiveW.writeMessageField(3, contentW.toByteArray())
+
+        val pkgW = ProtobufWriter()
+        pkgW.writeInt32Field(1, DASHBOARD_RECEIVE)
+        pkgW.writeInt32Field(2, magicRandom)
+        pkgW.writeMessageField(4, receiveW.toByteArray())
+        return pkgW.toByteArray()
+    }
 }
 
 // ---------- EvenBLE Transport Layer ----------
@@ -1465,11 +1489,13 @@ class G2 : SGCManager() {
                                                                         0x10,
                                                                         0x00, // distanceUnit=0
                                                                         0x18,
-                                                                        0x01, // timeFormat=1
+                                                                        dashboardHalfDayFormat().toByte(),
+                                                                        // timeFormat / halfDayFormat
                                                                         0x20,
                                                                         0x00, // dateFormat=0
                                                                         0x28,
-                                                                        0x01 // temperatureUnit=1
+                                                                        dashboardTemperatureUnit().toByte(),
+                                                                        // temperatureUnit
                                                                 )
                                                         )
                                                         sendG2SettingCommand(univW.toByteArray())
@@ -1597,11 +1623,11 @@ class G2 : SGCManager() {
                                                         ) // widgetDisplayOrder
                                                         dashDisplayW.writeInt32Field(
                                                                 6,
-                                                                1
+                                                                dashboardHalfDayFormat()
                                                         ) // halfDayFormat
                                                         dashDisplayW.writeInt32Field(
                                                                 7,
-                                                                1
+                                                                dashboardTemperatureUnit()
                                                         ) // temperatureUnit
 
                                                         val dashRecvW = ProtobufWriter()
@@ -1777,6 +1803,7 @@ class G2 : SGCManager() {
                                                         requestDeviceInfo()
 
                                                         sendMenuApps()
+                                                        sendStoredCalendarEvents()
                                                     },
                                                     500
                                             )
@@ -1815,8 +1842,8 @@ class G2 : SGCManager() {
                     dashDisplayW.writeMessageField(3, byteArrayOf(1, 2, 3)) // statusDisplayOrder
                     dashDisplayW.writeInt32Field(4, 4) // widgetDisplayCount
                     dashDisplayW.writeMessageField(5, byteArrayOf(1, 3, 2, 2)) // widgetDisplayOrder
-                    dashDisplayW.writeInt32Field(6, 1) // halfDayFormat
-                    dashDisplayW.writeInt32Field(7, 1) // temperatureUnit
+                    dashDisplayW.writeInt32Field(6, dashboardHalfDayFormat()) // halfDayFormat
+                    dashDisplayW.writeInt32Field(7, dashboardTemperatureUnit()) // temperatureUnit
 
                     val dashRecvW = ProtobufWriter()
                     dashRecvW.writeMessageField(2, dashDisplayW.toByteArray())
@@ -1831,6 +1858,36 @@ class G2 : SGCManager() {
                 },
                 1000
         )
+    }
+
+    private fun dashboardHalfDayFormat(): Int {
+        val twelveHour = DeviceStore.get("bluetooth", "twelve_hour_time") as? Boolean ?: true
+        return if (twelveHour) 1 else 0
+    }
+
+    private fun dashboardTemperatureUnit(): Int {
+        val metric = DeviceStore.get("bluetooth", "metric_system") as? Boolean ?: false
+        return if (metric) 1 else 2
+    }
+
+    override fun sendDashboardDisplaySettings() {
+        val dashDisplayW = ProtobufWriter()
+        dashDisplayW.writeInt32Field(1, 4) // displayMode
+        dashDisplayW.writeInt32Field(2, 3) // statusDisplayCount
+        dashDisplayW.writeMessageField(3, byteArrayOf(1, 2, 3)) // statusDisplayOrder
+        dashDisplayW.writeInt32Field(4, 4) // widgetDisplayCount
+        dashDisplayW.writeMessageField(5, byteArrayOf(1, 3, 2, 2)) // widgetDisplayOrder
+        dashDisplayW.writeInt32Field(6, dashboardHalfDayFormat()) // halfDayFormat
+        dashDisplayW.writeInt32Field(7, dashboardTemperatureUnit()) // temperatureUnit
+
+        val dashRecvW = ProtobufWriter()
+        dashRecvW.writeMessageField(2, dashDisplayW.toByteArray())
+
+        val dashPkgW = ProtobufWriter()
+        dashPkgW.writeInt32Field(1, 2) // Dashboard_Receive
+        dashPkgW.writeInt32Field(2, sendManager.nextMagicRandom())
+        dashPkgW.writeMessageField(4, dashRecvW.toByteArray())
+        sendDashboardCommand(dashPkgW.toByteArray())
     }
 
     // ---------- Heartbeats ----------
@@ -1922,13 +1979,20 @@ class G2 : SGCManager() {
         }
     }
 
+    private fun sendStoredCalendarEvents() {
+        val calendarEvents =
+                DeviceStore.get("bluetooth", "calendar_events") as? List<Map<String, Any>>
+                        ?: emptyList()
+        sendCalendarEvents(calendarEvents)
+    }
+
     // ---------- SGCManager: Display Control ----------
 
     override fun sendTextWall(text: String) {
         // Bridge.log("G2: sendTextWall(${text.take(10)}...)")
 
         // ignore events while the ER dashboard is open:
-        val useNativeDashboard = DeviceStore.get("core", "use_native_dashboard") as? Boolean ?: false
+        val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
         if (useNativeDashboard && dashboardShowing > 0) {
             return
         }
@@ -2231,7 +2295,7 @@ class G2 : SGCManager() {
         currentBitmapBase64 = ""
         mainHandler.postDelayed({
             // activate the dashboard by setting depth to the current setting:
-            val currentDepth = DeviceStore.get("core", "dashboard_depth") as? Int ?: 0
+            val currentDepth = DeviceStore.get("bluetooth", "dashboard_depth") as? Int ?: 0
             setDashboardDepthOnly(currentDepth)
         }, 500)
     }
@@ -2286,6 +2350,17 @@ class G2 : SGCManager() {
      */
     override fun sendCalendarEvents(events: List<Map<String, Any>>) {
         Bridge.log("G2: sendCalendarEvents -- ${events.size} events")
+        if (events.isEmpty()) {
+            sendDashboardCommand(
+                    CalendarProto.calendarClear(
+                            magicRandom = sendManager.nextMagicRandom(),
+                            packageId = 1,
+                            scheduleAuthority = 1
+                    )
+            )
+            return
+        }
+
         val total = events.size
         // Fold the local TZ offset into the timestamp so the glasses (which treat
         // timestamps as already-local) display the correct time — same hack as time-sync.
@@ -2594,7 +2669,7 @@ class G2 : SGCManager() {
         val msg = EvenHubProto.audioControlMessage(false)
         sendEvenHubCommand(msg)
         mainHandler.postDelayed({
-            val useNativeDashboard = DeviceStore.get("core", "use_native_dashboard") as? Boolean ?: false
+            val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
             Bridge.log("G2: setMicEnabled - useNativeDashboard=$useNativeDashboard, dashboardShowing=$dashboardShowing")
             if (useNativeDashboard && dashboardShowing > 0) {
                 return@postDelayed
@@ -3550,7 +3625,7 @@ class G2 : SGCManager() {
                 // trigger dashboard:
                 val isHeadUp = DeviceStore.get("glasses", "headUp") as? Boolean ?: false
 
-                val useNativeDashboard = DeviceStore.get("core", "use_native_dashboard") as? Boolean ?: false
+                val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
                 if (useNativeDashboard) {
                     showDashboard()
                 } else {
@@ -3730,7 +3805,7 @@ class G2 : SGCManager() {
         // Dashboard close detection: 08011A00 means dashboard closed
         if (payload.contentEquals(byteArrayOf(0x08, 0x01, 0x1A, 0x00))) {
             Bridge.log("G2: dashboard closed / shutdown - dashboardShowing=$dashboardShowing")
-            val useNativeDashboard = DeviceStore.get("core", "use_native_dashboard") as? Boolean ?: false
+            val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
             if (!useNativeDashboard) {
                 // make sure the container exists:
                 DeviceManager.getInstance().sendCurrentState()

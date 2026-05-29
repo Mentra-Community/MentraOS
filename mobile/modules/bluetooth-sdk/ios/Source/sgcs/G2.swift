@@ -1066,6 +1066,34 @@ private enum DashboardProto {
         pkg.writeMessageField(4, receive.data)
         return pkg.data
     }
+
+    static func calendarClear(
+        magicRandom: Int32,
+        packageId: Int32,
+        scheduleAuthority: Int32
+    ) -> Data {
+        // rScheduleWidget with scheduleTotal=0 clears the widget without sending a stale Schedule.
+        var rSched = ProtobufWriter()
+        rSched.writeInt32Field(1, 0)
+        rSched.writeInt32Field(2, 0)
+        rSched.writeInt32Field(4, scheduleAuthority)
+
+        var rWidget = ProtobufWriter()
+        rWidget.writeMessageField(3, rSched.data)
+
+        var content = ProtobufWriter()
+        content.writeMessageField(2, rWidget.data)
+
+        var receive = ProtobufWriter()
+        receive.writeInt32Field(1, packageId)
+        receive.writeMessageField(3, content.data)
+
+        var pkg = ProtobufWriter()
+        pkg.writeInt32Field(1, CommandId.dashboardReceive.rawValue)
+        pkg.writeInt32Field(2, magicRandom)
+        pkg.writeMessageField(4, receive.data)
+        return pkg.data
+    }
 }
 
 // MARK: - EvenBLE Transport Layer
@@ -1582,9 +1610,9 @@ class G2: NSObject, SGCManager {
                                 0x4A, 0x0A, // field 9, length 10
                                 0x08, 0x00, // unitFormat=0
                                 0x10, 0x00, // distanceUnit=0
-                                0x18, 0x01, // timeFormat=1
+                                0x18, UInt8(self.dashboardHalfDayFormat()), // timeFormat / halfDayFormat
                                 0x20, 0x00, // dateFormat=0
-                                0x28, 0x01, // temperatureUnit=1
+                                0x28, UInt8(self.dashboardTemperatureUnit()), // temperatureUnit
                             ])
                         )
                         self.sendG2SettingCommand(univW.data)
@@ -1640,8 +1668,6 @@ class G2: NSObject, SGCManager {
                         // 6. Dashboard init (0x01) — display settings
                         // halfDayFormat: 1 = 12h, 0 = 24h
                         // temperatureUnit: 1 = Celsius (metric), 2 = Fahrenheit (imperial)
-                        let twelveHour = DeviceStore.shared.get("core", "twelve_hour_time") as? Bool ?? true
-                        let metric = DeviceStore.shared.get("core", "metric_system") as? Bool ?? false
                         var dashDisplayW = ProtobufWriter()
                         dashDisplayW.writeInt32Field(1, 4) // displayMode
                         dashDisplayW.writeInt32Field(2, 3) // statusDisplayCount
@@ -1649,8 +1675,8 @@ class G2: NSObject, SGCManager {
                         dashDisplayW.writeInt32Field(4, 4) // widgetDisplayCount
                         // WidgetType: 1=News, 2=Stock, 3=Schedule, 4=Quicklist, 5=Health
                         dashDisplayW.writeMessageField(5, Data([3, 1, 2, 4, 5])) // widgetDisplayOrder: Schedule, News, Stock, Quicklist
-                        dashDisplayW.writeInt32Field(6, twelveHour ? 1 : 0) // halfDayFormat
-                        dashDisplayW.writeInt32Field(7, metric ? 1 : 2) // temperatureUnit
+                        dashDisplayW.writeInt32Field(6, self.dashboardHalfDayFormat()) // halfDayFormat
+                        dashDisplayW.writeInt32Field(7, self.dashboardTemperatureUnit()) // temperatureUnit
 
                         var dashRecvW = ProtobufWriter()
                         dashRecvW.writeMessageField(2, dashDisplayW.data)
@@ -1726,7 +1752,7 @@ class G2: NSObject, SGCManager {
                     self.sendMenuApps()
                     
                     // send calendar events
-                    let calendarEvents = DeviceStore.shared.get("core", "calendar_events") as? [[String: Any]] ?? []
+                    let calendarEvents = DeviceStore.shared.get("bluetooth", "calendar_events") as? [[String: Any]] ?? []
                     self.sendCalendarEvents(calendarEvents)
                 }
             }
@@ -2430,6 +2456,37 @@ class G2: NSObject, SGCManager {
         }
     }
 
+    private func dashboardHalfDayFormat() -> Int32 {
+        let twelveHour = DeviceStore.shared.get("bluetooth", "twelve_hour_time") as? Bool ?? true
+        return twelveHour ? 1 : 0
+    }
+
+    private func dashboardTemperatureUnit() -> Int32 {
+        let metric = DeviceStore.shared.get("bluetooth", "metric_system") as? Bool ?? false
+        return metric ? 1 : 2
+    }
+
+    func sendDashboardDisplaySettings() {
+        var dashDisplayW = ProtobufWriter()
+        dashDisplayW.writeInt32Field(1, 4) // displayMode
+        dashDisplayW.writeInt32Field(2, 3) // statusDisplayCount
+        dashDisplayW.writeMessageField(3, Data([1, 2, 3])) // statusDisplayOrder
+        dashDisplayW.writeInt32Field(4, 4) // widgetDisplayCount
+        // WidgetType: 1=News, 2=Stock, 3=Schedule, 4=Quicklist, 5=Health
+        dashDisplayW.writeMessageField(5, Data([3, 1, 2, 4, 5]))
+        dashDisplayW.writeInt32Field(6, dashboardHalfDayFormat()) // halfDayFormat
+        dashDisplayW.writeInt32Field(7, dashboardTemperatureUnit()) // temperatureUnit
+
+        var dashRecvW = ProtobufWriter()
+        dashRecvW.writeMessageField(2, dashDisplayW.data)
+
+        var dashPkgW = ProtobufWriter()
+        dashPkgW.writeInt32Field(1, 2) // Dashboard_Receive
+        dashPkgW.writeInt32Field(2, sendManager.nextMagicRandom())
+        dashPkgW.writeMessageField(4, dashRecvW.data)
+        sendDashboardCommand(dashPkgW.data)
+    }
+
     /// Push a calendar event to the dashboard's Schedule widget (service 0x01).
     ///
     /// - title: event title displayed on the widget
@@ -2478,6 +2535,16 @@ class G2: NSObject, SGCManager {
     /// slot 0 on each push and only the last event survives.
     func sendCalendarEvents(_ events: [[String: Any]]) {
         Bridge.log("G2: sendCalendarEvents — \(events.count) events")
+        if events.isEmpty {
+            let payload = DashboardProto.calendarClear(
+                magicRandom: sendManager.nextMagicRandom(),
+                packageId: 1,
+                scheduleAuthority: 1
+            )
+            sendDashboardCommand(payload)
+            return
+        }
+
         let total = Int32(events.count)
         for (i, ev) in events.enumerated() {
             guard let title = ev["title"] as? String,

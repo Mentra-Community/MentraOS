@@ -67,6 +67,7 @@ export const coreModuleMock = {
   ),
   update: jest.fn(() => Promise.resolve()),
   updateBluetoothSettings: jest.fn(() => Promise.resolve()),
+  setCalendarEvents: jest.fn(() => Promise.resolve()),
   updateGlasses: jest.fn(() => Promise.resolve()),
   onBluetoothStatus: jest.fn((listener: Listener) => addListener("bluetooth_status", listener).remove),
   onGlassesStatus: jest.fn((listener: Listener) => addListener("glasses_status", listener).remove),

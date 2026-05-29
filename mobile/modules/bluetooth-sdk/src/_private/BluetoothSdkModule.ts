@@ -339,7 +339,7 @@ NativeBluetoothSdkModule.setDashboardMenu = function (items: DashboardMenuItem[]
 }
 
 NativeBluetoothSdkModule.setCalendarEvents = function (events: CalendarEvent[]) {
-  return this.update("core", {calendar_events: events})
+  return this.updateBluetoothSettings({calendar_events: events})
 }
 
 NativeBluetoothSdkModule.setHeadUpAngle = function (angleDegrees: number) {

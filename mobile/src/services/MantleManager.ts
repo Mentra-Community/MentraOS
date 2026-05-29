@@ -172,7 +172,7 @@ class MantleManager {
       subscribeGlassesStatus: (onChange) => BluetoothSdk.onGlassesStatus(onChange),
       restartTranscriber: () => BluetoothSdk.restartTranscriber(),
       setMicRequirements: (requirements) =>
-        BluetoothSdk.update("core", {
+        BluetoothSdk.updateBluetoothSettings({
           should_send_pcm: requirements.shouldSendPcm,
           should_send_lc3: requirements.shouldSendLc3,
           should_send_transcript: requirements.shouldSendTranscript,
@@ -965,9 +965,9 @@ class MantleManager {
       console.log("MANTLE: sendCalendarEvents()")
       const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT)
       const calendarIds = calendars.map((calendar: Calendar.Calendar) => calendar.id)
-      // from 2 hours ago to 1 day from now:
+      // from 2 hours ago to 3 days from now:
       const startDate = new Date(Date.now() - 2 * 60 * 60 * 1000)
-      const endDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
+      const endDate = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)
       let events = await Calendar.getEventsAsync(calendarIds, startDate, endDate)
 
       // sort by start date (soonest first)
@@ -983,8 +983,8 @@ class MantleManager {
       const shapedEvents = events.map((ev: Calendar.Event) => {
         const start = new Date(ev.startDate as string | Date)
         const end = new Date(ev.endDate as string | Date)
-        let time;
-        
+        let time: string
+
         if (ev.allDay) {
           time = "All day"
         } else {
@@ -1002,7 +1002,7 @@ class MantleManager {
           endDate: Math.floor(end.getTime() / 1000),
         }
       })
-      CoreModule.updateCore({calendar_events: shapedEvents})
+      await BluetoothSdk.setCalendarEvents(shapedEvents)
       restComms.sendCalendarData({events, calendars})
 
       // Direct forward to local miniapps. Emit one event per calendar entry

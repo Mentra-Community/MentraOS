@@ -61,6 +61,10 @@ protocol SGCManager {
 
     func sendCalendarEvents(_ events: [[String: Any]])
 
+    // MARK: - Dashboard Display Settings
+
+    func sendDashboardDisplaySettings()
+
     // MARK: - Device Control
 
     func setHeadUpAngle(_ angle: Int)
@@ -146,6 +150,10 @@ extension SGCManager {
     // MARK: - Calendar Events (default no-op — only G2 supports this)
 
     func sendCalendarEvents(_: [[String: Any]]) {}
+
+    // MARK: - Dashboard Display Settings (default no-op — only G2 supports this)
+
+    func sendDashboardDisplaySettings() {}
 
     // MARK: - Voice Activity Detection (default no-op — Mentra Live supports this)
 

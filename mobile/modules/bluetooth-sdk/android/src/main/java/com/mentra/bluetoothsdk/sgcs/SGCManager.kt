@@ -64,6 +64,9 @@ abstract class SGCManager {
     // Calendar Events (default no-op — only G2 supports this)
     open fun sendCalendarEvents(events: List<Map<String, Any>>) {}
 
+    // Dashboard display settings (default no-op — only G2 supports this)
+    open fun sendDashboardDisplaySettings() {}
+
     // Notification Panel (default no-op — only G2 supports this)
     open fun showNotificationsPanel() {}
 
