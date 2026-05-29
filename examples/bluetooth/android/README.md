@@ -2,7 +2,7 @@
 
 Native Android reference app for the Mentra Bluetooth SDK, built with Kotlin and Jetpack Compose.
 
-This example installs the SDK as `com.mentra:bluetooth-sdk` and is intended to run from a fresh clone once the Mentra Maven package is available. No path to a local MentraOS checkout is required for normal SDK use.
+This example installs the SDK as `com.mentraglass:bluetooth-sdk` and is intended to run from a fresh clone once the Mentra Maven package is available. No path to a local MentraOS checkout is required for normal SDK use.
 
 ## Requirements
 

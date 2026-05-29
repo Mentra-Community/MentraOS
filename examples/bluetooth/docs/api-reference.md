@@ -12,7 +12,7 @@ The Mentra Bluetooth SDK exposes the same core glasses lifecycle across Android,
 
 | Platform | Install package | Import |
 | --- | --- | --- |
-| Android | `com.mentra:bluetooth-sdk` | `import com.mentra.bluetoothsdk.*` |
+| Android | `com.mentraglass:bluetooth-sdk` | `import com.mentra.bluetoothsdk.*` |
 | iOS | `MentraBluetoothSDK` Swift package | `import MentraBluetoothSDK` |
 | React Native / Expo | `@mentra/bluetooth-sdk` | `import BluetoothSdk, {DeviceModels} from '@mentra/bluetooth-sdk'` |
 | React Native hooks | `@mentra/bluetooth-sdk` | `import {useMentraBluetooth} from '@mentra/bluetooth-sdk/react'` |

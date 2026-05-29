@@ -3,7 +3,7 @@
 ## Android Dependency Resolution Fails
 
 - Confirm your app has the required Maven repositories configured, including `mavenCentral()` and `maven("https://www.jitpack.io")`.
-- Confirm `com.mentra:bluetooth-sdk:<version>` matches the version in your release notes.
+- Confirm `com.mentraglass:bluetooth-sdk:<version>` matches the version in your release notes.
 - If you are testing an unreleased SDK, publish the SDK and companion artifacts to `mavenLocal()` and include `mavenLocal()` in the example app repositories.
 
 ## Android Build Fails On Native Libraries

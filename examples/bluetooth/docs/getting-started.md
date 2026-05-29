@@ -47,7 +47,7 @@ android {
 }
 
 dependencies {
-    implementation("com.mentra:bluetooth-sdk:<version>")
+    implementation("com.mentraglass:bluetooth-sdk:<version>")
 }
 ```
 
