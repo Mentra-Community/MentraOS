@@ -28,7 +28,13 @@ export function NavMap({
    *  (the SDK's live pivot list is empty until a trip starts). When
    *  null/running, NavMap fetches the live pivot list via the
    *  nav:get-pivots RPC instead (those have no label). */
-  previewTurns?: Array<{lat: number; lng: number; label?: string | null}> | null
+  previewTurns?: Array<{
+    lat: number
+    lng: number
+    label?: string | null
+    /** Coarse turn direction ("Turn left"/"Turn right") metadata. */
+    direction?: "Turn left" | "Turn right" | null
+  }> | null
   /** Stars / home / work pins to drop while the map is idle. Empty while
    *  a trip is running so the route stays uncluttered. */
   savedPlaces?: Array<{lat: number; lng: number; placeId: string; type?: "home" | "work"; savedName?: string}>
@@ -600,27 +606,42 @@ export function NavMap({
     // immediately, before any new dots are drawn.
     teardown()
 
-    // A small square badge anchored above a turn dot, showing the road
-    // name. Defined here (like MeOverlay) because OverlayView only exists
-    // once the Maps script has loaded — which `ready` guarantees.
+    // A small square badge anchored above a turn dot. Shows the turn
+    // direction ("Turn left"/"Turn right") on top, then the road
+    // transition ("Market St → Franklin St") below — both in one box.
+    // Defined here (like MeOverlay) because OverlayView only exists once
+    // the Maps script has loaded — which `ready` guarantees.
     const g = window.google
     class PivotLabelOverlay extends g.maps.OverlayView {
       private pos: any
       private text: string
+      private direction: string | null
       private div: HTMLDivElement | null = null
-      constructor(pos: any, text: string) {
+      constructor(pos: any, text: string, direction: string | null) {
         super()
         this.pos = pos
         this.text = text
+        this.direction = direction
       }
       onAdd() {
         const div = document.createElement("div")
         div.style.cssText =
           "position:absolute;transform:translate(-50%,calc(-100% - 8px));pointer-events:none;" +
-          "padding:2px 6px;border-radius:6px;background:#FF3030;color:#FFFFFF;" +
-          "font:600 11px/1.3 system-ui,sans-serif;white-space:nowrap;" +
+          "padding:3px 7px;border-radius:6px;background:#FF3030;color:#FFFFFF;" +
+          "font:600 11px/1.3 system-ui,sans-serif;white-space:nowrap;text-align:center;" +
           "box-shadow:0 2px 6px #00000040;border:1px solid #FFFFFF99;z-index:6"
-        div.textContent = this.text
+        if (this.direction) {
+          const dir = document.createElement("div")
+          // Slightly bolder/brighter top line for the direction prompt.
+          dir.style.cssText = "font-weight:700;letter-spacing:0.01em"
+          dir.textContent = this.direction
+          div.appendChild(dir)
+        }
+        const road = document.createElement("div")
+        // De-emphasize the road line a touch when a direction sits above it.
+        if (this.direction) road.style.cssText = "opacity:0.92;font-weight:600"
+        road.textContent = this.text
+        div.appendChild(road)
         this.div = div
         this.getPanes()!.overlayMouseTarget.appendChild(div)
       }
@@ -638,7 +659,9 @@ export function NavMap({
       }
     }
 
-    function drawDots(turns: Array<{lat: number; lng: number; label?: string | null}>) {
+    function drawDots(
+      turns: Array<{lat: number; lng: number; label?: string | null; direction?: string | null}>,
+    ) {
       if (!mapRef.current) return
       for (const p of turns) {
         const dot = new g.maps.Circle({
@@ -655,9 +678,13 @@ export function NavMap({
         })
         pivotDotsRef.current.push(dot)
 
-        // Hovering square label with the road name, offset above the dot.
+        // Hovering badge above the dot: direction on top, road below.
         if (p.label) {
-          const label = new PivotLabelOverlay(new g.maps.LatLng(p.lat, p.lng), p.label)
+          const label = new PivotLabelOverlay(
+            new g.maps.LatLng(p.lat, p.lng),
+            p.label,
+            p.direction ?? null,
+          )
           label.setMap(mapRef.current)
           pivotLabelsRef.current.push(label)
         }

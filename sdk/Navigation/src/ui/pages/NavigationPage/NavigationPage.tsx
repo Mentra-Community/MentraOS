@@ -34,8 +34,16 @@ const DEV_DESTINATION: PlaceDetails = {
   lng: -122.3937,
 }
 
-// A previewed turn point plus the road name to label it with (dev dots).
-type PreviewTurn = {lat: number; lng: number; label: string | null}
+// A previewed turn point: the road-name label for the dot, plus the
+// coarse turn direction ("Turn left"/"Turn right") as metadata — the
+// prompt we'd give the user within this dot's radius. `direction` is
+// null when the maneuver wasn't directional.
+type PreviewTurn = {
+  lat: number
+  lng: number
+  label: string | null
+  direction: "Turn left" | "Turn right" | null
+}
 
 // Pull a short road name out of a Routes-API instruction for the dev
 // turn labels. Instructions look like:
@@ -105,7 +113,15 @@ function sameRoad(a: string, b: string): boolean {
 // cluster of points right at the junction doesn't make every tiny jog
 // look like a turn). Compare the incoming bearing to the outgoing one.
 // Returns null when the polyline is too short to measure.
-const PROBE_METERS = 12
+//
+// PROBE_METERS is deliberately wide (~22m): real street corners are
+// often ROUNDED, spreading the directional change over a 20-30m arc. A
+// tight probe (e.g. 12m) only sees part of that arc and under-reports
+// the angle, so a genuine 90° turn onto a side street can read ~40° and
+// (with a stricter threshold) get wrongly dropped. Sampling wider
+// captures the full bend. Trade-off: too wide bleeds into adjacent
+// turns — 22m stays well under a typical SF block (~80m).
+const PROBE_METERS = 22
 function bendAngleAt(points: LatLng[], junction: LatLng): number | null {
   if (points.length < 3) return null
   // Nearest point to the junction.
@@ -132,7 +148,23 @@ function bendAngleAt(points: LatLng[], junction: LatLng): number | null {
 
 // Minimum bend (degrees) for a junction to count as a real turn worth a
 // dot. Below this the route is effectively straight through the point.
-const MIN_TURN_ANGLE_DEG = 35
+// Kept moderate (30°) so a gradual/rounded corner onto a side street
+// still qualifies, while the near-straight phantom jogs the Routes API
+// reports at complex interchanges (Market → Gough → Market) stay out.
+const MIN_TURN_ANGLE_DEG = 30
+
+// Coarse left/right direction for a turn dot's metadata, from the
+// maneuver of the step that BEGINS at the dot. Collapses all left
+// variants (TURN_LEFT, TURN_SLIGHT_LEFT, TURN_SHARP_LEFT, UTURN_LEFT) to
+// "Turn left" and the rights to "Turn right" — we don't surface slight/
+// sharp. Returns null when the maneuver isn't directional.
+function turnDirection(maneuver?: string): "Turn left" | "Turn right" | null {
+  if (!maneuver) return null
+  const m = maneuver.toUpperCase()
+  if (m.includes("LEFT")) return "Turn left"
+  if (m.includes("RIGHT")) return "Turn right"
+  return null
+}
 
 let logIdSeq = 0
 
@@ -290,14 +322,25 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         const turns = steps
           .slice(0, -1)
           .map((s, i) => {
-            const fromRoad = roadNameFromInstruction(s.instruction)
-            const toRoad = roadNameFromInstruction(steps[i + 1].instruction)
-            return {s, fromRoad, toRoad}
+            const next = steps[i + 1]
+            return {
+              s,
+              fromRoad: roadNameFromInstruction(s.instruction),
+              toRoad: roadNameFromInstruction(next.instruction),
+              // The maneuver of the NEXT step is the one performed at this
+              // dot (step[i].end). Carry its coarse left/right direction.
+              direction: turnDirection(next.maneuver),
+            }
           })
           .filter(
             (
               t,
-            ): t is {s: (typeof steps)[number]; fromRoad: string; toRoad: string} =>
+            ): t is {
+              s: (typeof steps)[number]
+              fromRoad: string
+              toRoad: string
+              direction: "Turn left" | "Turn right" | null
+            } =>
               t.fromRoad != null &&
               t.toRoad != null &&
               !sameRoad(t.fromRoad, t.toRoad) &&
@@ -314,6 +357,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
             lat: t.s.endLat,
             lng: t.s.endLng,
             label: joinRoads(t.fromRoad, t.toRoad),
+            direction: t.direction,
           }))
         if (cancelled) return
         setPreviewTurns(turns)
