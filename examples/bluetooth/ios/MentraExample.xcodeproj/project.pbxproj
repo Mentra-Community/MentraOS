@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1178B517C2B84A06A3850001 /* MentraBluetoothSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 1178B517C2B84A06A3850003 /* MentraBluetoothSDK */; };
 		3A1D208A605A557E32A35AAF /* Pods_MentraExample.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D43C5E9E9C7C6DB117B9DA91 /* Pods_MentraExample.framework */; };
 		3E2B590902496632943A602A /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0ECF511371DFD443892300 /* RootView.swift */; };
 		636D70A07E2D7BAD88CFBCD2 /* MentraExampleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB9A9B8B86FC0ACF59F91AF8 /* MentraExampleApp.swift */; };
@@ -55,7 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3A1D208A605A557E32A35AAF /* Pods_MentraExample.framework in Frameworks */,
+				1178B517C2B84A06A3850001 /* MentraBluetoothSDK in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -130,19 +131,19 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 6FA7D0F9CD915386455BDDF3 /* Build configuration list for PBXNativeTarget "MentraExample" */;
 			buildPhases = (
-				CB0E901F2019649198E6AED7 /* [CP] Check Pods Manifest.lock */,
 				A10000000000000000000030 /* Install GStreamer iOS SDK */,
 				F57C61A872789A90F58473E5 /* Sources */,
 				8B63371EB5DD19BE924ABA94 /* Frameworks */,
 				B1B2C3D4E5F60718293A4B5C /* Resources */,
-				EA361D6916E8BAB2C9BF49DD /* [CP] Embed Pods Frameworks */,
-				7B0AACBC4A2E876B72A32DF9 /* [CP] Copy Pods Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			name = MentraExample;
+			packageProductDependencies = (
+				1178B517C2B84A06A3850003 /* MentraBluetoothSDK */,
+			);
 			productName = MentraExample;
 			productReference = A950FB52FB060CCB1BA59390 /* MentraExample.app */;
 			productType = "com.apple.product-type.application";
@@ -170,6 +171,9 @@
 			);
 			mainGroup = 75373FCEFC20A267275295AB;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				1178B517C2B84A06A3850002 /* XCRemoteSwiftPackageReference "mentra-bluetooth-sdk-ios" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 1CB6EE406B6430CB76C32445 /* Products */;
 			projectDirPath = "";
@@ -298,7 +302,6 @@
 /* Begin XCBuildConfiguration section */
 		47B517CEA51967B475B5D044 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 2B95C649CCFB26DB6BA7AD81 /* Pods-MentraExample.debug.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				FRAMEWORK_SEARCH_PATHS = (
@@ -329,7 +332,6 @@
 		};
 		872949F6CD2BE38E19A2FCD4 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = FFBF10A3E7C9332B4E988290 /* Pods-MentraExample.release.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				FRAMEWORK_SEARCH_PATHS = (
@@ -488,6 +490,25 @@
 			name = Debug;
 		};
 /* End XCBuildConfiguration section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		1178B517C2B84A06A3850002 /* XCRemoteSwiftPackageReference "mentra-bluetooth-sdk-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.1.7;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		1178B517C2B84A06A3850003 /* MentraBluetoothSDK */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1178B517C2B84A06A3850002 /* XCRemoteSwiftPackageReference "mentra-bluetooth-sdk-ios" */;
+			productName = MentraBluetoothSDK;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCConfigurationList section */
 		6FA7D0F9CD915386455BDDF3 /* Build configuration list for PBXNativeTarget "MentraExample" */ = {
