@@ -67,6 +67,12 @@ export interface AudioPlaybackAdapter {
   stopForApp: (packageName: string) => void
 }
 
+export interface MicRequirements {
+  shouldSendPcm: boolean
+  shouldSendLc3: boolean
+  shouldSendTranscript: boolean
+}
+
 /**
  * Result of an offline TTS synthesis. The island's TTSModelManager produces
  * this directly; the type is kept exported for hosts that wrap it.
@@ -277,6 +283,26 @@ export interface RuntimeHooks {
    * can leave this unset.
    */
   setDisplayEvent?: (event: string) => void
+  /**
+   * Send a processed display event to the connected glasses through the host's
+   * native Bluetooth bridge.
+   */
+  sendDisplayEvent?: (event: Record<string, unknown>) => Promise<void> | void
+  /**
+   * Subscribe to host glasses-status changes when the runtime needs live
+   * device-model updates. Returns an unsubscribe function.
+   */
+  subscribeGlassesStatus?: (onChange: (changed: Partial<GlassesSnapshot>) => void) => () => void
+  /**
+   * Restart the host-managed local transcriber. The runtime only decides when
+   * local STT is needed; the host owns the native STT implementation.
+   */
+  restartTranscriber?: () => Promise<void> | void
+  /**
+   * Apply the union of cloud and local microphone requirements through the
+   * host's native Bluetooth bridge.
+   */
+  setMicRequirements?: (requirements: MicRequirements) => Promise<void> | void
   /** Phone-orchestrated photo capture (session.camera.takePhoto). */
   photo?: PhotoAdapter
   /** Phone-orchestrated RTMP/SRT/WHIP publishing. */

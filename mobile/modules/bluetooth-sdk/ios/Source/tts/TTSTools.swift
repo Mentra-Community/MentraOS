@@ -147,7 +147,7 @@ class TTSTools {
             let saved = audio.save(filename: outputPath) == 1
             Bridge.log(
                 "TTS generated \(outputPath): saved=\(saved) sid=\(sid) lang=\(lang) " +
-                "sr=\(audio.sampleRate) samples=\(audio.n) speed=\(clampedSpeed)"
+                    "sr=\(audio.sampleRate) samples=\(audio.n) speed=\(clampedSpeed)"
             )
             return saved
         } catch {

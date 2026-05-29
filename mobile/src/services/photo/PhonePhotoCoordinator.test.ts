@@ -3,10 +3,10 @@
 import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
 
 // Mock module deps BEFORE importing the coordinator.
-const photoRequestNative = mock(async (..._args: unknown[]) => undefined)
+const requestPhotoNative = mock(async (..._args: unknown[]) => undefined)
 
 mock.module("@mentra/bluetooth-sdk", () => ({
-  default: {photoRequest: photoRequestNative},
+  default: {requestPhoto: requestPhotoNative},
 }))
 
 const requestPhotoApi = mock(async () => ({
@@ -15,7 +15,13 @@ const requestPhotoApi = mock(async () => ({
   uploadToken: "fake.upload.token",
 }))
 const pollUntilReady = mock(
-  async (_requestId: string, _signal?: AbortSignal) =>
+  async (
+    _requestId: string,
+    _signal?: AbortSignal,
+  ): Promise<
+    | {kind: "ready"; result: {photoUrl: string; mimeType: string; size: number}}
+    | {kind: "error"; code: string; message: string}
+  > =>
     ({
       kind: "ready" as const,
       result: {photoUrl: "https://r2.test/signed", mimeType: "image/jpeg", size: 4321},
@@ -43,13 +49,13 @@ mock.module("@mentra/island", () => ({
 }))
 
 beforeEach(() => {
-  photoRequestNative.mockClear()
+  requestPhotoNative.mockClear()
   requestPhotoApi.mockClear()
   pollUntilReady.mockClear()
   freePhoto.mockClear()
   glassesSnapshot = {connected: true, capabilities: {hasCamera: true}}
   // Restore default mock behaviors that prior tests may have changed.
-  photoRequestNative.mockImplementation(async () => undefined)
+  requestPhotoNative.mockImplementation(async () => undefined)
   requestPhotoApi.mockResolvedValue({
     requestId: "rq-test-1",
     uploadUrl: "https://cloud.test/api/v2/client/photo/upload/rq-test-1",
@@ -76,7 +82,7 @@ describe("PhonePhotoCoordinator", () => {
       }
       // Should NOT have called cloud or BLE.
       expect(requestPhotoApi).not.toHaveBeenCalled()
-      expect(photoRequestNative).not.toHaveBeenCalled()
+      expect(requestPhotoNative).not.toHaveBeenCalled()
     })
 
     test("hasCamera precheck is intentionally NOT enforced here (glasses-side handler is the source of truth)", async () => {
@@ -110,15 +116,21 @@ describe("PhonePhotoCoordinator", () => {
       expect(result.requestId).toBe("rq-test-1")
 
       // BLE call shape.
-      expect(photoRequestNative).toHaveBeenCalledTimes(1)
-      const args = photoRequestNative.mock.calls[0]!
-      expect(args[0]).toBe("rq-test-1") // requestId
-      expect(args[1]).toBe("com.a")     // packageName / appId
-      expect(args[2]).toBe("medium")    // size
-      expect(args[3]).toBe(
+      expect(requestPhotoNative).toHaveBeenCalledTimes(1)
+      const arg = requestPhotoNative.mock.calls[0]![0] as {
+        requestId: string
+        appId: string
+        size: string
+        webhookUrl: string
+        authToken: string
+      }
+      expect(arg.requestId).toBe("rq-test-1")
+      expect(arg.appId).toBe("com.a")
+      expect(arg.size).toBe("medium")
+      expect(arg.webhookUrl).toBe(
         "https://cloud.test/api/v2/client/photo/upload/rq-test-1",
-      ) // webhookUrl
-      expect(args[4]).toBe("fake.upload.token") // authToken
+      )
+      expect(arg.authToken).toBe("fake.upload.token")
     })
 
     test("owns(requestId) true mid-flight, false after completion", async () => {
@@ -149,11 +161,11 @@ describe("PhonePhotoCoordinator", () => {
         expect(err).toBeInstanceOf(PhotoError)
         expect((err as InstanceType<typeof PhotoError>).code).toBe("PHOTO_REQUEST_FAILED")
       }
-      expect(photoRequestNative).not.toHaveBeenCalled()
+      expect(requestPhotoNative).not.toHaveBeenCalled()
     })
 
     test("BLE photoRequest failure surfaces as PhotoError(BLE_SEND_FAILED), releases the slot, and tries to free cloud-side", async () => {
-      photoRequestNative.mockRejectedValueOnce(new Error("BLE down"))
+      requestPhotoNative.mockRejectedValueOnce(new Error("BLE down"))
       const coord = new PhonePhotoCoordinator()
       try {
         await coord.takePhoto("com.a", {})
@@ -217,7 +229,7 @@ describe("PhonePhotoCoordinator", () => {
       pollUntilReady.mockImplementationOnce(
         () => new Promise(() => {/* never settles */}),
       )
-      photoRequestNative.mockImplementationOnce(async () => {
+      requestPhotoNative.mockImplementationOnce(async () => {
         // The BLE send resolves; on the next microtask, glasses report an error.
         queueMicrotask(() => coord.handlePhotoError("rq-test-1", "CAMERA_BUSY", "Busy"))
       })
@@ -263,7 +275,7 @@ describe("PhonePhotoCoordinator", () => {
       expect(b.requestId).toBe("rq-B")
       expect(a.photoUrl).toBe("https://r2/A")
       expect(b.photoUrl).toBe("https://r2/B")
-      expect(photoRequestNative).toHaveBeenCalledTimes(2)
+      expect(requestPhotoNative).toHaveBeenCalledTimes(2)
     })
   })
 })

@@ -6,6 +6,7 @@ module.exports = {
     "^@babel/runtime/(.*)$": "<rootDir>/node_modules/@babel/runtime/$1",
     "^@/(.*)$": "<rootDir>/src/$1",
     "^@assets/(.*)$": "<rootDir>/assets/$1",
+    "^@mentra/bluetooth-sdk-internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
   },
   testPathIgnorePatterns: ["<rootDir>/modules/miniapp/"],
   transformIgnorePatterns: [

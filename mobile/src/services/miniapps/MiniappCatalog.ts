@@ -1,7 +1,7 @@
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {
   appRegistry,
   BgTimer,
@@ -188,7 +188,7 @@ class MiniappCatalog {
         }
         return false
       }
-      await CoreModule.restartTranscriber()
+      await BluetoothSdk.restartTranscriber()
       useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, true)
     }
 
@@ -362,16 +362,8 @@ class MiniappCatalog {
       return
     }
     if (app.local) {
-      // Local miniapps mirror cloud webviews: push a route with an
-      // inline WebView. The always-on half (JSContext) survives nav-away;
-      // only the WebView is torn down when the route pops.
-      nav.push("/applet/local", {
-        packageName: app.packageName,
-        appName: app.name,
-        iconUrl: app.logoUrl,
-        version: app.version,
-        transition: appOpenTransition,
-      })
+      // bring the local miniapp to the foreground:
+      useAppStatusStore.getState().setForeground(app.packageName)
       return
     }
     if (app.webviewUrl && app.healthy) {

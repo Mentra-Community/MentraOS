@@ -24,7 +24,7 @@ export default function SelectControllerScreen() {
   // when this screen is focused, forget any glasses that may be paired:
   useFocusEffect(
     useCallback(() => {
-      // CoreModule.forget()
+      // BluetoothSdk.forget()
       return () => {}
     }, []),
   )

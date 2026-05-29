@@ -1,4 +1,4 @@
-import CoreModule from "@mentra/bluetooth-sdk"
+import CoreModule, {BluetoothSdk} from "@mentra/bluetooth-sdk"
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
 /**
@@ -337,15 +337,15 @@ class TTSModelManager {
         throw new Error(`TTS model download failed with status code: ${downloadResult.statusCode}`)
       }
 
-      const unsubscribe = CoreModule.onExtractionProgress((event) => {
+      const subscription = BluetoothSdk.addListener("extraction_progress", (event) => {
         onExtractionProgress?.({percentage: event.percentage})
       })
 
       let extractionResult = false
       try {
-        extractionResult = await CoreModule.extractTarBz2(tempPath, finalPath)
+        extractionResult = await BluetoothSdk.extractTarBz2(tempPath, finalPath)
       } finally {
-        unsubscribe()
+        subscription.remove()
       }
 
       if (!extractionResult) {
@@ -422,7 +422,7 @@ class TTSModelManager {
     const outputDir = RNFS.CachesDirectoryPath || RNFS.TemporaryDirectoryPath
     const safeId = `${Date.now()}_${Math.random().toString(36).slice(2)}`
     const outputPath = `${outputDir}/mentra_tts_${safeId}.wav`
-    const ok = await CoreModule.generateTtsAudio(
+    const ok = await BluetoothSdk.generateTtsAudio(
       text,
       this.getModelPath(),
       outputPath,
@@ -445,7 +445,7 @@ class TTSModelManager {
   }
 
   private async setNativeModelPath(path: string, languageCode: string): Promise<void> {
-    await CoreModule.setTtsModelDetails(path, languageCode)
+    await BluetoothSdk.setTtsModelDetails(path, languageCode)
   }
 
   formatBytes(bytes: number): string {

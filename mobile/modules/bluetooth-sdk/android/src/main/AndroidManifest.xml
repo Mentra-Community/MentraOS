@@ -35,6 +35,6 @@
   <uses-permission android:name="android.permission.VIBRATE"/>
 
   <application>
-    <service android:name="com.mentra.core.services.ForegroundService" android:exported="false" android:foregroundServiceType="dataSync|connectedDevice|microphone"/>
+    <service android:name="com.mentra.bluetoothsdk.services.ForegroundService" android:exported="false" android:foregroundServiceType="dataSync|connectedDevice|microphone"/>
   </application>
 </manifest>

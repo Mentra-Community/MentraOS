@@ -56,11 +56,11 @@ private func jlog(_ message: String) {
     }
 }
 
-@objc public class JSCExperiment: NSObject {
+@objc class JSCExperiment: NSObject {
     /// Called from BluetoothSdkModule init. If MENTRA_RUN_JSC_BENCH env var
     /// is set, kick off the benchmark after a 5s settle window so the app
     /// is fully booted (RN bridge up, Metro pull done if dev, etc).
-    @objc public static func maybeAutoBenchmark() {
+    @objc static func maybeAutoBenchmark() {
         guard ProcessInfo.processInfo.environment["MENTRA_RUN_JSC_BENCH"] != nil else { return }
         os_log("🧪 MENTRA_RUN_JSC_BENCH set — auto-running benchmark in 5s",
                log: jscLog, type: .info)
@@ -75,11 +75,11 @@ private func jlog(_ message: String) {
 
     /// Spawn N JSContexts at once. Each gets its own VM + a representative
     /// idle workload. Returns the count successfully spawned.
-    @objc public static func spawn(count: Int) -> Int {
+    @objc static func spawn(count: Int) -> Int {
         let beforeMB = MemoryMonitor.currentMemoryMB()
         jlog("🧪 JSCExperiment.spawn(\(count)) starting; baseline \(String(format: "%.1f", beforeMB)) MB")
         var spawned = 0
-        for i in 0..<count {
+        for i in 0 ..< count {
             let id = "spike-\(UUID().uuidString.prefix(8))-\(i)"
             if spawnOne(id: id) {
                 spawned += 1
@@ -92,7 +92,7 @@ private func jlog(_ message: String) {
     }
 
     /// Spawn one named context. Returns true on success.
-    @objc public static func spawnOne(id: String) -> Bool {
+    @objc static func spawnOne(id: String) -> Bool {
         return queue.sync {
             // Each context gets its own VM = full heap isolation between miniapps.
             // (JSContexts that share a VM share the heap; we want isolation.)
@@ -102,19 +102,19 @@ private func jlog(_ message: String) {
             ctx.name = "MentraJS: \(id)"
             // Inspectable in dev builds only. iOS 16.4+ guarded.
             #if DEBUG
-            if #available(iOS 16.4, *) {
-                ctx.isInspectable = true
-            }
+                if #available(iOS 16.4, *) {
+                    ctx.isInspectable = true
+                }
             #endif
 
             // Single-dispatcher bridge. Per Pebble's CrashReproducer doc, never
             // bind individual native callbacks as JSValue properties — JSC's GC
             // races with ARC and crashes. One C-callable function only.
-            let dispatch: @convention(block) (String, String, [Any]?) -> Any? = { iface, method, args in
+            let dispatch: @convention(block) (String, String, [Any]?) -> Any? = { _, _, _ in
                 // Stub: real impl routes to native services.
                 // For the spike we just need __dispatch to exist so the
                 // workload can call it without throwing.
-                return NSNull()
+                NSNull()
             }
             ctx.setObject(dispatch, forKeyedSubscript: "__dispatch" as NSString)
 
@@ -147,7 +147,7 @@ private func jlog(_ message: String) {
             // setInterval that fires the JS callback. The JS code already
             // expects setInterval to exist as a global.
             let setInterval: @convention(block) (JSValue, Double) -> Int = { fn, ms in
-                let id = Int.random(in: 1...Int.max)
+                let id = Int.random(in: 1 ... Int.max)
                 // Stub: we won't actually fire in the spike, but the JS
                 // callback existing is what we want for memory measurement.
                 _ = fn // hold a ref to keep the JS callback alive
@@ -170,7 +170,7 @@ private func jlog(_ message: String) {
     }
 
     /// Tear down all contexts. Important: cancel timers, drop refs, force GC.
-    @objc public static func killAll() {
+    @objc static func killAll() {
         queue.sync {
             for (_, entry) in contexts {
                 entry.2.invalidate()
@@ -182,13 +182,13 @@ private func jlog(_ message: String) {
     }
 
     /// How many contexts are alive right now.
-    @objc public static func aliveCount() -> Int {
+    @objc static func aliveCount() -> Int {
         return queue.sync { contexts.count }
     }
 
     /// Convenience: spawn N + return memory delta vs baseline. Caller
     /// records baseline via MemoryMonitor.currentMemoryMB() before calling.
-    @objc public static func spawnAndMeasure(count: Int, baselineMB: Double) -> [String: Any] {
+    @objc static func spawnAndMeasure(count: Int, baselineMB: Double) -> [String: Any] {
         let beforeMB = MemoryMonitor.currentMemoryMB()
         let spawned = spawn(count: count)
         // Tiny settle delay so allocations complete before we read.
@@ -211,7 +211,7 @@ private func jlog(_ message: String) {
     /// Run a full benchmark sweep: spawn 1, 5, 10, 25, 50 in waves with
     /// 2s settle between, log resident MB before and after each. All
     /// output via jlog so it reaches syslog in release builds.
-    @objc public static func runBenchmark() {
+    @objc static func runBenchmark() {
         DispatchQueue.global(qos: .userInitiated).async {
             killAll()
             // Clear log file for a fresh run.

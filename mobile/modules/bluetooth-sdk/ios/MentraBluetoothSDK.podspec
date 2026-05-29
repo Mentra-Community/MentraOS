@@ -45,8 +45,6 @@ Pod::Spec.new do |s|
   # Vendored frameworks
   s.vendored_frameworks = 'Packages/SherpaOnnx/sherpa-onnx.xcframework'
 
-  # Resources (model files)
-  s.resources = 'Packages/VAD/Silero/Model/*.onnx'
   s.resource_bundles = {
     'BluetoothSDKPrivacy' => ['Source/PrivacyInfo.xcprivacy']
   }
@@ -57,6 +55,7 @@ Pod::Spec.new do |s|
     "Packages/SherpaOnnx/SherpaOnnx.swift",
     "Packages/SherpaOnnx/sherpa-onnx.xcframework/ios-arm64/Headers/**/*.{h,hpp}",
     "Packages/VAD/**/*.swift",
+    "Packages/SherpaOnnx/sherpa-onnx.xcframework/Headers/**/*.{h,hpp}",
     "Packages/libbz2/shim.h"
   ]
   native_source_files << "BluetoothSdkModule.swift" if include_expo_adapter

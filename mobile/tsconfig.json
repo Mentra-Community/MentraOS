@@ -21,8 +21,10 @@
       "@cloud/*": ["../cloud/packages/types/*"],
       "@assets/*": ["./assets/*"],
       "@plugins/*": ["./plugins/*"],
+      "@mentra/display-utils": ["../cloud/packages/display-utils/src"],
+      "@mentra/bluetooth-sdk-internal": ["./modules/bluetooth-sdk/src/_internal"]
     },
-    "types": ["node", "react", "jest"]
+    "types": ["node", "react", "jest", "bun-types"]
   },
   "extends": "expo/tsconfig.base",
   "ts-node": {

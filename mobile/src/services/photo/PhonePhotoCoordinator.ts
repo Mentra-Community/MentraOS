@@ -17,7 +17,7 @@
  * etc.) instead of waiting 30s for cloud's timeout.
  */
 
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {getRuntimeHooks} from "@mentra/island"
 
 import {freePhoto, pollUntilReady, requestPhoto, type PhotoResult} from "./v2PhotoApi"
@@ -48,6 +48,12 @@ interface ActiveRequest {
   abort: AbortController
   resolve: (r: PhotoResult) => void
   reject: (err: Error) => void
+}
+
+function toNativeCompression(compress: PhotoOpts["compress"]): "none" | "medium" | "heavy" {
+  if (compress === "high") return "heavy"
+  if (compress === "low" || compress === "medium") return "medium"
+  return "none"
 }
 
 export class PhonePhotoCoordinator {
@@ -99,16 +105,15 @@ export class PhonePhotoCoordinator {
     // 3) Drive glasses over BLE. iOS auto-injects transferMethod: "auto"
     //    (WiFi direct with BLE fallback) — see MentraLive.swift:1328.
     try {
-      await CoreModule.photoRequest(
+      await BluetoothSdk.requestPhoto({
         requestId,
-        packageName,
-        opts.size ?? "medium",
-        uploadUrl,
-        uploadToken,
-        opts.compress ?? "none",
-        true, // flash (glasses ignore on hardware without it)
-        opts.sound ?? true,
-      )
+        appId: packageName,
+        size: opts.size ?? "medium",
+        webhookUrl: uploadUrl,
+        authToken: uploadToken,
+        compress: toNativeCompression(opts.compress),
+        sound: opts.sound ?? true,
+      })
     } catch (err) {
       this.activeRequests.delete(requestId)
       // Best-effort free the slot on cloud — saves orphan slots.

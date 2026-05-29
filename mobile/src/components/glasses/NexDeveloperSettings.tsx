@@ -1,5 +1,5 @@
 import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {useEffect, useState} from "react"
 import {ScrollView, TextInput, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
@@ -8,8 +8,8 @@ import ToggleSetting from "@/components/settings/ToggleSetting"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {translate} from "@/i18n"
-import {useGlassesStore} from "@/stores/glasses"
+import {translate} from "@/i18n/translate"
+import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -256,7 +256,7 @@ export default function NexDeveloperSettings() {
   const {theme, themed} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
   const deviceModel = useGlassesStore((state) => state.deviceModel)
   const features: Capabilities = getModelCapabilities(defaultWearable)
 
@@ -278,6 +278,9 @@ export default function NexDeveloperSettings() {
 
   // LC3 Audio Control state
   const [lc3AudioEnabled, setLc3AudioEnabled] = useState(true)
+
+  // VAD (Voice Activity Detection) — sourced from native DeviceStore via glasses status.
+  const vadEnabled = useGlassesStore((state) => state.voiceActivityDetectionEnabled)
 
   // // // Get both protobuf versions from core status
   // const protobufSchemaVersion = status.core_info.protobuf_schema_version || "Unknown"
@@ -338,12 +341,7 @@ export default function NexDeveloperSettings() {
         ])
         return
       }
-      await CoreModule.displayText({
-        text,
-        x: parseInt(positionX, 0),
-        y: parseInt(positionY, 0),
-        size: parseInt(size, 10),
-      })
+      await BluetoothSdk.displayText(text, parseInt(positionX, 10), parseInt(positionY, 10), parseInt(size, 10))
     } else {
       showAlert("Please connect to the device", "Please connect to the device", [
         {
@@ -379,7 +377,7 @@ export default function NexDeveloperSettings() {
 
   const onClearDisplayClick = async () => {
     if (glassesConnected) {
-      await CoreModule.clearDisplay()
+      await BluetoothSdk.clearDisplay()
     } else {
       showAlert("Please connect to the device", "Please connect to the device", [
         {
@@ -396,6 +394,12 @@ export default function NexDeveloperSettings() {
     if (glassesConnected) {
       console.log("setLc3AudioEnabled", enabled)
       console.warn("setLc3AudioEnabled not yet implemented in Bluetooth SDK API")
+    }
+  }
+
+  const onVadToggle = async (enabled: boolean) => {
+    if (glassesConnected) {
+      await BluetoothSdk.setVoiceActivityDetectionEnabled(enabled)
     }
   }
 
@@ -673,6 +677,21 @@ export default function NexDeveloperSettings() {
                 subtitle="Play audio received from glasses through LC3 codec"
                 value={lc3AudioEnabled}
                 onValueChange={onLc3AudioToggle}
+              />
+            </View>
+
+            {/* Voice Activity Detection */}
+            <View style={themed($settingsGroup)}>
+              <Text style={themed($sectionTitle)}>🎤 Voice Activity Detection</Text>
+              <Text style={themed($description)}>
+                Toggle on-glasses VAD. Sends the set_vad_enabled protobuf command to the glasses.
+              </Text>
+
+              <ToggleSetting
+                label="VAD Enabled"
+                subtitle="When off, glasses stream mic audio continuously (no VAD gating)"
+                value={vadEnabled}
+                onValueChange={onVadToggle}
               />
             </View>
 

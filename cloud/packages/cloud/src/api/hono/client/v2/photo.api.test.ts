@@ -112,6 +112,22 @@ describe("v2 photo API", () => {
       const state = __testing__.photos.get(requestId);
       expect(state?.kind).toBe("pending");
     });
+
+    test("fails closed when the upload signing secret is missing", async () => {
+      const prev = process.env.MENTRA_PHOTO_UPLOAD_SECRET;
+      delete process.env.MENTRA_PHOTO_UPLOAD_SECRET;
+      try {
+        const res = await app.request("http://x/request", {
+          method: "POST",
+          headers: authHeader(),
+        });
+        expect(res.status).toBe(503);
+        const json = (await res.json()) as { code: string };
+        expect(json.code).toBe("upload_secret_missing");
+      } finally {
+        process.env.MENTRA_PHOTO_UPLOAD_SECRET = prev;
+      }
+    });
   });
 
   describe("POST /upload/:requestId", () => {
@@ -235,6 +251,39 @@ describe("v2 photo API", () => {
         body: form,
       });
       expect(res.status).toBe(400);
+    });
+
+    test("rejects multipart photo field that is not a file (400)", async () => {
+      const requestId = await provision();
+      const form = new FormData();
+      form.append("photo", "not-a-file");
+      const res = await app.request(`http://x/upload/${requestId}`, {
+        method: "POST",
+        headers: { authorization: uploadAuth() },
+        body: form,
+      });
+      expect(res.status).toBe(400);
+      expect(putPhoto).not.toHaveBeenCalled();
+    });
+
+    test("fails closed when the upload verification secret is missing", async () => {
+      const requestId = await provision();
+      const prev = process.env.MENTRA_PHOTO_UPLOAD_SECRET;
+      delete process.env.MENTRA_PHOTO_UPLOAD_SECRET;
+      try {
+        const { body } = multipartBody("x");
+        const res = await app.request(`http://x/upload/${requestId}`, {
+          method: "POST",
+          headers: { authorization: uploadAuth() },
+          body,
+        });
+        expect(res.status).toBe(503);
+        const json = (await res.json()) as { code: string };
+        expect(json.code).toBe("upload_secret_missing");
+        expect(putPhoto).not.toHaveBeenCalled();
+      } finally {
+        process.env.MENTRA_PHOTO_UPLOAD_SECRET = prev;
+      }
     });
 
     test("returns 503 storage_unavailable when R2 throws not-configured", async () => {

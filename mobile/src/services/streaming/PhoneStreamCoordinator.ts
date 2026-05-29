@@ -56,7 +56,8 @@ const DEFAULT_TIMINGS = {
   hlsReadinessMaxAttempts: 30,
 } as const
 
-export type CoordinatorTimings = Partial<typeof DEFAULT_TIMINGS>
+type TimingConfig = {[K in keyof typeof DEFAULT_TIMINGS]: number}
+export type CoordinatorTimings = Partial<TimingConfig>
 
 // Console-backed minimal logger; replaces pino on the phone.
 const consoleLogger: LifecycleLogger = {
@@ -138,7 +139,7 @@ export class PhoneStreamCoordinator {
   private lifecycle: StreamLifecycleController | null = null
   private statusSubscriber: StatusSubscriber | null = null
   private idCounter = 0
-  private readonly timings: typeof DEFAULT_TIMINGS
+  private readonly timings: TimingConfig
   /**
    * Serializes state transitions (start, stop, teardown). Without it, a
    * second `start*` racing with the first can pass the `this.current === null`
@@ -223,7 +224,6 @@ export class PhoneStreamCoordinator {
           streamId,
           keepAlive: true,
           keepAliveIntervalSeconds: this.timings.keepAliveIntervalMs / 1000,
-          flash: opts.flash ?? true,
           sound: opts.sound ?? true,
           video: opts.video as never,
           audio: opts.audio as never,
@@ -312,7 +312,6 @@ export class PhoneStreamCoordinator {
           streamId,
           keepAlive: true,
           keepAliveIntervalSeconds: this.timings.keepAliveIntervalMs / 1000,
-          flash: true,
           sound: true,
         })
       } catch (err) {

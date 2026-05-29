@@ -8,6 +8,7 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {Icon} from "@/components/ignite/Icon"
+import {PLAY_STORE_BETA_URL} from "@/constants/appConfig"
 
 export default function NonProdWarning() {
   const {theme, themed} = useAppTheme()
@@ -80,7 +81,7 @@ export default function NonProdWarning() {
           {
             text: translate("warning:optOutOfBeta"),
             onPress: () => {
-              Linking.openURL("https://play.google.com/apps/testing/com.mentra.mentra")
+              Linking.openURL(PLAY_STORE_BETA_URL)
             },
           },
           {

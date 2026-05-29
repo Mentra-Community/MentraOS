@@ -381,3 +381,6 @@ issues
 MEMORY.md
 # Cursor IDE local config (MCP, etc.)
 .cursor/
+
+# Nested starter-kit repo (separate git history)
+Mentra-Bluetooth-SDK-Starter-Kit/

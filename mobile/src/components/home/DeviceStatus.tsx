@@ -1,14 +1,13 @@
 import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import CoreModule, {GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
-import {useState, useEffect} from "react"
-import {ActivityIndicator, Image, ImageSourcePropType, TouchableOpacity, View, ViewStyle} from "react-native"
-import type {ReactNode} from "react"
+import BluetoothSdk, {GlassesNotReadyEvent} from "@mentra/bluetooth-sdk-internal"
+import {useState, useEffect, type ReactNode} from "react"
+import {ActivityIndicator, Image, TouchableOpacity, View, type ImageSourcePropType, type ViewStyle} from "react-native"
 import GlassView from "@/components/ui/GlassView"
 import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {useGlassesStore} from "@/stores/glasses"
+import {isGlassesConnected, isGlassesReady, useGlassesStore} from "@/stores/glasses"
 import {useSearchingState} from "@/hooks/useSearchingState"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
@@ -63,9 +62,9 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const {push} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [isCheckingConnectivity, setIsCheckingConnectivity] = useState(false)
-  const glassesConnected = useGlassesStore((state) => state.connected)
-  const glassesFullyBooted = useGlassesStore((state) => state.fullyBooted)
-  const glassesConnectionState = useGlassesStore((state) => state.connectionState)
+  const glassesConnection = useGlassesStore((state) => state.connection)
+  const glassesConnected = isGlassesConnected(glassesConnection)
+  const glassesFullyBooted = isGlassesReady(glassesConnection)
   const glassesStyle = useGlassesStore((state) => state.style)
   const color = useGlassesStore((state) => state.color)
   const caseRemoved = useGlassesStore((state) => state.caseRemoved)
@@ -79,7 +78,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   // Listen for glasses_not_ready event to know when glasses are actually booting
   useEffect(() => {
-    const sub = CoreModule.addListener("glasses_not_ready", (_event: GlassesNotReadyEvent) => {
+    const sub = BluetoothSdk.addListener("glasses_not_ready", (_event: GlassesNotReadyEvent) => {
       setShowGlassesBooting(true)
     })
     return () => {
@@ -94,7 +93,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
     }
   }, [glassesFullyBooted, glassesConnected])
 
-  const {wasSearching, nativeLinkBusy, resetSearching} = useSearchingState(searching, glassesConnectionState)
+  const {wasSearching, nativeLinkBusy, resetSearching} = useSearchingState(searching, glassesConnection)
 
   if (defaultWearable.includes(DeviceTypes.SIMULATED)) {
     return (
@@ -130,7 +129,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       if (!requirementsCheck) {
         return
       }
-      await CoreModule.connectDefault()
+      await BluetoothSdk.connectDefault()
     } catch (error) {
       console.error("connect to glasses error:", error)
       showAlert("Connection Error", "Failed to connect to glasses. Please try again.", [{text: "OK"}])
@@ -139,7 +138,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   const handleConnectOrDisconnect = async () => {
     if (searching || nativeLinkBusy) {
-      await CoreModule.disconnect()
+      await BluetoothSdk.disconnect()
       setIsCheckingConnectivity(false)
       resetSearching()
     } else {
@@ -259,9 +258,9 @@ export const ControllerStatus = ({style}: {style?: ViewStyle}) => {
 
   const handleConnectOrDisconnect = async () => {
     if (isSearching) {
-      await CoreModule.disconnectController()
+      await BluetoothSdk.disconnectController()
     } else {
-      await CoreModule.connectDefaultController()
+      await BluetoothSdk.connectDefaultController()
     }
   }
 

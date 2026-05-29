@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {Dimensions, FlatList, Platform, Pressable, StyleSheet, TouchableOpacity, View} from "react-native"
+import Animated, {Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming} from "react-native-reanimated"
 import {DraggableList} from "@/components/home/DraggableList"
 import {BlurView} from "expo-blur"
 
@@ -27,11 +28,12 @@ import {storage} from "@/utils/storage"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import GlassView from "@/components/ui/GlassView"
-import { DraggableMasonryList } from "react-native-draggable-masonry"
+import {DraggableMasonryList} from "react-native-draggable-masonry"
 
 const GRID_COLUMNS = 4
 const POPOVER_WIDTH = 180
 const SCREEN_PADDING = 4 * 12
+const PLACEHOLDER_COUNT = 20
 
 type MasonryAppItem = ClientApp & {id: string; height: number}
 
@@ -153,14 +155,46 @@ const AppPopover: React.FC<{
   )
 }
 
+const PlaceholderGrid: React.FC = () => {
+  const pulse = useSharedValue(0.4)
+
+  useEffect(() => {
+    pulse.value = withRepeat(withTiming(1, {duration: 800, easing: Easing.inOut(Easing.ease)}), -1, true)
+  }, [pulse])
+
+  const animatedStyle = useAnimatedStyle(() => ({opacity: pulse.value}))
+
+  return (
+    <Animated.View className="flex-1 mt-3" style={animatedStyle}>
+      <View className="flex-row flex-wrap">
+        {Array.from({length: PLACEHOLDER_COUNT}).map((_, i) => (
+          <View key={i} style={{width: `${100 / GRID_COLUMNS}%`}} className="items-center justify-center pt-3">
+            <View className="w-16 h-16 rounded-2xl bg-foreground/10" />
+            <View className="w-full h-9 my-1 items-center justify-start">
+              <View className="w-12 h-3 mt-1 rounded bg-foreground/10" />
+            </View>
+          </View>
+        ))}
+      </View>
+    </Animated.View>
+  )
+}
+
 interface AppsGridProps {
   showAllApps?: boolean
   onOpenApp?: (app: ClientApp) => void
   onAddToHome?: (app: ClientApp) => void
   searchQuery?: string
+  showPlaceholders?: boolean
 }
 
-export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQuery}: AppsGridProps) {
+export function AppsGrid({
+  showAllApps = false,
+  onOpenApp,
+  onAddToHome,
+  searchQuery,
+  showPlaceholders = false,
+}: AppsGridProps) {
   const {themed, theme} = useAppTheme()
 
   const startApplet = useStart()
@@ -546,6 +580,10 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
     },
     [themed, theme, startApplet],
   )
+
+  if (showPlaceholders) {
+    return <PlaceholderGrid />
+  }
 
   return (
     <View className="flex-1 mt-3">

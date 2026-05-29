@@ -66,6 +66,8 @@ interface AppStatusState {
   refresh: () => Promise<void>
   start: (app: ClientApp, opts?: StartOptions) => Promise<void>
   stop: (packageName: string) => Promise<void>
+  setForeground: (packageName: string) => Promise<void>
+  clearForeground: () => void
   stopAll: () => AsyncResult<void, Error>
   install: (url: string, opts?: {versionOverride?: string}) => AsyncResult<void, Error>
   uninstall: (packageName: string, version?: string) => AsyncResult<void, Error>
@@ -196,6 +198,10 @@ function projectApps(
     screenshot: previousByPackage.get(app.packageName)?.screenshot ?? app.screenshot,
     compatibility: HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities),
     hidden: previousState.getHiddenStatus(app.packageName),
+    // Carry over the foreground flag across refreshes (same reasoning as
+    // screenshot): a cloud/local refresh shouldn't drop the WebView the
+    // Compositor is currently rendering. Normalized to a concrete boolean.
+    foregrounded: previousByPackage.get(app.packageName)?.foregrounded ?? false,
   }))
 }
 
@@ -315,6 +321,41 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     await startStopApp(app, false)
   },
 
+  setForeground: async (packageName: string) => {
+    const app = get().apps.find((a) => a.packageName === packageName)
+    if (!app) {
+      console.error(`ISLAND: setForeground — app not found: ${packageName}`)
+      return
+    }
+
+    // Flip the foreground flag synchronously so the Compositor's open
+    // animation starts on the same frame as the tap. We do NOT await start()
+    // first — that gated the flag (and thus the animation) behind the whole
+    // JSContext-spawn chain, which was the perceived launch delay. The
+    // Compositor/LocalMiniappView already handle the spawn being in-flight
+    // (the phase machine), so foregrounding needn't wait for it.
+    saveLastOpenTime(packageName)
+    set((s) => ({
+      apps: s.apps.map((a) => ({...a, foregrounded: a.packageName === packageName})),
+    }))
+
+    // Ensure the JSContext exists. start() is idempotent for an
+    // already-running app and enforces the foreground-only-one rule for
+    // standard apps. Fire-and-forget after the flag flip so it doesn't block
+    // paint.
+    // if (!app.running) {
+    //   get().start(app)
+    // }
+  },
+
+  clearForeground: () => {
+    set((s) => ({
+      apps: s.apps.some((a) => a.foregrounded)
+        ? s.apps.map((a) => (a.foregrounded ? {...a, foregrounded: false} : a))
+        : s.apps,
+    }))
+  },
+
   stopAll: () => {
     return Res.try_async(async () => {
       const running = get().apps.filter((a) => a.running)
@@ -405,6 +446,8 @@ appRegistry.subscribe(() => {
 export const useApps = () => useAppStatusStore((state) => state.apps)
 export const useStart = () => useAppStatusStore((state) => state.start)
 export const useStop = () => useAppStatusStore((state) => state.stop)
+export const useSetForeground = () => useAppStatusStore((state) => state.setForeground)
+export const useClearForeground = () => useAppStatusStore((state) => state.clearForeground)
 export const useRefresh = () => useAppStatusStore((state) => state.refresh)
 export const useStopAll = () => useAppStatusStore((state) => state.stopAll)
 export const useInstall = () => useAppStatusStore((state) => state.install)
@@ -434,6 +477,16 @@ export const useBackgroundApps = () => {
 export const useActiveForegroundApp = () => {
   const apps = useApps()
   return useMemo(() => apps.find((app) => (app.type === "standard" || !app.type) && app.running) ?? null, [apps])
+}
+
+/**
+ * The single app currently foregrounded in the Compositor overlay, or null.
+ * Driven by setForeground/clearForeground — distinct from the "active
+ * standard app" (running) selector above.
+ */
+export const useForegroundApp = () => {
+  const apps = useApps()
+  return useMemo(() => apps.find((app) => app.foregrounded) ?? null, [apps])
 }
 
 export const useActiveBackgroundAppsCount = () => {

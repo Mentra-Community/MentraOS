@@ -69,7 +69,7 @@ Everything that talks directly to glasses hardware:
 ```
 # GLASSES STATE (hardware reported):
 batteryLevel, charging, connected, connectionState, deviceModel
-firmwareVersion, micEnabled, btcConnected, caseRemoved, caseOpen
+firmwareVersion, micEnabled, bluetoothClassicConnected, caseRemoved, caseOpen
 caseCharging, caseBatteryLevel, headUp, serialNumber, style, color
 wifiSsid, wifiConnected, wifiLocalIp, hotspotEnabled, hotspotSsid
 hotspotPassword, hotspotGatewayIp, bluetoothName, fullyBooted
@@ -436,68 +436,75 @@ fun sendWSBinary(data: ByteArray)
 
 ### 3.4 Public API Surface After Phase 3
 
-The Bluetooth SDK React Native/Expo adapter surface is the Expo module exported by `@mentra/bluetooth-sdk`. App code using that adapter should interact with it through typed async methods and typed event subscriptions, not native `Bridge.kt` / `Bridge.swift` helpers.
+The Bluetooth SDK React Native/Expo partner surface is the root module exported by `@mentra/bluetooth-sdk`. App code using that adapter should interact with typed async methods and typed event subscriptions, not native `Bridge.kt` / `Bridge.swift` helpers or raw store categories.
+
+MentraOS compatibility methods live behind the monorepo-only `@mentra/bluetooth-sdk-internal` alias. That alias resolves to SDK source from the MentraOS app config only; it is not exported by the published customer SDK package.
 
 **Connection and status methods:**
 
 ```ts
 await BluetoothSdk.getBluetoothStatus()
 await BluetoothSdk.getGlassesStatus()
-await BluetoothSdk.findCompatibleDevices()
-await BluetoothSdk.requestStatus()
+const devices = await BluetoothSdk.scan(model, options)
+await BluetoothSdk.connect(device, options)
 await BluetoothSdk.connectDefault()
-await BluetoothSdk.connectByName(deviceName)
-await BluetoothSdk.connectDefaultController()
-await BluetoothSdk.disconnectController()
-await BluetoothSdk.connectSimulated()
+await BluetoothSdk.cancelConnectionAttempt()
 await BluetoothSdk.disconnect()
 await BluetoothSdk.forget()
-await BluetoothSdk.forgetController()
-await BluetoothSdk.showDashboard()
-await BluetoothSdk.ping()
 ```
 
-**Display, camera, WiFi, OTA, audio, and streaming commands:**
+**Display, camera, WiFi, audio, and streaming commands:**
 
 ```ts
-await BluetoothSdk.displayEvent(params)
-await BluetoothSdk.displayText(params)
+await BluetoothSdk.displayText(text, x, y, size)
 await BluetoothSdk.clearDisplay()
-await BluetoothSdk.sendIncidentId(incidentId, apiBaseUrl)
-await BluetoothSdk.photoRequest(...)
+await BluetoothSdk.showDashboard()
+await BluetoothSdk.setDashboardPosition(height, depth)
+await BluetoothSdk.setHeadUpAngle(angleDegrees)
+await BluetoothSdk.setScreenDisabled(disabled)
+await BluetoothSdk.requestPhoto(...)
 await BluetoothSdk.queryGalleryStatus()
+await BluetoothSdk.setGalleryModeEnabled(enabled)
+await BluetoothSdk.setButtonPhotoSettings(size)
+await BluetoothSdk.setButtonVideoRecordingSettings(width, height, fps)
+await BluetoothSdk.setButtonCameraLed(enabled)
+await BluetoothSdk.setButtonMaxRecordingTime(minutes)
+await BluetoothSdk.setCameraFov(fov)
 await BluetoothSdk.requestWifiScan()
 await BluetoothSdk.sendWifiCredentials(ssid, password)
 await BluetoothSdk.forgetWifiNetwork(ssid)
 await BluetoothSdk.setHotspotState(enabled)
-await BluetoothSdk.logCurrentWifiFrequency()
-await BluetoothSdk.sendOtaStart()
 await BluetoothSdk.requestVersionInfo()
-await BluetoothSdk.startVideoRecording(requestId, save, flash, sound)
+await BluetoothSdk.startVideoRecording(requestId, save, sound)
 await BluetoothSdk.stopVideoRecording(requestId)
 await BluetoothSdk.startStream(...)
 await BluetoothSdk.stopStream()
 await BluetoothSdk.keepStreamAlive(...)
-await BluetoothSdk.setMicState(sendPcmData, sendTranscript, bypassVad)
-await BluetoothSdk.restartTranscriber()
+await BluetoothSdk.setMicState(enabled, useGlassesMic, bypassVad, sendTranscript, sendLc3Data)
+await BluetoothSdk.setPreferredMic(preferredMic)
 await BluetoothSdk.setOwnAppAudioPlaying(playing)
 await BluetoothSdk.getGlassesMediaVolume()
 await BluetoothSdk.setGlassesMediaVolume(level)
 await BluetoothSdk.rgbLedControl(...)
+```
+
+**MentraOS-internal compatibility helpers:**
+
+```ts
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+
+await BluetoothSdk.displayEvent(params)
+await BluetoothSdk.sendIncidentId(incidentId, apiBaseUrl)
+await BluetoothSdk.sendOtaStart()
+await BluetoothSdk.sendOtaQueryStatus()
+await BluetoothSdk.restartTranscriber()
 await BluetoothSdk.setSttModelDetails(path, languageCode)
 await BluetoothSdk.getSttModelPath()
 await BluetoothSdk.checkSttModelAvailable()
 await BluetoothSdk.validateSttModel(path)
 await BluetoothSdk.extractTarBz2(sourcePath, destinationPath)
-```
-
-**Typed store helpers:**
-
-```ts
 await BluetoothSdk.updateBluetoothSettings(values)
 await BluetoothSdk.updateGlasses(values)
-BluetoothSdk.onBluetoothStatus(callback)
-BluetoothSdk.onGlassesStatus(callback)
 ```
 
 `BluetoothSdk.update(category, values)` remains the low-level native store bridge used by these typed helpers. React Native/Expo adapter callers should prefer `updateBluetoothSettings()` and `updateGlasses()` so the internal native store category names (`"bluetooth"` / `"glasses"`) do not become part of the adapter API. Native stores still accept `"core"` as a legacy alias for `"bluetooth"` to avoid silently splitting persisted state during the rename.
@@ -507,20 +514,32 @@ BluetoothSdk.onGlassesStatus(callback)
 ```ts
 BluetoothSdk.addListener("bluetooth_status", handler)
 BluetoothSdk.addListener("glasses_status", handler)
+BluetoothSdk.addListener("device_discovered", handler)
+BluetoothSdk.addListener("default_device_changed", handler)
+BluetoothSdk.addListener("glasses_not_ready", handler)
 BluetoothSdk.addListener("button_press", handler)
 BluetoothSdk.addListener("touch_event", handler)
 BluetoothSdk.addListener("head_up", handler)
-BluetoothSdk.addListener("vad_status", handler)
+BluetoothSdk.addListener("voice_activity_detection_status", handler)
 BluetoothSdk.addListener("battery_status", handler)
+BluetoothSdk.addListener("local_transcription", handler)
 BluetoothSdk.addListener("photo_response", handler)
 BluetoothSdk.addListener("gallery_status", handler)
 BluetoothSdk.addListener("wifi_status_change", handler)
 BluetoothSdk.addListener("hotspot_status_change", handler)
+BluetoothSdk.addListener("hotspot_error", handler)
 BluetoothSdk.addListener("stream_status", handler)
 BluetoothSdk.addListener("keep_alive_ack", handler)
-BluetoothSdk.addListener("ota_update_available", handler)
-BluetoothSdk.addListener("ota_progress", handler)
-BluetoothSdk.addListener("save_setting", handler)
+BluetoothSdk.addListener("compatible_glasses_search_stop", handler)
+BluetoothSdk.addListener("swipe_volume_status", handler)
+BluetoothSdk.addListener("switch_status", handler)
+BluetoothSdk.addListener("rgb_led_control_response", handler)
+BluetoothSdk.addListener("pair_failure", handler)
+BluetoothSdk.addListener("audio_pairing_needed", handler)
+BluetoothSdk.addListener("audio_connected", handler)
+BluetoothSdk.addListener("audio_disconnected", handler)
+BluetoothSdk.addListener("mic_pcm", handler)
+BluetoothSdk.addListener("mic_lc3", handler)
 ```
 
 **MentraOS app-layer formatting:**
@@ -529,14 +548,14 @@ The SDK emits raw/typed events. MentraOS-specific cloud protocol messages stay i
 
 ```ts
 BluetoothSdk.addListener("head_up", (event) => socketComms.sendHeadPosition(event.up))
-BluetoothSdk.addListener("vad_status", (event) => socketComms.sendVadStatus(event.status))
+BluetoothSdk.addListener("voice_activity_detection_status", (event) => socketComms.sendVoiceActivityDetectionStatus(event.voiceActivityDetectionEnabled))
 BluetoothSdk.addListener("battery_status", (event) =>
   socketComms.sendBatteryStatus(event.level, event.charging, event.timestamp),
 )
 BluetoothSdk.addListener("photo_response", (event) => restComms.sendPhotoResponse(event))
 ```
 
-`ws_text` and `ws_bin` remain available as generic passthrough events for current legacy streaming/websocket paths, but new features should prefer dedicated typed events.
+Internal adapter-only events such as `save_setting`, OTA events, `ws_text`, `ws_bin`, and raw BLE command traces remain available through the MentraOS-only `@mentra/bluetooth-sdk-internal` alias while MentraOS migrates. New customer-facing features should prefer dedicated typed events.
 
 ---
 
@@ -929,7 +948,7 @@ MentraOS should continue to work, but it should use the native SDK through a thi
 
 - `BluetoothSdkModule.kt` calls `MentraBluetoothSdk`.
 - `BluetoothSdkModule.swift` calls `MentraBluetoothSDK`.
-- A MentraOS TypeScript service watches relevant Zustand settings and calls typed SDK methods such as `setBrightness`, `setPreferredMic`, `connectDefault`, and `setMicState`.
+- A MentraOS TypeScript service watches relevant Zustand settings and calls typed SDK methods such as `setPreferredMic`, `connectDefault`, and `setMicState`; brightness remains an internal MentraOS setting path until the hardware command is reliable.
 - Native status callbacks update `useBluetoothStore` / `useGlassesStore`; MentraOS TypeScript remains responsible for cloud/websocket formatting.
 - The legacy TypeScript API can remain stable during migration while native customers use the native facade.
 - Generic store blob syncing should be deprecated once MentraOS has moved to typed calls.

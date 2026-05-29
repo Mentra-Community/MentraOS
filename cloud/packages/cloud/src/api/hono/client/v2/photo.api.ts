@@ -35,12 +35,6 @@ const DOWNLOAD_URL_TTL_SECONDS = 30 * 60; // 30 minutes (decision #6 — ephemer
 const LONG_POLL_TIMEOUT_MS = 30_000;
 const JANITOR_INTERVAL_MS = 60_000;
 const SLOT_MAX_AGE_MS = 60 * 60_000; // drop entries older than an hour
-const UPLOAD_SECRET = process.env.MENTRA_PHOTO_UPLOAD_SECRET || "mentra-photo-dev-secret";
-if (!process.env.MENTRA_PHOTO_UPLOAD_SECRET) {
-  logger.warn(
-    "MENTRA_PHOTO_UPLOAD_SECRET not set — using well-known dev secret. Set this in production.",
-  );
-}
 
 const UPLOAD_TOKEN_PURPOSE = "v2_photo_upload" as const;
 
@@ -92,6 +86,13 @@ function resolveWaiters(requestId: string, state: PhotoState): void {
   }
 }
 
+function getUploadSecret(): string | null {
+  const secret = process.env.MENTRA_PHOTO_UPLOAD_SECRET;
+  if (secret) return secret;
+  logger.error("MENTRA_PHOTO_UPLOAD_SECRET is not configured");
+  return null;
+}
+
 /**
  * Best-effort cleanup of long-stale entries. SLOT_MAX_AGE_MS is much longer
  * than any realistic upload (upload token is 120s; long-poll is 30s). In
@@ -136,13 +137,20 @@ app.delete("/:requestId", clientAuth, handleDelete);
 async function handleRequest(c: AppContext) {
   const reqLogger = c.get("logger") || logger;
   const email = c.get("email")!;
+  const uploadSecret = getUploadSecret();
+  if (!uploadSecret) {
+    return c.json(
+      { success: false, code: "upload_secret_missing", message: "Photo upload secret is not configured" },
+      503,
+    );
+  }
 
   const requestId = uuidv4();
   // Capability token: "this user may upload one photo within UPLOAD_TOKEN_TTL_SECONDS."
   // The URL path identifies the slot; the in-memory map enforces ownership.
   const uploadToken = jwt.sign(
     { userId: email, purpose: UPLOAD_TOKEN_PURPOSE },
-    UPLOAD_SECRET,
+    uploadSecret,
     { expiresIn: UPLOAD_TOKEN_TTL_SECONDS },
   );
 
@@ -165,6 +173,16 @@ async function handleRequest(c: AppContext) {
 async function handleUpload(c: AppContext) {
   const reqLogger = c.get("logger") || logger;
   const requestId = c.req.param("requestId");
+  if (!requestId) {
+    return c.json({ success: false, message: "requestId required" }, 400);
+  }
+  const uploadSecret = getUploadSecret();
+  if (!uploadSecret) {
+    return c.json(
+      { success: false, code: "upload_secret_missing", message: "Photo upload secret is not configured" },
+      503,
+    );
+  }
 
   // ---- auth ----
   const authHeader = c.req.header("authorization");
@@ -174,7 +192,7 @@ async function handleUpload(c: AppContext) {
   const token = authHeader.substring(7);
   let payload: { userId: string; purpose: string };
   try {
-    payload = jwt.verify(token, UPLOAD_SECRET) as { userId: string; purpose: string };
+    payload = jwt.verify(token, uploadSecret) as { userId: string; purpose: string };
   } catch (err) {
     reqLogger.warn({ err, requestId }, "upload token verify failed");
     return c.json({ success: false, message: "Invalid or expired upload token" }, 401);
@@ -203,16 +221,17 @@ async function handleUpload(c: AppContext) {
   }
 
   // ---- multipart parse ----
-  let photoFile: File | null;
+  let photoFile: File;
   try {
     const form = await c.req.formData();
-    photoFile = form.get("photo") as File | null;
+    const photoField = form.get("photo");
+    if (!(photoField instanceof File)) {
+      return c.json({ success: false, message: "'photo' field must be a file" }, 400);
+    }
+    photoFile = photoField;
   } catch (err) {
     reqLogger.warn({ err, requestId }, "multipart parse failed");
     return c.json({ success: false, message: "Failed to parse multipart body" }, 400);
-  }
-  if (!photoFile) {
-    return c.json({ success: false, message: "Missing 'photo' field in multipart body" }, 400);
   }
 
   // ---- store in R2 + mint short-TTL download URL ----
@@ -288,6 +307,9 @@ async function handlePoll(c: AppContext) {
   const reqLogger = c.get("logger") || logger;
   const email = c.get("email")!;
   const requestId = c.req.param("requestId");
+  if (!requestId) {
+    return c.json({ success: false, message: "requestId required" }, 400);
+  }
 
   const entry = photos.get(requestId);
   if (!entry || entry.userId !== email) {
@@ -386,6 +408,9 @@ async function handlePoll(c: AppContext) {
 async function handleDelete(c: AppContext) {
   const email = c.get("email")!;
   const requestId = c.req.param("requestId");
+  if (!requestId) {
+    return c.json({ ok: true });
+  }
 
   const entry = photos.get(requestId);
   // Identical response shape for "doesn't exist" and "not yours" so a probe

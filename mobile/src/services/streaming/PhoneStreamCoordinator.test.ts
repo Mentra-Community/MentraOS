@@ -44,12 +44,12 @@ beforeEach(() => {
   getManagedStreamStatus.mockClear()
   teardownManagedStream.mockClear()
   hlsHeadResponder = () => new Response(null, {status: 200})
-  ;(globalThis as {fetch: typeof fetch}).fetch = async (url) => {
+  ;(globalThis as {fetch: typeof fetch}).fetch = (async (url) => {
     if (typeof url === "string" && url.includes("manifest/video.m3u8")) {
       return hlsHeadResponder()
     }
     return realFetch(url as string)
-  }
+  }) as typeof fetch
 })
 afterEach(() => {
   ;(globalThis as {fetch: typeof fetch}).fetch = realFetch

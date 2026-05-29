@@ -9,8 +9,8 @@
   "sdkVersion": "0.3.0",
   "minHostVersion": "1.42.0",
   "entry": {
-    "background": "dist/background/index.js",
-    "ui": "dist/ui/index.html"
+    "background": "background/index.js",
+    "ui": "ui/index.html"
   },
   "permissions": [
     {"type": "LOCATION", "description": "Used for live position, compass heading, and turn-by-turn directions"}
