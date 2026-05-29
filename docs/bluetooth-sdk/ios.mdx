@@ -4,16 +4,36 @@ description: "Use the Mentra Bluetooth SDK from a native iOS app."
 icon: "apple"
 ---
 
-Native iOS apps use the CocoaPod `MentraBluetoothSDK`.
+Native iOS apps use the `MentraBluetoothSDK` Swift package or CocoaPod.
 
 ## Requirements
 
 - iOS deployment target `15.1` or newer.
 - Xcode 15 or newer.
-- CocoaPods.
+- Swift Package Manager or CocoaPods.
 - A physical iPhone for Bluetooth, camera, microphone, direct phone photo, and direct phone WebRTC testing.
 
-## Podfile
+## Install
+
+<Tabs>
+  <Tab title="SwiftPM">
+
+The Swift package product is `MentraBluetoothSDK`.
+
+For local SDK development, add the package folder directly in Xcode:
+
+```text
+/path/to/MentraOS/mobile/modules/bluetooth-sdk
+```
+
+For a remote SwiftPM dependency, publish or tag `mobile/modules/bluetooth-sdk` as the root of the package repository, then add that repository URL in Xcode or `Package.swift`.
+
+<Warning>
+The SwiftPM package currently builds the core Bluetooth SDK only. It does not build the optional local STT, Nex/SwiftProtobuf, Vuzix/Ultralite, or tar.bz2 extraction code paths.
+</Warning>
+
+  </Tab>
+  <Tab title="CocoaPods">
 
 ```ruby
 platform :ios, '15.1'
@@ -30,6 +50,11 @@ Install pods:
 ```bash
 pod install
 ```
+
+CocoaPods remains supported and is still the path used by MentraOS for optional native code that is not part of the core Swift package.
+
+  </Tab>
+</Tabs>
 
 ## Permissions
 
@@ -133,7 +158,7 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
 
 ## Local SDK Override
 
-Use this when testing SDK source changes locally:
+Use this when testing SDK source changes locally with CocoaPods:
 
 ```bash
 export MENTRA_BLUETOOTH_SDK_LOCAL_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk/ios
