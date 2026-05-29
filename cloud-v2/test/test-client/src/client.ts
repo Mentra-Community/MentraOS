@@ -43,6 +43,22 @@ export type AudioSubscription =
   | TranscriptionSubscription
   | TranslationSubscription;
 
+/**
+ * Format an internal subscription to its v1 wire string. Mirror of
+ * `packages/audio/src/wire/phone-protocol.formatPhoneSubscription` (kept local
+ * to preserve the test-client tsconfig's `rootDir` boundary; update both if
+ * the grammar changes).
+ */
+function formatPhoneSubscription(sub: AudioSubscription): string {
+  if (sub.kind === "transcription") {
+    return sub.language.mode === "specific"
+      ? `transcription:${sub.language.code}`
+      : "transcription:auto";
+  }
+  const source = sub.source.mode === "specific" ? sub.source.code : "all";
+  return `translation:${source}-to-${sub.target}`;
+}
+
 const TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange";
 const JWT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt";
 const UDP_HEADER_SIZE = 6;
@@ -96,29 +112,46 @@ export interface TranscriptStub {
   origin: "live" | "replay";
 }
 
-export interface Transcript {
-  type: "TRANSCRIPT";
-  /** `"transcription"` = text in source language; `"translation"` = text in target language. */
-  kind: "transcription" | "translation";
-  mentraUserId: string;
+/** v1 `data_stream` payload for a `transcription:*` stream. */
+export interface TranscriptionData {
+  type: "transcription";
   text: string;
   isFinal: boolean;
-  /** Language of the emitted text. */
-  language?: string;
-  /** For translation: the source-audio language. */
-  sourceLanguage?: string;
-  /** Audio timeline window in milliseconds. */
-  startMs?: number;
-  endMs?: number;
-  /** Provider that produced this — `"mock"`, `"soniox"`, etc. */
-  source: string;
+  transcribeLanguage?: string;
+  detectedLanguage?: string;
+  startTime: number;
+  endTime: number;
+  provider?: string;
+}
+
+/** v1 `data_stream` payload for a `translation:*` stream. */
+export interface TranslationData {
+  type: "translation";
+  text: string;
+  isFinal: boolean;
+  transcribeLanguage?: string;
+  translateLanguage?: string;
+  startTime: number;
+  endTime: number;
+  provider?: string;
+}
+
+/**
+ * The v1 envelope real transcripts arrive in. The mobile routes by
+ * `streamType` (e.g. `transcription:en-US`). Cloud-v2's audio service
+ * produces these via `wire/phone-protocol.transcriptToDataStream`.
+ */
+export interface DataStream {
+  type: "data_stream";
+  streamType: string;
+  data: TranscriptionData | TranslationData;
 }
 
 export type AnyServerMessage =
   | ConnectionAck
   | { type: "UDP_PACKET_RECEIVED"; sequence: number; payloadLen: number }
   | TranscriptStub
-  | Transcript
+  | DataStream
   | { type: string; [k: string]: unknown };
 
 export type MessageHandler = (msg: AnyServerMessage) => void;
@@ -187,7 +220,16 @@ export class TestClient {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("WS not open");
     }
-    this.ws.send(JSON.stringify({ type: "SUBSCRIBE", subs }));
+    // Emit the v1 wire contract the real mobile uses: a flat list of
+    // subscription strings under `phone_subscription_update`. We accept the
+    // typed `AudioSubscription[]` for ergonomics and format to strings here.
+    this.ws.send(
+      JSON.stringify({
+        type: "phone_subscription_update",
+        subscriptions: subs.map(formatPhoneSubscription),
+        timestamp: new Date().toISOString(),
+      }),
+    );
   }
 
   /**

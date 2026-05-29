@@ -45,7 +45,10 @@ import {
   releaseOwnership,
 } from "./ownership.service";
 import { assignUser, releaseUser, updateSubscriptions } from "./worker-pool.service";
-import type { AudioSubscription, PhoneInboundWsMessage } from "../audio.types";
+import {
+  parsePhoneSubscriptions,
+  type PhoneSubscriptionUpdate,
+} from "../wire/phone-protocol";
 
 const logger = createLogger("audio").child({ service: "session.service" });
 
@@ -302,9 +305,9 @@ export const wsHandlers: WebSocketHandler<WsData> = {
       // which server-side pings can't fix (they only reset server→client
       // direction). Fix was app-level client pings + nginx WS-ingress
       // timeout bump to 1h. See cloud/issues/034-ws-liveness/ + 035 in v1.
-      let parsed: PhoneInboundWsMessage | { type?: string } | null = null;
+      let parsed: { type?: string } | null = null;
       try {
-        parsed = JSON.parse(msg) as PhoneInboundWsMessage;
+        parsed = JSON.parse(msg) as { type?: string };
       } catch {
         /* not JSON; ignore for now */
       }
@@ -312,23 +315,24 @@ export const wsHandlers: WebSocketHandler<WsData> = {
         ws.send(JSON.stringify({ type: "pong" }));
         return;
       }
-      if (parsed?.type === "SUBSCRIBE") {
-        // Phone is telling us what it wants transcribed/translated. Validate
-        // shape minimally — workers handle the details. We don't ACK over
-        // WS; the next transcript-or-not is the implicit confirmation.
-        const subs = Array.isArray(
-          (parsed as { subs?: unknown }).subs,
-        )
-          ? ((parsed as { subs: unknown[] }).subs as AudioSubscription[])
-          : [];
+      if (parsed?.type === "phone_subscription_update") {
+        // The phone sends a flat list of subscription strings on every
+        // (re)connect — the v1 wire contract. We parse them into the internal
+        // subscription shape (dropping any non-audio entries) and hand them to
+        // the worker pool. No WS ACK; the next transcript-or-not is the
+        // implicit confirmation.
+        const raw = (parsed as PhoneSubscriptionUpdate).subscriptions;
+        const rawList = Array.isArray(raw) ? raw : [];
+        const subs = parsePhoneSubscriptions(rawList);
         updateSubscriptions(ws.data.mentraUserId, subs);
         logger.info(
           {
             sessionTag: ws.data.sessionTag,
             mentraUserId: ws.data.mentraUserId,
-            subCount: subs.length,
+            rawCount: rawList.length,
+            audioSubCount: subs.length,
           },
-          "subscriptions updated",
+          "phone subscriptions updated",
         );
         return;
       }

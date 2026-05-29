@@ -143,8 +143,8 @@ for (let i = 0; i < numFrames; i++) {
 console.log("[smoke] waiting 4s for Soniox to finalize remaining transcripts…");
 await new Promise((r) => setTimeout(r, 4000));
 
-const transcripts = client.messages.filter((m) => m.type === "TRANSCRIPT");
-console.log(`[smoke] received ${transcripts.length} TRANSCRIPT messages`);
+const transcripts = client.messages.filter((m) => m.type === "data_stream");
+console.log(`[smoke] received ${transcripts.length} data_stream messages`);
 for (const t of transcripts) {
   console.log("[smoke]   →", JSON.stringify(t));
 }

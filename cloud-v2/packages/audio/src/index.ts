@@ -42,6 +42,7 @@ import {
   startWorkerPool,
   stopWorkerPool,
 } from "./services/worker-pool.service";
+import { transcriptToDataStream } from "./wire/phone-protocol";
 
 const logger = createLogger("audio");
 
@@ -102,8 +103,14 @@ export async function startAudio(opts: StartAudioOptions = {}): Promise<AudioHan
     Number.parseInt(process.env.AUDIO_WORKERS ?? "2", 10);
   startWorkerPool({ podId, count: workerCount });
   // Route worker-emitted transcripts to the user's WS sessions on this pod.
+  // Real transcripts are translated into the v1 `data_stream` envelope the
+  // mobile expects (see wire/phone-protocol). Debug stubs (TRANSCRIPT_STUB)
+  // pass through untouched — only the test client reads them; the mobile
+  // ignores unknown message types.
   onTranscript((msg) => {
-    forwardToUserSessions(msg.mentraUserId, msg);
+    const out =
+      msg.type === "TRANSCRIPT" ? transcriptToDataStream(msg) : msg;
+    forwardToUserSessions(msg.mentraUserId, out);
   });
 
   // Refresh-owned-claims loop: keeps each owned user's Redis claim alive

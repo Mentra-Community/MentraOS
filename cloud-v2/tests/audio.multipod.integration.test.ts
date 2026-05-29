@@ -373,15 +373,13 @@ describe("audio multi-pod e2e", () => {
 
     client.sendAudioTo(podB.udpAddr, new Uint8Array(40).fill(0x44));
 
-    const t = (await client.waitFor("TRANSCRIPT", 5000)) as {
-      type: "TRANSCRIPT";
-      source: string;
-      isFinal: boolean;
-      text: string;
+    const m = (await client.waitFor("data_stream", 5000)) as {
+      type: "data_stream";
+      data: { provider?: string; isFinal: boolean; text: string };
     };
-    expect(t.source).toBe("mock");
-    expect(t.isFinal).toBe(true);
-    expect(t.text).toMatch(/^mock mu_[A-Z0-9]+:\S+ \d+$/);
+    expect(m.data.provider).toBe("mock");
+    expect(m.data.isFinal).toBe(true);
+    expect(m.data.text).toMatch(/^mock mu_[A-Z0-9]+:\S+ \d+$/);
 
     await client.close();
   });

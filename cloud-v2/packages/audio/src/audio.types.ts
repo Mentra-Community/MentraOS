@@ -4,7 +4,6 @@
  * Currently:
  *   - AudioSubscription (discriminated union: transcription | translation)
  *   - Subscription canonicalization for structural equality
- *   - Inbound WS message envelopes
  *
  * Per the design (docs/issues/003-audio/spec.md "Subscription model"):
  * "Phone aggregates and dedupes across local miniapps; sends a flat list
@@ -48,15 +47,6 @@ function languageKey(lang: LanguageSource): string {
   return `a:${hints}`;
 }
 
-// === WS inbound message envelopes ===
-
-export interface SubscribeWsMessage {
-  type: "SUBSCRIBE";
-  subs: AudioSubscription[];
-}
-
-export interface PingWsMessage {
-  type: "ping";
-}
-
-export type PhoneInboundWsMessage = SubscribeWsMessage | PingWsMessage;
+// WS inbound message envelopes (the v1 phone wire contract:
+// `phone_subscription_update`, `ping`) live in `wire/phone-protocol.ts`,
+// which translates them into the `AudioSubscription` shape above.

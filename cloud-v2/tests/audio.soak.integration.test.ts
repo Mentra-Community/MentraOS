@@ -186,9 +186,9 @@ describe("audio soak", () => {
         c.sendAudio(new Uint8Array(40).fill(0x80));
       }
 
-      // Phase 4: wait for each client to receive its TRANSCRIPT.
+      // Phase 4: wait for each client to receive its transcript (data_stream).
       const results = await Promise.allSettled(
-        clients.map((c) => c.waitFor("TRANSCRIPT", 15_000)),
+        clients.map((c) => c.waitFor("data_stream", 15_000)),
       );
 
       const successes = results.filter(
@@ -200,18 +200,22 @@ describe("audio soak", () => {
       expect(failures).toBe(0);
       expect(successes).toBe(N_CLIENTS);
 
-      // Phase 5: cross-talk check — each client's transcript must reference
-      // its own scope. MockProvider text format includes the mentraUserId.
+      // Phase 5: cross-talk check — each client's transcripts must all
+      // reference its own user. The v1 `data_stream` envelope carries no
+      // mentraUserId, but the MockProvider text embeds the user scope
+      // (`mock mu_<id>:<lang> <n>`), so we key the check on that.
+      const scopeOf = (text: string): string | undefined =>
+        text.split(" ")[1]?.split(":")[0]; // "mu_<id>"
       for (let i = 0; i < clients.length; i++) {
         const c = clients[i]!;
         const transcripts = c.messages.filter(
-          (m) => m.type === "TRANSCRIPT",
-        ) as Array<{ mentraUserId: string; text: string }>;
+          (m) => m.type === "data_stream",
+        ) as Array<{ data: { text: string } }>;
         expect(transcripts.length).toBeGreaterThan(0);
         // Every transcript on this client's WS should be for this client's user.
-        const firstUserId = transcripts[0]!.mentraUserId;
+        const firstScope = scopeOf(transcripts[0]!.data.text);
         for (const t of transcripts) {
-          expect(t.mentraUserId).toBe(firstUserId);
+          expect(scopeOf(t.data.text)).toBe(firstScope);
         }
       }
 
