@@ -294,7 +294,7 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
           </svg>
         </button>
         <div className="text-[32px] tracking-tight leading-none font-sans font-bold text-black">Add a place</div>
-      </div>
+      </div>    
 
       <div className="flex-1 overflow-y-auto px-4 pb-28">
         <LocationInput

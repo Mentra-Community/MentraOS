@@ -466,6 +466,26 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
 
   const me = coords ? {lat: coords.lat, lng: coords.lng} : null
 
+  // When a trip is running/arrived, the background's trip state is the
+  // authority for the destination — the page-local `destination` is null
+  // after a WebView remount (it isn't persisted, the trip is). Synthesize
+  // a PlaceDetails from the live trip so the running/arrival drawers have
+  // a destination to render. Without this, on re-entering the app
+  // mid-trip the running drawer gets a null destination and renders
+  // NOTHING (the bottom bar with time/distance disappears).
+  const tripDestination: PlaceDetails | null =
+    (running || status === "arrived") && activeDestination
+      ? {
+          placeId: "active-trip",
+          name: activeDestinationName ?? "Destination",
+          address: activeDestinationName ?? "",
+          lat: activeDestination.lat,
+          lng: activeDestination.lng,
+        }
+      : null
+  // Live trip wins over the (possibly stale/absent) local selection.
+  const effectiveDestination = tripDestination ?? destination
+
   return (
     <DrawerOffsetProvider>
       <div className="fixed inset-0 overflow-hidden ">
@@ -533,12 +553,12 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
             const mode =
               devDrawer !== "auto"
                 ? devDrawer
-                : !running && !destination
+                : !running && !effectiveDestination
                   ? "idle"
-                  : !running && destination
+                  : !running && effectiveDestination
                     ? "preview"
                     : "running"
-            const devDestination = destination ?? (devDrawer !== "auto" ? DEV_DESTINATION : null)
+            const devDestination = effectiveDestination ?? (devDrawer !== "auto" ? DEV_DESTINATION : null)
             if (mode === "idle")
               return (
                 <IdleDrawer
@@ -576,7 +596,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         <ArrivalDrawer
           open={!isSearching && (status === "arrived" || devDrawer === "arrived")}
           destinationName={activeDestinationName}
-          destinationAddress={destination?.address ?? null}
+          destinationAddress={effectiveDestination?.address ?? null}
           onDone={handleStop}
         />
 
