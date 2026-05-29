@@ -1244,8 +1244,34 @@ class G2 : SGCManager() {
     private var lastClickTimestamp: Long? = null
     private var lastMenuSelectTimestamp: Long? = null
     private var lastGestureCtrlTimestamp: Long? = null
-    private var imageMode = "center"
-    private var imageCorner = 3
+
+    /** A tracked image container on the current page. Keyed by its rect for reuse. */
+    private data class ImgContainer(
+            val id: Int,
+            val x: Int,
+            val y: Int,
+            val width: Int,
+            val height: Int
+    ) {
+        val name: String
+            get() = "img-$id"
+
+        fun matches(x: Int, y: Int, width: Int, height: Int): Boolean =
+                this.x == x && this.y == y && this.width == width && this.height == height
+    }
+
+    /**
+     * Live list of image containers on the page, ordered oldest→newest (for LRU eviction). The page
+     * may hold at most 4 image containers (IDs from the pool below).
+     */
+    private val imageContainers: MutableList<ImgContainer> = mutableListOf()
+    /** Fixed pool of container IDs the page protocol expects. */
+    private val imageContainerIDPool: List<Int> = listOf(10, 11, 12, 13)
+    /** Default container seeded into every fresh page: 100x100 in the top-left. */
+    private val defaultImgX = 0
+    private val defaultImgY = 0
+    private val defaultImgWidth = 100
+    private val defaultImgHeight = 100
 
     // Battery state
     private var _batteryLevel: Int = -1
@@ -2024,158 +2050,32 @@ class G2 : SGCManager() {
         }
     }
 
-    override fun displayBitmap(base64ImageData: String): Boolean {
+    /**
+     * Display a bitmap inside a positioned image container.
+     *
+     * The page keeps a live list of up to 4 image containers keyed by exact rect:
+     * - If a container with the requested rect already exists, the image is just resent to it (no
+     * page rebuild).
+     * - Otherwise a new container is added (evicting the oldest when the list would exceed 4) and
+     * the page is rebuilt before the image is sent.
+     *
+     * Omitted params default to a 100x100 container in the top-left corner.
+     */
+    override fun displayBitmap(
+            base64ImageData: String,
+            x: Int?,
+            y: Int?,
+            width: Int?,
+            height: Int?
+    ): Boolean {
         currentBitmapBase64 = base64ImageData
         currentTextContent = ""
-        return when (imageMode) {
-            "quad" -> displayBitmapQuad(base64ImageData)
-            "corner" -> displayBitmapCorner(base64ImageData)
-            "center" -> displayBitmapCenter(base64ImageData)
-            else -> false
-        }
-    }
 
-    private fun displayBitmapQuad(base64ImageData: String): Boolean {
-        val rawData =
-                Base64.decode(base64ImageData, Base64.DEFAULT)
-                        ?: run {
-                            Bridge.log("G2: displayBitmapQuad() - failed to decode base64")
-                            return false
-                        }
+        val rx = x ?: defaultImgX
+        val ry = y ?: defaultImgY
+        val rw = width ?: defaultImgWidth
+        val rh = height ?: defaultImgHeight
 
-        val tiles =
-                renderAndSliceTo4Tiles(rawData)
-                        ?: run {
-                            Bridge.log(
-                                    "G2: displayBitmapQuad() - failed to slice image into tiles"
-                            )
-                            return false
-                        }
-
-        // 2x2 grid of 200x100 tiles covering 400x200 (matches G2.swift:1729-1745)
-        val container1 =
-                EvenHubProto.imageContainerProperty(
-                        x = 0,
-                        y = 0,
-                        width = 200,
-                        height = 100,
-                        containerID = 10,
-                        containerName = "img-10"
-                )
-        val container2 =
-                EvenHubProto.imageContainerProperty(
-                        x = 200,
-                        y = 0,
-                        width = 200,
-                        height = 100,
-                        containerID = 11,
-                        containerName = "img-11"
-                )
-        val container3 =
-                EvenHubProto.imageContainerProperty(
-                        x = 0,
-                        y = 100,
-                        width = 200,
-                        height = 100,
-                        containerID = 12,
-                        containerName = "img-12"
-                )
-        val container4 =
-                EvenHubProto.imageContainerProperty(
-                        x = 200,
-                        y = 100,
-                        width = 200,
-                        height = 100,
-                        containerID = 13,
-                        containerName = "img-13"
-                )
-        val containers = listOf(container1, container2, container3, container4)
-
-        val msg: ByteArray =
-                if (!startupPageCreated) {
-                    startupPageCreated = true
-                    EvenHubProto.createPageMessage(
-                            imageContainers = containers,
-                            magicRandom = sendManager.nextMagicRandom(),
-                            appId = activeMenuAppId
-                    )
-                } else {
-                    EvenHubProto.rebuildPageMessage(
-                            imageContainers = containers,
-                            magicRandom = sendManager.nextMagicRandom(),
-                            appId = activeMenuAppId
-                    )
-                }
-        sendEvenHubCommand(msg)
-        pageCreated = true
-        pageHasTextContainer = false
-        currentTextContent = ""
-
-        // After the 1s settle delay iOS waits, send each tile's BMP in series. Android's
-        // displayBitmap signature is synchronous Boolean, so this is fire-and-forget — we
-        // chain tiles via callbacks rather than awaiting like iOS.
-        Bridge.log("G2: displayBitmapQuad() - page sent, scheduling fragment send in 1s...")
-        mainHandler.postDelayed(
-                {
-                    sendImageDataChained(
-                            tiles =
-                                    listOf(
-                                            Triple(10, "img-10", tiles[0]),
-                                            Triple(11, "img-11", tiles[1]),
-                                            Triple(12, "img-12", tiles[2]),
-                                            Triple(13, "img-13", tiles[3])
-                                    ),
-                            index = 0
-                    )
-                },
-                1000
-        )
-
-        return true
-    }
-
-    private fun displayBitmapCenter(base64ImageData: String): Boolean {
-        val rawData =
-                Base64.decode(base64ImageData, Base64.DEFAULT)
-                        ?: run {
-                            Bridge.log("G2: displayBitmapCenter() - failed to decode base64")
-                            return false
-                        }
-
-        Bridge.log("G2: displayBitmapCenter() - decoded ${rawData.size} bytes from base64")
-        Bridge.log(
-                "G2: displayBitmapCenter() - state: startupPageCreated=$startupPageCreated, pageCreated=$pageCreated"
-        )
-
-        // Single-tile approach: scale source to fit 200x100, send as one image container
-        val bmpData =
-                convertToG2Bmp(rawData, containerWidth = 200, containerHeight = 100)
-                        ?: run {
-                            Bridge.log("G2: displayBitmap() - failed to convert image to BMP")
-                            return false
-                        }
-
-        val containerID = 10
-        val containerName = "img-10"
-
-        // Android's displayBitmap signature is synchronous Boolean, so this is fire-and-forget.
-        // If the page isn't up yet, create it then defer the BMP send by 1s (matches iOS's await).
-        if (!startupPageCreated) {
-            createPageWithText("")
-            Bridge.log("G2: displayBitmap() - page created, waiting 1s before sending image data...")
-            mainHandler.postDelayed(
-                    { sendImageData(containerID, containerName, bmpData) },
-                    1000
-            )
-        } else {
-            sendImageData(containerID, containerName, bmpData)
-        }
-
-        Bridge.log("G2: displayBitmap() - single tile scheduled, ${bmpData.size} bytes")
-        return true
-    }
-
-    private fun displayBitmapCorner(base64ImageData: String): Boolean {
         val rawData =
                 Base64.decode(base64ImageData, Base64.DEFAULT)
                         ?: run {
@@ -2183,47 +2083,80 @@ class G2 : SGCManager() {
                             return false
                         }
 
-        Bridge.log("G2: displayBitmap() - decoded ${rawData.size} bytes from base64")
-        Bridge.log(
-                "G2: displayBitmap() - state: startupPageCreated=$startupPageCreated, pageCreated=$pageCreated"
-        )
+        // Create the startup page lazily, seeded with the default top-left container.
+        val freshPage = !startupPageCreated
+        if (freshPage) {
+            imageContainers.clear()
+            imageContainers.add(
+                    ImgContainer(
+                            id = imageContainerIDPool[0],
+                            x = defaultImgX,
+                            y = defaultImgY,
+                            width = defaultImgWidth,
+                            height = defaultImgHeight
+                    )
+            )
+            createPageWithText("")
+            Bridge.log("G2: displayBitmap() - startup page created")
+        }
 
-        // Single-tile corner approach: scale source to fit 100x100, send as one image container
+        // Reuse an existing container if the rect matches exactly; otherwise add a new one.
+        val existing = imageContainers.firstOrNull { it.matches(rx, ry, rw, rh) }
+        val container: ImgContainer
+        val needsRebuild: Boolean
+        if (existing != null) {
+            container = existing
+            needsRebuild = false
+            Bridge.log("G2: displayBitmap() - reusing container ${existing.id} for rect $rx,$ry ${rw}x$rh")
+        } else {
+            container = addImageContainer(rx, ry, rw, rh)
+            needsRebuild = true
+            Bridge.log("G2: displayBitmap() - added container ${container.id} for rect $rx,$ry ${rw}x$rh, rebuilding page")
+            rebuildPage()
+        }
+
         val bmpData =
-                convertToG2Bmp(rawData, containerWidth = 100, containerHeight = 100)
+                convertToG2Bmp(rawData, containerWidth = container.width, containerHeight = container.height)
                         ?: run {
                             Bridge.log("G2: displayBitmap() - failed to convert image to BMP")
                             return false
                         }
 
-        val containerID = 10
-        val containerName = "img-10"
-
-        if (!startupPageCreated) {
-            createPageWithText("")
-            Bridge.log("G2: displayBitmap() - page created, waiting 1s before sending image data...")
+        // Fire-and-forget. If the page was just created/rebuilt, defer the BMP send 1s to let the
+        // glasses process the page (matches iOS's await). Reuse path sends immediately.
+        if (freshPage || needsRebuild) {
             mainHandler.postDelayed(
-                    { sendImageData(containerID, containerName, bmpData) },
+                    { sendImageData(container.id, container.name, bmpData) },
                     1000
             )
         } else {
-            sendImageData(containerID, containerName, bmpData)
+            sendImageData(container.id, container.name, bmpData)
         }
 
-        Bridge.log("G2: displayBitmap() - single tile scheduled, ${bmpData.size} bytes")
         return true
     }
 
-    /** Send the next tile's BMP in series; recurse to the next tile after this one finishes. */
-    private fun sendImageDataChained(
-            tiles: List<Triple<Int, String, ByteArray>>,
-            index: Int
-    ) {
-        if (index >= tiles.size) return
-        val (containerID, containerName, bmpData) = tiles[index]
-        sendImageData(containerID, containerName, bmpData) {
-            sendImageDataChained(tiles, index + 1)
+    /**
+     * Add a new image container for the rect, evicting the oldest when the list is full (max 4).
+     * Returns the newly tracked container (with an assigned ID from the pool).
+     */
+    private fun addImageContainer(x: Int, y: Int, width: Int, height: Int): ImgContainer {
+        // Evict the oldest container when at capacity, freeing its ID for reuse.
+        if (imageContainers.size >= imageContainerIDPool.size) {
+            val evicted = imageContainers.removeAt(0)
+            Bridge.log("G2: evicting oldest image container ${evicted.id}")
         }
+        // Pick the lowest free ID from the pool.
+        val usedIDs = imageContainers.map { it.id }.toSet()
+        val id = imageContainerIDPool.firstOrNull { it !in usedIDs } ?: imageContainerIDPool[0]
+        val container = ImgContainer(id = id, x = x, y = y, width = width, height = height)
+        imageContainers.add(container)
+        return container
+    }
+
+    /** Rebuild the page from the current text + image container list. */
+    private fun rebuildPage() {
+        createPageWithText(currentTextContent)
     }
 
     private fun sendImageData(
@@ -2268,9 +2201,8 @@ class G2 : SGCManager() {
             fragmentIndex++
             offset = end
 
-            // 200ms between fragments — and also before onComplete, so the next tile in
-            // sendImageDataChained gets the same gap before its first fragment (matches iOS,
-            // which awaits 200ms after every fragment including the last).
+            // 200ms between fragments — and also before onComplete (matches iOS, which awaits
+            // 200ms after every fragment including the last).
             if (offset < bmpData.size) {
                 mainHandler.postDelayed({ sendNextFragment() }, 200)
             } else {
@@ -2282,91 +2214,6 @@ class G2 : SGCManager() {
         }
 
         sendNextFragment()
-    }
-
-    /**
-     * Render any image to 400x200 grayscale, then slice into 4 tiles (200x100 each).
-     * Returns 4 BMP ByteArrays: [top-left, top-right, bottom-left, bottom-right].
-     * Mirrors G2.swift renderAndSliceTo4Tiles.
-     */
-    private fun renderAndSliceTo4Tiles(data: ByteArray): List<ByteArray>? {
-        val srcBitmap =
-                BitmapFactory.decodeByteArray(data, 0, data.size)
-                        ?: run {
-                            Bridge.log("G2: renderAndSliceTo4Tiles - could not decode image")
-                            return null
-                        }
-
-        val srcWidth = srcBitmap.width
-        val srcHeight = srcBitmap.height
-        val tileWidth = 200
-        val tileHeight = 100
-        val totalW = tileWidth * 2 // 400
-        val totalH = tileHeight * 2 // 200
-
-        // Scale source to fit within 400x200 (maintain aspect ratio)
-        val scale = minOf(totalW.toDouble() / srcWidth, totalH.toDouble() / srcHeight)
-        val scaledW = maxOf(1, (srcWidth * scale).toInt())
-        val scaledH = maxOf(1, (srcHeight * scale).toInt())
-        val offsetX = (totalW - scaledW) / 2
-        val offsetY = (totalH - scaledH) / 2
-
-        Bridge.log(
-                "G2: renderAndSliceTo4Tiles - input ${srcWidth}x${srcHeight} → ${scaledW}x${scaledH} in ${totalW}x${totalH}"
-        )
-
-        // Render to 400x200 with black background
-        val destBitmap = Bitmap.createBitmap(totalW, totalH, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(destBitmap)
-        canvas.drawColor(Color.BLACK)
-        val srcRect = Rect(0, 0, srcWidth, srcHeight)
-        val dstRect = Rect(offsetX, offsetY, offsetX + scaledW, offsetY + scaledH)
-        val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-        canvas.drawBitmap(srcBitmap, srcRect, dstRect, paint)
-        srcBitmap.recycle()
-
-        // Pull a single 400x200 grayscale buffer once; slice each tile from it
-        val fullPixels = ByteArray(totalW * totalH)
-        val argbRow = IntArray(totalW)
-        for (y in 0 until totalH) {
-            destBitmap.getPixels(argbRow, 0, totalW, 0, y, totalW, 1)
-            val rowOffset = y * totalW
-            for (x in 0 until totalW) {
-                val pixel = argbRow[x]
-                val r = (pixel shr 16) and 0xFF
-                val g = (pixel shr 8) and 0xFF
-                val b = pixel and 0xFF
-                fullPixels[rowOffset + x] = ((r * 299 + g * 587 + b * 114) / 1000).toByte()
-            }
-        }
-        destBitmap.recycle()
-
-        // Slice into 4 tiles: top-left, top-right, bottom-left, bottom-right (matches iOS order)
-        val tileOrigins = listOf(0 to 0, tileWidth to 0, 0 to tileHeight, tileWidth to tileHeight)
-        val tiles = mutableListOf<ByteArray>()
-        for ((ox, oy) in tileOrigins) {
-            val tilePixels = ByteArray(tileWidth * tileHeight)
-            for (row in 0 until tileHeight) {
-                val srcRowStart = (oy + row) * totalW + ox
-                System.arraycopy(
-                        fullPixels,
-                        srcRowStart,
-                        tilePixels,
-                        row * tileWidth,
-                        tileWidth
-                )
-            }
-            val bmp =
-                    build4BitBmp(tilePixels, tileWidth, tileHeight)
-                            ?: run {
-                                Bridge.log(
-                                        "G2: renderAndSliceTo4Tiles - failed to build BMP for tile"
-                                )
-                                return null
-                            }
-            tiles.add(bmp)
-        }
-        return tiles
     }
 
     /// Bring the Even Realities dashboard (the OS-level home/idle screen) to
@@ -2545,52 +2392,17 @@ class G2 : SGCManager() {
                         content = text
                 )
 
-        val imageContainers: List<ByteArray> =
-                when (imageMode) {
-                    "quad" -> {
-                        // 2x2 grid of 200x100 tiles covering 400x200
-                        listOf(
-                                EvenHubProto.imageContainerProperty(
-                                        x = 0, y = 0, width = 200, height = 100,
-                                        containerID = 10, containerName = "img-10"
-                                ),
-                                EvenHubProto.imageContainerProperty(
-                                        x = 200, y = 0, width = 200, height = 100,
-                                        containerID = 11, containerName = "img-11"
-                                ),
-                                EvenHubProto.imageContainerProperty(
-                                        x = 0, y = 100, width = 200, height = 100,
-                                        containerID = 12, containerName = "img-12"
-                                ),
-                                EvenHubProto.imageContainerProperty(
-                                        x = 200, y = 100, width = 200, height = 100,
-                                        containerID = 13, containerName = "img-13"
-                                )
-                        )
-                    }
-                    "center" -> {
-                        // Center the 200x100 container on the 576x288 canvas
-                        val containerW = 200
-                        val containerH = 100
-                        listOf(
-                                EvenHubProto.imageContainerProperty(
-                                        x = (576 - containerW) / 2,
-                                        y = (288 - containerH) / 2,
-                                        width = containerW, height = containerH,
-                                        containerID = 10, containerName = "img-10"
-                                )
-                        )
-                    }
-                    "corner" -> {
-                        // TODO: account for imageCorner:
-                        listOf(
-                                EvenHubProto.imageContainerProperty(
-                                        x = 0, y = 0, width = 100, height = 100,
-                                        containerID = 10, containerName = "img-10"
-                                )
-                        )
-                    }
-                    else -> emptyList()
+        // Build the page's image containers from the live tracked list.
+        val imageContainerProps: List<ByteArray> =
+                imageContainers.map { c ->
+                    EvenHubProto.imageContainerProperty(
+                            x = c.x,
+                            y = c.y,
+                            width = c.width,
+                            height = c.height,
+                            containerID = c.id,
+                            containerName = c.name
+                    )
                 }
 
         val msg: ByteArray
@@ -2599,7 +2411,7 @@ class G2 : SGCManager() {
             msg =
                     EvenHubProto.createPageMessage(
                             textContainers = listOf(tc),
-                            imageContainers = imageContainers,
+                            imageContainers = imageContainerProps,
                             magicRandom = sendManager.nextMagicRandom(),
                             appId = activeMenuAppId
                     )
@@ -2609,7 +2421,7 @@ class G2 : SGCManager() {
             msg =
                     EvenHubProto.rebuildPageMessage(
                             textContainers = listOf(tc),
-                            imageContainers = imageContainers,
+                            imageContainers = imageContainerProps,
                             magicRandom = sendManager.nextMagicRandom(),
                             appId = activeMenuAppId
                     )
@@ -2949,6 +2761,7 @@ class G2 : SGCManager() {
         startupPageCreated = false
         pageCreated = false
         pageHasTextContainer = false
+        imageContainers.clear()
         dashboardShowing = 0
         heartbeatCounter = 0
         currentBitmapBase64 = ""

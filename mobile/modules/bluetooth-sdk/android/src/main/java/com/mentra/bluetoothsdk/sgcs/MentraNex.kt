@@ -488,7 +488,13 @@ class MentraNex : SGCManager() {
         sendDataSequentially(textChunks)
     }
 
-    override fun displayBitmap(base64ImageData: String): Boolean {
+    override fun displayBitmap(
+            base64ImageData: String,
+            x: Int?,
+            y: Int?,
+            width: Int?,
+            height: Int?
+    ): Boolean {
         try {
             val bmpData: ByteArray? = android.util.Base64.decode(base64ImageData, android.util.Base64.DEFAULT)
             if (bmpData == null || bmpData.isEmpty()) {

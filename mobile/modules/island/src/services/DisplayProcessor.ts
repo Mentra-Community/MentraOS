@@ -62,6 +62,10 @@ export interface DisplayEvent {
     topText?: string
     bottomText?: string
     data?: string // For bitmap_view
+    x?: number // bitmap_view container position/size (forwarded to native, used by G2)
+    y?: number
+    width?: number
+    height?: number
     [key: string]: unknown
   }
   text?: string | string[]

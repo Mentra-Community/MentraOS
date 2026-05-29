@@ -31,6 +31,20 @@ export class DisplayManager {
   //   this.showText(`${title} — ${body}`)
   // }
 
+  /**
+   * Show a bitmap on the glasses. `base64Png` is a base64-encoded PNG;
+   * the phone decodes it and converts to the glasses' native 1-bit
+   * format. `durationMs` auto-clears after that long; omit for sticky.
+   */
+  showBitmap(base64Png: string, durationMs?: number): void {
+    this.safeCall(() =>
+      this.session.display.showBitmapView(
+        base64Png,
+        {width: 100, height: 100}
+      ),
+    )
+  }
+
   /** Wipe whatever's on the glasses. */
   clear(): void {
     this.safeCall(() => this.session.display.clearView())

@@ -4037,7 +4037,8 @@ public class MentraLive extends SGCManager {
     public void dbg1() {}
     public void dbg2() {}
 
-    public boolean displayBitmap(String base64) {
+    @Override
+    public boolean displayBitmap(String base64, Integer x, Integer y, Integer width, Integer height) {
         return false;
     }
 

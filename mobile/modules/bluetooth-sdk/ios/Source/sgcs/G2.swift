@@ -1411,8 +1411,27 @@ class G2: NSObject, SGCManager {
     private var lastClickTimestamp: Int64?
     private var lastMenuSelectTimestamp: Int64?
     private var lastGestureCtrlTimestamp: Int64?
-    private var imageMode = "quad"
-    private var imageCorner = 3
+
+    /// A tracked image container on the current page. Keyed by its rect for reuse.
+    private struct ImgContainer: Equatable {
+        let id: Int32
+        let x: Int32
+        let y: Int32
+        let width: Int32
+        let height: Int32
+        var name: String { "img-\(id)" }
+        func matches(x: Int32, y: Int32, width: Int32, height: Int32) -> Bool {
+            self.x == x && self.y == y && self.width == width && self.height == height
+        }
+    }
+
+    /// Live list of image containers on the page, ordered oldest→newest (for LRU eviction).
+    /// The page may hold at most 4 image containers (IDs from the pool below).
+    private var imageContainers: [ImgContainer] = []
+    /// Fixed pool of container IDs the page protocol expects.
+    private let imageContainerIDPool: [Int32] = [10, 11, 12, 13]
+    /// Default container seeded into every fresh page: 100x100 in the top-left.
+    private static let defaultImgContainer = (x: Int32(0), y: Int32(0), width: Int32(100), height: Int32(100))
 
     @Published var aiListening: Bool = false
 
@@ -1926,145 +1945,90 @@ class G2: NSObject, SGCManager {
         return true
     }
 
-    func displayBitmapLoc(rawData: Data, x: Int32, y: Int32, id: Int32) async -> Bool {
-        Bridge.log("G2: displayBitmap() - decoded \(rawData.count) bytes from base64")
+    /// Display a bitmap inside a positioned image container.
+    ///
+    /// The page keeps a live list of up to 4 image containers keyed by exact rect:
+    ///  - If a container with the requested rect already exists, the image is just resent to it
+    ///    (no page rebuild).
+    ///  - Otherwise a new container is added (evicting the oldest when the list would exceed 4) and
+    ///    the page is rebuilt before the image is sent.
+    ///
+    /// Omitted params default to a 100x100 container in the top-left corner.
+    func displayBitmap(base64ImageData: String, x: Int32? = nil, y: Int32? = nil, width: Int32? = nil, height: Int32? = nil) async -> Bool {
+        currentBitmapBase64 = base64ImageData
+        currentTextContent = ""
 
-        Bridge.log(
-            "G2: displayBitmap() - state: startupPageCreated=\(startupPageCreated), pageCreated=\(pageCreated)"
-        )
+        let rx = x ?? G2.defaultImgContainer.x
+        let ry = y ?? G2.defaultImgContainer.y
+        let rw = width ?? G2.defaultImgContainer.width
+        let rh = height ?? G2.defaultImgContainer.height
 
-        // --- Single-tile approach: scale source to fit 200x100, send as one image container ---
-        guard let bmpData = convertToG2Bmp(rawData, containerWidth: 200, containerHeight: 100)
+        guard let rawData = Data(base64Encoded: base64ImageData) else {
+            Bridge.log("G2: displayBitmap() - failed to decode base64")
+            return false
+        }
+
+        // Create the startup page lazily, seeded with the default top-left container.
+        if !startupPageCreated {
+            imageContainers = [
+                ImgContainer(
+                    id: imageContainerIDPool[0],
+                    x: G2.defaultImgContainer.x, y: G2.defaultImgContainer.y,
+                    width: G2.defaultImgContainer.width, height: G2.defaultImgContainer.height
+                )
+            ]
+            createPageWithText("")
+            Bridge.log("G2: displayBitmap() - startup page created, waiting 1s before sending image data...")
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+
+        // Reuse an existing container if the rect matches exactly; otherwise add a new one.
+        let container: ImgContainer
+        if let existing = imageContainers.first(where: { $0.matches(x: rx, y: ry, width: rw, height: rh) }) {
+            container = existing
+            Bridge.log("G2: displayBitmap() - reusing container \(existing.id) for rect \(rx),\(ry) \(rw)x\(rh)")
+        } else {
+            container = addImageContainer(x: rx, y: ry, width: rw, height: rh)
+            Bridge.log("G2: displayBitmap() - added container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh), rebuilding page")
+            rebuildPage()
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // settle before sending image data
+        }
+
+        guard let bmpData = convertToG2Bmp(rawData, containerWidth: Int(container.width), containerHeight: Int(container.height))
         else {
             Bridge.log("G2: displayBitmap() - failed to convert image to BMP")
             return false
         }
 
-        // Center the 200x100 container on the 576x288 canvas
-        let containerW: Int32 = 200
-        let containerH: Int32 = 100
-        let containerX: Int32 = x
-        let containerY: Int32 = y
-        let containerID: Int32 = id
-        let containerName = "img-\(id)"
-
-        let imageContainer = EvenHubProto.imageContainerProperty(
-            x: containerX, y: containerY,
-            width: containerW, height: containerH,
-            containerID: containerID, containerName: containerName
-        )
-
-        let msg: Data
-        if !startupPageCreated {
-            Bridge.log("G2: displayBitmap() - creating startup page with image container")
-            msg = EvenHubProto.createPageMessage(
-                imageContainers: [imageContainer], magicRandom: sendManager.nextMagicRandom(),
-                appId: activeMenuAppId
-            )
-            startupPageCreated = true
-        } else {
-            Bridge.log("G2: displayBitmap() - rebuilding page with image container")
-            msg = EvenHubProto.rebuildPageMessage(
-                imageContainers: [imageContainer], magicRandom: sendManager.nextMagicRandom(),
-                appId: activeMenuAppId
-            )
-        }
-        sendEvenHubCommand(msg)
-        pageCreated = true
-        pageHasTextContainer = false
-        currentTextContent = ""
-        Bridge.log("G2: displayBitmap() - page sent, waiting 1s before sending fragments...")
-        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s - give glasses time to process page
-
-        // Send the BMP data
         let success = await sendImageData(
-            containerID: containerID, containerName: containerName, bmpData: bmpData
+            containerID: container.id, containerName: container.name, bmpData: bmpData
         )
         if !success {
             Bridge.log("G2: displayBitmap() - failed sending image data")
         }
-
-        Bridge.log("G2: displayBitmap() - single tile sent, \(bmpData.count) bytes")
+        Bridge.log("G2: displayBitmap() - image sent to container \(container.id), \(bmpData.count) bytes")
         return success
     }
 
-    func displayBitmapQuad(base64ImageData: String) async -> Bool {
-        guard let rawData = Data(base64Encoded: base64ImageData) else {
-            Bridge.log("G2: displayBitmapQuad() - failed to decode base64")
-            return false
+    /// Add a new image container for `rect`, evicting the oldest when the list is full (max 4).
+    /// Returns the newly tracked container (with an assigned ID from the pool).
+    private func addImageContainer(x: Int32, y: Int32, width: Int32, height: Int32) -> ImgContainer {
+        // Evict the oldest container when at capacity, freeing its ID for reuse.
+        if imageContainers.count >= imageContainerIDPool.count {
+            let evicted = imageContainers.removeFirst()
+            Bridge.log("G2: evicting oldest image container \(evicted.id)")
         }
-
-        guard let tiles = renderAndSliceTo4Tiles(rawData) else {
-            Bridge.log("G2: displayBitmapQuad() - failed to slice image into tiles")
-            return false
-        }
-
-        // 2x2 grid of 200x100 tiles covering 400x200
-        let container1 = EvenHubProto.imageContainerProperty(
-            x: 0, y: 0, width: 200, height: 100,
-            containerID: 10, containerName: "img-10"
-        )
-        let container2 = EvenHubProto.imageContainerProperty(
-            x: 200, y: 0, width: 200, height: 100,
-            containerID: 11, containerName: "img-11"
-        )
-        let container3 = EvenHubProto.imageContainerProperty(
-            x: 0, y: 100, width: 200, height: 100,
-            containerID: 12, containerName: "img-12"
-        )
-        let container4 = EvenHubProto.imageContainerProperty(
-            x: 200, y: 100, width: 200, height: 100,
-            containerID: 13, containerName: "img-13"
-        )
-        let containers = [container1, container2, container3, container4]
-
-        let msg: Data
-        if !startupPageCreated {
-            msg = EvenHubProto.createPageMessage(
-                imageContainers: containers, magicRandom: sendManager.nextMagicRandom(), appId: activeMenuAppId
-            )
-            startupPageCreated = true
-        } else {
-            msg = EvenHubProto.rebuildPageMessage(
-                imageContainers: containers, magicRandom: sendManager.nextMagicRandom(), appId: activeMenuAppId
-            )
-        }
-        sendEvenHubCommand(msg)
-        pageCreated = true
-        pageHasTextContainer = false
-        currentTextContent = ""
-
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-
-        // Send each tile's unique BMP data to its container
-        let success1 = await sendImageData(
-            containerID: 10, containerName: "img-10", bmpData: tiles[0]
-        )
-        let success2 = await sendImageData(
-            containerID: 11, containerName: "img-11", bmpData: tiles[1]
-        )
-        let success3 = await sendImageData(
-            containerID: 12, containerName: "img-12", bmpData: tiles[2]
-        )
-        let success4 = await sendImageData(
-            containerID: 13, containerName: "img-13", bmpData: tiles[3]
-        )
-
-        return success1 && success2 && success3 && success4
+        // Pick the lowest free ID from the pool.
+        let usedIDs = Set(imageContainers.map { $0.id })
+        let id = imageContainerIDPool.first { !usedIDs.contains($0) } ?? imageContainerIDPool[0]
+        let container = ImgContainer(id: id, x: x, y: y, width: width, height: height)
+        imageContainers.append(container)
+        return container
     }
 
-    func displayBitmap(base64ImageData: String) async -> Bool {
-        currentBitmapBase64 = base64ImageData
-        currentTextContent = ""
-        if imageMode == "quad" {
-            return await displayBitmapQuad(base64ImageData: base64ImageData)
-        } else if imageMode == "corner" {
-            return await displayBitmapCorner(base64ImageData: base64ImageData)
-        } else if imageMode == "center" {
-            return await displayBitmapCenter(base64ImageData: base64ImageData)
-        } else {
-            return false
-        }
+    /// Rebuild the page from the current text + image container list.
+    private func rebuildPage() {
+        createPageWithText(currentTextContent)
     }
 
     /// Upscale BMP pixel data by 2x (200x100 → 400x200) using nearest-neighbor
@@ -2149,122 +2113,6 @@ class G2: NSObject, SGCManager {
         return dst
     }
 
-    func displayBitmapCenter(base64ImageData: String) async -> Bool {
-        guard let rawData = Data(base64Encoded: base64ImageData) else {
-            Bridge.log("G2: displayBitmapCenter() - failed to decode base64")
-            return false
-        }
-
-        Bridge.log("G2: displayBitmap() - decoded \(rawData.count) bytes from base64")
-
-        Bridge.log(
-            "G2: displayBitmapCenter() - state: startupPageCreated=\(startupPageCreated), pageCreated=\(pageCreated)"
-        )
-
-        // --- Single-tile approach: scale source to fit 200x100, send as one image container ---
-        guard let bmpData = convertToG2Bmp(rawData, containerWidth: 200, containerHeight: 100)
-        else {
-            Bridge.log("G2: displayBitmap() - failed to convert image to BMP")
-            return false
-        }
-
-        // // Center the 200x100 container on the 576x288 canvas
-        let containerID: Int32 = 10
-        let containerName = "img-10"
-        // let containerW: Int32 = 200
-        // let containerH: Int32 = 100
-        // let containerX: Int32 = (576 - containerW) / 2
-        // let containerY: Int32 = (288 - containerH) / 2
-
-        // let imageContainer = EvenHubProto.imageContainerProperty(
-        //     x: containerX, y: containerY,
-        //     width: containerW, height: containerH,
-        //     containerID: containerID, containerName: containerName
-        // )
-
-        // let msg: Data
-        // if !startupPageCreated {
-        //     Bridge.log("G2: displayBitmap() - creating startup page with image container")
-        //     msg = EvenHubProto.createPageMessage(
-        //         imageContainers: [imageContainer], magicRandom: sendManager.nextMagicRandom(),
-        //         appId: activeMenuAppId
-        //     )
-        //     startupPageCreated = true
-        // } else {
-        //     Bridge.log("G2: displayBitmap() - rebuilding page with image container")
-        //     msg = EvenHubProto.rebuildPageMessage(
-        //         imageContainers: [imageContainer], magicRandom: sendManager.nextMagicRandom(),
-        //         appId: activeMenuAppId
-        //     )
-        // }
-        // sendEvenHubCommand(msg)
-        // pageCreated = true
-        // pageHasTextContainer = false
-        // currentTextContent = ""
-        // try? await Task.sleep(nanoseconds: 2_000_000_000) // 1s - give glasses time to process page
-
-
-        if !startupPageCreated {
-            createPageWithText("")
-            Bridge.log("G2: displayBitmap() - page created, waiting 1s before sending image data...")
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-        }
-
-
-        // Send the BMP data
-        let success = await sendImageData(
-            containerID: containerID, containerName: containerName, bmpData: bmpData
-        )
-        if !success {
-            Bridge.log("G2: displayBitmap() - failed sending image data")
-        }
-
-        Bridge.log("G2: displayBitmap() - single tile sent, \(bmpData.count) bytes")
-        return success
-    }
-
-    func displayBitmapCorner(base64ImageData: String) async -> Bool {
-        guard let rawData = Data(base64Encoded: base64ImageData) else {
-            Bridge.log("G2: displayBitmap() - failed to decode base64")
-            return false
-        }
-
-        Bridge.log("G2: displayBitmap() - decoded \(rawData.count) bytes from base64")
-
-        Bridge.log(
-            "G2: displayBitmap() - state: startupPageCreated=\(startupPageCreated), pageCreated=\(pageCreated)"
-        )
-
-        // --- Single-tile approach: scale source to fit 200x100, send as one image container ---
-        guard let bmpData = convertToG2Bmp(rawData, containerWidth: 100, containerHeight: 100)
-        else {
-            Bridge.log("G2: displayBitmap() - failed to convert image to BMP")
-            return false
-        }
-
-        // // Center the 200x100 container on the 576x288 canvas
-        let containerID: Int32 = 10
-        let containerName = "img-10"
-
-        if !startupPageCreated {
-            createPageWithText("")
-            Bridge.log("G2: displayBitmap() - page created, waiting 1s before sending image data...")
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-        }
-
-
-        // Send the BMP data
-        let success = await sendImageData(
-            containerID: containerID, containerName: containerName, bmpData: bmpData
-        )
-        if !success {
-            Bridge.log("G2: displayBitmap() - failed sending image data")
-        }
-
-        Bridge.log("G2: displayBitmap() - single tile sent, \(bmpData.count) bytes")
-        return success
-    }
-
     // MARK: - Bitmap Conversion
 
     /// Scale source image to fit within containerWidth x containerHeight (maintaining aspect ratio),
@@ -2330,93 +2178,6 @@ class G2: NSObject, SGCManager {
         }
 
         return bmp
-    }
-
-    // MARK: - Bitmap Conversion (4-tile approach for G2 - kept for future use)
-
-    private static let tileWidth = 200
-    private static let tileHeight = 100
-    // Total image area: 400x200 (2x2 grid of 200x100 tiles)
-
-    /// Render any image to 400x200 grayscale, then slice into 4 tiles (200x100 each).
-    /// Returns 4 BMP Data objects: [top-left, top-right, bottom-left, bottom-right].
-    private func renderAndSliceTo4Tiles(_ data: Data) -> [Data]? {
-        guard let image = UIImage(data: data), let cgImage = image.cgImage else {
-            Bridge.log("G2: renderAndSliceTo4Tiles - could not decode image")
-            return nil
-        }
-
-        let srcWidth = cgImage.width
-        let srcHeight = cgImage.height
-        let totalW = G2.tileWidth * 2 // 400
-        let totalH = G2.tileHeight * 2 // 200
-
-        // Scale source to fit within 400x200 (maintain aspect ratio)
-        let scale = min(Double(totalW) / Double(srcWidth), Double(totalH) / Double(srcHeight))
-        let scaledW = Int(Double(srcWidth) * scale)
-        let scaledH = Int(Double(srcHeight) * scale)
-        let offsetX = (totalW - scaledW) / 2
-        let offsetY = (totalH - scaledH) / 2
-
-        Bridge.log(
-            "G2: renderAndSliceTo4Tiles - input \(srcWidth)x\(srcHeight) → \(scaledW)x\(scaledH) in \(totalW)x\(totalH)"
-        )
-
-        // Render to 400x200 8-bit grayscale
-        guard
-            let ctx = CGContext(
-                data: nil,
-                width: totalW,
-                height: totalH,
-                bitsPerComponent: 8,
-                bytesPerRow: totalW,
-                space: CGColorSpaceCreateDeviceGray(),
-                bitmapInfo: CGImageAlphaInfo.none.rawValue
-            )
-        else {
-            Bridge.log("G2: renderAndSliceTo4Tiles - failed to create CGContext")
-            return nil
-        }
-
-        ctx.setFillColor(gray: 0, alpha: 1)
-        ctx.fill(CGRect(x: 0, y: 0, width: totalW, height: totalH))
-        ctx.interpolationQuality = .high
-        ctx.draw(cgImage, in: CGRect(x: offsetX, y: offsetY, width: scaledW, height: scaledH))
-
-        guard let renderedImage = ctx.makeImage(),
-              let fullPixels = renderedImage.dataProvider?.data as Data?
-        else {
-            Bridge.log("G2: renderAndSliceTo4Tiles - failed to get pixel data")
-            return nil
-        }
-
-        // Slice into 4 tiles and build BMP for each
-        // CGContext origin is bottom-left, but pixel data is top-left row-first
-        let tw = G2.tileWidth // 200
-        let th = G2.tileHeight // 100
-        let tileOrigins = [
-            (0, 0), // top-left
-            (tw, 0), // top-right
-            (0, th), // bottom-left
-            (tw, th), // bottom-right
-        ]
-
-        var tiles: [Data] = []
-        for (ox, oy) in tileOrigins {
-            // Extract tile pixels from the full 400x200 buffer
-            var tilePixels = Data(capacity: tw * th)
-            for row in 0 ..< th {
-                let srcRowStart = (oy + row) * totalW + ox
-                tilePixels.append(fullPixels[srcRowStart ..< (srcRowStart + tw)])
-            }
-            guard let bmp = build4BitBmp(grayscalePixels: tilePixels, width: tw, height: th) else {
-                Bridge.log("G2: renderAndSliceTo4Tiles - failed to build BMP for tile")
-                return nil
-            }
-            tiles.append(bmp)
-        }
-
-        return tiles
     }
 
     /// Build a 4-bit indexed BMP file from 8-bit grayscale pixel data.
@@ -2668,54 +2429,20 @@ class G2: NSObject, SGCManager {
             content: text
         )
 
-        var imageContainers: [Data] = []
-        if imageMode == "quad" {
-            // 2x2 grid of 200x100 tiles covering 400x200
-            let container1 = EvenHubProto.imageContainerProperty(
-                x: 0, y: 0, width: 200, height: 100,
-                containerID: 10, containerName: "img-10"
+        // Build the page's image containers from the live tracked list.
+        let imageContainerProps: [Data] = imageContainers.map { c in
+            EvenHubProto.imageContainerProperty(
+                x: c.x, y: c.y, width: c.width, height: c.height,
+                containerID: c.id, containerName: c.name
             )
-            let container2 = EvenHubProto.imageContainerProperty(
-                x: 200, y: 0, width: 200, height: 100,
-                containerID: 11, containerName: "img-11"
-            )
-            let container3 = EvenHubProto.imageContainerProperty(
-                x: 0, y: 100, width: 200, height: 100,
-                containerID: 12, containerName: "img-12"
-            )
-            let container4 = EvenHubProto.imageContainerProperty(
-                x: 200, y: 100, width: 200, height: 100,
-                containerID: 13, containerName: "img-13"
-            )
-            imageContainers = [container1, container2, container3, container4]
-        } else if imageMode == "center" {
-            // Center the 200x100 container on the 576x288 canvas
-            let containerW: Int32 = 200
-            let containerH: Int32 = 100
-            let containerX: Int32 = (576 - containerW) / 2
-            let containerY: Int32 = (288 - containerH) / 2
-            let container1 = EvenHubProto.imageContainerProperty(
-                x: containerX, y: containerY,
-                width: containerW, height: containerH,
-                containerID: 10, containerName: "img-10"
-            )
-            imageContainers = [container1]
-        } else if imageMode == "corner" {
-            // TODO: account for imageCorner:
-            let container1 = EvenHubProto.imageContainerProperty(
-                x: 0, y: 0, width: 100, height: 100,
-                containerID: 10, containerName: "img-10"
-            )
-            imageContainers = [container1]
         }
-
 
         let msg: Data
         if !startupPageCreated {
             Bridge.log("G2: createPageWithText - using createPageMessage (first time)")
             msg = EvenHubProto.createPageMessage(
                 textContainers: [tc],
-                imageContainers: imageContainers,
+                imageContainers: imageContainerProps,
                 magicRandom: sendManager.nextMagicRandom(),
                 appId: activeMenuAppId
             )
@@ -2724,7 +2451,7 @@ class G2: NSObject, SGCManager {
             Bridge.log("G2: createPageWithText - using rebuildPageMessage")
             msg = EvenHubProto.rebuildPageMessage(
                 textContainers: [tc],
-                imageContainers: imageContainers,
+                imageContainers: imageContainerProps,
                 magicRandom: sendManager.nextMagicRandom(),
                 appId: activeMenuAppId
             )
@@ -2875,6 +2602,7 @@ class G2: NSObject, SGCManager {
         startupPageCreated = false
         pageCreated = false
         pageHasTextContainer = false
+        imageContainers = []
         dashboardShowing = 0
         heartbeatCounter = 0
         DeviceStore.shared.apply("glasses", "connected", false)
@@ -4162,6 +3890,7 @@ extension G2: CBCentralManagerDelegate {
             self.startupPageCreated = false
             self.pageCreated = false
             self.pageHasTextContainer = false
+            self.imageContainers = []
             self.dashboardShowing = 0
             DeviceStore.shared.apply("glasses", "connected", false)
             DeviceStore.shared.apply("glasses", "fullyBooted", false)

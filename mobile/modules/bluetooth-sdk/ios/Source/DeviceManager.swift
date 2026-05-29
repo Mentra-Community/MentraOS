@@ -19,6 +19,11 @@ struct ViewState {
     var text: String
     var data: String?
     var animationData: [String: Any]?
+    // Optional bitmap_view container position/size (used by G2; ignored by others)
+    var bmpX: Int32?
+    var bmpY: Int32?
+    var bmpWidth: Int32?
+    var bmpHeight: Int32?
 }
 
 @MainActor
@@ -682,7 +687,13 @@ struct ViewState {
                     return
                 }
                 Bridge.log("MAN: Processing bitmap_view with base64 data, length: \(data.count)")
-                await sgc?.displayBitmap(base64ImageData: data)
+                await sgc?.displayBitmap(
+                    base64ImageData: data,
+                    x: currentViewState.bmpX,
+                    y: currentViewState.bmpY,
+                    width: currentViewState.bmpWidth,
+                    height: currentViewState.bmpHeight
+                )
             case "clear_view":
                 sgc?.clearDisplay()
             default:
@@ -974,6 +985,12 @@ struct ViewState {
         var title = layout["title"] as? String ?? " "
         var data = layout["data"] as? String ?? ""
 
+        // Optional bitmap_view container position/size (forwarded to the SGC; used by G2).
+        let bmpX = (layout["x"] as? NSNumber).map { $0.int32Value }
+        let bmpY = (layout["y"] as? NSNumber).map { $0.int32Value }
+        let bmpWidth = (layout["width"] as? NSNumber).map { $0.int32Value }
+        let bmpHeight = (layout["height"] as? NSNumber).map { $0.int32Value }
+
         text = parsePlaceholders(text)
         topText = parsePlaceholders(topText)
         bottomText = parsePlaceholders(bottomText)
@@ -981,7 +998,8 @@ struct ViewState {
 
         var newViewState = ViewState(
             topText: topText, bottomText: bottomText, title: title, layoutType: layoutType,
-            text: text, data: data, animationData: nil
+            text: text, data: data, animationData: nil,
+            bmpX: bmpX, bmpY: bmpY, bmpWidth: bmpWidth, bmpHeight: bmpHeight
         )
 
         if layoutType == "bitmap_animation" {

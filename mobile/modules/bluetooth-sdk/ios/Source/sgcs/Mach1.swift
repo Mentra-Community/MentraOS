@@ -430,7 +430,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
         }
     }
 
-    func displayBitmap(base64ImageData: String) async -> Bool {
+    func displayBitmap(base64ImageData: String, x _: Int32? = nil, y _: Int32? = nil, width _: Int32? = nil, height _: Int32? = nil) async -> Bool {
         guard let bmpData = Data(base64Encoded: base64ImageData) else {
             Bridge.log("MACH1: Failed to decode base64 image data")
             return false

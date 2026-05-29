@@ -85,7 +85,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         sendTextWall("\(top)\n\(bottom)")
     }
 
-    func displayBitmap(base64ImageData: String) async -> Bool {
+    func displayBitmap(base64ImageData: String, x _: Int32? = nil, y _: Int32? = nil, width _: Int32? = nil, height _: Int32? = nil) async -> Bool {
         guard let imageData = Data(base64Encoded: base64ImageData),
               let image = UIImage(data: imageData)
         else {

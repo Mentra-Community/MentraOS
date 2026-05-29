@@ -99,7 +99,13 @@ class Simulated : SGCManager() {
         Bridge.log("sendDoubleTextWall")
     }
 
-    override fun displayBitmap(base64ImageData: String): Boolean {
+    override fun displayBitmap(
+            base64ImageData: String,
+            x: Int?,
+            y: Int?,
+            width: Int?,
+            height: Int?
+    ): Boolean {
         Bridge.log("displayBitmap")
         return false
     }

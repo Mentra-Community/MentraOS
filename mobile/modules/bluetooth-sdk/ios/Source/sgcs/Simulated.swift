@@ -137,7 +137,7 @@ class Simulated: SGCManager {
         Bridge.log("sendDoubleTextWall")
     }
 
-    func displayBitmap(base64ImageData _: String) async -> Bool {
+    func displayBitmap(base64ImageData _: String, x _: Int32?, y _: Int32?, width _: Int32?, height _: Int32?) async -> Bool {
         Bridge.log("displayBitmap")
         return false
     }

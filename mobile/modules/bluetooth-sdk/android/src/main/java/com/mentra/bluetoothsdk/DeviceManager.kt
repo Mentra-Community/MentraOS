@@ -623,7 +623,12 @@ class DeviceManager {
             var layoutType: String,
             var text: String,
             var data: String?,
-            var animationData: Map<String, Any>?
+            var animationData: Map<String, Any>?,
+            // Optional bitmap_view container position/size (used by G2; ignored by others)
+            var bmpX: Int? = null,
+            var bmpY: Int? = null,
+            var bmpWidth: Int? = null,
+            var bmpHeight: Int? = null
     )
     // MARK: - End Unique
 
@@ -872,7 +877,15 @@ class DeviceManager {
                 sgc?.sendTextWall("${currentViewState.title}\n\n${currentViewState.text}")
             }
             "bitmap_view" -> {
-                currentViewState.data?.let { data -> sgc?.displayBitmap(data) }
+                currentViewState.data?.let { data ->
+                    sgc?.displayBitmap(
+                            data,
+                            currentViewState.bmpX,
+                            currentViewState.bmpY,
+                            currentViewState.bmpWidth,
+                            currentViewState.bmpHeight
+                    )
+                }
             }
             "clear_view" -> sgc?.clearDisplay()
             else -> Bridge.log("MAN: UNHANDLED LAYOUT_TYPE ${currentViewState.layoutType}")
@@ -1195,7 +1208,26 @@ class DeviceManager {
         val title = parsePlaceholders(layout.getString("title", " "))
         val data = layout["data"] as? String
 
-        var newViewState = ViewState(topText, bottomText, title, layoutType ?: "", text, data, null)
+        // Optional bitmap_view container position/size (forwarded to the SGC; used by G2).
+        val bmpX = (layout["x"] as? Number)?.toInt()
+        val bmpY = (layout["y"] as? Number)?.toInt()
+        val bmpWidth = (layout["width"] as? Number)?.toInt()
+        val bmpHeight = (layout["height"] as? Number)?.toInt()
+
+        var newViewState =
+                ViewState(
+                        topText,
+                        bottomText,
+                        title,
+                        layoutType ?: "",
+                        text,
+                        data,
+                        null,
+                        bmpX,
+                        bmpY,
+                        bmpWidth,
+                        bmpHeight
+                )
 
         val currentState = viewStates[stateIndex]
 

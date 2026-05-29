@@ -42,7 +42,17 @@ abstract class SGCManager {
     abstract fun clearDisplay()
     abstract fun sendTextWall(text: String)
     abstract fun sendDoubleTextWall(top: String, bottom: String)
-    abstract fun displayBitmap(base64ImageData: String): Boolean
+    /**
+     * Display a bitmap. Optional [x]/[y]/[width]/[height] position and size the target
+     * container (used by G2; other SGCs ignore positioning and render the bitmap as before).
+     */
+    abstract fun displayBitmap(
+            base64ImageData: String,
+            x: Int? = null,
+            y: Int? = null,
+            width: Int? = null,
+            height: Int? = null
+    ): Boolean
     abstract fun showDashboard()
     abstract fun setDashboardPosition(height: Int, depth: Int)
 

@@ -926,7 +926,7 @@ class MentraLive: NSObject, SGCManager {
     func setSilentMode(_: Bool) {}
     func exit() {}
     func showDashboard() {}
-    func displayBitmap(base64ImageData _: String) async -> Bool {
+    func displayBitmap(base64ImageData _: String, x _: Int32? = nil, y _: Int32? = nil, width _: Int32? = nil, height _: Int32? = nil) async -> Bool {
         return true
     }
 

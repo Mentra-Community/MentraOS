@@ -879,7 +879,13 @@ class R1 : ControllerManager() {
     override fun clearDisplay() {}
     override fun sendTextWall(text: String) {}
     override fun sendDoubleTextWall(top: String, bottom: String) {}
-    override fun displayBitmap(base64ImageData: String): Boolean = false
+    override fun displayBitmap(
+            base64ImageData: String,
+            x: Int?,
+            y: Int?,
+            width: Int?,
+            height: Int?
+    ): Boolean = false
     override fun showDashboard() {}
     override fun setDashboardPosition(height: Int, depth: Int) {}
     override fun setHeadUpAngle(angle: Int) {}
