@@ -1031,13 +1031,17 @@ struct ViewState {
         sgc?.showDashboard()
     }
 
+    func showNotificationsPanel() {
+        sgc?.showNotificationsPanel()
+    }
+
     func ping() {
         sgc?.ping()
     }
 
     func dbg1() {
-        sgc?.disconnectController()
-        connectDefaultController()
+        // sgc?.disconnectController()
+        // connectDefaultController()
     }
 
     func dbg2() {}

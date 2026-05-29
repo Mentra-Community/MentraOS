@@ -300,6 +300,14 @@ class MentraBluetoothSdk private constructor(
         )
     }
 
+    internal fun setCalendarEvents(events: List<CalendarEvent>) {
+        DeviceStore.apply(
+            ObservableStore.BLUETOOTH_CATEGORY,
+            "calendar_events",
+            events.map { it.toMap() },
+        )
+    }
+
     fun setHeadUpAngle(angleDegrees: Int) {
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "head_up_angle", angleDegrees)
     }

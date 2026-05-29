@@ -543,6 +543,8 @@ const en = {
     contextualDashboardSubtitle: "Show a summary of your phone notifications when you look up.",
     metricSystemLabel: "Use Metric System",
     metricSystemSubtitle: "Metric System (°C) or Imperial System (°F).",
+    twelveHourTimeLabel: "Use 12-Hour Time",
+    twelveHourTimeSubtitle: "Use a 12-hour time format (AM/PM) instead of a 24-hour time format",
     adjustHeadAngleLabel: "Adjust Head-Up Angle",
     adjustHeadAngleSubtitle: "Adjust the angle at which the contextual dashboard appears when you look up.",
     reconnectOnAppForeground: "Reconnect on App Foreground",

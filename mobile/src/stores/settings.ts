@@ -307,6 +307,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  twelve_hour_time: {
+    key: "twelve_hour_time",
+    defaultValue: () => true,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   enforce_local_transcription: {
     key: "enforce_local_transcription",
     defaultValue: () => false,
@@ -388,6 +395,13 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: true,
     persist: true,
+  },
+  calendar_events: {
+    key: "calendar_events",
+    defaultValue: () => [],
+    writable: true,
+    saveOnServer: false,
+    persist: false,
   },
   // button settings
   // Legacy persisted/cloud key; hardware behavior is now controlled by gallery_mode plus capture settings.
@@ -589,7 +603,10 @@ const CORE_SETTINGS_KEYS: string[] = [
   SETTINGS.dashboard_height.key,
   SETTINGS.dashboard_depth.key,
   SETTINGS.menu_apps.key,
+  SETTINGS.calendar_events.key,
   SETTINGS.use_native_dashboard.key,
+  SETTINGS.twelve_hour_time.key,
+  SETTINGS.metric_system.key,
   // button:
   SETTINGS.button_photo_size.key,
   // Legacy MentraLive native code reads the object form when syncing video settings.

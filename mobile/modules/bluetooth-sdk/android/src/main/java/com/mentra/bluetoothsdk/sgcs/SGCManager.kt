@@ -61,6 +61,15 @@ abstract class SGCManager {
     // Dashboard Menu (default no-op — only G2 supports this)
     open fun setDashboardMenu(items: List<Map<String, Any>>) {}
 
+    // Calendar Events (default no-op — only G2 supports this)
+    open fun sendCalendarEvents(events: List<Map<String, Any>>) {}
+
+    // Dashboard display settings (default no-op — only G2 supports this)
+    open fun sendDashboardDisplaySettings() {}
+
+    // Notification Panel (default no-op — only G2 supports this)
+    open fun showNotificationsPanel() {}
+
     // Controller bridging (default no-op — only G2 supports pairing with a ring controller)
     open fun connectController() {}
     open fun disconnectController() {}

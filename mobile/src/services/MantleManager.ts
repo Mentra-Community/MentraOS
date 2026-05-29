@@ -233,7 +233,7 @@ class MantleManager {
       subscribeGlassesStatus: (onChange) => BluetoothSdk.onGlassesStatus(onChange),
       restartTranscriber: () => BluetoothSdk.restartTranscriber(),
       setMicRequirements: (requirements) =>
-        BluetoothSdk.update("core", {
+        BluetoothSdk.updateBluetoothSettings({
           should_send_pcm: requirements.shouldSendPcm,
           should_send_lc3: requirements.shouldSendLc3,
           should_send_transcript: requirements.shouldSendTranscript,
@@ -1103,10 +1103,46 @@ class MantleManager {
       console.log("MANTLE: sendCalendarEvents()")
       const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT)
       const calendarIds = calendars.map((calendar: Calendar.Calendar) => calendar.id)
-      // from 2 hours ago to 1 week from now:
+      // from 2 hours ago to 3 days from now:
       const startDate = new Date(Date.now() - 2 * 60 * 60 * 1000)
-      const endDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-      const events = await Calendar.getEventsAsync(calendarIds, startDate, endDate)
+      const endDate = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)
+      let events = await Calendar.getEventsAsync(calendarIds, startDate, endDate)
+
+      // sort by start date (soonest first)
+      events.sort((a: Calendar.Event, b: Calendar.Event) => {
+        return new Date(a.startDate as string | Date).getTime() - new Date(b.startDate as string | Date).getTime()
+      })
+
+      // limit to first 3 events:
+      events = events.slice(0, 3)
+
+      // Shape into the {title, location?, time, endDate} contract the SDK expects.
+      // time is a pre-formatted display label; endDate is unix seconds.
+      const shapedEvents = events.map((ev: Calendar.Event) => {
+        const start = new Date(ev.startDate as string | Date)
+        const end = new Date(ev.endDate as string | Date)
+        let time: string
+
+        if (ev.allDay) {
+          time = "All day"
+        } else {
+          time = start.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})
+        }
+        // add the duration of the event, i.e. "10:00AM - 11:00AM"
+        const duration = end.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})
+        if (!ev.allDay) {
+          time += ` - ${duration}`
+        }
+        return {
+          title: ev.title ?? "",
+          ...(ev.location ? {location: ev.location} : {}),
+          time,
+          endDate: Math.floor(end.getTime() / 1000),
+        }
+      })
+      void BluetoothSdk.setCalendarEvents(shapedEvents).catch(error => {
+        console.warn("MANTLE: Failed to sync calendar events to glasses", error)
+      })
       restComms.sendCalendarData({events, calendars})
 
       // Direct forward to local miniapps. Emit one event per calendar entry

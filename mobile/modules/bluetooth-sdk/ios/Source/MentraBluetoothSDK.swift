@@ -232,6 +232,10 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.showDashboard()
     }
 
+    public func showNotificationsPanel() {
+        DeviceManager.shared.showNotificationsPanel()
+    }
+
     func setBrightness(_ level: Int, autoMode: Bool? = nil) async throws {
         if let autoMode {
             DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "auto_brightness", autoMode)
@@ -257,6 +261,14 @@ public final class MentraBluetoothSDK {
             ObservableStore.bluetoothCategory,
             "menu_apps",
             items.map(\.dictionary)
+        )
+    }
+
+    func setCalendarEvents(_ events: [CalendarEvent]) async throws {
+        DeviceStore.shared.apply(
+            ObservableStore.bluetoothCategory,
+            "calendar_events",
+            events.map(\.dictionary)
         )
     }
 

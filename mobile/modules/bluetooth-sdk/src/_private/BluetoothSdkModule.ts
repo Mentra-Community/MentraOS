@@ -6,6 +6,7 @@ import {
   BluetoothSdkModuleEvents,
   BluetoothStatus,
   ButtonPhotoSize,
+  CalendarEvent,
   CameraFov,
   CameraFovSetting,
   ConnectOptions,
@@ -76,6 +77,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setAutoBrightness(enabled: boolean): Promise<void>
   setDashboardPosition(height: number, depth: number): Promise<void>
   setDashboardMenu(items: DashboardMenuItem[]): Promise<void>
+  setCalendarEvents(events: CalendarEvent[]): Promise<void>
   setHeadUpAngle(angleDegrees: number): Promise<void>
   setScreenDisabled(disabled: boolean): Promise<void>
   ping(): Promise<void>
@@ -348,6 +350,10 @@ NativeBluetoothSdkModule.setDashboardPosition = function (height: number, depth:
 
 NativeBluetoothSdkModule.setDashboardMenu = function (items: DashboardMenuItem[]) {
   return this.updateBluetoothSettings({menu_apps: items.map(dashboardMenuItemToNative)})
+}
+
+NativeBluetoothSdkModule.setCalendarEvents = function (events: CalendarEvent[]) {
+  return this.updateBluetoothSettings({calendar_events: events})
 }
 
 NativeBluetoothSdkModule.setHeadUpAngle = function (angleDegrees: number) {

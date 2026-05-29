@@ -774,8 +774,16 @@ export interface CoreDashboardMenuItem {
   running: boolean
 }
 
+export interface CalendarEvent {
+  title: string
+  location?: string
+  time: string
+  endDate: number
+}
+
 export interface CoreSettings {
   menu_apps: CoreDashboardMenuItem[]
+  calendar_events: CalendarEvent[]
 }
 
 export interface Device {
@@ -866,6 +874,9 @@ export type BluetoothSettingsUpdate = Partial<{
   dashboard_height: number
   dashboard_depth: number
   menu_apps: DashboardMenuItem[] | CoreDashboardMenuItem[] | Array<Record<string, unknown>> | null
+  calendar_events: CalendarEvent[]
+  metric_system: boolean
+  twelve_hour_time: boolean
   gallery_mode: boolean
   voice_activity_detection_enabled: boolean
   button_photo_size: ButtonPhotoSize

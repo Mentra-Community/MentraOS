@@ -58,6 +58,12 @@ class ObservableStore {
         values["\(Self.normalizeCategory(category)).\(key)"]
     }
 
+    func wouldSkipSet(_ category: String, _ key: String, _ value: Any) -> Bool {
+        let fullKey = "\(Self.normalizeCategory(category)).\(key)"
+        guard let oldValue = values[fullKey] else { return false }
+        return areEqual(oldValue, value)
+    }
+
     func getCategory(_ category: String) -> [String: Any] {
         var result: [String: Any] = [:]
         let prefix = "\(Self.normalizeCategory(category))."
