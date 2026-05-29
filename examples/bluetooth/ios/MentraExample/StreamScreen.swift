@@ -127,18 +127,9 @@ struct StreamScreen: View {
                     .frame(height: 160)
                     .background(Color.black)
                     .clipShape(RoundedRectangle(cornerRadius: 22))
-                if !model.streamPreviewReady {
-                    Color.black.opacity(0.62)
-                        .clipShape(RoundedRectangle(cornerRadius: 22))
-                    Text(model.streamStatus)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.white)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 24)
-                }
                 previewChrome(
                     label: model.streamPreviewReady ? "LIVE" : "STARTING",
-                    detail: model.streamPreviewReady ? nil : "Waiting for first frame"
+                    detail: model.streamPreviewReady ? nil : "Starting phone preview"
                 )
             }
         } else if let livePreviewUrl {
@@ -252,7 +243,7 @@ struct StreamScreen: View {
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(model.streamStatus).font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.ink)
-                    Text("uptime \(elapsedText(model.streamStartedAt)) · SDK keep-alive").font(.system(size: 11, weight: .medium)).foregroundColor(AppColor.muted)
+                    Text("uptime \(elapsedText(model.streamStartedAt)) · SDK-managed stream").font(.system(size: 11, weight: .medium)).foregroundColor(AppColor.muted)
                 }
             }
             .padding(.vertical, 12).padding(.horizontal, 16)

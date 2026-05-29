@@ -225,11 +225,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var pollGeneration = 0
     private var directPhotoTimeoutTask: Task<Void, Never>?
     private var previewHealthTask: Task<Void, Never>?
-    private var directStreamFrameWatchdogTask: Task<Void, Never>?
     private var directStreamStartTask: Task<Void, Never>?
     private var directStreamStopTask: Task<Void, Never>?
     private var directStreamFirstFrameSeen = false
-    private var lastDirectStreamFrameWatchdogRefresh = Date.distantPast
+    private var lastDirectStreamFrameStatusRefresh = Date.distantPast
     private var scanSession: ScanSession?
     private var micStartedAt: Date?
     private var micElapsedTask: Task<Void, Never>?
@@ -374,7 +373,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         activeAction = label
         lastAction = "Running: \(label)"
         append(tag: "TX", text: label)
-        stopDirectStreamFrameWatchdog()
         activeStreamId = nil
         applyDisconnectedState(status: "Disconnecting")
         Task { @MainActor [weak self] in
@@ -689,7 +687,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         if streamRequested || streamStartedAt != nil {
             runAction("Stop stream") {
                 stopPreviewHealthPoll()
-                stopDirectStreamFrameWatchdog()
                 if isDirectPhoneWebRtcSelected {
                     directStreamStartTask?.cancel()
                     directStreamStartTask = nil
@@ -800,7 +797,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 let url = "http://\(host):\(ports.publicPort)/whip/endpoint"
                 activeStreamId = streamId
                 directStreamFirstFrameSeen = false
-                lastDirectStreamFrameWatchdogRefresh = .distantPast
+                lastDirectStreamFrameStatusRefresh = .distantPast
                 directStreamReceiverRunning = true
                 directStreamWhipUrl = url
                 streamPreviewReady = false
@@ -838,7 +835,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         streamResolvedConfig = nil
         streamRequested = false
         streamStatus = "WebRTC phone receiver failed: \(message)"
-        stopDirectStreamFrameWatchdog()
         throw ExampleActionError(message: "WebRTC phone receiver failed: \(message)")
     }
 
@@ -852,7 +848,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         )
         streamRequested = true
         streamStartedAt = streamStartedAt ?? Date()
-        streamStatus = "WebRTC stream requested; waiting for first frame"
+        streamStatus = "WebRTC stream requested; waiting for phone preview"
         append(tag: "TX", text: "startStream direct phone \(streamUrl)")
     }
 
@@ -862,14 +858,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         directStreamStopTask?.cancel()
         directStreamStopTask = nil
         directStreamFirstFrameSeen = false
-        lastDirectStreamFrameWatchdogRefresh = .distantPast
+        lastDirectStreamFrameStatusRefresh = .distantPast
         directWhipProxy.stop()
         directWhipReceiver.stop()
         directStreamReceiverRunning = false
         directStreamWhipUrl = "Phone receiver not started"
         streamPreviewReady = false
         streamStatus = status
-        stopDirectStreamFrameWatchdog()
     }
 
     private func handleDirectReceiverStatus(_ message: String) {
@@ -886,7 +881,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         guard isDirectPhoneWebRtcSelected, directStreamReceiverRunning else { return }
         let firstFrame = !directStreamFirstFrameSeen
         let now = Date()
-        guard firstFrame || now.timeIntervalSince(lastDirectStreamFrameWatchdogRefresh) >= 1 else {
+        guard firstFrame || now.timeIntervalSince(lastDirectStreamFrameStatusRefresh) >= 1 else {
             return
         }
         directStreamFirstFrameSeen = true
@@ -896,32 +891,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         if firstFrame {
             append(tag: "LIVE", text: "first WebRTC frame received on phone")
         }
-        lastDirectStreamFrameWatchdogRefresh = now
-        scheduleDirectStreamFrameWatchdog()
-    }
-
-    private func scheduleDirectStreamFrameWatchdog() {
-        directStreamFrameWatchdogTask?.cancel()
-        directStreamFrameWatchdogTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 7_000_000_000)
-            await MainActor.run {
-                guard let self,
-                      self.isDirectPhoneWebRtcSelected,
-                      self.directStreamReceiverRunning,
-                      self.activeStreamId != nil
-                else {
-                    return
-                }
-                self.streamPreviewReady = false
-                self.streamStatus = "WebRTC preview stalled: no video frames received from glasses"
-                self.append(tag: "TX", text: "WebRTC preview stalled")
-            }
-        }
-    }
-
-    private func stopDirectStreamFrameWatchdog() {
-        directStreamFrameWatchdogTask?.cancel()
-        directStreamFrameWatchdogTask = nil
+        lastDirectStreamFrameStatusRefresh = now
     }
 
     private func startStream(streamUrl: String, streamId: String, protocol selectedProtocol: ExampleStreamProtocol) {
@@ -992,7 +962,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         guard streamActive else { return false }
 
         stopPreviewHealthPoll()
-        stopDirectStreamFrameWatchdog()
         directStreamStartTask?.cancel()
         directStreamStartTask = nil
         directStreamStopTask?.cancel()
@@ -1490,7 +1459,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private func applyDisconnectedState(status: String) {
         glassesValues = .disconnected(connection: .disconnected)
         stopPreviewHealthPoll()
-        stopDirectStreamFrameWatchdog()
         activeStreamId = nil
         streamRequested = false
         streamPreviewReady = false
@@ -1746,7 +1714,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             streamStartedAt = nil
             activeStreamId = nil
             stopPreviewHealthPoll()
-            stopDirectStreamFrameWatchdog()
             if directStreamReceiverRunning {
                 stopDirectPhoneStreamReceiver(status: "WebRTC direct phone stopped")
             }
@@ -1767,7 +1734,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             } else if streamPreviewReady {
                 streamStatus = "WebRTC direct phone live"
             } else {
-                streamStatus = "WebRTC stream requested; waiting for first frame"
+                streamStatus = "WebRTC stream requested; waiting for phone preview"
             }
         } else {
             streamStatus = summary
