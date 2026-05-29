@@ -151,6 +151,16 @@ export default function DisplayPage() {
             }>
             showBitmapView — 100×100 bottom-right
           </Button>
+          {/* New container: 100×100 bottom-left. */}
+          <Button
+            onClick={() =>
+              invoke("showBitmapView", [
+                makeBitmap(100, 100, "BL"),
+                {x: 0, y: 188, width: 100, height: 100},
+              ])
+            }>
+            showBitmapView — 100×100 bottom-left
+          </Button>
           {/* Reuse demo: re-send a fresh label to the default top-left rect — updates in place. */}
           <Button
             onClick={() => {
