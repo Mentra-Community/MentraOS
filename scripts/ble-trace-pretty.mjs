@@ -207,6 +207,16 @@ function summarize(trace) {
     return parts.join(' ');
   }
 
+  if (trace.layer === 'ble_transport_state') {
+    const parts = [];
+    for (const key of ['connected', 'source', 'conidx', 'heartbeatConnected']) {
+      if (trace.payload[key] != null) {
+        parts.push(`${key}=${singleLine(trace.payload[key])}`);
+      }
+    }
+    return parts.join(' ');
+  }
+
   if (
     trace.layer === 'wifi_http_output' ||
     trace.layer === 'wifi_http_input' ||
