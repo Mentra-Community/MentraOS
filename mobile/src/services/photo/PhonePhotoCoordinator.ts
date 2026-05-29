@@ -112,6 +112,7 @@ export class PhonePhotoCoordinator {
         webhookUrl: uploadUrl,
         authToken: uploadToken,
         compress: toNativeCompression(opts.compress),
+        save: opts.saveToGallery ?? false,
         sound: opts.sound ?? true,
       })
     } catch (err) {

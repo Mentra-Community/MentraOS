@@ -21,6 +21,7 @@ abstract class SGCManager {
             authToken: String?,
             compress: String?,
             flash: Boolean,
+            save: Boolean,
             sound: Boolean,
             exposureTimeNs: Long?,
     )

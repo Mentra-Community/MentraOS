@@ -61,6 +61,7 @@ public struct PhotoRequest {
     public let authToken: String?
     public let compress: PhotoCompression?
     public let flash: Bool
+    public let save: Bool
     public let sound: Bool
     /// Sensor exposure time for this capture only (ns), or nil for auto exposure
     public let exposureTimeNs: Double?
@@ -73,6 +74,7 @@ public struct PhotoRequest {
         authToken: String? = nil,
         compress: PhotoCompression? = nil,
         flash: Bool = true,
+        save: Bool = false,
         sound: Bool,
         exposureTimeNs: Double? = nil
     ) {
@@ -83,6 +85,7 @@ public struct PhotoRequest {
         self.authToken = authToken
         self.compress = compress
         self.flash = flash
+        self.save = save
         self.sound = sound
         self.exposureTimeNs = exposureTimeNs
     }

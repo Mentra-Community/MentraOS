@@ -520,6 +520,13 @@ class LocalMiniappRuntime {
     // Stop audio for this app
     getRuntimeHooks().audioPlayback?.stopForApp(packageName)
 
+    // Release phone-owned camera streams. If a miniapp closes/crashes without
+    // sending STREAM_STOP, the host coordinator must drop its subscriber/owner
+    // so glasses publishing and managed Cloudflare inputs do not leak.
+    void getRuntimeHooks().streaming?.stop(packageName).catch((error) => {
+      console.warn(`${LOG_TAG}: failed to stop stream for ${packageName} on unregister`, error)
+    })
+
     // Detach the per-app nav event forwarder but leave the native nav session
     // running. The user may have just closed the mini-app UI and will reopen
     // it; stopping the session here would kill an active trip mid-route.

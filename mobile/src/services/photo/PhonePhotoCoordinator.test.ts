@@ -123,6 +123,7 @@ describe("PhonePhotoCoordinator", () => {
         size: string
         webhookUrl: string
         authToken: string
+        save: boolean
       }
       expect(arg.requestId).toBe("rq-test-1")
       expect(arg.appId).toBe("com.a")
@@ -131,6 +132,15 @@ describe("PhonePhotoCoordinator", () => {
         "https://cloud.test/api/v2/client/photo/upload/rq-test-1",
       )
       expect(arg.authToken).toBe("fake.upload.token")
+      expect(arg.save).toBe(false)
+    })
+
+    test("passes saveToGallery through to the native take_photo command", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {saveToGallery: true})
+
+      expect(requestPhotoNative).toHaveBeenCalledTimes(1)
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({save: true})
     })
 
     test("owns(requestId) true mid-flight, false after completion", async () => {

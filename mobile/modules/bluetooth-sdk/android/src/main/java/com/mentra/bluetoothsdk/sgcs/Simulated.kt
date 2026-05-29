@@ -35,10 +35,11 @@ class Simulated : SGCManager() {
             authToken: String?,
             compress: String?,
             flash: Boolean,
+            save: Boolean,
             sound: Boolean,
             exposureTimeNs: Long?,
     ) {
-        Bridge.log("requestPhoto flash=$flash, sound=$sound")
+        Bridge.log("requestPhoto flash=$flash, save=$save, sound=$sound")
     }
 
     override fun startStream(message: MutableMap<String, Any>) {

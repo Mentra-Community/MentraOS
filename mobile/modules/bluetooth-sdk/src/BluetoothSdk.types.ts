@@ -243,6 +243,7 @@ export type PhotoRequestParams = {
   webhookUrl: string | null
   authToken: string | null
   compress: PhotoCompression
+  save?: boolean
   sound: boolean
   exposureTimeNs?: number | null
 }
