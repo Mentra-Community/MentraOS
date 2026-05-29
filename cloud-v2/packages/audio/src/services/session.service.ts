@@ -169,14 +169,17 @@ export async function tryWsUpgrade(
     return new Response("websocket upgrade required", { status: 426 });
   }
 
-  // Auth: prefer the standard Bearer header. (Browser WebSocket can't set
-  // headers; we'd add `?token=` query support if browsers ever dial this,
-  // but the audio WS is for native clients only.)
+  // Auth: prefer the standard Bearer header, fall back to a `?token=` query
+  // param. The mobile authenticates its WS via query param (React Native's
+  // WebSocket can't reliably set headers), matching the v1 glasses-ws
+  // pattern. Native test clients use the header.
   const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
+  const token = authHeader?.startsWith("Bearer ")
+    ? authHeader.slice("Bearer ".length).trim()
+    : url.searchParams.get("token");
+  if (!token) {
     return new Response("missing or malformed Authorization", { status: 401 });
   }
-  const token = authHeader.slice("Bearer ".length).trim();
 
   let verified: Awaited<ReturnType<typeof verifyAccessTokenSignature>>;
   try {
