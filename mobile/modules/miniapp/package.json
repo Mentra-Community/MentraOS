@@ -37,7 +37,8 @@
     "dev": "bun x tsc --watch",
     "typecheck": "bun x tsc --noEmit",
     "test": "bun test",
-    "prepare": "bun run build"
+    "prepare": "bun run build",
+    "prepublishOnly": "bun run build"
   },
   "peerDependencies": {
     "react": ">=18.0.0"

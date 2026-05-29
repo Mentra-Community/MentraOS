@@ -4,6 +4,10 @@ Per-module reference for the `@mentra/miniapp` SDK. Each page documents one
 module on `session.<module>`: what the methods take, what they return, what
 events fire, and the error shapes to expect.
 
+> New here? Start at the [SDK developer guide](../README.md) for setup + the
+> doc map, or the [package API reference](../../mobile/modules/miniapp/README.md)
+> for the full session/module surface.
+
 ## Architecture
 
 - [two-layer.md](./two-layer.md) — two-layer miniapp model
