@@ -10,6 +10,9 @@ import Combine
 import CoreBluetooth
 import Foundation
 import UIKit
+#if SWIFT_PACKAGE
+import MentraBluetoothSDKCoreObjC
+#endif
 
 struct ViewState {
     var topText: String
@@ -281,7 +284,9 @@ struct ViewState {
     private var micReinitTimer: Timer?
 
     /// STT:
+    #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
     private var transcriber: SherpaOnnxTranscriber?
+    #endif
 
     var viewStates: [ViewState] = [
         ViewState(
@@ -310,6 +315,7 @@ struct ViewState {
         // MemoryMonitor.start()
 
         // Initialize SherpaOnnx Transcriber
+        #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let window = windowScene.windows.first,
            let rootViewController = window.rootViewController
@@ -324,6 +330,7 @@ struct ViewState {
             transcriber.initialize()
             Bridge.log("SherpaOnnxTranscriber fully initialized")
         }
+        #endif
 
         // Initialize persistent LC3 converter for unified audio encoding
         lc3Converter = PcmConverter()
@@ -395,9 +402,11 @@ struct ViewState {
         handleSendingPcm(pcmData)
 
         // Send PCM to local transcriber.
+#if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
         if shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive {
             transcriber?.acceptAudio(pcm16le: pcmData)
         }
+#endif
     }
 
     func updateMicState() {
@@ -595,14 +604,19 @@ struct ViewState {
             sgc = G2()
         } else if wearable.contains(DeviceTypes.LIVE) {
             sgc = MentraLive()
-        } else if wearable.contains(DeviceTypes.MACH1) {
-            sgc = Mach1()
-        } else if wearable.contains(DeviceTypes.Z100) {
-            sgc = Mach1() // Z100 uses same hardware/SDK as Mach1
-            sgc?.type = DeviceTypes.Z100 // Override type to Z100
         } else if wearable.contains(DeviceTypes.FRAME) {
             // sgc = FrameManager()
         }
+#if !SWIFT_PACKAGE || MENTRA_FEATURE_VUZIX
+        if sgc == nil {
+            if wearable.contains(DeviceTypes.MACH1) {
+                sgc = Mach1()
+            } else if wearable.contains(DeviceTypes.Z100) {
+                sgc = Mach1() // Z100 uses same hardware/SDK as Mach1
+                sgc?.type = DeviceTypes.Z100 // Override type to Z100
+            }
+        }
+#endif
         // update device model:
         DeviceStore.shared.apply("glasses", "deviceModel", sgc?.type ?? "")
     }
@@ -827,8 +841,12 @@ struct ViewState {
     }
 
     func restartTranscriber() {
+        #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
         Bridge.log("MAN: Restarting SherpaOnnxTranscriber via command")
         transcriber?.restart()
+        #else
+        Bridge.log("MAN: Local STT is not included in this SwiftPM build")
+        #endif
     }
 
     // MARK: - connection state management
@@ -875,9 +893,14 @@ struct ViewState {
 
         // Re-apply display height after reconnection
         let h = DeviceStore.shared.get("bluetooth", "dashboard_height") as? Int ?? 4
+#if !SWIFT_PACKAGE || MENTRA_FEATURE_NEX
         let d = NexDashboardDisplayWire.clampDepthFromStore(
             DeviceStore.shared.get("bluetooth", "dashboard_depth")
         )
+#else
+        let rawDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 1
+        let d = min(max(rawDepth, 1), 3)
+#endif
         sgc.setDashboardPosition(h, d)
     }
 
@@ -1392,8 +1415,10 @@ struct ViewState {
 
     func cleanup() {
         // Clean up transcriber resources
+#if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
         transcriber?.shutdown()
         transcriber = nil
+#endif
 
         // Clean up LC3 converter
         lc3Converter = nil

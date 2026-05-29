@@ -8,7 +8,7 @@ The package includes:
 - React hooks under `@mentra/bluetooth-sdk/react` for common scan,
   connection, status, and event lifecycles.
 - Native Android code published as `com.mentra:bluetooth-sdk`.
-- Native iOS code published as the `MentraBluetoothSDK` CocoaPod.
+- Native iOS code available as the `MentraBluetoothSDK` Swift package or CocoaPod.
 - An Expo config plugin that wires the native dependencies into generated Android and iOS projects.
 
 Use a development build or production native build. Expo Go cannot load this package because the SDK contains native code.
@@ -346,6 +346,14 @@ MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk
 ```
 
 Use `bunx expo run:android` for Android. Keep local paths in your shell or CI environment, not in committed app config.
+
+For bare native iOS apps, the Swift package root is this directory. Add it locally in Xcode as:
+
+```text
+/path/to/MentraOS/mobile/modules/bluetooth-sdk
+```
+
+For remote SwiftPM distribution, publish or tag this directory as the root of the package repository. The core Swift package intentionally excludes optional local STT, Nex/SwiftProtobuf, Vuzix/Ultralite, and tar.bz2 extraction code paths.
 
 ## Starter Example App
 
