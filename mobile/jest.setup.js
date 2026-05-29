@@ -1,6 +1,36 @@
 // Mock react-native-permissions
 jest.mock("react-native-permissions", () => require("react-native-permissions/mock"))
 
+jest.mock("@mentra/bluetooth-sdk", () => {
+  const {coreModuleMock} = require("./src/test-utils/mockCoreModule")
+  return {
+    __esModule: true,
+    default: coreModuleMock,
+    ...coreModuleMock,
+  }
+})
+
+jest.mock("@mentra/bluetooth-sdk-internal", () => {
+  const {coreModuleMock} = require("./src/test-utils/mockCoreModule")
+  return {
+    __esModule: true,
+    default: coreModuleMock,
+    ...coreModuleMock,
+  }
+})
+
+jest.mock("@/utils/auth/authClient", () => ({
+  __esModule: true,
+  default: {
+    getSession: jest.fn(() => Promise.resolve({is_ok: () => false, is_error: () => true})),
+    getUser: jest.fn(() => Promise.resolve({is_ok: () => false, is_error: () => true})),
+    onAuthStateChange: jest.fn(() => ({is_ok: () => true, value: {unsubscribe: jest.fn()}})),
+    signOut: jest.fn(() => Promise.resolve({is_ok: () => true})),
+    startAutoRefresh: jest.fn(() => Promise.resolve({is_ok: () => true})),
+    stopAutoRefresh: jest.fn(() => Promise.resolve({is_ok: () => true})),
+  },
+}))
+
 // Mock react-native-mmkv
 jest.mock("react-native-mmkv", () => {
   const mockStorage = new Map([
@@ -252,6 +282,7 @@ jest.mock("@mentra/island", () => {
     },
     devServerBridge: {},
     displayProcessor: {
+      attachToRuntime: jest.fn(),
       processDisplayEvent: jest.fn((event) => ({...event, _processed: true})),
     },
     HardwareCompatibility: {
