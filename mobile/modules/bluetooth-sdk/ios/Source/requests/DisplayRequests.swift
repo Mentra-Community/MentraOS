@@ -25,10 +25,6 @@ public struct DisplayTextRequest {
 
 struct DisplayEventRequest {
     let values: [String: Any]
-
-    init(values: [String: Any]) {
-        self.values = values
-    }
 }
 
 public struct DashboardPositionRequest {

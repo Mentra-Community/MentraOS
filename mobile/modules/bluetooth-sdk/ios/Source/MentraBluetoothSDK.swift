@@ -358,17 +358,17 @@ public final class MentraBluetoothSDK {
     }
 
     public func getGlassesMediaVolume() async throws -> GlassesMediaVolumeGetResult {
-        GlassesMediaVolumeGetResult(values: try await DeviceManager.shared.getGlassesMediaVolume())
+        try GlassesMediaVolumeGetResult(values: await DeviceManager.shared.getGlassesMediaVolume())
     }
 
     public func setGlassesMediaVolume(_ level: Int) async throws -> GlassesMediaVolumeSetResult {
-        guard (0...15).contains(level) else {
+        guard (0 ... 15).contains(level) else {
             throw BluetoothError(
                 code: "invalid_volume_level",
                 message: "Glasses media volume must be between 0 and 15."
             )
         }
-        return GlassesMediaVolumeSetResult(values: try await DeviceManager.shared.setGlassesMediaVolume(level: level))
+        return try GlassesMediaVolumeSetResult(values: await DeviceManager.shared.setGlassesMediaVolume(level: level))
     }
 
     public func requestWifiScan() {

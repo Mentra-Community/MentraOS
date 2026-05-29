@@ -138,11 +138,11 @@ public struct WifiStatusEvent: CustomStringConvertible {
     }
 
     init(connected: Bool, ssid: String?, localIp: String?) {
-        self.status = WifiStatus.fromStoreFields(connected: connected, ssid: ssid, localIp: localIp) ?? .disconnected
+        status = WifiStatus.fromStoreFields(connected: connected, ssid: ssid, localIp: localIp) ?? .disconnected
     }
 
     init(values: [String: Any]) {
-        self.status = WifiStatus(values: values) ?? .disconnected
+        status = WifiStatus(values: values) ?? .disconnected
     }
 
     public var values: [String: Any] {
@@ -289,11 +289,11 @@ public struct HotspotStatusEvent: CustomStringConvertible {
     }
 
     init(enabled: Bool, ssid: String?, password: String?, localIp: String?) {
-        self.status = HotspotStatus.fromStoreFields(enabled: enabled, ssid: ssid, password: password, localIp: localIp) ?? .disabled
+        status = HotspotStatus.fromStoreFields(enabled: enabled, ssid: ssid, password: password, localIp: localIp) ?? .disabled
     }
 
     init(values: [String: Any]) {
-        self.status = HotspotStatus(values: values) ?? .disabled
+        status = HotspotStatus(values: values) ?? .disabled
     }
 
     public var values: [String: Any] {

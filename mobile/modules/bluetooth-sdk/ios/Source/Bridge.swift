@@ -10,7 +10,7 @@ import Foundation
 /// Bridge for Bluetooth SDK communication between Expo modules and native iOS code
 /// Has commands for the Bluetooth SDK to use to send messages to JavaScript
 class Bridge {
-    private static let micSampleRate = 16_000
+    private static let micSampleRate = 16000
     private static let pcmBitsPerSample = 16
     private static let micChannels = 1
     private static let lc3FrameDurationMs = 10

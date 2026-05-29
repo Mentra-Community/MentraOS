@@ -1410,6 +1410,9 @@ class G2: NSObject, SGCManager {
     private var activeMenuAppId: Int32?
     private var lastClickTimestamp: Int64?
     private var lastMenuSelectTimestamp: Int64?
+    private var lastGestureCtrlTimestamp: Int64?
+    private var imageMode = "quad"
+    private var imageCorner = 3
 
     @Published var aiListening: Bool = false
 
@@ -1529,7 +1532,7 @@ class G2: NSObject, SGCManager {
             payload: payload,
             reserveFlag: true
         )
-        sendToGlasses(packets)
+        sendToGlasses(packets, left: true, right: true)
     }
 
     // MARK: - Authentication Sequence
@@ -1750,7 +1753,7 @@ class G2: NSObject, SGCManager {
 
                     // send dashboard menu if we have stored items
                     self.sendMenuApps()
-                    
+
                     // send calendar events
                     let calendarEvents = DeviceStore.shared.get("bluetooth", "calendar_events") as? [[String: Any]] ?? []
                     self.sendCalendarEvents(calendarEvents)
@@ -2013,20 +2016,17 @@ class G2: NSObject, SGCManager {
             x: 200, y: 100, width: 200, height: 100,
             containerID: 13, containerName: "img-13"
         )
+        let containers = [container1, container2, container3, container4]
 
         let msg: Data
         if !startupPageCreated {
             msg = EvenHubProto.createPageMessage(
-                imageContainers: [
-                    container1, container2, container3, container4,
-                ], magicRandom: sendManager.nextMagicRandom(), appId: activeMenuAppId
+                imageContainers: containers, magicRandom: sendManager.nextMagicRandom(), appId: activeMenuAppId
             )
             startupPageCreated = true
         } else {
             msg = EvenHubProto.rebuildPageMessage(
-                imageContainers: [
-                    container1, container2, container3, container4,
-                ], magicRandom: sendManager.nextMagicRandom(), appId: activeMenuAppId
+                imageContainers: containers, magicRandom: sendManager.nextMagicRandom(), appId: activeMenuAppId
             )
         }
         sendEvenHubCommand(msg)
@@ -2056,7 +2056,15 @@ class G2: NSObject, SGCManager {
     func displayBitmap(base64ImageData: String) async -> Bool {
         currentBitmapBase64 = base64ImageData
         currentTextContent = ""
-        return await displayBitmapQuad(base64ImageData: base64ImageData)
+        if imageMode == "quad" {
+            return await displayBitmapQuad(base64ImageData: base64ImageData)
+        } else if imageMode == "corner" {
+            return await displayBitmapCorner(base64ImageData: base64ImageData)
+        } else if imageMode == "center" {
+            return await displayBitmapCenter(base64ImageData: base64ImageData)
+        } else {
+            return false
+        }
     }
 
     /// Upscale BMP pixel data by 2x (200x100 → 400x200) using nearest-neighbor
@@ -2141,7 +2149,81 @@ class G2: NSObject, SGCManager {
         return dst
     }
 
-    func displayBitmapOriginal(base64ImageData: String) async -> Bool {
+    func displayBitmapCenter(base64ImageData: String) async -> Bool {
+        guard let rawData = Data(base64Encoded: base64ImageData) else {
+            Bridge.log("G2: displayBitmapCenter() - failed to decode base64")
+            return false
+        }
+
+        Bridge.log("G2: displayBitmap() - decoded \(rawData.count) bytes from base64")
+
+        Bridge.log(
+            "G2: displayBitmapCenter() - state: startupPageCreated=\(startupPageCreated), pageCreated=\(pageCreated)"
+        )
+
+        // --- Single-tile approach: scale source to fit 200x100, send as one image container ---
+        guard let bmpData = convertToG2Bmp(rawData, containerWidth: 200, containerHeight: 100)
+        else {
+            Bridge.log("G2: displayBitmap() - failed to convert image to BMP")
+            return false
+        }
+
+        // // Center the 200x100 container on the 576x288 canvas
+        let containerID: Int32 = 10
+        let containerName = "img-10"
+        // let containerW: Int32 = 200
+        // let containerH: Int32 = 100
+        // let containerX: Int32 = (576 - containerW) / 2
+        // let containerY: Int32 = (288 - containerH) / 2
+
+        // let imageContainer = EvenHubProto.imageContainerProperty(
+        //     x: containerX, y: containerY,
+        //     width: containerW, height: containerH,
+        //     containerID: containerID, containerName: containerName
+        // )
+
+        // let msg: Data
+        // if !startupPageCreated {
+        //     Bridge.log("G2: displayBitmap() - creating startup page with image container")
+        //     msg = EvenHubProto.createPageMessage(
+        //         imageContainers: [imageContainer], magicRandom: sendManager.nextMagicRandom(),
+        //         appId: activeMenuAppId
+        //     )
+        //     startupPageCreated = true
+        // } else {
+        //     Bridge.log("G2: displayBitmap() - rebuilding page with image container")
+        //     msg = EvenHubProto.rebuildPageMessage(
+        //         imageContainers: [imageContainer], magicRandom: sendManager.nextMagicRandom(),
+        //         appId: activeMenuAppId
+        //     )
+        // }
+        // sendEvenHubCommand(msg)
+        // pageCreated = true
+        // pageHasTextContainer = false
+        // currentTextContent = ""
+        // try? await Task.sleep(nanoseconds: 2_000_000_000) // 1s - give glasses time to process page
+
+
+        if !startupPageCreated {
+            createPageWithText("")
+            Bridge.log("G2: displayBitmap() - page created, waiting 1s before sending image data...")
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+
+
+        // Send the BMP data
+        let success = await sendImageData(
+            containerID: containerID, containerName: containerName, bmpData: bmpData
+        )
+        if !success {
+            Bridge.log("G2: displayBitmap() - failed sending image data")
+        }
+
+        Bridge.log("G2: displayBitmap() - single tile sent, \(bmpData.count) bytes")
+        return success
+    }
+
+    func displayBitmapCorner(base64ImageData: String) async -> Bool {
         guard let rawData = Data(base64Encoded: base64ImageData) else {
             Bridge.log("G2: displayBitmap() - failed to decode base64")
             return false
@@ -2154,47 +2236,22 @@ class G2: NSObject, SGCManager {
         )
 
         // --- Single-tile approach: scale source to fit 200x100, send as one image container ---
-        guard let bmpData = convertToG2Bmp(rawData, containerWidth: 200, containerHeight: 100)
+        guard let bmpData = convertToG2Bmp(rawData, containerWidth: 100, containerHeight: 100)
         else {
             Bridge.log("G2: displayBitmap() - failed to convert image to BMP")
             return false
         }
 
-        // Center the 200x100 container on the 576x288 canvas
-        let containerW: Int32 = 200
-        let containerH: Int32 = 100
-        let containerX: Int32 = (576 - containerW) / 2
-        let containerY: Int32 = (288 - containerH) / 2
+        // // Center the 200x100 container on the 576x288 canvas
         let containerID: Int32 = 10
-        let containerName = "img-single"
+        let containerName = "img-10"
 
-        let imageContainer = EvenHubProto.imageContainerProperty(
-            x: containerX, y: containerY,
-            width: containerW, height: containerH,
-            containerID: containerID, containerName: containerName
-        )
-
-        let msg: Data
         if !startupPageCreated {
-            Bridge.log("G2: displayBitmap() - creating startup page with image container")
-            msg = EvenHubProto.createPageMessage(
-                imageContainers: [imageContainer], magicRandom: sendManager.nextMagicRandom(),
-                appId: activeMenuAppId
-            )
-            startupPageCreated = true
-        } else {
-            Bridge.log("G2: displayBitmap() - rebuilding page with image container")
-            msg = EvenHubProto.rebuildPageMessage(
-                imageContainers: [imageContainer], magicRandom: sendManager.nextMagicRandom(),
-                appId: activeMenuAppId
-            )
+            createPageWithText("")
+            Bridge.log("G2: displayBitmap() - page created, waiting 1s before sending image data...")
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
-        sendEvenHubCommand(msg)
-        pageCreated = true
-        pageHasTextContainer = false
-        currentTextContent = ""
-        Bridge.log("G2: displayBitmap() - page sent, waiting 1s before sending fragments...")
-        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s - give glasses time to process page
+
 
         // Send the BMP data
         let success = await sendImageData(
@@ -2440,7 +2497,7 @@ class G2: NSObject, SGCManager {
     /// the foreground by tearing down whatever EvenHub page we currently own.
     /// The glasses fall back to the dashboard automatically when no page is up.
     func showDashboard() {
-        Bridge.log("G2: showDashboard")
+        Bridge.log("G2: showDashboard()")
         dashboardShowing += 2
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
@@ -2611,18 +2668,64 @@ class G2: NSObject, SGCManager {
             content: text
         )
 
+        var imageContainers: [Data] = []
+        if imageMode == "quad" {
+            // 2x2 grid of 200x100 tiles covering 400x200
+            let container1 = EvenHubProto.imageContainerProperty(
+                x: 0, y: 0, width: 200, height: 100,
+                containerID: 10, containerName: "img-10"
+            )
+            let container2 = EvenHubProto.imageContainerProperty(
+                x: 200, y: 0, width: 200, height: 100,
+                containerID: 11, containerName: "img-11"
+            )
+            let container3 = EvenHubProto.imageContainerProperty(
+                x: 0, y: 100, width: 200, height: 100,
+                containerID: 12, containerName: "img-12"
+            )
+            let container4 = EvenHubProto.imageContainerProperty(
+                x: 200, y: 100, width: 200, height: 100,
+                containerID: 13, containerName: "img-13"
+            )
+            imageContainers = [container1, container2, container3, container4]
+        } else if imageMode == "center" {
+            // Center the 200x100 container on the 576x288 canvas
+            let containerW: Int32 = 200
+            let containerH: Int32 = 100
+            let containerX: Int32 = (576 - containerW) / 2
+            let containerY: Int32 = (288 - containerH) / 2
+            let container1 = EvenHubProto.imageContainerProperty(
+                x: containerX, y: containerY,
+                width: containerW, height: containerH,
+                containerID: 10, containerName: "img-10"
+            )
+            imageContainers = [container1]
+        } else if imageMode == "corner" {
+            // TODO: account for imageCorner:
+            let container1 = EvenHubProto.imageContainerProperty(
+                x: 0, y: 0, width: 100, height: 100,
+                containerID: 10, containerName: "img-10"
+            )
+            imageContainers = [container1]
+        }
+
+
         let msg: Data
         if !startupPageCreated {
             Bridge.log("G2: createPageWithText - using createPageMessage (first time)")
             msg = EvenHubProto.createPageMessage(
-                textContainers: [tc], magicRandom: sendManager.nextMagicRandom(),
+                textContainers: [tc],
+                imageContainers: imageContainers,
+                magicRandom: sendManager.nextMagicRandom(),
                 appId: activeMenuAppId
             )
             startupPageCreated = true
         } else {
             Bridge.log("G2: createPageWithText - using rebuildPageMessage")
             msg = EvenHubProto.rebuildPageMessage(
-                textContainers: [tc], magicRandom: sendManager.nextMagicRandom(),
+                textContainers: [tc],
+                imageContainers: imageContainers,
+                magicRandom: sendManager.nextMagicRandom(),
                 appId: activeMenuAppId
             )
         }
@@ -2683,8 +2786,8 @@ class G2: NSObject, SGCManager {
             if useNativeDashboard && dashboardShowing > 0 {
                 return
             }
-            if (!pageCreated || !pageHasTextContainer) {
-                DeviceManager.shared.sendCurrentState()// should re-create the page if needed
+            if !pageCreated || !pageHasTextContainer {
+                DeviceManager.shared.sendCurrentState() // should re-create the page if needed
             }
             let msg = EvenHubProto.audioControlMessage(enable: true)
             self.sendEvenHubCommand(msg)
@@ -3025,7 +3128,7 @@ class G2: NSObject, SGCManager {
     func syncTime() {
         Bridge.log("G2: syncTime()")
         let msg = DevSettingsProto.timeSync(magicRandom: sendManager.nextMagicRandom())
-        sendDevSettingsCommand(msg)
+        sendDevSettingsCommand(msg, left: true, right: true)
     }
 
     func sendRgbLedControl(
@@ -3355,7 +3458,11 @@ class G2: NSObject, SGCManager {
                     }
                     if let errorCode = resFields[8] as? Int32 {
                         // ImgResCmd has ErrorCode in field 8
-                        Bridge.log("G2: EvenHub ImgRes errorCode=\(errorCode)")
+                        if errorCode == 4 {
+                            Bridge.log("G2: img_success")
+                        } else {
+                            Bridge.log("G2: EvenHub ImgRes errorCode=\(errorCode)")
+                        }
                     }
                 }
             }
@@ -3806,6 +3913,15 @@ class G2: NSObject, SGCManager {
         //     "G2: gesture_ctrl response: \(data.map { String(format: "%02X", $0) }.joined())"
         // )
         // Bridge.log("G2: gesture_ctrl response:")
+        
+
+        // Dedup: L and R peripherals both deliver this event, so debounce or
+        let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
+        if lastGestureCtrlTimestamp != nil && timestamp - lastGestureCtrlTimestamp! < 500 {
+            Bridge.log("G2: gesture_ctrl dedup")
+            return
+        }
+        lastGestureCtrlTimestamp = timestamp
 
         // if we got 08011A00 that means we closed the dashboard, which means the mic is probably dead,
         // so we need to revive it:
@@ -3839,7 +3955,7 @@ class G2: NSObject, SGCManager {
                 }
                 // do nothing this time since we just closed the dashboard
                 dashboardShowing -= 1
-                if (dashboardShowing < 0) {
+                if dashboardShowing < 0 {
                     dashboardShowing = 0
                 }
             }

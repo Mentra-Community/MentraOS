@@ -379,7 +379,7 @@ public struct StreamStatusEvent: CustomStringConvertible {
     }
 
     public init(values: [String: Any]) {
-        self.status = StreamStatus(values: values)
+        status = StreamStatus(values: values)
     }
 
     public var state: StreamState {
@@ -413,9 +413,9 @@ public struct KeepAliveAckEvent: CustomStringConvertible, Equatable {
     }
 
     public init(values: [String: Any]) {
-        self.streamId = stringValue(values, "streamId") ?? ""
-        self.ackId = stringValue(values, "ackId") ?? ""
-        self.timestamp = intValue(values["timestamp"])
+        streamId = stringValue(values, "streamId") ?? ""
+        ackId = stringValue(values, "ackId") ?? ""
+        timestamp = intValue(values["timestamp"])
     }
 
     public var values: [String: Any] {

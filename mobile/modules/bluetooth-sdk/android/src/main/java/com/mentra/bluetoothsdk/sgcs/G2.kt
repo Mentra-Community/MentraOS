@@ -1243,6 +1243,9 @@ class G2 : SGCManager() {
     private var activeMenuAppId: Int? = null
     private var lastClickTimestamp: Long? = null
     private var lastMenuSelectTimestamp: Long? = null
+    private var lastGestureCtrlTimestamp: Long? = null
+    private var imageMode = "center"
+    private var imageCorner = 3
 
     // Battery state
     private var _batteryLevel: Int = -1
@@ -1323,7 +1326,7 @@ class G2 : SGCManager() {
                         payload = payload,
                         reserveFlag = true
                 )
-        sendToGlasses(packets)
+        sendToGlasses(packets, left = true, right = true)
     }
 
     private fun sendDevSettingsCommand(
@@ -2024,7 +2027,12 @@ class G2 : SGCManager() {
     override fun displayBitmap(base64ImageData: String): Boolean {
         currentBitmapBase64 = base64ImageData
         currentTextContent = ""
-        return displayBitmapQuad(base64ImageData)
+        return when (imageMode) {
+            "quad" -> displayBitmapQuad(base64ImageData)
+            "corner" -> displayBitmapCorner(base64ImageData)
+            "center" -> displayBitmapCenter(base64ImageData)
+            else -> false
+        }
     }
 
     private fun displayBitmapQuad(base64ImageData: String): Boolean {
@@ -2123,6 +2131,86 @@ class G2 : SGCManager() {
                 1000
         )
 
+        return true
+    }
+
+    private fun displayBitmapCenter(base64ImageData: String): Boolean {
+        val rawData =
+                Base64.decode(base64ImageData, Base64.DEFAULT)
+                        ?: run {
+                            Bridge.log("G2: displayBitmapCenter() - failed to decode base64")
+                            return false
+                        }
+
+        Bridge.log("G2: displayBitmapCenter() - decoded ${rawData.size} bytes from base64")
+        Bridge.log(
+                "G2: displayBitmapCenter() - state: startupPageCreated=$startupPageCreated, pageCreated=$pageCreated"
+        )
+
+        // Single-tile approach: scale source to fit 200x100, send as one image container
+        val bmpData =
+                convertToG2Bmp(rawData, containerWidth = 200, containerHeight = 100)
+                        ?: run {
+                            Bridge.log("G2: displayBitmap() - failed to convert image to BMP")
+                            return false
+                        }
+
+        val containerID = 10
+        val containerName = "img-10"
+
+        // Android's displayBitmap signature is synchronous Boolean, so this is fire-and-forget.
+        // If the page isn't up yet, create it then defer the BMP send by 1s (matches iOS's await).
+        if (!startupPageCreated) {
+            createPageWithText("")
+            Bridge.log("G2: displayBitmap() - page created, waiting 1s before sending image data...")
+            mainHandler.postDelayed(
+                    { sendImageData(containerID, containerName, bmpData) },
+                    1000
+            )
+        } else {
+            sendImageData(containerID, containerName, bmpData)
+        }
+
+        Bridge.log("G2: displayBitmap() - single tile scheduled, ${bmpData.size} bytes")
+        return true
+    }
+
+    private fun displayBitmapCorner(base64ImageData: String): Boolean {
+        val rawData =
+                Base64.decode(base64ImageData, Base64.DEFAULT)
+                        ?: run {
+                            Bridge.log("G2: displayBitmap() - failed to decode base64")
+                            return false
+                        }
+
+        Bridge.log("G2: displayBitmap() - decoded ${rawData.size} bytes from base64")
+        Bridge.log(
+                "G2: displayBitmap() - state: startupPageCreated=$startupPageCreated, pageCreated=$pageCreated"
+        )
+
+        // Single-tile corner approach: scale source to fit 100x100, send as one image container
+        val bmpData =
+                convertToG2Bmp(rawData, containerWidth = 100, containerHeight = 100)
+                        ?: run {
+                            Bridge.log("G2: displayBitmap() - failed to convert image to BMP")
+                            return false
+                        }
+
+        val containerID = 10
+        val containerName = "img-10"
+
+        if (!startupPageCreated) {
+            createPageWithText("")
+            Bridge.log("G2: displayBitmap() - page created, waiting 1s before sending image data...")
+            mainHandler.postDelayed(
+                    { sendImageData(containerID, containerName, bmpData) },
+                    1000
+            )
+        } else {
+            sendImageData(containerID, containerName, bmpData)
+        }
+
+        Bridge.log("G2: displayBitmap() - single tile scheduled, ${bmpData.size} bytes")
         return true
     }
 
@@ -2285,7 +2373,7 @@ class G2 : SGCManager() {
     /// the foreground by tearing down whatever EvenHub page we currently own.
     /// The glasses fall back to the dashboard automatically when no page is up.
     override fun showDashboard() {
-        Bridge.log("G2: showDashboard")
+        Bridge.log("G2: showDashboard()")
         dashboardShowing += 2
         val msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
@@ -2457,12 +2545,61 @@ class G2 : SGCManager() {
                         content = text
                 )
 
+        val imageContainers: List<ByteArray> =
+                when (imageMode) {
+                    "quad" -> {
+                        // 2x2 grid of 200x100 tiles covering 400x200
+                        listOf(
+                                EvenHubProto.imageContainerProperty(
+                                        x = 0, y = 0, width = 200, height = 100,
+                                        containerID = 10, containerName = "img-10"
+                                ),
+                                EvenHubProto.imageContainerProperty(
+                                        x = 200, y = 0, width = 200, height = 100,
+                                        containerID = 11, containerName = "img-11"
+                                ),
+                                EvenHubProto.imageContainerProperty(
+                                        x = 0, y = 100, width = 200, height = 100,
+                                        containerID = 12, containerName = "img-12"
+                                ),
+                                EvenHubProto.imageContainerProperty(
+                                        x = 200, y = 100, width = 200, height = 100,
+                                        containerID = 13, containerName = "img-13"
+                                )
+                        )
+                    }
+                    "center" -> {
+                        // Center the 200x100 container on the 576x288 canvas
+                        val containerW = 200
+                        val containerH = 100
+                        listOf(
+                                EvenHubProto.imageContainerProperty(
+                                        x = (576 - containerW) / 2,
+                                        y = (288 - containerH) / 2,
+                                        width = containerW, height = containerH,
+                                        containerID = 10, containerName = "img-10"
+                                )
+                        )
+                    }
+                    "corner" -> {
+                        // TODO: account for imageCorner:
+                        listOf(
+                                EvenHubProto.imageContainerProperty(
+                                        x = 0, y = 0, width = 100, height = 100,
+                                        containerID = 10, containerName = "img-10"
+                                )
+                        )
+                    }
+                    else -> emptyList()
+                }
+
         val msg: ByteArray
         if (!startupPageCreated) {
             Bridge.log("G2: createPageWithText - using createPageMessage (first time)")
             msg =
                     EvenHubProto.createPageMessage(
                             textContainers = listOf(tc),
+                            imageContainers = imageContainers,
                             magicRandom = sendManager.nextMagicRandom(),
                             appId = activeMenuAppId
                     )
@@ -2472,6 +2609,7 @@ class G2 : SGCManager() {
             msg =
                     EvenHubProto.rebuildPageMessage(
                             textContainers = listOf(tc),
+                            imageContainers = imageContainers,
                             magicRandom = sendManager.nextMagicRandom(),
                             appId = activeMenuAppId
                     )
@@ -2959,7 +3097,7 @@ class G2 : SGCManager() {
     fun syncTime() {
         Bridge.log("G2: syncTime()")
         val msg = DevSettingsProto.timeSync(sendManager.nextMagicRandom())
-        sendDevSettingsCommand(msg)
+        sendDevSettingsCommand(msg, left = true, right = true)
     }
 
     override fun sendRgbLedControl(
@@ -3545,7 +3683,11 @@ class G2 : SGCManager() {
                 }
                 (resFields[8] as? Int)?.let { errorCode ->
                     // ImgResCmd has ErrorCode in field 8
-                    Bridge.log("G2: EvenHub ImgRes errorCode=$errorCode")
+                    if (errorCode == 4) {
+                        Bridge.log("G2: img_success")
+                    } else {
+                        Bridge.log("G2: EvenHub ImgRes errorCode=$errorCode")
+                    }
                 }
             }
 
@@ -3804,6 +3946,15 @@ class G2 : SGCManager() {
     }
 
     private fun handleGestureCtrl(payload: ByteArray) {
+        // Dedup: L and R peripherals both deliver this event, so debounce within 500ms.
+        val timestamp = System.currentTimeMillis()
+        val last = lastGestureCtrlTimestamp
+        if (last != null && timestamp - last < 500) {
+            Bridge.log("G2: gesture_ctrl dedup")
+            return
+        }
+        lastGestureCtrlTimestamp = timestamp
+
         // Dashboard close detection: 08011A00 means dashboard closed
         if (payload.contentEquals(byteArrayOf(0x08, 0x01, 0x1A, 0x00))) {
             Bridge.log("G2: dashboard closed / shutdown - dashboardShowing=$dashboardShowing")

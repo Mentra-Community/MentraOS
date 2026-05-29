@@ -163,6 +163,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     func ping() {
         Bridge.log("NEX: ping() is host-side no-op for this transport")
     }
+
     func connectController() {}
     func disconnectController() {}
 

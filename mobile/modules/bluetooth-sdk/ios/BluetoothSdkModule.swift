@@ -241,7 +241,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             JSCExperiment.spawn(count: count)
         }
 
-        Function("jscKillAll") { () -> Void in
+        Function("jscKillAll") { () in
             JSCExperiment.killAll()
         }
 
@@ -253,7 +253,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             JSCExperiment.spawnAndMeasure(count: count, baselineMB: baselineMB)
         }
 
-        Function("jscRunBenchmark") { () -> Void in
+        Function("jscRunBenchmark") { () in
             JSCExperiment.runBenchmark()
         }
 

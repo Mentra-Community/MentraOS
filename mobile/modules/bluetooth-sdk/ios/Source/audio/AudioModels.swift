@@ -24,7 +24,7 @@ public struct LocalTranscriptionEvent: CustomStringConvertible {
 }
 
 public struct MicPcmEvent: CustomStringConvertible {
-    public static let sampleRate = 16_000
+    public static let sampleRate = 16000
     public static let bitsPerSample = 16
     public static let channels = 1
     public static let encoding = "pcm_s16le"
@@ -69,7 +69,7 @@ public struct MicPcmEvent: CustomStringConvertible {
 }
 
 public struct MicLc3Event: CustomStringConvertible {
-    public static let sampleRate = 16_000
+    public static let sampleRate = 16000
     public static let channels = 1
     public static let encoding = "lc3"
     public static let frameDurationMs = 10
@@ -132,8 +132,8 @@ public struct GlassesMediaVolumeGetResult: CustomStringConvertible {
     public let values: [String: Any]
 
     public init(values: [String: Any]) {
-        self.level = intValue(values["level"])
-        self.statusCode = intValue(values["statusCode"])
+        level = intValue(values["level"])
+        statusCode = intValue(values["statusCode"])
         self.values = values
     }
 
@@ -149,7 +149,7 @@ public struct GlassesMediaVolumeSetResult: CustomStringConvertible {
     public let values: [String: Any]
 
     public init(values: [String: Any]) {
-        self.statusCode = intValue(values["statusCode"])
+        statusCode = intValue(values["statusCode"])
         self.values = values
     }
 

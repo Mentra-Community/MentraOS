@@ -229,7 +229,7 @@ public struct PhotoResponseEvent: CustomStringConvertible {
     }
 
     public init(values: [String: Any]) {
-        self.response = PhotoResponse(values: values)
+        response = PhotoResponse(values: values)
     }
 
     public var requestId: String {
