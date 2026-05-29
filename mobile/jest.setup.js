@@ -315,10 +315,16 @@ jest.mock("@mentra/island", () => {
       getAppStatus: jest.fn(() => null),
       handleRawMessage: jest.fn(),
       initialize: jest.fn(),
+      wireStreamingStatusFanout: jest.fn(),
     },
     localSttFallbackCoordinator: {
       getActiveLanguage: jest.fn(() => null),
       isActive: jest.fn(() => false),
+    },
+    offlineSpeechModelService: {
+      getStatus: jest.fn(() => null),
+      startBackgroundDownloads: jest.fn(),
+      subscribe: jest.fn(() => () => {}),
     },
     micStateCoordinator: {
       cleanup: jest.fn(),
