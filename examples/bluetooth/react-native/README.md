@@ -9,7 +9,7 @@ Expo Go cannot load the SDK because the package contains native Android and iOS 
 ## Requirements
 
 - Node.js 20+.
-- Xcode 15+ and CocoaPods for iOS builds.
+- Xcode 15+ for iOS builds.
 - Android Studio / Android SDK and Java 17 for Android builds.
 - A physical phone for Bluetooth, camera, microphone, direct phone photo, and direct phone WebRTC testing.
 - Mentra smart glasses with Bluetooth enabled.
@@ -46,7 +46,7 @@ The React Native example uses the SDK photo receiver plus local native modules f
 - `@mentra/bluetooth-sdk/photo-receiver` starts a small phone-local photo upload server for direct JPEG uploads.
 - `@mentra/react-native-video-stream-receiver` starts the phone-local WebRTC preview receiver.
 
-Only the video stream receiver needs GStreamer. On iOS, `bun run ios:setup` downloads the GStreamer package from `gstreamer.freedesktop.org`, verifies the published SHA-256 checksum, and installs it to `~/Library/Developer/GStreamer/iPhone.sdk`. The video receiver CocoaPods podspec also runs the same setup automatically during `pod install` when the SDK is missing from the default location, so `bunx expo run:ios` can recover from a fresh clone.
+Only the video stream receiver needs GStreamer. On iOS, `bun run ios:setup` downloads the GStreamer package from `gstreamer.freedesktop.org`, verifies the published SHA-256 checksum, and installs it to `~/Library/Developer/GStreamer/iPhone.sdk`. Rerun this setup command after a fresh clone or whenever the local GStreamer SDK is missing from the default location.
 
 If your GStreamer SDK is installed somewhere else, set `GSTREAMER_ROOT_IOS` before prebuild or run:
 

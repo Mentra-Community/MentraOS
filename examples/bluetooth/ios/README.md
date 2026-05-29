@@ -1,39 +1,31 @@
 # iOS Example
 
-Native iOS reference app for the Mentra Bluetooth SDK, built with SwiftUI and CocoaPods.
+Native iOS reference app for the Mentra Bluetooth SDK, built with SwiftUI and Swift Package Manager.
 
-This example installs the SDK as the `MentraBluetoothSDK` CocoaPod and is intended to run from a fresh clone once the Mentra pod is available. No path to a local MentraOS checkout is required for normal SDK use.
+This example installs the SDK as the `MentraBluetoothSDK` Swift package. No path to a local MentraOS checkout is required for normal SDK use.
 
 ## Requirements
 
 - macOS with Xcode 15 or newer.
-- CocoaPods.
 - iOS deployment target `16.0` for this example app.
 - A physical iPhone for Bluetooth, camera, microphone, direct phone photo, and direct phone WebRTC testing.
 - Mentra smart glasses with Bluetooth enabled.
 
 ## SDK Version
 
-The Podfile defaults to SDK version `0.1.7`:
+The Xcode project pins the public Swift package to `0.1.7`:
 
-```ruby
-mentra_sdk_version = ENV['MENTRA_BLUETOOTH_SDK_VERSION'] || '0.1.7'
+```text
+https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Use the latest SDK version published by Mentra:
-
-```bash
-MENTRA_BLUETOOTH_SDK_VERSION=<version> pod install
-```
-
-If a dedicated Mentra CocoaPods source is required, add that source to `Podfile` above `https://cdn.cocoapods.org/`.
+Use Xcode's package dependency editor to update the version when a newer SDK is published.
 
 ## Run
 
 ```bash
 cd examples/ios
-pod install
-open MentraExample.xcworkspace
+open MentraExample.xcodeproj
 ```
 
 In Xcode, select the `MentraExample` scheme and run on a physical iPhone. Simulators are useful for UI and compile checks only.
@@ -42,22 +34,10 @@ The first build downloads the official GStreamer iOS SDK if it is not already pr
 
 ```bash
 export GSTREAMER_ROOT_IOS=/path/to/iPhone.sdk
-open MentraExample.xcworkspace
+open MentraExample.xcodeproj
 ```
 
 For production iOS apps that need BLE or microphone behavior while backgrounded or locked, see [Background Operation On iOS](../../docs/getting-started.md#background-operation-on-ios).
-
-## Local SDK Override
-
-Use this only when developing the SDK before a CocoaPods release is published:
-
-```bash
-cd examples/ios
-export MENTRA_BLUETOOTH_SDK_LOCAL_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk/ios
-pod install
-```
-
-Keep `MENTRA_BLUETOOTH_SDK_LOCAL_PATH` in your shell or CI environment, not in committed project settings.
 
 ## App Walkthrough
 
@@ -99,5 +79,4 @@ Direct phone photo and WebRTC require real hardware:
 - `MentraExample/LocalPhotoUploadServer.swift`: direct phone HTTP photo upload receiver.
 - `MentraExample/GStreamerWhipReceiver.*`, `WhipHeaderProxy.swift`, `gst_ios_init.*`: direct phone WebRTC receiver.
 - `MentraExample/Theme.swift`: shared colors, cards, status/header pieces.
-- `Podfile`: CocoaPods SDK integration.
-- `project.yml`: optional XcodeGen spec for regenerating the project.
+- `project.yml`: optional XcodeGen spec for regenerating the SPM-based project.

@@ -14,16 +14,9 @@
 - Confirm no app-level packaging rule excludes `libc++_shared.so`, ONNX runtime, or SDK native libraries.
 - Clean only the example build output first. Do not delete SDK source artifacts unless you are intentionally resetting your workspace.
 
-## iOS Pod Install Fails
+## iOS Swift Package Resolution Fails
 
-Run:
-
-```sh
-pod repo update
-pod install --repo-update
-```
-
-Check that your iOS deployment target is at least `15.1` and that your Podfile includes the Mentra pod source if one is required by the published pod.
+Check that your iOS deployment target is at least `15.1`, that the package URL is `https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git`, and that Xcode resolves version `0.1.7` or newer. If Xcode has stale package state, reset package caches and resolve packages again from Xcode.
 
 If your app also uses Firebase with static frameworks, Firebase modular header configuration belongs in your app, not in the Bluetooth SDK.
 
@@ -32,7 +25,7 @@ If your app also uses Firebase with static frameworks, Firebase modular header c
 - Confirm you are running a development build or production native build. Expo Go cannot load `@mentra/bluetooth-sdk`.
 - Run `bunx expo prebuild` after adding the SDK plugin to `app.json`.
 - Confirm `@mentra/bluetooth-sdk` is installed in the app that is being prebuilt.
-- On iOS, run `pod install` inside the generated `ios/` directory or rerun `bunx expo run:ios`.
+- On iOS, rerun `bunx expo run:ios` after changing native module dependencies.
 - If you are testing a local SDK package, set `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` to the same package path you installed with Bun.
 
 ## Bluetooth Permission Problems
@@ -75,4 +68,4 @@ React Native and Expo apps use the `@mentra/bluetooth-sdk` package and must run 
 
 If Android prebuild succeeds but native linking fails, confirm the generated project includes `:lc3Lib` in `android/settings.gradle`. The SDK plugin adds this module automatically during prebuild.
 
-If iOS builds fail with missing Expo adapter symbols, rerun `bunx expo prebuild` so the SDK plugin can configure the Podfile for Expo module registration.
+If iOS builds fail with missing Expo adapter symbols, rerun `bunx expo prebuild` so the SDK plugin can refresh native Expo module registration.

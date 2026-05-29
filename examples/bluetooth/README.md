@@ -7,7 +7,7 @@ The SDK is available in three first-class forms:
 | Platform | Package | Example |
 | --- | --- | --- |
 | Android | `com.mentra:bluetooth-sdk` | [`examples/android`](examples/android/README.md) |
-| iOS | `MentraBluetoothSDK` CocoaPod | [`examples/ios`](examples/ios/README.md) |
+| iOS | `MentraBluetoothSDK` Swift package | [`examples/ios`](examples/ios/README.md) |
 | React Native / Expo | `@mentra/bluetooth-sdk` | [`examples/react-native`](examples/react-native/README.md) |
 
 Use the latest SDK version published by Mentra for your app. This repo can be cloned and used without any local path to the MentraOS source tree.
@@ -51,7 +51,7 @@ Use the latest SDK version published by Mentra for your app. This repo can be cl
 Published package installs are the normal SDK path. Local overrides are only for SDK development before a release is published:
 
 - Android: publish `com.mentra:bluetooth-sdk` and its companion artifacts to Maven local, then build the example with `mavenLocal()` enabled.
-- iOS: set `MENTRA_BLUETOOTH_SDK_LOCAL_PATH` to a local SDK checkout before `pod install`.
+- iOS: point Xcode at a local Swift package checkout when testing unpublished Swift SDK source changes.
 - React Native: install a local `@mentra/bluetooth-sdk` package path and set `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` so Metro and native builds resolve the same package.
 
 The example READMEs document each override explicitly. Do not bake machine-specific paths into committed app config.

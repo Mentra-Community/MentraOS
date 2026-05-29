@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		1178B517C2B84A06A3850001 /* MentraBluetoothSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 1178B517C2B84A06A3850003 /* MentraBluetoothSDK */; };
-		3A1D208A605A557E32A35AAF /* Pods_MentraExample.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D43C5E9E9C7C6DB117B9DA91 /* Pods_MentraExample.framework */; };
 		3E2B590902496632943A602A /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0ECF511371DFD443892300 /* RootView.swift */; };
 		636D70A07E2D7BAD88CFBCD2 /* MentraExampleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB9A9B8B86FC0ACF59F91AF8 /* MentraExampleApp.swift */; };
 		657B565C6F560BB6DDA9C415 /* CameraScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85A06A4B5AFA293DC25C9582 /* CameraScreen.swift */; };
@@ -28,7 +27,6 @@
 
 /* Begin PBXFileReference section */
 		28C1C2066D3512195360A795 /* ConsoleScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConsoleScreen.swift; sourceTree = "<group>"; };
-		2B95C649CCFB26DB6BA7AD81 /* Pods-MentraExample.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MentraExample.debug.xcconfig"; path = "Target Support Files/Pods-MentraExample/Pods-MentraExample.debug.xcconfig"; sourceTree = "<group>"; };
 		4334B27A5FE9C5FECB2F7DF8 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		4558D51EE6D8AEE7C32E4C58 /* DeviceScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceScreen.swift; sourceTree = "<group>"; };
 		85A06A4B5AFA293DC25C9582 /* CameraScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraScreen.swift; sourceTree = "<group>"; };
@@ -46,9 +44,7 @@
 		BB9A9B8B86FC0ACF59F91AF8 /* MentraExampleApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MentraExampleApp.swift; sourceTree = "<group>"; };
 		C44F0B2F295E4B4593F7C2D7 /* BluetoothViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BluetoothViewModel.swift; sourceTree = "<group>"; };
 		C1B2C3D4E5F60718293A4B5C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		D43C5E9E9C7C6DB117B9DA91 /* Pods_MentraExample.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_MentraExample.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		EA0ECF511371DFD443892300 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
-		FFBF10A3E7C9332B4E988290 /* Pods-MentraExample.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MentraExample.release.xcconfig"; path = "Target Support Files/Pods-MentraExample/Pods-MentraExample.release.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -71,23 +67,11 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
-		30FB0368004013CD1995C4C2 /* Pods */ = {
-			isa = PBXGroup;
-			children = (
-				2B95C649CCFB26DB6BA7AD81 /* Pods-MentraExample.debug.xcconfig */,
-				FFBF10A3E7C9332B4E988290 /* Pods-MentraExample.release.xcconfig */,
-			);
-			name = Pods;
-			path = Pods;
-			sourceTree = "<group>";
-		};
 		75373FCEFC20A267275295AB = {
 			isa = PBXGroup;
 			children = (
 				8422AA1775D51591B7605030 /* MentraExample */,
 				1CB6EE406B6430CB76C32445 /* Products */,
-				30FB0368004013CD1995C4C2 /* Pods */,
-				FBE17ACED547FADA501AB9DB /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -114,14 +98,6 @@
 				A10000000000000000000013 /* WhipHeaderProxy.swift */,
 			);
 			path = MentraExample;
-			sourceTree = "<group>";
-		};
-		FBE17ACED547FADA501AB9DB /* Frameworks */ = {
-			isa = PBXGroup;
-			children = (
-				D43C5E9E9C7C6DB117B9DA91 /* Pods_MentraExample.framework */,
-			);
-			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -215,62 +191,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${PROJECT_DIR}/scripts/setup-gstreamer-ios.sh\"\n";
-			showEnvVarsInLog = 0;
-		};
-		7B0AACBC4A2E876B72A32DF9 /* [CP] Copy Pods Resources */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-MentraExample/Pods-MentraExample-resources-${CONFIGURATION}-input-files.xcfilelist",
-			);
-			name = "[CP] Copy Pods Resources";
-			outputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-MentraExample/Pods-MentraExample-resources-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-MentraExample/Pods-MentraExample-resources.sh\"\n";
-			showEnvVarsInLog = 0;
-		};
-		CB0E901F2019649198E6AED7 /* [CP] Check Pods Manifest.lock */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
-				"${PODS_ROOT}/Manifest.lock",
-			);
-			name = "[CP] Check Pods Manifest.lock";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"$(DERIVED_FILE_DIR)/Pods-MentraExample-checkManifestLockResult.txt",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
-			showEnvVarsInLog = 0;
-		};
-		EA361D6916E8BAB2C9BF49DD /* [CP] Embed Pods Frameworks */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-MentraExample/Pods-MentraExample-frameworks-${CONFIGURATION}-input-files.xcfilelist",
-			);
-			name = "[CP] Embed Pods Frameworks";
-			outputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-MentraExample/Pods-MentraExample-frameworks-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-MentraExample/Pods-MentraExample-frameworks.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */

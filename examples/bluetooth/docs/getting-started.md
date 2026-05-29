@@ -2,14 +2,14 @@
 
 This guide shows how to add the Mentra Bluetooth SDK to Android, iOS, and React Native apps, then connect to Mentra Live and read glasses status.
 
-Use the latest SDK version published by Mentra. The example apps in this repo are designed to work from a fresh clone with the Maven, CocoaPods, and JavaScript packages, without any local MentraOS checkout.
+Use the latest SDK version published by Mentra. The example apps in this repo are designed to work from a fresh clone with the Maven, SwiftPM, and JavaScript packages, without any local MentraOS checkout.
 
 ## Requirements
 
 - A supported pair of Mentra smart glasses.
 - A physical phone for real Bluetooth testing. Simulators and emulators are useful for UI/build checks only.
 - Android: min SDK `28` or newer, Java 17, Android Studio or Gradle.
-- iOS: deployment target `15.1` or newer, Xcode 15 or newer, CocoaPods.
+- iOS: deployment target `15.1` or newer, Xcode 15 or newer, Swift Package Manager.
 - React Native / Expo: a development build or production native build. Expo Go cannot load the native SDK.
 - Bluetooth permissions, and Android location permission where BLE scanning requires it, requested through your app's normal permission flow.
 
@@ -62,26 +62,30 @@ cd /path/to/MentraOS/mobile/android
 
 ### iOS
 
-Add the Mentra CocoaPods source if required by the published pod, then depend on the pod:
+Add the public Swift package in Xcode or `Package.swift`:
 
-```ruby
-platform :ios, '15.1'
-
-target 'YourApp' do
-  use_frameworks!
-
-  pod 'MentraBluetoothSDK', '<version>'
-end
+```text
+https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-For unreleased SDK development, point CocoaPods at a local checkout during `pod install`:
+Use version `0.1.7` or newer, then add the `MentraBluetoothSDK` product to your app target.
 
-```bash
-export MENTRA_BLUETOOTH_SDK_LOCAL_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk/ios
-pod install
+For `Package.swift` consumers:
+
+```swift
+.package(
+  url: "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git",
+  from: "0.1.7"
+)
 ```
 
-Keep that environment variable out of committed project files.
+For unreleased SDK development, point Xcode at a local Swift package checkout.
+
+```text
+/path/to/MentraOS/mobile/modules/bluetooth-sdk
+```
+
+Keep local package paths out of committed project files.
 
 ### React Native / Expo
 
@@ -376,8 +380,7 @@ cd examples/android
 
 ```bash
 cd examples/ios
-pod install
-open MentraExample.xcworkspace
+open MentraExample.xcodeproj
 ```
 
 ```bash
@@ -390,7 +393,7 @@ bunx expo run:ios
 bun run android:dev
 ```
 
-`bun run ios:setup` installs the GStreamer iOS SDK used by the React Native example's direct phone WebRTC preview. If the SDK is missing, the iOS podspec also attempts the same setup during `pod install`, so `bunx expo run:ios` can recover from a fresh clone.
+`bun run ios:setup` installs the GStreamer iOS SDK used by the React Native example's direct phone WebRTC preview.
 
 For photo upload and RTMP/SRT/WebRTC demos, start the local helper from the repo root:
 

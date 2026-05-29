@@ -35,10 +35,10 @@ Use this checklist before shipping an app with the Mentra Bluetooth SDK.
 ## Release Validation
 
 - Fresh bare Android app install using the published Maven artifact.
-- Fresh bare iOS app install using the published CocoaPod.
+- Fresh bare iOS app install using the published Swift package.
 - Fresh React Native development or production build using the published JavaScript package, if shipping React Native.
 - Android sample app in this Starter Kit builds.
-- iOS sample app in this Starter Kit runs `pod install` and builds.
+- iOS sample app in this Starter Kit resolves SwiftPM dependencies and builds.
 - React Native sample app in this Starter Kit runs `bun install`, `bunx expo prebuild`, and at least one native platform build.
 - Fresh install test on iOS.
 - Fresh install test on Android.

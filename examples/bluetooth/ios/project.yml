@@ -20,12 +20,20 @@ settings:
     INFOPLIST_KEY_NSLocalNetworkUsageDescription: "This example app can talk to local photo webhook, streaming preview, and direct phone receiver servers."
     INFOPLIST_KEY_NSMicrophoneUsageDescription: "This example app can stream microphone audio from connected smart glasses."
 
+packages:
+  MentraBluetoothSDK:
+    url: https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
+    exactVersion: 0.1.7
+
 targets:
   MentraExample:
     type: application
     platform: iOS
     sources:
       - path: MentraExample
+    dependencies:
+      - package: MentraBluetoothSDK
+        product: MentraBluetoothSDK
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mentra.examples.ios
