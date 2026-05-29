@@ -101,6 +101,13 @@ export function useRegisterCapsule({
 
   // Always run focusEffectPreventBack with the same shape every render to keep
   // hook order stable inside that helper.
+  //
+  // Back gesture / Android back = minimize (handleLeftPress: clearForeground
+  // only, app stays running:true). The explicit "X" (right) button is the only
+  // thing that fully stops the app via handleRightPress. Screens that pass an
+  // onBackPress (webview/local) own their own exit and never stop on back;
+  // hardcoded miniapp screens (settings, lmaInstaller, …) rely on this default,
+  // so it must minimize — not stop — to match.
   focusEffectPreventBack(
     onBackPress
       ? () => {
@@ -108,7 +115,7 @@ export function useRegisterCapsule({
         }
       : () => {
           let shouldGoBack = Platform.OS === "android"
-          handleRightPress(shouldGoBack)
+          handleLeftPress(shouldGoBack)
         },
     onBackPress ? false : true,
   )

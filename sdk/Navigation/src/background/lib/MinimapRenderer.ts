@@ -1,7 +1,7 @@
 /**
- * MinimapRenderer — rasterizes a small heading-up minimap into a PNG
- * for the glasses HUD. Pure JS (no DOM/canvas): we draw into a raw RGB
- * pixel buffer and hand it to the PNG encoder.
+ * MinimapRenderer — rasterizes a small heading-up minimap into a 1-bit
+ * BMP for the glasses HUD. Pure JS (no DOM/canvas): we draw into a raw
+ * RGB pixel buffer and hand it to the BMP encoder.
  *
  * Heading-up: the user sits at the center as an upward-pointing arrow,
  * and the world is rotated by -heading so whatever direction the user
@@ -12,7 +12,7 @@
  * quantize unpredictably.
  */
 
-import {encodePngBase64} from "./png"
+import {encodeBmpBase64} from "./bmp"
 import type {LatLng} from "./geometry"
 
 export type MinimapInput = {
@@ -26,8 +26,8 @@ export type MinimapInput = {
 // is centered, so the visible square is ~2 * VIEW_RADIUS_M on a side.
 const VIEW_RADIUS_M = 80
 
-const BLACK = 0
-const WHITE = 255
+const BLACK = 255
+const WHITE = 0
 
 /** Equirectangular projection to local meters, user at origin. */
 function toLocalMeters(p: LatLng, origin: LatLng): {x: number; y: number} {
@@ -155,6 +155,14 @@ export function renderMinimap(input: MinimapInput, size = 100): string | null {
     }
   }
 
+  // Border rectangle around the minimap edge (drawn first; route and
+  // arrow render on top). Inset by 1px so the 2px stroke stays in-bounds.
+  const max = size - 2
+  r.line(1, 1, max, 1, BLACK, 2) // top
+  r.line(1, max, max, max, BLACK, 2) // bottom
+  r.line(1, 1, 1, max, BLACK, 2) // left
+  r.line(max, 1, max, max, BLACK, 2) // right
+
   // Route polyline.
   if (routePoints && routePoints.length >= 2) {
     let prev = project(routePoints[0])
@@ -180,5 +188,5 @@ export function renderMinimap(input: MinimapInput, size = 100): string | null {
   const cy = center + 7 // bottom-right
   r.triangle(ax, ay, bx, by, cx, cy, BLACK)
 
-  return encodePngBase64(r.buf, size, size)
+  return encodeBmpBase64(r.buf, size, size)
 }

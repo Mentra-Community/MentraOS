@@ -1431,7 +1431,7 @@ class G2: NSObject, SGCManager {
     /// Fixed pool of container IDs the page protocol expects.
     private let imageContainerIDPool: [Int32] = [10, 11, 12, 13]
     /// Default container seeded into every fresh page: 100x100 in the top-left.
-    private static let defaultImgContainer = (x: Int32(0), y: Int32(0), width: Int32(100), height: Int32(100))
+    private static let defaultImgContainer = (x: Int32(288), y: Int32(144), width: Int32(200), height: Int32(100))
 
     @Published var aiListening: Bool = false
 
@@ -2602,7 +2602,6 @@ class G2: NSObject, SGCManager {
         startupPageCreated = false
         pageCreated = false
         pageHasTextContainer = false
-        imageContainers = []
         dashboardShowing = 0
         heartbeatCounter = 0
         DeviceStore.shared.apply("glasses", "connected", false)
@@ -3890,7 +3889,6 @@ extension G2: CBCentralManagerDelegate {
             self.startupPageCreated = false
             self.pageCreated = false
             self.pageHasTextContainer = false
-            self.imageContainers = []
             self.dashboardShowing = 0
             DeviceStore.shared.apply("glasses", "connected", false)
             DeviceStore.shared.apply("glasses", "fullyBooted", false)

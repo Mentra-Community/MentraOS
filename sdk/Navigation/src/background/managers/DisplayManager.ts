@@ -32,17 +32,12 @@ export class DisplayManager {
   // }
 
   /**
-   * Show a bitmap on the glasses. `base64Png` is a base64-encoded PNG;
-   * the phone decodes it and converts to the glasses' native 1-bit
-   * format. `durationMs` auto-clears after that long; omit for sticky.
+   * Show a bitmap on the glasses. `base64Bmp` is a base64-encoded 1-bit
+   * BMP (see MinimapRenderer/bmp.ts). `width`/`height` size the target
+   * container on the glasses canvas.
    */
-  showBitmap(base64Png: string, durationMs?: number): void {
-    this.safeCall(() =>
-      this.session.display.showBitmapView(
-        base64Png,
-        {width: 100, height: 100}
-      ),
-    )
+  showBitmap(base64Bmp: string): void {
+    this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x: 200, y: 100, width: 50, height: 50}))
   }
 
   /** Wipe whatever's on the glasses. */
