@@ -1,0 +1,61 @@
+---
+title: "Bluetooth SDK"
+description: "Build mobile apps that connect directly to smart glasses over Bluetooth."
+icon: "bluetooth"
+---
+
+The Mentra Bluetooth SDK is the base SDK for building mobile apps that control smart glasses directly over Bluetooth. It gives Android, iOS, and React Native apps access to scanning, pairing, device status, microphone audio, camera capture on camera-equipped models, speaker playback on speaker-equipped models, streaming, Wi-Fi, hardware events, and display commands on display-equipped models.
+
+Use this SDK when your app owns the mobile experience and needs a direct phone-to-glasses connection.
+
+<Info>
+If you are building a cloud Mini App that runs through MentraOS, start with the App Devs docs and the Mentra Cloud SDK (`@mentra/sdk`). If you are building a mobile app that talks to glasses over Bluetooth, use this Bluetooth SDK.
+</Info>
+
+## Packages
+
+| Platform | Package | Import |
+| --- | --- | --- |
+| Android | `com.mentra:bluetooth-sdk` | `import com.mentra.bluetoothsdk.*` |
+| iOS | `MentraBluetoothSDK` CocoaPod | `import MentraBluetoothSDK` |
+| React Native / Expo | `@mentra/bluetooth-sdk` | `import BluetoothSdk from '@mentra/bluetooth-sdk'` |
+
+## What You Can Build
+
+- Native Android, iOS, or React Native apps that scan for and connect to MentraOS-compatible glasses.
+- Apps that display text, clear the display, and open the dashboard on display-equipped glasses such as G2.
+- Apps that receive button, touch, swipe, head-up, battery, Wi-Fi, hotspot, stream, photo, audio, and SDK log events.
+- Apps that control model-supported features such as dashboard position, head-up angle, gallery mode, camera settings, speaker playback, RGB LEDs, Wi-Fi, hotspot, microphone, camera, and streaming.
+- Photo upload to your own webhook and RTMP, SRT, or WebRTC streaming to your own ingest endpoint. The starter kit also includes optional local demo helpers for trying these flows on a LAN.
+
+## Bluetooth SDK vs Cloud SDK
+
+| Use case | SDK |
+| --- | --- |
+| Build a mobile app that connects directly to glasses over Bluetooth | Mentra Bluetooth SDK |
+| Build a cloud Mini App that users launch from MentraOS | Mentra Cloud SDK (`@mentra/sdk`) |
+| Need CoreBluetooth, Android BLE, native permissions, and mobile lifecycle control | Mentra Bluetooth SDK |
+| Need server-side sessions, webhooks, app store distribution, and MentraOS relay features | Mentra Cloud SDK (`@mentra/sdk`) |
+
+## Requirements
+
+- A physical Android phone or iPhone for real Bluetooth testing.
+- Android min SDK `28` or newer.
+- iOS deployment target `15.1` or newer.
+- React Native / Expo apps must use a development build or production native build. Expo Go cannot load the native SDK.
+- Bluetooth permissions, plus Android location permission where BLE scanning requires it.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/bluetooth-sdk/quickstart">
+    Install the SDK, connect to Mentra Live, and read glasses status.
+  </Card>
+  <Card title="Example Apps" icon="mobile" href="/bluetooth-sdk/examples">
+    Run the Android, iOS, and React Native starter apps from a fresh clone.
+  </Card>
+  <Card title="API Reference" icon="book" href="/bluetooth-sdk/api-reference">
+    Review lifecycle, commands, events, status fields, and model differences.
+  </Card>
+  <Card title="Troubleshooting" icon="circle-question" href="/bluetooth-sdk/troubleshooting">
+    Fix native build, permission, scan, stream, and Expo issues.
+  </Card>
+</CardGroup>

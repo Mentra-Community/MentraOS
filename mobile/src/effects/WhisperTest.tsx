@@ -1,7 +1,7 @@
 // import React, {useEffect, useState} from "react"
 // import {Text, Button, View} from "react-native"
 // import {useSpeechToText, WHISPER_TINY, WHISPER_TINY_EN} from "react-native-executorch"
-// import CoreModule from "@mentra/bluetooth-sdk"
+// import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 // // const decodePcm16Base64ToFloat32 = (base64: string): Float32Array => {
 // //   const binaryString = atob(base64)
@@ -59,7 +59,7 @@
 
 //     // console.log("COMPOSITOR: Is recording:", recorder.isRecording());
 
-//     await CoreModule.updateCore({
+//     await BluetoothSdk.updateCore({
 //       should_send_pcm: true,
 //     })
 
@@ -72,7 +72,7 @@
 //     //   console.log("COMPOSITOR: Transcription result:", model.downloadProgress)
 //     // }, 1000)
 
-//     const pcmSub = CoreModule.addListener("mic_pcm", (event) => {
+//     const pcmSub = BluetoothSdk.addListener("mic_pcm", (event) => {
 //       // console.log("COMPOSITOR: Received mic pcm:", event.base64)
 //       //   const samples = decodePcm16Base64ToFloat32(event.base64)
 //       //   let samples = new Float32Array(event.pcm)

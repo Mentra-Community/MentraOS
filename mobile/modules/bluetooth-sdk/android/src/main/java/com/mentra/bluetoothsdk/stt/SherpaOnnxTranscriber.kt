@@ -1,4 +1,4 @@
-package com.mentra.core.stt
+package com.mentra.bluetoothsdk.stt
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -6,7 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.k2fsa.sherpa.onnx.*
-import com.mentra.core.Bridge
+import com.mentra.bluetoothsdk.Bridge
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -226,8 +226,7 @@ class SherpaOnnxTranscriber(private val context: Context) {
      * Feed PCM audio data (16-bit little endian) into the transcriber. This method should be called
      * continuously with short chunks (e.g., 100-300ms).
      *
-     * Note: Audio passed to this method is assumed to have already passed VAD elsewhere, so it's
-     * directly queued for processing without additional VAD checks.
+     * Audio is queued directly; microphone VAD gating is not applied in the SDK.
      */
     fun acceptAudio(pcm16le: ByteArray) {
         if (!running.get()) {
@@ -235,7 +234,6 @@ class SherpaOnnxTranscriber(private val context: Context) {
             return
         }
 
-        // Directly queue the audio data for processing
         if (!pcmQueue.offer(pcm16le.copyOf())) {
             // Queue is full, drop oldest and try again
             pcmQueue.poll()

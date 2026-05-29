@@ -1,4 +1,4 @@
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import CrustModule from "crust"
 import {Linking, Platform} from "react-native"
 

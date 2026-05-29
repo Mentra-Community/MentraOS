@@ -346,7 +346,7 @@ const $switchDetail: SwitchToggleProps["inputDetailStyle"] = {
   height: 24,
 }
 
-const $switchAccessibility: TextStyle = {
+const $switchAccessibility: ViewStyle = {
   width: "40%",
   justifyContent: "center",
   alignItems: "center",

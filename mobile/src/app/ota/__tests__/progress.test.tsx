@@ -3,6 +3,12 @@ import {render, act, fireEvent} from "@testing-library/react-native"
 
 import {useGlassesStore} from "@/stores/glasses"
 
+import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
+import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
+
+import OtaProgressScreen from "@/app/ota/progress"
+import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@/app/ota/otaProgressTimeouts"
+
 const mockReplace = jest.fn()
 
 jest.mock("@/contexts/NavigationHistoryContext", () => ({
@@ -40,29 +46,39 @@ jest.mock("@/components/ignite", () => {
     Screen: ({children}: any) => React.createElement(View, {testID: "screen"}, children),
     Header: () => null,
     Button: ({text, onPress}: any) =>
-      React.createElement(TouchableOpacity, {testID: `button-${text}`, onPress}, React.createElement(RNText, null, text)),
+      React.createElement(
+        TouchableOpacity,
+        {testID: `button-${text}`, onPress},
+        React.createElement(RNText, null, text),
+      ),
     Text: ({text}: any) => React.createElement(RNText, null, text),
     Icon: () => null,
   }
 })
 
-import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
-import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-
-import OtaProgressScreen from "@/app/ota/progress"
-import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@/app/ota/otaProgressTimeouts"
-
 const sb = (n: number) => String(n)
 
-const CoreModule = require("@mentra/bluetooth-sdk").default
+const BluetoothSdk = require("@mentra/bluetooth-sdk-internal").default
+
+function connectedGlassesInfo(values = {}) {
+  return {connection: {state: "connected", fullyBooted: true} as const, ...values}
+}
+
+function setGlassesConnected() {
+  useGlassesStore.getState().setGlassesInfo(connectedGlassesInfo())
+}
+
+function setGlassesDisconnected() {
+  useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+}
 
 beforeEach(() => {
   jest.useFakeTimers()
   useGlassesStore.getState().reset()
   useConnectionOverlayConfig.getState().clearConfig()
   mockReplace.mockClear()
-  CoreModule.sendOtaQueryStatus.mockClear()
-  CoreModule.sendOtaStart.mockClear()
+  BluetoothSdk.sendOtaQueryStatus.mockClear()
+  BluetoothSdk.sendOtaStart.mockClear()
 })
 
 afterEach(() => {
@@ -71,13 +87,13 @@ afterEach(() => {
 
 describe("progress.tsx display states", () => {
   it("starts in starting state", () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)
     expect(getByText("Starting update...")).toBeDefined()
   })
 
   it("transitions to updating on in_progress ota_status", () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)
 
     act(() => {
@@ -98,7 +114,7 @@ describe("progress.tsx display states", () => {
   })
 
   it("clamps displayed percent to 100 when overallPercent exceeds 100", () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)
 
     act(() => {
@@ -119,7 +135,7 @@ describe("progress.tsx display states", () => {
 
   it("transitions to complete on complete ota_status even when a target build is known in store", () => {
     const nextBuild = MINIMUM_OTA_STATUS_BUILD + 1
-    useGlassesStore.getState().setGlassesInfo({buildNumber: sb(MINIMUM_OTA_STATUS_BUILD), connected: true})
+    useGlassesStore.getState().setGlassesInfo(connectedGlassesInfo({buildNumber: sb(MINIMUM_OTA_STATUS_BUILD)}))
     useGlassesStore.getState().setOtaUpdateAvailable({
       available: true,
       versionCode: nextBuild,
@@ -147,7 +163,7 @@ describe("progress.tsx display states", () => {
   })
 
   it("transitions to complete on complete ota_status when no target build is set", () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)
 
     act(() => {
@@ -168,7 +184,7 @@ describe("progress.tsx display states", () => {
   })
 
   it("transitions to failed on failed ota_status with error", () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)
 
     act(() => {
@@ -191,14 +207,14 @@ describe("progress.tsx display states", () => {
   })
 
   it("shows disconnected state when not connected and not terminal", () => {
-    useGlassesStore.getState().setGlassesInfo({connected: false})
+    setGlassesDisconnected()
     const {getByText} = render(<OtaProgressScreen />)
     expect(getByText("Glasses disconnected")).toBeDefined()
   })
 
   it("does NOT override complete state on disconnect", () => {
     const nextBuild = MINIMUM_OTA_STATUS_BUILD + 1
-    useGlassesStore.getState().setGlassesInfo({buildNumber: sb(MINIMUM_OTA_STATUS_BUILD), connected: true})
+    useGlassesStore.getState().setGlassesInfo(connectedGlassesInfo({buildNumber: sb(MINIMUM_OTA_STATUS_BUILD)}))
     useGlassesStore.getState().setOtaUpdateAvailable({
       available: true,
       versionCode: nextBuild,
@@ -222,13 +238,13 @@ describe("progress.tsx display states", () => {
     })
 
     act(() => {
-      useGlassesStore.getState().setGlassesInfo({buildNumber: sb(nextBuild), connected: true})
+      useGlassesStore.getState().setGlassesInfo(connectedGlassesInfo({buildNumber: sb(nextBuild)}))
     })
 
     expect(getByText("Update complete!")).toBeDefined()
 
     act(() => {
-      useGlassesStore.getState().setGlassesInfo({connected: false})
+      setGlassesDisconnected()
     })
 
     rerender(<OtaProgressScreen />)
@@ -236,7 +252,7 @@ describe("progress.tsx display states", () => {
   })
 
   it("does NOT override failed state on disconnect", () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     const {getByText, rerender} = render(<OtaProgressScreen />)
 
     act(() => {
@@ -256,7 +272,7 @@ describe("progress.tsx display states", () => {
     expect(getByText("Update Failed")).toBeDefined()
 
     act(() => {
-      useGlassesStore.getState().setGlassesInfo({connected: false})
+      setGlassesDisconnected()
     })
 
     rerender(<OtaProgressScreen />)
@@ -266,7 +282,7 @@ describe("progress.tsx display states", () => {
 
 describe("progress.tsx watchdog timers", () => {
   it("fails with no-ack message after max ota_start retries while still starting", async () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)
 
     await act(async () => {
@@ -278,7 +294,7 @@ describe("progress.tsx watchdog timers", () => {
   })
 
   it("does not fail no-ack when ota_start_ack is received", async () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     const {queryByText} = render(<OtaProgressScreen />)
 
     await act(async () => {
@@ -295,7 +311,7 @@ describe("progress.tsx watchdog timers", () => {
   })
 
   it("fails stuck-at-zero after DOWNLOAD_STUCK_TIMEOUT_MS in starting", async () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)
 
     act(() => {
@@ -310,7 +326,7 @@ describe("progress.tsx watchdog timers", () => {
   })
 
   it("fails progress stall after PROGRESS_TIMEOUT_MS with frozen ota_status", async () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)
 
     act(() => {
@@ -335,9 +351,9 @@ describe("progress.tsx watchdog timers", () => {
   })
 
   it("delays sendOtaStart after reconnect when multi-step APK completed", async () => {
-    useGlassesStore.getState().setGlassesInfo({buildNumber: sb(MINIMUM_OTA_STATUS_BUILD + 3), connected: true})
+    useGlassesStore.getState().setGlassesInfo(connectedGlassesInfo({buildNumber: sb(MINIMUM_OTA_STATUS_BUILD + 3)}))
     render(<OtaProgressScreen />)
-    CoreModule.sendOtaStart.mockClear()
+    BluetoothSdk.sendOtaStart.mockClear()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -353,25 +369,25 @@ describe("progress.tsx watchdog timers", () => {
     })
 
     act(() => {
-      useGlassesStore.getState().setGlassesInfo({connected: false})
+      setGlassesDisconnected()
     })
     act(() => {
-      useGlassesStore.getState().setGlassesInfo({connected: true})
+      setGlassesConnected()
     })
 
-    expect(CoreModule.sendOtaStart).not.toHaveBeenCalled()
+    expect(BluetoothSdk.sendOtaStart).not.toHaveBeenCalled()
 
     await act(async () => {
       await jest.advanceTimersByTimeAsync(6000)
     })
 
-    expect(CoreModule.sendOtaStart).toHaveBeenCalled()
+    expect(BluetoothSdk.sendOtaStart).toHaveBeenCalled()
   })
 
   it("pings periodically while updating", async () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     render(<OtaProgressScreen />)
-    CoreModule.ping.mockClear()
+    BluetoothSdk.ping.mockClear()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -386,18 +402,18 @@ describe("progress.tsx watchdog timers", () => {
       })
     })
 
-    expect(CoreModule.ping).toHaveBeenCalled()
-    CoreModule.ping.mockClear()
+    expect(BluetoothSdk.ping).toHaveBeenCalled()
+    BluetoothSdk.ping.mockClear()
     await act(async () => {
       await jest.advanceTimersByTimeAsync(10_000)
     })
-    expect(CoreModule.ping).toHaveBeenCalled()
+    expect(BluetoothSdk.ping).toHaveBeenCalled()
   })
 })
 
 describe("progress.tsx progress heartbeat", () => {
   it("does NOT fail global timeout before PROGRESS_TIMEOUT when progress keeps updating", async () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     const {queryByText} = render(<OtaProgressScreen />)
 
     act(() => {
@@ -438,13 +454,13 @@ describe("progress.tsx progress heartbeat", () => {
 
 describe("progress.tsx reconnect", () => {
   it("sends sendOtaStart on mount when connected (no session yet)", () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     render(<OtaProgressScreen />)
-    expect(CoreModule.sendOtaStart).toHaveBeenCalled()
+    expect(BluetoothSdk.sendOtaStart).toHaveBeenCalled()
   })
 
   it("retry button calls sendOtaStart", () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     const {getByTestId} = render(<OtaProgressScreen />)
 
     act(() => {
@@ -462,20 +478,20 @@ describe("progress.tsx reconnect", () => {
     })
 
     fireEvent.press(getByTestId("button-Retry"))
-    expect(CoreModule.sendOtaStart).toHaveBeenCalled()
+    expect(BluetoothSdk.sendOtaStart).toHaveBeenCalled()
   })
 })
 
 describe("progress.tsx overlay suppression", () => {
   it("sets suppressOverlay on mount", () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
     render(<OtaProgressScreen />)
     expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(true)
   })
 
   it("clears config on unmount", () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    setGlassesConnected()
     const {unmount} = render(<OtaProgressScreen />)
     expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(true)
     unmount()

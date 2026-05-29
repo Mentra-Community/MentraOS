@@ -250,7 +250,7 @@ const $searchContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   paddingHorizontal: spacing.s3,
 })
 
-const $searchIcon: ThemedStyle<ViewStyle> = ({spacing}) => ({
+const $searchIcon: ThemedStyle<TextStyle> = ({spacing}) => ({
   marginRight: spacing.s2,
 })
 

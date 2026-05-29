@@ -1,4 +1,4 @@
-package com.mentra.core.utils
+package com.mentra.bluetoothsdk.utils
 
 import java.nio.ByteBuffer
 import java.io.IOException
@@ -7,13 +7,13 @@ import java.util.UUID
 import android.content.Context
 import android.util.Log
 
-import com.mentra.core.Bridge
+import com.mentra.bluetoothsdk.Bridge
 
 import mentraos.ble.MentraosBle.DisplayText
 import mentraos.ble.MentraosBle.ClearDisplay
 import mentraos.ble.MentraosBle.PhoneToGlasses
 import mentraos.ble.MentraosBle.DisplayImage
-import mentraos.ble.MentraosBle.PongResponse
+import mentraos.ble.MentraosBle.PingRequest
 import mentraos.ble.MentraosBle.BatteryStateRequest
 import mentraos.ble.MentraosBle.MicStateConfig
 import mentraos.ble.MentraosBle.BrightnessConfig
@@ -21,7 +21,7 @@ import mentraos.ble.MentraosBle.AutoBrightnessConfig
 import mentraos.ble.MentraosBle.HeadUpAngleConfig
 import mentraos.ble.MentraosBle.DisplayDistanceConfig
 import mentraos.ble.MentraosBle.DisplayHeightConfig
-import mentraos.ble.MentraosBle.VersionRequest
+import mentraos.ble.MentraosBle.VadEnabledConfig
 
 import org.json.JSONArray
 import org.json.JSONException
@@ -114,11 +114,9 @@ object NexProtobufUtils {
 
     fun constructPongResponse(): ByteArray {
         Bridge.log("Nex: Constructing pong response to glasses ping")
-        
-        // Create the PongResponse message
-        val pongResponse = PongResponse.newBuilder().build()
-        // Create the PhoneToGlasses message with the pong response
-        val phoneToGlasses = PhoneToGlasses.newBuilder().setPong(pongResponse).build()
+        // New schema flips the heartbeat names: glasses sends `pong`, phone replies with `ping` (acting as the pong-response).
+        val pingRequest = PingRequest.newBuilder().build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder().setPing(pingRequest).build()
         return generateProtobufCommandBytes(phoneToGlasses)
     }
     
@@ -202,15 +200,9 @@ object NexProtobufUtils {
     }
 
     fun generateVersionRequestCommandBytes(): ByteArray {
-        val msgId = "ver_req_${System.currentTimeMillis()}"
-        val versionRequest = VersionRequest.newBuilder()
-            .setMsgId(msgId)
-            .build()
-        val phoneToGlasses = PhoneToGlasses.newBuilder()
-            .setMsgId(msgId)
-            .setVersionRequest(versionRequest)
-            .build()
-        return generateProtobufCommandBytes(phoneToGlasses)
+        // VersionRequest/VersionResponse removed from the BLE schema; fw_version now comes via DeviceInfo.
+        Bridge.log("Nex: generateVersionRequestCommandBytes is a no-op after schema removal")
+        return ByteArray(0)
     }
 
     fun generateBatteryStateRequestCommandBytes(): ByteArray {
@@ -356,6 +348,18 @@ object NexProtobufUtils {
             .build()
         val phoneToGlasses = PhoneToGlasses.newBuilder()
             .setMicState(micStateConfig)
+            .build()
+
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
+    fun generateVadEnabledRequestCommandBytes(enable: Boolean): ByteArray {
+        Bridge.log("Nex: VAD Enabled: $enable")
+        val vadEnabledConfig = VadEnabledConfig.newBuilder()
+            .setEnabled(enable)
+            .build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setVadEnabled(vadEnabledConfig)
             .build()
 
         return generateProtobufCommandBytes(phoneToGlasses)

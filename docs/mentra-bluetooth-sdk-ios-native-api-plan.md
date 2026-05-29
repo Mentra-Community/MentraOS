@@ -12,7 +12,7 @@ The current iOS entrypoint is `BluetoothSdkModule.swift`, which imports `ExpoMod
 
 - Calls `Bridge.initialize { eventName, data in sendEvent(eventName, data) }`.
 - Configures `DeviceStore.shared.store.configure` so `"glasses"` updates become `glasses_status` events and `"bluetooth"` updates become `bluetooth_status` events.
-- Exposes Expo `AsyncFunction`s such as `update`, `findCompatibleDevices`, `connectByName`, `connectDefault`, `disconnect`, `displayText`, media commands, Wi-Fi commands, OTA commands, and microphone/STT commands.
+- Exposes Expo `AsyncFunction`s such as `update`, scan/connect helpers, `connectDefault`, `disconnect`, `displayText`, media commands, Wi-Fi commands, version commands, and microphone/STT commands.
 
 The real hardware lifecycle lives under the Expo module adapter:
 
@@ -43,22 +43,17 @@ public final class MentraBluetoothSDK {
     public func connect(to device: MentraDiscoveredDevice)
     public func connect(model: MentraDeviceModel, name: String)
     public func connectDefault()
-    public func connectSimulated()
     public func disconnect()
     public func forget()
 
     public func displayText(_ request: MentraDisplayTextRequest) async throws
-    public func displayEvent(_ request: MentraDisplayEventRequest) async throws
     public func clearDisplay() async throws
     public func showDashboard()
 
-    public func setBrightness(_ level: Int, autoMode: Bool? = nil) async throws
-    public func setAutoBrightness(enabled: Bool) async throws
     public func setDashboardPosition(_ request: MentraDashboardPositionRequest) async throws
-    public func setDashboardMenu(_ items: [MentraDashboardMenuItem]) async throws
     public func setHeadUpAngle(_ angleDegrees: Int) async throws
     public func setScreenDisabled(_ disabled: Bool) async throws
-    public func setGalleryMode(_ mode: MentraGalleryMode) async throws
+    public func setGalleryModeEnabled(_ enabled: Bool) async throws
     public func setButtonPhotoSettings(_ settings: MentraButtonPhotoSettings) async throws
     public func setButtonVideoRecordingSettings(_ settings: MentraButtonVideoRecordingSettings) async throws
     public func setButtonCameraLed(enabled: Bool) async throws
@@ -83,10 +78,6 @@ public final class MentraBluetoothSDK {
     public func stopVideoRecording(requestId: String)
 
     public func requestVersionInfo()
-    public func sendOtaStart()
-    public func sendShutdown()
-    public func sendReboot()
-    public func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil)
 
     public func invalidate()
 }
@@ -101,15 +92,15 @@ The facade can be implemented as one class initially, but the customer-facing do
 Base v1 should include:
 
 - Initialization, invalidation, permission/capability helpers, scan, connect, disconnect, forget, default-device handling, and status snapshots.
-- Display primitives: display text, display events/images as supported, clear display, and show dashboard.
-- Core hardware settings: brightness, auto brightness, dashboard height/depth/menu, head-up angle, screen disable, gallery mode, button/camera settings, preferred mic, mic routing, and own-app-audio state.
+- Display primitives: display text, clear display, and show dashboard.
+- Core hardware settings: brightness, auto brightness, dashboard height/depth, head-up angle, screen disable, gallery mode, button/camera settings, preferred mic, mic routing, and own-app-audio state.
 - Common device events: status, discovered devices, button/touch/head-up, battery, Wi-Fi status, logs, and errors.
 
 Advanced or capability-gated APIs should include:
 
 - Camera/gallery commands and media transfer state.
 - RTMP/video streaming and saved video recording.
-- OTA, shutdown, reboot, and version/diagnostic commands.
+- Version info commands. MentraOS-only OTA, shutdown, reboot, incident, and diagnostic commands stay behind the adapter boundary.
 - Local STT, VAD/model management, and raw mic frame delivery.
 - Controller pairing and RGB LED controls.
 
@@ -152,7 +143,7 @@ Add typed public models before exposing the facade:
 - `MentraGlassesStatus`: current snapshot of connected, fully booted, battery, charging, model, firmware, serial, Wi-Fi, hotspot, head-up, controller, and signal state.
 - `MentraBluetoothStatus`: current snapshot of searching, mic, current mic, search results, Wi-Fi scan results, permission availability, and audio availability.
 - `MentraDisplayTextRequest`, `MentraDisplayEventRequest`, `MentraDashboardPositionRequest`, `MentraDashboardMenuItem`, `MentraPhotoRequest`, `MentraStreamRequest`, `MentraStreamKeepAliveRequest`, `MentraVideoRecordingRequest`, `MentraMicConfiguration`, `MentraBluetoothError`.
-- Settings models/enums for values currently routed through `DeviceStore.apply()`: `MentraGalleryMode`, `MentraButtonPhotoSettings`, `MentraButtonPhotoSize`, `MentraButtonVideoRecordingSettings`, `MentraCameraFov`, and `MentraMicPreference`.
+- Settings models/enums for values currently routed through `DeviceStore.apply()`: `MentraButtonPhotoSettings`, `MentraButtonPhotoSize`, `MentraButtonVideoRecordingSettings`, `MentraCameraFov`, and `MentraMicPreference`.
 - Typed value enums should reflect device-specific capability boundaries rather than raw string payloads: `MentraPhotoSize` includes `full` for app-requested uploads, `MentraButtonPhotoSize` intentionally does not; `MentraPhotoCompression` is `none` / `medium` / `heavy`; `MentraRgbLedAction` and `MentraRgbLedColor` represent the Mentra Live/K900 RGB ring surface; stream request fields are typed while the actual streaming protocol is selected from the URL prefix.
 
 Prefer Swift structs and enums with clear defaults. Objective-C compatibility is not a v1 requirement unless a customer asks for it.
@@ -168,7 +159,7 @@ This two-store setup can remain internally, but it should not become the public 
 
 The target boundary is:
 
-- Public SDK callers use typed methods such as `setBrightness`, `setPreferredMic`, `startScan`, `connect`, `displayText`, and `setMicState`.
+- Public SDK callers use typed methods such as `setPreferredMic`, `startScan`, `connect`, `displayText`, and `setMicState`.
 - Public SDK callers receive typed delegate callbacks such as `didUpdateGlassesStatus`, `didUpdateBluetoothStatus`, `didDiscover`, and `didReceive`.
 - All hardware side effects currently hidden inside `DeviceStore.apply()` should have a typed public or adapter-only entrypoint before MentraOS removes blob sync.
 - `DeviceStore` remains an implementation detail behind `MentraBluetoothSDK`.
@@ -270,6 +261,6 @@ Current implementation status:
 ## Open Questions
 
 - Whether the adapter should be a separate pod, a CocoaPods subspec, or only an internal Expo module target.
-- Whether media, streaming, OTA, and local transcription should ship in the base SDK facade or be grouped behind capability protocols.
+- Whether media, streaming, and local transcription should ship in the base SDK facade or be grouped behind capability protocols.
 - Whether the first version needs Objective-C compatibility.
 - Whether Swift Package Manager is worth supporting before the dependency graph is simplified.

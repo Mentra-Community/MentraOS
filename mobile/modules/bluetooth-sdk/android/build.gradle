@@ -37,7 +37,7 @@ if (useManagedAndroidSdkVersions) {
 }
 
 android {
-  namespace "com.mentra.core"
+  namespace "com.mentra.bluetoothsdk"
   defaultConfig {
     versionCode 1
     versionName packageJson.version
@@ -89,13 +89,6 @@ dependencies {
   // Sherpa-ONNX for local transcription
   implementation 'com.github.k2-fsa:sherpa-onnx:v1.12.8'
 
-  // Silero VAD (with onnxruntime exclusions to avoid conflicts with sherpa-onnx)
-  implementation ('com.github.gkonovalov:android-vad:2.0.9') {
-    exclude group: 'com.microsoft.onnxruntime', module: 'onnxruntime'
-    exclude group: 'com.microsoft.onnxruntime', module: 'onnxruntime4j'
-    exclude group: 'com.microsoft.onnxruntime', module: 'onnxruntime4j-jni'
-  }
-
   // Vuzix Z100
   implementation 'com.vuzix:ultralite-sdk-android:1.8'
   implementation 'com.squareup.picasso:picasso:2.8'
@@ -110,11 +103,11 @@ configurations.all {
     eachDependency { DependencyResolveDetails details ->
       if (details.requested.group == 'com.microsoft.onnxruntime') {
         details.useVersion '1.17.1'
-        details.because('Force override vad\'s transitive version')
+        details.because('Force override transitive onnxruntime version')
       }
       if (details.requested.name == 'onnxruntime-android') {
         details.useVersion '1.17.1'
-        details.because('Force override vad\'s transitive version')
+        details.because('Force override transitive onnxruntime version')
       }
     }
   }

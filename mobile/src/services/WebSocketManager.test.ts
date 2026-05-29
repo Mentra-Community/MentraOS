@@ -50,7 +50,9 @@ describe("WebSocketManager", () => {
     useGlassesStore = require("@/stores/glasses").useGlassesStore
     useConnectionStore.getState().reset()
     useGlassesStore.getState().reset()
-    useGlassesStore.getState().setGlassesInfo({connected: true, deviceModel: "Mentra Live"})
+    useGlassesStore
+      .getState()
+      .setGlassesInfo({connection: {state: "connected", fullyBooted: true}, deviceModel: "Mentra Live"})
     manager = jest.requireActual("./WebSocketManager").default
   })
 

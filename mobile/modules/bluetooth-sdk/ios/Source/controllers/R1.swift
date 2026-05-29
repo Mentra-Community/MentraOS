@@ -131,7 +131,7 @@ class R1: NSObject, ControllerManager {
     @Published private var _batteryLevel: Int = -1 {
         didSet {
             if _batteryLevel != oldValue && _batteryLevel >= 0 {
-                GlassesStore.shared.apply("glasses", "controllerBatteryLevel", _batteryLevel)
+                DeviceStore.shared.apply("glasses", "controllerBatteryLevel", _batteryLevel)
                 // Bridge.sendBatteryStatus(level: _batteryLevel, charging: isCharging)
             }
         }
@@ -259,7 +259,7 @@ class R1: NSObject, ControllerManager {
     /// to WRITE_CHAR_2 (BAE80012-…). Reverse-engineered from the Even Realities mobile app
     /// (BleRing1CmdProto::advStart -> BleRing1CmdPublicExt.sendCmd).
     private func connectToGlasses() {
-        let glassesMac = (GlassesStore.shared.get("glasses", "btMacAddress") as? String)
+        let glassesMac = (DeviceStore.shared.get("glasses", "bluetoothMacAddress") as? String)
             ?? UserDefaults.standard.string(forKey: "glasses_btMacAddress")
 
         guard let glassesMac else {
@@ -307,17 +307,17 @@ class R1: NSObject, ControllerManager {
         Bridge.log("R1: Ring connected")
 
         if let name = ringPeripheral?.name, let id = extractRingId(name) {
-            GlassesStore.shared.apply("core", "controller_device_name", id)
+            DeviceStore.shared.apply("bluetooth", "controller_device_name", id)
         }
 
         guard let mac = ringMacAddress else {
             Bridge.log("R1: No ring MAC address found")
             return
         }
-        GlassesStore.shared.apply("glasses", "controllerMacAddress", mac)
+        DeviceStore.shared.apply("glasses", "controllerMacAddress", mac)
 
-        GlassesStore.shared.apply("glasses", "controllerConnected", true)
-        // GlassesStore.shared.apply("glasses", "controllerFullyBooted", true)
+        DeviceStore.shared.apply("glasses", "controllerConnected", true)
+        // DeviceStore.shared.apply("glasses", "controllerFullyBooted", true)
 
         // tell the ring to connect to the glasses if we have it's mac address:
         connectToGlasses()
@@ -325,7 +325,7 @@ class R1: NSObject, ControllerManager {
         // after a second, connect the glasses to the controller if needed:
         Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
-            await CoreManager.shared.sgc?.connectController()
+            await DeviceManager.shared.sgc?.connectController()
         }
 
         startHeartbeat()
@@ -339,7 +339,7 @@ class R1: NSObject, ControllerManager {
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) {
             [weak self] _ in
             DispatchQueue.main.async {
-                guard let self = self, GlassesStore.shared.get("glasses", "controllerConnected") as? Bool ?? false else { return }
+                guard let self = self, DeviceStore.shared.get("glasses", "controllerConnected") as? Bool ?? false else { return }
                 // Read battery if we have the standard battery char
                 if let char = self.batteryLevelChar {
                     self.ringPeripheral?.readValue(for: char)
@@ -421,8 +421,8 @@ class R1: NSObject, ControllerManager {
         notifySubscriptionCount = 0
         initSequenceRun = false
         ringMacAddress = nil
-        GlassesStore.shared.apply("glasses", "controllerConnected", false)
-        GlassesStore.shared.apply("glasses", "controllerFullyBooted", false)
+        DeviceStore.shared.apply("glasses", "controllerConnected", false)
+        DeviceStore.shared.apply("glasses", "controllerFullyBooted", false)
     }
 
     // MARK: - Reconnection
@@ -431,7 +431,7 @@ class R1: NSObject, ControllerManager {
         Task {
             await reconnectionManager.start { [weak self] in
                 guard let self else { return false }
-                if await MainActor.run(body: { GlassesStore.shared.get("glasses", "controllerConnected") as? Bool ?? false }) {
+                if await MainActor.run(body: { DeviceStore.shared.get("glasses", "controllerConnected") as? Bool ?? false }) {
                     return true // already connected
                 }
                 Bridge.log("R1: Attempting reconnection...")
@@ -530,8 +530,8 @@ class R1: NSObject, ControllerManager {
 
     func sendReboot() {}
     func sendRgbLedControl(
-        requestId _: String, packageName _: String?, action _: String, color _: String?, ontime _: Int,
-        offtime _: Int, count _: Int
+        requestId _: String, packageName _: String?, action _: String, color _: String?, onDurationMs _: Int,
+        offDurationMs _: Int, count _: Int
     ) {}
     func requestWifiScan() {}
     func sendWifiCredentials(_: String, _: String) {}
@@ -626,9 +626,9 @@ extension R1: CBCentralManagerDelegate {
                 self.disconnect()
                 self.ringUUID = nil
                 // we are still searching!:
-                GlassesStore.shared.apply("glasses", "controllerConnected", false)
-                GlassesStore.shared.apply("glasses", "controllerFullyBooted", false)
-                GlassesStore.shared.apply("glasses", "controllerSearching", true)
+                DeviceStore.shared.apply("glasses", "controllerConnected", false)
+                DeviceStore.shared.apply("glasses", "controllerFullyBooted", false)
+                DeviceStore.shared.apply("glasses", "controllerSearching", true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     self.startScan()
                 }

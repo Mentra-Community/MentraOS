@@ -1,4 +1,4 @@
-package com.mentra.core.utils
+package com.mentra.bluetoothsdk.utils
 
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -7,7 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioManager
-import com.mentra.core.Bridge
+import com.mentra.bluetoothsdk.Bridge
 
 /**
  * Android AudioSessionMonitor - maintains API parity with iOS implementation

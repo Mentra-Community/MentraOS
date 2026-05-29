@@ -1,4 +1,4 @@
-package com.mentra.core.sgcs;
+package com.mentra.bluetoothsdk.sgcs;
 
 import android.Manifest;
 import android.bluetooth.BluetoothAdapter;
@@ -32,25 +32,25 @@ import androidx.core.app.ActivityCompat;
 // import androidx.preference.PreferenceManager;
 
 // Mentra
-import com.mentra.core.sgcs.SGCManager;
-import com.mentra.core.CoreManager;
-import com.mentra.core.Bridge;
-import com.mentra.core.utils.DeviceTypes;
-import com.mentra.core.utils.ConnTypes;
-import com.mentra.core.utils.BitmapJavaUtils;
-import com.mentra.core.utils.SmartGlassesConnectionState;
-import com.mentra.core.utils.K900ProtocolUtils;
-import com.mentra.core.utils.MessageChunker;
-import com.mentra.core.utils.audio.Lc3Player;
-import com.mentra.core.utils.BlePhotoUploadService;
-import com.mentra.core.utils.IncidentLogBleRelayNaming;
-import com.mentra.core.utils.IncidentLogBleUploadService;
-import com.mentra.core.GlassesStore;
-import com.mentra.core.utils.PhoneAudioMonitor;
+import com.mentra.bluetoothsdk.sgcs.SGCManager;
+import com.mentra.bluetoothsdk.DeviceManager;
+import com.mentra.bluetoothsdk.Bridge;
+import com.mentra.bluetoothsdk.utils.DeviceTypes;
+import com.mentra.bluetoothsdk.utils.ConnTypes;
+import com.mentra.bluetoothsdk.utils.BitmapJavaUtils;
+import com.mentra.bluetoothsdk.utils.SmartGlassesConnectionState;
+import com.mentra.bluetoothsdk.utils.K900ProtocolUtils;
+import com.mentra.bluetoothsdk.utils.MessageChunker;
+import com.mentra.bluetoothsdk.utils.audio.Lc3Player;
+import com.mentra.bluetoothsdk.utils.BlePhotoUploadService;
+import com.mentra.bluetoothsdk.utils.IncidentLogBleRelayNaming;
+import com.mentra.bluetoothsdk.utils.IncidentLogBleUploadService;
+import com.mentra.bluetoothsdk.DeviceStore;
+import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor;
 
 // old augmentos imports:
 import com.mentra.lc3Lib.Lc3Cpp;
-import com.mentra.core.utils.audio.Lc3Player;
+import com.mentra.bluetoothsdk.utils.audio.Lc3Player;
 
 
 
@@ -105,6 +105,7 @@ public class MentraLive extends SGCManager {
 
     // LC3 frame size for Mentra Live
     private static final int LC3_FRAME_SIZE = 40;
+    private static final int VOICE_ACTIVITY_DETECTION_SWITCH_TYPE = 8;
 
     // Local-only fields (not in parent SGCManager)
     private int buildNumberInt = 0; // Build number as integer for version checks
@@ -550,7 +551,7 @@ public class MentraLive extends SGCManager {
         }
 
         // Initialize connection state
-        GlassesStore.INSTANCE.apply("glasses", "connectionState", ConnTypes.DISCONNECTED);
+        DeviceStore.INSTANCE.apply("glasses", "connectionState", ConnTypes.DISCONNECTED);
 
         // Initialize CTKD bonding receiver
         initializeBondingReceiver();
@@ -684,28 +685,28 @@ public class MentraLive extends SGCManager {
         }
 
         // Actually update the connection state!
-        GlassesStore.INSTANCE.apply("glasses", "connectionState", state);
+        DeviceStore.INSTANCE.apply("glasses", "connectionState", state);
 
         if (state.equals(ConnTypes.CONNECTED)) {
-            GlassesStore.INSTANCE.apply("glasses", "connected", true);
+            DeviceStore.INSTANCE.apply("glasses", "connected", true);
             if (glassesReadyReceived) {
-                GlassesStore.INSTANCE.apply("glasses", "fullyBooted", true);
+                DeviceStore.INSTANCE.apply("glasses", "fullyBooted", true);
             }
             // Drop cached version fields from the previous BLE session so the next version_info
             // repopulates RN. Otherwise a stale build (e.g. 38) can remain while ASG is still 36,
             // and the phone-side OTA check will disagree with glasses' PackageManager + ota_update_available.
-            GlassesStore.INSTANCE.apply("glasses", "buildNumber", "");
-            GlassesStore.INSTANCE.apply("glasses", "appVersion", "");
-            GlassesStore.INSTANCE.apply("glasses", "besFwVersion", "");
-            GlassesStore.INSTANCE.apply("glasses", "mtkFwVersion", "");
+            DeviceStore.INSTANCE.apply("glasses", "buildNumber", "");
+            DeviceStore.INSTANCE.apply("glasses", "appVersion", "");
+            DeviceStore.INSTANCE.apply("glasses", "besFirmwareVersion", "");
+            DeviceStore.INSTANCE.apply("glasses", "mtkFirmwareVersion", "");
             Bridge.log("LIVE: Cleared cached version_info fields for fresh session");
         }
         
         if (state.equals(ConnTypes.DISCONNECTED)) {
-            GlassesStore.INSTANCE.apply("glasses", "fullyBooted", false);
-            GlassesStore.INSTANCE.apply("glasses", "connected", false);
-            GlassesStore.INSTANCE.apply("glasses", "signalStrength", -1);
-            GlassesStore.INSTANCE.apply("glasses", "signalStrengthUpdatedAt", 0L);
+            DeviceStore.INSTANCE.apply("glasses", "fullyBooted", false);
+            DeviceStore.INSTANCE.apply("glasses", "connected", false);
+            DeviceStore.INSTANCE.apply("glasses", "signalStrength", -1);
+            DeviceStore.INSTANCE.apply("glasses", "signalStrengthUpdatedAt", 0L);
             // Drop OTA caches when fully disconnected — avoids leaking session/step state
             // from a previous pairing into the next one.
             resetOtaCache();
@@ -825,7 +826,7 @@ public class MentraLive extends SGCManager {
         try {
             bluetoothScanner.stopScan(scanCallback);
             isScanning = false;
-            GlassesStore.INSTANCE.apply("core", "searching", false);
+            DeviceStore.INSTANCE.apply("bluetooth", "searching", false);
             Bridge.log("LIVE: BLE scan stopped");
 
             // Post event only if we haven't been destroyed
@@ -841,7 +842,7 @@ public class MentraLive extends SGCManager {
 
     private void emitStopScanEvent() {
         Map<String, Object> body = new HashMap<>();
-        body.put("device_model", DeviceTypes.LIVE);
+        body.put("deviceModel", DeviceTypes.LIVE);
         Bridge.sendTypedMessage("compatible_glasses_search_stop", body);
     }
 
@@ -1101,7 +1102,7 @@ public class MentraLive extends SGCManager {
                 if (!isConnected && !isConnecting && !isKilled) {
                     // Prefer saved MAC for direct GATT connect (faster and more reliable than scanning).
                     // Falls back to name-based scan if no address is saved.
-                    String lastDeviceAddress = (String) GlassesStore.INSTANCE.get("core", "device_address");
+                    String lastDeviceAddress = (String) DeviceStore.INSTANCE.get("bluetooth", "device_address");
                     if (lastDeviceAddress != null && !lastDeviceAddress.isEmpty() && bluetoothAdapter != null) {
                         try {
                             BluetoothDevice device = bluetoothAdapter.getRemoteDevice(lastDeviceAddress);
@@ -1164,10 +1165,10 @@ public class MentraLive extends SGCManager {
                     isConnecting = false;
                     isConnected = true;
                     connectedDevice = gatt.getDevice();
-                    GlassesStore.INSTANCE.apply("glasses", "bluetoothName", connectedDevice.getName());
+                    DeviceStore.INSTANCE.apply("glasses", "bluetoothName", connectedDevice.getName());
                     // Persist MAC so reconnection can use direct GATT instead of scanning
                     if (connectedDevice.getAddress() != null) {
-                        GlassesStore.INSTANCE.apply("core", "device_address", connectedDevice.getAddress());
+                        DeviceStore.INSTANCE.apply("bluetooth", "device_address", connectedDevice.getAddress());
                     }
 
                     // Save the connected device name for future reconnections
@@ -1313,7 +1314,7 @@ public class MentraLive extends SGCManager {
                         Bridge.log("LIVE: 🔄 Waiting for glasses SOC to become ready...");
 
                         // Don't set connected=true here - wait for SOC to be ready (fullyBooted=true)
-                        // GlassesStore handles connected state based on fullyBooted
+                        // DeviceStore handles connected state based on fullyBooted
 
                         // Keep the state as CONNECTING until the glasses SOC responds
                         // connectionEvent(SmartGlassesConnectionState.CONNECTING);
@@ -2332,6 +2333,15 @@ public class MentraLive extends SGCManager {
                 }
                 break;
 
+            case "voice_activity_detection_status":
+                handleVoiceActivityDetectionStatus(
+                        json.optBoolean("voiceActivityDetectionEnabled", true));
+                break;
+
+            case "speaking_status":
+                handleSpeakingStatus(json.optBoolean("speaking", false));
+                break;
+
             case "battery_status":
                 // Process battery status
                 int percent = json.optInt("percent", getBatteryLevel());
@@ -2623,15 +2633,14 @@ public class MentraLive extends SGCManager {
 
             case "switch_status":
                 // Process switch status report from glasses
-                int switchType = json.optInt("switch_type", -1);
-                int switchValue = json.optInt("switch_value", -1);
+                int switchType = json.has("switch_type") ? json.optInt("switch_type", -1) : json.optInt("switchType", -1);
+                int switchValue = json.has("switch_value") ? json.optInt("switch_value", -1) : json.optInt("switchValue", -1);
                 long switchTimestamp = json.optLong("timestamp", System.currentTimeMillis());
 
                 Log.d(TAG, "🔘 Received switch status - Type: " + switchType +
                       ", Value: " + switchValue);
 
-                // Send switch status to React Native
-                Bridge.sendSwitchStatus(switchType, switchValue, switchTimestamp);
+                handleSwitchStatus(switchType, switchValue, switchTimestamp);
                 break;
 
             case "sensor_data":
@@ -2734,7 +2743,7 @@ public class MentraLive extends SGCManager {
                 // This check maintains platform parity with iOS
                 if (audioConnected) {
                     Bridge.log("LIVE: Audio: Both glasses_ready and audio connected - marking as fully connected");
-                    GlassesStore.INSTANCE.apply("glasses", "fullyBooted", true);
+                    DeviceStore.INSTANCE.apply("glasses", "fullyBooted", true);
                     updateConnectionState(ConnTypes.CONNECTED);
                 } else {
                     Bridge.log("LIVE: Audio: Waiting for CTKD audio bonding before marking as fully connected");
@@ -2776,13 +2785,13 @@ public class MentraLive extends SGCManager {
                 String btMacAddressLegacy = json.optString("bt_mac_address", "");
 
                 // Update parent SGCManager fields
-                GlassesStore.INSTANCE.apply("glasses", "appVersion", appVersionLegacy);
-                GlassesStore.INSTANCE.apply("glasses", "buildNumber", buildNumberLegacy);
-                GlassesStore.INSTANCE.apply("glasses", "deviceModel", deviceModelLegacy);
-                GlassesStore.INSTANCE.apply("glasses", "androidVersion", androidVersionLegacy);
-                GlassesStore.INSTANCE.apply("glasses", "otaVersionUrl", otaVersionUrlLegacy != null ? otaVersionUrlLegacy : "");
-                GlassesStore.INSTANCE.apply("glasses", "firmwareVersion", firmwareVersionLegacy);
-                GlassesStore.INSTANCE.apply("glasses", "btMacAddress", btMacAddressLegacy);
+                DeviceStore.INSTANCE.apply("glasses", "appVersion", appVersionLegacy);
+                DeviceStore.INSTANCE.apply("glasses", "buildNumber", buildNumberLegacy);
+                DeviceStore.INSTANCE.apply("glasses", "deviceModel", deviceModelLegacy);
+                DeviceStore.INSTANCE.apply("glasses", "androidVersion", androidVersionLegacy);
+                DeviceStore.INSTANCE.apply("glasses", "otaVersionUrl", otaVersionUrlLegacy != null ? otaVersionUrlLegacy : "");
+                DeviceStore.INSTANCE.apply("glasses", "firmwareVersion", firmwareVersionLegacy);
+                DeviceStore.INSTANCE.apply("glasses", "bluetoothMacAddress", btMacAddressLegacy);
 
                 // Parse build number as integer for version checks (local field)
                 try {
@@ -2935,13 +2944,13 @@ public class MentraLive extends SGCManager {
                         }
                     }
 
-                    // Update GlassesStore for any fields we recognize
+                    // Update DeviceStore for any fields we recognize
                     if (fields.containsKey("app_version")) {
-                        GlassesStore.INSTANCE.apply("glasses", "appVersion", (String) fields.get("app_version"));
+                        DeviceStore.INSTANCE.apply("glasses", "appVersion", (String) fields.get("app_version"));
                     }
                     if (fields.containsKey("build_number")) {
                         String buildNum = (String) fields.get("build_number");
-                        GlassesStore.INSTANCE.apply("glasses", "buildNumber", buildNum);
+                        DeviceStore.INSTANCE.apply("glasses", "buildNumber", buildNum);
                         // Parse build number as integer for version checks
                         try {
                             int buildNumInt = Integer.parseInt(buildNum);
@@ -2952,28 +2961,28 @@ public class MentraLive extends SGCManager {
                     }
                     if (fields.containsKey("device_model")) {
                         String deviceModel = (String) fields.get("device_model");
-                        GlassesStore.INSTANCE.apply("glasses", "deviceModel", deviceModel);
+                        DeviceStore.INSTANCE.apply("glasses", "deviceModel", deviceModel);
                         // Determine LC3 audio support: base K900 doesn't support LC3, variants do
                         boolean supportsLC3Audio = !"K900".equals(deviceModel);
                         Bridge.log("LIVE: 📱 LC3 audio support: " + supportsLC3Audio + " (device: " + deviceModel + ")");
                     }
                     if (fields.containsKey("android_version")) {
-                        GlassesStore.INSTANCE.apply("glasses", "androidVersion", (String) fields.get("android_version"));
+                        DeviceStore.INSTANCE.apply("glasses", "androidVersion", (String) fields.get("android_version"));
                     }
                     if (fields.containsKey("ota_version_url")) {
-                        GlassesStore.INSTANCE.apply("glasses", "otaVersionUrl", (String) fields.get("ota_version_url"));
+                        DeviceStore.INSTANCE.apply("glasses", "otaVersionUrl", (String) fields.get("ota_version_url"));
                     }
                     if (fields.containsKey("firmware_version")) {
-                        GlassesStore.INSTANCE.apply("glasses", "fwVersion", (String) fields.get("firmware_version"));
+                        DeviceStore.INSTANCE.apply("glasses", "firmwareVersion", (String) fields.get("firmware_version"));
                     }
                     if (fields.containsKey("bes_fw_version")) {
-                        GlassesStore.INSTANCE.apply("glasses", "besFwVersion", (String) fields.get("bes_fw_version"));
+                        DeviceStore.INSTANCE.apply("glasses", "besFirmwareVersion", (String) fields.get("bes_fw_version"));
                     }
                     if (fields.containsKey("mtk_fw_version")) {
-                        GlassesStore.INSTANCE.apply("glasses", "mtkFwVersion", (String) fields.get("mtk_fw_version"));
+                        DeviceStore.INSTANCE.apply("glasses", "mtkFirmwareVersion", (String) fields.get("mtk_fw_version"));
                     }
                     if (fields.containsKey("bt_mac_address")) {
-                        GlassesStore.INSTANCE.apply("glasses", "btMacAddress", (String) fields.get("bt_mac_address"));
+                        DeviceStore.INSTANCE.apply("glasses", "bluetoothMacAddress", (String) fields.get("bt_mac_address"));
                     }
 
 
@@ -3143,7 +3152,7 @@ public class MentraLive extends SGCManager {
                         int ready = bodyObj.optInt("ready", 0);
                         if (ready == 0) {
                             Bridge.log("LIVE: K900 SOC not ready (ready=0)");
-                            GlassesStore.INSTANCE.apply("glasses", "fullyBooted", false);
+                            DeviceStore.INSTANCE.apply("glasses", "fullyBooted", false);
                             Bridge.sendTypedMessage("glasses_not_ready", new HashMap<String, Object>() {});
                             if (batteryPercentage > 0 && batteryPercentage <= 20) {
                                 Bridge.log("LIVE: K900 battery percentage: " + batteryPercentage);
@@ -3207,6 +3216,33 @@ public class MentraLive extends SGCManager {
 
             case "sr_vol":
                 handleSrVol(json);
+                break;
+
+            case "sr_vad":
+                try {
+                    JSONObject bodyObj = optK900Body(json);
+                    if (bodyObj != null) {
+                        int on = bodyObj.optInt("on", -1);
+                        if (on == 0 || on == 1) {
+                            handleSpeakingStatus(on == 1);
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error parsing sr_vad response", e);
+                }
+                break;
+
+            case "sr_swit":
+                try {
+                    JSONObject bodyObj = optK900Body(json);
+                    if (bodyObj != null) {
+                        int type = bodyObj.optInt("type", -1);
+                        int value = bodyObj.optInt("switch", -1);
+                        handleSwitchStatus(type, value, System.currentTimeMillis());
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Error parsing sr_swit response", e);
+                }
                 break;
 
             case "sr_shut":
@@ -3360,7 +3396,7 @@ public class MentraLive extends SGCManager {
     /**
      * Send the coreToken to the ASG client for direct backend authentication.
      * Retries a few times with delay if token is empty (bridge may not have applied
-     * CoreModule.update yet when glasses_ready runs).
+     * BluetoothSdkModule.update yet when glasses_ready runs).
      */
     private void sendCoreTokenToAsgClient() {
         Bridge.log("LIVE: Preparing to send coreToken to ASG client");
@@ -3398,7 +3434,7 @@ public class MentraLive extends SGCManager {
      * Send stored user email to the ASG client for Sentry crash reporting
      */
     private void sendStoredUserEmailToAsgClient() {
-        Object emailObj = GlassesStore.INSTANCE.get("core", "auth_email");
+        Object emailObj = DeviceStore.INSTANCE.get("bluetooth", "auth_email");
         String storedEmail = emailObj instanceof String ? (String) emailObj : "";
 
         if (storedEmail == null || storedEmail.isEmpty()) {
@@ -3438,11 +3474,37 @@ public class MentraLive extends SGCManager {
      */
     private void updateBatteryStatus(int level, boolean isCharging) {
         // Update parent SGCManager fields
-        GlassesStore.INSTANCE.apply("glasses", "batteryLevel", level);
-        GlassesStore.INSTANCE.apply("glasses", "charging", isCharging);
+        DeviceStore.INSTANCE.apply("glasses", "batteryLevel", level);
+        DeviceStore.INSTANCE.apply("glasses", "charging", isCharging);
 
         if (level >= 0) {
             Bridge.sendBatteryStatus(level, isCharging);
+        }
+    }
+
+    private void handleVoiceActivityDetectionStatus(boolean enabled) {
+        Bridge.log("LIVE: Voice Activity Detection " + (enabled ? "enabled" : "disabled"));
+        Bridge.sendVoiceActivityDetectionStatus(enabled);
+    }
+
+    private void handleSpeakingStatus(boolean speaking) {
+        if (!isVoiceActivityDetectionEnabled()) {
+            Bridge.log("LIVE: Ignoring speaking status because Voice Activity Detection is disabled");
+            return;
+        }
+        Bridge.log("LIVE: Speaking status " + (speaking ? "speaking" : "not speaking"));
+        Bridge.sendSpeakingStatus(speaking);
+    }
+
+    private boolean isVoiceActivityDetectionEnabled() {
+        Object value = DeviceStore.INSTANCE.get("bluetooth", "voice_activity_detection_enabled");
+        return !(value instanceof Boolean) || (Boolean) value;
+    }
+
+    private void handleSwitchStatus(int switchType, int switchValue, long timestamp) {
+        Bridge.sendSwitchStatus(switchType, switchValue, timestamp);
+        if (switchType == VOICE_ACTIVITY_DETECTION_SWITCH_TYPE && (switchValue == 0 || switchValue == 1)) {
+            handleVoiceActivityDetectionStatus(switchValue == 1);
         }
     }
 
@@ -3454,9 +3516,9 @@ public class MentraLive extends SGCManager {
         Bridge.log("LIVE: 🌐 Updating WiFi status - connected: " + connected + ", SSID: " + ssid);
 
         // Update parent SGCManager fields
-        GlassesStore.INSTANCE.apply("glasses", "wifiConnected", connected);
-        GlassesStore.INSTANCE.apply("glasses", "wifiSsid", ssid);
-        GlassesStore.INSTANCE.apply("glasses", "wifiLocalIp", localIp);
+        DeviceStore.INSTANCE.apply("glasses", "wifiConnected", connected);
+        DeviceStore.INSTANCE.apply("glasses", "wifiSsid", ssid);
+        DeviceStore.INSTANCE.apply("glasses", "wifiLocalIp", localIp);
 
         // Send event to bridge for cloud communication
         Bridge.sendWifiStatusChange(connected, ssid, localIp);
@@ -3470,10 +3532,10 @@ public class MentraLive extends SGCManager {
         Bridge.log("LIVE: 🔥 Updating hotspot status - enabled: " + enabled + ", SSID: " + ssid);
 
         // Update parent SGCManager fields
-        GlassesStore.INSTANCE.apply("glasses", "hotspotEnabled", enabled);
-        GlassesStore.INSTANCE.apply("glasses", "hotspotSsid", ssid);
-        GlassesStore.INSTANCE.apply("glasses", "hotspotPassword", password);
-        GlassesStore.INSTANCE.apply("glasses", "hotspotGatewayIp", gatewayIp);
+        DeviceStore.INSTANCE.apply("glasses", "hotspotEnabled", enabled);
+        DeviceStore.INSTANCE.apply("glasses", "hotspotSsid", ssid);
+        DeviceStore.INSTANCE.apply("glasses", "hotspotPassword", password);
+        DeviceStore.INSTANCE.apply("glasses", "hotspotGatewayIp", gatewayIp);
 
         // Send hotspot status change event (matches iOS emitHotspotStatusChange)
         Bridge.sendHotspotStatusChange(enabled, ssid, password, gatewayIp);
@@ -3631,7 +3693,7 @@ public class MentraLive extends SGCManager {
 
     @Override
     public void sendGalleryMode() {
-        boolean active = (Boolean) GlassesStore.INSTANCE.get("core", "gallery_mode");
+        boolean active = (Boolean) DeviceStore.INSTANCE.get("bluetooth", "gallery_mode");
         Bridge.log("LIVE: 📸 Sending gallery mode active to glasses: " + active);
         try {
             JSONObject json = new JSONObject();
@@ -3740,8 +3802,8 @@ public class MentraLive extends SGCManager {
 
     private void updateSignalStrength(int rssi) {
         long now = System.currentTimeMillis();
-        GlassesStore.INSTANCE.apply("glasses", "signalStrength", rssi);
-        GlassesStore.INSTANCE.apply("glasses", "signalStrengthUpdatedAt", now);
+        DeviceStore.INSTANCE.apply("glasses", "signalStrength", rssi);
+        DeviceStore.INSTANCE.apply("glasses", "signalStrengthUpdatedAt", now);
         Bridge.log("LIVE: 📶 RSSI: " + rssi + " dBm");
     }
 
@@ -4008,7 +4070,7 @@ public class MentraLive extends SGCManager {
         // var context = Bridge.getContext();
         // SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         // String lastDeviceAddress = prefs.getString(PREF_DEVICE_NAME, null);
-        String lastDeviceAddress = (String) GlassesStore.INSTANCE.get("core", "device_address");
+        String lastDeviceAddress = (String) DeviceStore.INSTANCE.get("bluetooth", "device_address");
 
         if (lastDeviceAddress != null && lastDeviceAddress.length() > 0) {
             // Connect to last known device if available
@@ -4041,7 +4103,7 @@ public class MentraLive extends SGCManager {
         // Update the microphone state tracker
         isMicrophoneEnabled = enable;
 
-        GlassesStore.INSTANCE.apply("glasses", "micEnabled", enable);
+        DeviceStore.INSTANCE.apply("glasses", "micEnabled", enable);
 
         // Update the shouldUseGlassesMic flag to reflect the current state
         this.shouldUseGlassesMic = enable;
@@ -4340,7 +4402,7 @@ public class MentraLive extends SGCManager {
                                 // If glasses_ready was already received, now we're fully ready
                                 if (glassesReadyReceived) {
                                     Bridge.log("LIVE: Audio: Both audio and glasses_ready confirmed - marking as fully connected");
-                                    GlassesStore.INSTANCE.apply("glasses", "fullyBooted", true);
+                                    DeviceStore.INSTANCE.apply("glasses", "fullyBooted", true);
                                     updateConnectionState(ConnTypes.CONNECTED);
                                 }
 
@@ -4569,7 +4631,7 @@ public class MentraLive extends SGCManager {
      */
     private void markAudioConnected(String deviceName) {
         if (isKilled) {
-            Bridge.log("LIVE: A2DP: Ignoring markAudioConnected — SGC destroyed (would confuse CoreManager)");
+            Bridge.log("LIVE: A2DP: Ignoring markAudioConnected — SGC destroyed (would confuse DeviceManager)");
             return;
         }
         isBtClassicConnected = true;
@@ -4577,7 +4639,7 @@ public class MentraLive extends SGCManager {
         Bridge.sendAudioConnected(deviceName);
         if (glassesReadyReceived) {
             Bridge.log("LIVE: A2DP: Both audio and glasses_ready confirmed - marking as fully connected");
-            GlassesStore.INSTANCE.apply("glasses", "fullyBooted", true);
+            DeviceStore.INSTANCE.apply("glasses", "fullyBooted", true);
             updateConnectionState(ConnTypes.CONNECTED);
         }
     }
@@ -4718,7 +4780,7 @@ public class MentraLive extends SGCManager {
         reconnectAttempts = 0;
         isReconnecting = false;
         glassesReady = false;
-        GlassesStore.INSTANCE.apply("glasses", "fullyBooted", false);
+        DeviceStore.INSTANCE.apply("glasses", "fullyBooted", false);
         updateConnectionState(ConnTypes.DISCONNECTED);
 
         // Note: We don't null context here to prevent race conditions with BLE callbacks
@@ -4763,7 +4825,7 @@ public class MentraLive extends SGCManager {
     @Override
     public void sendButtonVideoRecordingSettings() {
         try {
-            Object videoSettingsObj = GlassesStore.INSTANCE.get("core", "button_video_settings");
+            Object videoSettingsObj = DeviceStore.INSTANCE.get("bluetooth", "button_video_settings");
             int videoWidth = 1920;  // defaults
             int videoHeight = 1080;
             int videoFps = 30;
@@ -4774,9 +4836,9 @@ public class MentraLive extends SGCManager {
                 videoHeight = ((Number) videoSettings.getOrDefault("height", videoHeight)).intValue();
                 videoFps = ((Number) videoSettings.getOrDefault("fps", videoFps)).intValue();
             } else {
-                Object width = GlassesStore.INSTANCE.get("core", "button_video_width");
-                Object height = GlassesStore.INSTANCE.get("core", "button_video_height");
-                Object fps = GlassesStore.INSTANCE.get("core", "button_video_fps");
+                Object width = DeviceStore.INSTANCE.get("bluetooth", "button_video_width");
+                Object height = DeviceStore.INSTANCE.get("bluetooth", "button_video_height");
+                Object fps = DeviceStore.INSTANCE.get("bluetooth", "button_video_fps");
                 if (width instanceof Number) {
                     videoWidth = ((Number) width).intValue();
                 }
@@ -5262,7 +5324,7 @@ public class MentraLive extends SGCManager {
         }
 
         HashMap<String, Object> map = new HashMap<>();
-        map.put("vol", vol);
+        map.put("level", vol);
         map.put("statusCode", status);
         Bridge.log("LIVE: sr_getvol received vol=" + vol + " (0-15), statusCode=" + status);
         if (ok != null) {
@@ -5879,8 +5941,8 @@ public class MentraLive extends SGCManager {
                                    String packageName,
                                    String action,
                                    String color,
-                                   int ontime,
-                                   int offtime,
+                                   int onDurationMs,
+                                   int offDurationMs,
                                    int count) {
         if (!isConnected || !glassesReady) {
             Bridge.log("LIVE: Cannot handle RGB LED control - glasses not connected");
@@ -5905,8 +5967,8 @@ public class MentraLive extends SGCManager {
                     int ledIndex = ledIndexForColor(color);
                     command.put("type", "rgb_led_control_on");
                     command.put("led", ledIndex);
-                    command.put("ontime", ontime);
-                    command.put("offtime", offtime);
+                    command.put("ontime", onDurationMs);
+                    command.put("offtime", offDurationMs);
                     command.put("count", count);
                     break;
                 case "off":
@@ -6417,11 +6479,11 @@ public class MentraLive extends SGCManager {
 
     /**
      * Get the core authentication token.
-     * Reads from GlassesStore first (synced from JS via CoreModule.update), then falls back to
+     * Reads from DeviceStore first (synced from JS via BluetoothSdkModule.update), then falls back to
      * SharedPreferences for backward compatibility.
      */
     private String getCoreToken() {
-        Object fromStore = GlassesStore.INSTANCE.get("core", "core_token");
+        Object fromStore = DeviceStore.INSTANCE.get("bluetooth", "core_token");
         if (fromStore instanceof String) {
             String token = (String) fromStore;
             if (token != null && !token.isEmpty()) {
@@ -6493,13 +6555,53 @@ public class MentraLive extends SGCManager {
 
         // Send gallery mode state (camera app running status)
         sendGalleryMode();
+
+        // Send glasses-side Voice Activity Detection setting.
+        sendVoiceActivityDetectionSetting();
+    }
+
+    @Override
+    public void sendVoiceActivityDetectionSetting() {
+        Object value = DeviceStore.INSTANCE.get("bluetooth", "voice_activity_detection_enabled");
+        boolean enabled = value instanceof Boolean ? (Boolean) value : true;
+
+        Bridge.log("LIVE: 🎤 Sending Voice Activity Detection setting to glasses: " + enabled);
+
+        if (!isConnected) {
+            Bridge.log("LIVE: Cannot send Voice Activity Detection setting - not connected");
+            return;
+        }
+
+        try {
+            JSONObject body = new JSONObject();
+            body.put("type", VOICE_ACTIVITY_DETECTION_SWITCH_TYPE);
+            body.put("switch", enabled ? 1 : 0);
+
+            JSONObject cmdObject = new JSONObject();
+            cmdObject.put("C", "cs_swit");
+            cmdObject.put("V", 1);
+            cmdObject.put("B", body.toString());
+
+            byte[] packedData =
+                    K900ProtocolUtils.packDataToK900(
+                            cmdObject.toString().getBytes(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING);
+            if (packedData == null) {
+                Bridge.log("LIVE: Failed to pack Voice Activity Detection setting command");
+                return;
+            }
+            queueData(packedData);
+            Bridge.sendVoiceActivityDetectionStatus(enabled);
+        } catch (JSONException e) {
+            Log.e(TAG, "Error creating Voice Activity Detection setting command", e);
+        }
     }
 
     /**
      * Send button photo settings to glasses
      */
     public void sendButtonPhotoSettings() {
-        String size = (String) GlassesStore.INSTANCE.get("core", "button_photo_size");
+        String size = (String) DeviceStore.INSTANCE.get("bluetooth", "button_photo_size");
 
         Bridge.log("LIVE: Sending button photo setting: " + size);
 
@@ -6523,7 +6625,7 @@ public class MentraLive extends SGCManager {
      */
     @Override
     public void sendButtonCameraLedSetting() {
-        boolean enabled = (Boolean) GlassesStore.INSTANCE.get("core", "button_camera_led");
+        boolean enabled = (Boolean) DeviceStore.INSTANCE.get("bluetooth", "button_camera_led");
 
         Bridge.log("LIVE: Sending button camera LED setting: " + enabled);
 
@@ -6543,14 +6645,14 @@ public class MentraLive extends SGCManager {
     }
 
     /**
-     * Send camera FOV setting to glasses (K900 / Mentra Live). Reads fov and roi_position from store.
+     * Send camera FOV setting to glasses (K900 / Mentra Live).
      */
     @Override
     public void sendCameraFovSetting() {
         int fov = 118;
         int roiPosition = 0;
         try {
-            Object raw = GlassesStore.INSTANCE.get("core", "camera_fov");
+            Object raw = DeviceStore.INSTANCE.get("bluetooth", "camera_fov");
             if (raw instanceof java.util.Map) {
                 @SuppressWarnings("unchecked")
                 java.util.Map<String, Object> map = (java.util.Map<String, Object>) raw;
@@ -6563,7 +6665,7 @@ public class MentraLive extends SGCManager {
             Log.w(TAG, "Could not read camera_fov from store, using defaults", e);
         }
 
-        Bridge.log("LIVE: Sending camera FOV setting: fov=" + fov + ", roi_position=" + roiPosition);
+        Bridge.log("LIVE: Sending camera FOV setting: fov=" + fov + ", roiPosition=" + roiPosition);
 
         if (!isConnected) {
             Log.w(TAG, "Cannot send camera FOV setting - not connected");
@@ -6596,7 +6698,7 @@ public class MentraLive extends SGCManager {
             return;
         }
 
-        Object rawMinutes = GlassesStore.INSTANCE.get("core", "button_max_recording_time");
+        Object rawMinutes = DeviceStore.INSTANCE.get("bluetooth", "button_max_recording_time");
         int minutes = (rawMinutes instanceof Number) ? ((Number) rawMinutes).intValue() : 10;
 
         try {
@@ -6710,9 +6812,9 @@ public class MentraLive extends SGCManager {
 
             // Bridge.log("LIVE: Received LC3 audio packet seq=" + sequenceNumber + ", size=" + lc3Data.length);
 
-            // Forward raw LC3 to CoreManager (matches iOS behavior)
+            // Forward raw LC3 to DeviceManager (matches iOS behavior)
             // MentraLive uses 40-byte LC3 frames
-            CoreManager.getInstance().handleGlassesMicData(lc3Data, LC3_FRAME_SIZE);
+            DeviceManager.getInstance().handleGlassesMicData(lc3Data, LC3_FRAME_SIZE);
 
             // Bridge.log("LIVE: 🔊 Audio playback enabled: " + audioPlaybackEnabled);
         // } else {
