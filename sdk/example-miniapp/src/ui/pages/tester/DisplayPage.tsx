@@ -92,14 +92,40 @@ function makeBitmap(width: number, height: number, label: string): string {
   return imageDataToBmp1Bit(ctx.getImageData(0, 0, width, height))
 }
 
+// The four 100×100 corner containers on the 576×288 display, keyed by rect.
+// First press of a corner sends its code (TL/TR/BR/BL); each later press
+// re-sends to the same rect with an incrementing count, updating in place.
+const CORNERS = [
+  {code: "TL", x: 0, y: 0},
+  {code: "TR", x: 476, y: 0},
+  {code: "BR", x: 476, y: 188},
+  {code: "BL", x: 0, y: 188},
+] as const
+
+type CornerCode = (typeof CORNERS)[number]["code"]
+
 export default function DisplayPage() {
   const navigate = useNavigate()
   // useTester opens a (no-op) subscription so `tester:event {kind:"error"}`
   // from a bad invoke() lands in lastError and surfaces in the UI.
   const {invoke, lastError} = useTester("display")
   const [text, setText] = useState("Hello from MentraJS!")
-  // Counter so the "reuse" button sends a visibly different image to the same rect each tap.
-  const [reuseN, setReuseN] = useState(0)
+  // Per-corner press counts. 0 = not yet pressed (first press shows the code).
+  const [counts, setCounts] = useState<Record<CornerCode, number>>({
+    TL: 0,
+    TR: 0,
+    BR: 0,
+    BL: 0,
+  })
+
+  const pressCorner = (code: CornerCode, x: number, y: number) => {
+    const next = counts[code] + 1
+    setCounts((c) => ({...c, [code]: next}))
+    // First press: just the corner code. Subsequent presses: code + count.
+    const label = next === 1 ? code : `${code} #${next - 1}`
+    invoke("showBitmapView", [makeBitmap(100, 100, label), {x, y, width: 100, height: 100}])
+  }
+
   return (
     <Shell>
       <MiniappHeader title="session.display" onBack={() => navigate("/tester")} />
@@ -123,56 +149,25 @@ export default function DisplayPage() {
         <p className="mb-2 mt-5 text-[13px] text-muted-foreground">
           Bitmaps. `showBitmapView(data, options)` accepts optional `x`/`y`/`width`/`height`.
           On G2 the page tracks up to 4 image containers, keyed by rect: a new rect adds a
-          container (evicting the oldest past 4), an existing rect updates in place. Omit options
-          for the default 100×100 top-left container.
+          container (evicting the oldest past 4), an existing rect updates in place. Each corner
+          button sends its code on first press, then increments a count in place on later presses.
         </p>
         <div className="flex flex-col gap-2">
-          {/* Default rect: 100×100 top-left (no options). */}
-          <Button onClick={() => invoke("showBitmapView", [makeBitmap(100, 100, "TL")])}>
-            showBitmapView — default 100×100 top-left
-          </Button>
-          {/* New container: 100×100 top-right. */}
-          <Button
-            onClick={() =>
-              invoke("showBitmapView", [
-                makeBitmap(100, 100, "TR"),
-                {x: 476, y: 0, width: 100, height: 100},
-              ])
-            }>
-            showBitmapView — 100×100 top-right
-          </Button>
-          {/* New container: 100×100 bottom-right. */}
-          <Button
-            onClick={() =>
-              invoke("showBitmapView", [
-                makeBitmap(100, 100, "BR"),
-                {x: 476, y: 188, width: 100, height: 100},
-              ])
-            }>
-            showBitmapView — 100×100 bottom-right
-          </Button>
-          {/* New container: 100×100 bottom-left. */}
-          <Button
-            onClick={() =>
-              invoke("showBitmapView", [
-                makeBitmap(100, 100, "BL"),
-                {x: 0, y: 188, width: 100, height: 100},
-              ])
-            }>
-            showBitmapView — 100×100 bottom-left
-          </Button>
-          {/* Reuse demo: re-send a fresh label to the default top-left rect — updates in place. */}
-          <Button
-            onClick={() => {
-              setReuseN((n) => n + 1)
-              invoke("showBitmapView", [makeBitmap(100, 100, `#${reuseN + 1}`)])
-            }}>
-            showBitmapView — reuse top-left (update in place)
-          </Button>
+          {CORNERS.map(({code, x, y}) => (
+            <Button key={code} onClick={() => pressCorner(code, x, y)}>
+              showBitmapView — 100×100 {code}
+              {counts[code] > 0 ? ` (#${counts[code] - 1})` : ""}
+            </Button>
+          ))}
         </div>
 
         <div className="mt-5 flex flex-col gap-2">
-          <Button variant="destructive" onClick={() => invoke("clearView", [])}>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              setCounts({TL: 0, TR: 0, BR: 0, BL: 0})
+              invoke("clearView", [])
+            }}>
             clearView()
           </Button>
         </div>
