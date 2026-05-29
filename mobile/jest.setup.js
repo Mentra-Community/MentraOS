@@ -371,16 +371,6 @@ jest.mock("@/services/WebSocketManager", () => {
   }
 })
 
-// Mock Bluetooth SDK native module to avoid native bridge errors
-jest.mock("@mentra/bluetooth-sdk", () => {
-  const {coreModuleMock} = require("./src/test-utils/mockCoreModule")
-  return {
-    __esModule: true,
-    default: coreModuleMock,
-    GlassesStatus: {},
-  }
-})
-
 // Mock crust native module to avoid native bridge errors
 jest.mock("crust", () => ({
   default: {

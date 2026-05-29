@@ -2772,6 +2772,7 @@ class G2: NSObject, SGCManager {
         startupPageCreated = false
         pageCreated = false
         pageHasTextContainer = false
+        dashboardShowing = 0
         heartbeatCounter = 0
         DeviceStore.shared.apply("glasses", "connected", false)
         DeviceStore.shared.apply("glasses", "fullyBooted", false)
@@ -4045,6 +4046,7 @@ extension G2: CBCentralManagerDelegate {
             self.startupPageCreated = false
             self.pageCreated = false
             self.pageHasTextContainer = false
+            self.dashboardShowing = 0
             DeviceStore.shared.apply("glasses", "connected", false)
             DeviceStore.shared.apply("glasses", "fullyBooted", false)
 

@@ -131,28 +131,12 @@ class DeviceStore {
         }
     }
 
-    /// Same equality rule as ObservableStore.set; avoids BLE side effects on no-op applies.
-    private func observableStoreWouldHaveSkipped(_ oldValue: Any?, _ newValue: Any) -> Bool {
-        guard let oldValue else {
-            return false
-        }
-
-        guard JSONSerialization.isValidJSONObject(["v": oldValue]),
-              JSONSerialization.isValidJSONObject(["v": newValue]),
-              let oldData = try? JSONSerialization.data(withJSONObject: ["v": oldValue]),
-              let newData = try? JSONSerialization.data(withJSONObject: ["v": newValue])
-        else {
-            return false
-        }
-
-        return oldData == newData
-    }
-
     /// Apply changes with side effects
     func apply(_ category: String, _ key: String, _ value: Any) {
         let oldValue = store.get(category, key)
+        let storeWouldSkipSet = store.wouldSkipSet(category, key, value)
         store.set(category, key, value)
-        if observableStoreWouldHaveSkipped(oldValue, value) {
+        if storeWouldSkipSet {
             return
         }
 

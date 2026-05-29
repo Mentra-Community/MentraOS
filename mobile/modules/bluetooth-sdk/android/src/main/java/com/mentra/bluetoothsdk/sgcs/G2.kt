@@ -2811,6 +2811,7 @@ class G2 : SGCManager() {
         startupPageCreated = false
         pageCreated = false
         pageHasTextContainer = false
+        dashboardShowing = 0
         heartbeatCounter = 0
         currentBitmapBase64 = ""
         menuAppIdToPackageName.clear()
@@ -3295,6 +3296,7 @@ class G2 : SGCManager() {
                         startupPageCreated = false
                         pageCreated = false
                         pageHasTextContainer = false
+                        dashboardShowing = 0
                         DeviceStore.apply("glasses", "connected", false)
                         DeviceStore.apply("glasses", "fullyBooted", false)
 
