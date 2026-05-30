@@ -479,6 +479,7 @@ const en = {
     profileSettings: "Profile",
     privacySettings: "Permissions and Privacy",
     transcriptionSettings: "Transcription",
+    speechSettings: "Speech",
     notificationsSettings: "Notifications",
     notificationsDescription:
       "Control which apps can send notifications to Mentra. When enabled, notifications from these apps will be available to Mentra.",
@@ -542,6 +543,8 @@ const en = {
     contextualDashboardSubtitle: "Show a summary of your phone notifications when you look up.",
     metricSystemLabel: "Use Metric System",
     metricSystemSubtitle: "Metric System (°C) or Imperial System (°F).",
+    twelveHourTimeLabel: "Use 12-Hour Time",
+    twelveHourTimeSubtitle: "Use a 12-hour time format (AM/PM) instead of a 24-hour time format",
     adjustHeadAngleLabel: "Adjust Head-Up Angle",
     adjustHeadAngleSubtitle: "Adjust the angle at which the contextual dashboard appears when you look up.",
     reconnectOnAppForeground: "Reconnect on App Foreground",

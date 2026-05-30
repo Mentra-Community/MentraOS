@@ -22,6 +22,7 @@ import {
   sortAppsByLastOpenTime,
   useActiveApps,
   useAppStatusStore,
+  useSetForeground,
   type ClientApp,
 } from "@mentra/island"
 import AppIcon from "@/components/home/AppIcon"
@@ -202,6 +203,7 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
           {
             width: CARD_WIDTH - 4, // idk why we need this -4, but it's more work than it's worth to figure out
             // height: imageHeight,
+            height: CARD_HEIGHT,
             position: "absolute",
             left: 0,
             // zIndex: index,// ensure the cards are on top of each other
@@ -279,6 +281,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   const prevTranslationX = useSharedValue(0)
   const openX = useSharedValue(-1)
   const {push} = useNavigationStore.getState()
+  const setForeground = useSetForeground()
   const insets = useSaferAreaInsets()
   let directApps = useActiveApps()
   let [apps, setApps] = useState<ClientApp[]>([])
@@ -580,13 +583,18 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
       index = index - 1
       const cardWidth = CARD_WIDTH + CARD_SPACING
       const clamped = Math.max(-1, Math.min(index, apps.length - 1))
+      console.log("APPSWITCHER: goToIndex()", index, clamped, instant)
+      if (clamped === targetIndex.value) {
+        // console.log("APPSWITCHER: goToIndex() - already at index", index)
+        return
+      }
       targetIndex.value = clamped
       let target = -clamped * cardWidth
       if (instant) {
         translateX.value = withTiming(target, {duration: 10})
       } else {
         translateX.value = withSpring(target, {
-          damping: 1000,
+          damping: 500,
           stiffness: 350,
           overshootClamping: true,
         })
@@ -617,8 +625,10 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         transition: "fade",
       })
     } else if (applet.local) {
-      saveLastOpenTime(applet.packageName)
-      useAppStatusStore.getState().setForeground(applet.packageName)
+      // Local miniapps are rendered by the Compositor overlay rather than a
+      // pushed route — foreground the app and let <Compositor /> mount its
+      // WebView (with the opening animation + back-swipe to background).
+      setForeground(applet.packageName)
     } else {
       saveLastOpenTime(applet.packageName)
       push("/applet/settings", {
@@ -650,6 +660,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
       if (previous !== null && current == 1 && previous < 1) {
         // setTimeout(() => {
         if (apps.length > 1) {
+          console.log("APPSWITCHER: swipeProgress.value - opening to last index", apps.length - 1)
           runOnJS(goToIndex)(apps.length - 1, true)
         }
         openX.value = withSpring(0, {damping: 200, stiffness: 1000, overshootClamping: true})
@@ -660,7 +671,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         // scheduleOnRN(() => {setIsOpen(false)})
       }
       if (previous !== null && current > 0 && previous == 0) {
-        // console.log("just opened")
+        console.log("APPSWITCHER: JUST OPENED: swipeProgress.value - closing to last index", apps.length - 1)
         runOnJS(goToIndex)(apps.length - 1, true)
         runOnJS(setBlurPointerEvents)("auto")
         if (apps.length > 0) {

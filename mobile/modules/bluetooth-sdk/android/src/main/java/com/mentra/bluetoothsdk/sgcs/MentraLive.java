@@ -4037,7 +4037,8 @@ public class MentraLive extends SGCManager {
     public void dbg1() {}
     public void dbg2() {}
 
-    public boolean displayBitmap(String base64) {
+    @Override
+    public boolean displayBitmap(String base64, Integer x, Integer y, Integer width, Integer height) {
         return false;
     }
 
@@ -4160,9 +4161,9 @@ public class MentraLive extends SGCManager {
         }
     }
 
-    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean sound, Long exposureTimeNs) {
+    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean save, boolean sound, Long exposureTimeNs) {
         boolean hasAuthToken = authToken != null && !authToken.isEmpty();
-        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs);
+        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", save=" + save + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs);
         Bridge.log("LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry — requestId=" + requestId + ", appId=" + appId);
 
         try {
@@ -4185,6 +4186,7 @@ public class MentraLive extends SGCManager {
                 json.put("compress", "none");
             }
             json.put("flash", flash);
+            json.put("save", save);
             json.put("sound", sound);
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
                 Bridge.log("LIVE: Using manual exposure time for photo request " + requestId + ": " + exposureTimeNs + " ns");

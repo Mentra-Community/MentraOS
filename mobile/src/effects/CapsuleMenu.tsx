@@ -19,11 +19,11 @@ import {useNavigationStore} from "@/stores/navigation"
 import {SYSTEM_APPS} from "@/constants/miniapps"
 
 interface CapsuleButtonProps {
-  onMinusPress?: () => void
-  onEllipsisPress?: () => void
+  onRightPress?: () => void
+  onLeftPress?: () => void
 }
 
-function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
+function CapsuleButton({onRightPress, onLeftPress}: CapsuleButtonProps) {
   const {theme} = useAppTheme()
 
   // On Android, GlassView is just a plain View with no blur, so the capsule
@@ -38,7 +38,7 @@ function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
   //     style={androidStyle}>
   //     <Pressable
   //       hitSlop={10}
-  //       onPress={onMinusPress}
+  //       onPress={onRightPress}
   //       style={({pressed}) => [
   //         pressed && {backgroundColor: theme.colors.input},
   //         {
@@ -58,12 +58,12 @@ function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
   // )
   return (
     <GlassView
-      transparent={true}
-      className="flex-row justify-between rounded-full h-8 w-20 items-center"
+      transparent={false}
+      className="flex-row justify-between rounded-full h-8 w-20 items-center bg-background/60"
       style={androidStyle}>
       <Pressable
         hitSlop={10}
-        onPress={onEllipsisPress}
+        onPress={onLeftPress}
         // className="w-8 h-full items-center justify-center rounded-l-full bg-red-500"
         style={({pressed}) => [
           pressed && {backgroundColor: theme.colors.input},
@@ -78,12 +78,16 @@ function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
             borderBottomLeftRadius: 40,
           },
         ]}>
-        <Icon name="ellipsis" size={20} color={theme.colors.foreground} />
+        {/* <View className="relative -top-[1px] left-0 w-4 h-4">
+          <View className="w-5.5 h-5.5 bg-input rounded-full z-0 absolute -top-0.5 -left-0.5" />
+          <Icon name={"minus"} size={16} color={theme.colors.foreground} className="z-0 absolute top-[1px] left-[1px]" />
+        </View> */}
+        <Icon name="minus" size={20} color={theme.colors.foreground} />
       </Pressable>
       <View className="h-4 w-px bg-primary-foreground/80 absolute left-1/2 -translate-x-1/2" />
       <Pressable
         hitSlop={10}
-        onPress={onMinusPress}
+        onPress={onRightPress}
         style={({pressed}) => [
           pressed && {backgroundColor: theme.colors.input},
           {
@@ -98,10 +102,11 @@ function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
           },
         ]}>
         {/* position circle under the icon: */}
-        <View className="relative -top-[1px] left-0 w-4 h-4">
+        {/* <View className="relative -top-[1px] left-0 w-4 h-4">
           <View className="w-5.5 h-5.5 bg-input rounded-full z-0 absolute -top-0.5 -left-0.5" />
           <Icon name={"x"} size={16} color={theme.colors.foreground} className="z-0 absolute top-[1px] left-[1px]" />
-        </View>
+        </View> */}
+        <Icon name={"x"} size={16} color={theme.colors.foreground} className="z-0" />
       </Pressable>
     </GlassView>
   )
@@ -144,10 +149,8 @@ export default function CapsuleMenu({forceShow}: {forceShow: boolean}) {
       style={{top: top, right: right}}
       pointerEvents="box-none">
       <CapsuleButton
-        onMinusPress={() => active?.handleExit(true)}
-        onEllipsisPress={() => {
-          bottomSheetRef.current?.present()
-        }}
+        onRightPress={() => active?.handleRightPress(true)}
+        onLeftPress={() => active?.handleLeftPress(true)}
       />
       <MiniAppMoreActionsSheet
         ref={bottomSheetRef}
@@ -164,6 +167,11 @@ export async function captureScreenshot(
   packageName: string,
   topInsetOffset: number = 0,
 ) {
+  if (!viewShotRef.current) {
+    console.warn(`captureScreenshot: viewShotRef is null ${viewShotRef.current}`)
+    return
+  }
+
   if (Platform.OS === "ios") {
     captureRef(viewShotRef, {
       format: "jpg",

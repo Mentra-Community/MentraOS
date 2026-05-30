@@ -10,7 +10,7 @@ import Foundation
 /// Bridge for Bluetooth SDK communication between Expo modules and native iOS code
 /// Has commands for the Bluetooth SDK to use to send messages to JavaScript
 class Bridge {
-    private static let micSampleRate = 16_000
+    private static let micSampleRate = 16000
     private static let pcmBitsPerSample = 16
     private static let micChannels = 1
     private static let lc3FrameDurationMs = 10
@@ -65,6 +65,16 @@ class Bridge {
     static func log(_ message: String) {
         let data = ["message": message]
         Bridge.sendTypedMessage("log", body: data)
+    }
+
+    /// Report tar.bz2 extraction progress to JavaScript.
+    static func sendExtractionProgress(percentage: Int, bytesRead: Int64, totalBytes: Int64) {
+        let body: [String: Any] = [
+            "percentage": percentage,
+            "bytesRead": bytesRead,
+            "totalBytes": totalBytes,
+        ]
+        Bridge.sendTypedMessage("extraction_progress", body: body)
     }
 
     static func sendHeadUp(_ isUp: Bool) {

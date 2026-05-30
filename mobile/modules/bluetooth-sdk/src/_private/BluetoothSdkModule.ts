@@ -6,6 +6,7 @@ import {
   BluetoothSdkModuleEvents,
   BluetoothStatus,
   ButtonPhotoSize,
+  CalendarEvent,
   CameraFov,
   CameraFovSetting,
   ConnectOptions,
@@ -76,6 +77,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setAutoBrightness(enabled: boolean): Promise<void>
   setDashboardPosition(height: number, depth: number): Promise<void>
   setDashboardMenu(items: DashboardMenuItem[]): Promise<void>
+  setCalendarEvents(events: CalendarEvent[]): Promise<void>
   setHeadUpAngle(angleDegrees: number): Promise<void>
   setScreenDisabled(disabled: boolean): Promise<void>
   ping(): Promise<void>
@@ -157,6 +159,20 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   checkSttModelAvailable(): Promise<boolean>
   validateSttModel(path: string): Promise<boolean>
   extractTarBz2(sourcePath: string, destinationPath: string): Promise<boolean>
+
+  // TTS Commands
+  setTtsModelDetails(path: string, languageCode: string): Promise<void>
+  getTtsModelPath(): Promise<string>
+  getTtsModelLanguage(): Promise<string>
+  checkTtsModelAvailable(): Promise<boolean>
+  validateTtsModel(path: string): Promise<boolean>
+  generateTtsAudio(
+    text: string,
+    modelPath: string,
+    outputPath: string,
+    speakerId: number,
+    speed: number,
+  ): Promise<boolean>
 
   // Helper methods for type-safe observable store access
   updateGlasses(values: Partial<GlassesStatus>): Promise<void>
@@ -334,6 +350,10 @@ NativeBluetoothSdkModule.setDashboardPosition = function (height: number, depth:
 
 NativeBluetoothSdkModule.setDashboardMenu = function (items: DashboardMenuItem[]) {
   return this.updateBluetoothSettings({menu_apps: items.map(dashboardMenuItemToNative)})
+}
+
+NativeBluetoothSdkModule.setCalendarEvents = function (events: CalendarEvent[]) {
+  return this.updateBluetoothSettings({calendar_events: events})
 }
 
 NativeBluetoothSdkModule.setHeadUpAngle = function (angleDegrees: number) {

@@ -20,6 +20,15 @@ const VARIANTS = {
     icon: "./assets/app-icons/ic_launcher_china.png",
     adaptiveIcon: "./assets/app-icons/ic_launcher_foreground_china.png",
   },
+  stable: {
+    appName: "Mentra Stable",
+    packageName: "com.mentra.mentra.stable",
+    includeFirebase: true,
+    googleServicesFile: "./google-services.json",
+    googleServicesPlist: "./GoogleService-Info.plist",
+    icon: "./assets/app-icons/ic_launcher.png",
+    adaptiveIcon: "./assets/app-icons/ic_launcher_foreground.png",
+  },
 } as const
 
 const variant = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? VARIANTS.cn : VARIANTS.default
@@ -35,22 +44,44 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   // a parallel-installable build with package com.mentra.mentra.stable and app
   // label "stable". Leave unset for the normal Mentra build.
   const variantName = process.env.MENTRAOS_BUILD_NAME?.trim() || null
-  const isValidVariant = variantName && /^[a-zA-Z][a-zA-Z0-9_]*$/.test(variantName)
+  const isValidVariant = variantName && /^[a-zA-Z][a-zA-Z0-9_ ]*$/.test(variantName)
   if (variantName && !isValidVariant) {
     throw new Error(
-      `MENTRAOS_BUILD_NAME="${variantName}" is invalid. Must start with a letter and contain only letters, digits, or underscores.`,
+      `MENTRAOS_BUILD_NAME="${variantName}" is invalid. Must start with a letter and contain only letters, digits, spaces, or underscores.`,
     )
   }
   const appName = isValidVariant ? variantName : variant.appName
   const baseId = variant.packageName
-  const androidPackage = isValidVariant ? `${baseId}.${variantName}` : baseId
-  const iosBundleId = isValidVariant ? `${baseId}.${variantName}` : baseId
+  // replace non-alphanumeric characters with underscores:
+  const normalizedVariantId = variantName?.toLowerCase().replace(/[^a-zA-Z0-9_]/g, "")
+  const androidPackage = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
+  const iosBundleId = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
+
+  // Google Navigation SDK API key — required for the iOS Nav SDK to
+  // boot. Fail loudly in CI/EAS so a release build never ships without
+  // it; warn (don't fail) in local-dev so contributors who don't touch
+  // nav can still build.
+  const googleNavApiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY ?? ""
+  if (!googleNavApiKey) {
+    const isCiOrEas =
+      process.env.CI === "true" ||
+      process.env.CI === "1" ||
+      process.env.EAS_BUILD === "true" ||
+      process.env.NODE_ENV === "production"
+    const msg =
+      "EXPO_PUBLIC_GOOGLE_NAV_API_KEY is not set. Navigation will fail at runtime — " +
+      "set it in mobile/.env (see mobile/.env.example) before building."
+    if (isCiOrEas) {
+      throw new Error(msg)
+    }
+    console.warn(`[mobile/app.config] ${msg}`)
+  }
 
   return {
     ...config,
     name: appName,
     slug: "Mentra",
-    version: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "0.0.1",
+    version: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "2.9.1",
     scheme: "com.mentra",
     orientation: "portrait",
     userInterfaceStyle: "automatic",
@@ -129,6 +160,12 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           "This app needs access to your notifications to provide you with notifications.",
         NSLocalNetworkUsageDescription:
           "Mentra needs to access your local network to connect to Mentra Live glasses for viewing photos and media stored on the device.",
+        // Required because miniapps subscribed to `heading_update` cause
+        // the host's HeadingService to read the device compass via
+        // CoreMotion. iOS hard-crashes any access to motion sensors
+        // without this usage string declared.
+        NSMotionUsageDescription:
+          "Mentra reads your device compass to show heading direction in navigation and similar miniapps on your glasses.",
         NSBonjourServices: ["_mentra-live._tcp", "_http._tcp"],
         NSAppTransportSecurity: {
           NSAllowsLocalNetworking: true,
@@ -148,6 +185,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           "UIInterfaceOrientationPortraitUpsideDown",
         ],
         BGTaskSchedulerPermittedIdentifiers: ["com.mentra.background-timer"],
+        GOOGLE_NAV_API_KEY: googleNavApiKey,
       },
       config: {
         usesNonExemptEncryption: false,
@@ -229,6 +267,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
             minSdkVersion: 28,
             targetSdkVersion: 35,
             compileSdkVersion: 36,
+            enableCoreLibraryDesugaring: true,
           },
           ios: {
             deploymentTarget: "15.5", // for react-native-zip-archive

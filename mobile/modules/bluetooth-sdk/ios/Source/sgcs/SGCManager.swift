@@ -20,7 +20,7 @@ protocol SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, sound: Bool, exposureTimeNs: Double?
+        compress: String?, flash: Bool, save: Bool, sound: Bool, exposureTimeNs: Double?
     )
     func startStream(_ message: [String: Any])
     func stopStream()
@@ -42,7 +42,9 @@ protocol SGCManager {
     func clearDisplay()
     func sendTextWall(_ text: String)
     func sendDoubleTextWall(_ top: String, _ bottom: String)
-    func displayBitmap(base64ImageData: String) async -> Bool
+    /// Display a bitmap. Optional `x`/`y`/`width`/`height` position and size the target
+    /// container (used by G2; other SGCs ignore positioning and render the bitmap as before).
+    func displayBitmap(base64ImageData: String, x: Int32?, y: Int32?, width: Int32?, height: Int32?) async -> Bool
     func showDashboard()
     func setDashboardPosition(_ height: Int, _ depth: Int)
     /// Default implementation sends both via [setDashboardPosition]; Nex overrides to one protobuf.
@@ -52,6 +54,18 @@ protocol SGCManager {
     // MARK: - Dashboard Menu
 
     func setDashboardMenu(_ items: [[String: Any]])
+
+    // MARK: - Notification Panel
+
+    func showNotificationsPanel()
+
+    // MARK: - Calendar Events
+
+    func sendCalendarEvents(_ events: [[String: Any]])
+
+    // MARK: - Dashboard Display Settings
+
+    func sendDashboardDisplaySettings()
 
     // MARK: - Device Control
 
@@ -130,6 +144,18 @@ extension SGCManager {
     // MARK: - Dashboard Menu (default no-op — only G2 supports this)
 
     func setDashboardMenu(_: [[String: Any]]) {}
+
+    // MARK: - Notification Panel (default no-op — only G2 supports this)
+
+    func showNotificationsPanel() {}
+
+    // MARK: - Calendar Events (default no-op — only G2 supports this)
+
+    func sendCalendarEvents(_: [[String: Any]]) {}
+
+    // MARK: - Dashboard Display Settings (default no-op — only G2 supports this)
+
+    func sendDashboardDisplaySettings() {}
 
     // MARK: - Voice Activity Detection (default no-op — Mentra Live supports this)
 

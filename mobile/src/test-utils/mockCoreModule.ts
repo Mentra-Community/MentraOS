@@ -67,6 +67,7 @@ export const coreModuleMock = {
   ),
   update: jest.fn(() => Promise.resolve()),
   updateBluetoothSettings: jest.fn(() => Promise.resolve()),
+  setCalendarEvents: jest.fn(() => Promise.resolve()),
   updateGlasses: jest.fn(() => Promise.resolve()),
   onBluetoothStatus: jest.fn((listener: Listener) => addListener("bluetooth_status", listener).remove),
   onGlassesStatus: jest.fn((listener: Listener) => addListener("glasses_status", listener).remove),
@@ -115,6 +116,13 @@ export const coreModuleMock = {
   checkSttModelAvailable: jest.fn(() => Promise.resolve(false)),
   validateSttModel: jest.fn(() => Promise.resolve(true)),
   extractTarBz2: jest.fn(() => Promise.resolve(true)),
+  setTtsModelDetails: jest.fn(() => Promise.resolve()),
+  getTtsModelPath: jest.fn(() => Promise.resolve("")),
+  getTtsModelLanguage: jest.fn(() => Promise.resolve("")),
+  checkTtsModelAvailable: jest.fn(() => Promise.resolve(false)),
+  validateTtsModel: jest.fn(() => Promise.resolve(true)),
+  generateTtsAudio: jest.fn(() => Promise.resolve(true)),
+  onExtractionProgress: jest.fn((listener: Listener) => addListener("extraction_progress", listener).remove),
 }
 
 export const emitCoreModuleEvent = (eventName: string, payload: any) => {

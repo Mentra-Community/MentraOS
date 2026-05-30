@@ -287,23 +287,14 @@ class SocketComms {
     ws.sendText(jsonString)
   }
 
-  public sendLocalTranscription(transcription: any) {
-    if (!ws.isConnected()) {
-      console.log("Cannot send local transcription: WebSocket not connected")
-      return
-    }
-
-    const text = transcription.text
-    if (!text || text === "") {
-      console.log("Skipping empty transcription result")
-      return
-    }
-
-    const jsonString = JSON.stringify(transcription)
-    ws.sendText(jsonString)
-
-    const isFinal = transcription.isFinal || false
-    console.log(`SOCKET: Sent ${isFinal ? "final" : "partial"} transcription: '${text}'`)
+  /**
+   * @deprecated Local transcripts no longer roundtrip to the cloud. They
+   * flow directly to subscribed local miniapps via LocalMiniappRuntime.
+   * Retained as a no-op only so external callers (if any) don't crash.
+   * Remove call sites and then delete this in a follow-up.
+   */
+  public sendLocalTranscription(_transcription: any) {
+    return
   }
 
   public sendUdpRegister(userIdHash: number) {
@@ -323,6 +314,16 @@ class SocketComms {
     // if (!isChina) {
     //   await livekit.connect()
     // }
+
+    // Resync the cloud's stream-subscription set to whatever's actually
+    // live locally. The cloud retains subscriptions across app
+    // restarts; without this push, a previous session's miniapp subs
+    // (e.g. transcription:auto from a dev miniapp that was killed when
+    // Mentra was force-quit) keep firing — cloud sends
+    // mic_state_change=pcm and fans transcripts that no JSContext is
+    // alive to receive. Common case on cold boot is "[]" which silences
+    // the cloud until a miniapp actually starts.
+    localMiniappRuntime.resyncCloudSubscriptions()
 
     // refresh the mini app list:
     restComms.getApplets()
@@ -437,6 +438,10 @@ class SocketComms {
   }
 
   private async handle_microphone_state_change(msg: any) {
+    // Phone-side VAD is now driven by LocalSttFallbackCoordinator for
+    // per-utterance offline/online STT switching, so we never want to
+    // bypass it from the cloud side. The cloud's bypassVad hint is ignored.
+    const bypassVad = false
     const requiredDataStrings = msg.requiredData || []
     console.log(`SOCKET: mic_state_change: requiredData = [${requiredDataStrings}]`)
     let shouldSendPcmData = false
@@ -812,10 +817,11 @@ class SocketComms {
         break
       }
 
-      case "phone_photo_ready":
       case "phone_stream_status":
       case "phone_managed_stream_status":
-        // Forward Phase 5 messages to LocalMiniappRuntime
+        // Forward cloud-1 streaming messages to LocalMiniappRuntime for
+        // any local miniapp that still has a pending cloud request (legacy
+        // path; phone-orchestrated v2 streaming doesn't register one).
         localMiniappRuntime.handleCloudMessage(msg)
         break
 

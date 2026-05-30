@@ -11,5 +11,11 @@
       <meta-data android:name="android.service.notification.default_filter_types" android:value="conversations|alerting" />
       <meta-data android:name="android.service.notification.disabled_filter_types" android:value="ongoing|silent" />
     </service>
+
+    <!-- Receives turn-by-turn NavInfo from the Google Nav SDK so we can
+         pull road names off StepInfo. Bound by Navigator.registerServiceForNavUpdates(). -->
+    <service
+        android:name="com.mentra.crust.navigation.NavInfoReceiverService"
+        android:exported="false" />
   </application>
 </manifest>
