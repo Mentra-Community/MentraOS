@@ -142,19 +142,19 @@ public final class MentraosBle {
     mentraos.ble.MentraosBle.HeadUpAngleConfigOrBuilder getHeadUpAngleOrBuilder();
 
     /**
-     * <code>.mentraos.ble.PingRequest ping = 16;</code>
-     * @return Whether the ping field is set.
+     * <code>.mentraos.ble.PongResponse pong = 16;</code>
+     * @return Whether the pong field is set.
      */
-    boolean hasPing();
+    boolean hasPong();
     /**
-     * <code>.mentraos.ble.PingRequest ping = 16;</code>
-     * @return The ping.
+     * <code>.mentraos.ble.PongResponse pong = 16;</code>
+     * @return The pong.
      */
-    mentraos.ble.MentraosBle.PingRequest getPing();
+    mentraos.ble.MentraosBle.PongResponse getPong();
     /**
-     * <code>.mentraos.ble.PingRequest ping = 16;</code>
+     * <code>.mentraos.ble.PongResponse pong = 16;</code>
      */
-    mentraos.ble.MentraosBle.PingRequestOrBuilder getPingOrBuilder();
+    mentraos.ble.MentraosBle.PongResponseOrBuilder getPongOrBuilder();
 
     /**
      * <pre>
@@ -648,7 +648,7 @@ public final class MentraosBle {
       PAIRING_MODE(13),
       HEAD_POSITION(14),
       HEAD_UP_ANGLE(15),
-      PING(16),
+      PONG(16),
       MIC_STATE(20),
       VAD_ENABLED(21),
       VAD_CONFIG(22),
@@ -698,7 +698,7 @@ public final class MentraosBle {
           case 13: return PAIRING_MODE;
           case 14: return HEAD_POSITION;
           case 15: return HEAD_UP_ANGLE;
-          case 16: return PING;
+          case 16: return PONG;
           case 20: return MIC_STATE;
           case 21: return VAD_ENABLED;
           case 22: return VAD_CONFIG;
@@ -985,35 +985,35 @@ public final class MentraosBle {
       return mentraos.ble.MentraosBle.HeadUpAngleConfig.getDefaultInstance();
     }
 
-    public static final int PING_FIELD_NUMBER = 16;
+    public static final int PONG_FIELD_NUMBER = 16;
     /**
-     * <code>.mentraos.ble.PingRequest ping = 16;</code>
-     * @return Whether the ping field is set.
+     * <code>.mentraos.ble.PongResponse pong = 16;</code>
+     * @return Whether the pong field is set.
      */
     @java.lang.Override
-    public boolean hasPing() {
+    public boolean hasPong() {
       return payloadCase_ == 16;
     }
     /**
-     * <code>.mentraos.ble.PingRequest ping = 16;</code>
-     * @return The ping.
+     * <code>.mentraos.ble.PongResponse pong = 16;</code>
+     * @return The pong.
      */
     @java.lang.Override
-    public mentraos.ble.MentraosBle.PingRequest getPing() {
+    public mentraos.ble.MentraosBle.PongResponse getPong() {
       if (payloadCase_ == 16) {
-         return (mentraos.ble.MentraosBle.PingRequest) payload_;
+         return (mentraos.ble.MentraosBle.PongResponse) payload_;
       }
-      return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
+      return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
     }
     /**
-     * <code>.mentraos.ble.PingRequest ping = 16;</code>
+     * <code>.mentraos.ble.PongResponse pong = 16;</code>
      */
     @java.lang.Override
-    public mentraos.ble.MentraosBle.PingRequestOrBuilder getPingOrBuilder() {
+    public mentraos.ble.MentraosBle.PongResponseOrBuilder getPongOrBuilder() {
       if (payloadCase_ == 16) {
-         return (mentraos.ble.MentraosBle.PingRequest) payload_;
+         return (mentraos.ble.MentraosBle.PongResponse) payload_;
       }
-      return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
+      return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
     }
 
     public static final int MIC_STATE_FIELD_NUMBER = 20;
@@ -1906,7 +1906,7 @@ public final class MentraosBle {
         output.writeMessage(15, (mentraos.ble.MentraosBle.HeadUpAngleConfig) payload_);
       }
       if (payloadCase_ == 16) {
-        output.writeMessage(16, (mentraos.ble.MentraosBle.PingRequest) payload_);
+        output.writeMessage(16, (mentraos.ble.MentraosBle.PongResponse) payload_);
       }
       if (payloadCase_ == 20) {
         output.writeMessage(20, (mentraos.ble.MentraosBle.MicStateConfig) payload_);
@@ -2024,7 +2024,7 @@ public final class MentraosBle {
       }
       if (payloadCase_ == 16) {
         size += com.google.protobuf.CodedOutputStream
-          .computeMessageSize(16, (mentraos.ble.MentraosBle.PingRequest) payload_);
+          .computeMessageSize(16, (mentraos.ble.MentraosBle.PongResponse) payload_);
       }
       if (payloadCase_ == 20) {
         size += com.google.protobuf.CodedOutputStream
@@ -2174,8 +2174,8 @@ public final class MentraosBle {
               .equals(other.getHeadUpAngle())) return false;
           break;
         case 16:
-          if (!getPing()
-              .equals(other.getPing())) return false;
+          if (!getPong()
+              .equals(other.getPong())) return false;
           break;
         case 20:
           if (!getMicState()
@@ -2323,8 +2323,8 @@ public final class MentraosBle {
           hash = (53 * hash) + getHeadUpAngle().hashCode();
           break;
         case 16:
-          hash = (37 * hash) + PING_FIELD_NUMBER;
-          hash = (53 * hash) + getPing().hashCode();
+          hash = (37 * hash) + PONG_FIELD_NUMBER;
+          hash = (53 * hash) + getPong().hashCode();
           break;
         case 20:
           hash = (37 * hash) + MIC_STATE_FIELD_NUMBER;
@@ -2588,8 +2588,8 @@ public final class MentraosBle {
         if (headUpAngleBuilder_ != null) {
           headUpAngleBuilder_.clear();
         }
-        if (pingBuilder_ != null) {
-          pingBuilder_.clear();
+        if (pongBuilder_ != null) {
+          pongBuilder_.clear();
         }
         if (micStateBuilder_ != null) {
           micStateBuilder_.clear();
@@ -2743,8 +2743,8 @@ public final class MentraosBle {
           result.payload_ = headUpAngleBuilder_.build();
         }
         if (payloadCase_ == 16 &&
-            pingBuilder_ != null) {
-          result.payload_ = pingBuilder_.build();
+            pongBuilder_ != null) {
+          result.payload_ = pongBuilder_.build();
         }
         if (payloadCase_ == 20 &&
             micStateBuilder_ != null) {
@@ -2926,8 +2926,8 @@ public final class MentraosBle {
             mergeHeadUpAngle(other.getHeadUpAngle());
             break;
           }
-          case PING: {
-            mergePing(other.getPing());
+          case PONG: {
+            mergePong(other.getPong());
             break;
           }
           case MIC_STATE: {
@@ -3113,7 +3113,7 @@ public final class MentraosBle {
               } // case 122
               case 130: {
                 input.readMessage(
-                    getPingFieldBuilder().getBuilder(),
+                    getPongFieldBuilder().getBuilder(),
                     extensionRegistry);
                 payloadCase_ = 16;
                 break;
@@ -4314,71 +4314,71 @@ public final class MentraosBle {
       }
 
       private com.google.protobuf.SingleFieldBuilderV3<
-          mentraos.ble.MentraosBle.PingRequest, mentraos.ble.MentraosBle.PingRequest.Builder, mentraos.ble.MentraosBle.PingRequestOrBuilder> pingBuilder_;
+          mentraos.ble.MentraosBle.PongResponse, mentraos.ble.MentraosBle.PongResponse.Builder, mentraos.ble.MentraosBle.PongResponseOrBuilder> pongBuilder_;
       /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
-       * @return Whether the ping field is set.
+       * <code>.mentraos.ble.PongResponse pong = 16;</code>
+       * @return Whether the pong field is set.
        */
       @java.lang.Override
-      public boolean hasPing() {
+      public boolean hasPong() {
         return payloadCase_ == 16;
       }
       /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
-       * @return The ping.
+       * <code>.mentraos.ble.PongResponse pong = 16;</code>
+       * @return The pong.
        */
       @java.lang.Override
-      public mentraos.ble.MentraosBle.PingRequest getPing() {
-        if (pingBuilder_ == null) {
+      public mentraos.ble.MentraosBle.PongResponse getPong() {
+        if (pongBuilder_ == null) {
           if (payloadCase_ == 16) {
-            return (mentraos.ble.MentraosBle.PingRequest) payload_;
+            return (mentraos.ble.MentraosBle.PongResponse) payload_;
           }
-          return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
+          return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
         } else {
           if (payloadCase_ == 16) {
-            return pingBuilder_.getMessage();
+            return pongBuilder_.getMessage();
           }
-          return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
+          return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
         }
       }
       /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
+       * <code>.mentraos.ble.PongResponse pong = 16;</code>
        */
-      public Builder setPing(mentraos.ble.MentraosBle.PingRequest value) {
-        if (pingBuilder_ == null) {
+      public Builder setPong(mentraos.ble.MentraosBle.PongResponse value) {
+        if (pongBuilder_ == null) {
           if (value == null) {
             throw new NullPointerException();
           }
           payload_ = value;
           onChanged();
         } else {
-          pingBuilder_.setMessage(value);
+          pongBuilder_.setMessage(value);
         }
         payloadCase_ = 16;
         return this;
       }
       /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
+       * <code>.mentraos.ble.PongResponse pong = 16;</code>
        */
-      public Builder setPing(
-          mentraos.ble.MentraosBle.PingRequest.Builder builderForValue) {
-        if (pingBuilder_ == null) {
+      public Builder setPong(
+          mentraos.ble.MentraosBle.PongResponse.Builder builderForValue) {
+        if (pongBuilder_ == null) {
           payload_ = builderForValue.build();
           onChanged();
         } else {
-          pingBuilder_.setMessage(builderForValue.build());
+          pongBuilder_.setMessage(builderForValue.build());
         }
         payloadCase_ = 16;
         return this;
       }
       /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
+       * <code>.mentraos.ble.PongResponse pong = 16;</code>
        */
-      public Builder mergePing(mentraos.ble.MentraosBle.PingRequest value) {
-        if (pingBuilder_ == null) {
+      public Builder mergePong(mentraos.ble.MentraosBle.PongResponse value) {
+        if (pongBuilder_ == null) {
           if (payloadCase_ == 16 &&
-              payload_ != mentraos.ble.MentraosBle.PingRequest.getDefaultInstance()) {
-            payload_ = mentraos.ble.MentraosBle.PingRequest.newBuilder((mentraos.ble.MentraosBle.PingRequest) payload_)
+              payload_ != mentraos.ble.MentraosBle.PongResponse.getDefaultInstance()) {
+            payload_ = mentraos.ble.MentraosBle.PongResponse.newBuilder((mentraos.ble.MentraosBle.PongResponse) payload_)
                 .mergeFrom(value).buildPartial();
           } else {
             payload_ = value;
@@ -4386,19 +4386,19 @@ public final class MentraosBle {
           onChanged();
         } else {
           if (payloadCase_ == 16) {
-            pingBuilder_.mergeFrom(value);
+            pongBuilder_.mergeFrom(value);
           } else {
-            pingBuilder_.setMessage(value);
+            pongBuilder_.setMessage(value);
           }
         }
         payloadCase_ = 16;
         return this;
       }
       /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
+       * <code>.mentraos.ble.PongResponse pong = 16;</code>
        */
-      public Builder clearPing() {
-        if (pingBuilder_ == null) {
+      public Builder clearPong() {
+        if (pongBuilder_ == null) {
           if (payloadCase_ == 16) {
             payloadCase_ = 0;
             payload_ = null;
@@ -4409,50 +4409,50 @@ public final class MentraosBle {
             payloadCase_ = 0;
             payload_ = null;
           }
-          pingBuilder_.clear();
+          pongBuilder_.clear();
         }
         return this;
       }
       /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
+       * <code>.mentraos.ble.PongResponse pong = 16;</code>
        */
-      public mentraos.ble.MentraosBle.PingRequest.Builder getPingBuilder() {
-        return getPingFieldBuilder().getBuilder();
+      public mentraos.ble.MentraosBle.PongResponse.Builder getPongBuilder() {
+        return getPongFieldBuilder().getBuilder();
       }
       /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
+       * <code>.mentraos.ble.PongResponse pong = 16;</code>
        */
       @java.lang.Override
-      public mentraos.ble.MentraosBle.PingRequestOrBuilder getPingOrBuilder() {
-        if ((payloadCase_ == 16) && (pingBuilder_ != null)) {
-          return pingBuilder_.getMessageOrBuilder();
+      public mentraos.ble.MentraosBle.PongResponseOrBuilder getPongOrBuilder() {
+        if ((payloadCase_ == 16) && (pongBuilder_ != null)) {
+          return pongBuilder_.getMessageOrBuilder();
         } else {
           if (payloadCase_ == 16) {
-            return (mentraos.ble.MentraosBle.PingRequest) payload_;
+            return (mentraos.ble.MentraosBle.PongResponse) payload_;
           }
-          return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
+          return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
         }
       }
       /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
+       * <code>.mentraos.ble.PongResponse pong = 16;</code>
        */
       private com.google.protobuf.SingleFieldBuilderV3<
-          mentraos.ble.MentraosBle.PingRequest, mentraos.ble.MentraosBle.PingRequest.Builder, mentraos.ble.MentraosBle.PingRequestOrBuilder> 
-          getPingFieldBuilder() {
-        if (pingBuilder_ == null) {
+          mentraos.ble.MentraosBle.PongResponse, mentraos.ble.MentraosBle.PongResponse.Builder, mentraos.ble.MentraosBle.PongResponseOrBuilder> 
+          getPongFieldBuilder() {
+        if (pongBuilder_ == null) {
           if (!(payloadCase_ == 16)) {
-            payload_ = mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
+            payload_ = mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
           }
-          pingBuilder_ = new com.google.protobuf.SingleFieldBuilderV3<
-              mentraos.ble.MentraosBle.PingRequest, mentraos.ble.MentraosBle.PingRequest.Builder, mentraos.ble.MentraosBle.PingRequestOrBuilder>(
-                  (mentraos.ble.MentraosBle.PingRequest) payload_,
+          pongBuilder_ = new com.google.protobuf.SingleFieldBuilderV3<
+              mentraos.ble.MentraosBle.PongResponse, mentraos.ble.MentraosBle.PongResponse.Builder, mentraos.ble.MentraosBle.PongResponseOrBuilder>(
+                  (mentraos.ble.MentraosBle.PongResponse) payload_,
                   getParentForChildren(),
                   isClean());
           payload_ = null;
         }
         payloadCase_ = 16;
         onChanged();
-        return pingBuilder_;
+        return pongBuilder_;
       }
 
       private com.google.protobuf.SingleFieldBuilderV3<
@@ -8446,19 +8446,19 @@ public final class MentraosBle {
     mentraos.ble.MentraosBle.HeadUpAngleResponseOrBuilder getHeadUpAngleSetOrBuilder();
 
     /**
-     * <code>.mentraos.ble.PongResponse pong = 15;</code>
-     * @return Whether the pong field is set.
+     * <code>.mentraos.ble.PingRequest ping = 15;</code>
+     * @return Whether the ping field is set.
      */
-    boolean hasPong();
+    boolean hasPing();
     /**
-     * <code>.mentraos.ble.PongResponse pong = 15;</code>
-     * @return The pong.
+     * <code>.mentraos.ble.PingRequest ping = 15;</code>
+     * @return The ping.
      */
-    mentraos.ble.MentraosBle.PongResponse getPong();
+    mentraos.ble.MentraosBle.PingRequest getPing();
     /**
-     * <code>.mentraos.ble.PongResponse pong = 15;</code>
+     * <code>.mentraos.ble.PingRequest ping = 15;</code>
      */
-    mentraos.ble.MentraosBle.PongResponseOrBuilder getPongOrBuilder();
+    mentraos.ble.MentraosBle.PingRequestOrBuilder getPingOrBuilder();
 
     /**
      * <pre>
@@ -8623,7 +8623,7 @@ public final class MentraosBle {
       DEVICE_INFO(12),
       HEAD_POSITION(13),
       HEAD_UP_ANGLE_SET(14),
-      PONG(15),
+      PING(15),
       VAD_EVENT(20),
       IMAGE_TRANSFER_COMPLETE(30),
       IMU_DATA(40),
@@ -8651,7 +8651,7 @@ public final class MentraosBle {
           case 12: return DEVICE_INFO;
           case 13: return HEAD_POSITION;
           case 14: return HEAD_UP_ANGLE_SET;
-          case 15: return PONG;
+          case 15: return PING;
           case 20: return VAD_EVENT;
           case 30: return IMAGE_TRANSFER_COMPLETE;
           case 40: return IMU_DATA;
@@ -8839,35 +8839,35 @@ public final class MentraosBle {
       return mentraos.ble.MentraosBle.HeadUpAngleResponse.getDefaultInstance();
     }
 
-    public static final int PONG_FIELD_NUMBER = 15;
+    public static final int PING_FIELD_NUMBER = 15;
     /**
-     * <code>.mentraos.ble.PongResponse pong = 15;</code>
-     * @return Whether the pong field is set.
+     * <code>.mentraos.ble.PingRequest ping = 15;</code>
+     * @return Whether the ping field is set.
      */
     @java.lang.Override
-    public boolean hasPong() {
+    public boolean hasPing() {
       return payloadCase_ == 15;
     }
     /**
-     * <code>.mentraos.ble.PongResponse pong = 15;</code>
-     * @return The pong.
+     * <code>.mentraos.ble.PingRequest ping = 15;</code>
+     * @return The ping.
      */
     @java.lang.Override
-    public mentraos.ble.MentraosBle.PongResponse getPong() {
+    public mentraos.ble.MentraosBle.PingRequest getPing() {
       if (payloadCase_ == 15) {
-         return (mentraos.ble.MentraosBle.PongResponse) payload_;
+         return (mentraos.ble.MentraosBle.PingRequest) payload_;
       }
-      return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
+      return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
     }
     /**
-     * <code>.mentraos.ble.PongResponse pong = 15;</code>
+     * <code>.mentraos.ble.PingRequest ping = 15;</code>
      */
     @java.lang.Override
-    public mentraos.ble.MentraosBle.PongResponseOrBuilder getPongOrBuilder() {
+    public mentraos.ble.MentraosBle.PingRequestOrBuilder getPingOrBuilder() {
       if (payloadCase_ == 15) {
-         return (mentraos.ble.MentraosBle.PongResponse) payload_;
+         return (mentraos.ble.MentraosBle.PingRequest) payload_;
       }
-      return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
+      return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
     }
 
     public static final int VAD_EVENT_FIELD_NUMBER = 20;
@@ -9091,7 +9091,7 @@ public final class MentraosBle {
         output.writeMessage(14, (mentraos.ble.MentraosBle.HeadUpAngleResponse) payload_);
       }
       if (payloadCase_ == 15) {
-        output.writeMessage(15, (mentraos.ble.MentraosBle.PongResponse) payload_);
+        output.writeMessage(15, (mentraos.ble.MentraosBle.PingRequest) payload_);
       }
       if (payloadCase_ == 20) {
         output.writeMessage(20, (mentraos.ble.MentraosBle.VadEvent) payload_);
@@ -9139,7 +9139,7 @@ public final class MentraosBle {
       }
       if (payloadCase_ == 15) {
         size += com.google.protobuf.CodedOutputStream
-          .computeMessageSize(15, (mentraos.ble.MentraosBle.PongResponse) payload_);
+          .computeMessageSize(15, (mentraos.ble.MentraosBle.PingRequest) payload_);
       }
       if (payloadCase_ == 20) {
         size += com.google.protobuf.CodedOutputStream
@@ -9199,8 +9199,8 @@ public final class MentraosBle {
               .equals(other.getHeadUpAngleSet())) return false;
           break;
         case 15:
-          if (!getPong()
-              .equals(other.getPong())) return false;
+          if (!getPing()
+              .equals(other.getPing())) return false;
           break;
         case 20:
           if (!getVadEvent()
@@ -9258,8 +9258,8 @@ public final class MentraosBle {
           hash = (53 * hash) + getHeadUpAngleSet().hashCode();
           break;
         case 15:
-          hash = (37 * hash) + PONG_FIELD_NUMBER;
-          hash = (53 * hash) + getPong().hashCode();
+          hash = (37 * hash) + PING_FIELD_NUMBER;
+          hash = (53 * hash) + getPing().hashCode();
           break;
         case 20:
           hash = (37 * hash) + VAD_EVENT_FIELD_NUMBER;
@@ -9434,8 +9434,8 @@ public final class MentraosBle {
         if (headUpAngleSetBuilder_ != null) {
           headUpAngleSetBuilder_.clear();
         }
-        if (pongBuilder_ != null) {
-          pongBuilder_.clear();
+        if (pingBuilder_ != null) {
+          pingBuilder_.clear();
         }
         if (vadEventBuilder_ != null) {
           vadEventBuilder_.clear();
@@ -9514,8 +9514,8 @@ public final class MentraosBle {
           result.payload_ = headUpAngleSetBuilder_.build();
         }
         if (payloadCase_ == 15 &&
-            pongBuilder_ != null) {
-          result.payload_ = pongBuilder_.build();
+            pingBuilder_ != null) {
+          result.payload_ = pingBuilder_.build();
         }
         if (payloadCase_ == 20 &&
             vadEventBuilder_ != null) {
@@ -9604,8 +9604,8 @@ public final class MentraosBle {
             mergeHeadUpAngleSet(other.getHeadUpAngleSet());
             break;
           }
-          case PONG: {
-            mergePong(other.getPong());
+          case PING: {
+            mergePing(other.getPing());
             break;
           }
           case VAD_EVENT: {
@@ -9695,7 +9695,7 @@ public final class MentraosBle {
               } // case 114
               case 122: {
                 input.readMessage(
-                    getPongFieldBuilder().getBuilder(),
+                    getPingFieldBuilder().getBuilder(),
                     extensionRegistry);
                 payloadCase_ = 15;
                 break;
@@ -10514,71 +10514,71 @@ public final class MentraosBle {
       }
 
       private com.google.protobuf.SingleFieldBuilderV3<
-          mentraos.ble.MentraosBle.PongResponse, mentraos.ble.MentraosBle.PongResponse.Builder, mentraos.ble.MentraosBle.PongResponseOrBuilder> pongBuilder_;
+          mentraos.ble.MentraosBle.PingRequest, mentraos.ble.MentraosBle.PingRequest.Builder, mentraos.ble.MentraosBle.PingRequestOrBuilder> pingBuilder_;
       /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
-       * @return Whether the pong field is set.
+       * <code>.mentraos.ble.PingRequest ping = 15;</code>
+       * @return Whether the ping field is set.
        */
       @java.lang.Override
-      public boolean hasPong() {
+      public boolean hasPing() {
         return payloadCase_ == 15;
       }
       /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
-       * @return The pong.
+       * <code>.mentraos.ble.PingRequest ping = 15;</code>
+       * @return The ping.
        */
       @java.lang.Override
-      public mentraos.ble.MentraosBle.PongResponse getPong() {
-        if (pongBuilder_ == null) {
+      public mentraos.ble.MentraosBle.PingRequest getPing() {
+        if (pingBuilder_ == null) {
           if (payloadCase_ == 15) {
-            return (mentraos.ble.MentraosBle.PongResponse) payload_;
+            return (mentraos.ble.MentraosBle.PingRequest) payload_;
           }
-          return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
+          return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
         } else {
           if (payloadCase_ == 15) {
-            return pongBuilder_.getMessage();
+            return pingBuilder_.getMessage();
           }
-          return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
+          return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
         }
       }
       /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
+       * <code>.mentraos.ble.PingRequest ping = 15;</code>
        */
-      public Builder setPong(mentraos.ble.MentraosBle.PongResponse value) {
-        if (pongBuilder_ == null) {
+      public Builder setPing(mentraos.ble.MentraosBle.PingRequest value) {
+        if (pingBuilder_ == null) {
           if (value == null) {
             throw new NullPointerException();
           }
           payload_ = value;
           onChanged();
         } else {
-          pongBuilder_.setMessage(value);
+          pingBuilder_.setMessage(value);
         }
         payloadCase_ = 15;
         return this;
       }
       /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
+       * <code>.mentraos.ble.PingRequest ping = 15;</code>
        */
-      public Builder setPong(
-          mentraos.ble.MentraosBle.PongResponse.Builder builderForValue) {
-        if (pongBuilder_ == null) {
+      public Builder setPing(
+          mentraos.ble.MentraosBle.PingRequest.Builder builderForValue) {
+        if (pingBuilder_ == null) {
           payload_ = builderForValue.build();
           onChanged();
         } else {
-          pongBuilder_.setMessage(builderForValue.build());
+          pingBuilder_.setMessage(builderForValue.build());
         }
         payloadCase_ = 15;
         return this;
       }
       /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
+       * <code>.mentraos.ble.PingRequest ping = 15;</code>
        */
-      public Builder mergePong(mentraos.ble.MentraosBle.PongResponse value) {
-        if (pongBuilder_ == null) {
+      public Builder mergePing(mentraos.ble.MentraosBle.PingRequest value) {
+        if (pingBuilder_ == null) {
           if (payloadCase_ == 15 &&
-              payload_ != mentraos.ble.MentraosBle.PongResponse.getDefaultInstance()) {
-            payload_ = mentraos.ble.MentraosBle.PongResponse.newBuilder((mentraos.ble.MentraosBle.PongResponse) payload_)
+              payload_ != mentraos.ble.MentraosBle.PingRequest.getDefaultInstance()) {
+            payload_ = mentraos.ble.MentraosBle.PingRequest.newBuilder((mentraos.ble.MentraosBle.PingRequest) payload_)
                 .mergeFrom(value).buildPartial();
           } else {
             payload_ = value;
@@ -10586,19 +10586,19 @@ public final class MentraosBle {
           onChanged();
         } else {
           if (payloadCase_ == 15) {
-            pongBuilder_.mergeFrom(value);
+            pingBuilder_.mergeFrom(value);
           } else {
-            pongBuilder_.setMessage(value);
+            pingBuilder_.setMessage(value);
           }
         }
         payloadCase_ = 15;
         return this;
       }
       /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
+       * <code>.mentraos.ble.PingRequest ping = 15;</code>
        */
-      public Builder clearPong() {
-        if (pongBuilder_ == null) {
+      public Builder clearPing() {
+        if (pingBuilder_ == null) {
           if (payloadCase_ == 15) {
             payloadCase_ = 0;
             payload_ = null;
@@ -10609,50 +10609,50 @@ public final class MentraosBle {
             payloadCase_ = 0;
             payload_ = null;
           }
-          pongBuilder_.clear();
+          pingBuilder_.clear();
         }
         return this;
       }
       /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
+       * <code>.mentraos.ble.PingRequest ping = 15;</code>
        */
-      public mentraos.ble.MentraosBle.PongResponse.Builder getPongBuilder() {
-        return getPongFieldBuilder().getBuilder();
+      public mentraos.ble.MentraosBle.PingRequest.Builder getPingBuilder() {
+        return getPingFieldBuilder().getBuilder();
       }
       /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
+       * <code>.mentraos.ble.PingRequest ping = 15;</code>
        */
       @java.lang.Override
-      public mentraos.ble.MentraosBle.PongResponseOrBuilder getPongOrBuilder() {
-        if ((payloadCase_ == 15) && (pongBuilder_ != null)) {
-          return pongBuilder_.getMessageOrBuilder();
+      public mentraos.ble.MentraosBle.PingRequestOrBuilder getPingOrBuilder() {
+        if ((payloadCase_ == 15) && (pingBuilder_ != null)) {
+          return pingBuilder_.getMessageOrBuilder();
         } else {
           if (payloadCase_ == 15) {
-            return (mentraos.ble.MentraosBle.PongResponse) payload_;
+            return (mentraos.ble.MentraosBle.PingRequest) payload_;
           }
-          return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
+          return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
         }
       }
       /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
+       * <code>.mentraos.ble.PingRequest ping = 15;</code>
        */
       private com.google.protobuf.SingleFieldBuilderV3<
-          mentraos.ble.MentraosBle.PongResponse, mentraos.ble.MentraosBle.PongResponse.Builder, mentraos.ble.MentraosBle.PongResponseOrBuilder> 
-          getPongFieldBuilder() {
-        if (pongBuilder_ == null) {
+          mentraos.ble.MentraosBle.PingRequest, mentraos.ble.MentraosBle.PingRequest.Builder, mentraos.ble.MentraosBle.PingRequestOrBuilder> 
+          getPingFieldBuilder() {
+        if (pingBuilder_ == null) {
           if (!(payloadCase_ == 15)) {
-            payload_ = mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
+            payload_ = mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
           }
-          pongBuilder_ = new com.google.protobuf.SingleFieldBuilderV3<
-              mentraos.ble.MentraosBle.PongResponse, mentraos.ble.MentraosBle.PongResponse.Builder, mentraos.ble.MentraosBle.PongResponseOrBuilder>(
-                  (mentraos.ble.MentraosBle.PongResponse) payload_,
+          pingBuilder_ = new com.google.protobuf.SingleFieldBuilderV3<
+              mentraos.ble.MentraosBle.PingRequest, mentraos.ble.MentraosBle.PingRequest.Builder, mentraos.ble.MentraosBle.PingRequestOrBuilder>(
+                  (mentraos.ble.MentraosBle.PingRequest) payload_,
                   getParentForChildren(),
                   isClean());
           payload_ = null;
         }
         payloadCase_ = 15;
         onChanged();
-        return pongBuilder_;
+        return pingBuilder_;
       }
 
       private com.google.protobuf.SingleFieldBuilderV3<
@@ -18094,6 +18094,18 @@ public final class MentraosBle {
   public interface PingRequestOrBuilder extends
       // @@protoc_insertion_point(interface_extends:mentraos.ble.PingRequest)
       com.google.protobuf.MessageOrBuilder {
+
+    /**
+     * <code>string msg_id = 1;</code>
+     * @return The msgId.
+     */
+    java.lang.String getMsgId();
+    /**
+     * <code>string msg_id = 1;</code>
+     * @return The bytes for msgId.
+     */
+    com.google.protobuf.ByteString
+        getMsgIdBytes();
   }
   /**
    * Protobuf type {@code mentraos.ble.PingRequest}
@@ -18108,6 +18120,7 @@ public final class MentraosBle {
       super(builder);
     }
     private PingRequest() {
+      msgId_ = "";
     }
 
     @java.lang.Override
@@ -18130,6 +18143,45 @@ public final class MentraosBle {
               mentraos.ble.MentraosBle.PingRequest.class, mentraos.ble.MentraosBle.PingRequest.Builder.class);
     }
 
+    public static final int MSG_ID_FIELD_NUMBER = 1;
+    @SuppressWarnings("serial")
+    private volatile java.lang.Object msgId_ = "";
+    /**
+     * <code>string msg_id = 1;</code>
+     * @return The msgId.
+     */
+    @java.lang.Override
+    public java.lang.String getMsgId() {
+      java.lang.Object ref = msgId_;
+      if (ref instanceof java.lang.String) {
+        return (java.lang.String) ref;
+      } else {
+        com.google.protobuf.ByteString bs = 
+            (com.google.protobuf.ByteString) ref;
+        java.lang.String s = bs.toStringUtf8();
+        msgId_ = s;
+        return s;
+      }
+    }
+    /**
+     * <code>string msg_id = 1;</code>
+     * @return The bytes for msgId.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getMsgIdBytes() {
+      java.lang.Object ref = msgId_;
+      if (ref instanceof java.lang.String) {
+        com.google.protobuf.ByteString b = 
+            com.google.protobuf.ByteString.copyFromUtf8(
+                (java.lang.String) ref);
+        msgId_ = b;
+        return b;
+      } else {
+        return (com.google.protobuf.ByteString) ref;
+      }
+    }
+
     private byte memoizedIsInitialized = -1;
     @java.lang.Override
     public final boolean isInitialized() {
@@ -18144,6 +18196,9 @@ public final class MentraosBle {
     @java.lang.Override
     public void writeTo(com.google.protobuf.CodedOutputStream output)
                         throws java.io.IOException {
+      if (!com.google.protobuf.GeneratedMessageV3.isStringEmpty(msgId_)) {
+        com.google.protobuf.GeneratedMessageV3.writeString(output, 1, msgId_);
+      }
       getUnknownFields().writeTo(output);
     }
 
@@ -18153,6 +18208,9 @@ public final class MentraosBle {
       if (size != -1) return size;
 
       size = 0;
+      if (!com.google.protobuf.GeneratedMessageV3.isStringEmpty(msgId_)) {
+        size += com.google.protobuf.GeneratedMessageV3.computeStringSize(1, msgId_);
+      }
       size += getUnknownFields().getSerializedSize();
       memoizedSize = size;
       return size;
@@ -18168,6 +18226,8 @@ public final class MentraosBle {
       }
       mentraos.ble.MentraosBle.PingRequest other = (mentraos.ble.MentraosBle.PingRequest) obj;
 
+      if (!getMsgId()
+          .equals(other.getMsgId())) return false;
       if (!getUnknownFields().equals(other.getUnknownFields())) return false;
       return true;
     }
@@ -18179,6 +18239,8 @@ public final class MentraosBle {
       }
       int hash = 41;
       hash = (19 * hash) + getDescriptor().hashCode();
+      hash = (37 * hash) + MSG_ID_FIELD_NUMBER;
+      hash = (53 * hash) + getMsgId().hashCode();
       hash = (29 * hash) + getUnknownFields().hashCode();
       memoizedHashCode = hash;
       return hash;
@@ -18309,6 +18371,8 @@ public final class MentraosBle {
       @java.lang.Override
       public Builder clear() {
         super.clear();
+        bitField0_ = 0;
+        msgId_ = "";
         return this;
       }
 
@@ -18335,8 +18399,16 @@ public final class MentraosBle {
       @java.lang.Override
       public mentraos.ble.MentraosBle.PingRequest buildPartial() {
         mentraos.ble.MentraosBle.PingRequest result = new mentraos.ble.MentraosBle.PingRequest(this);
+        if (bitField0_ != 0) { buildPartial0(result); }
         onBuilt();
         return result;
+      }
+
+      private void buildPartial0(mentraos.ble.MentraosBle.PingRequest result) {
+        int from_bitField0_ = bitField0_;
+        if (((from_bitField0_ & 0x00000001) != 0)) {
+          result.msgId_ = msgId_;
+        }
       }
 
       @java.lang.Override
@@ -18383,6 +18455,11 @@ public final class MentraosBle {
 
       public Builder mergeFrom(mentraos.ble.MentraosBle.PingRequest other) {
         if (other == mentraos.ble.MentraosBle.PingRequest.getDefaultInstance()) return this;
+        if (!other.getMsgId().isEmpty()) {
+          msgId_ = other.msgId_;
+          bitField0_ |= 0x00000001;
+          onChanged();
+        }
         this.mergeUnknownFields(other.getUnknownFields());
         onChanged();
         return this;
@@ -18409,6 +18486,11 @@ public final class MentraosBle {
               case 0:
                 done = true;
                 break;
+              case 10: {
+                msgId_ = input.readStringRequireUtf8();
+                bitField0_ |= 0x00000001;
+                break;
+              } // case 10
               default: {
                 if (!super.parseUnknownField(input, extensionRegistry, tag)) {
                   done = true; // was an endgroup tag
@@ -18422,6 +18504,79 @@ public final class MentraosBle {
         } finally {
           onChanged();
         } // finally
+        return this;
+      }
+      private int bitField0_;
+
+      private java.lang.Object msgId_ = "";
+      /**
+       * <code>string msg_id = 1;</code>
+       * @return The msgId.
+       */
+      public java.lang.String getMsgId() {
+        java.lang.Object ref = msgId_;
+        if (!(ref instanceof java.lang.String)) {
+          com.google.protobuf.ByteString bs =
+              (com.google.protobuf.ByteString) ref;
+          java.lang.String s = bs.toStringUtf8();
+          msgId_ = s;
+          return s;
+        } else {
+          return (java.lang.String) ref;
+        }
+      }
+      /**
+       * <code>string msg_id = 1;</code>
+       * @return The bytes for msgId.
+       */
+      public com.google.protobuf.ByteString
+          getMsgIdBytes() {
+        java.lang.Object ref = msgId_;
+        if (ref instanceof String) {
+          com.google.protobuf.ByteString b = 
+              com.google.protobuf.ByteString.copyFromUtf8(
+                  (java.lang.String) ref);
+          msgId_ = b;
+          return b;
+        } else {
+          return (com.google.protobuf.ByteString) ref;
+        }
+      }
+      /**
+       * <code>string msg_id = 1;</code>
+       * @param value The msgId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setMsgId(
+          java.lang.String value) {
+        if (value == null) { throw new NullPointerException(); }
+        msgId_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string msg_id = 1;</code>
+       * @return This builder for chaining.
+       */
+      public Builder clearMsgId() {
+        msgId_ = getDefaultInstance().getMsgId();
+        bitField0_ = (bitField0_ & ~0x00000001);
+        onChanged();
+        return this;
+      }
+      /**
+       * <code>string msg_id = 1;</code>
+       * @param value The bytes for msgId to set.
+       * @return This builder for chaining.
+       */
+      public Builder setMsgIdBytes(
+          com.google.protobuf.ByteString value) {
+        if (value == null) { throw new NullPointerException(); }
+        checkByteStringIsUtf8(value);
+        msgId_ = value;
+        bitField0_ |= 0x00000001;
+        onChanged();
         return this;
       }
       @java.lang.Override
@@ -40217,7 +40372,7 @@ public final class MentraosBle {
       descriptor;
   static {
     java.lang.String[] descriptorData = {
-      "\n\022mentraos_ble.proto\022\014mentraos.ble\"\334\016\n\016P" +
+      "\n\022mentraos_ble.proto\022\014mentraos.ble\"\335\016\n\016P" +
       "honeToGlasses\022\016\n\006msg_id\030\001 \001(\t\0225\n\ndisconn" +
       "ect\030\n \001(\0132\037.mentraos.ble.DisconnectReque" +
       "stH\000\022:\n\rbattery_state\030\013 \001(\0132!.mentraos.b" +
@@ -40227,53 +40382,53 @@ public final class MentraosBle {
       "PairingModeRequestH\000\022:\n\rhead_position\030\016 " +
       "\001(\0132!.mentraos.ble.HeadPositionRequestH\000" +
       "\0228\n\rhead_up_angle\030\017 \001(\0132\037.mentraos.ble.H" +
-      "eadUpAngleConfigH\000\022)\n\004ping\030\020 \001(\0132\031.mentr" +
-      "aos.ble.PingRequestH\000\0221\n\tmic_state\030\024 \001(\013" +
-      "2\034.mentraos.ble.MicStateConfigH\000\0225\n\013vad_" +
-      "enabled\030\025 \001(\0132\036.mentraos.ble.VadEnabledC" +
-      "onfigH\000\022-\n\nvad_config\030\026 \001(\0132\027.mentraos.b" +
-      "le.VadConfigH\000\0221\n\014display_text\030\036 \001(\0132\031.m" +
-      "entraos.ble.DisplayTextH\000\0223\n\rdisplay_ima" +
-      "ge\030\037 \001(\0132\032.mentraos.ble.DisplayImageH\000\0223" +
-      "\n\rpreload_image\030  \001(\0132\032.mentraos.ble.Pre" +
-      "loadImageH\000\022@\n\024display_cached_image\030! \001(" +
-      "\0132 .mentraos.ble.DisplayCachedImageH\000\022<\n" +
-      "\022clear_cached_image\030\" \001(\0132\036.mentraos.ble" +
-      ".ClearCachedImageH\000\022D\n\026display_scrolling" +
-      "_text\030# \001(\0132\".mentraos.ble.DisplayScroll" +
-      "ingTextH\000\0229\n\rdisplay_power\030$ \001(\0132 .mentr" +
-      "aos.ble.DisplayPowerConfigH\000\0224\n\nbrightne" +
-      "ss\030% \001(\0132\036.mentraos.ble.BrightnessConfig" +
-      "H\000\022=\n\017auto_brightness\030& \001(\0132\".mentraos.b" +
-      "le.AutoBrightnessConfigH\000\022F\n\024auto_bright" +
-      "ness_mult\030\' \001(\0132&.mentraos.ble.AutoBrigh" +
-      "tnessMultiplierH\000\022+\n\tdraw_line\030( \001(\0132\026.m" +
-      "entraos.ble.DrawLineH\000\022+\n\tdraw_rect\030) \001(" +
-      "\0132\026.mentraos.ble.DrawRectH\000\022/\n\013draw_circ" +
-      "le\030* \001(\0132\030.mentraos.ble.DrawCircleH\000\022-\n\006" +
-      "commit\030+ \001(\0132\033.mentraos.ble.CommitDispla" +
-      "yH\000\022?\n\020display_distance\030, \001(\0132#.mentraos" +
-      ".ble.DisplayDistanceConfigH\000\022;\n\016display_" +
-      "height\030- \001(\0132!.mentraos.ble.DisplayHeigh" +
-      "tConfigH\000\0223\n\rclear_display\030. \001(\0132\032.mentr" +
-      "aos.ble.ClearDisplayH\000\0225\n\013imu_enabled\0302 " +
-      "\001(\0132\036.mentraos.ble.ImuEnabledConfigH\000\0224\n" +
-      "\nimu_single\0303 \001(\0132\036.mentraos.ble.ImuSing" +
-      "leRequestH\000\0223\n\nimu_stream\0304 \001(\0132\035.mentra" +
-      "os.ble.ImuStreamConfigH\000\0227\n\014head_gesture" +
-      "\0305 \001(\0132\037.mentraos.ble.HeadGestureConfigH" +
-      "\000\022/\n\007restart\030< \001(\0132\034.mentraos.ble.Restar" +
-      "tRequestH\000\022:\n\rfactory_reset\030= \001(\0132!.ment" +
-      "raos.ble.FactoryResetRequestH\000B\t\n\007payloa" +
-      "d\"\341\004\n\016GlassesToPhone\0225\n\016battery_status\030\n" +
-      " \001(\0132\033.mentraos.ble.BatteryStatusH\000\0225\n\016c" +
-      "harging_state\030\013 \001(\0132\033.mentraos.ble.Charg" +
-      "ingStateH\000\022/\n\013device_info\030\014 \001(\0132\030.mentra" +
-      "os.ble.DeviceInfoH\000\0223\n\rhead_position\030\r \001" +
-      "(\0132\032.mentraos.ble.HeadPositionH\000\022>\n\021head" +
-      "_up_angle_set\030\016 \001(\0132!.mentraos.ble.HeadU" +
-      "pAngleResponseH\000\022*\n\004pong\030\017 \001(\0132\032.mentrao" +
-      "s.ble.PongResponseH\000\022+\n\tvad_event\030\024 \001(\0132" +
+      "eadUpAngleConfigH\000\022*\n\004pong\030\020 \001(\0132\032.mentr" +
+      "aos.ble.PongResponseH\000\0221\n\tmic_state\030\024 \001(" +
+      "\0132\034.mentraos.ble.MicStateConfigH\000\0225\n\013vad" +
+      "_enabled\030\025 \001(\0132\036.mentraos.ble.VadEnabled" +
+      "ConfigH\000\022-\n\nvad_config\030\026 \001(\0132\027.mentraos." +
+      "ble.VadConfigH\000\0221\n\014display_text\030\036 \001(\0132\031." +
+      "mentraos.ble.DisplayTextH\000\0223\n\rdisplay_im" +
+      "age\030\037 \001(\0132\032.mentraos.ble.DisplayImageH\000\022" +
+      "3\n\rpreload_image\030  \001(\0132\032.mentraos.ble.Pr" +
+      "eloadImageH\000\022@\n\024display_cached_image\030! \001" +
+      "(\0132 .mentraos.ble.DisplayCachedImageH\000\022<" +
+      "\n\022clear_cached_image\030\" \001(\0132\036.mentraos.bl" +
+      "e.ClearCachedImageH\000\022D\n\026display_scrollin" +
+      "g_text\030# \001(\0132\".mentraos.ble.DisplayScrol" +
+      "lingTextH\000\0229\n\rdisplay_power\030$ \001(\0132 .ment" +
+      "raos.ble.DisplayPowerConfigH\000\0224\n\nbrightn" +
+      "ess\030% \001(\0132\036.mentraos.ble.BrightnessConfi" +
+      "gH\000\022=\n\017auto_brightness\030& \001(\0132\".mentraos." +
+      "ble.AutoBrightnessConfigH\000\022F\n\024auto_brigh" +
+      "tness_mult\030\' \001(\0132&.mentraos.ble.AutoBrig" +
+      "htnessMultiplierH\000\022+\n\tdraw_line\030( \001(\0132\026." +
+      "mentraos.ble.DrawLineH\000\022+\n\tdraw_rect\030) \001" +
+      "(\0132\026.mentraos.ble.DrawRectH\000\022/\n\013draw_cir" +
+      "cle\030* \001(\0132\030.mentraos.ble.DrawCircleH\000\022-\n" +
+      "\006commit\030+ \001(\0132\033.mentraos.ble.CommitDispl" +
+      "ayH\000\022?\n\020display_distance\030, \001(\0132#.mentrao" +
+      "s.ble.DisplayDistanceConfigH\000\022;\n\016display" +
+      "_height\030- \001(\0132!.mentraos.ble.DisplayHeig" +
+      "htConfigH\000\0223\n\rclear_display\030. \001(\0132\032.ment" +
+      "raos.ble.ClearDisplayH\000\0225\n\013imu_enabled\0302" +
+      " \001(\0132\036.mentraos.ble.ImuEnabledConfigH\000\0224" +
+      "\n\nimu_single\0303 \001(\0132\036.mentraos.ble.ImuSin" +
+      "gleRequestH\000\0223\n\nimu_stream\0304 \001(\0132\035.mentr" +
+      "aos.ble.ImuStreamConfigH\000\0227\n\014head_gestur" +
+      "e\0305 \001(\0132\037.mentraos.ble.HeadGestureConfig" +
+      "H\000\022/\n\007restart\030< \001(\0132\034.mentraos.ble.Resta" +
+      "rtRequestH\000\022:\n\rfactory_reset\030= \001(\0132!.men" +
+      "traos.ble.FactoryResetRequestH\000B\t\n\007paylo" +
+      "ad\"\340\004\n\016GlassesToPhone\0225\n\016battery_status\030" +
+      "\n \001(\0132\033.mentraos.ble.BatteryStatusH\000\0225\n\016" +
+      "charging_state\030\013 \001(\0132\033.mentraos.ble.Char" +
+      "gingStateH\000\022/\n\013device_info\030\014 \001(\0132\030.mentr" +
+      "aos.ble.DeviceInfoH\000\0223\n\rhead_position\030\r " +
+      "\001(\0132\032.mentraos.ble.HeadPositionH\000\022>\n\021hea" +
+      "d_up_angle_set\030\016 \001(\0132!.mentraos.ble.Head" +
+      "UpAngleResponseH\000\022)\n\004ping\030\017 \001(\0132\031.mentra" +
+      "os.ble.PingRequestH\000\022+\n\tvad_event\030\024 \001(\0132" +
       "\026.mentraos.ble.VadEventH\000\022F\n\027image_trans" +
       "fer_complete\030\036 \001(\0132#.mentraos.ble.ImageT" +
       "ransferCompleteH\000\022)\n\010imu_data\030( \001(\0132\025.me" +
@@ -40296,68 +40451,68 @@ public final class MentraosBle {
       "uest\"\025\n\023HeadPositionRequest\"\035\n\014HeadPosit" +
       "ion\022\r\n\005angle\030\001 \001(\005\"\"\n\021HeadUpAngleConfig\022" +
       "\r\n\005angle\030\001 \001(\r\"&\n\023HeadUpAngleResponse\022\017\n" +
-      "\007success\030\001 \001(\010\"\r\n\013PingRequest\"\016\n\014PongRes" +
-      "ponse\"!\n\016MicStateConfig\022\017\n\007enabled\030\001 \001(\010" +
-      "\"#\n\020VadEnabledConfig\022\017\n\007enabled\030\001 \001(\010\" \n" +
-      "\tVadConfig\022\023\n\013sensitivity\030\001 \001(\r\"Z\n\010VadEv" +
-      "ent\022+\n\005state\030\001 \001(\0162\034.mentraos.ble.VadEve" +
-      "nt.State\"!\n\005State\022\014\n\010INACTIVE\020\000\022\n\n\006ACTIV" +
-      "E\020\001\"a\n\013DisplayText\022\014\n\004text\030\001 \001(\t\022\r\n\005colo" +
-      "r\030\002 \001(\r\022\021\n\tfont_code\030\003 \001(\r\022\t\n\001x\030\004 \001(\r\022\t\n" +
-      "\001y\030\005 \001(\r\022\014\n\004size\030\006 \001(\r\"~\n\014DisplayImage\022\021" +
-      "\n\tstream_id\030\001 \001(\t\022\t\n\001x\030\002 \001(\r\022\t\n\001y\030\003 \001(\r\022" +
-      "\r\n\005width\030\004 \001(\r\022\016\n\006height\030\005 \001(\r\022\020\n\010encodi" +
-      "ng\030\006 \001(\t\022\024\n\014total_chunks\030\007 \001(\r\"z\n\014Preloa" +
-      "dImage\022\021\n\tstream_id\030\001 \001(\t\022\020\n\010image_id\030\002 " +
-      "\001(\r\022\r\n\005width\030\003 \001(\r\022\016\n\006height\030\004 \001(\r\022\020\n\010en" +
-      "coding\030\005 \001(\t\022\024\n\014total_chunks\030\006 \001(\r\"[\n\022Di" +
-      "splayCachedImage\022\020\n\010image_id\030\001 \001(\r\022\t\n\001x\030" +
-      "\002 \001(\r\022\t\n\001y\030\003 \001(\r\022\r\n\005width\030\004 \001(\r\022\016\n\006heigh" +
-      "t\030\005 \001(\r\"$\n\020ClearCachedImage\022\020\n\010image_id\030" +
-      "\001 \001(\r\"\271\002\n\024DisplayScrollingText\022\014\n\004text\030\001" +
-      " \001(\t\022\r\n\005color\030\002 \001(\r\022\021\n\tfont_code\030\003 \001(\r\022\t" +
-      "\n\001x\030\004 \001(\r\022\t\n\001y\030\005 \001(\r\022\r\n\005width\030\006 \001(\r\022\016\n\006h" +
-      "eight\030\007 \001(\r\022;\n\005align\030\010 \001(\0162,.mentraos.bl" +
-      "e.DisplayScrollingText.Alignment\022\024\n\014line" +
-      "_spacing\030\t \001(\r\022\r\n\005speed\030\n \001(\r\022\014\n\004size\030\013 " +
-      "\001(\r\022\014\n\004loop\030\014 \001(\010\022\020\n\010pause_ms\030\r \001(\r\",\n\tA" +
-      "lignment\022\010\n\004LEFT\020\000\022\n\n\006CENTER\020\001\022\t\n\005RIGHT\020" +
-      "\002\"\016\n\014ClearDisplay\" \n\022DisplayPowerConfig\022" +
-      "\n\n\002on\030\001 \001(\010\"!\n\020BrightnessConfig\022\r\n\005value" +
-      "\030\001 \001(\r\"\'\n\024AutoBrightnessConfig\022\017\n\007enable" +
-      "d\030\001 \001(\010\".\n\030AutoBrightnessMultiplier\022\022\n\nm" +
-      "ultiplier\030\001 \001(\002\"Y\n\010DrawLine\022\r\n\005color\030\001 \001" +
-      "(\r\022\016\n\006stroke\030\002 \001(\r\022\n\n\002x1\030\003 \001(\r\022\n\n\002y1\030\004 \001" +
-      "(\r\022\n\n\002x2\030\005 \001(\r\022\n\n\002y2\030\006 \001(\r\"^\n\010DrawRect\022\r" +
-      "\n\005color\030\001 \001(\r\022\016\n\006stroke\030\002 \001(\r\022\t\n\001x\030\003 \001(\r" +
-      "\022\t\n\001y\030\004 \001(\r\022\r\n\005width\030\005 \001(\r\022\016\n\006height\030\006 \001" +
-      "(\r\"Q\n\nDrawCircle\022\r\n\005color\030\001 \001(\r\022\016\n\006strok" +
-      "e\030\002 \001(\r\022\t\n\001x\030\003 \001(\r\022\t\n\001y\030\004 \001(\r\022\016\n\006radius\030" +
-      "\005 \001(\r\"\017\n\rCommitDisplay\",\n\025DisplayDistanc" +
-      "eConfig\022\023\n\013distance_cm\030\001 \001(\r\"%\n\023DisplayH" +
-      "eightConfig\022\016\n\006height\030\001 \001(\r\"\240\001\n\025ImageTra" +
-      "nsferComplete\022\021\n\tstream_id\030\001 \001(\t\022:\n\006stat" +
-      "us\030\002 \001(\0162*.mentraos.ble.ImageTransferCom" +
-      "plete.Status\022\026\n\016missing_chunks\030\003 \003(\r\" \n\006" +
-      "Status\022\006\n\002OK\020\000\022\016\n\nINCOMPLETE\020\001\"#\n\020ImuEna" +
-      "bledConfig\022\017\n\007enabled\030\001 \001(\010\"\022\n\020ImuSingle" +
-      "Request\"\"\n\017ImuStreamConfig\022\017\n\007enabled\030\001 " +
-      "\001(\010\"x\n\007ImuData\022$\n\005accel\030\001 \001(\0132\025.mentraos" +
-      ".ble.Vector3\022#\n\004gyro\030\002 \001(\0132\025.mentraos.bl" +
-      "e.Vector3\022\"\n\003mag\030\003 \001(\0132\025.mentraos.ble.Ve" +
-      "ctor3\"*\n\007Vector3\022\t\n\001x\030\001 \001(\002\022\t\n\001y\030\002 \001(\002\022\t" +
-      "\n\001z\030\003 \001(\002\"\265\001\n\013ButtonEvent\0220\n\006button\030\001 \001(" +
-      "\0162 .mentraos.ble.ButtonEvent.Button\022.\n\005s" +
-      "tate\030\002 \001(\0162\037.mentraos.ble.ButtonEvent.St" +
-      "ate\")\n\006Button\022\n\n\006CENTER\020\000\022\010\n\004LEFT\020\001\022\t\n\005R" +
-      "IGHT\020\002\"\031\n\005State\022\006\n\002UP\020\000\022\010\n\004DOWN\020\001\"m\n\013Hea" +
-      "dGesture\0222\n\007gesture\030\001 \001(\0162!.mentraos.ble" +
-      ".HeadGesture.Gesture\"*\n\007Gesture\022\007\n\003NOD\020\000" +
-      "\022\t\n\005SHAKE\020\001\022\013\n\007HEAD_UP\020\002\"X\n\021HeadGestureC" +
-      "onfig\0222\n\007gesture\030\001 \001(\0162!.mentraos.ble.He" +
-      "adGesture.Gesture\022\017\n\007enabled\030\002 \001(\010\"\020\n\016Re" +
-      "startRequest\"\025\n\023FactoryResetRequestb\006pro" +
-      "to3"
+      "\007success\030\001 \001(\010\"\035\n\013PingRequest\022\016\n\006msg_id\030" +
+      "\001 \001(\t\"\016\n\014PongResponse\"!\n\016MicStateConfig\022" +
+      "\017\n\007enabled\030\001 \001(\010\"#\n\020VadEnabledConfig\022\017\n\007" +
+      "enabled\030\001 \001(\010\" \n\tVadConfig\022\023\n\013sensitivit" +
+      "y\030\001 \001(\r\"Z\n\010VadEvent\022+\n\005state\030\001 \001(\0162\034.men" +
+      "traos.ble.VadEvent.State\"!\n\005State\022\014\n\010INA" +
+      "CTIVE\020\000\022\n\n\006ACTIVE\020\001\"a\n\013DisplayText\022\014\n\004te" +
+      "xt\030\001 \001(\t\022\r\n\005color\030\002 \001(\r\022\021\n\tfont_code\030\003 \001" +
+      "(\r\022\t\n\001x\030\004 \001(\r\022\t\n\001y\030\005 \001(\r\022\014\n\004size\030\006 \001(\r\"~" +
+      "\n\014DisplayImage\022\021\n\tstream_id\030\001 \001(\t\022\t\n\001x\030\002" +
+      " \001(\r\022\t\n\001y\030\003 \001(\r\022\r\n\005width\030\004 \001(\r\022\016\n\006height" +
+      "\030\005 \001(\r\022\020\n\010encoding\030\006 \001(\t\022\024\n\014total_chunks" +
+      "\030\007 \001(\r\"z\n\014PreloadImage\022\021\n\tstream_id\030\001 \001(" +
+      "\t\022\020\n\010image_id\030\002 \001(\r\022\r\n\005width\030\003 \001(\r\022\016\n\006he" +
+      "ight\030\004 \001(\r\022\020\n\010encoding\030\005 \001(\t\022\024\n\014total_ch" +
+      "unks\030\006 \001(\r\"[\n\022DisplayCachedImage\022\020\n\010imag" +
+      "e_id\030\001 \001(\r\022\t\n\001x\030\002 \001(\r\022\t\n\001y\030\003 \001(\r\022\r\n\005widt" +
+      "h\030\004 \001(\r\022\016\n\006height\030\005 \001(\r\"$\n\020ClearCachedIm" +
+      "age\022\020\n\010image_id\030\001 \001(\r\"\271\002\n\024DisplayScrolli" +
+      "ngText\022\014\n\004text\030\001 \001(\t\022\r\n\005color\030\002 \001(\r\022\021\n\tf" +
+      "ont_code\030\003 \001(\r\022\t\n\001x\030\004 \001(\r\022\t\n\001y\030\005 \001(\r\022\r\n\005" +
+      "width\030\006 \001(\r\022\016\n\006height\030\007 \001(\r\022;\n\005align\030\010 \001" +
+      "(\0162,.mentraos.ble.DisplayScrollingText.A" +
+      "lignment\022\024\n\014line_spacing\030\t \001(\r\022\r\n\005speed\030" +
+      "\n \001(\r\022\014\n\004size\030\013 \001(\r\022\014\n\004loop\030\014 \001(\010\022\020\n\010pau" +
+      "se_ms\030\r \001(\r\",\n\tAlignment\022\010\n\004LEFT\020\000\022\n\n\006CE" +
+      "NTER\020\001\022\t\n\005RIGHT\020\002\"\016\n\014ClearDisplay\" \n\022Dis" +
+      "playPowerConfig\022\n\n\002on\030\001 \001(\010\"!\n\020Brightnes" +
+      "sConfig\022\r\n\005value\030\001 \001(\r\"\'\n\024AutoBrightness" +
+      "Config\022\017\n\007enabled\030\001 \001(\010\".\n\030AutoBrightnes" +
+      "sMultiplier\022\022\n\nmultiplier\030\001 \001(\002\"Y\n\010DrawL" +
+      "ine\022\r\n\005color\030\001 \001(\r\022\016\n\006stroke\030\002 \001(\r\022\n\n\002x1" +
+      "\030\003 \001(\r\022\n\n\002y1\030\004 \001(\r\022\n\n\002x2\030\005 \001(\r\022\n\n\002y2\030\006 \001" +
+      "(\r\"^\n\010DrawRect\022\r\n\005color\030\001 \001(\r\022\016\n\006stroke\030" +
+      "\002 \001(\r\022\t\n\001x\030\003 \001(\r\022\t\n\001y\030\004 \001(\r\022\r\n\005width\030\005 \001" +
+      "(\r\022\016\n\006height\030\006 \001(\r\"Q\n\nDrawCircle\022\r\n\005colo" +
+      "r\030\001 \001(\r\022\016\n\006stroke\030\002 \001(\r\022\t\n\001x\030\003 \001(\r\022\t\n\001y\030" +
+      "\004 \001(\r\022\016\n\006radius\030\005 \001(\r\"\017\n\rCommitDisplay\"," +
+      "\n\025DisplayDistanceConfig\022\023\n\013distance_cm\030\001" +
+      " \001(\r\"%\n\023DisplayHeightConfig\022\016\n\006height\030\001 " +
+      "\001(\r\"\240\001\n\025ImageTransferComplete\022\021\n\tstream_" +
+      "id\030\001 \001(\t\022:\n\006status\030\002 \001(\0162*.mentraos.ble." +
+      "ImageTransferComplete.Status\022\026\n\016missing_" +
+      "chunks\030\003 \003(\r\" \n\006Status\022\006\n\002OK\020\000\022\016\n\nINCOMP" +
+      "LETE\020\001\"#\n\020ImuEnabledConfig\022\017\n\007enabled\030\001 " +
+      "\001(\010\"\022\n\020ImuSingleRequest\"\"\n\017ImuStreamConf" +
+      "ig\022\017\n\007enabled\030\001 \001(\010\"x\n\007ImuData\022$\n\005accel\030" +
+      "\001 \001(\0132\025.mentraos.ble.Vector3\022#\n\004gyro\030\002 \001" +
+      "(\0132\025.mentraos.ble.Vector3\022\"\n\003mag\030\003 \001(\0132\025" +
+      ".mentraos.ble.Vector3\"*\n\007Vector3\022\t\n\001x\030\001 " +
+      "\001(\002\022\t\n\001y\030\002 \001(\002\022\t\n\001z\030\003 \001(\002\"\265\001\n\013ButtonEven" +
+      "t\0220\n\006button\030\001 \001(\0162 .mentraos.ble.ButtonE" +
+      "vent.Button\022.\n\005state\030\002 \001(\0162\037.mentraos.bl" +
+      "e.ButtonEvent.State\")\n\006Button\022\n\n\006CENTER\020" +
+      "\000\022\010\n\004LEFT\020\001\022\t\n\005RIGHT\020\002\"\031\n\005State\022\006\n\002UP\020\000\022" +
+      "\010\n\004DOWN\020\001\"m\n\013HeadGesture\0222\n\007gesture\030\001 \001(" +
+      "\0162!.mentraos.ble.HeadGesture.Gesture\"*\n\007" +
+      "Gesture\022\007\n\003NOD\020\000\022\t\n\005SHAKE\020\001\022\013\n\007HEAD_UP\020\002" +
+      "\"X\n\021HeadGestureConfig\0222\n\007gesture\030\001 \001(\0162!" +
+      ".mentraos.ble.HeadGesture.Gesture\022\017\n\007ena" +
+      "bled\030\002 \001(\010\"\020\n\016RestartRequest\"\025\n\023FactoryR" +
+      "esetRequestb\006proto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -40368,13 +40523,13 @@ public final class MentraosBle {
     internal_static_mentraos_ble_PhoneToGlasses_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_PhoneToGlasses_descriptor,
-        new java.lang.String[] { "MsgId", "Disconnect", "BatteryState", "GlassesInfo", "PairingMode", "HeadPosition", "HeadUpAngle", "Ping", "MicState", "VadEnabled", "VadConfig", "DisplayText", "DisplayImage", "PreloadImage", "DisplayCachedImage", "ClearCachedImage", "DisplayScrollingText", "DisplayPower", "Brightness", "AutoBrightness", "AutoBrightnessMult", "DrawLine", "DrawRect", "DrawCircle", "Commit", "DisplayDistance", "DisplayHeight", "ClearDisplay", "ImuEnabled", "ImuSingle", "ImuStream", "HeadGesture", "Restart", "FactoryReset", "Payload", });
+        new java.lang.String[] { "MsgId", "Disconnect", "BatteryState", "GlassesInfo", "PairingMode", "HeadPosition", "HeadUpAngle", "Pong", "MicState", "VadEnabled", "VadConfig", "DisplayText", "DisplayImage", "PreloadImage", "DisplayCachedImage", "ClearCachedImage", "DisplayScrollingText", "DisplayPower", "Brightness", "AutoBrightness", "AutoBrightnessMult", "DrawLine", "DrawRect", "DrawCircle", "Commit", "DisplayDistance", "DisplayHeight", "ClearDisplay", "ImuEnabled", "ImuSingle", "ImuStream", "HeadGesture", "Restart", "FactoryReset", "Payload", });
     internal_static_mentraos_ble_GlassesToPhone_descriptor =
       getDescriptor().getMessageTypes().get(1);
     internal_static_mentraos_ble_GlassesToPhone_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_GlassesToPhone_descriptor,
-        new java.lang.String[] { "BatteryStatus", "ChargingState", "DeviceInfo", "HeadPosition", "HeadUpAngleSet", "Pong", "VadEvent", "ImageTransferComplete", "ImuData", "ButtonEvent", "HeadGesture", "Payload", });
+        new java.lang.String[] { "BatteryStatus", "ChargingState", "DeviceInfo", "HeadPosition", "HeadUpAngleSet", "Ping", "VadEvent", "ImageTransferComplete", "ImuData", "ButtonEvent", "HeadGesture", "Payload", });
     internal_static_mentraos_ble_DisconnectRequest_descriptor =
       getDescriptor().getMessageTypes().get(2);
     internal_static_mentraos_ble_DisconnectRequest_fieldAccessorTable = new
@@ -40452,7 +40607,7 @@ public final class MentraosBle {
     internal_static_mentraos_ble_PingRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_PingRequest_descriptor,
-        new java.lang.String[] { });
+        new java.lang.String[] { "MsgId", });
     internal_static_mentraos_ble_PongResponse_descriptor =
       getDescriptor().getMessageTypes().get(15);
     internal_static_mentraos_ble_PongResponse_fieldAccessorTable = new

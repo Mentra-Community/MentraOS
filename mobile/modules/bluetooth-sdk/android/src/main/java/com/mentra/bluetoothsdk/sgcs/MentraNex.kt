@@ -1402,8 +1402,8 @@ class MentraNex : SGCManager() {
                     val headUpAngleResponse: HeadUpAngleResponse = glassesToPhone.headUpAngleSet
                     Bridge.log("headUpAngleResponse: $headUpAngleResponse")
                 }
-                GlassesToPhone.PayloadCase.PONG -> {
-                    // New schema: glasses-initiated heartbeat is named `pong`; phone replies with `ping`.
+                GlassesToPhone.PayloadCase.PING -> {
+                    // Glasses-initiated heartbeat is named `ping` (tag 15); phone replies with `pong` (tag 16).
                     lastHeartbeatReceivedTime = System.currentTimeMillis()
                     Bridge.log("=== RECEIVED PING FROM GLASSES === (Time: $lastHeartbeatReceivedTime)")
                     sendPongResponse()

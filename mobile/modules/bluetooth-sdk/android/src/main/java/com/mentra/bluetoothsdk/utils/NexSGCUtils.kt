@@ -13,7 +13,7 @@ import mentraos.ble.MentraosBle.DisplayText
 import mentraos.ble.MentraosBle.ClearDisplay
 import mentraos.ble.MentraosBle.PhoneToGlasses
 import mentraos.ble.MentraosBle.DisplayImage
-import mentraos.ble.MentraosBle.PingRequest
+import mentraos.ble.MentraosBle.PongResponse
 import mentraos.ble.MentraosBle.BatteryStateRequest
 import mentraos.ble.MentraosBle.MicStateConfig
 import mentraos.ble.MentraosBle.BrightnessConfig
@@ -114,9 +114,9 @@ object NexProtobufUtils {
 
     fun constructPongResponse(): ByteArray {
         Bridge.log("Nex: Constructing pong response to glasses ping")
-        // New schema flips the heartbeat names: glasses sends `pong`, phone replies with `ping` (acting as the pong-response).
-        val pingRequest = PingRequest.newBuilder().build()
-        val phoneToGlasses = PhoneToGlasses.newBuilder().setPing(pingRequest).build()
+        // Glasses send `ping` (tag 15); phone replies with `pong` (tag 16).
+        val pongResponse = PongResponse.newBuilder().build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder().setPong(pongResponse).build()
         return generateProtobufCommandBytes(phoneToGlasses)
     }
     
