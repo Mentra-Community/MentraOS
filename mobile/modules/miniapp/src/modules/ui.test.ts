@@ -7,25 +7,39 @@ import {UIModuleImpl, type RpcHandlerContext} from "./ui"
 
 type InboundHandler = (data: unknown) => void
 
-function mockSession() {
+function mockSession(opts: {ready?: boolean} = {}) {
   let inboundHandler: InboundHandler | null = null
   const oneShotCalls: unknown[] = []
+  const readyHandlers = new Set<() => void>()
   const session = {
+    // Default to ready=true: the common case is the background session
+    // has already connected by the time a WebView opens. Tests that
+    // exercise the connect race pass ready:false and emitReady() later.
+    ready: opts.ready ?? true,
     _subscribe(streamType: string, handler: (data: unknown) => void) {
       if (streamType === "_ui") inboundHandler = handler
       return () => {
         if (inboundHandler === handler) inboundHandler = null
       }
     },
+    on(event: string, handler: () => void) {
+      if (event === "ready") readyHandlers.add(handler)
+      return () => readyHandlers.delete(handler)
+    },
     sendOneShot(payload: object) {
       oneShotCalls.push(payload)
     },
-  } as unknown as MiniappSession
+  } as unknown as MiniappSession & {ready: boolean}
   return {
     session,
     deliver(env: unknown) {
       if (!inboundHandler) throw new Error("inboundHandler not bound")
       inboundHandler(env)
+    },
+    /** Flip the session to ready and fire its "ready" listeners. */
+    emitReady() {
+      ;(session as {ready: boolean}).ready = true
+      for (const h of [...readyHandlers]) h()
     },
     oneShotCalls,
   }
@@ -91,6 +105,52 @@ describe("UIModuleImpl", () => {
     const calls: number[] = []
     ui.onOpen(() => calls.push(1))
     expect(calls).toEqual([1])
+  })
+
+  // Regression: the WebView's mentra.ready() (which produces UI_OPEN) races
+  // the background session's CONNECT_ACK. If UI_OPEN wins, onOpen handlers
+  // must NOT fire until the session is ready — otherwise they read null
+  // capabilities and the UI renders a "no glasses" snapshot that never
+  // self-corrects.
+  test("UI_OPEN before session.ready defers onOpen until the ready event", () => {
+    const m = mockSession({ready: false})
+    const u = new UIModuleImpl(m.session)
+    const calls: number[] = []
+    u.onOpen(() => calls.push(1))
+
+    m.deliver({type: "UI_OPEN"})
+    // Bound immediately (send/isOpen work) but open handlers wait.
+    expect(u.isOpen()).toBe(true)
+    expect(calls).toEqual([])
+
+    m.emitReady()
+    expect(calls).toEqual([1])
+  })
+
+  test("onOpen registered while bound-but-not-ready also waits for ready", () => {
+    const m = mockSession({ready: false})
+    const u = new UIModuleImpl(m.session)
+    m.deliver({type: "UI_OPEN"})
+    const calls: number[] = []
+    // Late subscriber arrives during the connect window — must not fire yet.
+    u.onOpen(() => calls.push(1))
+    expect(calls).toEqual([])
+
+    m.emitReady()
+    expect(calls).toEqual([1])
+  })
+
+  test("WebView closing during the connect window suppresses the deferred open", () => {
+    const m = mockSession({ready: false})
+    const u = new UIModuleImpl(m.session)
+    const calls: number[] = []
+    u.onOpen(() => calls.push(1))
+
+    m.deliver({type: "UI_OPEN"})
+    m.deliver({type: "UI_CLOSE"}) // user navigated away before connect landed
+    m.emitReady()
+    // No stale fire — a later UI_OPEN would re-trigger.
+    expect(calls).toEqual([])
   })
 
   test("send() drops silently when no WebView is bound", () => {
