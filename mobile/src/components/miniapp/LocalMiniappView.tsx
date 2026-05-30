@@ -58,10 +58,10 @@ interface LocalMiniappViewProps {
   onExit: () => void
   /** Notified whenever the WebView's in-app back history availability changes. */
   onCanGoBackChange?: (canGoBack: boolean) => void
-  onShouldCapture: () => void
+  onShouldCapture?: () => void
 }
 
-const LocalMiniappView = ({
+const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProps>(({
   packageName,
   appName,
   version,
@@ -70,8 +70,8 @@ const LocalMiniappView = ({
   devPort,
   onExit,
   onCanGoBackChange,
-  onShouldCapture,
-}: LocalMiniappViewProps) => {
+  onShouldCapture = () => undefined,
+}, ref) => {
   const {theme} = useAppTheme()
   const insets = useSaferAreaInsets()
   const colorScheme = theme.isDark ? "dark" : "light"
@@ -94,6 +94,19 @@ const LocalMiniappView = ({
     devUrl || version ? "installing" : "error",
   )
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      goBack: () => {
+        if (!webViewCanGoBack || !webViewRef.current) return false
+        webViewRef.current.goBack()
+        return true
+      },
+      canGoBack: webViewCanGoBack,
+    }),
+    [webViewCanGoBack],
+  )
 
   useEffect(() => {
     if (Platform.OS !== "android") return
@@ -508,7 +521,7 @@ const LocalMiniappView = ({
       <CapsuleMenu forceShow={true} />
     </View>
   )
-}
+})
 
 export default LocalMiniappView
 

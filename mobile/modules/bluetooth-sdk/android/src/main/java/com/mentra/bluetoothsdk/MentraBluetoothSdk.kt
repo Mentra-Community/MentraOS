@@ -433,6 +433,7 @@ class MentraBluetoothSdk private constructor(
             request.authToken,
             request.compress.value,
             request.flash,
+            request.save,
             request.sound,
             request.exposureTimeNs,
         )

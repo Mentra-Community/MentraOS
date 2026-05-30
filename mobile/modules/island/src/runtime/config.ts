@@ -226,6 +226,43 @@ export interface LocationTierAdapter {
   setLocationTier: (rate: "off" | "passive" | "low" | "high" | "realtime") => void
 }
 
+/**
+ * Streaming adapter — owns RTMP/SRT/WHIP publishing on the phone for local
+ * miniapps. The runtime calls these from its stream request handlers; the
+ * host's PhoneStreamCoordinator implements them.
+ */
+export interface StreamingAdapter {
+  startUnmanaged: (
+    packageName: string,
+    opts: {
+      streamUrl: string
+      video?: unknown
+      audio?: unknown
+      flash?: boolean
+      sound?: boolean
+    },
+  ) => Promise<{streamId: string}>
+  startManaged: (
+    packageName: string,
+    opts: {restreamDestinations?: Array<string | {url: string; name?: string}>},
+  ) => Promise<{
+    streamId: string
+    liveInputId: string
+    hlsUrl: string
+    dashUrl: string
+    webrtcUrl?: string
+  }>
+  stop: (packageName: string, streamId?: string) => Promise<void>
+  /**
+   * Subscribe to status updates produced by the coordinator (BLE-originated
+   * status, Cloudflare poll, lifecycle errors). Called per-(packageName,
+   * update) pair so the runtime can fan an EVENT into the right miniapp(s).
+   */
+  setStatusSubscriber: (
+    cb: (packageName: string, update: {streamId: string; status: string; data?: Record<string, unknown>; source: string}) => void,
+  ) => void
+}
+
 export interface RuntimeHooks {
   socketComms?: SocketCommsAdapter
   audioPlayback?: AudioPlaybackAdapter
@@ -266,20 +303,34 @@ export interface RuntimeHooks {
    * host's native Bluetooth bridge.
    */
   setMicRequirements?: (requirements: MicRequirements) => Promise<void> | void
-  /**
-   * Cloud-coordinated photo request. The host posts to its own backend
-   * (mobile manager hits /api/client/miniapp-sdk-photo/request) and
-   * resolves once the cloud accepts the request. The phone_photo_ready
-   * response arrives later via SocketComms → handleCloudMessage.
-   */
-  requestMiniappSdkPhoto?: (params: {
+  /** Phone-orchestrated photo capture (session.camera.takePhoto). */
+  photo?: PhotoAdapter
+  /** Phone-orchestrated RTMP/SRT/WHIP publishing. */
+  streaming?: StreamingAdapter
+}
+
+/**
+ * Photo adapter — end-to-end takePhoto(). The runtime calls `takePhoto`
+ * from its handlePhoto handler; the host's PhonePhotoCoordinator implements
+ * it (mints upload token via the v2 cloud route, drives glasses over BLE,
+ * long-polls for the download URL).
+ */
+export interface PhotoAdapter {
+  takePhoto: (
+    packageName: string,
+    opts: {
+      size?: "small" | "medium" | "large" | "full"
+      compress?: "none" | "low" | "medium" | "high"
+      sound?: boolean
+      saveToGallery?: boolean
+      exposureTimeNs?: number
+    },
+  ) => Promise<{
+    photoUrl: string
+    mimeType: string
+    size: number
     requestId: string
-    packageName: string
-    size?: string
-    compress?: string
-    saveToGallery?: boolean
-    sound?: boolean
-  }) => Promise<{accepted: boolean; requestId: string}>
+  }>
 }
 
 let hooks: RuntimeHooks = {}

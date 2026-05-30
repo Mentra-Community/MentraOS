@@ -13,10 +13,16 @@ export interface SetCameraFovOptions {
 }
 
 export interface TakePhotoOptions {
-  size?: "small" | "medium" | "large"
+  size?: "small" | "medium" | "large" | "full"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
+  /**
+   * Manual shutter / exposure time in nanoseconds. Omit (or pass undefined)
+   * to let the glasses auto-expose. Honored only on cameras that support
+   * manual exposure; ignored otherwise.
+   */
+  exposureTimeNs?: number
 }
 
 export interface PhotoTaken {
@@ -46,9 +52,10 @@ export class CameraModule {
    * Take a photo via the glasses camera. Returns a URL to the captured image.
    * Requires CAMERA permission declared in miniapp.json.
    *
-   * The photo is uploaded to cloud storage (24h TTL) and the URL is returned.
-   * If the glasses don't have a camera, the phone-side handler rejects with
-   * an error. Check `session.capabilities.hasCamera` before calling.
+   * The photo is uploaded to cloud storage; the returned URL is a short-TTL
+   * (~30 minute) signed download URL. If the glasses don't have a camera,
+   * the phone-side handler rejects with an error. Check
+   * `session.capabilities.hasCamera` before calling.
    */
   async takePhoto(options: TakePhotoOptions = {}): Promise<PhotoTaken> {
     return this.session.sendRequest<PhotoTaken>({
@@ -57,6 +64,7 @@ export class CameraModule {
       compress: options.compress ?? "none",
       sound: options.sound ?? true,
       saveToGallery: options.saveToGallery ?? false,
+      exposureTimeNs: options.exposureTimeNs,
     })
   }
 }

@@ -332,7 +332,7 @@ class LocalMiniappRuntime {
 
   /**
    * Handle an incoming cloud message forwarded by SocketComms
-   * (phone_photo_ready, phone_stream_status, phone_managed_stream_status).
+   * (phone_stream_status, phone_managed_stream_status).
    *
    * Routes the response back to the originating miniapp via the requestId
    * that was stored when the miniapp first made the request.
@@ -357,24 +357,10 @@ class LocalMiniappRuntime {
     this.pendingCloudRequests.delete(requestId)
 
     switch (msgType) {
-      case "phone_photo_ready": {
-        if (msg.error) {
-          this.sendResult(pending.packageName, pending.envelopeRequestId, false, undefined, {
-            code: msg.error as string,
-            message: `Photo capture failed: ${msg.error}`,
-          })
-        } else {
-          this.sendResult(pending.packageName, pending.envelopeRequestId, true, {
-            photoUrl: msg.photoUrl,
-            mimeType: msg.mimeType,
-            size: msg.size,
-          })
-        }
-        break
-      }
-
       case "phone_stream_status": {
-        // Forward stream status as an event to the miniapp
+        // Unreachable for phone-orchestrated streams (the coordinator owns
+        // their lifecycle and never registers a pending cloud request).
+        // Retained as a safety net for any legacy registration path.
         this.sendToMiniapp(pending.packageName, {
           type: MiniappResponseType.EVENT,
           streamType: "stream_status",
@@ -533,6 +519,13 @@ class LocalMiniappRuntime {
 
     // Stop audio for this app
     getRuntimeHooks().audioPlayback?.stopForApp(packageName)
+
+    // Release phone-owned camera streams. If a miniapp closes/crashes without
+    // sending STREAM_STOP, the host coordinator must drop its subscriber/owner
+    // so glasses publishing and managed Cloudflare inputs do not leak.
+    void getRuntimeHooks().streaming?.stop(packageName).catch((error) => {
+      console.warn(`${LOG_TAG}: failed to stop stream for ${packageName} on unregister`, error)
+    })
 
     // Detach the per-app nav event forwarder but leave the native nav session
     // running. The user may have just closed the mini-app UI and will reopen
@@ -734,16 +727,16 @@ class LocalMiniappRuntime {
         this.handlePhoto(packageName, payload, requestId)
         break
       case MiniappRequestType.STREAM_START:
-        this.handleStreamStart(packageName, payload, requestId)
+        void this.handleStreamStart(packageName, payload, requestId)
         break
       case MiniappRequestType.STREAM_STOP:
-        this.handleStreamStop(packageName, payload, requestId)
+        void this.handleStreamStop(packageName, payload, requestId)
         break
       case MiniappRequestType.MANAGED_STREAM_START:
-        this.handleManagedStreamStart(packageName, payload, requestId)
+        void this.handleManagedStreamStart(packageName, payload, requestId)
         break
       case MiniappRequestType.MANAGED_STREAM_STOP:
-        this.handleManagedStreamStop(packageName, payload, requestId)
+        void this.handleManagedStreamStop(packageName, payload, requestId)
         break
 
       // Deferred in v1
@@ -1696,7 +1689,7 @@ class LocalMiniappRuntime {
   // ===========================================================================
 
   private async handlePhoto(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
-    // Check CAMERA permission
+    // Manifest CAMERA permission gate.
     const app = this.connectedApps.get(packageName)
     const hasCameraPermission = app?.installedManifest?.permissions?.some((p) => p.type === "CAMERA")
     if (!hasCameraPermission) {
@@ -1710,80 +1703,144 @@ class LocalMiniappRuntime {
       return
     }
 
-    try {
-      const requestMiniappSdkPhoto = getRuntimeHooks().requestMiniappSdkPhoto
-      if (!requestMiniappSdkPhoto) {
-        this.sendResult(packageName, requestId, false, undefined, {
-          code: MiniappErrorCode.NOT_IMPLEMENTED,
-          message: "Photo capture is not configured on this host",
-        })
-        return
-      }
-      const photoRequestId = requestId || `photo_${Date.now()}`
-
-      // Register so handleCloudMessage can route phone_photo_ready back
-      this.registerPendingCloudRequest(photoRequestId, packageName, requestId)
-
-      await requestMiniappSdkPhoto({
-        requestId: photoRequestId,
-        packageName,
-        size: (payload.size as string) || "medium",
-        compress: (payload.compress as string) || "none",
-        saveToGallery: payload.saveToGallery as boolean | undefined,
-        sound: payload.sound as boolean | undefined,
-      })
-      // Don't sendResult here — we wait for phone_photo_ready via handleCloudMessage
-    } catch (err) {
-      this.pendingCloudRequests.delete(requestId || "")
+    const photo = getRuntimeHooks().photo
+    if (!photo) {
       this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
+        code: MiniappErrorCode.NOT_IMPLEMENTED,
+        message: "Photo capture is not configured on this host",
+      })
+      return
+    }
+
+    try {
+      const result = await photo.takePhoto(packageName, {
+        size: payload.size as "small" | "medium" | "large" | "full" | undefined,
+        compress: payload.compress as "none" | "low" | "medium" | "high" | undefined,
+        sound: payload.sound as boolean | undefined,
+        saveToGallery: payload.saveToGallery as boolean | undefined,
+        exposureTimeNs: payload.exposureTimeNs as number | undefined,
+      })
+      this.sendResult(packageName, requestId, true, result)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Photo request failed",
       })
     }
   }
 
-  private handleStreamStart(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
-    const streamRequestId = requestId || `stream_${Date.now()}`
-    this.registerPendingCloudRequest(streamRequestId, packageName, requestId)
-
-    getRuntimeHooks().socketComms?.sendMessage({
-      type: "stream_request",
-      packageName: "__phone__",
-      requestId: streamRequestId,
-      streamUrl: payload.streamUrl,
-      video: payload.video ?? true,
-      audio: payload.audio ?? true,
-    })
+  /**
+   * Stream handlers — dispatched to the host's StreamingAdapter. For managed
+   * streams the adapter additionally calls the v2 client REST route to
+   * provision Cloudflare. Cloud-SDK apps (third-party developers) use a
+   * separate cloud-side path that does not pass through here.
+   */
+  private async handleStreamStart(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const streaming = getRuntimeHooks().streaming
+    if (!streaming) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_IMPLEMENTED,
+        message: "Streaming is not configured on this host",
+      })
+      return
+    }
+    try {
+      const result = await streaming.startUnmanaged(packageName, {
+        streamUrl: payload.streamUrl as string,
+        video: payload.video,
+        audio: payload.audio,
+      })
+      this.sendResult(packageName, requestId, true, result)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Stream start failed",
+      })
+    }
   }
 
-  private handleStreamStop(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
-    getRuntimeHooks().socketComms?.sendMessage({
-      type: "stream_stop",
-      packageName: "__phone__",
-      streamId: payload.streamId,
-    })
-    this.sendResult(packageName, requestId, true)
+  private async handleStreamStop(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const streaming = getRuntimeHooks().streaming
+    if (!streaming) {
+      // No adapter wired — treat as already-stopped.
+      this.sendResult(packageName, requestId, true)
+      return
+    }
+    try {
+      await streaming.stop(packageName, payload.streamId as string | undefined)
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Stream stop failed",
+      })
+    }
   }
 
-  private handleManagedStreamStart(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
-    const streamRequestId = requestId || `managed_${Date.now()}`
-    this.registerPendingCloudRequest(streamRequestId, packageName, requestId)
-
-    getRuntimeHooks().socketComms?.sendMessage({
-      type: "managed_stream_request",
-      packageName: "__phone__",
-      requestId: streamRequestId,
-      restreamDestinations: payload.restreamDestinations,
-    })
+  private async handleManagedStreamStart(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const streaming = getRuntimeHooks().streaming
+    if (!streaming) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_IMPLEMENTED,
+        message: "Streaming is not configured on this host",
+      })
+      return
+    }
+    try {
+      const result = await streaming.startManaged(packageName, {
+        restreamDestinations: payload.restreamDestinations as
+          | Array<string | {url: string; name?: string}>
+          | undefined,
+      })
+      this.sendResult(packageName, requestId, true, result)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Managed stream start failed",
+      })
+    }
   }
 
-  private handleManagedStreamStop(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
-    getRuntimeHooks().socketComms?.sendMessage({
-      type: "managed_stream_stop",
-      packageName: "__phone__",
-      streamId: payload.streamId,
+  private async handleManagedStreamStop(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    return this.handleStreamStop(packageName, payload, requestId)
+  }
+
+  /**
+   * Wire the StreamingAdapter's status callback so coordinator-emitted
+   * updates become `EVENT { streamType: "stream_status" }` envelopes on the
+   * subscribing miniapp(s).
+   */
+  public wireStreamingStatusFanout(): void {
+    const streaming = getRuntimeHooks().streaming
+    if (!streaming) return
+    streaming.setStatusSubscriber((packageName, update) => {
+      this.sendToMiniapp(packageName, {
+        type: MiniappResponseType.EVENT,
+        streamType: "stream_status",
+        data: {
+          streamId: update.streamId,
+          status: update.status,
+          source: update.source,
+          ...(update.data || {}),
+        },
+      })
     })
-    this.sendResult(packageName, requestId, true)
   }
 
   // ===========================================================================

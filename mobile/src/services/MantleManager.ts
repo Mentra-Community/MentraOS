@@ -17,7 +17,8 @@ import audioPlaybackService from "@/services/AudioPlaybackService"
 import headingService from "@/services/HeadingService"
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import navigationService from "@/services/NavigationService"
-import {requestMiniappSdkPhoto} from "@/services/miniapp/MiniappSdkPhotoHandler"
+import {phonePhotoCoordinator} from "@/services/photo/PhonePhotoCoordinator"
+import {phoneStreamCoordinator} from "@/services/streaming/PhoneStreamCoordinator"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {migrate} from "@/services/Migrations"
@@ -238,7 +239,9 @@ class MantleManager {
           should_send_lc3: requirements.shouldSendLc3,
           should_send_transcript: requirements.shouldSendTranscript,
         }),
-      requestMiniappSdkPhoto: (params) => requestMiniappSdkPhoto(params),
+      photo: {
+        takePhoto: (pkg, opts) => phonePhotoCoordinator.takePhoto(pkg, opts),
+      },
       // Google Nav SDK adapter — the island runtime fan-outs nav events to
       // miniapps subscribed to navigation_*. Delegates straight to the host's
       // singleton NavigationService.
@@ -262,7 +265,15 @@ class MantleManager {
       locationTier: {
         setLocationTier: (rate) => this.setLocationTier(rate),
       },
+      streaming: {
+        startUnmanaged: (pkg, opts) => phoneStreamCoordinator.startUnmanaged(pkg, opts),
+        startManaged: (pkg, opts) => phoneStreamCoordinator.startManaged(pkg, opts),
+        stop: (pkg, streamId) => phoneStreamCoordinator.stop(pkg, streamId),
+        setStatusSubscriber: (cb) => phoneStreamCoordinator.setStatusSubscriber(cb),
+      },
     })
+    // Wire the runtime's status fanout now that the streaming hook is in.
+    localMiniappRuntime.wireStreamingStatusFanout()
 
     // DisplayProcessor's singleton was constructed at module load — before runtime
     // hooks existed — so its initial deviceModel read and glasses-status subscription
@@ -597,6 +608,33 @@ class MantleManager {
 
       this.subs.push(
         BluetoothSdk.addListener("photo_response", (event) => {
+          // Local miniapps' photos are tracked by phonePhotoCoordinator. If
+          // glasses report an error (BATTERY_LOW, CAMERA_BUSY, ...) for a
+          // phone-owned requestId, short-circuit the in-flight long-poll
+          // with the typed error. Cloud-app photos (third-party SDK) still
+          // forward to cloud's PhotoManager.
+          //
+          // Note: glasses only emit photo_response on ERROR (verified in
+          // asg_client/.../MediaCaptureService.java — only sendPhotoErrorResponse
+          // emits this event). Successful uploads land directly on cloud's
+          // /api/v2/client/photo/upload and the coordinator learns via its
+          // long-poll. So the state === "success" branch is unreachable for
+          // phone-owned requestIds.
+          //
+          // Caveat: BLE-fallback upload failures on the phone-side
+          // BlePhotoUploadService only log (no photo_response is emitted),
+          // so the coordinator falls back to the 30s long-poll timeout in
+          // that path. Pre-existing v1 behavior; not regressed here.
+          if (event.requestId && phonePhotoCoordinator.owns(event.requestId)) {
+            if (event.state === "error") {
+              phonePhotoCoordinator.handlePhotoError(
+                event.requestId,
+                event.errorCode ?? "GLASSES_ERROR",
+                event.errorMessage ?? "Glasses reported an error",
+              )
+            }
+            return
+          }
           restComms.sendPhotoResponse(event)
         }),
       )
@@ -742,7 +780,7 @@ class MantleManager {
       )
 
       this.subs.push(
-        CrustModule.addListener("phone_notification", async (event) => {
+        (CrustModule.addListener as any)("phone_notification", async (event: any) => {
           // Direct forward to local miniapps subscribed to phone_notification.
           // Gated by READ_NOTIFICATIONS in miniapp.json at subscribe time.
           localMiniappRuntime.forwardEvent("phone_notification", {
@@ -770,7 +808,7 @@ class MantleManager {
       )
 
       this.subs.push(
-        CrustModule.addListener("phone_notification_dismissed", async (event) => {
+        (CrustModule.addListener as any)("phone_notification_dismissed", async (event: any) => {
           // Direct forward to local miniapps subscribed to
           // phone_notification_dismissed (Android only — iOS never emits this).
           // Gated by READ_NOTIFICATIONS at subscribe time.
@@ -792,7 +830,7 @@ class MantleManager {
       )
 
       this.subs.push(
-        CrustModule.addListener("captions_tester_incident", (event) => {
+        (CrustModule.addListener as any)("captions_tester_incident", (event: any) => {
           const failureCode = typeof event.failure_code === "string" ? event.failure_code : "unknown"
           const failureMessage =
             typeof event.failure_message === "string" ? event.failure_message : "Captions tester incident detected."
@@ -1020,6 +1058,12 @@ class MantleManager {
 
       this.subs.push(
         BluetoothSdk.addListener("stream_status", (event) => {
+          // Phone-owned streams stay on-device; cloud-SDK app streams
+          // forward so cloud's lifecycle state machine sees them.
+          if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) {
+            phoneStreamCoordinator.handleGlassesStatus(event)
+            return
+          }
           console.log("MANTLE: Forwarding stream status to server:", event)
           socketComms.sendStreamStatus(event)
         }),
@@ -1027,6 +1071,10 @@ class MantleManager {
 
       this.subs.push(
         BluetoothSdk.addListener("keep_alive_ack", (event) => {
+          if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) {
+            phoneStreamCoordinator.handleKeepAliveAck(event)
+            return
+          }
           console.log("MANTLE: Forwarding keep-alive ACK to server:", event)
           socketComms.sendKeepAliveAck(event)
         }),

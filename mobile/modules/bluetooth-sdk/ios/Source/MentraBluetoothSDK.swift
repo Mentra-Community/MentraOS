@@ -399,6 +399,7 @@ public final class MentraBluetoothSDK {
             request.authToken,
             request.compress?.rawValue,
             request.flash,
+            request.save,
             request.sound,
             exposureTimeNs: request.exposureTimeNs
         )

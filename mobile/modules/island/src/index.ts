@@ -63,6 +63,8 @@ export {
   type SettingsAccessor,
   type StoreAccessor,
   type GlassesSnapshot,
+  type StreamingAdapter,
+  type PhotoAdapter,
 } from "./runtime/config"
 
 // Stores

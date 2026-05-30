@@ -363,7 +363,13 @@ class NavigationService {
         })
       }),
       CrustModule.addListener("onNavRoute", (data) => {
-        const route: NavRoute = {points: data.points ?? [], steps: data.steps ?? undefined}
+        const route: NavRoute = {
+          points: data.points ?? [],
+          steps: data.steps?.map((step) => ({
+            ...step,
+            road: step.road ?? null,
+          })),
+        }
         this.lastRoute = route
         console.log(`${LOG_TAG}: ← onNavRoute (${route.points.length} points, steps=${route.steps?.length ?? "null"})`)
         this.routeListeners.forEach((l) => {

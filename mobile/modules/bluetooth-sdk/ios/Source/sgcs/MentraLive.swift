@@ -1312,10 +1312,10 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, sound: Bool, exposureTimeNs: Double?
+        compress: String?, flash: Bool, save: Bool, sound: Bool, exposureTimeNs: Double?
     ) {
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(requestId) appId=\(appId) flash=\(flash) sound=\(sound)"
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(requestId) appId=\(appId) flash=\(flash) save=\(save) sound=\(sound)"
         )
 
         var json: [String: Any] = [
@@ -1361,6 +1361,7 @@ class MentraLive: NSObject, SGCManager {
         json["compress"] = compress ?? "none"
 
         json["flash"] = flash
+        json["save"] = save
         json["sound"] = sound
 
         if let e = exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {

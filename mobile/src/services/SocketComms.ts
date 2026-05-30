@@ -473,7 +473,6 @@ class SocketComms {
       pcm: !!shouldSendPcmData,
       lc3: !!shouldSendPcmData, // online apps always want lc3
       transcript: !!shouldSendTranscript,
-      voiceActivityDetectionEnabled: !bypassVad,
     })
   }
 
@@ -818,10 +817,11 @@ class SocketComms {
         break
       }
 
-      case "phone_photo_ready":
       case "phone_stream_status":
       case "phone_managed_stream_status":
-        // Forward photo / streaming messages to LocalMiniappRuntime
+        // Forward cloud-1 streaming messages to LocalMiniappRuntime for
+        // any local miniapp that still has a pending cloud request (legacy
+        // path; phone-orchestrated v2 streaming doesn't register one).
         localMiniappRuntime.handleCloudMessage(msg)
         break
 

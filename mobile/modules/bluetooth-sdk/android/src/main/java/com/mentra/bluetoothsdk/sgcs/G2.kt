@@ -2658,6 +2658,7 @@ class G2 : SGCManager() {
             authToken: String?,
             compress: String?,
             flash: Boolean,
+            save: Boolean,
             sound: Boolean,
             exposureTimeNs: Long?,
     ) {
