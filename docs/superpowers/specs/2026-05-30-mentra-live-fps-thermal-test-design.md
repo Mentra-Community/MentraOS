@@ -155,6 +155,25 @@ This is behavior-preserving on the current Mentra Live (the snap returns `[fps,f
 
 ---
 
+## 5b. Expanded scope — FULL MATRIX (operator requested "test everything")
+
+Beyond the focused 1080p × {30,15,5} thermal-isolation runs, sweep the full grid of what the existing JSON command can drive **with no code changes**:
+
+**Resolutions (app-supported, ffprobe-confirmed on device):** 1280×720, 1920×1080, 2560×1920, 3840×2160 (4K capped to ≤15fps by the app).
+**FPS per resolution:** 30, 15, 5 (4K: 15, 5 only).
+
+This is **11 cells**. Each cell records `RECORD_SECS` (default 180s for the full sweep; bump to 600s for the focused steady-state runs), cooled to baseline between cells.
+
+**Bitrate is coupled to resolution, not independent** (`VideoRecorderPolicy.java:32-34`: 16Mbps for width≥1920, 8Mbps for 720p). So the matrix gives us *two* axes for free — FPS effect (within a resolution row, bitrate constant → clean isolation) AND resolution effect (across rows, bitrate changes too). The "bitrate scales with FPS" variant the operator asked about is **not** drivable from the JSON command (no bitrate field) — it requires a code change and is the one deferred item (§6).
+
+**Richer thermal sources** (all confirmed live on device, no root):
+- **`dumpsys thermalservice` HAL named sensors:** CPU, GPU, **NPU**, **SKIN** (the user-facing one), BATTERY, POWER_AMPLIFIER — far more meaningful than raw zone numbers.
+- **`Thermal Status: N`** — framework throttle severity (0=none … 6=shutdown). **This is the headline "is it overheating?" signal:** any run that pushes status > 0 is the device officially throttling.
+- Raw sysfs zones (mtktscpu, mtktswmt, tzts1/2/3, battery, pmic) as a cross-check.
+- Throttle proxies: CPU `scaling_cur_freq`, GPU `/sys/kernel/ged/hal/current_freqency` + `gpu_utilization`.
+
+**Output:** per-cell CSV (every sensor, every 5s) + `SUMMARY.md` with a human-readable table (req res/fps, **actual** res/fps from ffprobe, steady-state CPU, peak, Δ-vs-baseline, **maxStatus**, file size) and an FPS-effect breakdown per resolution. Script: `asg_client/scripts/fps-thermal-test.sh`.
+
 ## 6. Out of Scope (follow-ups, gated on results)
 
 - App-side continuous thermal logging during streaming/recording (port Philippe's `WhipThermalUtils`/`WhipBitrateTemperatureController` from branch `philippe/os-1244-…`, which is **not in `dev`** — see §2.1) so thermals report over the normal status channel.
