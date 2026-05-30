@@ -924,12 +924,6 @@ class MantleManager {
       //   }),
       // )
 
-      // this.subs.push(
-      //   BluetoothSdk.addListener("audio_chunk", (event) => {
-      //     localMiniappRuntime.forwardEvent("audio_chunk", event)
-      //   }),
-      // )
-
       // G2 dashboard menu: user selected a miniapp from the glasses swipe menu
       // G2.swift resolves the numeric appId → packageName before sending this event
       this.subs.push(
@@ -995,13 +989,12 @@ class MantleManager {
       )
 
       this.subs.push(
-        BluetoothSdk.addListener("mic_pcm", () => {
-          // mic_pcm events are strictly on-device. Local miniapps consume
-          // raw PCM via the `audio_chunk` listener; Sherpa-ONNX consumes
-          // it via the local-STT path. The cloud only ever receives LC3
-          // (mic_lc3 listener above). Never forward PCM bytes upstream —
-          // we'd interleave them with LC3 frames on the same binary
-          // WebSocket and corrupt the cloud's audio decoder.
+        BluetoothSdk.addListener("mic_pcm", (event) => {
+          // mic_pcm events are strictly on-device. The cloud only ever
+          // receives LC3 (mic_lc3 listener above) — never forward PCM
+          // bytes upstream, or we'd interleave them with LC3 frames on
+          // the same binary WebSocket and corrupt the cloud's decoder.
+          // Sherpa-ONNX is fed PCM natively inside the BT SDK, not here.
           if (this.micDataTimeout) {
             BgTimer.clearTimeout(this.micDataTimeout)
           }
@@ -1009,6 +1002,19 @@ class MantleManager {
             useDebugStore.getState().setDebugInfo({micDataRecvd: false})
           }, this.MIC_TIMEOUT_MS)
           useDebugStore.getState().setDebugInfo({micDataRecvd: true})
+
+          // Fan raw PCM to local miniapps that subscribed to `audio_chunk`
+          // (session.mic.onAudioChunk). forwardEvent is subscriber-gated —
+          // a no-op when no miniapp is listening — and should_send_pcm is
+          // only flipped on by the runtime when a subscription exists.
+          // ArrayBuffer can't survive the JSON bridge, so base64-encode.
+          // PERF: ~100 events/sec/subscriber, unbatched; revisit with
+          // frame batching if a real always-on audio miniapp ships.
+          localMiniappRuntime.forwardEvent("audio_chunk", {
+            data: Buffer.from(event.pcm).toString("base64"),
+            sampleRate: event.sampleRate,
+            format: event.encoding,
+          })
         }),
       )
 
