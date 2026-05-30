@@ -1,5 +1,6 @@
 import "tsx/cjs"
 import {ExpoConfig, ConfigContext} from "@expo/config"
+import {getBuildNumber} from "./scripts/build-number.mjs"
 
 const VARIANTS = {
   default: {
@@ -77,6 +78,8 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     console.warn(`[mobile/app.config] ${msg}`)
   }
 
+  const buildNumber = getBuildNumber()
+
   return {
     ...config,
     name: appName,
@@ -95,7 +98,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       // icon: "./assets/app-icons/ic_launcher.png",
       package: androidPackage,
       ...(variant.googleServicesFile ? {googleServicesFile: variant.googleServicesFile} : {}),
-      versionCode: 265,
+      versionCode: buildNumber,
       adaptiveIcon: {
         foregroundImage: variant.adaptiveIcon,
         // backgroundImage: "./assets/app-icons/ic_launcher.png",
@@ -133,7 +136,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       icon: variant.icon,
       supportsTablet: false,
       requireFullScreen: true,
-      buildNumber: "265",
+      buildNumber: String(buildNumber),
       bundleIdentifier: iosBundleId,
       appleTeamId: "T5XXXL6N36",
       ...(variant.googleServicesPlist ? {googleServicesFile: variant.googleServicesPlist} : {}),

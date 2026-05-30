@@ -399,7 +399,8 @@ class Bridge {
         stepPercent: Int,
         overallPercent: Int,
         status: String,
-        errorMessage: String?
+        errorMessage: String?,
+        glassesTimeMs: Int64? = nil
     ) {
         var eventBody: [String: Any] = [
             "session_id": sessionId,
@@ -413,6 +414,9 @@ class Bridge {
         ]
         if let error = errorMessage {
             eventBody["error_message"] = error
+        }
+        if let glassesTimeMs, glassesTimeMs > 0 {
+            eventBody["glasses_time_ms"] = glassesTimeMs
         }
         Bridge.sendTypedMessage("ota_status", body: eventBody)
     }

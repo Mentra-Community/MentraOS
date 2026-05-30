@@ -421,6 +421,10 @@ class MentraBluetoothSdk private constructor(
         deviceManager.setHotspotState(enabled)
     }
 
+    fun setSystemTime(timestampMs: Long) {
+        deviceManager.setSystemTime(timestampMs)
+    }
+
     fun requestPhoto(request: PhotoRequest) {
         Bridge.log(
             "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=${request.requestId} appId=${request.appId}"
@@ -485,6 +489,10 @@ class MentraBluetoothSdk private constructor(
 
     internal fun sendOtaQueryStatus() {
         deviceManager.sendOtaQueryStatus()
+    }
+
+    internal fun retryOtaVersionCheck() {
+        deviceManager.retryOtaVersionCheck()
     }
 
     internal fun sendShutdown() {

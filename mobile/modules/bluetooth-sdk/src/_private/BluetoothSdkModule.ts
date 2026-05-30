@@ -92,6 +92,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   sendWifiCredentials(ssid: string, password: string): Promise<void>
   forgetWifiNetwork(ssid: string): Promise<void>
   setHotspotState(enabled: boolean): Promise<void>
+  /** Set glasses system clock (Mentra Live only) when phone detects clock skew. */
+  setSystemTime(timestampMs: number): Promise<void>
   /** Logs current WiFi frequency (MHz) and 5 GHz band to Android logcat. */
   logCurrentWifiFrequency(): Promise<void>
 
@@ -109,6 +111,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   // OTA Commands
   sendOtaStart(): Promise<void>
   sendOtaQueryStatus(): Promise<void>
+  /** Re-run glasses-side OTA version check (called after a clock fix invalidates a TLS failure). */
+  retryOtaVersionCheck(): Promise<void>
 
   // Version Info Commands
   requestVersionInfo(): Promise<void>
@@ -123,12 +127,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   keepStreamAlive(params: StreamKeepAliveRequest): Promise<void>
 
   // Microphone Commands
-  setMicState(
-    enabled: boolean,
-    useGlassesMic?: boolean,
-    sendTranscript?: boolean,
-    sendLc3Data?: boolean,
-  ): Promise<void>
+  setMicState(enabled: boolean, useGlassesMic?: boolean, sendTranscript?: boolean, sendLc3Data?: boolean): Promise<void>
   setPreferredMic(preferredMic: MicPreference): Promise<void>
   restartTranscriber(): Promise<void>
 
@@ -292,7 +291,9 @@ NativeBluetoothSdkModule.getGlassesStatus = function () {
   return Promise.resolve(nativeGetGlassesStatus())
 }
 
-const nativeGetBluetoothStatus = NativeBluetoothSdkModule.getBluetoothStatus.bind(NativeBluetoothSdkModule) as () => MaybePromise<BluetoothStatus>
+const nativeGetBluetoothStatus = NativeBluetoothSdkModule.getBluetoothStatus.bind(
+  NativeBluetoothSdkModule,
+) as () => MaybePromise<BluetoothStatus>
 NativeBluetoothSdkModule.getBluetoothStatus = function () {
   return Promise.resolve(nativeGetBluetoothStatus())
 }
@@ -406,12 +407,7 @@ NativeBluetoothSdkModule.setMicState = function (
   sendLc3Data?: boolean,
 ) {
   return Promise.resolve(
-    nativeSetMicState(
-      enabled,
-      useGlassesMic ?? true,
-      sendTranscript ?? false,
-      sendLc3Data ?? false,
-    ),
+    nativeSetMicState(enabled, useGlassesMic ?? true, sendTranscript ?? false, sendLc3Data ?? false),
   )
 }
 
@@ -441,10 +437,7 @@ NativeBluetoothSdkModule.connect = function (device: Device, options?: ConnectOp
   return this.connectWithOptions(device, {...DEFAULT_CONNECT_OPTIONS, ...options})
 }
 
-NativeBluetoothSdkModule.scan = async function (
-  modelOrOptions: DeviceModel | ScanOptions,
-  options?: ScanModelOptions,
-) {
+NativeBluetoothSdkModule.scan = async function (modelOrOptions: DeviceModel | ScanOptions, options?: ScanModelOptions) {
   const scanOptions = normalizeScanArgs(modelOrOptions, options)
   const timeoutMs = normalizeTimeoutMs(scanOptions.timeoutMs ?? scanOptions.timeout, DEFAULT_SCAN_TIMEOUT_MS)
   let latestResults: Device[] = []

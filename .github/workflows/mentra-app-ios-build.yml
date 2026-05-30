@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - "mobile/**"
-      - ".github/workflows/mentraos-manager-ios-build.yml"
+      - ".github/workflows/mentra-app-ios-build.yml"
   push:
     branches:
       - main

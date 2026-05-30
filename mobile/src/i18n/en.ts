@@ -508,7 +508,7 @@ const en = {
     glassesMenuApps: "Menu Mini Apps",
     cameraSettings: "Camera Settings",
     cameraSettingsDescription: "Configure photo and video resolution for button capture",
-    cameraRestartBanner: "Camera will take a few seconds to restart.",
+    cameraRestartBanner: "Updating FOV. Please wait 10 seconds before taking a photo or video.",
     cameraFovRoiTitle: "Camera field of view",
     cameraFovRoiExplanation:
       "FOV sets how wide the camera sees (82–118°). Values below 118° use ROI crop: the image is cropped to that angle, and ROI position (Center, Bottom, Top) chooses where the crop is taken from. 118° uses the full sensor with no crop.",

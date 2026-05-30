@@ -9,6 +9,7 @@ import com.mentra.asg_client.logging.Logger;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.file.core.FileManager.FileMetadata;
 import com.mentra.asg_client.io.file.core.FileManager.FileOperationResult;
+import com.mentra.asg_client.utils.GallerySyncFilter;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
@@ -333,17 +334,37 @@ public class AsgCameraServer extends AsgServer {
                 return createErrorResponse(Response.Status.REQUEST_TIMEOUT, "Gallery request timeout");
             }
 
+            // Filter BEFORE pagination so pages have a consistent size and total_count
+            // reflects only files that will actually be served.
+            List<FileMetadata> servableList = new ArrayList<>(photoMetadataList.size());
+            for (FileMetadata photoMetadata : photoMetadataList) {
+                if (isAvifTransferArtifact(photoMetadata.getFileName())) {
+                    logger.debug(TAG, "📚 Skipping AVIF transfer artifact in gallery: " + photoMetadata.getFileName());
+                    continue;
+                }
+                if (isImuSidecar(photoMetadata.getFileName())) {
+                    continue;
+                }
+                if (isHdrBracket(photoMetadata.getFileName())) {
+                    continue;
+                }
+                if (!shouldExposeServableFile(photoMetadata)) {
+                    continue;
+                }
+                servableList.add(photoMetadata);
+            }
+
             // Sort by modification time (newest first) BEFORE pagination
-            photoMetadataList.sort((a, b) -> Long.compare(b.getLastModified(), a.getLastModified()));
-            
-            // Apply pagination
-            int totalCount = photoMetadataList.size();
+            servableList.sort((a, b) -> Long.compare(b.getLastModified(), a.getLastModified()));
+
+            // Apply pagination on the filtered list
+            int totalCount = servableList.size();
             int endIndex = (limit > 0) ? Math.min(offset + limit, totalCount) : totalCount;
             int actualOffset = Math.min(offset, totalCount);
-            
-            List<FileMetadata> paginatedList = photoMetadataList.subList(actualOffset, endIndex);
+
+            List<FileMetadata> paginatedList = servableList.subList(actualOffset, endIndex);
             boolean hasMore = endIndex < totalCount;
-            
+
             logger.debug(TAG, "📚 Returning photos " + actualOffset + " to " + endIndex + " of " + totalCount);
 
             List<Map<String, Object>> photos = new ArrayList<>();
@@ -351,8 +372,8 @@ public class AsgCameraServer extends AsgServer {
             long totalSize = 0;
             long paginatedSize = 0;
 
-            // Calculate total size (for all photos)
-            for (FileMetadata metadata : photoMetadataList) {
+            // Calculate total size (for all servable photos)
+            for (FileMetadata metadata : servableList) {
                 totalSize += metadata.getFileSize();
             }
 
@@ -362,22 +383,6 @@ public class AsgCameraServer extends AsgServer {
                 if (System.currentTimeMillis() - startTime > timeoutMs) {
                     logger.warn(TAG, "📚 Gallery processing timeout after " + (System.currentTimeMillis() - startTime) + "ms");
                     return createErrorResponse(Response.Status.REQUEST_TIMEOUT, "Gallery processing timeout");
-                }
-
-                // Skip AVIF transfer artifacts - they should not appear in gallery
-                if (isAvifTransferArtifact(photoMetadata.getFileName())) {
-                    logger.debug(TAG, "📚 Skipping AVIF transfer artifact in gallery: " + photoMetadata.getFileName());
-                    continue;
-                }
-
-                // Skip IMU sidecar files - they are metadata, not displayable media
-                if (isImuSidecar(photoMetadata.getFileName())) {
-                    continue;
-                }
-
-                // Skip HDR bracket files - only the merged base file should appear
-                if (isHdrBracket(photoMetadata.getFileName())) {
-                    continue;
                 }
 
                 Map<String, Object> photoInfo = new HashMap<>();
@@ -747,6 +752,17 @@ public class AsgCameraServer extends AsgServer {
             if (photoFile == null || !photoFile.exists()) {
                 logger.warn(TAG, "⬇️ ❌ Photo file not found: " + filename);
                 return createErrorResponse(Response.Status.NOT_FOUND, "Photo not found");
+            }
+
+            FileMetadata downloadMetadata =
+                    fileManager.getFileMetadata(fileManager.getDefaultPackageName(), filename);
+            if (downloadMetadata != null && !shouldExposeServableFile(downloadMetadata)) {
+                logger.warn(TAG, "⬇️ ❌ Blocked download of unservable file: " + filename);
+                return createErrorResponse(Response.Status.CONFLICT, "File is not ready for download");
+            }
+            if (GallerySyncFilter.isZeroBytePrimaryVideo(filename, photoFile.length())) {
+                logger.warn(TAG, "⬇️ ❌ Blocked download of zero-byte video: " + filename);
+                return createErrorResponse(Response.Status.CONFLICT, "Video file is not ready");
             }
 
             // Get metadata for MIME type
@@ -1199,14 +1215,27 @@ public class AsgCameraServer extends AsgServer {
      */
     private boolean isActiveRecording(String fileName) {
         if (activeRecordingProvider == null || fileName == null) return false;
-        // deriveCaptureId handles both folder-based ("VID_xxx/base.mp4" -> "VID_xxx")
-        // and legacy flat ("VID_xxx.mp4" -> "VID_xxx") paths
-        String fileCaptureId = deriveCaptureId(fileName);
         String activeCaptureId = activeRecordingProvider.getActiveRecordingCaptureId();
-        if (activeCaptureId != null && activeCaptureId.equals(fileCaptureId)) {
-            return true;
+        Set<String> blocked = activeRecordingProvider.getPendingVideoIntegrityCaptureIds();
+        return GallerySyncFilter.isCaptureBlockedFromSync(fileName, activeCaptureId, blocked);
+    }
+
+    /**
+     * Whether a file may appear in gallery listings or sync responses.
+     */
+    private boolean shouldExposeServableFile(FileMetadata metadata) {
+        if (metadata == null) {
+            return false;
         }
-        return activeRecordingProvider.getPendingVideoIntegrityCaptureIds().contains(fileCaptureId);
+        String fileName = metadata.getFileName();
+        if (isActiveRecording(fileName)) {
+            return false;
+        }
+        if (GallerySyncFilter.isZeroBytePrimaryVideo(fileName, metadata.getFileSize())) {
+            logger.debug(TAG, "Skipping zero-byte primary video from sync/gallery: " + fileName);
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -1275,9 +1304,11 @@ public class AsgCameraServer extends AsgServer {
             // In a more sophisticated implementation, you'd track deletions separately
             for (FileMetadata fileMetadata : allFiles) {
                 if (fileMetadata.getLastModified() > lastSyncTime) {
-                    // Skip files that are actively being recorded (incomplete / corrupted)
-                    if (isActiveRecording(fileMetadata.getFileName())) {
-                        logger.debug(TAG, "🔄 Skipping active recording: " + fileMetadata.getFileName());
+                    // Skip files that are actively being recorded or not yet servable
+                    if (!shouldExposeServableFile(fileMetadata)) {
+                        if (isActiveRecording(fileMetadata.getFileName())) {
+                            logger.debug(TAG, "🔄 Skipping active recording: " + fileMetadata.getFileName());
+                        }
                         continue;
                     }
 
@@ -1589,6 +1620,16 @@ public class AsgCameraServer extends AsgServer {
                         continue;
                     }
 
+                    if (!shouldExposeServableFile(metadata)) {
+                        Map<String, Object> result = new HashMap<>();
+                        result.put("file", fileName);
+                        result.put("success", false);
+                        result.put("message", "File is not ready for download");
+                        results.add(result);
+                        failureCount++;
+                        continue;
+                    }
+
                     // Get file
                     File file = fileManager.getFile(fileManager.getDefaultPackageName(), fileName);
                     if (file == null || !file.exists()) {
@@ -1699,18 +1740,28 @@ public class AsgCameraServer extends AsgServer {
             status.put("server_time", System.currentTimeMillis());
             status.put("server_uptime", System.currentTimeMillis() - getStartTime());
 
-            // File statistics
+            // File statistics (servable media only)
             List<FileMetadata> allFiles = fileManager.listFiles(fileManager.getDefaultPackageName());
-            status.put("total_files", allFiles.size());
-            status.put("total_size", allFiles.stream().mapToLong(FileMetadata::getFileSize).sum());
+            List<FileMetadata> servableFiles = new ArrayList<>();
+            for (FileMetadata metadata : allFiles) {
+                if (isAvifTransferArtifact(metadata.getFileName())) {
+                    continue;
+                }
+                if (isImuSidecar(metadata.getFileName()) || isHdrBracket(metadata.getFileName())) {
+                    continue;
+                }
+                if (shouldExposeServableFile(metadata)) {
+                    servableFiles.add(metadata);
+                }
+            }
+            status.put("total_files", servableFiles.size());
+            status.put("total_size", servableFiles.stream().mapToLong(FileMetadata::getFileSize).sum());
 
             // File type breakdown (exclude auxiliary files like HDR brackets and IMU sidecars)
-            long imageCount = allFiles.stream()
+            long imageCount = servableFiles.stream()
                 .filter(f -> !isVideoFile(f.getFileName()))
-                .filter(f -> !isImuSidecar(f.getFileName()))
-                .filter(f -> !isHdrBracket(f.getFileName()))
                 .count();
-            long videoCount = allFiles.stream().filter(f -> isVideoFile(f.getFileName())).count();
+            long videoCount = servableFiles.stream().filter(f -> isVideoFile(f.getFileName())).count();
             status.put("image_count", imageCount);
             status.put("video_count", videoCount);
 

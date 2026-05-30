@@ -19,7 +19,11 @@ import android.util.Log;
 import android.util.Size;
 import com.dev.api.DevApi;
 import com.mentra.asg_client.SysControl;
+import com.mentra.asg_client.camera.UvcStreamingState;
+import com.mentra.asg_client.hardware.K900RgbLedController;
 import com.mentra.asg_client.io.bluetooth.interfaces.BluetoothStateListener;
+import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
+import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
@@ -77,6 +81,9 @@ public class AsgClientService extends Service
     public static final String ACTION_I2S_AUDIO_STATE =
             "com.mentra.asg_client.ACTION_I2S_AUDIO_STATE";
     public static final String EXTRA_I2S_AUDIO_PLAYING = "extra_i2s_audio_playing";
+    public static final String ACTION_UVC_STREAMING_CHANGED =
+            "com.mentra.asg_client.ACTION_UVC_STREAMING_CHANGED";
+    public static final String EXTRA_UVC_STREAMING = "extra_uvc_streaming";
     public static final String ACTION_START_OTA_UPDATER = "ACTION_START_OTA_UPDATER";
 
     // OTA Update progress actions
@@ -90,6 +97,8 @@ public class AsgClientService extends Service
     private static final String ACTION_HEARTBEAT = "com.mentra.asg_client.ACTION_HEARTBEAT";
     private static final String ACTION_HEARTBEAT_ACK = "com.mentra.asg_client.ACTION_HEARTBEAT_ACK";
     private static final long HEARTBEAT_TIMEOUT_MS = 35000; // 35 seconds timeout
+    /** Solid white RGB LED duration while USB UVC streaming (same as video recording). */
+    private static final int UVC_STREAMING_LED_DURATION_MS = 1_800_000;
 
     // ---------------------------------------------
     // Dependency Injection Container
@@ -113,6 +122,7 @@ public class AsgClientService extends Service
     // private boolean isAugmentosBound = false;
     private static AsgClientService instance;
     private boolean lastI2sPlaying = false;
+    private boolean lastUvcStreaming = false;
     private boolean isConnected = false; // Track connection state based on heartbeat
 
     /**
@@ -292,6 +302,12 @@ public class AsgClientService extends Service
                 return START_STICKY;
             }
 
+            if (ACTION_UVC_STREAMING_CHANGED.equals(action)) {
+                boolean streaming = intent.getBooleanExtra(EXTRA_UVC_STREAMING, false);
+                handleUvcStreamingState(streaming);
+                return START_STICKY;
+            }
+
             // Delegate action handling to lifecycle manager
             lifecycleManager.handleAction(action, intent.getExtras());
             Log.d(TAG, "✅ Action processed successfully");
@@ -383,6 +399,70 @@ public class AsgClientService extends Service
 
     public static AsgClientService getInstance() {
         return instance;
+    }
+
+    /** Handle MTK UVC streaming state forwarded from {@link com.mentra.asg_client.receiver.UvcStreamingBroadcastReceiver}. */
+    public void handleUvcStreamingState(boolean streaming) {
+        if (streaming == lastUvcStreaming) {
+            Log.d(TAG, "UVC streaming state unchanged (" + streaming + "), skipping LED update");
+            return;
+        }
+
+        lastUvcStreaming = streaming;
+        Log.i(TAG, "UVC streaming state: " + (streaming ? "active" : "inactive"));
+        UvcStreamingState.setStreaming(streaming);
+        applyUvcStreamingLed(streaming);
+    }
+
+    /**
+     * Drive privacy indicators while USB UVC webcam mode is active — same pairing as video
+     * recording: local MTK front-facing flash LED plus BES RGB ring (solid white).
+     */
+    private void applyUvcStreamingLed(boolean streaming) {
+        IHardwareManager hardwareManager = getHardwareManagerForLed();
+        if (hardwareManager == null) {
+            Log.w(TAG, "Hardware manager not available; skipping UVC streaming LED update");
+            return;
+        }
+
+        if (streaming) {
+            if (hardwareManager.supportsRecordingLed()) {
+                hardwareManager.setRecordingLedOn();
+                Log.i(TAG, "UVC streaming front-facing recording flash LED on");
+            } else {
+                Log.w(TAG, "Recording flash LED not supported on this device");
+            }
+
+            if (hardwareManager.supportsRgbLed()) {
+                sendRgbLedControlAuthority(true);
+                hardwareManager.setRgbLedSolidWhite(
+                        UVC_STREAMING_LED_DURATION_MS,
+                        K900RgbLedController.DEFAULT_RGB_LED_BRIGHTNESS);
+                Log.i(TAG, "UVC streaming RGB ring LED on (solid white)");
+            } else {
+                Log.w(TAG, "RGB LED not supported on this device");
+            }
+        } else {
+            if (hardwareManager.supportsRecordingLed()) {
+                hardwareManager.setRecordingLedOff();
+                Log.i(TAG, "UVC streaming front-facing recording flash LED off");
+            }
+            if (hardwareManager.supportsRgbLed()) {
+                hardwareManager.setRgbLedOff();
+                Log.i(TAG, "UVC streaming RGB ring LED off");
+            }
+        }
+    }
+
+    private IHardwareManager getHardwareManagerForLed() {
+        IHardwareManager hardwareManager = HardwareManagerFactory.getInstance(this);
+        if (serviceContainer != null && serviceContainer.getServiceManager() != null) {
+            var bluetoothManager = serviceContainer.getServiceManager().getBluetoothManager();
+            if (bluetoothManager != null) {
+                hardwareManager.setBluetoothManager(bluetoothManager);
+            }
+        }
+        return hardwareManager;
     }
 
     public void handleI2SAudioState(boolean playing) {

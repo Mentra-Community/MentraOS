@@ -357,6 +357,10 @@ class BluetoothSdkModule : Module() {
             sdk?.setHotspotState(enabled)
         }
 
+        AsyncFunction("setSystemTime") { timestampMs: Double ->
+            sdk?.setSystemTime(timestampMs.toLong())
+        }
+
         // MARK: - Gallery Commands
 
         AsyncFunction("setGalleryModeEnabled") { enabled: Boolean ->
@@ -394,6 +398,8 @@ class BluetoothSdkModule : Module() {
         AsyncFunction("sendOtaStart") { sdk?.sendOtaStart() }
 
         AsyncFunction("sendOtaQueryStatus") { sdk?.sendOtaQueryStatus() }
+
+        AsyncFunction("retryOtaVersionCheck") { sdk?.retryOtaVersionCheck() }
 
         // MARK: - Version Info Commands
 

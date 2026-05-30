@@ -10,6 +10,7 @@ import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
 import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
 import com.mentra.asg_client.utils.GalleryStatusHelper;
+import com.mentra.asg_client.utils.GallerySyncFilter;
 
 import org.json.JSONObject;
 import java.util.Set;
@@ -81,8 +82,27 @@ public class GalleryCommandHandler implements ICommandHandler {
                 return sendEmptyGalleryStatus();
             }
 
-            // Build gallery status using shared utility
-            JSONObject response = GalleryStatusHelper.buildGalleryStatus(fileManager);
+            MediaCaptureService mediaCaptureService = null;
+            if (serviceManager != null) {
+                mediaCaptureService = serviceManager.getMediaCaptureService();
+            }
+
+            final String activeCaptureId =
+                    mediaCaptureService != null ? mediaCaptureService.getActiveRecordingCaptureId() : null;
+            final java.util.Set<String> blockedCaptureIds =
+                    mediaCaptureService != null
+                            ? mediaCaptureService.getPendingVideoIntegrityCaptureIds()
+                            : java.util.Collections.emptySet();
+
+            // Build gallery status using shared utility with sync-safe filters
+            JSONObject response =
+                    GalleryStatusHelper.buildGalleryStatus(
+                            fileManager,
+                            metadata ->
+                                    !GallerySyncFilter.isCaptureBlockedFromSync(
+                                            metadata.getFileName(), activeCaptureId, blockedCaptureIds)
+                                            && !GallerySyncFilter.isZeroBytePrimaryVideo(
+                                                    metadata.getFileName(), metadata.getFileSize()));
 
             // Send response
             boolean sent = communicationManager.sendBluetoothResponse(response);

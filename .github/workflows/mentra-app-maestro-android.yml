@@ -30,9 +30,9 @@ jobs:
       - name: Download APK from build workflow
         uses: dawidd6/action-download-artifact@v3
         with:
-          workflow: mentraos-manager-android-build.yml
+          workflow: mentra-app-android-build.yml
           workflow_conclusion: success
-          name: app-debug
+          name: app-release
           path: ./
 
       - name: Install Maestro
@@ -74,7 +74,7 @@ jobs:
             adb shell input keyevent 82
 
             # Install the APK
-            adb install app-debug.apk
+            adb install app-release.apk
 
             # Run Maestro tests
             cd mobile

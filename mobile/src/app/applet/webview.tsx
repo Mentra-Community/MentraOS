@@ -142,6 +142,13 @@ export default function AppWebView() {
     if (isLocal) return
 
     const POST_RECONNECT_GRACE_MS = 5_000
+    // The island store's `loading: true` stamp lands ~1 frame AFTER nav
+    // (beforeStart awaits an alert/network call before island.start() sets
+    // it). Without this grace, the screen mounts seeing stale loading=false
+    // running=false and immediately latches appStartFailed, causing the
+    // "Can't connect" screen to flash for ~500ms before the real load.
+    const MOUNT_GRACE_MS = 3_000
+    const mountedAt = Date.now()
 
     const checkApplet = (state: {apps: Array<{packageName: string; loading: boolean; running: boolean}>}) => {
       const applet = state.apps.find((a) => a.packageName === packageName)
@@ -153,6 +160,8 @@ export default function AppWebView() {
         setAppStartFailed(false)
         return
       }
+
+      if (Date.now() - mountedAt < MOUNT_GRACE_MS) return
 
       const connState = useConnectionStore.getState()
       if (connState.status !== WebSocketStatus.CONNECTED) return
@@ -168,9 +177,15 @@ export default function AppWebView() {
     const unsubConn = useConnectionStore.subscribe(() => {
       checkApplet(useAppStatusStore.getState())
     })
+    // Re-run once the mount grace expires so a failure that latched silently
+    // during the grace gets re-evaluated.
+    const graceTimer = setTimeout(() => {
+      checkApplet(useAppStatusStore.getState())
+    }, MOUNT_GRACE_MS + 50)
     return () => {
       unsubApplets()
       unsubConn()
+      clearTimeout(graceTimer)
     }
   }, [packageName, isLocal])
 
