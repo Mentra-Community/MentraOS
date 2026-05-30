@@ -726,6 +726,12 @@ class LocalMiniappRuntime {
       case MiniappRequestType.PHOTO:
         this.handlePhoto(packageName, payload, requestId)
         break
+      case MiniappRequestType.VIDEO_RECORDING_START:
+        void this.handleVideoRecordingStart(packageName, payload, requestId)
+        break
+      case MiniappRequestType.VIDEO_RECORDING_STOP:
+        void this.handleVideoRecordingStop(packageName, payload, requestId)
+        break
       case MiniappRequestType.STREAM_START:
         void this.handleStreamStart(packageName, payload, requestId)
         break
@@ -1725,6 +1731,76 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Photo request failed",
+      })
+    }
+  }
+
+  private async handleVideoRecordingStart(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    // Manifest CAMERA permission gate (same as photo).
+    const app = this.connectedApps.get(packageName)
+    const hasCameraPermission = app?.installedManifest?.permissions?.some((p) => p.type === "CAMERA")
+    if (!hasCameraPermission) {
+      logPermissionNotDeclared(packageName, "CAMERA", "to record video", `{"type": "CAMERA"}`)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+        message: `CAMERA permission not declared in miniapp.json. Add {"type": "CAMERA"} to the "permissions" array.`,
+        permission: "CAMERA",
+        operation: MiniappRequestType.VIDEO_RECORDING_START,
+      })
+      return
+    }
+
+    const video = getRuntimeHooks().videoRecording
+    if (!video) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_IMPLEMENTED,
+        message: "Video recording is not configured on this host",
+      })
+      return
+    }
+
+    try {
+      const result = await video.startRecording(packageName, {
+        width: payload.width as number | undefined,
+        height: payload.height as number | undefined,
+        fps: payload.fps as number | undefined,
+        sound: payload.sound as boolean | undefined,
+        save: payload.save as boolean | undefined,
+      })
+      this.sendResult(packageName, requestId, true, result)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Video recording start failed",
+      })
+    }
+  }
+
+  private async handleVideoRecordingStop(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const video = getRuntimeHooks().videoRecording
+    if (!video) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_IMPLEMENTED,
+        message: "Video recording is not configured on this host",
+      })
+      return
+    }
+
+    try {
+      await video.stopRecording(packageName, payload.recordingId as string | undefined)
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Video recording stop failed",
       })
     }
   }

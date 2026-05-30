@@ -130,6 +130,10 @@ data class VideoRecordingRequest(
     val requestId: String,
     val save: Boolean,
     val sound: Boolean,
+    // Optional per-recording overrides; 0 means "use the saved button-video default".
+    val width: Int = 0,
+    val height: Int = 0,
+    val fps: Int = 0,
 )
 
 data class GalleryStatusEvent(

@@ -26,6 +26,7 @@ import {
   ScanOptions,
   StreamKeepAliveRequest,
   StreamStartRequest,
+  VideoRecordingSettings,
 } from "../BluetoothSdk.types"
 
 /**
@@ -118,7 +119,12 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   requestVersionInfo(): Promise<void>
 
   // Video Recording Commands
-  startVideoRecording(requestId: string, save: boolean, sound: boolean): Promise<void>
+  startVideoRecording(
+    requestId: string,
+    save: boolean,
+    sound: boolean,
+    settings?: VideoRecordingSettings,
+  ): Promise<void>
   stopVideoRecording(requestId: string): Promise<void>
 
   // Stream Commands

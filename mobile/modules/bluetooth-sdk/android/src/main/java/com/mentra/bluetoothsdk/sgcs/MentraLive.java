@@ -6760,6 +6760,7 @@ public class MentraLive extends SGCManager {
      * @param height Video height (0 for default)
      * @param fps Video frame rate (0 for default)
      */
+    @Override
     public void startVideoRecording(String requestId, boolean save, boolean flash, boolean sound, int width, int height, int fps) {
         Bridge.log("LIVE: Starting video recording: requestId=" + requestId + ", save=" + save +
                    ", flash=" + flash + ", sound=" + sound + ", resolution=" + width + "x" + height + "@" + fps + "fps");

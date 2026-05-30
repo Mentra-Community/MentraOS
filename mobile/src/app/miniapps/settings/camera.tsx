@@ -16,6 +16,7 @@ import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
 type PhotoSize = "small" | "medium" | "large"
 type VideoResolution = "720p" | "1080p" | "1440p" | "4K"
+type VideoFps = "30" | "15" | "5"
 type MaxRecordingTime = "3m" | "5m" | "10m" | "15m" | "20m"
 type CameraRoiPosition = 0 | 1 | 2 // 0=Center, 1=Bottom, 2=Top
 
@@ -31,6 +32,12 @@ const PHOTO_SIZE_OPTIONS = [
 const VIDEO_RESOLUTION_OPTIONS = [
   {key: "720p" as VideoResolution, label: "720p (1280×720)"},
   {key: "1080p" as VideoResolution, label: "1080p (1920×1080)"},
+]
+
+const VIDEO_FPS_OPTIONS = [
+  {key: "30" as VideoFps, label: "30 fps", subtitle: "Smoothest motion"},
+  {key: "15" as VideoFps, label: "15 fps", subtitle: "Cooler, smaller files"},
+  {key: "5" as VideoFps, label: "5 fps", subtitle: "Coolest — best for long recordings"},
 ]
 
 const MAX_RECORDING_TIME_OPTIONS = [
@@ -82,6 +89,14 @@ export default function CameraSettingsScreen() {
     return "720p"
   })()
 
+  // Derive video fps from settings (snap to the nearest offered option)
+  const videoFps: VideoFps = (() => {
+    const fps = videoSettings?.fps ?? 30
+    if (fps <= 7) return "5"
+    if (fps <= 22) return "15"
+    return "30"
+  })()
+
   // Derive max recording time key from stored number
   const maxRecordingTimeKey: MaxRecordingTime = maxRecordingTime ? (`${maxRecordingTime}m` as MaxRecordingTime) : "5m"
 
@@ -101,9 +116,32 @@ export default function CameraSettingsScreen() {
     }
     const width = resolution === "4K" ? 3840 : resolution === "1440p" ? 2560 : resolution === "1080p" ? 1920 : 1280
     const height = resolution === "4K" ? 2160 : resolution === "1440p" ? 1920 : resolution === "1080p" ? 1080 : 720
-    const fps = resolution === "4K" ? 15 : 30
+    // Preserve the user's chosen fps; 4K only supports up to 15 fps, so clamp it there.
+    const currentFps = videoSettings?.fps ?? 30
+    const fps = resolution === "4K" ? Math.min(currentFps, 15) : currentFps
     setVideoSettings({width, height, fps})
-    BluetoothSdk.updateBluetoothSettings({button_video_width: width, button_video_height: height, button_video_fps: fps})
+    BluetoothSdk.updateBluetoothSettings({
+      button_video_width: width,
+      button_video_height: height,
+      button_video_fps: fps,
+    })
+  }
+
+  const handleVideoFpsChange = (fpsKey: VideoFps) => {
+    if (!glassesConnected) {
+      console.log("Cannot change video fps - glasses not connected")
+      return
+    }
+    // Keep the current resolution; only change the frame rate.
+    const width = videoSettings?.width ?? 1920
+    const height = videoSettings?.height ?? 1080
+    const fps = parseInt(fpsKey, 10)
+    setVideoSettings({width, height, fps})
+    BluetoothSdk.updateBluetoothSettings({
+      button_video_width: width,
+      button_video_height: height,
+      button_video_fps: fps,
+    })
   }
 
   const _handleLedToggle = (enabled: boolean) => {
@@ -182,6 +220,15 @@ export default function CameraSettingsScreen() {
             selected={videoResolution}
             onSelect={handleVideoResolutionChange}
           />
+        </View>
+
+        <View style={themed($section)}>
+          <Text style={themed($sectionTitle)}>Action Button Video Frame Rate</Text>
+          <Text style={themed($sectionSubtitle)}>
+            Lower frame rates keep the glasses cooler and produce smaller files — ideal for long recordings where smooth
+            motion isn&apos;t needed.
+          </Text>
+          <OptionList options={VIDEO_FPS_OPTIONS} selected={videoFps} onSelect={handleVideoFpsChange} />
         </View>
 
         <View style={themed($section)}>
