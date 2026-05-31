@@ -77,17 +77,46 @@ export class PhoneVideoCoordinator {
     return {recordingId}
   }
 
-  async stopRecording(_packageName: string, recordingId?: string): Promise<void> {
+  async stopRecording(packageName: string, recordingId?: string): Promise<void> {
     if (!recordingId) {
       throw new VideoError("INVALID_RECORDING_ID", "recordingId is required to stop a recording")
+    }
+
+    // Validate ownership before touching the glasses: a miniapp may only stop a
+    // recording it started, and we shouldn't forward an unknown id.
+    const active = this.activeRecordings.get(recordingId)
+    if (!active || active.packageName !== packageName) {
+      throw new VideoError("RECORDING_NOT_OWNED", "recordingId is not an active recording owned by this app")
     }
 
     try {
       await BluetoothSdk.stopVideoRecording(recordingId)
     } catch (err) {
+      // Leave the recording tracked so a retry (or unregister cleanup) can stop
+      // it — only drop it once the BLE command actually dispatched.
       throw this.toVideoError(err, "BLE_SEND_FAILED")
-    } finally {
-      this.activeRecordings.delete(recordingId)
+    }
+    this.activeRecordings.delete(recordingId)
+  }
+
+  /**
+   * Stop every recording owned by a package. Called when a miniapp unregisters
+   * (close/crash): the miniapp loses its recordingId, so without this the
+   * glasses keep recording until the max-recording timeout or thermal shutdown.
+   * Mirrors the streaming coordinator's per-app cleanup on disconnect.
+   */
+  async stopForApp(packageName: string): Promise<void> {
+    const owned = [...this.activeRecordings.values()].filter((r) => r.packageName === packageName)
+    for (const rec of owned) {
+      try {
+        await BluetoothSdk.stopVideoRecording(rec.recordingId)
+      } catch (err) {
+        console.warn(`[PhoneVideoCoordinator] failed to stop ${rec.recordingId} for ${packageName} on cleanup`, err)
+      } finally {
+        // Best-effort cleanup — drop tracking regardless so the map doesn't leak
+        // entries for a gone miniapp.
+        this.activeRecordings.delete(rec.recordingId)
+      }
     }
   }
 

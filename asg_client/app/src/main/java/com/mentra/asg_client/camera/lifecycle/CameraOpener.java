@@ -45,11 +45,20 @@ public final class CameraOpener {
         }
         int targetVideoWidth;
         int targetVideoHeight;
-        if (pendingSettings != null && pendingSettings.isValid()) {
+        if (pendingSettings != null && pendingSettings.isValid()
+                && containsSize(videoSizes, pendingSettings.width, pendingSettings.height)) {
             targetVideoWidth = pendingSettings.width;
             targetVideoHeight = pendingSettings.height;
             Log.i(TAG, "📹 Using CUSTOM video settings from command: " + pendingSettings);
         } else {
+            // Either no custom settings, or the requested size isn't one the sensor
+            // actually reports via getOutputSizes(). Handing MediaRecorder a size the
+            // sensor can't encode wedges the camera in a stuck recording, so fall back
+            // to the safe default instead of trusting the static whitelist alone.
+            if (pendingSettings != null && pendingSettings.isValid()) {
+                Log.w(TAG, "⚠️ Requested " + pendingSettings.width + "x" + pendingSettings.height +
+                        " is not in the sensor's getOutputSizes(); falling back to 1920x1080");
+            }
             targetVideoWidth = 1920;
             targetVideoHeight = 1080;
             Log.i(TAG, "📹 Using DEFAULT video settings: 1920x1080@30fps (no custom settings provided)");
@@ -67,6 +76,19 @@ public final class CameraOpener {
                     " - camera may not support requested resolution for MediaRecorder");
         }
         return chosenVideoSize;
+    }
+
+    /** True iff the sensor reports an exact (width x height) output size. */
+    private static boolean containsSize(Size[] sizes, int width, int height) {
+        if (sizes == null) {
+            return false;
+        }
+        for (Size s : sizes) {
+            if (s.getWidth() == width && s.getHeight() == height) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static Size resolveJpegSize(Size[] jpegSizes, boolean fromSdk, String requestedSizeTier) {

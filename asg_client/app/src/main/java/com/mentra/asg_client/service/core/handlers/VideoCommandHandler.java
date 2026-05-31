@@ -110,22 +110,32 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
                 return true;
             }
 
-            // Parse video settings if provided
+            // Parse video settings if provided. Any field that is missing or <= 0
+            // falls back to the saved button-video default rather than being
+            // dropped, so partial overrides (e.g. an fps-only request from a
+            // miniapp) still apply instead of silently recording at the default
+            // frame rate.
             VideoSettings videoSettings = null;
             JSONObject settings = data.optJSONObject("settings");
             if (settings != null) {
+                VideoSettings defaults = VideoSettings.getDefault();
+                if (serviceManager != null && serviceManager.getAsgSettings() != null) {
+                    defaults = serviceManager.getAsgSettings().getButtonVideoSettings();
+                }
+
                 int width = settings.optInt("width", 0);
                 int height = settings.optInt("height", 0);
-                int fps = settings.optInt("fps", 30);
-                
-                if (width > 0 && height > 0) {
-                    videoSettings = new VideoSettings(width, height, fps);
-                    if (!videoSettings.isValid()) {
-                        Log.w(TAG, "Invalid video settings provided, using defaults: " + videoSettings);
-                        videoSettings = null;
-                    } else {
-                        Log.d(TAG, "Using custom video settings: " + videoSettings);
-                    }
+                int fps = settings.optInt("fps", 0);
+                if (width <= 0) width = defaults.width;
+                if (height <= 0) height = defaults.height;
+                if (fps <= 0) fps = defaults.fps;
+
+                VideoSettings candidate = new VideoSettings(width, height, fps);
+                if (candidate.isValid()) {
+                    videoSettings = candidate;
+                    Log.d(TAG, "Using video settings (merged over saved defaults): " + videoSettings);
+                } else {
+                    Log.w(TAG, "Invalid video settings after merge, using defaults: " + candidate);
                 }
             }
 

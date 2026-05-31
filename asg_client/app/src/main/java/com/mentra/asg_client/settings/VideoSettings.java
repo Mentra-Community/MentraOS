@@ -37,29 +37,21 @@ public class VideoSettings {
     public static VideoSettings get720p() {
         return new VideoSettings(1280, 720, 30);
     }
-    
+
     /**
-     * Create 1440p settings
-     */
-    public static VideoSettings get1440p() {
-        return new VideoSettings(2560, 1920, 30);
-    }
-    
-    /**
-     * Create 4K settings
-     */
-    public static VideoSettings get4K() {
-        return new VideoSettings(3840, 2160, 15);
-    }
-    
-    /**
-     * Validate if resolution is supported
+     * Validate if resolution is supported.
+     *
+     * Only resolutions the Mentra Live sensor can actually record are advertised
+     * here. 1440p (2560x1920) and 4K (3840x2160) were previously listed but the
+     * sensor cannot encode them — requesting one fails to record AND wedges the
+     * camera in a stuck recording until the app restarts. They are intentionally
+     * excluded; {@link com.mentra.asg_client.camera.lifecycle.CameraOpener}
+     * additionally validates the request against the sensor's real
+     * getOutputSizes() at capture time as a second line of defense.
      */
     public static boolean isSupported(int width, int height) {
-        return (width == 1920 && height == 1080) || 
-               (width == 1280 && height == 720) ||
-               (width == 2560 && height == 1920) ||
-               (width == 3840 && height == 2160);
+        return (width == 1920 && height == 1080) ||
+               (width == 1280 && height == 720);
     }
     
     /**

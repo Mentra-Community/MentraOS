@@ -38,9 +38,15 @@ COOL_MAX_WAIT="${COOL_MAX_WAIT:-600}"    # max cooldown wait (s)
 IDLE_CPU_MAX="${IDLE_CPU_MAX:-45}"       # require CPU below this (C) before first run
 OUTDIR="${OUTDIR:-thermal-out-$(date +%Y%m%d_%H%M%S)}"
 
-# Full matrix: resolution@fps. Bitrate is derived by the app (16Mbps w>=1920, else 8Mbps).
-# Order: hottest-likely last so cooldowns are honest. 4K is capped to 15fps by the app.
-MATRIX="${MATRIX:-1280x720@30 1280x720@15 1280x720@5 1920x1080@30 1920x1080@15 1920x1080@5 2560x1920@30 2560x1920@15 2560x1920@5 3840x2160@15 3840x2160@5}"
+# Matrix: resolution@fps. Bitrate is derived by the app (16Mbps w>=1920, else 8Mbps).
+# Order: hottest-likely last so cooldowns are honest.
+#
+# WARNING: only sizes the Mentra Live sensor can actually record are included.
+# 2560x1920 (1440p) and 3840x2160 (4K) are NOT supported — requesting one fails
+# to record AND wedges the camera in a stuck recording. If you add them back and
+# the camera hangs, recover with:
+#   adb shell "am force-stop com.mentra.asg_client"   # then reconnect from the app
+MATRIX="${MATRIX:-1280x720@30 1280x720@15 1280x720@5 1920x1080@30 1920x1080@15 1920x1080@5}"
 
 # ---- helpers ---------------------------------------------------------------
 c() { awk -v m="$1" 'BEGIN{printf "%.1f", m/1000}'; }   # millideg -> C
@@ -50,11 +56,17 @@ adb_one() {  # ensure exactly one device
   [ "$n" -eq 1 ] || { echo "ERROR: need exactly 1 adb device, found $n"; adb devices; exit 1; }
 }
 
-send() {  # send a JSON command (directed + escaped). $1 = json body
-  adb shell "am broadcast -a $ACTION -p $PKG --es json '$1'" >/dev/null 2>&1
+send() {  # send a JSON command (directed + escaped). $1 = json body. Returns adb's exit code.
+  if ! adb shell "am broadcast -a $ACTION -p $PKG --es json '$1'" >/dev/null 2>&1; then
+    echo "   ⚠️  send failed (adb broadcast exited non-zero): $1" >&2
+    return 1
+  fi
 }
 
 cpu_c() { local v; v=$(adb shell "cat $CPU_ZONE" 2>/dev/null | tr -d '\r'); [ -n "$v" ] && c "$v" || echo "NaN"; }
+
+# portable file size in bytes (GNU coreutils `stat -c`, BSD/macOS `stat -f`)
+file_size_bytes() { stat -c%s "$1" 2>/dev/null || stat -f%z "$1" 2>/dev/null || echo 0; }
 
 # Read ALL named framework sensors from thermalservice HAL: "NAME=value" pairs.
 # BSD-awk friendly: no 3-arg match(); use sub()/gsub() to carve fields.
@@ -97,6 +109,13 @@ hal_sensors | sed 's/^/   /'
 BASE_CPU=$(cpu_c); echo
 echo "Baseline CPU (mtktscpu): ${BASE_CPU}C"
 
+# Guard against an unreadable sensor: cpu_c() returns "NaN" on a failed read,
+# which awk's `c+0` would silently coerce to 0 and slip past the idle check —
+# producing a full run of invalid thermal data. Fail fast instead.
+case "$BASE_CPU" in
+  ''|NaN|nan) echo "ERROR: could not read CPU temperature from $CPU_ZONE (got '${BASE_CPU}'). Check the device connection / sensor path."; exit 1;;
+esac
+
 awk -v c="$BASE_CPU" -v m="$IDLE_CPU_MAX" 'BEGIN{exit !(c+0<=m+0)}' \
   || { echo "ERROR: CPU ${BASE_CPU}C above idle threshold ${IDLE_CPU_MAX}C. Let it cool."; exit 1; }
 
@@ -132,7 +151,10 @@ run_cell() {
 
   local start_cpu; start_cpu=$(cpu_c)
   echo "   start CPU=${start_cpu}C — starting recording"
-  send "{\"type\":\"start_video_recording\",\"requestId\":\"$rid\",\"save\":true,\"settings\":{\"width\":$w,\"height\":$h,\"fps\":$fps}}"
+  if ! send "{\"type\":\"start_video_recording\",\"requestId\":\"$rid\",\"save\":true,\"settings\":{\"width\":$w,\"height\":$h,\"fps\":$fps}}"; then
+    echo "   ⚠️  skipping cell ${cell}: failed to dispatch start command"
+    return 1
+  fi
   sleep 2  # let recording actually engage
 
   # CSV header
@@ -181,7 +203,7 @@ run_cell() {
   ss=$(awk -F, 'NR>1{a[NR]=$2;n=NR} END{s=0;c=0;for(i=int(n*2/3);i<=n;i++){s+=a[i];c++} if(c)printf "%.1f",s/c}' "$csv")
   peak=$(awk -F, 'NR>1{if($2>m)m=$2} END{printf "%.1f",m}' "$csv")
   local maxstatus; maxstatus=$(awk -F, 'NR>1{c=$(NF-1); if(c>m)m=c} END{print m+0}' "$csv")
-  [ -f "$mp4" ] && fsize_mb=$(awk -v b="$(stat -f%z "$mp4" 2>/dev/null||echo 0)" 'BEGIN{printf "%.1f",b/1048576}') || fsize_mb=NaN
+  [ -f "$mp4" ] && fsize_mb=$(awk -v b="$(file_size_bytes "$mp4")" 'BEGIN{printf "%.1f",b/1048576}') || fsize_mb=NaN
 
   # record a row for the master table  (req_res req_fps act_res act_fps dur ss peak dStatus startCPU endCPU sizeMB)
   echo "${res}|${fps}|${aw}x${ah}|${afps}|${dur}|${ss}|${peak}|${maxstatus}|${start_cpu}|${end_cpu}|${fsize_mb}" >> "$OUTDIR/.rows"
@@ -209,7 +231,7 @@ for cell in $MATRIX; do run_cell "$cell"; done
   done < "$OUTDIR/.rows"
   echo
   echo "## FPS effect at fixed resolution (steady CPU)"
-  for r in 1280x720 1920x1080 2560x1920 3840x2160; do
+  for r in 1280x720 1920x1080; do
     line=$(awk -F'|' -v r="$r" '$1==r{printf "%s@%sfps=%sC  ",$1,$2,$6}' "$OUTDIR/.rows")
     [ -n "$line" ] && echo "- **$r**: $line"
   done

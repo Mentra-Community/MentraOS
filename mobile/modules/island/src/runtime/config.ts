@@ -333,6 +333,11 @@ export interface VideoRecordingAdapter {
     },
   ) => Promise<{recordingId: string}>
   stopRecording: (packageName: string, recordingId?: string) => Promise<void>
+  /**
+   * Stop any recordings still owned by an app (e.g. on miniapp disconnect/crash)
+   * so the glasses don't keep recording until the max-recording timeout.
+   */
+  stopForApp?: (packageName: string) => Promise<void>
 }
 
 /**

@@ -527,6 +527,13 @@ class LocalMiniappRuntime {
       console.warn(`${LOG_TAG}: failed to stop stream for ${packageName} on unregister`, error)
     })
 
+    // Stop any phone-owned video recordings for this app. A miniapp that
+    // closes/crashes mid-recording loses its recordingId, so without this the
+    // glasses keep recording until the max-recording timeout or thermal shutdown.
+    void getRuntimeHooks().videoRecording?.stopForApp?.(packageName).catch((error) => {
+      console.warn(`${LOG_TAG}: failed to stop video recording for ${packageName} on unregister`, error)
+    })
+
     // Detach the per-app nav event forwarder but leave the native nav session
     // running. The user may have just closed the mini-app UI and will reopen
     // it; stopping the session here would kill an active trip mid-route.

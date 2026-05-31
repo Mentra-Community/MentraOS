@@ -135,7 +135,10 @@ export default function CameraSettingsScreen() {
     // Keep the current resolution; only change the frame rate.
     const width = videoSettings?.width ?? 1920
     const height = videoSettings?.height ?? 1080
-    const fps = parseInt(fpsKey, 10)
+    // 4K tops out at 15 fps — clamp so we never send an unsupported 4K@30 combo
+    // (mirrors the clamp in handleVideoResolutionChange).
+    const requestedFps = parseInt(fpsKey, 10)
+    const fps = width >= 3840 ? Math.min(requestedFps, 15) : requestedFps
     setVideoSettings({width, height, fps})
     BluetoothSdk.updateBluetoothSettings({
       button_video_width: width,

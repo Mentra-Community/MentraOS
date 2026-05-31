@@ -6778,12 +6778,15 @@ public class MentraLive extends SGCManager {
             json.put("flash", flash);
             json.put("sound", sound);
 
-            // Add video settings if provided
-            if (width > 0 && height > 0) {
+            // Add video settings when any field is overridden. Each field is sent
+            // only when > 0; the glasses merge the missing fields onto their saved
+            // button-video defaults, so a partial override (e.g. fps-only) still
+            // takes effect instead of being dropped here.
+            if (width > 0 || height > 0 || fps > 0) {
                 JSONObject settings = new JSONObject();
-                settings.put("width", width);
-                settings.put("height", height);
-                settings.put("fps", fps > 0 ? fps : 30);
+                if (width > 0) settings.put("width", width);
+                if (height > 0) settings.put("height", height);
+                if (fps > 0) settings.put("fps", fps);
                 json.put("settings", settings);
             }
 

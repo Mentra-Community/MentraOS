@@ -240,6 +240,7 @@ class MantleManager {
       videoRecording: {
         startRecording: (pkg, opts) => phoneVideoCoordinator.startRecording(pkg, opts),
         stopRecording: (pkg, recordingId) => phoneVideoCoordinator.stopRecording(pkg, recordingId),
+        stopForApp: (pkg) => phoneVideoCoordinator.stopForApp(pkg),
       },
       // Google Nav SDK adapter — the island runtime fan-outs nav events to
       // miniapps subscribed to navigation_*. Delegates straight to the host's
