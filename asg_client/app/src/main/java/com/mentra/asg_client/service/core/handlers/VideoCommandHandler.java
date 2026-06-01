@@ -3,12 +3,12 @@ package com.mentra.asg_client.service.core.handlers;
 import android.content.Context;
 import android.util.Log;
 
-import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.file.core.FileManager;
+import com.mentra.asg_client.io.media.core.MediaCaptureService;
+import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
-import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.settings.VideoSettings;
 
 import org.json.JSONException;
@@ -18,9 +18,8 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Handler for video recording commands.
- * Follows Single Responsibility Principle by handling only video commands.
- * Extends BaseMediaCommandHandler for common package directory management.
+ * Handler for video recording commands. Follows Single Responsibility Principle by handling only
+ * video commands. Extends BaseMediaCommandHandler for common package directory management.
  */
 public class VideoCommandHandler extends BaseMediaCommandHandler {
     private static final String TAG = "VideoCommandHandler";
@@ -29,7 +28,12 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
     private final IMediaManager streamingManager;
     private final IStateManager stateManager;
 
-    public VideoCommandHandler(Context context, AsgClientServiceManager serviceManager, IMediaManager streamingManager, FileManager fileManager, IStateManager stateManager) {
+    public VideoCommandHandler(
+            Context context,
+            AsgClientServiceManager serviceManager,
+            IMediaManager streamingManager,
+            FileManager fileManager,
+            IStateManager stateManager) {
         super(context, fileManager);
         this.serviceManager = serviceManager;
         this.streamingManager = streamingManager;
@@ -38,7 +42,8 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("start_video_recording", "stop_video_recording", "get_video_recording_status");
+        return Set.of(
+                "start_video_recording", "stop_video_recording", "get_video_recording_status");
     }
 
     @Override
@@ -61,9 +66,7 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
         }
     }
 
-    /**
-     * Handle start video recording command
-     */
+    /** Handle start video recording command */
     private boolean handleStartVideoRecording(JSONObject data) {
         try {
             // Resolve package name using base class functionality
@@ -72,14 +75,17 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
 
             // Validate requestId using base class functionality
             if (!validateRequestId(data)) {
-                streamingManager.sendVideoRecordingStatusResponse(false, "missing_request_id", null);
+                streamingManager.sendVideoRecordingStatusResponse(
+                        false, "missing_request_id", null);
                 return false;
             }
 
             MediaCaptureService captureService = serviceManager.getMediaCaptureService();
             if (captureService == null) {
-                logCommandResult("start_video_recording", false, "Media capture service is not initialized");
-                streamingManager.sendVideoRecordingStatusResponse(false, "service_unavailable", null);
+                logCommandResult(
+                        "start_video_recording", false, "Media capture service is not initialized");
+                streamingManager.sendVideoRecordingStatusResponse(
+                        false, "service_unavailable", null);
                 return false;
             }
 
@@ -87,16 +93,28 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
             if (stateManager != null) {
                 int batteryLevel = stateManager.getBatteryLevel();
                 if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
-                    Log.w(TAG, "🚫 Video recording rejected - battery too low (" + batteryLevel + "%)");
-                    logCommandResult("start_video_recording", false, "Battery too low: " + batteryLevel + "%");
+                    Log.w(
+                            TAG,
+                            "🚫 Video recording rejected - battery too low ("
+                                    + batteryLevel
+                                    + "%)");
+                    logCommandResult(
+                            "start_video_recording",
+                            false,
+                            "Battery too low: " + batteryLevel + "%");
 
                     // Play audio feedback
                     captureService.playBatteryLowSound();
 
                     // Send error response to phone
-                    streamingManager.sendVideoRecordingStatusResponse(false, "battery_low",
-                        "Battery level too low (" + batteryLevel + "%) - minimum " +
-                        BatteryConstants.MIN_BATTERY_LEVEL + "% required");
+                    streamingManager.sendVideoRecordingStatusResponse(
+                            false,
+                            "battery_low",
+                            "Battery level too low ("
+                                    + batteryLevel
+                                    + "%) - minimum "
+                                    + BatteryConstants.MIN_BATTERY_LEVEL
+                                    + "% required");
 
                     return false;
                 }
@@ -133,7 +151,9 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
                 VideoSettings candidate = new VideoSettings(width, height, fps);
                 if (candidate.isValid()) {
                     videoSettings = candidate;
-                    Log.d(TAG, "Using video settings (merged over saved defaults): " + videoSettings);
+                    Log.d(
+                            TAG,
+                            "Using video settings (merged over saved defaults): " + videoSettings);
                 } else {
                     Log.w(TAG, "Invalid video settings after merge, using defaults: " + candidate);
                 }
@@ -146,11 +166,13 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
             String requestId = data.optString("requestId", "video_" + System.currentTimeMillis());
 
             if (videoSettings != null) {
-                captureService.handleStartVideoCommand(requestId, save, videoSettings, flash, sound);
+                captureService.handleStartVideoCommand(
+                        requestId, save, videoSettings, flash, sound);
             } else {
-                captureService.handleStartVideoCommand(requestId, save, flash, sound); // Use default settings
+                captureService.handleStartVideoCommand(
+                        requestId, save, flash, sound); // Use default settings
             }
-            
+
             logCommandResult("start_video_recording", true, null);
             streamingManager.sendVideoRecordingStatusResponse(true, "recording_started", null);
             return true;
@@ -162,9 +184,7 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
         }
     }
 
-    /**
-     * Handle stop video recording command
-     */
+    /** Handle stop video recording command */
     public boolean handleStopCommand(JSONObject data) {
         Log.d(TAG, "handleStopCommand called with data: " + data);
 
@@ -172,7 +192,8 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
             MediaCaptureService captureService = serviceManager.getMediaCaptureService();
             if (captureService == null) {
                 Log.e(TAG, "Media capture service is not initialized");
-                streamingManager.sendVideoRecordingStatusResponse(false, "service_unavailable", null);
+                streamingManager.sendVideoRecordingStatusResponse(
+                        false, "service_unavailable", null);
                 return false;
             }
 
@@ -187,7 +208,7 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
             if (data != null) {
                 requestId = data.optString("requestId", null);
             }
-            
+
             // If requestId provided, use handleStopVideoCommand for validation
             // Otherwise use direct stopVideoRecording for backward compatibility
             if (requestId != null && !requestId.isEmpty()) {
@@ -197,7 +218,7 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
                 Log.d(TAG, "Stopping video without requestId (backward compatibility mode)");
                 captureService.stopVideoRecording();
             }
-            
+
             streamingManager.sendVideoRecordingStatusResponse(true, "recording_stopped", null);
             return true;
         } catch (Exception e) {
@@ -207,15 +228,14 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
         }
     }
 
-    /**
-     * Handle get video recording status command
-     */
+    /** Handle get video recording status command */
     public boolean handleStatusCommand() {
         try {
             MediaCaptureService captureService = serviceManager.getMediaCaptureService();
             if (captureService == null) {
                 Log.e(TAG, "Media capture service is not initialized");
-                streamingManager.sendVideoRecordingStatusResponse(false, "service_unavailable", null);
+                streamingManager.sendVideoRecordingStatusResponse(
+                        false, "service_unavailable", null);
                 return false;
             }
 
@@ -234,7 +254,8 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
                 return true;
             } catch (JSONException e) {
                 Log.e(TAG, "Error creating video recording status response", e);
-                streamingManager.sendVideoRecordingStatusResponse(false, "json_error", e.getMessage());
+                streamingManager.sendVideoRecordingStatusResponse(
+                        false, "json_error", e.getMessage());
                 return false;
             }
         } catch (Exception e) {
