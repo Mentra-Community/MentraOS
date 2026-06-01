@@ -926,7 +926,7 @@ class MentraLive: NSObject, SGCManager {
     func setSilentMode(_: Bool) {}
     func exit() {}
     func showDashboard() {}
-    func displayBitmap(base64ImageData _: String) async -> Bool {
+    func displayBitmap(base64ImageData _: String, x _: Int32? = nil, y _: Int32? = nil, width _: Int32? = nil, height _: Int32? = nil) async -> Bool {
         return true
     }
 
@@ -1312,10 +1312,11 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, sound: Bool, includeImu: Bool, exposureTimeNs: Double?
+        compress: String?, flash: Bool, save: Bool, sound: Bool, includeImu: Bool,
+        exposureTimeNs: Double?
     ) {
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(requestId) appId=\(appId) flash=\(flash) sound=\(sound) includeImu=\(includeImu)"
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(requestId) appId=\(appId) flash=\(flash) save=\(save) sound=\(sound) includeImu=\(includeImu)"
         )
 
         var json: [String: Any] = [
@@ -1361,6 +1362,7 @@ class MentraLive: NSObject, SGCManager {
         json["compress"] = compress ?? "none"
 
         json["flash"] = flash
+        json["save"] = save
         json["sound"] = sound
         json["includeImu"] = includeImu
 
@@ -2022,6 +2024,7 @@ class MentraLive: NSObject, SGCManager {
 
             Bridge.log("LIVE: 📱 OTA status - step \(osCurrentStep)/\(osTotalSteps) \(osPhase) \(osStatus) \(osOverallPercent)%")
 
+            let glassesTimeMs = (json["glasses_time_ms"] as? NSNumber)?.int64Value ?? 0
             Bridge.sendOtaStatus(
                 sessionId: osSessionId,
                 totalSteps: osTotalSteps,
@@ -2031,7 +2034,8 @@ class MentraLive: NSObject, SGCManager {
                 stepPercent: osStepPercent,
                 overallPercent: osOverallPercent,
                 status: osStatus,
-                errorMessage: osErrorMessage
+                errorMessage: osErrorMessage,
+                glassesTimeMs: glassesTimeMs > 0 ? glassesTimeMs : nil
             )
 
         case "ota_progress":
@@ -2111,6 +2115,9 @@ class MentraLive: NSObject, SGCManager {
                 }
                 if let bluetoothMacAddress = fields["bt_mac_address"] as? String {
                     DeviceStore.shared.apply("glasses", "bluetoothMacAddress", bluetoothMacAddress)
+                }
+                if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
+                    DeviceStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
                 }
 
                 // Send fields immediately to RN - no waiting for other chunks
@@ -2428,6 +2435,17 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    func sendSetSystemTime(_ timestampMs: Int64) {
+        Bridge.log("LIVE: ⏰ Sending set_system_time: \(timestampMs)")
+
+        let json: [String: Any] = [
+            "type": "set_system_time",
+            "timestamp_ms": timestampMs,
+        ]
+
+        sendJson(json, wakeUp: true)
+    }
+
     func sendUserEmailToGlasses(_ email: String) {
         Bridge.log("LIVE: Sending user email to glasses for crash reporting")
 
@@ -2533,6 +2551,17 @@ class MentraLive: NSObject, SGCManager {
 
         let json: [String: Any] = [
             "type": "ota_query_status",
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+        ]
+
+        sendJson(json, wakeUp: true)
+    }
+
+    func sendOtaRetryVersionCheck() {
+        Bridge.log("LIVE: ⏰ Sending ota_retry_version_check command to glasses")
+
+        let json: [String: Any] = [
+            "type": "ota_retry_version_check",
             "timestamp": Int(Date().timeIntervalSince1970 * 1000),
         ]
 

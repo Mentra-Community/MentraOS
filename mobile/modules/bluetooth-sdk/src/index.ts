@@ -35,6 +35,7 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "mic_lc3",
   "stream_status",
   "keep_alive_ack",
+  "extraction_progress",
 ])
 
 const addListener: BluetoothSdkPublicModule["addListener"] = (eventName, listener) => {
@@ -93,6 +94,18 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setGlassesMediaVolume: PrivateBluetoothSdkModule.setGlassesMediaVolume.bind(PrivateBluetoothSdkModule),
   rgbLedControl: PrivateBluetoothSdkModule.rgbLedControl.bind(PrivateBluetoothSdkModule),
   requestVersionInfo: PrivateBluetoothSdkModule.requestVersionInfo.bind(PrivateBluetoothSdkModule),
+  setSttModelDetails: PrivateBluetoothSdkModule.setSttModelDetails.bind(PrivateBluetoothSdkModule),
+  getSttModelPath: PrivateBluetoothSdkModule.getSttModelPath.bind(PrivateBluetoothSdkModule),
+  checkSttModelAvailable: PrivateBluetoothSdkModule.checkSttModelAvailable.bind(PrivateBluetoothSdkModule),
+  validateSttModel: PrivateBluetoothSdkModule.validateSttModel.bind(PrivateBluetoothSdkModule),
+  extractTarBz2: PrivateBluetoothSdkModule.extractTarBz2.bind(PrivateBluetoothSdkModule),
+  restartTranscriber: PrivateBluetoothSdkModule.restartTranscriber.bind(PrivateBluetoothSdkModule),
+  setTtsModelDetails: PrivateBluetoothSdkModule.setTtsModelDetails.bind(PrivateBluetoothSdkModule),
+  getTtsModelPath: PrivateBluetoothSdkModule.getTtsModelPath.bind(PrivateBluetoothSdkModule),
+  getTtsModelLanguage: PrivateBluetoothSdkModule.getTtsModelLanguage.bind(PrivateBluetoothSdkModule),
+  checkTtsModelAvailable: PrivateBluetoothSdkModule.checkTtsModelAvailable.bind(PrivateBluetoothSdkModule),
+  validateTtsModel: PrivateBluetoothSdkModule.validateTtsModel.bind(PrivateBluetoothSdkModule),
+  generateTtsAudio: PrivateBluetoothSdkModule.generateTtsAudio.bind(PrivateBluetoothSdkModule),
 })
 
 export default BluetoothSdk

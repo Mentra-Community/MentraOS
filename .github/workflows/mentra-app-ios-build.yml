@@ -1,0 +1,198 @@
+name: Mobile App iOS Build
+
+on:
+  pull_request:
+    paths:
+      - "mobile/**"
+      - ".github/workflows/mentra-app-ios-build.yml"
+  push:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: [self-hosted, macOS, ARM64]
+
+    steps:
+      - name: Kill stale build processes
+        run: |
+          killall xcodebuild 2>/dev/null || true
+          killall Simulator 2>/dev/null || true
+          xcrun simctl shutdown all 2>/dev/null || true
+
+      - name: Clean previous build outputs only
+        run: |
+          # Wipe build outputs from previous runs but preserve dependency caches
+          # (node_modules, Pods, DerivedData are kept and invalidated by lockfile keys below)
+          rm -rf mobile/ios/build mobile/ios/build-device
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Get cache week number
+        id: cache-week
+        run: echo "week=$(date +%Y-%U)" >> $GITHUB_OUTPUT
+
+      - name: Cache CocoaPods
+        id: pods-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            mobile/ios/Pods
+            ~/Library/Caches/CocoaPods
+            ~/.cocoapods
+          key: pods-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/ios/Podfile.lock', 'mobile/package.json') }}
+          restore-keys: |
+            pods-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            pods-${{ runner.os }}-
+
+      - name: Cache Xcode DerivedData (device build)
+        uses: actions/cache@v4
+        with:
+          path: mobile/ios/build-device
+          key: xcode-derived-device-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/ios/Podfile.lock', 'mobile/package.json') }}
+          restore-keys: |
+            xcode-derived-device-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            xcode-derived-device-${{ runner.os }}-
+
+      - name: Install dependencies
+        id: bun-install
+        working-directory: ./mobile
+        run: bun install --no-frozen-lockfile
+        continue-on-error: true
+
+      - name: Retry bun install with clean node_modules (if first attempt failed)
+        if: steps.bun-install.outcome == 'failure'
+        working-directory: ./mobile
+        run: |
+          echo "First bun install failed, wiping node_modules and retrying..."
+          rm -rf node_modules
+          bun install --no-frozen-lockfile
+
+      - name: Setup environment
+        working-directory: ./mobile
+        run: |
+          # Create .env from example
+          cp .env.example .env
+
+      - name: Run Expo prebuild
+        working-directory: ./mobile
+        run: bun expo prebuild --platform ios
+
+      - name: Setup Sherpa Onnx
+        working-directory: ./mobile
+        run: |
+          chmod +x scripts/setup-sherpa-onnx-optional.sh
+          ./scripts/setup-sherpa-onnx-optional.sh
+
+      - name: Install CocoaPods dependencies
+        working-directory: ./mobile/ios
+        run: pod install
+
+      - name: List available simulators
+        run: xcrun simctl list devices available
+
+      - name: Debug - List iOS directory contents
+        working-directory: ./mobile/ios
+        run: |
+          echo "Contents of mobile/ios:"
+          ls -la
+          echo "Workspace files:"
+          ls -la *.xcworkspace || echo "No workspace files found"
+
+      - name: Ensure iOS platform is installed
+        working-directory: ./mobile/ios
+        run: |
+          # Idempotent: no-op if already present, downloads if missing.
+          # Required because Xcode bundles SDK headers but device-build
+          # support files are downloaded separately (e.g. iOS 26.4).
+          xcodebuild -downloadPlatform iOS || true
+          echo "Available destinations:"
+          xcodebuild -workspace Mentra.xcworkspace -scheme Mentra -showdestinations 2>&1 | head -40 || true
+
+      # ----------------------------------------------------------------------
+      # Debug simulator build — disabled on PRs to keep Mac mini queue moving.
+      # Re-enable when Maestro E2E is added (Maestro needs simulator builds).
+      # ----------------------------------------------------------------------
+      # - name: Build iOS app for Simulator
+      #   working-directory: ./mobile/ios
+      #   run: |
+      #     xcodebuild \
+      #                -workspace Mentra.xcworkspace \
+      #                -scheme Mentra \
+      #                -configuration Debug \
+      #                -sdk iphonesimulator \
+      #                -destination 'platform=iOS Simulator,name=iPhone 16 Pro,OS=18.0' \
+      #                -derivedDataPath build
+
+      - name: Build iOS app for Device (cached attempt)
+        id: xcode-build
+        working-directory: ./mobile/ios
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: "true"
+        continue-on-error: true
+        run: |
+          xcodebuild -workspace Mentra.xcworkspace \
+                     -scheme Mentra \
+                     -configuration Release \
+                     -destination 'generic/platform=iOS' \
+                     -derivedDataPath build-device \
+                     CODE_SIGN_IDENTITY="" \
+                     CODE_SIGNING_REQUIRED=NO \
+                     CODE_SIGNING_ALLOWED=NO
+
+      - name: Retry build with clean caches (if first attempt failed)
+        if: steps.xcode-build.outcome == 'failure'
+        working-directory: ./mobile/ios
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: "true"
+        run: |
+          echo "First build failed, nuking caches and retrying from scratch..."
+
+          # Kill any hung Xcode processes from the failed attempt
+          killall xcodebuild 2>/dev/null || true
+          killall Simulator 2>/dev/null || true
+          xcrun simctl shutdown all 2>/dev/null || true
+
+          # Wipe all iOS-side caches (Pods, DerivedData, repo-level + global)
+          rm -rf Pods Podfile.lock build-device
+          rm -rf ~/Library/Developer/Xcode/DerivedData/Mentra-*
+
+          # Reinstall pods from scratch with fresh repo
+          pod install --repo-update
+
+          # Retry the build
+          xcodebuild -workspace Mentra.xcworkspace \
+                     -scheme Mentra \
+                     -configuration Release \
+                     -destination 'generic/platform=iOS' \
+                     -derivedDataPath build-device \
+                     CODE_SIGN_IDENTITY="" \
+                     CODE_SIGNING_REQUIRED=NO \
+                     CODE_SIGNING_ALLOWED=NO
+
+      - name: Fail if both builds failed
+        if: steps.xcode-build.outcome == 'failure'
+        run: |
+          if [ ! -d "mobile/ios/build-device/Build/Products/Release-iphoneos/Mentra.app" ]; then
+            echo "Both build attempts failed"
+            exit 1
+          fi
+
+      - name: Upload Device Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-device-build
+          path: mobile/ios/build-device/Build/Products/Release-iphoneos/Mentra.app

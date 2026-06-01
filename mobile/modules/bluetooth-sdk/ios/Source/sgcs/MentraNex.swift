@@ -53,7 +53,8 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     func requestPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, sound _: Bool, includeImu _: Bool, exposureTimeNs _: Double?
+        compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, includeImu _: Bool,
+        exposureTimeNs _: Double?
     ) {}
 
     func startStream(_: [String: Any]) {}
@@ -85,7 +86,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         sendTextWall("\(top)\n\(bottom)")
     }
 
-    func displayBitmap(base64ImageData: String) async -> Bool {
+    func displayBitmap(base64ImageData: String, x _: Int32? = nil, y _: Int32? = nil, width _: Int32? = nil, height _: Int32? = nil) async -> Bool {
         guard let imageData = Data(base64Encoded: base64ImageData),
               let image = UIImage(data: imageData)
         else {
@@ -163,6 +164,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     func ping() {
         Bridge.log("NEX: ping() is host-side no-op for this transport")
     }
+
     func connectController() {}
     func disconnectController() {}
 

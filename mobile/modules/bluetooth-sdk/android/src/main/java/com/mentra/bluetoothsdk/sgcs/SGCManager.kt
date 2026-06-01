@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.utils.ConnTypes
 
@@ -21,6 +22,7 @@ abstract class SGCManager {
             authToken: String?,
             compress: String?,
             flash: Boolean,
+            save: Boolean,
             sound: Boolean,
             includeImu: Boolean,
             exposureTimeNs: Long?,
@@ -43,7 +45,17 @@ abstract class SGCManager {
     abstract fun clearDisplay()
     abstract fun sendTextWall(text: String)
     abstract fun sendDoubleTextWall(top: String, bottom: String)
-    abstract fun displayBitmap(base64ImageData: String): Boolean
+    /**
+     * Display a bitmap. Optional [x]/[y]/[width]/[height] position and size the target
+     * container (used by G2; other SGCs ignore positioning and render the bitmap as before).
+     */
+    abstract fun displayBitmap(
+            base64ImageData: String,
+            x: Int? = null,
+            y: Int? = null,
+            width: Int? = null,
+            height: Int? = null
+    ): Boolean
     abstract fun showDashboard()
     abstract fun setDashboardPosition(height: Int, depth: Int)
 
@@ -61,6 +73,15 @@ abstract class SGCManager {
 
     // Dashboard Menu (default no-op — only G2 supports this)
     open fun setDashboardMenu(items: List<Map<String, Any>>) {}
+
+    // Calendar Events (default no-op — only G2 supports this)
+    open fun sendCalendarEvents(events: List<Map<String, Any>>) {}
+
+    // Dashboard display settings (default no-op — only G2 supports this)
+    open fun sendDashboardDisplaySettings() {}
+
+    // Notification Panel (default no-op — only G2 supports this)
+    open fun showNotificationsPanel() {}
 
     // Controller bridging (default no-op — only G2 supports pairing with a ring controller)
     open fun connectController() {}
@@ -100,6 +121,11 @@ abstract class SGCManager {
     abstract fun sendWifiCredentials(ssid: String, password: String)
     abstract fun forgetWifiNetwork(ssid: String)
     abstract fun sendHotspotState(enabled: Boolean)
+
+    /** Set glasses system clock (Mentra Live only; no-op on other devices). */
+    open fun sendSetSystemTime(timestampMs: Long) {
+        Bridge.log("SGC: sendSetSystemTime not supported on $type")
+    }
 
     // User Context (for crash reporting)
     abstract fun sendUserEmailToGlasses(email: String)

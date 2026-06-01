@@ -106,6 +106,16 @@ public class Bridge private constructor() {
             sendTypedMessage("log", data as Map<String, Any>)
         }
 
+        /** Report tar.bz2 extraction progress to JavaScript. */
+        @JvmStatic
+        fun sendExtractionProgress(percentage: Int, bytesRead: Long, totalBytes: Long) {
+            val data = HashMap<String, Any>()
+            data["percentage"] = percentage
+            data["bytesRead"] = bytesRead
+            data["totalBytes"] = totalBytes
+            sendTypedMessage("extraction_progress", data as Map<String, Any>)
+        }
+
         /** Send head position event */
         @JvmStatic
         fun sendHeadUp(isUp: Boolean) {
@@ -534,6 +544,7 @@ public class Bridge private constructor() {
         }
 
         @JvmStatic
+        @JvmOverloads
         fun sendOtaStatus(
                 sessionId: String,
                 totalSteps: Int,
@@ -543,7 +554,8 @@ public class Bridge private constructor() {
                 stepPercent: Int,
                 overallPercent: Int,
                 status: String,
-                errorMessage: String?
+                errorMessage: String? = null,
+                glassesTimeMs: Long? = null,
         ) {
             val eventBody = HashMap<String, Any>()
             eventBody["session_id"] = sessionId
@@ -555,6 +567,9 @@ public class Bridge private constructor() {
             eventBody["overall_percent"] = overallPercent
             eventBody["status"] = status
             errorMessage?.let { eventBody["error_message"] = it }
+            if (glassesTimeMs != null && glassesTimeMs > 0) {
+                eventBody["glasses_time_ms"] = glassesTimeMs
+            }
 
             Log.d(TAG, "Bridge: sendOtaStatus: $eventBody")
 

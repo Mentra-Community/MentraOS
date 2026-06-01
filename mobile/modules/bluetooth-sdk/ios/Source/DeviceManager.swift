@@ -19,6 +19,11 @@ struct ViewState {
     var text: String
     var data: String?
     var animationData: [String: Any]?
+    // Optional bitmap_view container position/size (used by G2; ignored by others)
+    var bmpX: Int32?
+    var bmpY: Int32?
+    var bmpWidth: Int32?
+    var bmpHeight: Int32?
 }
 
 @MainActor
@@ -167,6 +172,14 @@ struct ViewState {
         set { DeviceStore.shared.apply("bluetooth", "sensing_enabled", newValue) }
     }
 
+    /// Phone-side VAD gating switch. Default is OFF (VAD runs) so that the
+    /// coordinator can drive per-utterance offline/online STT switching from
+    /// `vad_status` events. Set to `true` only as an emergency kill-switch.
+    private var bypassVad: Bool {
+        get { DeviceStore.shared.get("bluetooth", "bypass_vad") as? Bool ?? false }
+        set { DeviceStore.shared.apply("bluetooth", "bypass_vad", newValue) }
+    }
+
     private var offlineCaptionsRunning: Bool {
         get { DeviceStore.shared.get("bluetooth", "offline_captions_running") as? Bool ?? false }
         set { DeviceStore.shared.apply("bluetooth", "offline_captions_running", newValue) }
@@ -225,6 +238,7 @@ struct ViewState {
         get { DeviceStore.shared.get("bluetooth", "shouldSendBootingMessage") as? Bool ?? true }
         set { DeviceStore.shared.apply("bluetooth", "shouldSendBootingMessage", newValue) }
     }
+    private var lastSystemTimeSyncConnectionKey = ""
 
     private var systemMicUnavailable: Bool {
         get { DeviceStore.shared.get("bluetooth", "systemMicUnavailable") as? Bool ?? false }
@@ -581,6 +595,7 @@ struct ViewState {
             Bridge.log("MAN: Manager already initialized, cleaning up previous sgc")
             sgc?.cleanup()
             sgc = nil
+            lastSystemTimeSyncConnectionKey = ""
         }
 
         if sgc != nil {
@@ -674,7 +689,13 @@ struct ViewState {
                     return
                 }
                 Bridge.log("MAN: Processing bitmap_view with base64 data, length: \(data.count)")
-                await sgc?.displayBitmap(base64ImageData: data)
+                await sgc?.displayBitmap(
+                    base64ImageData: data,
+                    x: currentViewState.bmpX,
+                    y: currentViewState.bmpY,
+                    width: currentViewState.bmpWidth,
+                    height: currentViewState.bmpHeight
+                )
             case "clear_view":
                 sgc?.clearDisplay()
             default:
@@ -735,7 +756,7 @@ struct ViewState {
         if !glassesMicEnabled || !glassesConnected {
             return
         }
-        
+
         let timeSinceLastLc3Event = Date().timeIntervalSince(lastLc3Event ?? Date())
         if timeSinceLastLc3Event > 5 {
             Bridge.log("MAN: No audio activity in the last 5 seconds from glasses, reinitializing glasses mic")
@@ -846,6 +867,9 @@ struct ViewState {
         defaultWearable = sgc.type
         searching = false
 
+        let connectionKey = "\(sgc.type):\(deviceName)"
+        syncSystemTimeOnceForConnection(sgc, connectionKey: connectionKey)
+
         // Show welcome message on first connect for all display glasses
         if shouldSendBootingMessage {
             Task {
@@ -881,6 +905,20 @@ struct ViewState {
             DeviceStore.shared.get("bluetooth", "dashboard_depth")
         )
         sgc.setDashboardPosition(h, d)
+    }
+
+    private func syncSystemTimeOnceForConnection(_ sgc: SGCManager, connectionKey: String) {
+        if sgc.type.contains(DeviceTypes.SIMULATED) {
+            return
+        }
+        if connectionKey == lastSystemTimeSyncConnectionKey {
+            return
+        }
+
+        lastSystemTimeSyncConnectionKey = connectionKey
+        let timestampMs = Int64(Date().timeIntervalSince1970 * 1000)
+        Bridge.log("MAN: Syncing glasses system time once for connection: \(timestampMs)")
+        sgc.sendSetSystemTime(timestampMs)
     }
 
     func handleControllerReady() {
@@ -927,6 +965,7 @@ struct ViewState {
 
     func handleDeviceDisconnected() {
         Bridge.log("MAN: Device disconnected")
+        lastSystemTimeSyncConnectionKey = ""
         DeviceStore.shared.apply("glasses", "headUp", false)
         DeviceStore.shared.apply("glasses", "voiceActivityDetectionEnabled", true)
         // shouldSendBootingMessage = true  // Reset for next first connect
@@ -966,6 +1005,12 @@ struct ViewState {
         var title = layout["title"] as? String ?? " "
         var data = layout["data"] as? String ?? ""
 
+        // Optional bitmap_view container position/size (forwarded to the SGC; used by G2).
+        let bmpX = (layout["x"] as? NSNumber).map { $0.int32Value }
+        let bmpY = (layout["y"] as? NSNumber).map { $0.int32Value }
+        let bmpWidth = (layout["width"] as? NSNumber).map { $0.int32Value }
+        let bmpHeight = (layout["height"] as? NSNumber).map { $0.int32Value }
+
         text = parsePlaceholders(text)
         topText = parsePlaceholders(topText)
         bottomText = parsePlaceholders(bottomText)
@@ -973,7 +1018,8 @@ struct ViewState {
 
         var newViewState = ViewState(
             topText: topText, bottomText: bottomText, title: title, layoutType: layoutType,
-            text: text, data: data, animationData: nil
+            text: text, data: data, animationData: nil,
+            bmpX: bmpX, bmpY: bmpY, bmpWidth: bmpWidth, bmpHeight: bmpHeight
         )
 
         if layoutType == "bitmap_animation" {
@@ -1023,13 +1069,17 @@ struct ViewState {
         sgc?.showDashboard()
     }
 
+    func showNotificationsPanel() {
+        sgc?.showNotificationsPanel()
+    }
+
     func ping() {
         sgc?.ping()
     }
 
     func dbg1() {
-        sgc?.disconnectController()
-        connectDefaultController()
+        // sgc?.disconnectController()
+        // connectDefaultController()
     }
 
     func dbg2() {}
@@ -1077,6 +1127,11 @@ struct ViewState {
         sgc?.sendHotspotState(enabled)
     }
 
+    func setSystemTime(_ timestampMs: Int64) {
+        Bridge.log("MAN: Setting glasses system time: \(timestampMs)")
+        sgc?.sendSetSystemTime(timestampMs)
+    }
+
     func queryGalleryStatus() {
         Bridge.log("MAN: 📸 Querying gallery status from glasses")
         sgc?.queryGalleryStatus()
@@ -1093,6 +1148,11 @@ struct ViewState {
     func sendOtaQueryStatus() {
         Bridge.log("MAN: 📱 Sending OTA query status command to glasses")
         (sgc as? MentraLive)?.sendOtaQueryStatus()
+    }
+
+    func retryOtaVersionCheck() {
+        Bridge.log("MAN: ⏰ Retrying glasses OTA version check after clock sync")
+        (sgc as? MentraLive)?.sendOtaRetryVersionCheck()
     }
 
     /// Request version info from glasses.
@@ -1197,12 +1257,13 @@ struct ViewState {
         _ authToken: String?,
         _ compress: String?,
         _ flash: Bool,
+        _ save: Bool,
         _ sound: Bool,
         _ includeImu: Bool,
         exposureTimeNs: Double? = nil
     ) {
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(requestId) appId=\(appId) webhookUrl=\(webhookUrl ?? "nil") size=\(size) compress=\(compress ?? "none") flash=\(flash) sound=\(sound) includeImu=\(includeImu) exposureTimeNs=\(exposureTimeNs.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(requestId) appId=\(appId) webhookUrl=\(webhookUrl ?? "nil") size=\(size) compress=\(compress ?? "none") flash=\(flash) save=\(save) sound=\(sound) includeImu=\(includeImu) exposureTimeNs=\(exposureTimeNs.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
         )
         guard let sgc else {
             Bridge.log(
@@ -1212,7 +1273,7 @@ struct ViewState {
         }
         sgc.requestPhoto(
             requestId, appId: appId, size: size, webhookUrl: webhookUrl, authToken: authToken,
-            compress: compress, flash: flash, sound: sound, includeImu: includeImu,
+            compress: compress, flash: flash, save: save, sound: sound, includeImu: includeImu,
             exposureTimeNs: exposureTimeNs
         )
     }
@@ -1311,6 +1372,7 @@ struct ViewState {
         sgc?.clearDisplay() // clear the screen
         sgc?.disconnect()
         sgc = nil // Clear the SGC reference after disconnect
+        lastSystemTimeSyncConnectionKey = ""
         searching = false
         micEnabled = false
         updateMicState()

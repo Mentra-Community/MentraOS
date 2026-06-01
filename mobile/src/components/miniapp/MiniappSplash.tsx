@@ -23,10 +23,9 @@ interface MiniappSplashProps {
   isLoaded?: boolean
 }
 
-const FADE_IN_DURATION_MS = 200
-const FADE_OUT_DURATION_MS = 300
+const FADE_IN_DURATION_MS = 50
+const FADE_OUT_DURATION_MS = 200
 const MIN_VISIBLE_MS = 700
-const SCALE_FROM = 0.4
 
 export default function MiniappSplash({iconUrl, bgColor, isLoaded = false}: MiniappSplashProps) {
   const {theme} = useAppTheme()
@@ -34,16 +33,14 @@ export default function MiniappSplash({iconUrl, bgColor, isLoaded = false}: Mini
   const borderRadius = theme.spacing.s3
 
   const opacity = useSharedValue(0)
-  const scale = useSharedValue(SCALE_FROM)
   const [hidden, setHidden] = useState(false)
   const [minVisibleElapsed, setMinVisibleElapsed] = useState(false)
 
   useEffect(() => {
     opacity.value = withTiming(1, {duration: FADE_IN_DURATION_MS})
-    scale.value = withTiming(1, {duration: FADE_IN_DURATION_MS})
     const t = setTimeout(() => setMinVisibleElapsed(true), MIN_VISIBLE_MS)
     return () => clearTimeout(t)
-  }, [opacity, scale])
+  }, [opacity])
 
   useEffect(() => {
     if (!isLoaded || !minVisibleElapsed) return
@@ -54,7 +51,6 @@ export default function MiniappSplash({iconUrl, bgColor, isLoaded = false}: Mini
 
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,
-    transform: [{scale: scale.value}],
   }))
 
   if (hidden) return null
@@ -62,7 +58,11 @@ export default function MiniappSplash({iconUrl, bgColor, isLoaded = false}: Mini
   return (
     <Animated.View
       pointerEvents="none"
-      style={[StyleSheet.absoluteFill, styles.root, {backgroundColor: bgColor}, animatedStyle]}>
+      style={[
+        StyleSheet.absoluteFill,
+        {backgroundColor: bgColor, borderRadius: theme.spacing.s12, justifyContent: "center", alignItems: "center"},
+        animatedStyle,
+      ]}>
       {iconUrl && (
         <SquircleView
           cornerSmoothing={100}
@@ -87,10 +87,3 @@ export default function MiniappSplash({iconUrl, bgColor, isLoaded = false}: Mini
     </Animated.View>
   )
 }
-
-const styles = StyleSheet.create({
-  root: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-})

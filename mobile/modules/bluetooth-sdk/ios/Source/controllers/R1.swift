@@ -499,11 +499,15 @@ class R1: NSObject, ControllerManager {
 
     func sendIncidentId(_: String, apiBaseUrl _: String?) {}
     func setMicEnabled(_: Bool) {}
-    func sortMicRanking(list: [String]) -> [String] { return list }
+    func sortMicRanking(list: [String]) -> [String] {
+        return list
+    }
+
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
     func requestPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, sound _: Bool, includeImu _: Bool, exposureTimeNs _: Double?
+        compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, includeImu _: Bool,
+        exposureTimeNs _: Double?
     ) {}
     func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
     func stopVideoRecording(requestId _: String) {}
@@ -518,7 +522,10 @@ class R1: NSObject, ControllerManager {
     func clearDisplay() {}
     func sendTextWall(_: String) {}
     func sendDoubleTextWall(_: String, _: String) {}
-    func displayBitmap(base64ImageData _: String) async -> Bool { return false }
+    func displayBitmap(base64ImageData _: String, x _: Int32? = nil, y _: Int32? = nil, width _: Int32? = nil, height _: Int32? = nil) async -> Bool {
+        return false
+    }
+
     func showDashboard() {}
     func setDashboardPosition(_: Int, _: Int) {}
     func setHeadUpAngle(_: Int) {}

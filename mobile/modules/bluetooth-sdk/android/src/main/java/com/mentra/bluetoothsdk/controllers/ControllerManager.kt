@@ -22,6 +22,7 @@ abstract class ControllerManager {
         authToken: String?,
         compress: String?,
         flash: Boolean,
+        save: Boolean,
         sound: Boolean,
         includeImu: Boolean,
         exposureTimeNs: Long?,
@@ -43,7 +44,13 @@ abstract class ControllerManager {
     abstract fun clearDisplay()
     abstract fun sendTextWall(text: String)
     abstract fun sendDoubleTextWall(top: String, bottom: String)
-    abstract fun displayBitmap(base64ImageData: String): Boolean
+    abstract fun displayBitmap(
+            base64ImageData: String,
+            x: Int? = null,
+            y: Int? = null,
+            width: Int? = null,
+            height: Int? = null
+    ): Boolean
     abstract fun showDashboard()
     abstract fun setDashboardPosition(height: Int, depth: Int)
 

@@ -6,6 +6,7 @@ import SWCompression
 @objc(TarBz2Extractor)
 class TarBz2Extractor: NSObject {
     private static let chunkSize = 1 << 16 // 64 KB
+    private static let progressEmitIntervalMs: Int64 = 200
 
     @objc
     static func extractTarBz2From(
@@ -42,14 +43,19 @@ class TarBz2Extractor: NSObject {
             attributes: nil
         )
 
-        let tempTarURL = try decompressBzipArchive(at: sourcePath)
+        let sourceSize = fileSize(atPath: sourcePath)
+        Bridge.sendExtractionProgress(percentage: 0, bytesRead: 0, totalBytes: sourceSize)
+
+        let tempTarURL = try decompressBzipArchive(at: sourcePath, sourceSize: sourceSize)
         defer { try? fileManager.removeItem(at: tempTarURL) }
 
         try extractTarArchive(at: tempTarURL, to: destinationPath)
         try flattenNestedDirectory(at: destinationPath)
+
+        Bridge.sendExtractionProgress(percentage: 100, bytesRead: sourceSize, totalBytes: sourceSize)
     }
 
-    private static func decompressBzipArchive(at sourcePath: String) throws -> URL {
+    private static func decompressBzipArchive(at sourcePath: String, sourceSize: Int64) throws -> URL {
         let tempTarURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("tar")
@@ -70,6 +76,7 @@ class TarBz2Extractor: NSObject {
         }
 
         var buffer = [Int8](repeating: 0, count: chunkSize)
+        var lastEmittedAt: Int64 = 0
         while true {
             let bytesRead = BZ2_bzRead(&bzError, bzFile, &buffer, Int32(buffer.count))
             if bzError == BZ_OK || bzError == BZ_STREAM_END {
@@ -83,6 +90,20 @@ class TarBz2Extractor: NSObject {
                         throw makeError(code: 1004, message: "Failed to write decompressed data")
                     }
                 }
+
+                let now = nowMs()
+                if now - lastEmittedAt >= progressEmitIntervalMs && sourceSize > 0 {
+                    let consumed = Int64(ftell(sourceFile))
+                    // Bzip phase claims 0–80% of total UI progress.
+                    let pct = max(0, min(80, Int((consumed * 80) / sourceSize)))
+                    Bridge.sendExtractionProgress(
+                        percentage: pct,
+                        bytesRead: consumed,
+                        totalBytes: sourceSize
+                    )
+                    lastEmittedAt = now
+                }
+
                 if bzError == BZ_STREAM_END {
                     break
                 }
@@ -97,6 +118,8 @@ class TarBz2Extractor: NSObject {
             throw makeError(code: 1006, message: "bzip2 close failed with code \(bzError)")
         }
 
+        Bridge.sendExtractionProgress(percentage: 80, bytesRead: sourceSize, totalBytes: sourceSize)
+
         return tempTarURL
     }
 
@@ -104,10 +127,12 @@ class TarBz2Extractor: NSObject {
         let destinationRoot = URL(fileURLWithPath: destinationPath, isDirectory: true)
         let fileManager = FileManager.default
 
+        let tarSize = fileSize(at: tarURL)
         let handle = try FileHandle(forReadingFrom: tarURL)
         defer { try? handle.close() }
 
         var reader = TarReader(fileHandle: handle)
+        var lastEmittedAt: Int64 = 0
 
         while let entry = try reader.read() {
             let sanitizedName = sanitize(entryName: entry.info.name)
@@ -135,7 +160,33 @@ class TarBz2Extractor: NSObject {
             default:
                 continue
             }
+
+            let now = nowMs()
+            if now - lastEmittedAt >= progressEmitIntervalMs && tarSize > 0 {
+                let consumed = Int64(handle.offsetInFile)
+                // Tar phase claims 80–99% of total UI progress.
+                let pct = 80 + max(0, min(19, Int((consumed * 19) / tarSize)))
+                Bridge.sendExtractionProgress(
+                    percentage: pct,
+                    bytesRead: consumed,
+                    totalBytes: tarSize
+                )
+                lastEmittedAt = now
+            }
         }
+    }
+
+    private static func fileSize(atPath path: String) -> Int64 {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+        return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
+    private static func fileSize(at url: URL) -> Int64 {
+        return fileSize(atPath: url.path)
+    }
+
+    private static func nowMs() -> Int64 {
+        return Int64(Date().timeIntervalSince1970 * 1000)
     }
 
     private static func flattenNestedDirectory(at destinationPath: String) throws {

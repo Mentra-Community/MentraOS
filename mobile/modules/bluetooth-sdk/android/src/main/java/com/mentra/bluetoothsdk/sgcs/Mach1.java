@@ -132,7 +132,7 @@ public class Mach1 extends SGCManager {
     }
 
     @Override
-    public void requestPhoto(@NonNull String requestId, @NonNull String appId, @NonNull String size, @Nullable String webhookUrl, @Nullable String authToken, @Nullable String compress, boolean flash, boolean sound, boolean includeImu, @Nullable Long exposureTimeNs) {
+    public void requestPhoto(@NonNull String requestId, @NonNull String appId, @NonNull String size, @Nullable String webhookUrl, @Nullable String authToken, @Nullable String compress, boolean flash, boolean save, boolean sound, boolean includeImu, @Nullable Long exposureTimeNs) {
 
     }
 
@@ -211,7 +211,7 @@ public class Mach1 extends SGCManager {
     }
 
     @Override
-    public boolean displayBitmap(@NonNull String base64ImageData) {
+    public boolean displayBitmap(@NonNull String base64ImageData, Integer x, Integer y, Integer width, Integer height) {
         try {
             Bridge.log("Mach1: displayBitmap() - decoding base64");
             // Decode base64 to byte array

@@ -303,7 +303,7 @@ class MentraNex : SGCManager() {
     override fun requestVersionInfo() { Bridge.log("Nex: requestVersionInfo operation not supported") }
 
     // Camera & Media: Not supported on Nex (No camera)
-    override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, flash: Boolean, sound: Boolean, includeImu: Boolean, exposureTimeNs: Long?) { Bridge.log("Nex: requestPhoto operation not supported") }
+    override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, flash: Boolean, save: Boolean, sound: Boolean, includeImu: Boolean, exposureTimeNs: Long?) { Bridge.log("Nex: requestPhoto operation not supported") }
     override fun startStream(message: MutableMap<String, Any>) { Bridge.log("Nex: startStream operation not supported") }
     override fun stopStream() { Bridge.log("Nex: stopStream operation not supported") }
     override fun sendStreamKeepAlive(message: MutableMap<String, Any>) { Bridge.log("Nex: sendStreamKeepAlive operation not supported") }
@@ -488,7 +488,13 @@ class MentraNex : SGCManager() {
         sendDataSequentially(textChunks)
     }
 
-    override fun displayBitmap(base64ImageData: String): Boolean {
+    override fun displayBitmap(
+            base64ImageData: String,
+            x: Int?,
+            y: Int?,
+            width: Int?,
+            height: Int?
+    ): Boolean {
         try {
             val bmpData: ByteArray? = android.util.Base64.decode(base64ImageData, android.util.Base64.DEFAULT)
             if (bmpData == null || bmpData.isEmpty()) {

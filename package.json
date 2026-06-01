@@ -1,5 +1,4 @@
 {
-  "dependencies": {},
   "devDependencies": {
     "@eslint/css": "^0.10.0",
     "@eslint/js": "^9.36.0",

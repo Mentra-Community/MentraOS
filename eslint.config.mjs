@@ -165,6 +165,18 @@ export default defineConfig([
     },
   },
 
+  // Publishable npm packages under mobile/modules/ — these have their own
+  // package.json and ship to npm as @mentra/island, @mentra/miniapp, etc.
+  // The @/ alias is mobile-app-only, so internal relative imports are correct.
+  // bun:test is a Bun built-in that the import resolver doesn't know about.
+  {
+    files: ["mobile/modules/island/**/*.{js,ts,jsx,tsx}", "mobile/modules/miniapp/**/*.{js,ts,jsx,tsx}"],
+    rules: {
+      "no-restricted-imports": "off",
+      "import/no-unresolved": ["error", {ignore: ["^bun:"]}],
+    },
+  },
+
   // Ignore patterns
   {
     ignores: [

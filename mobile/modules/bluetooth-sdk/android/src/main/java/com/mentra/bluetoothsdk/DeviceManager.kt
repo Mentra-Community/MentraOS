@@ -132,6 +132,13 @@ class DeviceManager {
         get() = DeviceStore.store.get("bluetooth", "power_saving_mode") as? Boolean ?: false
         set(value) = DeviceStore.apply("bluetooth", "power_saving_mode", value)
 
+    // Phone-side VAD gating switch. Default is OFF (VAD runs) so the
+    // coordinator can drive per-utterance offline/online STT switching from
+    // `vad_status` events. Set to `true` only as an emergency kill-switch.
+    private var bypassVad: Boolean
+        get() = DeviceStore.store.get("bluetooth", "bypass_vad") as? Boolean ?: false
+        set(value) = DeviceStore.apply("bluetooth", "bypass_vad", value)
+
     private var offlineCaptionsRunning: Boolean
         get() = DeviceStore.store.get("bluetooth", "offline_captions_running") as? Boolean ?: false
         set(value) = DeviceStore.apply("bluetooth", "offline_captions_running", value)
@@ -192,6 +199,7 @@ class DeviceManager {
     // Guard against duplicate ready callbacks firing back-to-back.
     private var lastReadyHandledAtMs: Long = 0L
     private var lastReadyHandledKey: String = ""
+    private var lastSystemTimeSyncConnectionKey: String = ""
 
     private var systemMicUnavailable: Boolean
         get() = DeviceStore.store.get("bluetooth", "systemMicUnavailable") as? Boolean ?: false
@@ -236,6 +244,11 @@ class DeviceManager {
     private var audioOutputFormat: AudioOutputFormat = AudioOutputFormat.LC3
     private var lastLc3Event: Long? = null
     private var micReinitRunnable: Runnable? = null
+
+    // VAD
+    private val vadBuffer = mutableListOf<ByteArray>()
+    private var isSpeaking = false
+    private var vadPolicy: com.mentra.bluetoothsdk.stt.VadGateSpeechPolicy? = null
 
     // STT
     private var transcriber: SherpaOnnxTranscriber? = null
@@ -284,6 +297,27 @@ class DeviceManager {
             Bridge.log("Failed to initialize LC3 encoder/decoder: ${e.message}")
             lc3EncoderPtr = 0
             lc3DecoderPtr = 0
+        }
+
+        // Initialize phone-side Silero VAD. Used by handlePcm to gate audio
+        // fan-out and to drive per-utterance offline/online STT switching
+        // (see LocalSttFallbackCoordinator on the JS side). If a previous
+        // policy somehow exists (re-init on hot reload), stop it first to
+        // release the ONNX session.
+        try {
+            vadPolicy?.stop()
+            val ctx = Bridge.getContext()
+            val policy = com.mentra.bluetoothsdk.stt.VadGateSpeechPolicy(ctx)
+            policy.init(blockSizeSamples = 512)
+            policy.onSpeechStateChanged = { speaking ->
+                isSpeaking = speaking
+                Bridge.sendVoiceActivityDetectionStatus(speaking)
+            }
+            vadPolicy = policy
+            Bridge.log("VadGateSpeechPolicy initialized")
+        } catch (e: Exception) {
+            Bridge.log("Failed to initialize VadGateSpeechPolicy: ${e.message}")
+            vadPolicy = null
         }
 
         // Mic reinit check every 10 seconds
@@ -590,7 +624,12 @@ class DeviceManager {
             var layoutType: String,
             var text: String,
             var data: String?,
-            var animationData: Map<String, Any>?
+            var animationData: Map<String, Any>?,
+            // Optional bitmap_view container position/size (used by G2; ignored by others)
+            var bmpX: Int? = null,
+            var bmpY: Int? = null,
+            var bmpWidth: Int? = null,
+            var bmpHeight: Int? = null
     )
     // MARK: - End Unique
 
@@ -652,9 +691,17 @@ class DeviceManager {
     }
 
     fun handlePcm(pcmData: ByteArray) {
+        // Audio always flows. The previous phone-side Silero VAD gate was a
+        // bandwidth-saver that ate transcripts when the mic delivered frames
+        // not aligned to 512 samples (the case for Android AudioRecord on the
+        // phone internal mic) and was never wired up correctly anyway —
+        // `bypass_vad_for_debugging` was dead, cloud-side `bypass_vad` was
+        // the only knob, and the policy double-VAD'd what the cloud already
+        // VADs server-side. VadGateSpeechPolicy is kept around because
+        // hardware-side VAD events from the glasses route through the same
+        // class to fire `vad_status` (a separate signal the cloud SDK
+        // surfaces as `session.audio.isSpeaking`).
         handleSendingPcm(pcmData)
-
-        // Send PCM to local transcriber (always needs raw PCM)
         if (shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive) {
             transcriber?.acceptAudio(pcmData)
         }
@@ -831,7 +878,15 @@ class DeviceManager {
                 sgc?.sendTextWall("${currentViewState.title}\n\n${currentViewState.text}")
             }
             "bitmap_view" -> {
-                currentViewState.data?.let { data -> sgc?.displayBitmap(data) }
+                currentViewState.data?.let { data ->
+                    sgc?.displayBitmap(
+                            data,
+                            currentViewState.bmpX,
+                            currentViewState.bmpY,
+                            currentViewState.bmpWidth,
+                            currentViewState.bmpHeight
+                    )
+                }
             }
             "clear_view" -> sgc?.clearDisplay()
             else -> Bridge.log("MAN: UNHANDLED LAYOUT_TYPE ${currentViewState.layoutType}")
@@ -974,6 +1029,7 @@ class DeviceManager {
             Bridge.log("MAN: Cleaning up previous sgc type: ${sgc?.type}")
             sgc?.cleanup()
             sgc = null
+            lastSystemTimeSyncConnectionKey = ""
         }
 
         if (sgc != null) {
@@ -1048,6 +1104,8 @@ class DeviceManager {
         defaultWearable = sgc?.type ?: ""
         searching = false
 
+        syncSystemTimeOnceForConnection(readyKey)
+
         // Apply dashboard position before any boot text so content doesn't jump.
         sgc?.setDashboardPosition(dashboardHeight, dashboardDepth)
 
@@ -1084,6 +1142,21 @@ class DeviceManager {
         Bridge.saveSetting("device_address", deviceAddress)
     }
 
+    private fun syncSystemTimeOnceForConnection(connectionKey: String) {
+        val activeSgc = sgc ?: return
+        if (activeSgc.type.contains(DeviceTypes.SIMULATED)) {
+            return
+        }
+        if (connectionKey == lastSystemTimeSyncConnectionKey) {
+            return
+        }
+
+        lastSystemTimeSyncConnectionKey = connectionKey
+        val timestampMs = System.currentTimeMillis()
+        Bridge.log("MAN: Syncing glasses system time once for connection: $timestampMs")
+        activeSgc.sendSetSystemTime(timestampMs)
+    }
+
     private fun handleG1Ready() {
         // G1-specific setup (if any needed in the future)
         // Note: G1-specific settings like silent mode, battery status,
@@ -1096,6 +1169,7 @@ class DeviceManager {
 
     fun handleDeviceDisconnected() {
         Bridge.log("MAN: Device disconnected")
+        lastSystemTimeSyncConnectionKey = ""
         DeviceStore.apply("glasses", "headUp", false)
         DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", true)
     }
@@ -1154,7 +1228,26 @@ class DeviceManager {
         val title = parsePlaceholders(layout.getString("title", " "))
         val data = layout["data"] as? String
 
-        var newViewState = ViewState(topText, bottomText, title, layoutType ?: "", text, data, null)
+        // Optional bitmap_view container position/size (forwarded to the SGC; used by G2).
+        val bmpX = (layout["x"] as? Number)?.toInt()
+        val bmpY = (layout["y"] as? Number)?.toInt()
+        val bmpWidth = (layout["width"] as? Number)?.toInt()
+        val bmpHeight = (layout["height"] as? Number)?.toInt()
+
+        var newViewState =
+                ViewState(
+                        topText,
+                        bottomText,
+                        title,
+                        layoutType ?: "",
+                        text,
+                        data,
+                        null,
+                        bmpX,
+                        bmpY,
+                        bmpWidth,
+                        bmpHeight
+                )
 
         val currentState = viewStates[stateIndex]
 
@@ -1174,6 +1267,10 @@ class DeviceManager {
 
     fun showDashboard() {
         sgc?.showDashboard()
+    }
+
+    fun showNotificationsPanel() {
+        sgc?.showNotificationsPanel()
     }
 
     fun ping() {
@@ -1232,6 +1329,11 @@ class DeviceManager {
         sgc?.sendHotspotState(enabled)
     }
 
+    fun setSystemTime(timestampMs: Long) {
+        Bridge.log("MAN: Setting glasses system time: $timestampMs")
+        sgc?.sendSetSystemTime(timestampMs)
+    }
+
     fun queryGalleryStatus() {
         Bridge.log("MAN: Querying gallery status from glasses")
         sgc?.queryGalleryStatus()
@@ -1249,6 +1351,11 @@ class DeviceManager {
     fun sendOtaQueryStatus() {
         Bridge.log("MAN: 📱 Sending OTA query status command to glasses")
         (sgc as? MentraLive)?.sendOtaQueryStatus()
+    }
+
+    fun retryOtaVersionCheck() {
+        Bridge.log("MAN: ⏰ Retrying glasses OTA version check after clock sync")
+        (sgc as? MentraLive)?.sendOtaRetryVersionCheck()
     }
 
     /**
@@ -1339,7 +1446,15 @@ class DeviceManager {
     fun setMicState() {
         val willSendPcm = shouldSendPcm || shouldSendLc3
         val willSendTranscript = shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive
-        micEnabled = willSendPcm || willSendTranscript
+        val nextEnabled = willSendPcm || willSendTranscript
+        // Tell VAD when the mic is shutting down so it doesn't get stuck in
+        // a stale "speaking" state and keep emitting vad_status=true after
+        // audio stops flowing.
+        if (micEnabled && !nextEnabled) {
+            vadPolicy?.microphoneStateChanged(false)
+        }
+        micEnabled = nextEnabled
+        vadBuffer.clear()
         updateMicState()
     }
 
@@ -1351,6 +1466,7 @@ class DeviceManager {
             authToken: String?,
             compress: String,
             flash: Boolean,
+            save: Boolean,
             sound: Boolean,
             includeImu: Boolean,
             exposureTimeNs: Double? = null,
@@ -1363,7 +1479,7 @@ class DeviceManager {
                     }
                 }
         Bridge.log(
-                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=$requestId appId=$appId size=$size compress=$compress flash=$flash sound=$sound includeImu=$includeImu exposureTimeNs=$exposureNs sgc=${sgc?.javaClass?.simpleName ?: "null"}"
+                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=$requestId appId=$appId size=$size compress=$compress flash=$flash save=$save sound=$sound includeImu=$includeImu exposureTimeNs=$exposureNs sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
         val activeSgc = sgc
         if (activeSgc == null) {
@@ -1372,7 +1488,7 @@ class DeviceManager {
             )
             return
         }
-        activeSgc.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, sound, includeImu, exposureNs)
+        activeSgc.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, save, sound, includeImu, exposureNs)
     }
 
     fun rgbLedControl(
@@ -1494,6 +1610,7 @@ class DeviceManager {
         sgc?.clearDisplay()
         sgc?.disconnect()
         sgc = null // Clear the SGC reference after disconnect
+        lastSystemTimeSyncConnectionKey = ""
         searching = false
         micEnabled = false
         updateMicState()

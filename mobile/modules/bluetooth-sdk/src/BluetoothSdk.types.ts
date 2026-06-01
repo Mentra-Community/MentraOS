@@ -255,6 +255,7 @@ export type PhotoRequestParams = {
   webhookUrl: string | null
   authToken: string | null
   compress: PhotoCompression
+  save?: boolean
   sound: boolean
   includeImu?: boolean
   exposureTimeNs?: number | null
@@ -518,6 +519,13 @@ export type BluetoothSdkModuleEvents = {
   send_command_to_ble: (event: BleCommandTraceEvent) => void
   receive_command_from_ble: (event: BleCommandTraceEvent) => void
   miniapp_selected: (event: MiniappSelectedEvent) => void
+  extraction_progress: (event: ExtractionProgressEvent) => void
+}
+
+export interface ExtractionProgressEvent {
+  percentage: number
+  bytesRead: number
+  totalBytes: number
 }
 
 export type PublicGlassesStatus = Omit<
@@ -569,6 +577,7 @@ export type BluetoothSdkEventMap = {
   mic_lc3: MicLc3Event
   stream_status: StreamStatusEvent
   keep_alive_ack: KeepAliveAckEvent
+  extraction_progress: ExtractionProgressEvent
 }
 
 export type BluetoothSdkEventName = keyof BluetoothSdkEventMap
@@ -653,6 +662,43 @@ export interface BluetoothSdkPublicModule {
   ): Promise<void>
 
   requestVersionInfo(): Promise<void>
+
+  // // stt commands (MOVE TO CRUST)
+  // setSttModelDetails(path: string, languageCode: string): Promise<void>
+  // getSttModelPath(): Promise<string>
+  // checkSttModelAvailable(): Promise<boolean>
+  // validateSttModel(path: string): Promise<boolean>
+  // extractTarBz2(sourcePath: string, destinationPath: string): Promise<boolean>
+
+  // // tts commands (MOVE TO CRUST)
+  // setTtsModelDetails(path: string, languageCode: string): Promise<void>
+  // getTtsModelPath(): Promise<string>
+  // getTtsModelLanguage(): Promise<string>
+  // checkTtsModelAvailable(): Promise<boolean>
+  // validateTtsModel(path: string): Promise<boolean>
+  // generateTtsAudio(text: string, path: string, outputPath: string, speakerId: number, speed: number): Promise<boolean>
+  
+  // STT Commands (TODO: MOVE TO CRUST)
+  setSttModelDetails(path: string, languageCode: string): Promise<void>
+  getSttModelPath(): Promise<string>
+  checkSttModelAvailable(): Promise<boolean>
+  validateSttModel(path: string): Promise<boolean>
+  extractTarBz2(sourcePath: string, destinationPath: string): Promise<boolean>
+  restartTranscriber(): Promise<void>
+
+  // TTS Commands (TODO: MOVE TO CRUST)
+  setTtsModelDetails(path: string, languageCode: string): Promise<void>
+  getTtsModelPath(): Promise<string>
+  getTtsModelLanguage(): Promise<string>
+  checkTtsModelAvailable(): Promise<boolean>
+  validateTtsModel(path: string): Promise<boolean>
+  generateTtsAudio(
+    text: string,
+    modelPath: string,
+    outputPath: string,
+    speakerId: number,
+    speed: number,
+  ): Promise<boolean>
 }
 
 // OTA update status types
@@ -709,6 +755,8 @@ export interface GlassesStatus {
   leftMacAddress: string
   rightMacAddress: string
   buildNumber: string
+  /** Glasses System.currentTimeMillis() from last version_info (clock skew detection). */
+  systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
   bluetoothName: string
@@ -744,8 +792,16 @@ export interface CoreDashboardMenuItem {
   running: boolean
 }
 
+export interface CalendarEvent {
+  title: string
+  location?: string
+  time: string
+  endDate: number
+}
+
 export interface CoreSettings {
   menu_apps: CoreDashboardMenuItem[]
+  calendar_events: CalendarEvent[]
 }
 
 export interface Device {
@@ -836,6 +892,9 @@ export type BluetoothSettingsUpdate = Partial<{
   dashboard_height: number
   dashboard_depth: number
   menu_apps: DashboardMenuItem[] | CoreDashboardMenuItem[] | Array<Record<string, unknown>> | null
+  calendar_events: CalendarEvent[]
+  metric_system: boolean
+  twelve_hour_time: boolean
   gallery_mode: boolean
   voice_activity_detection_enabled: boolean
   button_photo_size: ButtonPhotoSize

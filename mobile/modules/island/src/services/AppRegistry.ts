@@ -9,6 +9,7 @@
  *
  * Public surface:
  *   - installFromUrl(url, opts?)            install/replace a miniapp from a URL
+ *   - installFromLocalZip(path, opts?)      install/replace from a local zip
  *   - uninstall(packageName, version?)      remove one or all versions
  *   - getInstalledMiniapps()                ClientApp[] derived from disk
  *   - getActiveVersion(packageName)         active version string for a package
@@ -25,6 +26,7 @@ import type {AppletPermission, AppPermissionType, ClientApp} from "../types/appl
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
+import {checkManifestVersions} from "./manifestVersionGate"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 
 const ALLOWED_PERMISSION_TYPES: ReadonlySet<AppPermissionType> = new Set<AppPermissionType>([
@@ -130,23 +132,13 @@ interface InstalledLma {
 }
 
 /**
- * Download a miniapp zip from `url`, unpack it, and install it under
- * `lmas/<packageName>/<version>/`.
+ * Download a miniapp zip from `url` into the cache and return its local path.
  *
- * Zip layout: flat — files at root, `miniapp.json` at the top level. We're
- * strict on shape so we fail loudly on malformed bundles.
- *
- * @param versionOverride  override the manifest's version field. Used by the
- *                         dev miniapp caching path which stamps `dev-<ms>`
- *                         so multiple snapshots can coexist alongside
- *                         semver-installed versions.
+ * `File.downloadFileAsync` is HTTP(S)-only, so this path is for remote bundles
+ * (dev server, store). Bundled-asset installs already have a local zip and
+ * should call {@link unpackMiniApp} directly.
  */
-async function downloadAndInstallMiniApp(
-  url: string,
-  versionOverride?: string,
-): Promise<{packageName: string; version: string}> {
-  let downloadedZipPath: string = ""
-
+async function downloadMiniAppZip(url: string): Promise<string> {
   const downloadDir = new Directory(Paths.cache, "lma_downloads")
   try {
     if (!downloadDir.exists) {
@@ -174,14 +166,30 @@ async function downloadAndInstallMiniApp(
 
   try {
     const output = await File.downloadFileAsync(url, downloadDir)
-    downloadedZipPath = output.uri
+    return output.uri
   } catch (error) {
     console.error("ZIP: Error downloading zip file", error)
     throw "DOWNLOAD_FAILED"
   }
+}
 
-  console.log("ZIP: done downloading, starting unzip")
-
+/**
+ * Unpack a local miniapp zip and install it under
+ * `lmas/<packageName>/<version>/`.
+ *
+ * Zip layout: flat — files at root, `miniapp.json` at the top level. We're
+ * strict on shape so we fail loudly on malformed bundles.
+ *
+ * @param zipPath          file:// URI of the zip on local disk.
+ * @param versionOverride  override the manifest's version field. Used by the
+ *                         dev miniapp caching path which stamps `dev-<ms>`
+ *                         so multiple snapshots can coexist alongside
+ *                         semver-installed versions.
+ */
+async function unpackMiniApp(
+  zipPath: string,
+  versionOverride?: string,
+): Promise<{packageName: string; version: string}> {
   const unzipDir = new Directory(Paths.cache, "lma_unzip")
   try {
     if (unzipDir.exists) unzipDir.delete()
@@ -192,8 +200,8 @@ async function downloadAndInstallMiniApp(
   }
 
   try {
-    console.log("ZIP: unzipping", downloadedZipPath)
-    await unzip(downloadedZipPath, unzipDir.uri)
+    console.log("ZIP: unzipping", zipPath)
+    await unzip(zipPath, unzipDir.uri)
   } catch (error) {
     console.error("Error unzipping zip file", error)
     throw "UNZIP_FAILED"
@@ -258,6 +266,25 @@ async function downloadAndInstallMiniApp(
   return {packageName, version}
 }
 
+/**
+ * Download a miniapp zip from `url`, unpack it, and install it under
+ * `lmas/<packageName>/<version>/`. Thin composition of
+ * {@link downloadMiniAppZip} + {@link unpackMiniApp} for remote bundles.
+ *
+ * @param versionOverride  override the manifest's version field. Used by the
+ *                         dev miniapp caching path which stamps `dev-<ms>`
+ *                         so multiple snapshots can coexist alongside
+ *                         semver-installed versions.
+ */
+async function downloadAndInstallMiniApp(
+  url: string,
+  versionOverride?: string,
+): Promise<{packageName: string; version: string}> {
+  const downloadedZipPath = await downloadMiniAppZip(url)
+  console.log("ZIP: done downloading, starting unzip")
+  return unpackMiniApp(downloadedZipPath, versionOverride)
+}
+
 type Listener = () => void
 
 class AppRegistry {
@@ -301,7 +328,64 @@ class AppRegistry {
    * On-disk path for a given miniapp bundle version.
    */
   public getBundleDir(packageName: string, version: string): string {
-    return `${Paths.document.uri}/lmas/${packageName}/${version}`
+    const bundleDir = new Directory(Paths.document, "lmas", packageName, version)
+    return bundleDir.uri
+  }
+
+  /**
+   * Resolve the two-layer entry paths for an installed miniapp version.
+   * Returns absolute file:// URIs for `background` and (when present) `ui`.
+   *
+   * Legacy single-layer bundles (no `entry` object in manifest) fall back
+   * to `index.html` discovery so the WebView host keeps working unchanged.
+   * Two-layer bundles ship `entry.background` and optional `entry.ui`
+   * paths relative to the bundle root.
+   *
+   * Returns null if neither shape resolves to existing files on disk.
+   */
+  public getMiniappEntryPaths(
+    packageName: string,
+    version: string,
+  ): {background: string | null; ui: string | null} | null {
+    const manifest = this.getMiniappManifest(packageName, version) as {
+      entry?: {background?: string; ui?: string}
+    } | null
+    const bundleDir = this.getBundleDir(packageName, version)
+    const resolve = (rel: string): string | null => {
+      const trimmed = rel.replace(/^\.?\/+/, "")
+      const file = new File(bundleDir, trimmed)
+      return file.exists ? file.uri : null
+    }
+    if (manifest?.entry) {
+      console.log("manifest.entry", manifest.entry)
+      const bg = manifest.entry.background ? resolve(manifest.entry.background) : null
+      console.log("bg", bg)
+      const ui = manifest.entry.ui ? resolve(manifest.entry.ui) : null
+      console.log("ui", ui)
+      if (bg || ui) {
+        return {background: bg, ui: ui}
+      }
+    }
+    // Legacy single-bundle fallback — `index.html` at the bundle root.
+    const legacy = new File(new Directory(bundleDir.replace(/^file:\/\//, "")), "index.html")
+    return {
+      background: null,
+      ui: legacy.exists ? legacy.uri : null,
+    }
+  }
+
+  /**
+   * Verify a manifest declares an SDK / host version range compatible
+   * with the current host. Delegates to the pure
+   * {@link checkManifestVersions} helper — same shape, no React Native
+   * imports, unit-testable. Manifests missing either field pass
+   * through unchanged (legacy single-layer path).
+   */
+  public checkManifestVersions(
+    manifest: {sdkVersion?: string; minHostVersion?: string} | null,
+    options: {hostVersion: string; supportedSdkRange: string},
+  ): {ok: true} | {ok: false; reason: string} {
+    return checkManifestVersions(manifest, options)
   }
 
   /**
@@ -341,21 +425,48 @@ class AppRegistry {
     return Res.try_async(async () => {
       const {packageName, version} = await downloadAndInstallMiniApp(url, opts?.versionOverride)
       console.log("APP_REGISTRY: Downloaded and installed mini app")
-
-      // If this is a release install (semver, not dev-*) of a package that
-      // currently has dev-* snapshots, clear the dev state so the swap to
-      // "released" is clean. Otherwise the dev version would keep winning
-      // getActiveVersion's dev-precedence rule and the just-installed
-      // release wouldn't run.
-      const isDevInstall = version.startsWith("dev-")
-      if (!isDevInstall) {
-        this.clearDevArtifacts(packageName)
-      }
-
-      this.setActiveVersion(packageName, version)
-      this.refreshNeeded = true
-      this.notify()
+      this.finalizeInstall(packageName, version)
     })
+  }
+
+  /**
+   * Install a miniapp from a zip already on local disk (e.g. a bundled asset
+   * copied into cache). Skips the HTTP download path that `installFromUrl`
+   * uses — `File.downloadFileAsync` is HTTP(S)-only and rejects file:// URIs.
+   *
+   * @param zipPath  file:// URI of the local zip.
+   */
+  public installFromLocalZip(
+    zipPath: string,
+    opts?: {versionOverride?: string},
+  ): AsyncResult<{packageName: string; version: string}, Error> {
+    return Res.try_async(async () => {
+      const {packageName, version} = await unpackMiniApp(zipPath, opts?.versionOverride)
+      console.log("APP_REGISTRY: Installed mini app from local zip")
+      this.finalizeInstall(packageName, version)
+      return {packageName, version}
+    })
+  }
+
+  /**
+   * Post-install bookkeeping shared by every install path: clear stale dev
+   * artifacts on release installs, point the active-version at the just-
+   * installed bundle, and notify subscribers to refresh.
+   */
+  private finalizeInstall(packageName: string, version: string): void {
+    // If this is a release install (semver, not dev-*) of a package that
+    // currently has dev-* snapshots, clear the dev state so the swap to
+    // "released" is clean. Otherwise the dev version would keep winning
+    // getActiveVersion's dev-precedence rule and the just-installed
+    // release wouldn't run.
+    const isDevInstall = version.startsWith("dev-")
+    if (!isDevInstall) {
+      this.clearDevArtifacts(packageName)
+    }
+
+    this.setActiveVersion(packageName, version)
+    this.refreshNeeded = true
+    this.notify()
   }
 
   public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string, version: string, name: string}, Error> {

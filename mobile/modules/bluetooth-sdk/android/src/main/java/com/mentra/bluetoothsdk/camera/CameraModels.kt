@@ -60,6 +60,7 @@ data class PhotoRequest @JvmOverloads constructor(
     val authToken: String? = null,
     val compress: PhotoCompression = PhotoCompression.MEDIUM,
     val flash: Boolean = true,
+    val save: Boolean = false,
     val sound: Boolean = true,
     val includeImu: Boolean = false,
     /** Sensor exposure time for this capture only (ns), or null for auto exposure */
@@ -83,6 +84,7 @@ data class PhotoRequest @JvmOverloads constructor(
                 authToken = stringValue(values, "authToken", "auth_token")?.takeIf { it.isNotBlank() },
                 compress = PhotoCompression.fromValue(stringValue(values, "compress") ?: "none"),
                 flash = boolValue(values, "flash") ?: true,
+                save = boolValue(values, "save", "saveToGallery") ?: false,
                 sound = boolValue(values, "sound") ?: true,
                 includeImu = boolValue(values, "includeImu", "include_imu") ?: false,
                 exposureTimeNs = exposureTimeNs,

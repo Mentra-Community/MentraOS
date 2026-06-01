@@ -1,8 +1,9 @@
 #!/usr/bin/env zx
 
 import { setBuildEnv } from './set-build-env.mjs';
-import { withRetry } from './release-utils.mjs';
-import { readFile, writeFile, cp, mkdir } from 'fs/promises';
+import { withRetry, isSentryTransientError, writeSummary } from './release-utils.mjs';
+import { getBuildNumber } from './build-number.mjs';
+import { cp, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
@@ -39,26 +40,15 @@ const tag = ghTag(version);
 const prefix = apkPrefix(version);
 console.log(`Version: ${version} → tag: ${tag}, prefix: ${prefix}`);
 
-// ── Step 2: Bump versionCode in app.config.ts ─────────────────────────────────
+// ── Step 2: Derive build number ──────────────────────────────────────────────
 
-console.log('\n━━━ Step 2: Bumping versionCode in app.config.ts ━━━');
-const configPath = path.resolve('app.config.ts');
-let configContent = await readFile(configPath, 'utf-8');
-
-const versionCodeMatch = configContent.match(/versionCode:\s*(\d+)/);
-if (!versionCodeMatch) {
-  console.error('Could not find versionCode in app.config.ts');
-  process.exit(1);
-}
-
-const oldVersionCode = parseInt(versionCodeMatch[1], 10);
-const newVersionCode = oldVersionCode + 1;
-configContent = configContent.replace(
-  /versionCode:\s*\d+/,
-  `versionCode: ${newVersionCode}`
-);
-await writeFile(configPath, configContent);
-console.log(`versionCode: ${oldVersionCode} → ${newVersionCode}`);
+// Pin the value via env var so every getBuildNumber() call in this process
+// tree (including app.config.ts evaluations during prebuild) returns the
+// same number. Without pinning, the summary value can drift from the value
+// baked into the native project by a few seconds — small but real.
+const versionCode = getBuildNumber();
+process.env.MENTRAOS_PINNED_BUILD_NUMBER = String(versionCode);
+console.log(`versionCode: ${versionCode}`);
 
 // ── Step 3: Prebuild + bundle ────────────────────────────────────────────────
 
@@ -92,7 +82,18 @@ console.log('Fastlane config copied to android/fastlane/');
 // ── Step 5: Build APK ─────────────────────────────────────────────────────────
 
 console.log('\n━━━ Step 5: Building APK ━━━');
-await $({ stdio: 'inherit', cwd: 'android' })`./gradlew assembleRelease`;
+// stdio piped manually so withRetry's predicate can inspect output for transient
+// Sentry/network errors; output still streams live to the terminal.
+await withRetry(
+  'gradlew assembleRelease',
+  () => {
+    const p = $({ cwd: 'android' })`./gradlew assembleRelease`;
+    p.stdout.pipe(process.stdout);
+    p.stderr.pipe(process.stderr);
+    return p;
+  },
+  { shouldRetry: isSentryTransientError }
+);
 
 const apkPath = path.resolve('android/app/build/outputs/apk/release/app-release.apk');
 if (!existsSync(apkPath)) {
@@ -162,7 +163,16 @@ console.log(`Uploaded ${apkName} to release ${tag}`);
 // ── Step 8: Build AAB ─────────────────────────────────────────────────────────
 
 console.log('\n━━━ Step 8: Building AAB ━━━');
-await $({ stdio: 'inherit', cwd: 'android' })`./gradlew bundleRelease`;
+await withRetry(
+  'gradlew bundleRelease',
+  () => {
+    const p = $({ cwd: 'android' })`./gradlew bundleRelease`;
+    p.stdout.pipe(process.stdout);
+    p.stderr.pipe(process.stderr);
+    return p;
+  },
+  { shouldRetry: isSentryTransientError }
+);
 
 const aabPath = path.resolve('android/app/build/outputs/bundle/release/app-release.aab');
 if (!existsSync(aabPath)) {
@@ -177,19 +187,45 @@ console.log('\n━━━ Step 9: Uploading AAB to Google Play ━━━');
 
 const keyPath = process.env.GOOGLE_PLAY_JSON_KEY || path.join(os.homedir(), '.mentra', 'credentials', 'google-play-key.json');
 
+// Track Play Store upload result so we can surface it in the release-status
+// JSON consumed by the staging-builds workflow Slack notification.
+let playStatus = 'skipped';
+let playDetail = null;
+
 if (!existsSync(keyPath)) {
   console.log(`⚠️  Google Play key not found at ${keyPath}`);
   console.log('   Skipping Google Play upload.');
   console.log('   To enable: place service account key at ~/.mentra/credentials/google-play-key.json');
   console.log('   or set GOOGLE_PLAY_JSON_KEY env var.');
+  playDetail = 'credentials missing on runner';
 } else {
   process.env.GOOGLE_PLAY_JSON_KEY = keyPath;
   // Install gems and run fastlane
   await $({ stdio: 'inherit', cwd: 'android' })`bundle install`;
-  await withRetry('fastlane google_play', () =>
-    $({ stdio: 'inherit', cwd: 'android' })`bundle exec fastlane google_play`
-  );
-  console.log('AAB uploaded to Google Play (internal track)');
+  try {
+    await withRetry('fastlane google_play', () =>
+      $({ stdio: 'inherit', cwd: 'android' })`bundle exec fastlane google_play`
+    );
+    console.log('AAB uploaded to Google Play (internal track)');
+    playStatus = 'success';
+  } catch (err) {
+    // Same philosophy as iOS TestFlight: Play upload is a publish-side
+    // concern. The signed APK + AAB are already on the GH release. Don't
+    // fail the build over a transient Play API outage or a previously-
+    // uploaded versionCode collision; warn loud and continue.
+    console.warn('\n⚠️  Google Play upload failed — continuing because the signed APK + AAB');
+    console.warn('   were still published to the GitHub release.');
+    console.warn('   Original error:', err?.message || err);
+    playStatus = 'failure';
+    const msg = String(err?.message || err || '');
+    if (/wrong key|signed with the wrong/i.test(msg)) {
+      playDetail = 'AAB signed with wrong key (check upload-keystore)';
+    } else if (/version code|already.+used/i.test(msg)) {
+      playDetail = 'versionCode already used (bump build number)';
+    } else {
+      playDetail = msg.split('\n')[0].slice(0, 200);
+    }
+  }
 }
 
 // ── Done ──────────────────────────────────────────────────────────────────────
@@ -197,11 +233,40 @@ if (!existsSync(keyPath)) {
 const repoName = (await $`gh repo view --json nameWithOwner -q .nameWithOwner`).stdout.trim();
 const apkUrl = `https://github.com/${repoName}/releases/download/${tag}/${apkName}`;
 
-console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-console.log(`Android release complete!`);
-console.log(`  Version: ${version} (versionCode ${newVersionCode})`);
-console.log(`  APK: ${apkUrl}`);
-if (existsSync(keyPath)) {
-  console.log(`  Google Play: AAB uploaded (internal track)`);
+const summaryLines = [
+  'Android release complete!',
+  `  Version: ${version} (versionCode ${versionCode})`,
+  `  APK: ${apkUrl}`,
+];
+if (playStatus === 'success') {
+  summaryLines.push('  Google Play: AAB uploaded (internal track)');
+} else if (playStatus === 'failure') {
+  summaryLines.push(`  Google Play: FAILED (${playDetail || 'see logs'})`);
+} else {
+  summaryLines.push('  Google Play: skipped (no credentials on runner)');
 }
-console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+await writeSummary('android', summaryLines);
+
+// Structured status file for the staging-builds workflow's Slack notification.
+const statusPath = path.resolve('build/release-status.json');
+const { writeFile: writeStatusFile, mkdir: mkdirP } = await import('fs/promises');
+await mkdirP(path.dirname(statusPath), { recursive: true });
+await writeStatusFile(
+  statusPath,
+  JSON.stringify(
+    {
+      platform: 'android',
+      version,
+      versionCode,
+      beta_number: betaNumber,
+      apk_name: apkName,
+      apk_url: apkUrl,
+      tag,
+      google_play: playStatus, // 'success' | 'failure' | 'skipped'
+      google_play_detail: playDetail,
+    },
+    null,
+    2,
+  ),
+);
+console.log(`Wrote release status: ${statusPath}`);
