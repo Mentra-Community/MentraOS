@@ -135,5 +135,3 @@ Must use Java SDK 17. To set this, in Android Studio, go to Settings > Build, Ex
 ### Documentation
 
 See [docs/](docs/README.md) for architecture overview, command API reference, and feature docs.
-
-CI probe: this documentation-only line verifies ASG pull-request workflow triggering.

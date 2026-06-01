@@ -18,6 +18,7 @@ import com.mentra.asg_client.service.core.AsgClientService;
  */
 public class BootstrapActivity extends Activity {
     private static final String TAG = "BootstrapActivity";
+    // CI probe: touch the same ASG Java file shape as the logging PR.
     private static final int STARTUP_DELAY_MS = 3000; // 3 second delay before starting service
     private static final int FINISH_DELAY_MS = 2000;  // 2 second delay after starting before finishing
     
