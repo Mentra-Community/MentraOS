@@ -8,7 +8,6 @@ import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.MediaRecorder;
 import android.util.Log;
 import android.util.Size;
-
 import com.mentra.asg_client.camera.policy.CameraSizeSelector;
 import com.mentra.asg_client.camera.policy.PhotoResolutionPolicy;
 import com.mentra.asg_client.settings.VideoSettings;
