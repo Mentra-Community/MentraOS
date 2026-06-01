@@ -1483,6 +1483,12 @@ public class AsgClientService extends Service
         resetHeartbeatTimeout();
     }
 
+    /** Handle any standard command received from the phone over Bluetooth. */
+    public void onPhoneCommandReceived() {
+        Log.d(TAG, "📱 Phone command received - marking phone connection active");
+        resetHeartbeatTimeout();
+    }
+
     /** Handle service heartbeat received from MentraLiveSGC */
     public void onServiceHeartbeatReceived() {
         Log.d(TAG, "💓 Service heartbeat received from MentraLiveSGC");

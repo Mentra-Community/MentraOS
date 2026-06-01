@@ -168,6 +168,7 @@ public class CommandProcessor {
             }
 
             Log.d(TAG, "📊 Command data extracted - Type: " + commandData.type() + ", MessageID: " + commandData.messageId() + ", Data: " + commandData.data());
+            serviceManager.onPhoneCommandReceived();
 
             // Check for duplicate message ID
             if (isDuplicateMessage(commandData.messageId())) {

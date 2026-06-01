@@ -10,7 +10,6 @@ import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.io.bes.log.BesLogManager;
-import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
@@ -832,16 +831,12 @@ public class K900CommandHandler {
             .getAsgSettings()
             .isSaveInGalleryMode();
 
-        IBluetoothManager bluetoothManager = serviceManager.getBluetoothManager();
-        boolean isBesTransportConnected = bluetoothManager != null && bluetoothManager.isConnected();
-        boolean isHeartbeatConnected = serviceManager.isConnected();
-        boolean isConnected = isHeartbeatConnected;
+        // Check if glasses are connected to phone
+        boolean isConnected = serviceManager.isConnected();
 
         // LOG CONNECTION STATE FOR DEBUGGING
         Log.i(TAG, "📸 Photo capture decision - Gallery Mode: " + (isSaveInGalleryMode ? "ACTIVE" : "INACTIVE") +
-                   ", Connection State: " + (isConnected ? "CONNECTED" : "DISCONNECTED") +
-                   ", BES Transport: " + (isBesTransportConnected ? "CONNECTED" : "DISCONNECTED") +
-                   ", Heartbeat: " + (isHeartbeatConnected ? "CONNECTED" : "DISCONNECTED"));
+                   ", Connection State: " + (isConnected ? "CONNECTED" : "DISCONNECTED"));
 
         // Skip capture only if: camera app NOT running AND phone IS connected
         if (!isSaveInGalleryMode && isConnected) {
