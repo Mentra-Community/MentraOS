@@ -9,6 +9,7 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
+import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
 import com.mentra.asg_client.hardware.K900RgbLedController;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
@@ -24,11 +25,11 @@ import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.settings.VideoSettings;
-import com.radzivon.bartoshyk.avif.coder.HeifCoder;
-import com.radzivon.bartoshyk.avif.coder.PreciseMode;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.nio.file.Files;
 import java.text.SimpleDateFormat;
 import java.util.Collections;
 import java.util.Date;
@@ -115,13 +116,11 @@ public class MediaCaptureService {
         final int targetWidth;
         final int targetHeight;
         final int avifQuality;
-        final int jpegFallbackQuality;
 
-        BleParams(int targetWidth, int targetHeight, int avifQuality, int jpegFallbackQuality) {
+        BleParams(int targetWidth, int targetHeight, int avifQuality) {
             this.targetWidth = targetWidth;
             this.targetHeight = targetHeight;
             this.avifQuality = avifQuality;
-            this.jpegFallbackQuality = jpegFallbackQuality;
         }
     }
 
@@ -132,17 +131,17 @@ public class MediaCaptureService {
         switch (requestedSize) {
             case "small":
                 // Target ~8KB: 400x400 @ quality 28
-                return new BleParams(400, 400, 28, 20);
+                return new BleParams(400, 400, 28);
             case "large":
                 // Target ~25KB: 800x800 @ quality 32 (may hit BLE limit)
-                return new BleParams(800, 800, 32, 28);
+                return new BleParams(800, 800, 32);
             case "full":
                 // Target ~35KB: 1024x1024 @ quality 35 (will likely hit BLE limit)
-                return new BleParams(1024, 1024, 35, 30);
+                return new BleParams(1024, 1024, 35);
             case "medium":
             default:
                 // Target ~15KB: 640x640 @ quality 30 - safe for BLE
-                return new BleParams(640, 640, 30, 25);
+                return new BleParams(640, 640, 30);
         }
     }
 
@@ -1801,14 +1800,15 @@ public class MediaCaptureService {
                                 String compressedPath =
                                         originalPath.replace(
                                                 ".jpg", "_compressed_" + compress + ".jpg");
-                                java.io.FileOutputStream fos =
-                                        new java.io.FileOutputStream(compressedPath);
+                                FileOutputStream fos = new FileOutputStream(compressedPath);
                                 compressed.compress(
                                         android.graphics.Bitmap.CompressFormat.JPEG,
                                         jpegQuality,
                                         fos);
                                 fos.close();
                                 compressed.recycle();
+
+                                PhotoExifMetadataWriter.copyImuMetadata(originalPath, compressedPath);
 
                                 long compressionDuration =
                                         System.currentTimeMillis() - compressionStartTime;
@@ -1915,14 +1915,15 @@ public class MediaCaptureService {
                                 // Save compressed image to temporary file
                                 String compressedPath =
                                         originalPath.replace(".jpg", "_compressed.jpg");
-                                java.io.FileOutputStream fos =
-                                        new java.io.FileOutputStream(compressedPath);
+                                FileOutputStream fos = new FileOutputStream(compressedPath);
                                 compressed.compress(
                                         android.graphics.Bitmap.CompressFormat.JPEG,
                                         60,
                                         fos); // 60% quality
                                 fos.close();
                                 compressed.recycle();
+
+                                PhotoExifMetadataWriter.copyImuMetadata(originalPath, compressedPath);
 
                                 long compressionDuration =
                                         System.currentTimeMillis() - compressionStartTime;
@@ -2926,34 +2927,20 @@ public class MediaCaptureService {
                                                 original, targetWidth, targetHeight, true);
                                 original.recycle();
 
-                                // 4. Encode as AVIF with aggressive compression
-                                byte[] compressedData;
-                                try {
-                                    // Use avif-coder library for AVIF encoding
-                                    HeifCoder heifCoder = new HeifCoder();
-                                    compressedData =
-                                            heifCoder.encodeAvif(
-                                                    resized,
-                                                    bleParams.avifQuality, // quality (0-100)
-                                                    PreciseMode
-                                                            .LOSSY // Use FAST mode for reasonable
-                                                    // compression speed
-                                                    );
-                                    Log.d(TAG, "Successfully encoded as AVIF");
-                                } catch (Exception e) {
-                                    Log.w(
-                                            TAG,
-                                            "AVIF encoding failed, falling back to JPEG: "
-                                                    + e.getMessage());
-                                    // Fallback to JPEG if AVIF fails
-                                    java.io.ByteArrayOutputStream baos =
-                                            new java.io.ByteArrayOutputStream();
-                                    resized.compress(
-                                            android.graphics.Bitmap.CompressFormat.JPEG,
-                                            bleParams.jpegFallbackQuality,
-                                            baos);
-                                    compressedData = baos.toByteArray();
-                                }
+                                // 4. Encode as AVIF (with EXIF when source JPEG has IMU metadata)
+                                Log.d(
+                                        TAG,
+                                        "BLE AVIF encode: originalPath="
+                                                + originalPath
+                                                + " hasImuMetadata="
+                                                + PhotoExifMetadataWriter.hasImuMetadata(
+                                                        originalPath));
+                                byte[] compressedData =
+                                        PhotoExifMetadataWriter.encodeAvifForBle(
+                                                resized,
+                                                bleParams.avifQuality,
+                                                originalPath);
+                                Log.d(TAG, "Successfully encoded as AVIF for BLE");
                                 resized.recycle();
 
                                 long compressionTime = System.currentTimeMillis() - startTime;
