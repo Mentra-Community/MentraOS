@@ -833,14 +833,14 @@ public class K900CommandHandler {
             .isSaveInGalleryMode();
 
         IBluetoothManager bluetoothManager = serviceManager.getBluetoothManager();
-        boolean isBluetoothConnected = bluetoothManager != null && bluetoothManager.isConnected();
+        boolean isBesTransportConnected = bluetoothManager != null && bluetoothManager.isConnected();
         boolean isHeartbeatConnected = serviceManager.isConnected();
-        boolean isConnected = isBluetoothConnected || isHeartbeatConnected;
+        boolean isConnected = isHeartbeatConnected;
 
         // LOG CONNECTION STATE FOR DEBUGGING
         Log.i(TAG, "📸 Photo capture decision - Gallery Mode: " + (isSaveInGalleryMode ? "ACTIVE" : "INACTIVE") +
                    ", Connection State: " + (isConnected ? "CONNECTED" : "DISCONNECTED") +
-                   ", BLE Transport: " + (isBluetoothConnected ? "CONNECTED" : "DISCONNECTED") +
+                   ", BES Transport: " + (isBesTransportConnected ? "CONNECTED" : "DISCONNECTED") +
                    ", Heartbeat: " + (isHeartbeatConnected ? "CONNECTED" : "DISCONNECTED"));
 
         // Skip capture only if: camera app NOT running AND phone IS connected
