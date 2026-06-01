@@ -7,6 +7,8 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.util.Log;
 
+import androidx.annotation.Nullable;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -91,7 +93,7 @@ public class ImuRecorder implements SensorEventListener {
   }
 
   /**
-   * Stop recording and build the IMU payload JSON.
+   * Stop recording and build the IMU payload JSON (same schema as the sidecar file).
    *
    * <p>Payload schema:
    * <ul>
@@ -105,6 +107,7 @@ public class ImuRecorder implements SensorEventListener {
    *
    * @return IMU payload JSON, or null when no samples were captured or serialization fails
    */
+  @Nullable
   public JSONObject stopRecordingAndBuildPayload() {
     mRecording = false;
     mSensorManager.unregisterListener(this);
@@ -121,30 +124,7 @@ public class ImuRecorder implements SensorEventListener {
     }
 
     try {
-      JSONObject root = new JSONObject();
-      root.put("version", 1);
-      root.put("sampleCount", captured.size());
-      root.put("samplingRateHz", 100);
-      root.put("startTimeNs", mStartTimeNs);
-      root.put(
-              "durationMs",
-              (captured.get(captured.size() - 1).timestampNs - mStartTimeNs) / 1_000_000);
-
-      JSONArray samples = new JSONArray();
-      for (ImuSample s : captured) {
-        JSONArray sample = new JSONArray();
-        // Compact format: [relativeTimeMs, ax, ay, az, gx, gy, gz]
-        sample.put(Math.round((s.timestampNs - mStartTimeNs) / 1_000_000.0));
-        sample.put(round4(s.accel[0]));
-        sample.put(round4(s.accel[1]));
-        sample.put(round4(s.accel[2]));
-        sample.put(round4(s.gyro[0]));
-        sample.put(round4(s.gyro[1]));
-        sample.put(round4(s.gyro[2]));
-        samples.put(sample);
-      }
-      root.put("samples", samples);
-      return root;
+      return buildPayloadFromSamples(captured);
     } catch (JSONException e) {
       Log.e(TAG, "Failed to build IMU payload", e);
       return null;
@@ -153,36 +133,73 @@ public class ImuRecorder implements SensorEventListener {
 
   /**
    * Stop recording and write the sidecar JSON file.
+   *
    * @param mediaFilePath Path to the media file (e.g., IMG_xxx.jpg or VID_xxx.mp4)
    * @return Path to the sidecar JSON file, or null on failure
    */
+  @Nullable
   public String stopRecordingAndSave(String mediaFilePath) {
     JSONObject payload = stopRecordingAndBuildPayload();
-    if (payload == null) return null;
+    if (payload == null) {
+      return null;
+    }
+    return writeSidecar(mediaFilePath, payload);
+  }
 
-    // Generate sidecar path: save imu.json inside the capture folder
+  /**
+   * Write imu.json sidecar next to the media file using an existing payload.
+   */
+  @Nullable
+  public String writeSidecar(String mediaFilePath, JSONObject payload) {
     File parentDir = new File(mediaFilePath).getParentFile();
+    if (parentDir == null) {
+      Log.e(TAG, "Cannot resolve parent dir for sidecar: " + mediaFilePath);
+      return null;
+    }
     String sidecarPath = new File(parentDir, "imu.json").getAbsolutePath();
-
     try {
       File sidecarFile = new File(sidecarPath);
       try (FileWriter writer = new FileWriter(sidecarFile)) {
         writer.write(payload.toString());
       }
-
       Log.d(
-              TAG,
-              "IMU sidecar written: "
-                      + sidecarPath
-                      + " ("
-                      + payload.optInt("sampleCount", 0)
-                      + " samples)");
+          TAG,
+          "IMU sidecar written: "
+              + sidecarPath
+              + " ("
+              + payload.optInt("sampleCount", 0)
+              + " samples)");
       return sidecarPath;
-
     } catch (IOException e) {
       Log.e(TAG, "Failed to write IMU sidecar", e);
       return null;
     }
+  }
+
+  private JSONObject buildPayloadFromSamples(List<ImuSample> captured) throws JSONException {
+    JSONObject root = new JSONObject();
+    root.put("version", 1);
+    root.put("sampleCount", captured.size());
+    root.put("samplingRateHz", 100);
+    root.put("startTimeNs", mStartTimeNs);
+    root.put(
+        "durationMs",
+        (captured.get(captured.size() - 1).timestampNs - mStartTimeNs) / 1_000_000);
+
+    JSONArray samples = new JSONArray();
+    for (ImuSample s : captured) {
+      JSONArray sample = new JSONArray();
+      sample.put(Math.round((s.timestampNs - mStartTimeNs) / 1_000_000.0));
+      sample.put(round4(s.accel[0]));
+      sample.put(round4(s.accel[1]));
+      sample.put(round4(s.accel[2]));
+      sample.put(round4(s.gyro[0]));
+      sample.put(round4(s.gyro[1]));
+      sample.put(round4(s.gyro[2]));
+      samples.put(sample);
+    }
+    root.put("samples", samples);
+    return root;
   }
 
   /** Cancel recording without saving. */
