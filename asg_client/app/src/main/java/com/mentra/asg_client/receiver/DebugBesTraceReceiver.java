@@ -12,9 +12,8 @@ import com.mentra.asg_client.service.core.processors.CommandProcessor;
 /**
  * Debug receiver for polling BES trace logs into MentraBleTrace.
  *
- * Usage:
- *   adb shell am broadcast -a com.mentra.DEBUG_BES_TRACE --ez enabled true --ei interval_ms 5000
- *   adb shell am broadcast -a com.mentra.DEBUG_BES_TRACE --ez enabled false
+ * <p>Usage: adb shell am broadcast -a com.mentra.DEBUG_BES_TRACE --ez enabled true --ei interval_ms
+ * 5000 adb shell am broadcast -a com.mentra.DEBUG_BES_TRACE --ez enabled false
  */
 public class DebugBesTraceReceiver extends BroadcastReceiver {
     private static final String TAG = "DebugBesTraceReceiver";
@@ -43,8 +42,12 @@ public class DebugBesTraceReceiver extends BroadcastReceiver {
         }
 
         processor.setBesTracePollingEnabled(enabled, intervalMs);
-        Log.i(TAG, "BES trace polling " + (enabled ? "enabled" : "disabled")
-            + " intervalMs=" + intervalMs);
+        Log.i(
+                TAG,
+                "BES trace polling "
+                        + (enabled ? "enabled" : "disabled")
+                        + " intervalMs="
+                        + intervalMs);
     }
 
     private long readIntervalMs(Intent intent) {
