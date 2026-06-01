@@ -864,7 +864,6 @@ class R1 : ControllerManager() {
     override fun requestPhoto(
         requestId: String, appId: String, size: String?, webhookUrl: String?,
         authToken: String?, compress: String?, flash: Boolean, save: Boolean, sound: Boolean,
-        includeImu: Boolean,
         exposureTimeNs: Long?,
     ) {}
     override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {}
