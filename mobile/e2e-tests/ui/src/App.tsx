@@ -276,7 +276,7 @@ function applyStreamUpdate(
       ...snapshot,
       current_utterance: null,
       completed_utterances: trimHistory(
-        [...snapshot.completed_utterances, streamEvent.payload as MonitorSnapshot["completed_utterances"][number]],
+        [...snapshot.completed_utterances, streamEvent.payload as unknown as MonitorSnapshot["completed_utterances"][number]],
         COMPLETED_UTTERANCE_LIMIT,
       ),
     }

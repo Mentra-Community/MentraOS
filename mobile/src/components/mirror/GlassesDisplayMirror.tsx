@@ -7,7 +7,6 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore} from "@/stores/glasses"
 import {ThemedStyle} from "@/theme"
-import GlassView from "@/components/ui/GlassView"
 
 interface GlassesDisplayMirrorProps {
   fallbackMessage?: string

@@ -11,7 +11,8 @@ interface OverviewTabProps {
 }
 
 export function OverviewTab({compareDevice = false, snapshot}: OverviewTabProps) {
-  const currentWord = snapshot.current_utterance?.words?.filter((word) => word.logcat_true_first_visible_ts_ms).at(-1)
+  const visibleWords = snapshot.current_utterance?.words.filter((word) => word.logcat_true_first_visible_ts_ms) ?? []
+  const currentWord = visibleWords[visibleWords.length - 1]
   const nextWord = snapshot.current_utterance?.words?.find((word) => !word.logcat_true_first_visible_ts_ms)
 
   return (

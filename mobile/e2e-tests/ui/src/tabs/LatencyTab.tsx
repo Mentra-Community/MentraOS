@@ -54,14 +54,15 @@ export function LatencyTab({snapshot}: {snapshot: MonitorSnapshot}) {
     }
   }, [])
 
-  const latestPointTsMs = snapshot.logcat_true_word_delay_points.at(-1)?.ts_ms ?? null
-  const activeWindow = WINDOW_OPTIONS.find((option) => option.value === windowMs) ?? WINDOW_OPTIONS.at(-1)
+  const latestPoint = snapshot.logcat_true_word_delay_points[snapshot.logcat_true_word_delay_points.length - 1]
+  const latestPointTsMs = latestPoint?.ts_ms ?? null
+  const activeWindow = WINDOW_OPTIONS.find((option) => option.value === windowMs) ?? WINDOW_OPTIONS[WINDOW_OPTIONS.length - 1]
   const windowEndMs = windowMs !== null ? Math.max(nowMs, latestPointTsMs ?? 0) : null
   const windowStartMs = windowMs !== null && windowEndMs !== null ? windowEndMs - windowMs : null
-  const xDomain =
+  const xDomain: [number, number] | ["dataMin", "dataMax"] =
     windowMs !== null && windowEndMs !== null
       ? [windowEndMs - windowMs, windowEndMs]
-      : (["dataMin", "dataMax"] as const)
+      : ["dataMin", "dataMax"]
   const ticks =
     windowStartMs !== null && windowEndMs !== null
       ? buildWindowTicks(windowStartMs, windowEndMs, activeWindow?.tickStepMs ?? null)
@@ -126,7 +127,6 @@ export function LatencyTab({snapshot}: {snapshot: MonitorSnapshot}) {
                   name="Raw delay"
                   dataKey="delay_ms"
                   fill="#2563eb"
-                  shape={{type: "circle", size: 4, sizeType: "diameter"}}
                 />
                 <Line
                   isAnimationActive={false}

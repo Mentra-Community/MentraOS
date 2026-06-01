@@ -447,7 +447,6 @@ class SocketComms {
     // Phone-side VAD is now driven by LocalSttFallbackCoordinator for
     // per-utterance offline/online STT switching, so we never want to
     // bypass it from the cloud side. The cloud's bypassVad hint is ignored.
-    const bypassVad = false
     const requiredDataStrings = msg.requiredData || []
     console.log(`SOCKET: mic_state_change: requiredData = [${requiredDataStrings}]`)
     let shouldSendPcmData = false

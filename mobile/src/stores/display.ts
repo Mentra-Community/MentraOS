@@ -42,7 +42,6 @@ export const useDisplayStore = create<DisplayStore>((set, get) => ({
     }
 
     set(updates)
-
   },
   setView: (view: string) => {
     const currentView = get().view
