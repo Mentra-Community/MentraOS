@@ -335,6 +335,10 @@ MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk
 
 Use `bunx expo run:android` for Android. Keep local paths in your shell or CI environment, not in committed app config.
 
+## Android Maven Publishing
+
+For maintainer releases of the native Android artifacts, use `android/gradle.properties.example` as the template for Sonatype Central and GPG signing properties. Put real values in `~/.gradle/gradle.properties` or CI secrets, not in the repository.
+
 ## Starter Example App
 
 The [Mentra Bluetooth SDK Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit) includes starter example apps for Android, iOS, and React Native / Expo. The React Native starter demonstrates scan/connect, display, camera photo upload, RTMP/SRT/WebRTC streaming, Wi-Fi/hotspot, microphone PCM, RGB LED, gallery mode, and console event inspection.
