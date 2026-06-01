@@ -2017,9 +2017,9 @@ class LocalMiniappRuntime {
 
     if (normalizedStream.startsWith("transcription:")) {
       const known = Array.from(this.streamSubscribers.keys())
-      console.log(
-        `${LOG_TAG}: forwardEvent(${streamType} → ${normalizedStream}) matched=${matchedSubs.size} known=[${known.join(", ")}]`,
-      )
+      // console.log(
+      //   `${LOG_TAG}: forwardEvent(${streamType} → ${normalizedStream}) matched=${matchedSubs.size} known=[${known.join(", ")}]`,
+      // )
     }
 
     if (matchedSubs.size === 0 && !perGestureStream) return

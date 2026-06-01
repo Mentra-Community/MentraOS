@@ -238,6 +238,7 @@ struct ViewState {
         get { DeviceStore.shared.get("bluetooth", "shouldSendBootingMessage") as? Bool ?? true }
         set { DeviceStore.shared.apply("bluetooth", "shouldSendBootingMessage", newValue) }
     }
+
     private var lastSystemTimeSyncConnectionKey = ""
 
     private var systemMicUnavailable: Bool {
@@ -683,12 +684,12 @@ struct ViewState {
             case "reference_card":
                 sgc?.sendTextWall(currentViewState.title + "\n\n" + currentViewState.text)
             case "bitmap_view":
-                Bridge.log("MAN: Processing bitmap_view layout")
+                // Bridge.log("MAN: Processing bitmap_view layout")
                 guard let data = currentViewState.data else {
                     Bridge.log("MAN: ERROR: bitmap_view missing data field")
                     return
                 }
-                Bridge.log("MAN: Processing bitmap_view with base64 data, length: \(data.count)")
+                // Bridge.log("MAN: Processing bitmap_view with base64 data, length: \(data.count)")
                 await sgc?.displayBitmap(
                     base64ImageData: data,
                     x: currentViewState.bmpX,

@@ -1386,7 +1386,6 @@ class G2: NSObject, SGCManager {
     private var foregroundObserver: NSObjectProtocol?
     private var startupPageCreated: Bool = false // createStartUpPageContainer can only be called once
     private var pageCreated: Bool = false
-    private var pageHasTextContainer: Bool = false // tracks if current page has a text container
     private var currentTextContent: String = ""
     private var currentBitmapBase64: String = ""
     private var textContainerID: Int32 = 1
@@ -1419,19 +1418,45 @@ class G2: NSObject, SGCManager {
         let y: Int32
         let width: Int32
         let height: Int32
-        var name: String { "img-\(id)" }
+        var name: String {
+            "img-\(id)"
+        }
+
         func matches(x: Int32, y: Int32, width: Int32, height: Int32) -> Bool {
             self.x == x && self.y == y && self.width == width && self.height == height
+        }
+    }
+
+    private struct TextContainer: Equatable {
+        let id: Int32
+        let x: Int32
+        let y: Int32
+        let width: Int32
+        let height: Int32
+        var content: String
+        let borderWidth: Int32
+        let borderColor: Int32
+        let borderRadius: Int32
+        let paddingLength: Int32
+        var name: String {
+            "text-\(id)"
+        }
+
+        func matches(x: Int32, y: Int32, width: Int32, height: Int32) -> Bool {
+            self.x == x && self.y == y && self.width == width && self.height == height && borderWidth == borderWidth && borderColor == borderColor && borderRadius == borderRadius && paddingLength == paddingLength
         }
     }
 
     /// Live list of image containers on the page, ordered oldest→newest (for LRU eviction).
     /// The page may hold at most 4 image containers (IDs from the pool below).
     private var imageContainers: [ImgContainer] = []
+    private var textContainers: [TextContainer] = []
     /// Fixed pool of container IDs the page protocol expects.
     private let imageContainerIDPool: [Int32] = [10, 11, 12, 13]
+    private let textContainerIDPool: [Int32] = [1, 2, 3, 4, 5, 6]
     /// Default container seeded into every fresh page: 100x100 in the top-left.
     private static let defaultImgContainer = (x: Int32(288), y: Int32(144), width: Int32(200), height: Int32(100))
+    private static let defaultTextContainer = (x: Int32(0), y: Int32(0), width: Int32(576), height: Int32(288), borderWidth: Int32(0), borderColor: Int32(0), borderRadius: Int32(0), paddingLength: Int32(4))
 
     @Published var aiListening: Bool = false
 
@@ -1863,6 +1888,21 @@ class G2: NSObject, SGCManager {
     // MARK: - SGCManager: Display Control
 
     func sendTextWall(_ text: String) {
+        Task {
+            await sendText(text,
+                x: G2.defaultTextContainer.x,
+                y: G2.defaultTextContainer.y,
+                width: G2.defaultTextContainer.width,
+                height: G2.defaultTextContainer.height,
+                borderWidth: G2.defaultTextContainer.borderWidth,
+                borderColor: G2.defaultTextContainer.borderColor,
+                borderRadius: G2.defaultTextContainer.borderRadius,
+                paddingLength: G2.defaultTextContainer.paddingLength
+            )
+        }
+    }
+
+    func sendText(_ text: String, x: Int32? = nil, y: Int32? = nil, width: Int32? = nil, height: Int32? = nil, borderWidth: Int32? = nil, borderColor: Int32? = nil, borderRadius: Int32? = nil, paddingLength: Int32? = nil) async -> Void {
         // Bridge.log("G2: sendTextWall(\(text.prefix(50))...)")
 
         // ignore events while the ER dashboard is open:
@@ -1876,14 +1916,42 @@ class G2: NSObject, SGCManager {
             return
         }
 
-        if !pageCreated || !pageHasTextContainer {
-            // Need to create/rebuild page with a text container
-            // Bridge.log("G2: sendTextWall() - creating page with text container")
-            createPageWithText(text)
+
+        let rx = x ?? G2.defaultTextContainer.x
+        let ry = y ?? G2.defaultTextContainer.y
+        let rw = width ?? G2.defaultTextContainer.width
+        let rh = height ?? G2.defaultTextContainer.height
+        let content = text
+        let borderWidth = G2.defaultTextContainer.borderWidth
+        let borderColor = G2.defaultTextContainer.borderColor
+        let borderRadius = G2.defaultTextContainer.borderRadius
+        let paddingLength = G2.defaultTextContainer.paddingLength
+
+        // Reuse an existing container if the rect matches exactly; otherwise add a new one.
+        let container: TextContainer
+        if let existing = textContainers.first(where: { $0.matches(x: rx, y: ry, width: rw, height: rh) }) {
+            container = existing
+            // Bridge.log("G2: sendTextWall() - reusing container \(existing.id) for rect \(rx),\(ry) \(rw)x\(rh)")
+            if !pageCreated {
+                rebuildPage()
+                try? await Task.sleep(nanoseconds: 1_000_000_000) // settle before sending image data
+            }
         } else {
-            // Bridge.log("G2: sendTextWall() - updating text container")
-            updateText(text)
+            container = addTextContainer(x: rx, y: ry, width: rw, height: rh, content: content, borderWidth: borderWidth, borderColor: borderColor, borderRadius: borderRadius, paddingLength: paddingLength)
+            Bridge.log("G2: displayBitmap() - added text container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh), rebuilding page")
+            rebuildPage()
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // settle before sending text data
         }
+
+        // update the text container:
+        let msg = EvenHubProto.updateTextMessage(
+            containerID: container.id,
+            contentOffset: 0,
+            contentLength: Int32(text.utf8.count),
+            content: container.content
+        )
+        queueEvenHubCommand(msg)
+        currentTextContent = text 
     }
 
     func sendDoubleTextWall(_ top: String, _ bottom: String) {
@@ -1968,25 +2036,15 @@ class G2: NSObject, SGCManager {
             return false
         }
 
-        // Create the startup page lazily, seeded with the default top-left container.
-        if !startupPageCreated {
-            imageContainers = [
-                ImgContainer(
-                    id: imageContainerIDPool[0],
-                    x: G2.defaultImgContainer.x, y: G2.defaultImgContainer.y,
-                    width: G2.defaultImgContainer.width, height: G2.defaultImgContainer.height
-                )
-            ]
-            createPageWithText("")
-            Bridge.log("G2: displayBitmap() - startup page created, waiting 1s before sending image data...")
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-        }
-
         // Reuse an existing container if the rect matches exactly; otherwise add a new one.
         let container: ImgContainer
         if let existing = imageContainers.first(where: { $0.matches(x: rx, y: ry, width: rw, height: rh) }) {
             container = existing
             Bridge.log("G2: displayBitmap() - reusing container \(existing.id) for rect \(rx),\(ry) \(rw)x\(rh)")
+            if !pageCreated {
+                rebuildPage()
+                try? await Task.sleep(nanoseconds: 1_000_000_000) // settle before sending image data
+            }
         } else {
             container = addImageContainer(x: rx, y: ry, width: rw, height: rh)
             Bridge.log("G2: displayBitmap() - added container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh), rebuilding page")
@@ -2025,10 +2083,50 @@ class G2: NSObject, SGCManager {
         imageContainers.append(container)
         return container
     }
+    
+    private func addTextContainer(x: Int32, y: Int32, width: Int32, height: Int32, content: String, borderWidth: Int32, borderColor: Int32, borderRadius: Int32, paddingLength: Int32) -> TextContainer {
+        // Evict the oldest container when at capacity, freeing its ID for reuse.
+        if textContainers.count >= textContainerIDPool.count {
+            let evicted = textContainers.removeFirst()
+            Bridge.log("G2: evicting oldest text container \(evicted.id)")
+        }
+        // Pick the lowest free ID from the pool.
+        let usedIDs = Set(textContainers.map { $0.id })
+        let id = textContainerIDPool.first { !usedIDs.contains($0) } ?? textContainerIDPool[0]
+        let container = TextContainer(id: id, x: x, y: y, width: width, height: height, content: content, borderWidth: borderWidth, borderColor: borderColor, borderRadius: borderRadius, paddingLength: paddingLength)
+        textContainers.append(container)
+        return container
+    }
 
     /// Rebuild the page from the current text + image container list.
     private func rebuildPage() {
-        createPageWithText(currentTextContent)
+        let msg = EvenHubProto.shutdownMessage()
+        sendEvenHubCommand(msg)
+        pageCreated = false
+        // createPageWithText(currentTextContent)
+        rebuildState()
+    }
+    
+    private func rebuildState() {
+        Task {
+
+            // send any image containers we have
+            createPageWithContainers()
+            // go through each container and send the data:
+            for container in imageContainers {
+                
+            }
+
+            // go through each text container and send the data:
+            for container in textContainers {
+                let msg = EvenHubProto.updateTextMessage(
+                    containerID: container.id,
+                    contentOffset: 0,
+                    contentLength: Int32(container.content.utf8.count),
+                    content: container.content
+                )
+            }
+        }
     }
 
     /// Upscale BMP pixel data by 2x (200x100 → 400x200) using nearest-neighbor
@@ -2263,7 +2361,6 @@ class G2: NSObject, SGCManager {
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
-        pageHasTextContainer = false
         currentTextContent = ""
         currentBitmapBase64 = ""
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -2420,6 +2517,49 @@ class G2: NSObject, SGCManager {
 
     // MARK: - Private Display Helpers
 
+    private func createPageWithContainers() {
+        // build the page's text containers from the live tracked list.
+        let textContainerProps: [Data] = textContainers.map { c in
+            EvenHubProto.textContainerProperty(
+                x: c.x, y: c.y, width: c.width, height: c.height,
+                borderWidth: c.borderWidth, borderColor: c.borderColor, borderRadius: c.borderRadius,
+                paddingLength: c.paddingLength, containerID: c.id,
+                containerName: c.name, isEventCapture: c.id == 0,
+                content: c.content
+            )
+        }
+
+        // Build the page's image containers from the live tracked list.
+        let imageContainerProps: [Data] = imageContainers.map { c in
+            EvenHubProto.imageContainerProperty(
+                x: c.x, y: c.y, width: c.width, height: c.height,
+                containerID: c.id, containerName: c.name
+            )
+        }
+
+        let msg: Data
+        if !pageCreated {
+            Bridge.log("G2: createPageWithText - using createPageMessage (first time)")
+            msg = EvenHubProto.createPageMessage(
+                textContainers: textContainerProps,
+                imageContainers: imageContainerProps,
+                magicRandom: sendManager.nextMagicRandom(),
+                appId: activeMenuAppId
+            )
+            pageCreated = true
+        } else {
+            Bridge.log("G2: createPageWithText - using rebuildPageMessage")
+            msg = EvenHubProto.rebuildPageMessage(
+                textContainers: textContainerProps,
+                imageContainers: imageContainerProps,
+                magicRandom: sendManager.nextMagicRandom(),
+                appId: activeMenuAppId
+            )
+        }
+        sendEvenHubCommand(msg)
+        pageCreated = true
+    }
+
     private func createPageWithText(_ text: String) {
         let tc = EvenHubProto.textContainerProperty(
             x: 0, y: 0, width: 576, height: 288,
@@ -2438,7 +2578,7 @@ class G2: NSObject, SGCManager {
         }
 
         let msg: Data
-        if !startupPageCreated {
+        if !pageCreated {
             Bridge.log("G2: createPageWithText - using createPageMessage (first time)")
             msg = EvenHubProto.createPageMessage(
                 textContainers: [tc],
@@ -2446,7 +2586,7 @@ class G2: NSObject, SGCManager {
                 magicRandom: sendManager.nextMagicRandom(),
                 appId: activeMenuAppId
             )
-            startupPageCreated = true
+            pageCreated = true
         } else {
             Bridge.log("G2: createPageWithText - using rebuildPageMessage")
             msg = EvenHubProto.rebuildPageMessage(
@@ -2458,19 +2598,6 @@ class G2: NSObject, SGCManager {
         }
         sendEvenHubCommand(msg)
         pageCreated = true
-        pageHasTextContainer = true
-        currentTextContent = text
-        currentBitmapBase64 = ""
-    }
-
-    private func updateText(_ text: String) {
-        let msg = EvenHubProto.updateTextMessage(
-            containerID: textContainerID,
-            contentOffset: 0,
-            contentLength: Int32(text.utf8.count),
-            content: text
-        )
-        queueEvenHubCommand(msg)
         currentTextContent = text
         currentBitmapBase64 = ""
     }
@@ -2513,7 +2640,7 @@ class G2: NSObject, SGCManager {
             if useNativeDashboard && dashboardShowing > 0 {
                 return
             }
-            if !pageCreated || !pageHasTextContainer {
+            if !pageCreated {
                 DeviceManager.shared.sendCurrentState() // should re-create the page if needed
             }
             let msg = EvenHubProto.audioControlMessage(enable: true)
@@ -2601,7 +2728,6 @@ class G2: NSObject, SGCManager {
         rightAuthenticated = false
         startupPageCreated = false
         pageCreated = false
-        pageHasTextContainer = false
         dashboardShowing = 0
         heartbeatCounter = 0
         DeviceStore.shared.apply("glasses", "connected", false)
@@ -3177,9 +3303,7 @@ class G2: NSObject, SGCManager {
                             Bridge.log(
                                 "G2: WARN: Glasses shutdown our EvenHub page — resetting page state"
                             )
-                            startupPageCreated = false
                             pageCreated = false
-                            pageHasTextContainer = false
                             currentTextContent = ""
                         }
                     }
@@ -3197,9 +3321,7 @@ class G2: NSObject, SGCManager {
             // If glasses sent a shutdown (cmd=9/10), our page is gone — reset state
             if cmdValue == 9 || cmdValue == 10 {
                 Bridge.log("G2: ERROR: Glasses shutdown our EvenHub page — resetting page state")
-                startupPageCreated = false
                 pageCreated = false
-                pageHasTextContainer = false
                 currentTextContent = ""
             }
         }
@@ -3322,9 +3444,7 @@ class G2: NSObject, SGCManager {
                 let savedText = currentTextContent
                 let savedBitmap = currentBitmapBase64
                 // Bridge.log("G2: System exit detected")
-                startupPageCreated = false
                 pageCreated = false
-                pageHasTextContainer = false
                 currentTextContent = ""
                 currentBitmapBase64 = ""
                 // Firmware kills the mic on system exit; re-arm it if it should be on
@@ -3640,7 +3760,6 @@ class G2: NSObject, SGCManager {
         //     "G2: gesture_ctrl response: \(data.map { String(format: "%02X", $0) }.joined())"
         // )
         // Bridge.log("G2: gesture_ctrl response:")
-        
 
         // Dedup: L and R peripherals both deliver this event, so debounce or
         let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
@@ -3672,7 +3791,9 @@ class G2: NSObject, SGCManager {
                 if dashboardShowing <= 1 {
                     dashboardShowing = 0
                     // make sure the container exists:
-                    DeviceManager.shared.sendCurrentState()
+                    // DeviceManager.shared.sendCurrentState()
+                    // rebuild state:
+                    rebuildState()
                     // set the mic back on if it should be on
                     let micEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
                     if micEnabled {
@@ -3888,7 +4009,6 @@ extension G2: CBCentralManagerDelegate {
 
             self.startupPageCreated = false
             self.pageCreated = false
-            self.pageHasTextContainer = false
             self.dashboardShowing = 0
             DeviceStore.shared.apply("glasses", "connected", false)
             DeviceStore.shared.apply("glasses", "fullyBooted", false)
