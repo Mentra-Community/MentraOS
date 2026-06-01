@@ -2,6 +2,7 @@ package com.mentra.asg_client.camera.lifecycle;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.File;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Rule;
@@ -10,8 +11,6 @@ import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
-
-import java.io.File;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)

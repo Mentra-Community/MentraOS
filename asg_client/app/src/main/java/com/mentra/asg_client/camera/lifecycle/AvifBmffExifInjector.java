@@ -1,7 +1,6 @@
 package com.mentra.asg_client.camera.lifecycle;
 
 import android.util.Log;
-
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -11,9 +10,10 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Embeds TIFF EXIF ({@code Exif\0\0} + IFD) into HeifCoder/libavif AVIF by extending {@code mdat} and
- * patching {@code iloc}/{@code iinf}/{@code iref}. Matches the layout produced by libheif on Mentra
- * Live so {@link android.media.MediaMetadataRetriever} exposes EXIF offset/length on API 31+.
+ * Embeds TIFF EXIF ({@code Exif\0\0} + IFD) into HeifCoder/libavif AVIF by extending {@code mdat}
+ * and patching {@code iloc}/{@code iinf}/{@code iref}. Matches the layout produced by libheif on
+ * Mentra Live so {@link android.media.MediaMetadataRetriever} exposes EXIF offset/length on API
+ * 31+.
  */
 final class AvifBmffExifInjector {
     private static final String TAG = "AvifBmffExif";
@@ -32,9 +32,7 @@ final class AvifBmffExifInjector {
 
     private static void logBox(String logTag, BmffBox box, int depth) {
         String indent = "  ".repeat(Math.max(0, depth));
-        Log.i(
-                logTag,
-                indent + "type=" + box.type + " payload=" + box.payload.length);
+        Log.i(logTag, indent + "type=" + box.type + " payload=" + box.payload.length);
         if ("meta".equals(box.type)) {
             for (BmffBox child : parseMetaChildren(box.payload)) {
                 logBox(logTag, child, depth + 1);
@@ -68,19 +66,23 @@ final class AvifBmffExifInjector {
         byte[] newIinf = appendIinfEntry(tables.iinfPayload, exifItemId);
         byte[] newIref = appendCdscRef(tables.irefPayload, exifItemId, tables.primaryItemId);
         // Placeholder iloc; offset is fixed after meta size is known.
-        byte[] newIloc =
-                appendIlocEntry(tables.ilocPayload, exifItemId, 0, exifTiffBlock.length);
+        byte[] newIloc = appendIlocEntry(tables.ilocPayload, exifItemId, 0, exifTiffBlock.length);
         byte[] newMetaPayload = rebuildMeta(metaPayload, newIloc, newIinf, newIref);
         BmffBox newMeta = new BmffBox("meta", newMetaPayload);
         int exifOffsetInFile =
-                ftyp.encodedSize() + newMeta.encodedSize() + mdat.headerSize() + mdat.payload.length;
+                ftyp.encodedSize()
+                        + newMeta.encodedSize()
+                        + mdat.headerSize()
+                        + mdat.payload.length;
         newIloc =
-                appendIlocEntry(tables.ilocPayload, exifItemId, exifOffsetInFile, exifTiffBlock.length);
+                appendIlocEntry(
+                        tables.ilocPayload, exifItemId, exifOffsetInFile, exifTiffBlock.length);
         newMetaPayload = rebuildMeta(metaPayload, newIloc, newIinf, newIref);
         newMeta = new BmffBox("meta", newMetaPayload);
         BmffBox newMdat = new BmffBox("mdat", newMdatPayload);
 
-        ByteArrayOutputStream out = new ByteArrayOutputStream(avif.length + exifTiffBlock.length + 256);
+        ByteArrayOutputStream out =
+                new ByteArrayOutputStream(avif.length + exifTiffBlock.length + 256);
         ftyp.writeTo(out);
         newMeta.writeTo(out);
         for (BmffBox box : top) {
@@ -93,11 +95,16 @@ final class AvifBmffExifInjector {
 
         int actualExifOffset = locateMdatPayloadEnd(result) - exifTiffBlock.length;
         if (actualExifOffset != exifOffsetInFile) {
-            Log.d(TAG, "Re-patching iloc exif offset " + exifOffsetInFile + " -> " + actualExifOffset);
+            Log.d(
+                    TAG,
+                    "Re-patching iloc exif offset " + exifOffsetInFile + " -> " + actualExifOffset);
             MetaTables reparsed = parseMetaTables(newMetaPayload);
             byte[] patchedIloc =
                     patchIlocEntryOffset(
-                            reparsed.ilocPayload, exifItemId, actualExifOffset, exifTiffBlock.length);
+                            reparsed.ilocPayload,
+                            exifItemId,
+                            actualExifOffset,
+                            exifTiffBlock.length);
             byte[] patchedMeta = rebuildMeta(newMetaPayload, patchedIloc, newIinf, newIref);
             System.arraycopy(
                     new BmffBox("meta", patchedMeta).encode(),
@@ -124,7 +131,8 @@ final class AvifBmffExifInjector {
     /** Unwrap accidental nested {@code meta} box left by older injector builds. */
     private static byte[] normalizeMetaPayload(byte[] metaPayload) {
         if (metaPayload.length >= 8) {
-            String type = new String(metaPayload, 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1);
+            String type =
+                    new String(metaPayload, 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1);
             if ("meta".equals(type)) {
                 int innerSize = u32(metaPayload, 0);
                 if (innerSize >= 8 && innerSize <= metaPayload.length) {
@@ -147,8 +155,8 @@ final class AvifBmffExifInjector {
     }
 
     /**
-     * Returns the meta box PAYLOAD (version+flags + rebuilt child boxes).
-     * Callers wrap this in a BmffBox("meta", ...) which adds the 8-byte box header.
+     * Returns the meta box PAYLOAD (version+flags + rebuilt child boxes). Callers wrap this in a
+     * BmffBox("meta", ...) which adds the 8-byte box header.
      */
     private static byte[] rebuildMeta(byte[] metaPayload, byte[] iloc, byte[] iinf, byte[] iref)
             throws IOException {
@@ -176,8 +184,8 @@ final class AvifBmffExifInjector {
         return result.toByteArray();
     }
 
-    private static byte[] appendIlocEntry(
-            byte[] ilocPayload, int itemId, int offset, int length) throws IOException {
+    private static byte[] appendIlocEntry(byte[] ilocPayload, int itemId, int offset, int length)
+            throws IOException {
         if (ilocPayload.length < 12) {
             throw new IOException("iloc too small");
         }
@@ -268,7 +276,8 @@ final class AvifBmffExifInjector {
         }
     }
 
-    private static void writeSized(ByteArrayOutputStream out, int value, int bytes) throws IOException {
+    private static void writeSized(ByteArrayOutputStream out, int value, int bytes)
+            throws IOException {
         switch (bytes) {
             case 0:
                 break;
@@ -367,7 +376,9 @@ final class AvifBmffExifInjector {
         if (tables.maxItemId <= 0) {
             tables.maxItemId = tables.primaryItemId;
         }
-        if (tables.ilocPayload == null || tables.iinfPayload == null || tables.irefPayload == null) {
+        if (tables.ilocPayload == null
+                || tables.iinfPayload == null
+                || tables.irefPayload == null) {
             throw new IOException("meta missing iloc/iinf/iref");
         }
         return tables;
@@ -415,12 +426,16 @@ final class AvifBmffExifInjector {
             if (size < 8 || offset + size > payload.length) {
                 break;
             }
-            String type = new String(payload, offset + 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1);
+            String type =
+                    new String(
+                            payload, offset + 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1);
             if ("infe".equals(type) && size >= 15) {
                 int version = payload[offset + 8] & 0xFF;
                 int id =
                         version >= 3
-                                ? ByteBuffer.wrap(payload, offset + 12, 4).order(ByteOrder.BIG_ENDIAN).getInt()
+                                ? ByteBuffer.wrap(payload, offset + 12, 4)
+                                        .order(ByteOrder.BIG_ENDIAN)
+                                        .getInt()
                                 : u16(payload, offset + 12);
                 max = Math.max(max, id);
             }
@@ -444,18 +459,24 @@ final class AvifBmffExifInjector {
         return parseChildBoxes(data, 0, data.length);
     }
 
-    private static List<BmffBox> parseChildBoxes(byte[] data, int start, int end) throws IOException {
+    private static List<BmffBox> parseChildBoxes(byte[] data, int start, int end)
+            throws IOException {
         List<BmffBox> boxes = new ArrayList<>();
         int offset = start;
         while (offset + 8 <= end) {
             int size = u32(data, offset);
-            String type = new String(data, offset + 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1);
+            String type =
+                    new String(data, offset + 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1);
             int header = 8;
             if (size == 1) {
                 if (offset + 16 > end) {
                     break;
                 }
-                size = (int) ByteBuffer.wrap(data, offset + 8, 8).order(ByteOrder.BIG_ENDIAN).getLong();
+                size =
+                        (int)
+                                ByteBuffer.wrap(data, offset + 8, 8)
+                                        .order(ByteOrder.BIG_ENDIAN)
+                                        .getLong();
                 header = 16;
             } else if (size == 0) {
                 size = end - offset;

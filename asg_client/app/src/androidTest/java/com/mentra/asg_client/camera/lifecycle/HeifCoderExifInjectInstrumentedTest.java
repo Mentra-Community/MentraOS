@@ -7,20 +7,16 @@ import android.graphics.Color;
 import android.media.MediaMetadataRetriever;
 import android.os.Build;
 import android.util.Log;
-
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
-
 import com.radzivon.bartoshyk.avif.coder.HeifCoder;
 import com.radzivon.bartoshyk.avif.coder.PreciseMode;
-
+import java.io.File;
+import java.io.FileOutputStream;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-
-import java.io.File;
-import java.io.FileOutputStream;
 
 @RunWith(AndroidJUnit4.class)
 public class HeifCoderExifInjectInstrumentedTest {
@@ -55,13 +51,17 @@ public class HeifCoderExifInjectInstrumentedTest {
             MediaMetadataRetriever mmr = new MediaMetadataRetriever();
             try {
                 mmr.setDataSource(out.getAbsolutePath());
-                String offset = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_EXIF_OFFSET);
-                String length = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_EXIF_LENGTH);
+                String offset =
+                        mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_EXIF_OFFSET);
+                String length =
+                        mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_EXIF_LENGTH);
                 Log.i(TAG, "MMR EXIF offset=" + offset + " length=" + length);
                 if (offset != null && length != null) {
                     assertTrue(Integer.parseInt(length) > 6);
                 } else {
-                    Log.w(TAG, "MMR did not report EXIF keys; raw Exif marker present in file bytes");
+                    Log.w(
+                            TAG,
+                            "MMR did not report EXIF keys; raw Exif marker present in file bytes");
                 }
             } finally {
                 mmr.release();

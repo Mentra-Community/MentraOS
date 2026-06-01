@@ -5,28 +5,23 @@ import android.graphics.Color;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.util.Log;
-
 import androidx.annotation.Nullable;
 import androidx.exifinterface.media.ExifInterface;
 import androidx.heifwriter.AvifWriter;
-
 import com.radzivon.bartoshyk.avif.coder.HeifCoder;
 import com.radzivon.bartoshyk.avif.coder.PreciseMode;
-
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.Arrays;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
-/**
- * Embeds IMU JSON in JPEG EXIF (UserComment) and preserves/copies metadata across re-encodes.
- */
+/** Embeds IMU JSON in JPEG EXIF (UserComment) and preserves/copies metadata across re-encodes. */
 public final class PhotoExifMetadataWriter {
     private static final String TAG = "PhotoExifMetadata";
+
     /** EXIF UserComment practical limit; full samples remain in gallery sidecar. */
     private static final int MAX_EXIF_SAMPLES = 400;
 
@@ -80,7 +75,8 @@ public final class PhotoExifMetadataWriter {
     }
 
     /**
-     * Builds a standalone EXIF APP1 segment (including marker and length) for AvifWriter.addExifData.
+     * Builds a standalone EXIF APP1 segment (including marker and length) for
+     * AvifWriter.addExifData.
      */
     public static byte[] buildExifApp1Segment(JSONObject imuPayload) throws IOException {
         File tempDir = new File(System.getProperty("java.io.tmpdir"));
@@ -97,10 +93,11 @@ public final class PhotoExifMetadataWriter {
     }
 
     /**
-     * Encode bitmap as AVIF with embedded EXIF when source JPEG has IMU metadata; otherwise use HeifCoder.
+     * Encode bitmap as AVIF with embedded EXIF when source JPEG has IMU metadata; otherwise use
+     * HeifCoder.
      */
-    public static byte[] encodeAvifForBle(
-            Bitmap bitmap, int quality, String sourceJpegPath) throws Exception {
+    public static byte[] encodeAvifForBle(Bitmap bitmap, int quality, String sourceJpegPath)
+            throws Exception {
         boolean hasImu = hasImuMetadata(sourceJpegPath);
         Log.d(
                 TAG,
@@ -114,12 +111,13 @@ public final class PhotoExifMetadataWriter {
         if (hasImu) {
             String json = readImuJsonFromJpeg(sourceJpegPath);
             if (json == null) {
-                Log.w(TAG, "encodeAvifForBle: hasImuMetadata true but readImuJsonFromJpeg returned null");
+                Log.w(
+                        TAG,
+                        "encodeAvifForBle: hasImuMetadata true but readImuJsonFromJpeg returned null");
             } else {
                 JSONObject payload = new JSONObject(json);
                 byte[] exifSegment = buildExifApp1Segment(payload);
-                byte[] exifTiff =
-                        Arrays.copyOfRange(exifSegment, 4, exifSegment.length);
+                byte[] exifTiff = Arrays.copyOfRange(exifSegment, 4, exifSegment.length);
 
                 if (isAv1EncoderAvailable()) {
                     try {
@@ -138,7 +136,9 @@ public final class PhotoExifMetadataWriter {
                                         + e.getMessage());
                     }
                 } else {
-                    Log.d(TAG, "encodeAvifForBle: no AV1 encoder; using HeifCoder+BMFF EXIF inject");
+                    Log.d(
+                            TAG,
+                            "encodeAvifForBle: no AV1 encoder; using HeifCoder+BMFF EXIF inject");
                 }
 
                 byte[] avif = heifCoder.encodeAvif(bitmap, quality, PreciseMode.LOSSY);

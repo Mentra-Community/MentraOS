@@ -1,10 +1,8 @@
 package com.mentra.asg_client.camera.lifecycle;
 
-import android.content.Context;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraDevice;
-import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureRequest;
 import android.media.Image;
 import android.media.ImageReader;
@@ -12,9 +10,7 @@ import android.os.Handler;
 import android.util.Log;
 import android.util.Range;
 import android.util.Size;
-
 import androidx.annotation.Nullable;
-
 import com.mentra.asg_client.camera.CameraConstants;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.CameraSettings;
@@ -32,29 +28,29 @@ import com.mentra.asg_client.camera.request.HdrBurstBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureCallback;
 import com.mentra.asg_client.sensors.ImuRecorder;
-import org.json.JSONObject;
-
-import org.json.JSONObject;
-
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.concurrent.Executor;
+import org.json.JSONObject;
 
 /**
- * Owns photo capture lifecycle: queue dispatch, AE precapture, still/HDR capture, image save,
- * and metering timestamps. Bridges to {@link CameraNeoService} via {@link Hooks}.
+ * Owns photo capture lifecycle: queue dispatch, AE precapture, still/HDR capture, image save, and
+ * metering timestamps. Bridges to {@link CameraNeoService} via {@link Hooks}.
  *
  * <p><b>Request model (see {@code camera.model}):</b>
+ *
  * <ul>
- *   <li>{@link com.mentra.asg_client.camera.model.QueuedPhotoRequest} — waiting in
- *       {@link com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue}</li>
- *   <li>{@link com.mentra.asg_client.camera.model.ActivePhotoCapture} — frozen snapshot in
- *       {@link #activeCapture} while this session runs AE/capture</li>
+ *   <li>{@link com.mentra.asg_client.camera.model.QueuedPhotoRequest} — waiting in {@link
+ *       com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue}
+ *   <li>{@link com.mentra.asg_client.camera.model.ActivePhotoCapture} — frozen snapshot in {@link
+ *       #activeCapture} while this session runs AE/capture
  * </ul>
- * Promotion happens in {@link #activateQueuedRequest}; {@link #clearActiveCapture} runs after each shot.
+ *
+ * Promotion happens in {@link #activateQueuedRequest}; {@link #clearActiveCapture} runs after each
+ * shot.
  */
 public final class PhotoSession {
 
@@ -67,18 +63,17 @@ public final class PhotoSession {
     private Size jpegSize;
 
     /**
-     * Non-null while a {@link QueuedPhotoRequest} is being captured (AE → still → JPEG).
-     * Cleared after each shot; see {@link #activateQueuedRequest} and {@link #clearActiveCapture}.
+     * Non-null while a {@link QueuedPhotoRequest} is being captured (AE → still → JPEG). Cleared
+     * after each shot; see {@link #activateQueuedRequest} and {@link #clearActiveCapture}.
      */
     private volatile ActivePhotoCapture activeCapture;
 
     /**
-     * Last camera pipeline config (size / SDK / exposure) applied to the open session.
-     * Survives {@link #clearActiveCapture()} so queued burst shots can reuse the session
-     * without a false-positive reconfiguration after the previous shot completes.
+     * Last camera pipeline config (size / SDK / exposure) applied to the open session. Survives
+     * {@link #clearActiveCapture()} so queued burst shots can reuse the session without a
+     * false-positive reconfiguration after the previous shot completes.
      */
-    @Nullable
-    private volatile ConfiguredCameraConfig configuredCameraConfig;
+    @Nullable private volatile ConfiguredCameraConfig configuredCameraConfig;
 
     private volatile AeStateMachine.ShotState shotState = AeStateMachine.ShotState.IDLE;
     private final AeStateMachine aeStateMachine = new AeStateMachine();
@@ -94,79 +89,83 @@ public final class PhotoSession {
 
     public PhotoSession(Hooks hooks) {
         this.hooks = hooks;
-        this.aeCallback = new AeCaptureCallback(aeStateMachine, new AeCaptureCallback.Hooks() {
-            @Override
-            public AeStateMachine.ShotState shotState() {
-                return shotState;
-            }
+        this.aeCallback =
+                new AeCaptureCallback(
+                        aeStateMachine,
+                        new AeCaptureCallback.Hooks() {
+                            @Override
+                            public AeStateMachine.ShotState shotState() {
+                                return shotState;
+                            }
 
-            @Override
-            public void setShotState(AeStateMachine.ShotState nextShotState) {
-                shotState = nextShotState;
-            }
+                            @Override
+                            public void setShotState(AeStateMachine.ShotState nextShotState) {
+                                shotState = nextShotState;
+                            }
 
-            @Override
-            public void recordMeteredIso(Integer iso) {
-                mLastMeteredIso = iso;
-            }
+                            @Override
+                            public void recordMeteredIso(Integer iso) {
+                                mLastMeteredIso = iso;
+                            }
 
-            @Override
-            public void recordMeteredExposureNs(Long exposureNs) {
-                mLastMeteredExposureNs = exposureNs;
-            }
+                            @Override
+                            public void recordMeteredExposureNs(Long exposureNs) {
+                                mLastMeteredExposureNs = exposureNs;
+                            }
 
-            @Override
-            public void postDelayed(Runnable runnable, long delayMs) {
-                Handler h = hooks.backgroundHandler();
-                if (h != null) {
-                    h.postDelayed(runnable, delayMs);
-                } else {
-                    runnable.run();
-                }
-            }
+                            @Override
+                            public void postDelayed(Runnable runnable, long delayMs) {
+                                Handler h = hooks.backgroundHandler();
+                                if (h != null) {
+                                    h.postDelayed(runnable, delayMs);
+                                } else {
+                                    runnable.run();
+                                }
+                            }
 
-            @Override
-            public void requestAeLock(CameraCaptureSession session) {
-                boolean lockRequested = AePreviewController.requestAeLock(
-                        session,
-                        hooks.coordinator().device() != null,
-                        hooks.previewBuilder(),
-                        aeCallback,
-                        hooks.backgroundHandler(),
-                        hooks.cameraSettings(),
-                        aeStateMachine);
-                if (lockRequested) {
-                    shotState = AeStateMachine.ShotState.WAITING_AE_LOCK;
-                } else {
-                    capturePhoto();
-                }
-            }
+                            @Override
+                            public void requestAeLock(CameraCaptureSession session) {
+                                boolean lockRequested =
+                                        AePreviewController.requestAeLock(
+                                                session,
+                                                hooks.coordinator().device() != null,
+                                                hooks.previewBuilder(),
+                                                aeCallback,
+                                                hooks.backgroundHandler(),
+                                                hooks.cameraSettings(),
+                                                aeStateMachine);
+                                if (lockRequested) {
+                                    shotState = AeStateMachine.ShotState.WAITING_AE_LOCK;
+                                } else {
+                                    capturePhoto();
+                                }
+                            }
 
-            @Override
-            public void capturePhoto() {
-                PhotoSession.this.capturePhoto();
-            }
+                            @Override
+                            public void capturePhoto() {
+                                PhotoSession.this.capturePhoto();
+                            }
 
-            @Override
-            public void notifyPhotoError(String errorMessage) {
-                PhotoSession.this.notifyPhotoError(errorMessage);
-            }
+                            @Override
+                            public void notifyPhotoError(String errorMessage) {
+                                PhotoSession.this.notifyPhotoError(errorMessage);
+                            }
 
-            @Override
-            public void cancelKeepAliveTimer() {
-                hooks.cancelKeepAliveTimer();
-            }
+                            @Override
+                            public void cancelKeepAliveTimer() {
+                                hooks.cancelKeepAliveTimer();
+                            }
 
-            @Override
-            public void closeCamera() {
-                hooks.closeCamera();
-            }
+                            @Override
+                            public void closeCamera() {
+                                hooks.closeCamera();
+                            }
 
-            @Override
-            public void stopSelf() {
-                hooks.stopService();
-            }
-        });
+                            @Override
+                            public void stopSelf() {
+                                hooks.stopService();
+                            }
+                        });
     }
 
     public AeCaptureCallback aeCallback() {
@@ -194,7 +193,8 @@ public final class PhotoSession {
     public void prepareStillReaders(String filePath, Size jpegSize, Handler backgroundHandler) {
         this.jpegSize = jpegSize;
         listenerFallbackPhotoPath = filePath;
-        imageReaders = new ImageReaderTwin(jpegSize, backgroundHandler, this::onStillImageAvailable);
+        imageReaders =
+                new ImageReaderTwin(jpegSize, backgroundHandler, this::onStillImageAvailable);
     }
 
     public void closeImageReadersIfPresent() {
@@ -208,7 +208,11 @@ public final class PhotoSession {
     public void pollFirstQueuedRequestIntoCurrent() {
         synchronized (hooks.serviceLock()) {
             if (!QueuedPhotoRequestQueue.getInstance().isEmpty()) {
-                Log.d(TAG, "Camera ready, processing " + QueuedPhotoRequestQueue.getInstance().size() + " queued requests");
+                Log.d(
+                        TAG,
+                        "Camera ready, processing "
+                                + QueuedPhotoRequestQueue.getInstance().size()
+                                + " queued requests");
                 QueuedPhotoRequest firstRequest = QueuedPhotoRequestQueue.getInstance().poll();
                 if (firstRequest != null) {
                     activateQueuedRequest(firstRequest);
@@ -240,15 +244,18 @@ public final class PhotoSession {
     }
 
     /**
-     * Dequeue handoff: copy the queued job into {@link #activeCapture} before AE/capture.
-     * The queue entry may still be mutated for callback binding until this runs.
+     * Dequeue handoff: copy the queued job into {@link #activeCapture} before AE/capture. The queue
+     * entry may still be mutated for callback binding until this runs.
      */
     private void activateQueuedRequest(QueuedPhotoRequest queued) {
         activeCapture = ActivePhotoCapture.fromQueued(queued);
         rememberConfiguredCamera(queued);
     }
 
-    /** Shot finished or aborted; {@link #configuredCameraConfig} may still describe the open HAL session. */
+    /**
+     * Shot finished or aborted; {@link #configuredCameraConfig} may still describe the open HAL
+     * session.
+     */
     private void clearActiveCapture() {
         activeCapture = null;
     }
@@ -289,9 +296,9 @@ public final class PhotoSession {
     // ----- Dispatch -----
 
     /**
-     * Compares {@code request} to the active session camera config (size, SDK flag, exposure).
-     * Uses {@link #configuredCameraConfig} when {@link #activeCapture} was cleared after a shot.
-     * Must be called before {@link #activateQueuedRequest(QueuedPhotoRequest)} mutates current state.
+     * Compares {@code request} to the active session camera config (size, SDK flag, exposure). Uses
+     * {@link #configuredCameraConfig} when {@link #activeCapture} was cleared after a shot. Must be
+     * called before {@link #activateQueuedRequest(QueuedPhotoRequest)} mutates current state.
      */
     private boolean needsReconfigurationForQueued(QueuedPhotoRequest request) {
         if (request == null) {
@@ -328,8 +335,11 @@ public final class PhotoSession {
                 }
                 queue.attachRegistryCallback(firstRequest);
                 if (needsReconfigurationForQueued(firstRequest)) {
-                    Log.d(TAG, "Configured camera needs reconfiguration for " + firstRequest.requestId
-                            + " — routing through setupCameraForQueuedRequest");
+                    Log.d(
+                            TAG,
+                            "Configured camera needs reconfiguration for "
+                                    + firstRequest.requestId
+                                    + " — routing through setupCameraForQueuedRequest");
                     setupCameraForQueuedRequest(firstRequest);
                     return;
                 }
@@ -421,7 +431,8 @@ public final class PhotoSession {
             try {
                 long imgTs = (image != null) ? image.getTimestamp() : -1L;
                 Long stillTs = mLastStillSensorTimestampNs;
-                long deltaMs = (stillTs != null && imgTs > 0) ? (stillTs - imgTs) / 1_000_000L : -1L;
+                long deltaMs =
+                        (stillTs != null && imgTs > 0) ? (stillTs - imgTs) / 1_000_000L : -1L;
                 boolean match = (stillTs != null && imgTs > 0 && stillTs == imgTs);
                 CameraDiagnosticsLog.savedFrameTimestampVsStill(imgTs, stillTs, match, deltaMs);
             } catch (Throwable t) {
@@ -445,7 +456,10 @@ public final class PhotoSession {
             String currentPath = currentFilePath();
             String targetPath = (currentPath != null) ? currentPath : listenerFallbackPhotoPath;
 
-            if (hdrBurstCapture.handleFrame(bytes, targetPath, this::saveImageDataToFile,
+            if (hdrBurstCapture.handleFrame(
+                    bytes,
+                    targetPath,
+                    this::saveImageDataToFile,
                     new HdrBurstCapture.Callback() {
                         @Override
                         public void onBurstComplete(String basePath) {
@@ -463,7 +477,8 @@ public final class PhotoSession {
 
                         @Override
                         public void onAllCaptureRequestsCompleted(CameraCaptureSession session) {
-                            // Image routing handles completion here; preview restoration happens from capture callbacks.
+                            // Image routing handles completion here; preview restoration happens
+                            // from capture callbacks.
                         }
                     })) {
                 return;
@@ -551,16 +566,23 @@ public final class PhotoSession {
     private void notifyPhotoCaptured(String filePath) {
         long startMs = currentStartTimeMs();
         long e2eTimeMs = (startMs > 0) ? (System.currentTimeMillis() - startMs) : -1L;
-        Log.i(TAG, "📸 PHOTO E2E: Photo captured and saved in " + e2eTimeMs + "ms (e2e) | Path: " + filePath);
+        Log.i(
+                TAG,
+                "📸 PHOTO E2E: Photo captured and saved in "
+                        + e2eTimeMs
+                        + "ms (e2e) | Path: "
+                        + filePath);
 
-        CameraNeoService.PhotoCaptureCallback callback = activeCapture != null ? activeCapture.callback : null;
+        CameraNeoService.PhotoCaptureCallback callback =
+                activeCapture != null ? activeCapture.callback : null;
         if (callback != null) {
             hooks.executor().execute(() -> callback.onPhotoCaptured(filePath));
         }
     }
 
     private void notifyPhotoError(String errorMessage) {
-        CameraNeoService.PhotoCaptureCallback callback = activeCapture != null ? activeCapture.callback : null;
+        CameraNeoService.PhotoCaptureCallback callback =
+                activeCapture != null ? activeCapture.callback : null;
         if (callback != null) {
             hooks.executor().execute(() -> callback.onPhotoError(errorMessage));
         }
@@ -582,13 +604,15 @@ public final class PhotoSession {
             CaptureRequest previewRequest = hooks.previewBuilder().build();
             Boolean zslInPreview = previewRequest.get(CaptureRequest.CONTROL_ENABLE_ZSL);
             if (zslInPreview != null && zslInPreview) {
-                Log.d(TAG, "✓ ZSL verified in preview request: CONTROL_ENABLE_ZSL = true (buffer filling)");
+                Log.d(
+                        TAG,
+                        "✓ ZSL verified in preview request: CONTROL_ENABLE_ZSL = true (buffer filling)");
             } else {
                 Log.w(TAG, "⚠ ZSL NOT enabled in preview request - ZSL buffer will not fill!");
             }
 
-            activeSession.setRepeatingRequest(previewRequest,
-                    aeCallback, hooks.backgroundHandler());
+            activeSession.setRepeatingRequest(
+                    previewRequest, aeCallback, hooks.backgroundHandler());
 
             startPrecaptureSequence();
 
@@ -606,7 +630,11 @@ public final class PhotoSession {
             shotState = AeStateMachine.ShotState.WAITING_AE;
 
             if (shouldUseManualExposure()) {
-                Log.i(TAG, "Manual exposure (exposureTimeNs=" + currentExposureTimeNs() + "): skipping AE convergence");
+                Log.i(
+                        TAG,
+                        "Manual exposure (exposureTimeNs="
+                                + currentExposureTimeNs()
+                                + "): skipping AE convergence");
                 aeStateMachine.skipAeForManualCapture();
                 Runnable runCapture = this::capturePhoto;
                 Handler h = hooks.backgroundHandler();
@@ -620,16 +648,22 @@ public final class PhotoSession {
 
             aeStateMachine.beginWaitingForAe();
 
-            boolean zslEnabled = (hooks.cameraSettings() != null && hooks.cameraSettings().isZslSupported() &&
-                    hooks.cameraSettings().mAsgSettings.isZslEnabled());
+            boolean zslEnabled =
+                    (hooks.cameraSettings() != null
+                            && hooks.cameraSettings().isZslSupported()
+                            && hooks.cameraSettings().mAsgSettings.isZslEnabled());
 
             Log.d(TAG, "🔍 DIAGNOSTIC: startPrecaptureSequence() called");
             Log.d(TAG, "🔍 ZSL enabled: " + zslEnabled);
             Log.d(TAG, "🔍 Current shot state: " + shotState);
-            Log.d(TAG, "🔍 Waiting for AE convergence: " + aeStateMachine.waitingForAeConvergence());
+            Log.d(
+                    TAG,
+                    "🔍 Waiting for AE convergence: " + aeStateMachine.waitingForAeConvergence());
 
             Log.d(TAG, "Starting AE convergence (monitoring via repeating request callback)...");
-            Log.d(TAG, "🔍 XyCamera2 MODE: No precapture trigger - monitoring AE via repeating request callback");
+            Log.d(
+                    TAG,
+                    "🔍 XyCamera2 MODE: No precapture trigger - monitoring AE via repeating request callback");
 
         } catch (Exception e) {
             Log.e(TAG, "Error starting AE convergence", e);
@@ -644,9 +678,11 @@ public final class PhotoSession {
 
     public void restoreAePreview(CameraCaptureSession session) {
         // A late still/HDR completion can run after a new photo has entered precapture; do not
-        // clear AE wait flags in that case or the repeating callback will ignore convergence forever.
-        boolean clearAeWait = shotState != AeStateMachine.ShotState.WAITING_AE
-                && shotState != AeStateMachine.ShotState.WAITING_AE_LOCK;
+        // clear AE wait flags in that case or the repeating callback will ignore convergence
+        // forever.
+        boolean clearAeWait =
+                shotState != AeStateMachine.ShotState.WAITING_AE
+                        && shotState != AeStateMachine.ShotState.WAITING_AE_LOCK;
         AePreviewController.restorePreview(
                 session,
                 hooks.coordinator().device() != null,
@@ -670,11 +706,15 @@ public final class PhotoSession {
             decision = false;
             reason = "no/invalid activeCapture.exposureTimeNs";
         } else if (!manualSupported) {
-            Log.w(TAG, "Manual exposure requested but MANUAL_SENSOR not supported; using auto exposure");
+            Log.w(
+                    TAG,
+                    "Manual exposure requested but MANUAL_SENSOR not supported; using auto exposure");
             decision = false;
             reason = "MANUAL_SENSOR unsupported";
         } else if (expRange == null || isoRange == null) {
-            Log.w(TAG, "Manual exposure requested but sensor ranges unavailable; using auto exposure");
+            Log.w(
+                    TAG,
+                    "Manual exposure requested but sensor ranges unavailable; using auto exposure");
             decision = false;
             reason = "sensor ranges null";
         } else {
@@ -682,8 +722,11 @@ public final class PhotoSession {
             reason = "manual path engaged";
         }
         try {
-            CameraDiagnosticsLog.manualExposureDecision(decision, reason, exposureNs, manualSupported);
-        } catch (Throwable t) { /* never let logging crash capture */ }
+            CameraDiagnosticsLog.manualExposureDecision(
+                    decision, reason, exposureNs, manualSupported);
+        } catch (Throwable t) {
+            /* never let logging crash capture */
+        }
         return decision;
     }
 
@@ -699,8 +742,7 @@ public final class PhotoSession {
         if (caps == null || !caps.manualSensorSupported) {
             return "manual requested but MANUAL_SENSOR unsupported";
         }
-        if (caps.sensorExposureTimeRange == null
-                || caps.sensorSensitivityRange == null) {
+        if (caps.sensorExposureTimeRange == null || caps.sensorSensitivityRange == null) {
             return "manual requested but sensor ranges unavailable";
         }
         return "auto AE path";
@@ -718,16 +760,21 @@ public final class PhotoSession {
         CameraCapabilities caps = hooks.capabilities();
         Range<Integer> isoRange = (caps != null) ? caps.sensorSensitivityRange : null;
 
-        int isoBeforeScale = (last != null && last > 0) ? last.intValue() : ManualExposurePolicy.DEFAULT_ISO;
+        int isoBeforeScale =
+                (last != null && last > 0) ? last.intValue() : ManualExposurePolicy.DEFAULT_ISO;
         double evScaleApplied = 1.0;
         int isoAfterScale = isoBeforeScale;
-        if (meteredExposureNs != null && meteredExposureNs > 0 && targetExposureNs > 0 && isoBeforeScale > 0) {
+        if (meteredExposureNs != null
+                && meteredExposureNs > 0
+                && targetExposureNs > 0
+                && isoBeforeScale > 0) {
             evScaleApplied = (double) meteredExposureNs / (double) targetExposureNs;
             isoAfterScale = (int) Math.round(isoBeforeScale * evScaleApplied);
         }
 
-        int iso = ManualExposurePolicy.pickSensitivityForManualCapture(
-                targetExposureNs, last, meteredExposureNs, isoRange);
+        int iso =
+                ManualExposurePolicy.pickSensitivityForManualCapture(
+                        targetExposureNs, last, meteredExposureNs, isoRange);
 
         try {
             Integer isoLow = (isoRange != null) ? isoRange.getLower() : null;
@@ -742,7 +789,9 @@ public final class PhotoSession {
                     iso,
                     isoLow,
                     isoHigh);
-        } catch (Throwable t) { /* never let logging crash capture */ }
+        } catch (Throwable t) {
+            /* never let logging crash capture */
+        }
         return iso;
     }
 
@@ -758,9 +807,10 @@ public final class PhotoSession {
             return;
         }
 
-        boolean hdrEnabled = hooks.cameraSettings() != null
-                && hooks.cameraSettings().mAsgSettings.isHdrBurstEnabled()
-                && !currentIsFromSdk();
+        boolean hdrEnabled =
+                hooks.cameraSettings() != null
+                        && hooks.cameraSettings().mAsgSettings.isHdrBurstEnabled()
+                        && !currentIsFromSdk();
 
         if (hdrEnabled) {
             captureHdrBurst();
@@ -795,29 +845,50 @@ public final class PhotoSession {
                 manualClampedNs = clampExposureTimeNs(requestedExposureNs);
                 manualIso = pickSensitivityForManualCapture(manualClampedNs);
                 manualFrameDurationNs = pickFrameDurationForManualCapture(manualClampedNs);
-                Log.i(TAG, "Using manual exposure time for still capture: SENSOR_EXPOSURE_TIME="
-                        + manualClampedNs + " ns, SENSOR_SENSITIVITY=" + manualIso
-                        + ", SENSOR_FRAME_DURATION=" + manualFrameDurationNs
-                        + " (requestedNs=" + requestedExposureNs + "; AE disabled; ZSL/MFNR vendor path skipped)");
+                Log.i(
+                        TAG,
+                        "Using manual exposure time for still capture: SENSOR_EXPOSURE_TIME="
+                                + manualClampedNs
+                                + " ns, SENSOR_SENSITIVITY="
+                                + manualIso
+                                + ", SENSOR_FRAME_DURATION="
+                                + manualFrameDurationNs
+                                + " (requestedNs="
+                                + requestedExposureNs
+                                + "; AE disabled; ZSL/MFNR vendor path skipped)");
             } else {
                 Log.d(TAG, "Using auto exposure / AE lock path");
             }
 
             int displayOrientation = hooks.displayRotation();
-            int jpegOrientation = JpegOrientationResolver.lookupJpegOrientation(
-                    displayOrientation, JpegOrientationResolver.DEFAULT_JPEG_ORIENTATION);
+            int jpegOrientation =
+                    JpegOrientationResolver.lookupJpegOrientation(
+                            displayOrientation, JpegOrientationResolver.DEFAULT_JPEG_ORIENTATION);
 
-            StillCaptureBuilder.configure(StillCaptureBuilder.wrap(stillBuilder), useManual,
-                    manualClampedNs, manualIso, manualFrameDurationNs, hooks.userExposureCompensation(),
-                    hooks.selectedFpsRange(), hooks.hasAutoFocus(), jpegSize, getJpegQualityForSize(),
+            StillCaptureBuilder.configure(
+                    StillCaptureBuilder.wrap(stillBuilder),
+                    useManual,
+                    manualClampedNs,
+                    manualIso,
+                    manualFrameDurationNs,
+                    hooks.userExposureCompensation(),
+                    hooks.selectedFpsRange(),
+                    hooks.hasAutoFocus(),
+                    jpegSize,
+                    getJpegQualityForSize(),
                     jpegOrientation);
 
-            Log.d(TAG, "Capturing photo with JPEG orientation: " + jpegOrientation
-                    + " for display orientation: " + displayOrientation);
+            Log.d(
+                    TAG,
+                    "Capturing photo with JPEG orientation: "
+                            + jpegOrientation
+                            + " for display orientation: "
+                            + displayOrientation);
 
-            if (!useManual && hooks.cameraSettings() != null
+            if (!useManual
+                    && hooks.cameraSettings() != null
                     && (hooks.cameraSettings().mAsgSettings.isZslEnabled()
-                    || hooks.cameraSettings().mAsgSettings.isMfnrEnabled())) {
+                            || hooks.cameraSettings().mAsgSettings.isMfnrEnabled())) {
                 hooks.cameraSettings().configureCaptureBuilder(stillBuilder);
             }
 
@@ -827,13 +898,24 @@ public final class PhotoSession {
             if (zslInCapture != null && zslInCapture) {
                 Log.d(TAG, "✓ ZSL verified in capture request: CONTROL_ENABLE_ZSL = true");
             } else {
-                Log.w(TAG, "⚠ ZSL NOT enabled in capture request (CONTROL_ENABLE_ZSL = " + zslInCapture + ")");
+                Log.w(
+                        TAG,
+                        "⚠ ZSL NOT enabled in capture request (CONTROL_ENABLE_ZSL = "
+                                + zslInCapture
+                                + ")");
             }
 
             if (useManual) {
-                Log.i(TAG, "📸 SHOT firing: MANUAL exposureTimeNs=" + manualClampedNs
-                        + " (requested=" + requestedExposureNs + ") iso=" + manualIso
-                        + " frameDurationNs=" + manualFrameDurationNs);
+                Log.i(
+                        TAG,
+                        "📸 SHOT firing: MANUAL exposureTimeNs="
+                                + manualClampedNs
+                                + " (requested="
+                                + requestedExposureNs
+                                + ") iso="
+                                + manualIso
+                                + " frameDurationNs="
+                                + manualFrameDurationNs);
             } else {
                 Log.i(TAG, "📸 SHOT firing: AUTO — " + describeAutoExposureStillPath());
             }
@@ -848,8 +930,10 @@ public final class PhotoSession {
                 Integer reqAfMode = captureRequest.get(CaptureRequest.CONTROL_AF_MODE);
                 Boolean reqZsl = captureRequest.get(CaptureRequest.CONTROL_ENABLE_ZSL);
                 Boolean reqAeLock = captureRequest.get(CaptureRequest.CONTROL_AE_LOCK);
-                Range<Integer> reqFps = captureRequest.get(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE);
-                Integer reqExpComp = captureRequest.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION);
+                Range<Integer> reqFps =
+                        captureRequest.get(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE);
+                Integer reqExpComp =
+                        captureRequest.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION);
                 CameraDiagnosticsLog.stillRequestKeysBeforeCapture(
                         useManual,
                         reqExp,
@@ -863,54 +947,60 @@ public final class PhotoSession {
                         reqAeLock,
                         reqExpComp,
                         reqFps);
-            } catch (Throwable t) { /* never let logging crash capture */ }
+            } catch (Throwable t) {
+                /* never let logging crash capture */
+            }
 
-            activeSession.capture(captureRequest, new StillCaptureCallback(new StillCaptureCallback.Hooks() {
-                @Override
-                public void recordStillSensorTimestampNs(Long timestampNs) {
-                    mLastStillSensorTimestampNs = timestampNs;
-                }
+            activeSession.capture(
+                    captureRequest,
+                    new StillCaptureCallback(
+                            new StillCaptureCallback.Hooks() {
+                                @Override
+                                public void recordStillSensorTimestampNs(Long timestampNs) {
+                                    mLastStillSensorTimestampNs = timestampNs;
+                                }
 
-                @Override
-                public void restorePreview(CameraCaptureSession session) {
-                    restoreAePreview(session);
-                }
+                                @Override
+                                public void restorePreview(CameraCaptureSession session) {
+                                    restoreAePreview(session);
+                                }
 
-                @Override
-                public void notifyPhotoError(String errorMessage) {
-                    PhotoSession.this.notifyPhotoError(errorMessage);
-                }
+                                @Override
+                                public void notifyPhotoError(String errorMessage) {
+                                    PhotoSession.this.notifyPhotoError(errorMessage);
+                                }
 
-                @Override
-                public void cancelImuRecording() {
-                    hooks.cancelImuRecording();
-                }
+                                @Override
+                                public void cancelImuRecording() {
+                                    hooks.cancelImuRecording();
+                                }
 
-                @Override
-                public void setShotState(AeStateMachine.ShotState nextShotState) {
-                    shotState = nextShotState;
-                }
+                                @Override
+                                public void setShotState(AeStateMachine.ShotState nextShotState) {
+                                    shotState = nextShotState;
+                                }
 
-                @Override
-                public void clearAeWaitFlags() {
-                    aeStateMachine.clearWaitFlags();
-                }
+                                @Override
+                                public void clearAeWaitFlags() {
+                                    aeStateMachine.clearWaitFlags();
+                                }
 
-                @Override
-                public void cancelKeepAliveTimer() {
-                    hooks.cancelKeepAliveTimer();
-                }
+                                @Override
+                                public void cancelKeepAliveTimer() {
+                                    hooks.cancelKeepAliveTimer();
+                                }
 
-                @Override
-                public void closeCamera() {
-                    hooks.closeCamera();
-                }
+                                @Override
+                                public void closeCamera() {
+                                    hooks.closeCamera();
+                                }
 
-                @Override
-                public void stopSelf() {
-                    hooks.stopService();
-                }
-            }), hooks.backgroundHandler());
+                                @Override
+                                public void stopSelf() {
+                                    hooks.stopService();
+                                }
+                            }),
+                    hooks.backgroundHandler());
 
         } catch (CameraAccessException e) {
             Log.e(TAG, "Error during photo capture", e);
@@ -930,17 +1020,28 @@ public final class PhotoSession {
             ImuRecorder imu = hooks.ensureImuRecorder();
             imu.startRecording();
 
-            Log.i(TAG, "HDR: Starting burst capture with brackets "
-                    + java.util.Arrays.toString(HdrBurstBuilder.HDR_EV_BRACKETS));
+            Log.i(
+                    TAG,
+                    "HDR: Starting burst capture with brackets "
+                            + java.util.Arrays.toString(HdrBurstBuilder.HDR_EV_BRACKETS));
 
             int displayOrientation = hooks.displayRotation();
-            int jpegOrientation = JpegOrientationResolver.lookupJpegOrientation(
-                    displayOrientation, JpegOrientationResolver.DEFAULT_JPEG_ORIENTATION);
+            int jpegOrientation =
+                    JpegOrientationResolver.lookupJpegOrientation(
+                            displayOrientation, JpegOrientationResolver.DEFAULT_JPEG_ORIENTATION);
             int jpegQuality = getJpegQualityForSize();
 
-            hdrBurstCapture.start(hooks.coordinator().session(), hooks.coordinator().device(), imageReaders.getStillSurface(),
-                    hooks.backgroundHandler(), hooks.selectedFpsRange(), hooks.hasAutoFocus(), jpegQuality, jpegOrientation,
-                    hooks.cameraSettings(), new HdrBurstCapture.Callback() {
+            hdrBurstCapture.start(
+                    hooks.coordinator().session(),
+                    hooks.coordinator().device(),
+                    imageReaders.getStillSurface(),
+                    hooks.backgroundHandler(),
+                    hooks.selectedFpsRange(),
+                    hooks.hasAutoFocus(),
+                    jpegQuality,
+                    jpegOrientation,
+                    hooks.cameraSettings(),
+                    new HdrBurstCapture.Callback() {
                         @Override
                         public void onBurstComplete(String basePath) {
                             // Frame completion is handled from the ImageReader listener.
@@ -990,28 +1091,27 @@ public final class PhotoSession {
         return getJpegQualityForSize();
     }
 
-    /**
-     * Immutable snapshot of camera pipeline parameters for burst reuse decisions.
-     */
+    /** Immutable snapshot of camera pipeline parameters for burst reuse decisions. */
     private static final class ConfiguredCameraConfig {
-        @Nullable
-        final String size;
+        @Nullable final String size;
         final boolean isFromSdk;
-        @Nullable
-        final Long exposureTimeNs;
+        @Nullable final Long exposureTimeNs;
 
-        ConfiguredCameraConfig(@Nullable String size, boolean isFromSdk, @Nullable Long exposureTimeNs) {
+        ConfiguredCameraConfig(
+                @Nullable String size, boolean isFromSdk, @Nullable Long exposureTimeNs) {
             this.size = size;
             this.isFromSdk = isFromSdk;
             this.exposureTimeNs = exposureTimeNs;
         }
 
         static ConfiguredCameraConfig from(QueuedPhotoRequest request) {
-            return new ConfiguredCameraConfig(request.size, request.isFromSdk, request.exposureTimeNs);
+            return new ConfiguredCameraConfig(
+                    request.size, request.isFromSdk, request.exposureTimeNs);
         }
 
         static ConfiguredCameraConfig from(ActivePhotoCapture request) {
-            return new ConfiguredCameraConfig(request.size, request.isFromSdk, request.exposureTimeNs);
+            return new ConfiguredCameraConfig(
+                    request.size, request.isFromSdk, request.exposureTimeNs);
         }
 
         boolean differsFrom(QueuedPhotoRequest request) {
@@ -1025,9 +1125,7 @@ public final class PhotoSession {
         }
     }
 
-    /**
-     * Service-level bridge for threading, wake, camera open, and shared builders.
-     */
+    /** Service-level bridge for threading, wake, camera open, and shared builders. */
     public interface Hooks {
         Object serviceLock();
 

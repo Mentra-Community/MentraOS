@@ -154,10 +154,6 @@ public class BlePhotoUploadService {
     @Nullable
     @VisibleForTesting
     static String readImuJsonFromImageFile(String imagePath) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            Log.w(TAG, "EXIF read skipped: API < 24");
-            return null;
-        }
         try {
             ExifInterface exif = new ExifInterface(imagePath);
             String userComment = exif.getAttribute(ExifInterface.TAG_USER_COMMENT);
@@ -294,7 +290,7 @@ public class BlePhotoUploadService {
                     Log.w(TAG, "HeifCoder AVIF decode failed, trying BitmapFactory: " + e.getMessage());
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    return BitmapFactory.decodeByteArray(imageData, 0, imageData.length);
+                    return BitmapFactory.decodeByteArray(decodeBytes, 0, decodeBytes.length);
                 }
                 Log.e(TAG, "AVIF decoding requires Android 12+ (API 31+). Current API: " + Build.VERSION.SDK_INT);
                 throw new UnsupportedOperationException("AVIF not supported on Android " + Build.VERSION.SDK_INT);

@@ -45,20 +45,26 @@ final class HeifExifTagReader {
     private static String readFromTiff(byte[] fileBytes, int tiff) {
         boolean littleEndian = fileBytes[tiff] == 'I' && fileBytes[tiff + 1] == 'I';
         int ifd0 = readInt(fileBytes, tiff + 4, littleEndian);
-        String userComment = readTagString(fileBytes, tiff, tiff + ifd0, TAG_USER_COMMENT, littleEndian);
+        int ifd0Offset = tiff + ifd0;
+        if (ifd0 < 0 || ifd0Offset < tiff || ifd0Offset + 2 > fileBytes.length) {
+            return null;
+        }
+        String userComment = readTagString(fileBytes, tiff, ifd0Offset, TAG_USER_COMMENT, littleEndian);
         if (userComment != null && !userComment.isEmpty()) {
             return userComment;
         }
-        userComment = readTagFromLinkedIfd(fileBytes, tiff, tiff + ifd0, TAG_EXIF_IFD_POINTER, TAG_USER_COMMENT, littleEndian);
+        userComment =
+                readTagFromLinkedIfd(fileBytes, tiff, ifd0Offset, TAG_EXIF_IFD_POINTER, TAG_USER_COMMENT, littleEndian);
         if (userComment != null && !userComment.isEmpty()) {
             return userComment;
         }
-        String imageDescription = readTagString(fileBytes, tiff, tiff + ifd0, TAG_IMAGE_DESCRIPTION, littleEndian);
+        String imageDescription =
+                readTagString(fileBytes, tiff, ifd0Offset, TAG_IMAGE_DESCRIPTION, littleEndian);
         if (imageDescription != null && !imageDescription.isEmpty()) {
             return imageDescription;
         }
         return readTagFromLinkedIfd(
-                fileBytes, tiff, tiff + ifd0, TAG_EXIF_IFD_POINTER, TAG_IMAGE_DESCRIPTION, littleEndian);
+                fileBytes, tiff, ifd0Offset, TAG_EXIF_IFD_POINTER, TAG_IMAGE_DESCRIPTION, littleEndian);
     }
 
     @Nullable
@@ -84,7 +90,11 @@ final class HeifExifTagReader {
                 continue;
             }
             int subIfdOffset = readInt(data, entry + 8, littleEndian);
-            return readTagString(data, tiffStart, tiffStart + subIfdOffset, targetTag, littleEndian);
+            int subIfdAbs = tiffStart + subIfdOffset;
+            if (subIfdOffset < 0 || subIfdAbs < tiffStart || subIfdAbs + 2 > data.length) {
+                return null;
+            }
+            return readTagString(data, tiffStart, subIfdAbs, targetTag, littleEndian);
         }
         return null;
     }
@@ -123,6 +133,9 @@ final class HeifExifTagReader {
             int valueCount = readInt(data, entry + 4, littleEndian);
             int valueOffset = readInt(data, entry + 8, littleEndian);
             int valuePos = valueCount > 4 ? tiffStart + valueOffset : entry + 8;
+            if (valueCount > 4 && (valueOffset < 0 || valuePos < tiffStart || valuePos > data.length)) {
+                continue;
+            }
             return decodeExifString(data, valuePos, valueCount, type);
         }
         return null;
@@ -130,7 +143,11 @@ final class HeifExifTagReader {
 
     @Nullable
     private static String decodeExifString(byte[] data, int offset, int count, int type) {
-        if (count <= 0 || offset < 0 || offset + count > data.length) {
+        if (count <= 0 || offset < 0) {
+            return null;
+        }
+        long end = (long) offset + count;
+        if (end > data.length) {
             return null;
         }
         if (type == 2) {
