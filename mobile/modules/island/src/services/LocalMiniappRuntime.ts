@@ -671,6 +671,9 @@ class LocalMiniappRuntime {
       case MiniappRequestType.NAVIGATION_COMPUTE_ROUTE:
         this.navigationHandlers.handleComputeRoute(packageName, payload, requestId)
         break
+      case MiniappRequestType.NAVIGATION_REVERSE_GEOCODE:
+        this.navigationHandlers.handleReverseGeocode(packageName, payload, requestId)
+        break
       case MiniappRequestType.NAVIGATION_REQUEST_PERMISSION:
         this.navigationHandlers.handleRequestPermission(packageName, requestId)
         break

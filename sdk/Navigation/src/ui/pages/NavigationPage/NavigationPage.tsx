@@ -1,5 +1,5 @@
 import {useEffect, useState} from "react"
-import type {NavManeuver, TravelMode} from "@mentra/miniapp"
+import type {ComputedRouteStep, NavManeuver, TravelMode} from "@mentra/miniapp"
 import {useRpc} from "@mentra/miniapp/ui"
 
 import "@/shared/channels"
@@ -7,7 +7,7 @@ import type {Channels} from "@/shared/channels"
 import type {LatLng, LogEntry, NavStatus, PlaceDetails, SavedPlace} from "@/shared/types"
 import {useRouter} from "@/ui/router"
 import {useNavStore} from "@/ui/store/navStore"
-import {reverseGeocode} from "@/ui/lib/reverseGeocode"
+import {reverseGeocode, reverseGeocodeRoadName} from "@/ui/lib/reverseGeocode"
 import {bearingDeg, haversineMeters, signedAngleDiff} from "@/ui/lib/geometry"
 import {DrawerOffsetProvider} from "@/ui/components/Drawer/DrawerOffsetContext"
 import {FloatingDevPanel} from "@/ui/components/FloatingDevPanel/FloatingDevPanel"
@@ -276,6 +276,11 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     let cancelled = false
     computeRoute.abort()
     const origin = {lat: coords.lat, lng: coords.lng}
+    // Walking mode for the actual routing (correct pedestrian rules,
+    // correct ETA, allows pedestrian-only paths). The host snaps the
+    // returned polyline to road centerlines before sending it back so
+    // the rendered line + pivot anchors are on roads, not sidewalks —
+    // see snapPolylineToRoads on the host side.
     computeRoute({
       origin,
       stops: [{lat: destination.lat, lng: destination.lng}],
@@ -318,6 +323,97 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         //      not the instruction, and drop those phantom turns.
         // The LAST step (the destination) is dropped by slice(0, -1).
         const steps = route.steps
+        // Dev testing rig: log the ordered list of roads this previewed
+        // route covers. Fires once per preview (the enclosing effect
+        // re-runs on destination/origin change) and never during a live
+        // trip (the `running` guard at the top of the effect skips it).
+        //
+        // Hybrid road-name resolution per step:
+        //   1. Trust the Routes-API instruction's "onto X" parse when it
+        //      has one. The API literally told us the road; geocoding
+        //      junction points just second-guesses it and snaps to the
+        //      wrong cross-street at complex intersections (Market/Gough/
+        //      Fell ramp, Van Ness/Market diagonal, etc).
+        //   2. When the instruction has no road name — "Slight right",
+        //      "Turn left toward …", "Destination will be on the right",
+        //      depart steps with no "on X" — fall back to reverse-geocoding
+        //      the step's MIDPOINT (not endpoint). Endpoints sit on
+        //      junctions and snap to whichever cross-street has higher
+        //      weight; the midpoint sits on the step's own road. This is
+        //      what catches short steps the parser can't name (e.g. the
+        //      110m "Turn left onto 12th St" step where both endpoints
+        //      report the cross-streets).
+        //
+        // Each step contributes at most ONE name. Runs of the same road
+        // collapse via sameRoad (canonicalizes St/Street etc).
+        const stepMid = (s: ComputedRouteStep): {lat: number; lng: number} | null => {
+          if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return null
+          if (!Number.isFinite(s.endLat) || !Number.isFinite(s.endLng)) return null
+          return {lat: (s.lat + s.endLat) / 2, lng: (s.lng + s.endLng) / 2}
+        }
+        const resolutions = steps.map((s) => {
+          const parsed = roadNameFromInstruction(s.instruction)
+          if (parsed) return {source: "parsed" as const, name: parsed, probeAt: null}
+          const mid = stepMid(s)
+          if (!mid) return {source: "skipped" as const, name: null, probeAt: null}
+          return {source: "geocoded" as const, name: null, probeAt: mid}
+        })
+        Promise.all(
+          resolutions.map((r) =>
+            r.source === "geocoded" && r.probeAt
+              ? reverseGeocodeRoadName(r.probeAt.lat, r.probeAt.lng)
+              : Promise.resolve(r.name),
+          ),
+        )
+          .then((names) => {
+            if (cancelled) return
+            const annotated = resolutions.map((r, i) => ({
+              stepIdx: i,
+              source: r.source,
+              probeAt: r.probeAt,
+              name: names[i] ?? r.name,
+            }))
+            const roads: string[] = []
+            for (const a of annotated) {
+              if (!a.name) continue
+              if (roads.length > 0 && sameRoad(roads[roads.length - 1], a.name)) continue
+              roads.push(a.name)
+            }
+            console.log(`[NavPreview] roads: ${roads.join(" → ")}`)
+            // Per-step trace: instruction parse vs midpoint geocode, so a
+            // bad name in the list above can be traced to a specific
+            // source + coordinate.
+            console.log(
+              `[NavPreview] resolution:\n` +
+                annotated
+                  .map((a) => {
+                    const where = a.probeAt
+                      ? ` @ (${a.probeAt.lat.toFixed(5)}, ${a.probeAt.lng.toFixed(5)})`
+                      : ""
+                    return `  step ${a.stepIdx} [${a.source}${where}] → ${a.name ?? "(none)"}`
+                  })
+                  .join("\n"),
+            )
+            // Step instructions for cross-reference.
+            console.log(
+              `[NavPreview] step instructions:\n` +
+                steps
+                  .map((s, i) => `  step ${i}: ${(s.instruction ?? "(no instruction)").replace(/\n/g, " | ")}`)
+                  .join("\n"),
+            )
+            // Compact polyline (every Nth point so the log doesn't blow
+            // up on long routes) — paste these into a maps tool to see
+            // the actual path the geocoder probes were sampled along.
+            const stride = Math.max(1, Math.ceil(polyline.length / 30))
+            const sampled = polyline.filter((_, i) => i % stride === 0 || i === polyline.length - 1)
+            console.log(
+              `[NavPreview] polyline (${polyline.length} pts, showing ${sampled.length}):\n` +
+                sampled.map((p, i) => `  ${i}: ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`).join("\n"),
+            )
+          })
+          .catch(() => {
+            // Geocoder failures already log inside reverseGeocodeRoadName.
+          })
         const polyline = pts ?? []
         const turns = steps
           .slice(0, -1)

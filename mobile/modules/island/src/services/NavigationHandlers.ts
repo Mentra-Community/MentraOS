@@ -335,4 +335,40 @@ export class NavigationHandlers {
       })
     }
   }
+
+  /**
+   * Reverse-geocode a coordinate into a road name. Backs the SDK
+   * pivot engine's last-resort fallback when the Routes API
+   * instruction didn't carry a parseable road. Always resolves with
+   * `{ok, road?}` — a missing road is `{ok: true, road: null}`, not
+   * an error.
+   */
+  async handleReverseGeocode(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const lat = Number(payload.lat)
+      const lng = Number(payload.lng)
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: "lat/lng required",
+        })
+        return
+      }
+      const navigation = getRuntimeHooks().navigation
+      const result = navigation?.reverseGeocodeRoad
+        ? await navigation.reverseGeocodeRoad({lat, lng})
+        : {ok: false as const, error: "navigation adapter not configured"}
+      this.sendResult(packageName, requestId, true, result)
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation reverseGeocode error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation reverseGeocode error",
+      })
+    }
+  }
 }

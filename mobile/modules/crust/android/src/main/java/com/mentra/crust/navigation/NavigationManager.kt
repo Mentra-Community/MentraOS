@@ -1030,7 +1030,21 @@ object NavigationManager {
     val out = ArrayList<RouteStep>(src.size)
     val totalPolylineMeters = cumPolylineMeters.last()
     var cumStepOffset = 0.0
-    for (s in src) {
+    // Google's StepInfo.distanceFromPrevStepMeters is the distance from
+    // the PREVIOUS step's start to THIS step's start — i.e., the length
+    // of the previous step, not the length of this one. So:
+    //   - allSteps[0] (currentStep) anchors at offset 0 (start of polyline)
+    //   - allSteps[i] for i ≥ 1 anchors at offset += allSteps[i].distanceMeters
+    // Advancing BEFORE adding (instead of after) lines step i up at the
+    // correct cumulative distance. Previously we advanced by the current
+    // step's own value, which shifted every anchor by one step's length
+    // and made the pivot matcher pick the next step's road, producing
+    // labels like "Dolores → 15th" at the Market & Dolores corner.
+    for ((i, s) in src.withIndex()) {
+      if (i > 0) {
+        cumStepOffset = (cumStepOffset + s.distanceMeters.coerceAtLeast(0))
+          .coerceAtMost(totalPolylineMeters)
+      }
       val idx = closestPolylineIndexByDistance(cumPolylineMeters, cumStepOffset)
       out.add(
         RouteStep(
@@ -1042,13 +1056,6 @@ object NavigationManager {
           distanceMeters = s.distanceMeters,
         ),
       )
-      // Advance the offset by this step's own length so the next step
-      // anchors at the right cumulative distance. `distanceMeters` on
-      // a remaining step is the length of that step, so adding it
-      // moves us to the start of the next. Cap at the polyline total
-      // so a slight distance overshoot doesn't push us out of bounds.
-      cumStepOffset = (cumStepOffset + s.distanceMeters.coerceAtLeast(0))
-        .coerceAtMost(totalPolylineMeters)
     }
     return if (out.isEmpty()) null else out
   }

@@ -453,10 +453,14 @@ export function NavMap({
     const g = window.google
 
     // Smooth out the squiggly raw polyline before rendering. The SDK returns
-    // points every 1-3m which produces visible jitter on screen; RDP at 6m
-    // collapses that into clean straight runs without losing real corners.
+    // points every 1-3m which produces visible jitter on screen; RDP at 14m
+    // absorbs curb-cut zigzags and sidewalk-side flips so the rendered line
+    // visually reads as following road centerlines, while preserving real
+    // intersection corners. Was 6m — at that epsilon the polyline still
+    // hugged sidewalk geometry and looked like it was stepping off curbs at
+    // every intersection.
     const rawPath: LatLng[] = routePoints && routePoints.length > 1 ? routePoints : []
-    const path: LatLng[] = rawPath.length > 1 ? rdpSmooth(rawPath, 6) : rawPath
+    const path: LatLng[] = rawPath.length > 1 ? rdpSmooth(rawPath, 14) : rawPath
 
     if (path.length < 2) {
       routeRef.current?.setMap(null)
@@ -698,20 +702,64 @@ export function NavMap({
     }
 
     // Running path: fetch the live pivot list over the channel boundary.
-    // These pivots carry no label, so dots render without squares.
+    // The SDK's Pivot carries fromRoad/toRoad/direction separately; format
+    // them into the same `{label, direction}` shape the preview uses so
+    // the same red box (direction on top, "From → To" below) renders for
+    // an active trip too. Pivots whose direction isn't a real left/right
+    // (e.g. CROSS_STREET) fall back to a plain "Cross" prompt.
+    //
+    // We fetch TWICE: once immediately to render the geometry-derived
+    // pivots the SDK builds on the synchronous `onRoute` event, then
+    // again ~700ms later to pick up the instruction-derived pivots the
+    // SDK swaps in once its async Routes-API computeRoute resolves
+    // (typical REST + bridge round trip is 200-500ms). The second fetch
+    // produces "Market St → Dolores St"-quality labels; the first
+    // produces something less precise but immediately visible.
     let cancelled = false
-    mentra
-      .request("nav:get-pivots", undefined)
-      .then((pivots) => {
-        if (cancelled) return
-        drawDots(pivots)
-      })
-      .catch((err) => {
-        console.warn("[NavMap] nav:get-pivots failed:", err)
-      })
+    const fetchAndDraw = () => {
+      mentra
+        .request("nav:get-pivots", undefined)
+        .then((pivots) => {
+          if (cancelled) return
+          // Clear any prior pass so we don't double-draw when the second
+          // fetch arrives with a different anchor set.
+          for (const dot of pivotDotsRef.current) dot.setMap(null)
+          pivotDotsRef.current = []
+          for (const label of pivotLabelsRef.current) label.setMap(null)
+          pivotLabelsRef.current = []
+
+          // CROSS_STREET pivots get their own label ("Cross to X") and
+          // no left/right direction line — the user just needs to know
+          // a crossing is coming up, not which way to turn.
+          // Turn pivots get "Turn left/right" on top and "From → To"
+          // beneath.
+          const formatted = pivots.map((p) => {
+            if (p.maneuver === "CROSS_STREET") {
+              return {
+                lat: p.lat,
+                lng: p.lng,
+                label: p.toRoad ? `Cross to ${p.toRoad}` : "Cross the street",
+                direction: null,
+              }
+            }
+            const direction: "Turn left" | "Turn right" | null =
+              p.direction === "left" ? "Turn left" : p.direction === "right" ? "Turn right" : null
+            const label =
+              p.fromRoad && p.toRoad ? `${p.fromRoad} → ${p.toRoad}` : (p.toRoad ?? p.fromRoad ?? null)
+            return {lat: p.lat, lng: p.lng, label, direction}
+          })
+          drawDots(formatted)
+        })
+        .catch((err) => {
+          console.warn("[NavMap] nav:get-pivots failed:", err)
+        })
+    }
+    fetchAndDraw()
+    const refetchHandle = setTimeout(fetchAndDraw, 700)
 
     return () => {
       cancelled = true
+      clearTimeout(refetchHandle)
       teardown()
     }
   }, [ready, routePoints, previewTurns])

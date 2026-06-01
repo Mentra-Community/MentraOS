@@ -227,6 +227,7 @@ class MantleManager {
         setSkipCrossings: (enabled) => navigationService.setSkipCrossings(enabled),
         requestPermission: () => navigationService.requestPermission(),
         computeRoute: (payload) => navigationService.computeRoute(payload),
+        reverseGeocodeRoad: (coord) => navigationService.reverseGeocodeRoad(coord),
       },
       heading: {
         addListener: (l) => headingService.addListener(l),
