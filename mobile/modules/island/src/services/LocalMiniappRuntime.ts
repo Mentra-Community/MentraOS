@@ -2016,7 +2016,7 @@ class LocalMiniappRuntime {
     }
 
     if (normalizedStream.startsWith("transcription:")) {
-      const known = Array.from(this.streamSubscribers.keys())
+      // const known = Array.from(this.streamSubscribers.keys())
       // console.log(
       //   `${LOG_TAG}: forwardEvent(${streamType} → ${normalizedStream}) matched=${matchedSubs.size} known=[${known.join(", ")}]`,
       // )
@@ -2137,9 +2137,9 @@ class LocalMiniappRuntime {
 
     const serialized = serializeEnvelope(envelope)
     if ((payload as Record<string, unknown>)?.streamType?.toString().startsWith("transcription")) {
-      console.log(
-        `${LOG_TAG}: sendToMiniapp → ${packageName} streamType=${(payload as Record<string, unknown>).streamType}`,
-      )
+      // console.log(
+      //   `${LOG_TAG}: sendToMiniapp → ${packageName} streamType=${(payload as Record<string, unknown>).streamType}`,
+      // )
     }
 
     try {
