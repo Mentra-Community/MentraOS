@@ -256,10 +256,6 @@ jobs:
               body: newBody
             });
 
-      - name: Fetch Spotless ratchet base
-        working-directory: ./asg_client
-        run: git fetch --no-tags --prune --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
-
       - name: Spotless check
         working-directory: ./asg_client
         run: ./gradlew spotlessCheck

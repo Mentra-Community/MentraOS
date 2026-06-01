@@ -17,7 +17,6 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
 import android.util.Size;
-
 import com.dev.api.DevApi;
 import com.mentra.asg_client.SysControl;
 import com.mentra.asg_client.camera.UvcStreamingState;
@@ -44,15 +43,13 @@ import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.system.managers.AsgNotificationManager;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 import com.mentra.asg_client.service.utils.SysProp;
-
+import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 import org.json.JSONException;
 import org.json.JSONObject;
-
-import java.nio.charset.StandardCharsets;
-import java.util.Objects;
 
 /**
  * Fully refactored AsgClientService that follows SOLID principles.
@@ -101,7 +98,6 @@ public class AsgClientService extends Service
     private static final String ACTION_HEARTBEAT = "com.mentra.asg_client.ACTION_HEARTBEAT";
     private static final String ACTION_HEARTBEAT_ACK = "com.mentra.asg_client.ACTION_HEARTBEAT_ACK";
     private static final long HEARTBEAT_TIMEOUT_MS = 35000; // 35 seconds timeout
-
     /** Solid white RGB LED duration while USB UVC streaming (same as video recording). */
     private static final int UVC_STREAMING_LED_DURATION_MS = 1_800_000;
 
@@ -296,8 +292,7 @@ public class AsgClientService extends Service
             lifecycleDetails.put("action", intent != null ? intent.getAction() : JSONObject.NULL);
             lifecycleDetails.put("flags", flags);
             lifecycleDetails.put("startId", startId);
-            BleTraceLogger.logLifecycle(
-                    this, "AsgClientService", "service_start_command", lifecycleDetails);
+            BleTraceLogger.logLifecycle(this, "AsgClientService", "service_start_command", lifecycleDetails);
 
             ensureForegroundStarted();
 
@@ -416,10 +411,7 @@ public class AsgClientService extends Service
         return instance;
     }
 
-    /**
-     * Handle MTK UVC streaming state forwarded from {@link
-     * com.mentra.asg_client.receiver.UvcStreamingBroadcastReceiver}.
-     */
+    /** Handle MTK UVC streaming state forwarded from {@link com.mentra.asg_client.receiver.UvcStreamingBroadcastReceiver}. */
     public void handleUvcStreamingState(boolean streaming) {
         if (streaming == lastUvcStreaming) {
             Log.d(TAG, "UVC streaming state unchanged (" + streaming + "), skipping LED update");
@@ -627,8 +619,7 @@ public class AsgClientService extends Service
             if (!bluetoothManager.isConnected()) {
                 Log.w(
                         TAG,
-                        "⚠️ Bluetooth not connected; RGB LED authority will be sent when"
-                                + " connected");
+                        "⚠️ Bluetooth not connected; RGB LED authority will be sent when connected");
                 return;
             }
 
@@ -962,8 +953,7 @@ public class AsgClientService extends Service
                 } else {
                     Log.w(
                             TAG,
-                            "📡 🔥 Cannot send hotspot error - communication manager not"
-                                    + " available");
+                            "📡 🔥 Cannot send hotspot error - communication manager not available");
                 }
             }
         } catch (Exception e) {
@@ -1220,8 +1210,7 @@ public class AsgClientService extends Service
             } else {
                 Log.w(
                         TAG,
-                        "⚠️ Bluetooth manager not available or not connected - cannot send version"
-                                + " info");
+                        "⚠️ Bluetooth manager not available or not connected - cannot send version info");
             }
         } catch (JSONException e) {
             Log.e(TAG, "💥 Error creating version info JSON", e);
@@ -1458,8 +1447,7 @@ public class AsgClientService extends Service
                             isConnected = false;
                             Log.i(
                                     TAG,
-                                    "🔌 Connection state changed to DISCONNECTED due to heartbeat"
-                                            + " timeout");
+                                    "🔌 Connection state changed to DISCONNECTED due to heartbeat timeout");
                         };
             }
 
@@ -1470,8 +1458,7 @@ public class AsgClientService extends Service
             isConnected = false;
             Log.d(
                     TAG,
-                    "🔌 Connection state initialized as DISCONNECTED - waiting for first"
-                            + " heartbeat");
+                    "🔌 Connection state initialized as DISCONNECTED - waiting for first heartbeat");
 
             // Schedule initial timeout to detect if no heartbeat comes
             heartbeatTimeoutHandler.postDelayed(heartbeatTimeoutRunnable, HEARTBEAT_TIMEOUT_MS);
