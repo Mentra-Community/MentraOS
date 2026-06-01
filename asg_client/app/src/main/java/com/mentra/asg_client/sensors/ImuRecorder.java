@@ -91,11 +91,21 @@ public class ImuRecorder implements SensorEventListener {
   }
 
   /**
-   * Stop recording and write the sidecar JSON file.
-   * @param mediaFilePath Path to the media file (e.g., IMG_xxx.jpg or VID_xxx.mp4)
-   * @return Path to the sidecar JSON file, or null on failure
+   * Stop recording and build the IMU payload JSON.
+   *
+   * <p>Payload schema:
+   * <ul>
+   *   <li>version: format version</li>
+   *   <li>sampleCount: number of samples</li>
+   *   <li>samplingRateHz: nominal sample rate</li>
+   *   <li>startTimeNs: capture start monotonic time</li>
+   *   <li>durationMs: total capture duration</li>
+   *   <li>samples: compact tuples [relativeTimeMs, ax, ay, az, gx, gy, gz]</li>
+   * </ul>
+   *
+   * @return IMU payload JSON, or null when no samples were captured or serialization fails
    */
-  public String stopRecordingAndSave(String mediaFilePath) {
+  public JSONObject stopRecordingAndBuildPayload() {
     mRecording = false;
     mSensorManager.unregisterListener(this);
 
@@ -110,17 +120,15 @@ public class ImuRecorder implements SensorEventListener {
       return null;
     }
 
-    // Generate sidecar path: save imu.json inside the capture folder
-    File parentDir = new File(mediaFilePath).getParentFile();
-    String sidecarPath = new File(parentDir, "imu.json").getAbsolutePath();
-
     try {
       JSONObject root = new JSONObject();
       root.put("version", 1);
       root.put("sampleCount", captured.size());
       root.put("samplingRateHz", 100);
       root.put("startTimeNs", mStartTimeNs);
-      root.put("durationMs", (captured.get(captured.size() - 1).timestampNs - mStartTimeNs) / 1_000_000);
+      root.put(
+              "durationMs",
+              (captured.get(captured.size() - 1).timestampNs - mStartTimeNs) / 1_000_000);
 
       JSONArray samples = new JSONArray();
       for (ImuSample s : captured) {
@@ -136,16 +144,42 @@ public class ImuRecorder implements SensorEventListener {
         samples.put(sample);
       }
       root.put("samples", samples);
+      return root;
+    } catch (JSONException e) {
+      Log.e(TAG, "Failed to build IMU payload", e);
+      return null;
+    }
+  }
 
+  /**
+   * Stop recording and write the sidecar JSON file.
+   * @param mediaFilePath Path to the media file (e.g., IMG_xxx.jpg or VID_xxx.mp4)
+   * @return Path to the sidecar JSON file, or null on failure
+   */
+  public String stopRecordingAndSave(String mediaFilePath) {
+    JSONObject payload = stopRecordingAndBuildPayload();
+    if (payload == null) return null;
+
+    // Generate sidecar path: save imu.json inside the capture folder
+    File parentDir = new File(mediaFilePath).getParentFile();
+    String sidecarPath = new File(parentDir, "imu.json").getAbsolutePath();
+
+    try {
       File sidecarFile = new File(sidecarPath);
       try (FileWriter writer = new FileWriter(sidecarFile)) {
-        writer.write(root.toString());
+        writer.write(payload.toString());
       }
 
-      Log.d(TAG, "IMU sidecar written: " + sidecarPath + " (" + captured.size() + " samples)");
+      Log.d(
+              TAG,
+              "IMU sidecar written: "
+                      + sidecarPath
+                      + " ("
+                      + payload.optInt("sampleCount", 0)
+                      + " samples)");
       return sidecarPath;
 
-    } catch (JSONException | IOException e) {
+    } catch (IOException e) {
       Log.e(TAG, "Failed to write IMU sidecar", e);
       return null;
     }
