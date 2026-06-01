@@ -1,5 +1,5 @@
 import {useEffect, useState} from "react"
-import type {ComputedRouteStep, NavManeuver, TravelMode} from "@mentra/miniapp"
+import type {NavManeuver, TravelMode} from "@mentra/miniapp"
 import {useRpc} from "@mentra/miniapp/ui"
 
 import "@/shared/channels"
@@ -7,7 +7,7 @@ import type {Channels} from "@/shared/channels"
 import type {LatLng, LogEntry, NavStatus, PlaceDetails, SavedPlace} from "@/shared/types"
 import {useRouter} from "@/ui/router"
 import {useNavStore} from "@/ui/store/navStore"
-import {reverseGeocode, reverseGeocodeRoadName} from "@/ui/lib/reverseGeocode"
+import {reverseGeocode} from "@/ui/lib/reverseGeocode"
 import {bearingDeg, haversineMeters, signedAngleDiff} from "@/ui/lib/geometry"
 import {DrawerOffsetProvider} from "@/ui/components/Drawer/DrawerOffsetContext"
 import {FloatingDevPanel} from "@/ui/components/FloatingDevPanel/FloatingDevPanel"
@@ -43,43 +43,6 @@ type PreviewTurn = {
   lng: number
   label: string | null
   direction: "Turn left" | "Turn right" | null
-}
-
-// Pull a short road name out of a Routes-API instruction for the dev
-// turn labels. Instructions look like:
-//   "Turn left onto Octavia Blvd"
-//   "Slight right onto Octavia St"
-//   "Head northeast on Market St toward Octavia St"
-//   "Turn right onto Haight St\nDestination will be on the right"
-//
-// Pitfalls this guards against (seen in real data):
-//   - Multi-line: the API appends a second line like "Destination will
-//     be on the right". We ONLY look at the first line, otherwise the
-//     greedy match grabs "on the right" → "the right".
-//   - Trailing clauses on the first line ("… toward Octavia St",
-//     "… and continue"): cut at the first such keyword.
-//   - Unit suffixes: "Hayes St #116" → "Hayes St".
-//   - Direction-only leftovers ("the right", "right", "left"): rejected
-//     so a parse miss returns null (caller hides the label / geocodes)
-//     instead of showing a direction word.
-const DIRECTION_WORDS = new Set(["right", "left", "the right", "the left", "north", "south", "east", "west"])
-function roadNameFromInstruction(instruction?: string): string | null {
-  if (!instruction) return null
-  // Only the first line — drop "Destination will be on the right" etc.
-  const firstLine = instruction.split("\n")[0] ?? ""
-  // Prefer "onto" (always immediately precedes the road); fall back to
-  // "on" for depart steps ("Head north on Market St").
-  const m = firstLine.match(/\bonto\s+(.+)$/i) ?? firstLine.match(/\bon\s+(.+)$/i)
-  let raw = (m ? m[1] : "").trim()
-  if (!raw) return null
-  // Cut trailing direction/continuation clauses the API appends.
-  raw = raw.split(/\s+(?:toward|towards|to|and|then|for)\b/i)[0]?.trim() ?? ""
-  // Strip a unit/suite suffix ("Hayes St #116" → "Hayes St").
-  raw = raw.replace(/\s+#.*$/, "").trim()
-  if (!raw) return null
-  // Reject a bare direction word that slipped through.
-  if (DIRECTION_WORDS.has(raw.toLowerCase())) return null
-  return raw
 }
 
 // Build the "fromRoad → toRoad" label for a turn dot. Both sides are
@@ -351,214 +314,135 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         const steps = route.steps
         const polyline = pts ?? []
         // Dev testing rig: log the ordered list of roads this previewed
-        // route covers. Fires once per preview (the enclosing effect
-        // re-runs on destination/origin change) and never during a live
-        // trip (the `running` guard at the top of the effect skips it).
+        // route covers, then derive the turn-dot list from it. Fires
+        // once per preview and never during a live trip (the `running`
+        // guard at the top of the effect skips it).
         //
-        // Hybrid road-name resolution per step:
-        //   1. Trust the Routes-API instruction's "onto X" parse when it
-        //      has one. The API literally told us the road; geocoding
-        //      junction points just second-guesses it and snaps to the
-        //      wrong cross-street at complex intersections (Market/Gough/
-        //      Fell ramp, Van Ness/Market diagonal, etc).
-        //   2. When the instruction has no road name — "Slight right",
-        //      "Turn left toward …", "Destination will be on the right",
-        //      depart steps with no "on X" — fall back to reverse-geocoding
-        //      the step's MIDPOINT (not endpoint). Endpoints sit on
-        //      junctions and snap to whichever cross-street has higher
-        //      weight; the midpoint sits on the step's own road. This is
-        //      what catches short steps the parser can't name (e.g. the
-        //      110m "Turn left onto 12th St" step where both endpoints
-        //      report the cross-streets).
-        //
-        // Each step contributes at most ONE name. Runs of the same road
-        // collapse via sameRoad (canonicalizes St/Street etc).
-        const stepMid = (s: ComputedRouteStep): {lat: number; lng: number} | null => {
-          if (!Number.isFinite(s.lat) || !Number.isFinite(s.lng)) return null
-          if (!Number.isFinite(s.endLat) || !Number.isFinite(s.endLng)) return null
-          return {lat: (s.lat + s.endLat) / 2, lng: (s.lng + s.endLng) / 2}
-        }
-        const resolutions = steps.map((s) => {
-          const parsed = roadNameFromInstruction(s.instruction)
-          if (parsed) return {source: "parsed" as const, name: parsed, probeAt: null}
-          const mid = stepMid(s)
-          if (!mid) return {source: "skipped" as const, name: null, probeAt: null}
-          return {source: "geocoded" as const, name: null, probeAt: mid}
-        })
-        Promise.all(
-          resolutions.map((r) =>
-            r.source === "geocoded" && r.probeAt
-              ? reverseGeocodeRoadName(r.probeAt.lat, r.probeAt.lng)
-              : Promise.resolve(r.name),
-          ),
-        )
-          .then((names) => {
-            if (cancelled) return
-            const rawAnnotated = resolutions.map((r, i) => ({
-              stepIdx: i,
-              source: r.source,
-              probeAt: r.probeAt,
-              name: names[i] ?? r.name,
-            }))
-            // Collapse "A → B → A" ping-pongs in the resolved road
-            // sequence. Routes API sometimes decomposes a single
-            // crosswalk into 3-5 micro-steps ("Turn right toward X",
-            // "Turn left toward X", ...) that briefly bounce onto an
-            // intersecting road and back. Each micro-step gets
-            // geocoded individually, producing phantom road names that
-            // don't correspond to a turn the user perceives. If we see
-            // a single entry of a different road sandwiched between
-            // two same-road entries (A, B, A) we drop B. Repeated to
-            // catch longer alternations like A,B,A,B,A.
-            const annotated = (() => {
-              let cur = rawAnnotated
-              for (let pass = 0; pass < 4; pass++) {
-                const out: typeof cur = []
-                for (let i = 0; i < cur.length; i++) {
-                  const prev = out[out.length - 1]
-                  const next = cur[i + 1]
-                  if (
-                    prev?.name &&
-                    next?.name &&
-                    cur[i].name &&
-                    !sameRoad(prev.name, cur[i].name!) &&
-                    sameRoad(prev.name, next.name)
-                  ) {
-                    continue
-                  }
-                  out.push(cur[i])
-                }
-                if (out.length === cur.length) break
-                cur = out
-              }
-              return cur
-            })()
-            const roads: string[] = []
-            for (const a of annotated) {
-              if (!a.name) continue
-              if (roads.length > 0 && sameRoad(roads[roads.length - 1], a.name)) continue
-              roads.push(a.name)
-            }
-            console.log(`[NavPreview] roads: ${roads.join(" → ")}`)
-            // Per-step trace: instruction parse vs midpoint geocode, so a
-            // bad name in the list above can be traced to a specific
-            // source + coordinate.
-            console.log(
-              `[NavPreview] resolution:\n` +
-                annotated
-                  .map((a) => {
-                    const where = a.probeAt
-                      ? ` @ (${a.probeAt.lat.toFixed(5)}, ${a.probeAt.lng.toFixed(5)})`
-                      : ""
-                    return `  step ${a.stepIdx} [${a.source}${where}] → ${a.name ?? "(none)"}`
-                  })
-                  .join("\n"),
-            )
-            // Step instructions for cross-reference.
-            console.log(
-              `[NavPreview] step instructions:\n` +
-                steps
-                  .map((s, i) => `  step ${i}: ${(s.instruction ?? "(no instruction)").replace(/\n/g, " | ")}`)
-                  .join("\n"),
-            )
-            // Compact polyline (every Nth point so the log doesn't blow
-            // up on long routes) — paste these into a maps tool to see
-            // the actual path the geocoder probes were sampled along.
-            const stride = Math.max(1, Math.ceil(polyline.length / 30))
-            const sampled = polyline.filter((_, i) => i % stride === 0 || i === polyline.length - 1)
-            console.log(
-              `[NavPreview] polyline (${polyline.length} pts, showing ${sampled.length}):\n` +
-                sampled.map((p, i) => `  ${i}: ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`).join("\n"),
-            )
-
-            // Turn dots: one per road→road transition. We use the SAME
-            // hybrid-resolved names that drive the log line above (parsed
-            // instruction first, midpoint geocode fallback), so the dots
-            // can never disagree with the log. A transition is "real"
-            // when the resolved road actually changes — sequential steps
-            // on the same road collapse into one dot at the road change.
-            // The dot sits at the END of the LAST step on the outgoing
-            // road, which is the junction where the user actually turns.
-            // Direction is read from the maneuver of the FIRST step on
-            // the incoming road.
-            const dots: PreviewTurn[] = []
-            for (let i = 0; i < annotated.length - 1; i++) {
-              const here = annotated[i]
-              const next = annotated[i + 1]
-              if (!here.name || !next.name) continue
-              if (sameRoad(here.name, next.name)) continue
-              const junction = steps[here.stepIdx]
-              if (!Number.isFinite(junction.endLat) || !Number.isFinite(junction.endLng)) continue
-              // Geometry sanity check: if the polyline doesn't actually
-              // bend at this junction the API's "turn" is a phantom (slip
-              // lane / interchange artefact) — same filter the old turn
-              // builder used.
-              const bend = bendAngleAt(polyline, {lat: junction.endLat, lng: junction.endLng})
-              if (bend != null && bend < MIN_TURN_ANGLE_DEG) continue
-              // Snap to the RAW polyline, not the smoothed one. NavMap
-              // renders the route through rdpSmooth(points, 14) which can
-              // collapse a short interchange (e.g. the brief Market St
-              // traversal between Van Ness and S Van Ness on a Z-shape)
-              // down to a single vertex — that left two distinct turns
-              // sharing one position and stacking visually as one dot.
-              // The raw polyline preserves those vertices, so each turn
-              // lands at its own corner. The drawn line still passes
-              // through these points (smoothing only drops in-line
-              // micro-points, not real corners), so dots stay on the
-              // visible route.
-              const snapped = snapToPolyline(polyline, {lat: junction.endLat, lng: junction.endLng})
-              dots.push({
-                lat: snapped.lat,
-                lng: snapped.lng,
-                label: joinRoads(here.name, next.name),
-                direction: turnDirection(steps[next.stepIdx].maneuver),
-              })
-            }
-            // Coalesce dots that snapped to the same junction. Routes
-            // API sometimes splits a single human-perceived turn into
-            // two steps via a roadless connector ("Turn left toward S
-            // Van Ness Ave" between Van Ness and S Van Ness). After
-            // snapping to the polyline, the two transition dots land on
-            // the same vertex and stack visually as one. Merge them
-            // into a single dot whose label spans the outer roads
-            // ("Van Ness → S Van Ness", skipping the connector name),
-            // and keep the second dot's direction (that's the maneuver
-            // the user actually performs on entering the new road).
-            // 6m chosen so two distinct turns at opposite corners of a
-            // narrow street (e.g. Z-shape across Market — ~20m apart)
-            // survive, while truly co-located dots (snapped to the same
-            // raw polyline vertex) still collapse.
-            const MERGE_RADIUS_M = 6
-            const merged: PreviewTurn[] = []
-            for (const d of dots) {
-              const prev = merged[merged.length - 1]
-              if (prev && haversineMeters(prev, d) < MERGE_RADIUS_M) {
-                const prevFrom = prev.label?.split(" → ")[0] ?? null
-                const dTo = d.label?.split(" → ")[1] ?? null
-                merged[merged.length - 1] = {
-                  lat: d.lat,
-                  lng: d.lng,
-                  label: prevFrom && dTo ? `${prevFrom} → ${dTo}` : (d.label ?? prev.label),
-                  direction: d.direction ?? prev.direction,
-                }
+        // Road names come from `step.road`, filled by the host's
+        // resolver — parsed "onto X" from the instruction when present,
+        // midpoint reverse-geocoded otherwise. We just consume them.
+        // Collapse "A → B → A" ping-pongs in the resolved road
+        // sequence first. Routes API sometimes decomposes a single
+        // crosswalk into 3-5 micro-steps ("Turn right toward X",
+        // "Turn left toward X", ...) that briefly bounce onto an
+        // intersecting road and back. If we see a single entry of a
+        // different road sandwiched between two same-road entries
+        // (A, B, A) we drop B. Repeated to catch A,B,A,B,A.
+        const annotated = (() => {
+          let cur = steps.map((s, i) => ({stepIdx: i, name: s.road ?? null}))
+          for (let pass = 0; pass < 4; pass++) {
+            const out: typeof cur = []
+            for (let i = 0; i < cur.length; i++) {
+              const prev = out[out.length - 1]
+              const next = cur[i + 1]
+              if (
+                prev?.name &&
+                next?.name &&
+                cur[i].name &&
+                !sameRoad(prev.name, cur[i].name!) &&
+                sameRoad(prev.name, next.name)
+              ) {
                 continue
               }
-              merged.push(d)
+              out.push(cur[i])
             }
-            setPreviewTurns(merged)
-            console.log(
-              `[NavPreview] turns (${merged.length}, ${dots.length - merged.length} merged):\n` +
-                merged
-                  .map(
-                    (d, i) =>
-                      `  ${i}: ${d.label}${d.direction ? ` (${d.direction})` : ""} @ (${d.lat.toFixed(5)}, ${d.lng.toFixed(5)})`,
-                  )
-                  .join("\n"),
-            )
+            if (out.length === cur.length) break
+            cur = out
+          }
+          return cur
+        })()
+        const roads: string[] = []
+        for (const a of annotated) {
+          if (!a.name) continue
+          if (roads.length > 0 && sameRoad(roads[roads.length - 1], a.name)) continue
+          roads.push(a.name)
+        }
+        console.log(`[NavPreview] roads: ${roads.join(" → ")}`)
+        // Step trace — useful when a road in the list looks wrong, to
+        // see which step contributed it.
+        console.log(
+          `[NavPreview] resolution:\n` +
+            annotated
+              .map((a) => `  step ${a.stepIdx} → ${a.name ?? "(none)"}`)
+              .join("\n"),
+        )
+        console.log(
+          `[NavPreview] step instructions:\n` +
+            steps
+              .map((s, i) => `  step ${i}: ${(s.instruction ?? "(no instruction)").replace(/\n/g, " | ")}`)
+              .join("\n"),
+        )
+        const stride = Math.max(1, Math.ceil(polyline.length / 30))
+        const sampled = polyline.filter((_, i) => i % stride === 0 || i === polyline.length - 1)
+        console.log(
+          `[NavPreview] polyline (${polyline.length} pts, showing ${sampled.length}):\n` +
+            sampled.map((p, i) => `  ${i}: ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`).join("\n"),
+        )
+
+        // Turn dots: one per road→road transition. A transition is
+        // "real" when the resolved road actually changes — sequential
+        // steps on the same road collapse into one dot at the change.
+        // The dot sits at the END of the LAST step on the outgoing
+        // road, which is the junction where the user actually turns.
+        // Direction comes from the maneuver of the first step on the
+        // incoming road.
+        const dots: PreviewTurn[] = []
+        for (let i = 0; i < annotated.length - 1; i++) {
+          const here = annotated[i]
+          const next = annotated[i + 1]
+          if (!here.name || !next.name) continue
+          if (sameRoad(here.name, next.name)) continue
+          const junction = steps[here.stepIdx]
+          if (!Number.isFinite(junction.endLat) || !Number.isFinite(junction.endLng)) continue
+          // Geometry sanity check: if the polyline doesn't actually bend
+          // at this junction the API's "turn" is a phantom (slip lane
+          // / interchange artefact).
+          const bend = bendAngleAt(polyline, {lat: junction.endLat, lng: junction.endLng})
+          if (bend != null && bend < MIN_TURN_ANGLE_DEG) continue
+          // Snap to the raw polyline so dots land on actual route
+          // vertices; falls back to the raw endpoint when no vertex is
+          // within MAX_SNAP_M.
+          const snapped = snapToPolyline(polyline, {lat: junction.endLat, lng: junction.endLng})
+          dots.push({
+            lat: snapped.lat,
+            lng: snapped.lng,
+            label: joinRoads(here.name, next.name),
+            direction: turnDirection(steps[next.stepIdx].maneuver),
           })
-          .catch(() => {
-            // Geocoder failures already log inside reverseGeocodeRoadName.
-          })
+        }
+        // Coalesce dots that snapped to the same junction (roadless
+        // connectors splitting a single perceived turn into two API
+        // steps). The merged label spans the outer roads, skipping the
+        // connector. 6m chosen so two distinct turns at opposite corners
+        // of a narrow street (~20m apart) survive.
+        const MERGE_RADIUS_M = 6
+        const merged: PreviewTurn[] = []
+        for (const d of dots) {
+          const prev = merged[merged.length - 1]
+          if (prev && haversineMeters(prev, d) < MERGE_RADIUS_M) {
+            const prevFrom = prev.label?.split(" → ")[0] ?? null
+            const dTo = d.label?.split(" → ")[1] ?? null
+            merged[merged.length - 1] = {
+              lat: d.lat,
+              lng: d.lng,
+              label: prevFrom && dTo ? `${prevFrom} → ${dTo}` : (d.label ?? prev.label),
+              direction: d.direction ?? prev.direction,
+            }
+            continue
+          }
+          merged.push(d)
+        }
+        if (cancelled) return
+        setPreviewTurns(merged)
+        console.log(
+          `[NavPreview] turns (${merged.length}, ${dots.length - merged.length} merged):\n` +
+            merged
+              .map(
+                (d, i) =>
+                  `  ${i}: ${d.label}${d.direction ? ` (${d.direction})` : ""} @ (${d.lat.toFixed(5)}, ${d.lng.toFixed(5)})`,
+              )
+              .join("\n"),
+        )
       })
       .catch(() => {
         // Aborted or failed — preview just stays blank.

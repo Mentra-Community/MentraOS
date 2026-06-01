@@ -130,6 +130,23 @@ object NavigationManager {
    */
   private val DEVIATE_OFF_ROUTE_TRIGGER_M = 12.0
 
+  /**
+   * Phase 2 of route-source promotion: the JS layer derives the trip's
+   * source-of-truth polyline + steps from the Routes REST API and
+   * synthesizes its own onRoute event from `navigation.start()`. The
+   * Nav SDK still runs in the background for position fixes, reroute
+   * detection, and live announcements — but its polyline and step
+   * emissions are NOT the source of truth and must never reach the
+   * miniapp.
+   *
+   * Latching: set true on every `start()`, cleared on `stop()`. While
+   * true, `emitRoute()` (and the deferred re-emit it can spawn) early-
+   * return without calling `callbacks.onRoute()`. This intentionally
+   * also drops native reroute emits — Phase 3 wires those back through
+   * a REST round trip + synthetic emit instead.
+   */
+  @Volatile private var suppressNativeRouteEmits: Boolean = false
+
   data class ManeuverPayload(
     /**
      * Categorical type of the upcoming maneuver, derived from the
@@ -297,6 +314,13 @@ object NavigationManager {
       callbacks.onError("at least one stop is required")
       return
     }
+    // Latch native-route suppression on for the lifetime of the trip.
+    // JS is dispatching the source-of-truth polyline + steps from the
+    // Routes REST API itself; every Nav SDK route emission during this
+    // trip (the multiple emits the SDK fires at start as the route
+    // settles, plus reroute emits later) must be ignored. Cleared in
+    // stop().
+    suppressNativeRouteEmits = true
     // Fall back to showing the T&C dialog here if a miniapp didn't call
     // ensureTermsAccepted() up front. Once accepted, proceed straight
     // into navigator init.
@@ -784,6 +808,12 @@ object NavigationManager {
     lastEmittedKey = null
     simulating = false
     simulationSpeed = 1f
+    // Release the trip's route-emit suppression so a subsequent start
+    // arms it cleanly. Belt-and-suspenders — start() also sets it true
+    // — but clearing here means an external code path that revives
+    // emitRoute() without going through start() (none today) wouldn't
+    // silently inherit a stale latch.
+    suppressNativeRouteEmits = false
     navigator?.let { nav ->
       try {
         nav.simulator?.unsetUserLocation()
@@ -956,6 +986,13 @@ object NavigationManager {
    * it. Called on initial route + after any reroute.
    */
   private fun emitRoute(nav: Navigator, callbacks: Callbacks) {
+    if (suppressNativeRouteEmits) {
+      // Clear any pending deferred re-emit too — a late-arriving NavInfo
+      // would otherwise call callbacks.onRoute() directly, bypassing
+      // this gate and surfacing the native polyline to the miniapp.
+      NavInfoHolder.onAllStepsAvailable = null
+      return
+    }
     try {
       val segments = nav.routeSegments ?: return
       val points = mutableListOf<RoutePoint>()

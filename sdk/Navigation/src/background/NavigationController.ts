@@ -191,6 +191,7 @@ export class NavigationController {
         this.trip = {...this.trip, routePoints: route.points}
         this.ui.send("nav:route", {points: route.points})
         this.ui.send("nav:trip-state", this.trip)
+        logLiveRoute(route)
       }),
     )
   }
@@ -485,4 +486,62 @@ function isRealRoadName(s: string | undefined | null): string | null {
   if (!s) return null
   if (/^Pivot \d+$/i.test(s)) return null
   return s
+}
+
+/**
+ * Diagnostic log fired whenever the live trip's onRoute event lands.
+ * Mirrors the `[NavPreview]` block the miniapp prints during preview,
+ * so we can eyeball-compare preview vs live for the same destination.
+ *
+ * Post-Phase-2 the route this sees should be REST-derived (synthetic
+ * onRoute from navigation.start). Reroutes still fall through the
+ * native path until Phase 3 — when those land here, the polyline and
+ * step shape are the Nav SDK's, which is exactly what we want to
+ * spot.
+ */
+function logLiveRoute(route: NavRoute): void {
+  const steps = route.steps ?? []
+  const polyline = route.points ?? []
+  const annotated = steps.map((s, i) => ({stepIdx: i, name: s.road ?? null}))
+  const roads: string[] = []
+  for (const a of annotated) {
+    if (!a.name) continue
+    if (roads.length > 0 && roads[roads.length - 1].toLowerCase() === a.name.toLowerCase()) continue
+    roads.push(a.name)
+  }
+  console.log(`[NavLive] roads: ${roads.join(" → ")}`)
+  console.log(
+    `[NavLive] resolution:\n` +
+      annotated.map((a) => `  step ${a.stepIdx} → ${a.name ?? "(none)"}`).join("\n"),
+  )
+  console.log(
+    `[NavLive] steps:\n` +
+      steps
+        .map(
+          (s, i) =>
+            `  step ${i}: ${s.road ?? "(unnamed)"} | ${s.maneuver ?? "—"} | ${s.distanceMeters}m`,
+        )
+        .join("\n"),
+  )
+  const stride = Math.max(1, Math.ceil(polyline.length / 30))
+  const sampled = polyline.filter((_, i) => i % stride === 0 || i === polyline.length - 1)
+  console.log(
+    `[NavLive] polyline (${polyline.length} pts, showing ${sampled.length}):\n` +
+      sampled.map((p, i) => `  ${i}: ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`).join("\n"),
+  )
+  // Turn list derived from road→road transitions, same logic the
+  // preview block uses minus the polyline-bend filter (we trust the
+  // SDK's resolved step list at this point).
+  const turns: string[] = []
+  for (let i = 0; i < annotated.length - 1; i++) {
+    const here = annotated[i]
+    const next = annotated[i + 1]
+    if (!here.name || !next.name) continue
+    if (here.name.toLowerCase() === next.name.toLowerCase()) continue
+    const junction = steps[here.stepIdx]
+    turns.push(
+      `  ${turns.length}: ${here.name} → ${next.name} @ (${junction.lat.toFixed(5)}, ${junction.lng.toFixed(5)})`,
+    )
+  }
+  console.log(`[NavLive] turns (${turns.length}):\n${turns.join("\n")}`)
 }

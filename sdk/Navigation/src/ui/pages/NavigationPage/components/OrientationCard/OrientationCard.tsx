@@ -54,10 +54,6 @@ export function OrientationCard({
       }
     : real
 
-  // Single source of truth — log exactly what the ManeuverCard is showing
-  // on screen right now. This is the only road/maneuver log in the app.
-  console.log(`[ManeuverCard] ${nextRoad ?? "—"} | ${label} | ${road ?? "—"}`)
-
   return (
     <div className="mx-1 mt-2">
       <div className="[font-synthesis:none] relative flex py-4.5 px-5 gap-4  rounded-[20px] items-center bg-[#FFFFFFC7] border border-solid border-[#FFFFFF99] [backdrop-filter:blur(40px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#00000029_0px_8px_32px] antialiased ">

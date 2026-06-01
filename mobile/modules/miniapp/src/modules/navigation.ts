@@ -397,6 +397,18 @@ export type ComputedRouteStep = {
    * Comes straight from the Routes API; no client-side parsing.
    */
   instruction?: string
+  /**
+   * Resolved road name for this step (e.g. "Hayes St"). Filled by the
+   * host's hybrid resolver: parse "onto X" from `instruction` when the
+   * Routes API supplied one; otherwise reverse-geocode the step
+   * midpoint. Null when neither path produced a name (e.g. an unnamed
+   * pedestrian segment whose midpoint also reverse-geocodes blank).
+   *
+   * Use this in preference to parsing `instruction` yourself — the host
+   * runs the same resolver for preview and live trip, so road names
+   * stay consistent across both phases.
+   */
+  road?: string | null
 }
 
 export type ComputedRoute = {
@@ -507,12 +519,12 @@ export class NavigationModule {
    * and host rejections all come back through `{ok: false, error}` so
    * a single error path covers every failure mode.
    */
-  start(opts: StartNavigationOptions): Promise<{ok: boolean; error?: string}> {
+  async start(opts: StartNavigationOptions): Promise<{ok: boolean; error?: string}> {
     if (!this.hasPermission) {
-      return Promise.resolve({
+      return {
         ok: false,
         error: "LOCATION permission not declared in miniapp.json (required for navigation.start).",
-      })
+      }
     }
     const stops = normalizeStops(opts)
     const mode = opts.mode ?? "driving"
@@ -529,7 +541,45 @@ export class NavigationModule {
     // first so a stop-less restart doesn't leak subscriptions.
     this._attachPivotTrackingForTrip(mode, opts.pivots)
 
-    return this.session.sendRequest<{ok: boolean; error?: string}>({
+    // Phase 2: source-of-truth route comes from the host's Routes REST
+    // call, not the Android Nav SDK. Resolve the REST route first; if
+    // it fails, abort the trip start (no native fallback — the goal of
+    // Phase 2 is that preview, live, and reroute all use the same
+    // polyline + pivots). On success, fire the native start so position
+    // fixes + reroute detection wire up, then dispatch the REST route
+    // as a synthetic `onRoute` event so subscribers (the pivot engine,
+    // miniapp UI) render the REST polyline + steps.
+    if (stops.length === 0) {
+      return {ok: false, error: "navigation.start: no stops"}
+    }
+    // Origin precedence: live-stream position if we have one (fast,
+    // 0ms), else a one-shot location fetch from the host (~50-200ms on
+    // first call). The earlier fallback to stops[0] was a bug —
+    // stops[0] is the FIRST stop, which for a single-destination trip
+    // is the destination, producing a degenerate origin==destination
+    // route from the Routes API.
+    let origin: LatLng | null = this._lastUserPosition
+    if (!origin) {
+      try {
+        const fix = await this.session.location.getOnce()
+        origin = {lat: fix.lat, lng: fix.lng}
+        this._lastUserPosition = origin
+      } catch (err) {
+        return {ok: false, error: `navigation.start: no GPS fix (${err instanceof Error ? err.message : String(err)})`}
+      }
+    }
+    const restResult = await this.computeRoute({
+      origin,
+      stops,
+      mode,
+      avoid: opts.avoid,
+    })
+    if (!restResult.ok || !restResult.routes || restResult.routes.length === 0) {
+      return {ok: false, error: restResult.error ?? "computeRoute failed"}
+    }
+    const restRoute = restResult.routes[0]
+
+    const nativeResult = await this.session.sendRequest<{ok: boolean; error?: string}>({
       type: MiniappRequestType.NAVIGATION_START,
       // Keep lat/lng on the wire for hosts that haven't been upgraded to
       // read `stops` yet. New hosts prefer `stops` when present.
@@ -542,6 +592,16 @@ export class NavigationModule {
       speedMultiplier: opts.speedMultiplier ?? 5,
       missedTurnRerouteMeters: opts.missedTurnRerouteMeters,
     })
+    if (!nativeResult.ok) return nativeResult
+
+    // Synthesize a NavRoute from the REST ComputedRoute and dispatch it
+    // through the same channel native route events use. Subscribers
+    // can't tell the difference; the pivot engine sees REST-derived
+    // step roads immediately instead of waiting for the retroactive
+    // `_issueComputeRouteForTrip` call.
+    const syntheticRoute = buildNavRouteFromComputed(restRoute)
+    this.session.events._forwardEvent(MiniappStreamType.NAVIGATION_ROUTE, syntheticRoute)
+    return nativeResult
   }
 
   /**
@@ -824,23 +884,51 @@ export class NavigationModule {
     this._pivots.reset()
     this._pivots.updateOptions(mode, opts)
 
-    // Subscribe to onRoute — rebuilds the pivot list whenever the
-    // host emits a new route (initial trip start + every reroute).
-    //
-    // For each route, we ALSO kick off a Routes-API `computeRoute`
-    // request with the captured trip parameters. The REST response
-    // carries per-step `endLat/endLng` + `instruction` strings, which
-    // the engine uses to build pivots that match preview accuracy
-    // ("Market St → Dolores St" instead of the Android Nav SDK's
-    // off-by-one "Dolores St → 15th St"). If the request fails or
-    // returns no usable steps, `setRouteFromComputedSteps` falls back
-    // to the geometry-derived path so pivots are still produced.
-    //
-    // Until the Routes API reply lands we render geometry-derived
-    // pivots so consumers don't sit empty during the ~200-500ms REST
-    // round trip. The reply (when it arrives) replaces the pivot list.
+    // Subscribe to onRoute — rebuilds the pivot list whenever a new
+    // route lands. There are two source paths post-Phase 2:
+    //   1. Initial trip start: `start()` dispatches a SYNTHETIC onRoute
+    //      built from the Routes REST result. It carries REST-derived
+    //      steps with resolved `road` names, so we can build pivots
+    //      directly via `setRouteFromComputedSteps`.
+    //   2. Reroute: the native Nav SDK still emits its own polyline on
+    //      reroute (Phase 3 will move this to REST too). Native emits
+    //      arrive without REST steps, so we fall back to the existing
+    //      retroactive Routes-API enrichment — geometry pivots first,
+    //      REST-derived pivots once the request resolves.
     this._tripUnsubs.push(
       this.onRoute((route) => {
+        // Synthetic REST emit: route.steps is populated with resolved
+        // road names. Map NavStep → ComputedRouteStep shape that the
+        // pivot engine expects and skip the retroactive REST call.
+        if (route.steps && route.steps.length > 0) {
+          // NavStep only carries (lat, lng) at the step's start. The
+          // pivot engine wants endLat/endLng to anchor turns at the
+          // junction where the user actually pivots. The end of
+          // step[i] equals the start of step[i+1]; for the final step
+          // we fall back to the last polyline vertex (the destination).
+          const tail = route.points[route.points.length - 1]
+          const computedSteps = route.steps.map((s, i) => {
+            const next = route.steps?.[i + 1]
+            const endLat = next ? next.lat : (tail?.lat ?? s.lat)
+            const endLng = next ? next.lng : (tail?.lng ?? s.lng)
+            return {
+              lat: s.lat,
+              lng: s.lng,
+              endLat,
+              endLng,
+              distanceMeters: s.distanceMeters,
+              maneuver: s.maneuver,
+              road: s.road ?? undefined,
+            }
+          })
+          this._pivots.setRouteFromComputedSteps(route, computedSteps)
+          return
+        }
+        // Native reroute (no REST steps yet) — render geometry pivots
+        // immediately, then ask the host for a REST polyline so the
+        // pivots can be replaced with instruction-derived ones.
+        // Phase 3 will replace this entire branch with a REST-first
+        // reroute path.
         this._pivots.setRoute(route, null)
         const seq = ++this._computeRouteSeq
         this._issueComputeRouteForTrip(route)
@@ -850,12 +938,8 @@ export class NavigationModule {
             if (computedSteps && computedSteps.length > 0) {
               this._pivots.setRouteFromComputedSteps(route, computedSteps)
             }
-            // No steps in the reply → keep the geometry-derived pivots
-            // already produced by setRoute() above.
           })
           .catch((err) => {
-            // computeRoute is best-effort enrichment; failures leave
-            // the geometry-derived pivots in place.
             console.warn("[NavigationModule] computeRoute for pivots failed:", err)
           })
       }),
@@ -939,4 +1023,46 @@ function normalizeStops(opts: StartNavigationOptions): LatLng[] {
     return [{lat: opts.lat, lng: opts.lng}]
   }
   return []
+}
+
+/**
+ * Convert a REST-derived `ComputedRoute` into the wire `NavRoute` shape
+ * `onRoute` subscribers expect. The two types overlap heavily —
+ * `ComputedRoute.points` maps straight onto `NavRoute.points`, and
+ * `ComputedRouteStep` already carries `road` and `maneuver` typed as
+ * `ManeuverKind`. The main work is anchoring each step to a polyline
+ * vertex (`routeIndex`) by linear search on `step.lat/lng`, since
+ * `NavStep` requires a `routeIndex` but `ComputedRouteStep` doesn't
+ * surface one. Steps with no maneuver default to `"STRAIGHT"` so the
+ * field stays typed.
+ */
+function buildNavRouteFromComputed(computed: ComputedRoute): NavRoute {
+  const points = computed.points ?? []
+  const steps: NavStep[] = (computed.steps ?? []).map((s) => {
+    let routeIndex = 0
+    let best = Infinity
+    for (let i = 0; i < points.length; i++) {
+      const dLat = points[i].lat - s.lat
+      const dLng = points[i].lng - s.lng
+      const d = dLat * dLat + dLng * dLng
+      if (d < best) {
+        best = d
+        routeIndex = i
+      }
+    }
+    return {
+      lat: s.lat,
+      lng: s.lng,
+      routeIndex,
+      road: s.road ?? null,
+      maneuver: s.maneuver ?? "STRAIGHT",
+      distanceMeters: s.distanceMeters,
+    }
+  })
+  return {
+    points,
+    totalDistanceMeters: computed.totalDistanceMeters,
+    totalDurationSeconds: computed.totalDurationSeconds,
+    steps: steps.length > 0 ? steps : undefined,
+  }
 }

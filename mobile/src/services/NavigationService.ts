@@ -14,6 +14,7 @@
 import CrustModule from "crust"
 
 import {decodePolyline, parseDurationSeconds} from "./navigation/routesApiCodec"
+import {resolveStepRoads} from "./navigation/roadNameResolver"
 
 const LOG_TAG = "NAV_SERVICE"
 
@@ -445,6 +446,7 @@ async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promi
       distanceMeters: number
       maneuver?: string
       instruction?: string
+      road?: string | null
     }>
   }>
 }> {
@@ -523,26 +525,35 @@ async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promi
         }>
       }>
     }
-    const routes = (json.routes ?? []).slice(0, alternatives).map((r) => {
-      const steps = (r.legs ?? []).flatMap((leg) =>
-        (leg.steps ?? []).map((s) => ({
-          lat: s.startLocation?.latLng?.latitude ?? Number.NaN,
-          lng: s.startLocation?.latLng?.longitude ?? Number.NaN,
-          endLat: s.endLocation?.latLng?.latitude ?? Number.NaN,
-          endLng: s.endLocation?.latLng?.longitude ?? Number.NaN,
-          distanceMeters: s.distanceMeters ?? 0,
-          maneuver: s.navigationInstruction?.maneuver,
-          instruction: s.navigationInstruction?.instructions,
-        })),
-      )
-      return {
-        points: decodePolyline(r.polyline?.encodedPolyline ?? ""),
-        totalDistanceMeters: r.distanceMeters ?? 0,
-        totalDurationSeconds: parseDurationSeconds(r.duration ?? ""),
-        summary: r.description,
-        steps: steps.length > 0 ? steps : undefined,
-      }
-    })
+    // Resolve `road` for every step in each route before returning. The
+    // resolver hits Geocoding API for steps whose instruction had no
+    // road name (slip lanes, "Slight right", "Destination ahead"). All
+    // resolutions per route fire concurrently; alternates resolve in
+    // parallel too. Adds latency proportional to the number of unnamed
+    // steps — typically 1-3 per walking route in dense urban areas.
+    const routes = await Promise.all(
+      (json.routes ?? []).slice(0, alternatives).map(async (r) => {
+        const rawSteps = (r.legs ?? []).flatMap((leg) =>
+          (leg.steps ?? []).map((s) => ({
+            lat: s.startLocation?.latLng?.latitude ?? Number.NaN,
+            lng: s.startLocation?.latLng?.longitude ?? Number.NaN,
+            endLat: s.endLocation?.latLng?.latitude ?? Number.NaN,
+            endLng: s.endLocation?.latLng?.longitude ?? Number.NaN,
+            distanceMeters: s.distanceMeters ?? 0,
+            maneuver: s.navigationInstruction?.maneuver,
+            instruction: s.navigationInstruction?.instructions,
+          })),
+        )
+        const steps = await resolveStepRoads(rawSteps, reverseGeocodeRoadViaGeocodingApi)
+        return {
+          points: decodePolyline(r.polyline?.encodedPolyline ?? ""),
+          totalDistanceMeters: r.distanceMeters ?? 0,
+          totalDurationSeconds: parseDurationSeconds(r.duration ?? ""),
+          summary: r.description,
+          steps: steps.length > 0 ? steps : undefined,
+        }
+      }),
+    )
     if (routes.length === 0) return {ok: false, error: "no routes returned"}
     return {ok: true, routes}
   } catch (err) {
