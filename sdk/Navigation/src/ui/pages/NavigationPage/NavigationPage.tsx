@@ -122,6 +122,33 @@ function sameRoad(a: string, b: string): boolean {
 // captures the full bend. Trade-off: too wide bleeds into adjacent
 // turns — 22m stays well under a typical SF block (~80m).
 const PROBE_METERS = 22
+
+// Snap an arbitrary lat/lng to the closest vertex on the drawn polyline,
+// but only if the nearest vertex is within MAX_SNAP_M of the target. The
+// Routes API gives us step endpoints in raw road-network coordinates,
+// but the polyline drawn on the map is road-SNAPPED by the host
+// (snapPolylineToRoads). The two spaces drift by a few meters at
+// intersections, so snapping fixes that. BUT some routes have sparse
+// polylines — only vertices at major corners — and a step endpoint
+// without a nearby vertex would snap to a far-away corner and land the
+// dot in the wrong intersection. The cap rejects those snaps and falls
+// back to the raw endpoint, which is at least on the right corner even
+// if a few meters off the drawn line.
+const MAX_SNAP_M = 25
+function snapToPolyline(points: LatLng[], target: LatLng): LatLng {
+  if (points.length === 0) return target
+  let best = points[0]
+  let bestDist = haversineMeters(best, target)
+  for (let i = 1; i < points.length; i++) {
+    const d = haversineMeters(points[i], target)
+    if (d < bestDist) {
+      bestDist = d
+      best = points[i]
+    }
+  }
+  return bestDist <= MAX_SNAP_M ? best : target
+}
+
 function bendAngleAt(points: LatLng[], junction: LatLng): number | null {
   if (points.length < 3) return null
   // Nearest point to the junction.
@@ -236,7 +263,6 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [simulate, setSimulate] = useState(false)
   const [speedMultiplier, setSpeedMultiplier] = useState(5)
   const [wrongSidewalk, setWrongSidewalk] = useState(false)
-  const [skipCrossings, setSkipCrossings] = useState(false)
   const [travelMode, setTravelMode] = useState<TravelMode>("walking")
 
   const [previewRoutePoints, setPreviewRoutePoints] = useState<LatLng[] | null>(null)
@@ -323,6 +349,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         //      not the instruction, and drop those phantom turns.
         // The LAST step (the destination) is dropped by slice(0, -1).
         const steps = route.steps
+        const polyline = pts ?? []
         // Dev testing rig: log the ordered list of roads this previewed
         // route covers. Fires once per preview (the enclosing effect
         // re-runs on destination/origin change) and never during a live
@@ -367,12 +394,45 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         )
           .then((names) => {
             if (cancelled) return
-            const annotated = resolutions.map((r, i) => ({
+            const rawAnnotated = resolutions.map((r, i) => ({
               stepIdx: i,
               source: r.source,
               probeAt: r.probeAt,
               name: names[i] ?? r.name,
             }))
+            // Collapse "A → B → A" ping-pongs in the resolved road
+            // sequence. Routes API sometimes decomposes a single
+            // crosswalk into 3-5 micro-steps ("Turn right toward X",
+            // "Turn left toward X", ...) that briefly bounce onto an
+            // intersecting road and back. Each micro-step gets
+            // geocoded individually, producing phantom road names that
+            // don't correspond to a turn the user perceives. If we see
+            // a single entry of a different road sandwiched between
+            // two same-road entries (A, B, A) we drop B. Repeated to
+            // catch longer alternations like A,B,A,B,A.
+            const annotated = (() => {
+              let cur = rawAnnotated
+              for (let pass = 0; pass < 4; pass++) {
+                const out: typeof cur = []
+                for (let i = 0; i < cur.length; i++) {
+                  const prev = out[out.length - 1]
+                  const next = cur[i + 1]
+                  if (
+                    prev?.name &&
+                    next?.name &&
+                    cur[i].name &&
+                    !sameRoad(prev.name, cur[i].name!) &&
+                    sameRoad(prev.name, next.name)
+                  ) {
+                    continue
+                  }
+                  out.push(cur[i])
+                }
+                if (out.length === cur.length) break
+                cur = out
+              }
+              return cur
+            })()
             const roads: string[] = []
             for (const a of annotated) {
               if (!a.name) continue
@@ -410,53 +470,95 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
               `[NavPreview] polyline (${polyline.length} pts, showing ${sampled.length}):\n` +
                 sampled.map((p, i) => `  ${i}: ${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}`).join("\n"),
             )
+
+            // Turn dots: one per road→road transition. We use the SAME
+            // hybrid-resolved names that drive the log line above (parsed
+            // instruction first, midpoint geocode fallback), so the dots
+            // can never disagree with the log. A transition is "real"
+            // when the resolved road actually changes — sequential steps
+            // on the same road collapse into one dot at the road change.
+            // The dot sits at the END of the LAST step on the outgoing
+            // road, which is the junction where the user actually turns.
+            // Direction is read from the maneuver of the FIRST step on
+            // the incoming road.
+            const dots: PreviewTurn[] = []
+            for (let i = 0; i < annotated.length - 1; i++) {
+              const here = annotated[i]
+              const next = annotated[i + 1]
+              if (!here.name || !next.name) continue
+              if (sameRoad(here.name, next.name)) continue
+              const junction = steps[here.stepIdx]
+              if (!Number.isFinite(junction.endLat) || !Number.isFinite(junction.endLng)) continue
+              // Geometry sanity check: if the polyline doesn't actually
+              // bend at this junction the API's "turn" is a phantom (slip
+              // lane / interchange artefact) — same filter the old turn
+              // builder used.
+              const bend = bendAngleAt(polyline, {lat: junction.endLat, lng: junction.endLng})
+              if (bend != null && bend < MIN_TURN_ANGLE_DEG) continue
+              // Snap to the RAW polyline, not the smoothed one. NavMap
+              // renders the route through rdpSmooth(points, 14) which can
+              // collapse a short interchange (e.g. the brief Market St
+              // traversal between Van Ness and S Van Ness on a Z-shape)
+              // down to a single vertex — that left two distinct turns
+              // sharing one position and stacking visually as one dot.
+              // The raw polyline preserves those vertices, so each turn
+              // lands at its own corner. The drawn line still passes
+              // through these points (smoothing only drops in-line
+              // micro-points, not real corners), so dots stay on the
+              // visible route.
+              const snapped = snapToPolyline(polyline, {lat: junction.endLat, lng: junction.endLng})
+              dots.push({
+                lat: snapped.lat,
+                lng: snapped.lng,
+                label: joinRoads(here.name, next.name),
+                direction: turnDirection(steps[next.stepIdx].maneuver),
+              })
+            }
+            // Coalesce dots that snapped to the same junction. Routes
+            // API sometimes splits a single human-perceived turn into
+            // two steps via a roadless connector ("Turn left toward S
+            // Van Ness Ave" between Van Ness and S Van Ness). After
+            // snapping to the polyline, the two transition dots land on
+            // the same vertex and stack visually as one. Merge them
+            // into a single dot whose label spans the outer roads
+            // ("Van Ness → S Van Ness", skipping the connector name),
+            // and keep the second dot's direction (that's the maneuver
+            // the user actually performs on entering the new road).
+            // 6m chosen so two distinct turns at opposite corners of a
+            // narrow street (e.g. Z-shape across Market — ~20m apart)
+            // survive, while truly co-located dots (snapped to the same
+            // raw polyline vertex) still collapse.
+            const MERGE_RADIUS_M = 6
+            const merged: PreviewTurn[] = []
+            for (const d of dots) {
+              const prev = merged[merged.length - 1]
+              if (prev && haversineMeters(prev, d) < MERGE_RADIUS_M) {
+                const prevFrom = prev.label?.split(" → ")[0] ?? null
+                const dTo = d.label?.split(" → ")[1] ?? null
+                merged[merged.length - 1] = {
+                  lat: d.lat,
+                  lng: d.lng,
+                  label: prevFrom && dTo ? `${prevFrom} → ${dTo}` : (d.label ?? prev.label),
+                  direction: d.direction ?? prev.direction,
+                }
+                continue
+              }
+              merged.push(d)
+            }
+            setPreviewTurns(merged)
+            console.log(
+              `[NavPreview] turns (${merged.length}, ${dots.length - merged.length} merged):\n` +
+                merged
+                  .map(
+                    (d, i) =>
+                      `  ${i}: ${d.label}${d.direction ? ` (${d.direction})` : ""} @ (${d.lat.toFixed(5)}, ${d.lng.toFixed(5)})`,
+                  )
+                  .join("\n"),
+            )
           })
           .catch(() => {
             // Geocoder failures already log inside reverseGeocodeRoadName.
           })
-        const polyline = pts ?? []
-        const turns = steps
-          .slice(0, -1)
-          .map((s, i) => {
-            const next = steps[i + 1]
-            return {
-              s,
-              fromRoad: roadNameFromInstruction(s.instruction),
-              toRoad: roadNameFromInstruction(next.instruction),
-              // The maneuver of the NEXT step is the one performed at this
-              // dot (step[i].end). Carry its coarse left/right direction.
-              direction: turnDirection(next.maneuver),
-            }
-          })
-          .filter(
-            (
-              t,
-            ): t is {
-              s: (typeof steps)[number]
-              fromRoad: string
-              toRoad: string
-              direction: "Turn left" | "Turn right" | null
-            } =>
-              t.fromRoad != null &&
-              t.toRoad != null &&
-              !sameRoad(t.fromRoad, t.toRoad) &&
-              Number.isFinite(t.s.endLat) &&
-              Number.isFinite(t.s.endLng),
-          )
-          .filter((t) => {
-            const bend = bendAngleAt(polyline, {lat: t.s.endLat, lng: t.s.endLng})
-            // No polyline to measure → keep (don't hide a labeled turn
-            // just because geometry was unavailable).
-            return bend == null || bend >= MIN_TURN_ANGLE_DEG
-          })
-          .map((t) => ({
-            lat: t.s.endLat,
-            lng: t.s.endLng,
-            label: joinRoads(t.fromRoad, t.toRoad),
-            direction: t.direction,
-          }))
-        if (cancelled) return
-        setPreviewTurns(turns)
       })
       .catch(() => {
         // Aborted or failed — preview just stays blank.
@@ -803,22 +905,6 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                         : "border-amber-300 bg-amber-50 text-amber-800"
                     }`}>
                     🚶‍♂️ Wrong sidewalk: {wrongSidewalk ? "ON" : "OFF"}
-                  </button>
-                ) : null}
-                {simulate ? (
-                  <button
-                    onClick={() => {
-                      const next = !skipCrossings
-                      setSkipCrossings(next)
-                      mentra.send("nav:set-dev-settings", {skipCrossings: next})
-                      append(`skip-crossings → ${next ? "on" : "off"}`)
-                    }}
-                    className={`w-full mt-2 px-3 py-2.5 rounded-xl text-sm font-semibold border border-dashed ${
-                      skipCrossings
-                        ? "border-rose-500 bg-rose-100 text-rose-900"
-                        : "border-rose-300 bg-rose-50 text-rose-800"
-                    }`}>
-                    🚷 Skip crossings: {skipCrossings ? "ON" : "OFF"}
                   </button>
                 ) : null}
               </>

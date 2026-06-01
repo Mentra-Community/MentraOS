@@ -2,7 +2,13 @@ import {useEffect, useRef, useState} from "react"
 import {motion, useMotionValue, useTransform} from "motion/react"
 
 import {useNavStore} from "@/ui/store/navStore"
-import {bearingDeg, detectCrossings, haversineMeters, rdpSmooth} from "@/ui/lib/geometry"
+import {bearingDeg, haversineMeters, rdpSmooth} from "@/ui/lib/geometry"
+
+// Experiment toggle: render the route line with RDP smoothing applied or
+// straight from the raw points Google returned. Flip to false to see the
+// unsmoothed path — useful for verifying turn-dot positions against the
+// actual polyline vertices rather than the visually-smoothed line.
+const SMOOTH_ROUTE_LINE = true
 import type {LatLng} from "@/shared/types"
 import {isDev} from "@/ui/lib/env"
 import {getGoogleMaps} from "@/ui/lib/googleMaps"
@@ -121,10 +127,6 @@ export function NavMap({
   const pivotDotsRef = useRef<any[]>([])
   /** Debug: hovering road-name labels paired with the pivot dots. */
   const pivotLabelsRef = useRef<any[]>([])
-  // One Polyline per detected crossing leg. Blue, semi-transparent,
-  // thicker than the route line so it visually highlights the crossing
-  // segment we'd skip when "Skip crossings" is on.
-  const crossingMarkersRef = useRef<any[]>([])
   // Saved-place markers (home / work / starred) shown while idle.
   // Map keyed by placeId so we only churn markers whose payload changed.
   const savedMarkersRef = useRef<Map<string, any>>(new Map())
@@ -460,7 +462,7 @@ export function NavMap({
     // hugged sidewalk geometry and looked like it was stepping off curbs at
     // every intersection.
     const rawPath: LatLng[] = routePoints && routePoints.length > 1 ? routePoints : []
-    const path: LatLng[] = rawPath.length > 1 ? rdpSmooth(rawPath, 14) : rawPath
+    const path: LatLng[] = SMOOTH_ROUTE_LINE && rawPath.length > 1 ? rdpSmooth(rawPath, 14) : rawPath
 
     if (path.length < 2) {
       routeRef.current?.setMap(null)
@@ -548,40 +550,6 @@ export function NavMap({
       routeRef.current?.setMap(null)
     }
   }, [ready, me?.lat, me?.lng, destination?.lat, destination?.lng, routePoints])
-
-  // Debug overlay: render a blue line across each detected crossing
-  // leg. Same heuristic the simulator's skip-crossings walker uses, so
-  // visually verifying these markers is also verifying what the walker
-  // will skip. Rebuilt on every route change.
-  useEffect(() => {
-    if (!isDev) return
-    if (!ready || !mapRef.current) return
-    const g = window.google
-    const path: LatLng[] = routePoints && routePoints.length > 1 ? routePoints : []
-    const crossings = path.length > 3 ? detectCrossings(path) : []
-
-    for (const m of crossingMarkersRef.current) m.setMap(null)
-    crossingMarkersRef.current = []
-
-    for (const c of crossings) {
-      const line = new g.maps.Polyline({
-        map: mapRef.current,
-        path: [
-          new g.maps.LatLng(c.start.lat, c.start.lng),
-          new g.maps.LatLng(c.end.lat, c.end.lng),
-        ],
-        strokeColor: "#3B82F6",
-        strokeOpacity: 0.9,
-        strokeWeight: 10,
-        zIndex: 4,
-      })
-      crossingMarkersRef.current.push(line)
-    }
-    return () => {
-      for (const m of crossingMarkersRef.current) m.setMap(null)
-      crossingMarkersRef.current = []
-    }
-  }, [ready, routePoints])
 
   // Debug overlay: render a red dot at each turn point. Lets us visually
   // verify that turns land where they belong.
