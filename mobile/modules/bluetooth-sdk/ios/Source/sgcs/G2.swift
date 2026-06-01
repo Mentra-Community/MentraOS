@@ -55,6 +55,7 @@ private enum ServiceID: UInt8 {
     case menu = 3 // 0x03 - UI_FOREGROUND_MEUN_ID (typo is intentional — matches Even's proto)
     case notification = 4 // 0x04 - UI_FOREGROUND_NOTIFICATION_ID
     case evenAI = 7 // 0x07 - UI_FOREGROUND_EVEN_AI_ID
+    case navigation = 8 // 0x08 - UI_BACKGROUND_NAVIGATION_ID (compass/heading lives here)
     case g2Setting = 9 // 0x09 - UI_SETTING_APP_ID
     case gestureCtrl = 13 // 0x0D - gesture_ctrl lifecycle signals
     case onboarding = 16 // 0x10 - UI_ONBOARDING_APP_ID
@@ -72,6 +73,20 @@ private enum EvenHubCmd: Int32 {
     case shutdownPage = 9 // APP_REQUEST_SHUTDOWN_PAGE_PACKET
     case heartbeat = 12 // APP_REQUEST_HEARTBEAT_PACKET
     case audioControl = 15 // APP_REQUEST_AUDIO_CTR_PACKET
+    case imuControl = 19 // APP_REQUEST_IMU_CTR_PACKET (confirmed via on-device brute-force)
+}
+
+/// Navigation_Cmd_list from navigation.proto (service 0x08)
+private enum NavigationCmd: Int32 {
+    case appSendHeartbeat = 0 // APP_SEND_HEARTBEAT_CMD
+    case appRequestStartUp = 5 // APP_REQUEST_START_UP — begin navigation/compass session
+    case appSendBasicInfo = 7 // APP_SEND_BASIC_INFO
+    case appRequestExit = 12 // APP_REQUEST_EXIT
+    case osNotifyExit = 13 // OS_NOTIFY_EXIT
+    case osNotifyReviewChanged = 14 // OS_NOTIFY_REVIEW_CHANGED
+    case osNotifyCompassChanged = 15 // OS_NOTIFY_COMPASS_CHANGED — heading update
+    case osNotifyCompassCalibrateStart = 16 // OS_NOTIFY_COMPASS_CALIBRATE_STRAT (sic)
+    case osNotifyCompassCalibrateComplete = 17 // OS_NOTIFY_COMPASS_CALIBRATE_COMPLETE
 }
 
 /// EvenHub response command IDs (from glasses → phone)
@@ -89,6 +104,7 @@ private enum OsEventType: Int32 {
     case foregroundExit = 5
     case abnormalExit = 6
     case systemExit = 7
+    case imuDataReport = 8 // IMU_DATA_REPORT — Sys_ItemEvent carries imuData
 }
 
 /// g2_settingCommandId from g2_setting.proto
@@ -486,6 +502,48 @@ private enum EvenHubProto {
             cmd: .audioControl, subFieldNumber: 18, subMessage: audioMsg, magicRandom: magicRandom
         )
     }
+
+    // MARK: - IMU control
+    //
+    // Wire format recovered by on-device brute-force (sample magnitude ≈ 1.0 g confirms
+    // the decode). Shapes from even_hub_sdk@0.0.10; numeric proto tags confirmed live:
+    //   EvenHub_Cmd_List IMU command = 19
+    //   evenhub_main_msg_ctx ImuCtrlCmd slot = field 20
+    //   ImuCtrlCmd { field 1 = IMU_ReportEn (bool), field 2 = reportFrq (pacing 100…1000) }
+    //   Report path: cmd=2 (osNotifyEventToApp) → SendDeviceEvent.field13 →
+    //                Sys_ItemEvent { field 1 = eventType = 8 (IMU_DATA_REPORT),
+    //                                field 3 = imuData = IMU_Report_Data }
+    //   IMU_Report_Data { field 1 = x, 2 = y, 3 = z } — each a 32-bit float (NOT double),
+    //                     gravity-normalized (|v| ≈ 1 at rest).
+    static let imuCtrlSubField = 20
+
+    /// ImuReportPace pacing codes (protocol values, NOT literal Hz). Step 100, 100…1000.
+    static let imuPaceP100: Int32 = 100
+    static let imuPaceP500: Int32 = 500
+    static let imuPaceP1000: Int32 = 1000
+
+    /// Build an ImuCtrlCmd sub-message.
+    static func imuCtrlCmd(enable: Bool, reportFrq: Int32) -> Data {
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, enable ? 1 : 0) // IMU_ReportEn
+        if enable {
+            w.writeInt32Field(2, reportFrq) // reportFrq (pacing code 100…1000)
+        }
+        return w.data
+    }
+
+    /// Build a full evenhub_main_msg_ctx that enables/disables IMU reporting.
+    /// `reportFrq` is an ImuReportPace pacing code; ignored when disabling.
+    static func imuControlMessage(
+        enable: Bool, reportFrq: Int32 = imuPaceP100, magicRandom: Int32 = 0
+    ) -> Data {
+        let imuMsg = imuCtrlCmd(enable: enable, reportFrq: reportFrq)
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, EvenHubCmd.imuControl.rawValue) // Cmd
+        w.writeInt32Field(2, magicRandom) // MagicRandom
+        w.writeMessageField(imuCtrlSubField, imuMsg) // ImuCtrlCmd slot (field 20)
+        return w.data
+    }
 }
 
 // MARK: - DevSettings Auth Protobuf Builders
@@ -737,13 +795,21 @@ private enum OnboardingProto {
 // MARK: - EvenAI Protobuf Builders (even_ai.proto, service ID 7)
 
 private enum EvenAIProto {
-    /// EvenAIDataPackage with CONFIG command to toggle Hey Even wakeword
-    /// voiceSwitch: 0 = OFF, 1 = ON
+    /// EvenAIDataPackage with CONFIG command to toggle Hey Even wakeword.
+    /// voiceSwitch: 0 = OFF, 1 = ON.
+    ///
+    /// Wire format confirmed by sniffing the official app toggling the setting:
+    ///   EvenAIConfig (field 13) = { f1=voiceSwitch, f2=32 }
+    /// The app OMITS f1 when disabling (proto3 zero) and sends f2=32 (0x20), NOT 80.
+    /// Observed echoes: ON  → 6A04 08 01 10 20  ({f1:1, f2:32})
+    ///                  OFF → 6A02 10 20         ({f2:32})
     static func setHeyEven(magicRandom: Int32, enabled: Bool) -> Data {
         // EvenAIConfig
         var configW = ProtobufWriter()
-        configW.writeInt32Field(1, enabled ? 1 : 0) // voiceSwitch
-        configW.writeInt32Field(2, 80) // streamSpeed (always sent)
+        if enabled {
+            configW.writeInt32Field(1, 1) // voiceSwitch (omitted when off, matching the app)
+        }
+        configW.writeInt32Field(2, 32) // streamSpeed (always sent, app uses 32)
 
         // EvenAIDataPackage
         var w = ProtobufWriter()
@@ -1481,7 +1547,7 @@ class G2: NSObject, SGCManager {
     // MARK: - BLE Sending
 
     private func sendToGlasses(_ packets: [Data], left: Bool = false, right: Bool = true) {
-        Bridge.log("G2: sendToGlasses() - sending \(packets.count) packets first byte: \(packets[0][0])")
+        // Bridge.log("G2: sendToGlasses() - sending \(packets.count) packets first byte: \(packets[0][0])")
         for packet in packets {
             if right, let char = rightWriteChar, let peripheral = rightPeripheral {
                 peripheral.writeValue(packet, for: char, type: .withoutResponse)
@@ -1507,6 +1573,15 @@ class G2: NSObject, SGCManager {
             payload: payload
         )
         sendToGlasses(packets, left: left, right: right)
+    }
+
+    private func sendNavigationCommand(_ payload: Data) {
+        let packets = sendManager.buildPackets(
+            serviceId: ServiceID.navigation.rawValue,
+            payload: payload,
+            reserveFlag: true
+        )
+        sendToGlasses(packets)
     }
 
     private func sendG2SettingCommand(_ payload: Data) {
@@ -1814,7 +1889,7 @@ class G2: NSObject, SGCManager {
         heartbeatTask?.cancel()
         heartbeatTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
                 guard !Task.isCancelled else { break }
                 await MainActor.run {
                     self?.sendEvenHubHeartbeat()
@@ -1953,8 +2028,9 @@ class G2: NSObject, SGCManager {
     }
 
     func sendDoubleTextWall(_ top: String, _ bottom: String) {
+        Bridge.log("G2: sendDoubleTextWall() - top: \(top), bottom: \(bottom)")
         // G2 doesn't have native double text wall, combine them
-        let combined = top + "\n" + bottom
+        let combined = top + "\n\n" + bottom
         sendTextWall(combined)
     }
 
@@ -1963,6 +2039,10 @@ class G2: NSObject, SGCManager {
         // Don't shutdown the EvenHub page — that kills audio streaming too.
         // Instead, just clear the text content by sending a space.
         if pageCreated {
+            // reset the content of all text containers to empty:
+            for i in textContainers.indices {
+                textContainers[i].content = " "
+            }
             // shutdown the page and then recreate the containers without the content:
             let msg = EvenHubProto.shutdownMessage()
             sendEvenHubCommand(msg)
@@ -2048,7 +2128,7 @@ class G2: NSObject, SGCManager {
             Bridge.log("G2: displayBitmap() - reusing container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh)")
             if !pageCreated {
                 rebuildPage()
-                try? await Task.sleep(nanoseconds: 1_000_000_000) // settle before sending image data
+                try? await Task.sleep(nanoseconds: 3_000_000_000) // settle before sending image data
             }
         } else {
             container = addImageContainer(x: rx, y: ry, width: rw, height: rh, bmpData: bmpData)
@@ -2116,13 +2196,13 @@ class G2: NSObject, SGCManager {
             // send any image containers we have
             // go through each container and send the data:
             for container in imageContainers {
-                // let success = await sendImageData(
-                //     containerID: container.id, containerName: container.name, bmpData: container.bmpData
-                // )
-                // if !success {
-                //     Bridge.log("G2: rebuildState() - failed sending image data for container \(container.id)")
-                // }
-                // try? await Task.sleep(nanoseconds: 200_000_000) // 200ms between containers
+                let success = await sendImageData(
+                    containerID: container.id, containerName: container.name, bmpData: container.bmpData
+                )
+                if !success {
+                    Bridge.log("G2: rebuildState() - failed sending image data for container \(container.id)")
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000) // 200ms between containers
             }
 
             // go through each text container and send the data:
@@ -2855,35 +2935,94 @@ class G2: NSObject, SGCManager {
     }
 
     func dbg1() {
-        showNotificationsPanel()
+        toggleHeyEven()
     }
 
+    private var heyEvenEnabled = true
+
+    /// Debug: toggle the "Hey Even" wakeword on/off and log the request bytes.
+    /// Watch for the glasses' echo on service 7 (logged by handleEvenAIResponse).
+    func toggleHeyEven() {
+        heyEvenEnabled.toggle()
+        let msg = EvenAIProto.setHeyEven(
+            magicRandom: sendManager.nextMagicRandom(),
+            enabled: heyEvenEnabled
+        )
+        Bridge.log(
+            "G2: toggleHeyEven → \(heyEvenEnabled ? "ON" : "OFF") "
+                + "tx=\(msg.map { String(format: "%02X", $0) }.joined())"
+        )
+        sendEvenAICommand(msg)
+    }
+
+    private var compassRunning = false
+
     func dbg2() {
-        Bridge.log("G2: dbg2()")
+        compassRunning.toggle()
+        Bridge.log("G2: dbg2() — \(compassRunning ? "start" : "stop") compass")
+        if compassRunning {
+            startCompass()
+        } else {
+            stopCompass()
+        }
+    }
 
-        // createPageWithText("test1")
+    /// Start a navigation session so the glasses stream compass heading via
+    /// OS_NOTIFY_COMPASS_CHANGED — surfaced as `CompassHeadingEvent { heading: 0…359 }`
+    /// in handleNavigationResponse.
+    ///
+    /// If the magnetometer needs calibration, the glasses emit
+    /// OS_NOTIFY_COMPASS_CALIBRATE_STRAT (→ `CompassCalibrationEvent {status:"start"}`);
+    /// the wearer should look around until `…{status:"complete"}`.
+    func startCompass() {
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, NavigationCmd.appRequestStartUp.rawValue) // cmd
+        w.writeInt32Field(2, sendManager.nextMagicRandom()) // magicRandom
+        sendNavigationCommand(w.data)
+    }
 
-        // let tc = EvenHubProto.textContainerProperty(
-        //     x: 0, y: 0, width: 576, height: 288,
-        //     borderWidth: 0, borderColor: 0, borderRadius: 0,
-        //     paddingLength: 4, containerID: textContainerID,
-        //     containerName: "text-main2", isEventCapture: true,
-        //     content: "test-dbg1"
-        // )
+    /// Stop the navigation/compass session (ends heading streaming).
+    func stopCompass() {
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, NavigationCmd.appRequestExit.rawValue)
+        w.writeInt32Field(2, sendManager.nextMagicRandom())
+        sendNavigationCommand(w.data)
+    }
 
-        // let msg: Data
-        // Bridge.log("G2: dbg2 - sending createPageMessage()")
-        // msg = EvenHubProto.createPageMessage(
-        //     textContainers: [tc], magicRandom: sendManager.nextMagicRandom(),
-        //     appId: nil)
+    /// Enable or disable IMU motion reporting on the glasses.
+    ///
+    /// When enabled, the glasses continuously push `IMU_Report_Data { x, y, z }` (32-bit
+    /// floats, gravity-normalized) via the EvenHub notify path; these surface in
+    /// `handleTouchEvent` as a Sys_ItemEvent with `eventType == IMU_DATA_REPORT (8)` and
+    /// are emitted through `Bridge.sendImuData`.
+    ///
+    /// - Parameters:
+    ///   - enabled: `true` to start streaming, `false` to stop.
+    ///   - reportFrq: ImuReportPace pacing code (100…1000, step 100 — protocol codes, not
+    ///     Hz). Ignored when disabling.
+    func setImuEnabled(_ enabled: Bool, reportFrq: Int32 = EvenHubProto.imuPaceP100) {
+        Bridge.log("G2: setImuEnabled(\(enabled), frq=\(reportFrq))")
 
-        // sendEvenHubCommand(msg)
+        // IMU requires an active EvenHub page (same prerequisite as the mic).
+        if enabled, !pageCreated {
+            DeviceManager.shared.sendCurrentState() // re-creates the page if needed
+        }
 
-        // // update the text
-        // Bridge.log("G2: sendTextWall() - updating text container")
-        // updateText("test2")
-        let currentDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 0
-        setDashboardDepthOnly(currentDepth)
+        let send = { [weak self] in
+            guard let self = self else { return }
+            let msg = EvenHubProto.imuControlMessage(
+                enable: enabled, reportFrq: reportFrq,
+                magicRandom: self.sendManager.nextMagicRandom()
+            )
+            self.sendEvenHubCommand(msg)
+        }
+
+        // If we just asked for a page, give it a moment to be created first.
+        if enabled, !pageCreated {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: send)
+        } else {
+            send()
+        }
     }
 
     // MARK: - SGCManager: Device Control
@@ -3196,12 +3335,69 @@ class G2: NSObject, SGCManager {
             handleDashboardResponse(result.payload)
         case ServiceID.gestureCtrl.rawValue:
             handleGestureCtrl(result.payload)
+        case ServiceID.navigation.rawValue:
+            handleNavigationResponse(result.payload)
+        case ServiceID.evenAI.rawValue:
+            handleEvenAIResponse(result.payload)
         case ServiceID.evenHubCtrl.rawValue:
             handleEvenHubCtrlResponse(result.payload)
         default:
             Bridge.log(
                 "G2: Unhandled service \(result.serviceId) (\(result.payload.count) bytes): \(result.payload.prefix(32).map { String(format: "%02X", $0) }.joined())"
             )
+        }
+    }
+
+    /// EvenAI service (0x07). Logs the decoded EvenAIDataPackage so we can read the
+    /// CONFIG (Hey Even) echo: commandId=10 (CONFIG), config sub-message in field 13.
+    private func handleEvenAIResponse(_ payload: Data) {
+        var reader = ProtobufReader(payload)
+        let fields = reader.parseFields()
+        let cmd = fields[1] as? Int32 ?? -1
+        if cmd == 10, let configData = fields[13] as? Data {
+            var cReader = ProtobufReader(configData)
+            let cFields = cReader.parseFields()
+            let voiceSwitch = cFields[1] as? Int32 ?? 0 // omitted = 0 = OFF
+            Bridge.log("G2: EvenAI CONFIG echo — voiceSwitch=\(voiceSwitch) (\(voiceSwitch == 1 ? "ON" : "OFF")) config=\(cFields)")
+        } else {
+            Bridge.log("G2: EvenAI cmd=\(cmd) fields=\(Array(fields.keys).sorted()) raw=\(payload.map { String(format: "%02X", $0) }.joined())")
+        }
+    }
+
+    /// Navigation service (0x08).
+    ///
+    /// OS_NOTIFY_COMPASS_CHANGED (15) carries the magnetometer heading in
+    /// compass_info_msg (field 10) → field 1, as whole degrees 0…359. (The proto names
+    /// that field `compassIndex`, but on the notify path it's the live heading — verified
+    /// on-device: values sweep 0–359 as the wearer turns.)
+    private func handleNavigationResponse(_ payload: Data) {
+        var reader = ProtobufReader(payload)
+        let fields = reader.parseFields()
+        guard let cmd = fields[1] as? Int32 else { return }
+
+        switch cmd {
+        case NavigationCmd.osNotifyCompassChanged.rawValue:
+            guard let compassData = fields[10] as? Data else { return }
+            var cReader = ProtobufReader(compassData)
+            let cFields = cReader.parseFields()
+            guard let heading = cFields[1] as? Int32 else { return }
+            // Heading in degrees, 0…359.
+            Bridge.log("G2: compass heading=\(heading)°")
+            Bridge.sendTypedMessage("CompassHeadingEvent", body: [
+                "heading": Int(heading),
+                "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+            ])
+
+        case NavigationCmd.osNotifyCompassCalibrateStart.rawValue:
+            Bridge.log("G2: compass calibration started — wearer should look around")
+            Bridge.sendTypedMessage("CompassCalibrationEvent", body: ["status": "start"])
+
+        case NavigationCmd.osNotifyCompassCalibrateComplete.rawValue:
+            Bridge.log("G2: compass calibration complete")
+            Bridge.sendTypedMessage("CompassCalibrationEvent", body: ["status": "complete"])
+
+        default:
+            break
         }
     }
 
@@ -3217,7 +3413,7 @@ class G2: NSObject, SGCManager {
             return
         }
 
-        // Bridge.log("G2: EvenHub incoming cmd=\(cmdValue), fields=\(Array(fields.keys).sorted())")
+        Bridge.log("G2: EvenHub incoming cmd=\(cmdValue), fields=\(Array(fields.keys).sorted())")
 
         if cmdValue == EvenHubResponseCmd.osNotifyEventToApp.rawValue {
             // Touch/gesture event from glasses
@@ -3323,6 +3519,35 @@ class G2: NSObject, SGCManager {
         }
     }
 
+    /// Parse an IMU_Report_Data sub-message: fields 1/2/3 = x/y/z as 32-bit floats
+    /// (wire type 5). `ProtobufReader.parseFields()` skips wire-type-5 fields, so this
+    /// walks the bytes manually.
+    private func parseImuReportData(_ data: Data) -> (x: Float, y: Float, z: Float)? {
+        var x: Float?, y: Float?, z: Float?
+        var i = data.startIndex
+        while i < data.endIndex {
+            let tag = data[i]
+            i = data.index(after: i)
+            let fieldNum = Int(tag >> 3)
+            let wireType = Int(tag & 0x07)
+            guard wireType == 5, data.distance(from: i, to: data.endIndex) >= 4 else { break }
+            var bits: UInt32 = 0
+            for b in 0 ..< 4 {
+                bits |= UInt32(data[data.index(i, offsetBy: b)]) << (8 * b) // little-endian
+            }
+            i = data.index(i, offsetBy: 4)
+            let value = Float(bitPattern: bits)
+            switch fieldNum {
+            case 1: x = value
+            case 2: y = value
+            case 3: z = value
+            default: break
+            }
+        }
+        guard let x = x, let y = y, let z = z else { return nil }
+        return (x, y, z)
+    }
+
     private func handleTouchEvent(_ devEventData: Data) {
         // Parse SendDeviceEvent: field 1=ListEvent, field 2=TextEvent, field 3=SysEvent
         var reader = ProtobufReader(devEventData)
@@ -3341,6 +3566,19 @@ class G2: NSObject, SGCManager {
         if let sysData = fields[3] as? Data {
             var sysReader = ProtobufReader(sysData)
             let sysFields = sysReader.parseFields()
+
+            // IMU data report: eventType == IMU_DATA_REPORT (8), imuData in field 3
+            // (IMU_Report_Data { x, y, z } as 32-bit floats). Handle and return before
+            // the gesture-mapping path.
+            if (sysFields[1] as? Int32) == OsEventType.imuDataReport.rawValue,
+               let imuData = sysFields[3] as? Data,
+               let imu = parseImuReportData(imuData)
+            {
+                Bridge.log("G2: IMU data report: \(imu.x), \(imu.y), \(imu.z)")
+                Bridge.sendImuEvent(x: imu.x, y: imu.y, z: imu.z, timestamp: timestamp)
+                return
+            }
+
             var eventType: OsEventType? = nil
             var eventSource: Int32? = nil
             if let normalType = sysFields[1] as? Int32 {
@@ -3477,6 +3715,7 @@ class G2: NSObject, SGCManager {
         case .foregroundEnter: return "foreground_enter"
         case .foregroundExit: return "foreground_exit"
         case .systemExit: return "system_exit"
+        case .imuDataReport: return nil
         case .abnormalExit: return nil // don't report abnormal exits as gestures
         }
     }

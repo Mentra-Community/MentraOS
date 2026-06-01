@@ -18,6 +18,14 @@ export type TouchEvent = {
   timestamp: number
 }
 
+export type ImuEvent = {
+  type: "imu_event"
+  x: number
+  y: number
+  z: number
+  timestamp: number
+}
+
 export type HeadUpEvent = {
   up: boolean
 }
@@ -471,6 +479,7 @@ export type BluetoothSdkModuleEvents = {
   glasses_not_ready: (event: GlassesNotReadyEvent) => void
   button_press: (event: ButtonPressEvent) => void
   touch_event: (event: TouchEvent) => void
+  imu_event: (event: ImuEvent) => void
   head_up: (event: HeadUpEvent) => void
   voice_activity_detection_status: (event: VoiceActivityDetectionStatusEvent) => void
   speaking_status: (event: SpeakingStatusEvent) => void
@@ -540,6 +549,7 @@ export type BluetoothSdkEventMap = {
   glasses_not_ready: GlassesNotReadyEvent
   button_press: ButtonPressEvent
   touch_event: TouchEvent
+  imu_event: ImuEvent
   head_up: HeadUpEvent
   voice_activity_detection_status: VoiceActivityDetectionStatusEvent
   speaking_status: SpeakingStatusEvent

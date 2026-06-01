@@ -159,6 +159,9 @@ export default function DisplayPage() {
               {counts[code] > 0 ? ` (#${counts[code] - 1})` : ""}
             </Button>
           ))}
+          <Button onClick={() => invoke("showBitmapView", [makeBitmap(100, 100, "CE"), {x: 200, y: 100, width: 100, height: 100}])}>
+            showBitmapView — 100×100 Center
+          </Button>
         </div>
 
         <div className="mt-5 flex flex-col gap-2">
