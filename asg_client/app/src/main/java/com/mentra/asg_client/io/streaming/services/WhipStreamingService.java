@@ -292,6 +292,7 @@ public class WhipStreamingService extends Service {
     } catch (Exception e) {
       Log.e(TAG, "Failed to start streaming", e);
       notifyError("Failed to start: " + e.getMessage());
+      cleanupFailedStartup();
       resetState();
     }
   }
@@ -302,8 +303,12 @@ public class WhipStreamingService extends Service {
   }
 
   private void stopStreaming(boolean forReconnect) {
+    boolean hasWebRtcResources = hasWebRtcResources();
     synchronized (mStateLock) {
-      if (mStreamState == StreamState.IDLE || mStreamState == StreamState.STOPPING) {
+      if (mStreamState == StreamState.STOPPING) {
+        return;
+      }
+      if (mStreamState == StreamState.IDLE && !hasWebRtcResources) {
         return;
       }
       mStreamState = StreamState.STOPPING;
@@ -724,6 +729,31 @@ public class WhipStreamingService extends Service {
     if (mEglBase != null) { mEglBase.release(); mEglBase = null; }
     mWhipResourceUrl = null;
     Log.d(TAG, "WebRTC resources released");
+  }
+
+  private boolean hasWebRtcResources() {
+    return mVideoCapturer != null
+        || mPeerConnection != null
+        || mVideoTrack != null
+        || mAudioTrack != null
+        || mVideoSource != null
+        || mAudioSource != null
+        || mSurfaceTextureHelper != null
+        || mPeerConnectionFactory != null
+        || mEglBase != null;
+  }
+
+  private void cleanupFailedStartup() {
+    mMainHandler.removeCallbacks(mStatsRunnable);
+    cancelStreamTimeout();
+    stopBatteryMonitoring();
+    if (mWhipResourceUrl != null) {
+      deleteWhipResource(mWhipResourceUrl);
+      mWhipResourceUrl = null;
+    }
+    releaseWebRtc();
+    WakeLockManager.releaseAllWakeLocks();
+    updateNotification("Stream failed");
   }
 
   private void resetState() {
