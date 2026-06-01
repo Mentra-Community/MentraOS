@@ -58,7 +58,6 @@ interface MentraBluetoothSdkListener {
     fun onHotspotError(event: HotspotErrorEvent) {}
     fun onGalleryStatus(event: GalleryStatusEvent) {}
     fun onPhotoResponse(event: PhotoResponseEvent) {}
-    fun onPhotoImu(event: PhotoImuEvent) {}
     fun onStreamStatus(event: StreamStatusEvent) {}
     fun onKeepAliveAck(event: KeepAliveAckEvent) {}
     fun onMicPcm(event: MicPcmEvent) {}
