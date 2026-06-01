@@ -56,6 +56,11 @@ export interface PhotoRequest extends BaseMessage {
   compress?: "none" | "medium" | "heavy";
   /** Controls shutter sound. Defaults to true if omitted. */
   sound?: boolean;
+  /**
+   * Optional sensor exposure time for this photo only (nanoseconds). Not persisted.
+   * When omitted or invalid, glasses use auto exposure as today.
+   */
+  exposureTimeNs?: number;
 }
 
 /**
@@ -231,7 +236,7 @@ export interface CameraFovSetRequest extends BaseMessage {
   packageName: string;
   sessionId: string;
   requestId: string;
-  /** Field of view in degrees (82-118). 118 means no crop (full sensor). */
+  /** Field of view in degrees (62-118). 118 means no crop (full sensor). */
   fov: number;
   /** ROI crop position. Ignored when fov is 118. Defaults to "center". */
   roiPosition: CameraRoiPosition;

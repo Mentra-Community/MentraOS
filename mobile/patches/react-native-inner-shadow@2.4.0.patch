@@ -1,0 +1,233 @@
+diff --git a/node_modules/react-native-inner-shadow/.bun-tag-5ea6e70af2663d03 b/.bun-tag-5ea6e70af2663d03
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/node_modules/react-native-inner-shadow/.bun-tag-77e2e22ccb7bf4d8 b/.bun-tag-77e2e22ccb7bf4d8
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/node_modules/react-native-inner-shadow/.bun-tag-aaded0b0c27f43a7 b/.bun-tag-aaded0b0c27f43a7
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/node_modules/react-native-inner-shadow/.bun-tag-d7d448cef0d0c262 b/.bun-tag-d7d448cef0d0c262
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/lib/commonjs/components/BaseShadowComponent.js b/lib/commonjs/components/BaseShadowComponent.js
+index 7d07e9a257a575aba2fd86febe60c052add65053..7716c6b72baefb6a1eb7da9151b15d1e63b90ce2 100644
+--- a/lib/commonjs/components/BaseShadowComponent.js
++++ b/lib/commonjs/components/BaseShadowComponent.js
+@@ -50,6 +50,7 @@ const BaseShadowComponent = exports.BaseShadowComponent = /*#__PURE__*/(0, _reac
+     style: [flatStyle, _constants.COMMON_STYLES.canvasContainer],
+     onLayout: onLayout,
+     children: [canRenderCanvas && /*#__PURE__*/(0, _jsxRuntime.jsx)(_reactNativeSkia.Canvas, {
++      pointerEvents: "none",
+       style: [_constants.COMMON_STYLES.canvas, {
+         width: layout.width + _constants.CANVAS_PADDING * 2,
+         height: layout.height + _constants.CANVAS_PADDING * 2
+diff --git a/lib/commonjs/components/ShadowView.js b/lib/commonjs/components/ShadowView.js
+index 4ed806cec4870a263d662f8fe75cfd8cf1849db3..151caad34e0cf39ee3e3983817c90ed05a03e683 100644
+--- a/lib/commonjs/components/ShadowView.js
++++ b/lib/commonjs/components/ShadowView.js
+@@ -15,20 +15,32 @@ function _interopRequireWildcard(e, r) { if (!r && e && e.__esModule) return e;
+  * A unified interface for both "solid" (InnerShadow) and "linear" (LinearShadow).
+  * We automatically detect "linear mode" by checking if the user provides
+  * gradient props (colors, from, to, etc.).
+- */const UnifiedShadowView = /*#__PURE__*/(0, _react.memo)(function UnifiedShadowView({
++ */
++const OUTER_ONLY_STYLE_KEYS = ["borderWidth", "borderColor", "borderStyle", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth", "borderStartWidth", "borderEndWidth", "borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor", "borderStartColor", "borderEndColor", "borderBlockColor", "borderBlockEndColor", "borderBlockStartColor", "padding", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "paddingStart", "paddingEnd", "paddingHorizontal", "paddingVertical", "paddingBlock", "paddingBlockStart", "paddingBlockEnd", "paddingInline", "paddingInlineStart", "paddingInlineEnd", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "marginStart", "marginEnd", "marginHorizontal", "marginVertical", "marginBlock", "marginBlockStart", "marginBlockEnd", "marginInline", "marginInlineStart", "marginInlineEnd", "boxShadow", "shadowColor", "shadowOffset", "shadowOpacity", "shadowRadius", "elevation"];
++function stripOuterOnlyStyles(style) {
++  const out = {};
++  for (const key of Object.keys(style)) {
++    if (OUTER_ONLY_STYLE_KEYS.includes(key)) continue;
++    out[key] = style[key];
++  }
++  return out;
++}
++const UnifiedShadowView = /*#__PURE__*/(0, _react.memo)(function UnifiedShadowView({
+   children,
+   backgroundColor,
+   ...props
+ }) {
+   const flatStyle = _reactNative.StyleSheet.flatten(props.style) || {};
++  const innerStyle = stripOuterOnlyStyles(flatStyle);
+   // Extract base fields
+   return /*#__PURE__*/(0, _jsxRuntime.jsx)(_BaseShadowComponent.BaseShadowComponent, {
+     ...props,
+     style: flatStyle,
+     backgroundColor: backgroundColor,
+     children: /*#__PURE__*/(0, _jsxRuntime.jsx)(_reactNative.View, {
+-      ...props,
+-      style: [flatStyle, _constants.COMMON_STYLES.canvasWrapper],
++      style: [innerStyle, _constants.COMMON_STYLES.canvasWrapper, {
++        backgroundColor: 'transparent'
++      }],
+       children: children
+     })
+   });
+diff --git a/lib/module/components/BaseShadowComponent.js b/lib/module/components/BaseShadowComponent.js
+index 9dd37a5949962ae0eed4c08f2f58839c47ea6d16..6b487cc565e97f724eaf3bb02157a057a46cea57 100644
+--- a/lib/module/components/BaseShadowComponent.js
++++ b/lib/module/components/BaseShadowComponent.js
+@@ -46,6 +46,7 @@ export const BaseShadowComponent = /*#__PURE__*/memo(function BaseShadowComponen
+     style: [flatStyle, COMMON_STYLES.canvasContainer],
+     onLayout: onLayout,
+     children: [canRenderCanvas && /*#__PURE__*/_jsx(Canvas, {
++      pointerEvents: "none",
+       style: [COMMON_STYLES.canvas, {
+         width: layout.width + CANVAS_PADDING * 2,
+         height: layout.height + CANVAS_PADDING * 2
+diff --git a/lib/module/components/ShadowView.js b/lib/module/components/ShadowView.js
+index d2427b4d2bc6821ec940f6f1986c97df31076e60..19e871946667938f2e11ddebd8e2494cda6dbb62 100644
+--- a/lib/module/components/ShadowView.js
++++ b/lib/module/components/ShadowView.js
+@@ -11,20 +11,31 @@ import { BaseShadowComponent } from "./BaseShadowComponent.js";
+  * gradient props (colors, from, to, etc.).
+  */
+ import { jsx as _jsx } from "react/jsx-runtime";
++const OUTER_ONLY_STYLE_KEYS = ["borderWidth", "borderColor", "borderStyle", "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth", "borderStartWidth", "borderEndWidth", "borderTopColor", "borderRightColor", "borderBottomColor", "borderLeftColor", "borderStartColor", "borderEndColor", "borderBlockColor", "borderBlockEndColor", "borderBlockStartColor", "padding", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "paddingStart", "paddingEnd", "paddingHorizontal", "paddingVertical", "paddingBlock", "paddingBlockStart", "paddingBlockEnd", "paddingInline", "paddingInlineStart", "paddingInlineEnd", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "marginStart", "marginEnd", "marginHorizontal", "marginVertical", "marginBlock", "marginBlockStart", "marginBlockEnd", "marginInline", "marginInlineStart", "marginInlineEnd", "boxShadow", "shadowColor", "shadowOffset", "shadowOpacity", "shadowRadius", "elevation"];
++function stripOuterOnlyStyles(style) {
++  const out = {};
++  for (const key of Object.keys(style)) {
++    if (OUTER_ONLY_STYLE_KEYS.includes(key)) continue;
++    out[key] = style[key];
++  }
++  return out;
++}
+ const UnifiedShadowView = /*#__PURE__*/memo(function UnifiedShadowView({
+   children,
+   backgroundColor,
+   ...props
+ }) {
+   const flatStyle = StyleSheet.flatten(props.style) || {};
++  const innerStyle = stripOuterOnlyStyles(flatStyle);
+   // Extract base fields
+   return /*#__PURE__*/_jsx(BaseShadowComponent, {
+     ...props,
+     style: flatStyle,
+     backgroundColor: backgroundColor,
+     children: /*#__PURE__*/_jsx(View, {
+-      ...props,
+-      style: [flatStyle, COMMON_STYLES.canvasWrapper],
++      style: [innerStyle, COMMON_STYLES.canvasWrapper, {
++        backgroundColor: 'transparent'
++      }],
+       children: children
+     })
+   });
+diff --git a/src/components/BaseShadowComponent.tsx b/src/components/BaseShadowComponent.tsx
+index a55e729535f3be1a7437ce4fa9b5f4d5518b2b62..475a7c692a7162ab8b0c752fedbda548628c535e 100644
+--- a/src/components/BaseShadowComponent.tsx
++++ b/src/components/BaseShadowComponent.tsx
+@@ -54,6 +54,7 @@ export const BaseShadowComponent = memo(function BaseShadowComponent({
+     >
+       {canRenderCanvas && (
+         <Canvas
++          pointerEvents="none"
+           style={[
+             COMMON_STYLES.canvas,
+             {
+diff --git a/src/components/ShadowView.tsx b/src/components/ShadowView.tsx
+index b67cb32894498688081463b138a2be973de77953..5586a0ad7e899cd8de8343c867c46a48b0a6bbc4 100644
+--- a/src/components/ShadowView.tsx
++++ b/src/components/ShadowView.tsx
+@@ -15,12 +15,87 @@ import { BaseShadowComponent } from './BaseShadowComponent';
+  * We automatically detect "linear mode" by checking if the user provides
+  * gradient props (colors, from, to, etc.).
+  */
++// Style keys that should only render on the outer view. Border stroke would
++// otherwise be drawn twice; padding/margin on the inner view would compound on
++// top of the outer view's box. Radius keys are intentionally kept so the inner
++// view still clips children to rounded corners.
++const OUTER_ONLY_STYLE_KEYS = [
++  // Border stroke (radius keys intentionally omitted)
++  'borderWidth',
++  'borderColor',
++  'borderStyle',
++  'borderTopWidth',
++  'borderRightWidth',
++  'borderBottomWidth',
++  'borderLeftWidth',
++  'borderStartWidth',
++  'borderEndWidth',
++  'borderTopColor',
++  'borderRightColor',
++  'borderBottomColor',
++  'borderLeftColor',
++  'borderStartColor',
++  'borderEndColor',
++  'borderBlockColor',
++  'borderBlockEndColor',
++  'borderBlockStartColor',
++  // Padding
++  'padding',
++  'paddingTop',
++  'paddingRight',
++  'paddingBottom',
++  'paddingLeft',
++  'paddingStart',
++  'paddingEnd',
++  'paddingHorizontal',
++  'paddingVertical',
++  'paddingBlock',
++  'paddingBlockStart',
++  'paddingBlockEnd',
++  'paddingInline',
++  'paddingInlineStart',
++  'paddingInlineEnd',
++  // Margin
++  'margin',
++  'marginTop',
++  'marginRight',
++  'marginBottom',
++  'marginLeft',
++  'marginStart',
++  'marginEnd',
++  'marginHorizontal',
++  'marginVertical',
++  'marginBlock',
++  'marginBlockStart',
++  'marginBlockEnd',
++  'marginInline',
++  'marginInlineStart',
++  'marginInlineEnd',
++  // Shadow (only the outer view should cast a shadow)
++  'boxShadow',
++  'shadowColor',
++  'shadowOffset',
++  'shadowOpacity',
++  'shadowRadius',
++  'elevation',
++] as const;
++
++function stripOuterOnlyStyles(style: Record<string, unknown>) {
++  const out: Record<string, unknown> = {};
++  for (const key of Object.keys(style)) {
++    if ((OUTER_ONLY_STYLE_KEYS as readonly string[]).includes(key)) continue;
++    out[key] = style[key];
++  }
++  return out;
++}
++
+ const UnifiedShadowView = memo(function UnifiedShadowView({
+   children,
+   backgroundColor,
+   ...props
+ }: InnerShadowProps | LinearInnerShadowProps | RadialInnerShadowProps) {
+   const flatStyle = StyleSheet.flatten(props.style) || {};
++  const innerStyle = stripOuterOnlyStyles(flatStyle as Record<string, unknown>);
+   // Extract base fields
+   return (
+     <BaseShadowComponent
+@@ -28,7 +103,13 @@ const UnifiedShadowView = memo(function UnifiedShadowView({
+       style={flatStyle}
+       backgroundColor={backgroundColor}
+     >
+-      <View {...props} style={[flatStyle, COMMON_STYLES.canvasWrapper]}>
++      <View
++        style={[
++          innerStyle,
++          COMMON_STYLES.canvasWrapper,
++          {backgroundColor: 'transparent'},
++        ]}
++      >
+         {children}
+       </View>
+     </BaseShadowComponent>

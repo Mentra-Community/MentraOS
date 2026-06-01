@@ -2,8 +2,9 @@ import {useState} from "react"
 import {TextInput, View, ViewStyle, TextStyle, TouchableOpacity} from "react-native"
 
 import {Button, Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import GlassView from "@/components/ui/GlassView"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
@@ -17,7 +18,7 @@ interface SavedUrl {
 
 export default function BackendUrl() {
   const {theme, themed} = useAppTheme()
-  const {replaceAll} = useNavigationHistory()
+  const {replaceAll} = useNavigationStore.getState()
   const [customUrlInput, setCustomUrlInput] = useState("")
   const [isSavingUrl, setIsSavingUrl] = useState(false)
   const [backendUrl, setBackendUrl] = useSetting(SETTINGS.backend_url.key)
@@ -186,14 +187,14 @@ export default function BackendUrl() {
     setAsiaButtonLastTapTime(currentTime)
 
     if (asiaButtonTapCount + 1 >= 3) {
-      setCustomUrlInput("https://devold.augmentos.org:443")
+      setCustomUrlInput("https://clouddev.ngrok.app:443")
     } else {
       setCustomUrlInput("https://asiaeastapi.mentra.glass:443")
     }
   }
 
   return (
-    <View style={themed($container)}>
+    <GlassView className="bg-primary-foreground rounded-2xl" style={themed($container)}>
       <View style={themed($textContainer)}>
         <Text style={themed($label)}>Custom Backend URL</Text>
         <Text style={themed($subtitle)}>
@@ -308,13 +309,11 @@ export default function BackendUrl() {
           />
         </View>
       </View>
-    </View>
+    </GlassView>
   )
 }
 
-const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.primary_foreground,
-  borderRadius: spacing.s4,
+const $container: ThemedStyle<ViewStyle> = ({spacing}) => ({
   paddingHorizontal: spacing.s6,
   paddingVertical: spacing.s4,
 })

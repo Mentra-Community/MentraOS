@@ -1,0 +1,96 @@
+{
+  "name": "@mentra/bluetooth-sdk",
+  "version": "0.1.7",
+  "description": "SDK for communicating with smart glasses",
+  "main": "build/index.js",
+  "react-native": "src/index.ts",
+  "app.plugin": "app.plugin.js",
+  "types": "build/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./build/index.d.ts",
+      "react-native": "./src/index.ts",
+      "default": "./build/index.js"
+    },
+    "./react": {
+      "types": "./build/react/index.d.ts",
+      "react-native": "./src/react/index.ts",
+      "default": "./build/react/index.js"
+    },
+    "./_private/*": null,
+    "./build/*": null,
+    "./src/*": null,
+    "./app.plugin": "./app.plugin.js",
+    "./app.plugin.js": "./app.plugin.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "android",
+    "!android/.gradle",
+    "!android/.gradle/**",
+    "!android/build",
+    "!android/build/**",
+    "!android/lc3Lib/.cxx",
+    "!android/lc3Lib/.cxx/**",
+    "!android/lc3Lib/build",
+    "!android/lc3Lib/build/**",
+    "app.plugin.js",
+    "build",
+    "expo-module.config.json",
+    "ios",
+    "!ios/build",
+    "!ios/build/**",
+    "!ios/Pods",
+    "!ios/Pods/**",
+    "plugin/build",
+    "README.md",
+    "src",
+    "!src/__tests__"
+  ],
+  "scripts": {
+    "build": "expo-module build",
+    "build:plugin": "expo-module build plugin",
+    "clean": "expo-module clean",
+    "test": "expo-module test",
+    "prepare": "expo-module prepare",
+    "prepublishOnly": "expo-module prepublishOnly",
+    "lint": "expo-module lint",
+    "expo-module": "expo-module",
+    "open:ios": "xed example/ios",
+    "open:android": "open -a \"Android Studio\" example/android"
+  },
+  "keywords": [
+    "react-native",
+    "expo",
+    "smart-glasses",
+    "bluetooth",
+    "ble",
+    "ar-glasses"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "mobile/modules/bluetooth-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/Mentra-Community/MentraOS/issues"
+  },
+  "author": "Mentra",
+  "license": "MIT",
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/main/mobile/modules/bluetooth-sdk#readme",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "expo-module-scripts": "^55.0.2"
+  },
+  "peerDependencies": {
+    "@expo/config-plugins": ">=8.0.0",
+    "@types/react": ">=18.0.0",
+    "expo": ">=49.0.0",
+    "react": ">=18.0.0",
+    "react-native": ">=0.72.0"
+  }
+}

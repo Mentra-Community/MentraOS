@@ -5,6 +5,19 @@ plugins {
     id 'io.sentry.android.gradle' version '5.8.0'
 }
 
+apply plugin: 'com.diffplug.spotless'
+
+spotless {
+    java {
+        target 'src/**/*.java'
+        googleJavaFormat('1.17.0').aosp()
+        ratchetFrom 'origin/dev'
+        toggleOffOn()
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+}
+
 // 1. Import classes for file/stream and properties
 import java.util.Properties
 
@@ -181,6 +194,12 @@ android {
         checkReleaseBuilds false
     }
 
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+        }
+    }
+
     defaultConfig {
         applicationId "com.mentra.asg_client"
 
@@ -260,6 +279,11 @@ dependencies {
     //implementation project(':AugmentOSLib')
     implementation 'com.squareup.picasso:picasso:2.8'
     testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-core:5.11.0'
+    // mockito-inline is bundled into mockito-core by default since Mockito 5.0 — no extra dep needed.
+    testImplementation 'org.robolectric:robolectric:4.11.1'
+    testImplementation 'org.assertj:assertj-core:3.24.2'
+    testImplementation 'androidx.test:core:1.5.0'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test:runner:1.5.2'
     androidTestImplementation 'androidx.test:rules:1.5.0'

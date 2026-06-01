@@ -29,7 +29,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresPermission;
 import androidx.core.app.NotificationCompat;
 
-import com.mentra.asg_client.camera.CameraNeo;
+import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.reporting.domains.StreamingReporting;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
@@ -257,12 +257,13 @@ public class SrtStreamingService extends Service {
   private void createSurface() {
     if (mSurfaceTexture != null) releaseSurface();
     try {
-      int surfaceWidth = mStreamConfig.getVideoWidth();
-      int surfaceHeight = mStreamConfig.getVideoHeight();
+      int surfaceWidth = mStreamConfig.getCaptureSurfaceWidth();
+      int surfaceHeight = mStreamConfig.getCaptureSurfaceHeight();
       mSurfaceTexture = new SurfaceTexture(0);
       mSurfaceTexture.setDefaultBufferSize(surfaceWidth, surfaceHeight);
       mSurface = new Surface(mSurfaceTexture);
-      Log.d(TAG, "Surface created: " + surfaceWidth + "x" + surfaceHeight);
+      Log.d(TAG, "Surface created: " + surfaceWidth + "x" + surfaceHeight
+          + " (encode " + mStreamConfig.getVideoWidth() + "x" + mStreamConfig.getVideoHeight() + ")");
     } catch (Exception e) {
       Log.e(TAG, "Error creating surface", e);
       if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to create surface: " + e.getMessage(), mCurrentStreamId);
@@ -413,6 +414,8 @@ public class SrtStreamingService extends Service {
 
       int videoWidth = mStreamConfig.getVideoWidth();
       int videoHeight = mStreamConfig.getVideoHeight();
+      int captureW = mStreamConfig.getCaptureSurfaceWidth();
+      int captureH = mStreamConfig.getCaptureSurfaceHeight();
       int videoBitrate = mStreamConfig.getVideoBitrate();
       int videoFps = mStreamConfig.getVideoFps();
       int audioBitrate = mStreamConfig.getAudioBitrate();
@@ -430,8 +433,13 @@ public class SrtStreamingService extends Service {
       String mimeType = MediaFormat.MIMETYPE_VIDEO_AVC;
       int profile = VideoConfig.Companion.getBestProfile(mimeType);
       int level = VideoConfig.Companion.getBestLevel(mimeType, profile);
+      Size captureSize =
+          (captureW != videoWidth || captureH != videoHeight)
+              ? new Size(captureW, captureH)
+              : null;
       VideoConfig videoConfig = new VideoConfig(
-          mimeType, videoBitrate, new Size(videoWidth, videoHeight), videoFps, profile, level, 2.0f);
+          mimeType, videoBitrate, new Size(videoWidth, videoHeight), videoFps, profile, level,
+          2.0f, captureSize);
 
       mSrtStreamer.configure(videoConfig);
       mSrtStreamer.configure(audioConfig);
@@ -494,7 +502,7 @@ public class SrtStreamingService extends Service {
         mReconnectionSequence++;
       }
 
-      if (CameraNeo.isCameraInUse()) {
+      if (CameraNeoService.isCameraInUse()) {
         String error = "camera_busy";
         Log.e(TAG, "Cannot start SRT stream - camera is busy");
         if (sStatusCallback != null) sStatusCallback.onStreamError(error, mCurrentStreamId);
@@ -502,7 +510,7 @@ public class SrtStreamingService extends Service {
         return;
       }
 
-      CameraNeo.closeKeptAliveCamera();
+      CameraNeoService.closeKeptAliveCamera();
 
       if (mSrtUrl == null || mSrtUrl.isEmpty()) {
         String error = "SRT URL not set";

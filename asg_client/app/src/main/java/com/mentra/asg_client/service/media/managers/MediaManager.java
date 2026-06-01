@@ -99,6 +99,17 @@ public class MediaManager implements IMediaManager {
             Log.w(TAG, "Cannot send stream status response - not connected to BLE device");
             return;
         }
+        try {
+            if (!statusObject.has("type")) {
+                statusObject.put("type", "stream_status");
+            }
+            if (!statusObject.has("timestamp")) {
+                statusObject.put("timestamp", System.currentTimeMillis());
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "Error normalizing stream status response", e);
+            return;
+        }
         String jsonString = statusObject.toString();
         Log.d(TAG, "📤 Sending stream status response: " + jsonString);
         serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
@@ -142,53 +153,6 @@ public class MediaManager implements IMediaManager {
             serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
         } catch (JSONException e) {
             Log.e(TAG, "Error creating video recording status response", e);
-        }
-    }
-
-    @Override
-    public void sendBufferStatusResponse(boolean success, String status, String details) {
-        if (!isBleConnected()) {
-            Log.w(TAG, "Cannot send buffer status response - not connected to BLE device");
-            return;
-        }
-        try {
-            JSONObject response = new JSONObject();
-            response.put("type", "buffer_status");
-            response.put("success", success);
-            response.put("status", status);
-            if (details != null) {
-                response.put("details", details);
-            }
-            response.put("timestamp", System.currentTimeMillis());
-            String jsonString = response.toString();
-            Log.d(TAG, "📤 Sending buffer status response: " + jsonString);
-            serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
-        } catch (JSONException e) {
-            Log.e(TAG, "Error creating buffer status response", e);
-        }
-    }
-
-    @Override
-    public void sendBufferStatusResponse(boolean success, JSONObject statusObject) {
-        if (!isBleConnected()) {
-            Log.w(TAG, "Cannot send buffer status response - not connected to BLE device");
-            return;
-        }
-        try {
-            JSONObject response = new JSONObject();
-            response.put("type", "buffer_status");
-            response.put("success", success);
-            java.util.Iterator<String> keys = statusObject.keys();
-            while (keys.hasNext()) {
-                String key = keys.next();
-                response.put(key, statusObject.get(key));
-            }
-            response.put("timestamp", System.currentTimeMillis());
-            String jsonString = response.toString();
-            Log.d(TAG, "📤 Sending buffer status response: " + jsonString);
-            serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
-        } catch (JSONException e) {
-            Log.e(TAG, "Error creating buffer status response", e);
         }
     }
 

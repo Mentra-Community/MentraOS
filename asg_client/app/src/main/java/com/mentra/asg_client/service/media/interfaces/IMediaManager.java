@@ -45,16 +45,6 @@ public interface IMediaManager {
     void sendVideoRecordingStatusResponse(boolean success, JSONObject statusObject);
 
     /**
-     * Send buffer status response
-     */
-    void sendBufferStatusResponse(boolean success, String status, String details);
-
-    /**
-     * Send buffer status response with JSON object
-     */
-    void sendBufferStatusResponse(boolean success, JSONObject statusObject);
-
-    /**
      * Get the shared streaming status callback instance
      */
     com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback getStreamingStatusCallback();

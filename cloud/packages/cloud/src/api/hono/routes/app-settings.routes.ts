@@ -335,7 +335,8 @@ async function updateAppSettings(c: AppContext) {
     const user = await User.findOrCreateUser(userId);
 
     // Update the settings for this app
-    const updatedSettings = await user.updateAppSettings(appName, settingsArray);
+    await user.updateAppSettings(appName, settingsArray);
+    const updatedSettings = user.getAppSettings(appName) || settingsArray;
 
     logger.info(`Updated settings for app "${appName}" for user ${userId}`);
 
@@ -344,6 +345,8 @@ async function updateAppSettings(c: AppContext) {
 
     // If user has active sessions, send them settings updates via WebSocket
     if (userSession) {
+      userSession.appManager.updateCachedAppSettings(appName, updatedSettings);
+
       const settingsUpdate = {
         type: CloudToAppMessageType.SETTINGS_UPDATE,
         packageName: appName,

@@ -1,12 +1,12 @@
 import {GalleryScreen} from "@/components/glasses/Gallery/GalleryScreen"
 import {Screen} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {useRef} from "react"
 import {captureRef} from "react-native-view-shot"
 
 export default function AsgGallery() {
   const viewShotRef = useRef(null)
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
 
   const handleExit = async () => {
     // take a screenshot of the webview and save it to the applet zustand store:

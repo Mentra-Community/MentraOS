@@ -7,6 +7,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore} from "@/stores/glasses"
 import {ThemedStyle} from "@/theme"
+import GlassView from "@/components/ui/GlassView"
 
 interface GlassesDisplayMirrorProps {
   fallbackMessage?: string
@@ -130,7 +131,7 @@ const GlassesDisplayMirror: React.FC<GlassesDisplayMirrorProps> = ({
   const renderLayout = (
     layout: any,
     textStyle?: TextStyle,
-    canvasRef?: React.RefObject<Canvas>,
+    canvasRef?: React.RefObject<Canvas | null>,
     containerRef?: React.RefObject<View | null>,
     setContainerWidth?: (width: number) => void,
   ) => {

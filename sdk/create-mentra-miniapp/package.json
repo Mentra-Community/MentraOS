@@ -1,0 +1,19 @@
+{
+  "name": "create-mentra-miniapp",
+  "version": "0.1.0",
+  "description": "Scaffold a new MentraOS miniapp project",
+  "type": "module",
+  "bin": {
+    "create-mentra-miniapp": "./bin/index.ts"
+  },
+  "scripts": {
+    "build": "echo 'No build needed — runs via bun'"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "files": ["bin", "template"]
+}

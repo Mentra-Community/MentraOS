@@ -55,5 +55,5 @@ public class OtaConstants {
 
     // Download socket timeouts (prevents downloads from hanging indefinitely)
     public static final int CONNECT_TIMEOUT_MS = 15000;  // 15 seconds to establish connection
-    public static final int READ_TIMEOUT_MS = 30000;     // 30 seconds to receive data (triggers retry on stall)
+    public static final int READ_TIMEOUT_MS = 20000;     // 20 seconds to receive data (stall / dead WiFi fail faster)
 }

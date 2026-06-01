@@ -29,13 +29,13 @@ import {MediaViewer} from "@/components/glasses/Gallery/MediaViewer"
 import {PhotoImage} from "@/components/glasses/Gallery/PhotoImage"
 import {ProgressRing} from "@/components/glasses/Gallery/ProgressRing"
 import {Header, Icon, Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
 import {localStorageService} from "@/services/asg/localStorageService"
 import {useGallerySyncStore} from "@/stores/gallerySync"
-import {useGlassesStore} from "@/stores/glasses"
+import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {spacing, ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
@@ -71,7 +71,7 @@ interface GalleryItem {
 }
 
 export function GalleryScreen() {
-  const {goBack, push} = useNavigationHistory()
+  const {goBack, push} = useNavigationStore.getState()
   const {theme, themed} = useAppTheme()
   const insets = useSaferAreaInsets()
 
@@ -83,7 +83,7 @@ export function GalleryScreen() {
   const itemWidth = (screenWidth - HORIZONTAL_PADDING - ITEM_SPACING * (numColumns - 1)) / numColumns
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const features = getModelCapabilities(defaultWearable)
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
 
   // Subscribe to sync store
   const syncState = useGallerySyncStore((state) => state.syncState)
@@ -189,35 +189,72 @@ export function GalleryScreen() {
       const validPhotoInfos: PhotoInfo[] = []
       const staleFileNames: string[] = []
 
-      // Check all files exist on disk in parallel (50-100x faster than sequential)
+      // Check all files exist on disk in parallel (50-100x faster than sequential).
+      // Returns one of three states per entry:
+      //   "ok"           — keep the metadata, file is present and non-empty
+      //   "stale"        — drop the metadata (file missing OR zero-byte)
+      //   "unknown"      — keep the metadata (transient stat error; don't lose entries)
+      // Zero-byte files also flag for disk unlink so they don't accumulate.
       const validationPromises = Object.entries(downloadedFiles).map(async ([name, file]) => {
-        // console.log(`[GalleryScreen]   Checking file: ${name} at ${file.filePath}`)
-        const fileExists = await RNFS.exists(file.filePath)
-        return {
-          name,
-          file,
-          exists: fileExists,
+        let status: "ok" | "stale" | "unknown" = "unknown"
+        let shouldUnlink = false
+        try {
+          const fileExists = await RNFS.exists(file.filePath)
+          if (!fileExists) {
+            status = "stale"
+          } else {
+            try {
+              const stat = await RNFS.stat(file.filePath)
+              if (stat.size > 0) {
+                status = "ok"
+              } else {
+                console.warn(`[GalleryScreen] Removing zero-byte local file from gallery index: ${name}`)
+                status = "stale"
+                shouldUnlink = true
+              }
+            } catch (statError) {
+              // Transient stat failure — keep the metadata so we don't permanently
+              // drop a still-valid entry on a one-off filesystem hiccup.
+              console.warn(`[GalleryScreen] Could not stat local file ${name}:`, statError)
+              status = "unknown"
+            }
+          }
+        } catch (existsError) {
+          console.warn(`[GalleryScreen] Could not check existence of local file ${name}:`, existsError)
+          status = "unknown"
         }
+        return {name, file, status, shouldUnlink}
       })
 
       // Wait for all validations to complete (happens in parallel)
       const validationResults = await Promise.all(validationPromises)
 
       // Process results
+      const filesToUnlink: string[] = []
       for (const result of validationResults) {
-        if (result.exists) {
-          // console.log(`[GalleryScreen]     ✅ File exists on disk`)
+        if (result.status === "ok" || result.status === "unknown") {
           validPhotoInfos.push(localStorageService.convertToPhotoInfo(result.file))
         } else {
-          // console.log(`[GalleryScreen]     ❌ File missing on disk - marking as stale`)
           console.log(`[GalleryScreen] Cleaning up stale entry for missing file: ${result.name}`)
           staleFileNames.push(result.name)
+          if (result.shouldUnlink) {
+            filesToUnlink.push(result.file.filePath)
+          }
         }
       }
 
       // Clean up stale metadata entries (files that no longer exist on disk)
       for (const fileName of staleFileNames) {
         await localStorageService.deleteDownloadedFile(fileName)
+      }
+
+      // Also unlink zero-byte files from disk so they don't accumulate.
+      for (const path of filesToUnlink) {
+        try {
+          await RNFS.unlink(path)
+        } catch (unlinkError) {
+          console.warn(`[GalleryScreen] Failed to unlink zero-byte file ${path}:`, unlinkError)
+        }
       }
 
       if (staleFileNames.length > 0) {

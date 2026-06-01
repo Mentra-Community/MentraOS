@@ -3,7 +3,7 @@ name: Self-Hosted Runner Cleanup
 on:
   schedule:
     # Run every Sunday at 3 AM UTC
-    - cron: '0 3 * * 0'
+    - cron: "0 3 * * 0"
   workflow_dispatch:
 
 jobs:
@@ -41,11 +41,10 @@ jobs:
           rm -rf ~/mentra/actions-runner-*/bin.2.3[0-2]* || true
           rm -f ~/mentra/actions-runner-*/*.tar.gz || true
 
-      - name: Clean pnpm cache
+      - name: Clean bun cache
         run: |
-          echo "Cleaning pnpm cache..."
-          rm -rf ~/Library/Caches/pnpm/* || true
-          pnpm store prune 2>/dev/null || true
+          echo "Cleaning bun cache..."
+          rm -rf ~/.bun/install/cache/* || true
 
       - name: Clean npm cache
         run: |

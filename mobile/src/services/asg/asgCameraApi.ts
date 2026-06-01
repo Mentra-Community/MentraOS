@@ -6,9 +6,10 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import {PhotoInfo, CaptureGroup, GalleryResponse, ServerStatus, HealthResponse} from "@/types/asg"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 
 import {localStorageService} from "./localStorageService"
+import {validateDownloadedMediaFile} from "./galleryMediaValidation"
 
 export class AsgCameraApiClient {
   private baseUrl: string
@@ -25,7 +26,7 @@ export class AsgCameraApiClient {
 
   private createTimeoutSignal(timeoutMs: number): AbortSignal {
     const controller = new AbortController()
-    BackgroundTimer.setTimeout(() => controller.abort(), timeoutMs)
+    BgTimer.setTimeout(() => controller.abort(), timeoutMs)
     return controller.signal
   }
 
@@ -42,7 +43,6 @@ export class AsgCameraApiClient {
 
     // Only update if the URL actually changed
     if (this.baseUrl !== newUrl) {
-      const oldUrl = this.baseUrl
       this.baseUrl = newUrl
       this.port = newPort
       // console.log(`[ASG Camera API] Server changed from ${oldUrl} to ${this.baseUrl}`)
@@ -69,7 +69,7 @@ export class AsgCameraApiClient {
     if (timeSinceLastRequest < minDelay) {
       const delay = minDelay - timeSinceLastRequest
       console.log(`[ASG Camera API] Rate limiting: waiting ${delay}ms`)
-      await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, delay))
+      await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), delay))
     }
 
     this.lastRequestTime = Date.now()
@@ -140,7 +140,7 @@ export class AsgCameraApiClient {
           // N3: Cap individual retry delay at 10s
           const retryDelay = Math.min(Math.pow(2, 6 - retries) * 1000, 10000)
           console.log(`[ASG Camera API] Rate limited, retrying in ${retryDelay}ms (${retries} retries left)`)
-          await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, retryDelay))
+          await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), retryDelay))
           return this.makeRequest<T>(endpoint, options, retries - 1)
         }
 
@@ -514,14 +514,14 @@ export class AsgCameraApiClient {
       console.log(`[ASG Camera API] Checking server reachability...`)
       // Use a simple HEAD request to check reachability
       const controller = new AbortController()
-      const timeoutId = BackgroundTimer.setTimeout(() => controller.abort(), 3000) // 3 second timeout
+      const timeoutId = BgTimer.setTimeout(() => controller.abort(), 3000) // 3 second timeout
 
       const response = await fetch(`${this.baseUrl}/api/health`, {
         method: "HEAD",
         signal: controller.signal,
       })
 
-      BackgroundTimer.clearTimeout(timeoutId)
+      BgTimer.clearTimeout(timeoutId)
       console.log(`[ASG Camera API] Server is reachable`)
       return response.ok
     } catch (error) {
@@ -711,7 +711,7 @@ export class AsgCameraApiClient {
       // Small delay between batches to prevent overwhelming the server
       if (i + CONCURRENCY_LIMIT < files.length) {
         console.log(`[ASG Camera API] Waiting 300ms between batches`)
-        await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, 300))
+        await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 300))
       }
     }
 
@@ -798,7 +798,7 @@ export class AsgCameraApiClient {
             RNFS.stopDownload(jobId)
             throw new Error("Sync cancelled")
           }
-          abortPollTimer = BackgroundTimer.setInterval(() => {
+          abortPollTimer = BgTimer.setInterval(() => {
             if (abortSignal.aborted) {
               RNFS.stopDownload(jobId)
             }
@@ -809,7 +809,7 @@ export class AsgCameraApiClient {
         try {
           downloadResult = await dlPromise
         } finally {
-          if (abortPollTimer !== undefined) BackgroundTimer.clearInterval(abortPollTimer)
+          if (abortPollTimer !== undefined) BgTimer.clearInterval(abortPollTimer)
         }
 
         if (downloadResult.statusCode !== 200) {
@@ -823,23 +823,17 @@ export class AsgCameraApiClient {
           throw new Error("Sync cancelled")
         }
 
-        // Validate downloaded file size against expected size from sync response.
-        // On Android, a graceful TCP close on a chunked response looks like a
-        // successful download (HTTP 200, no error) but produces a truncated file.
-        if (file.size > 0) {
-          try {
-            const stat = await RNFS.stat(localFilePath)
-            if (stat.size !== file.size) {
-              console.error(
-                `[ASG Camera API] downloadCapture: size mismatch for ${file.name}: expected ${file.size}, got ${stat.size}`,
-              )
-              await RNFS.unlink(localFilePath).catch(() => {})
-              throw new Error(`Size mismatch for ${file.name}: expected ${file.size}, got ${stat.size}`)
-            }
-          } catch (statErr: any) {
-            if (statErr?.message?.includes("Size mismatch")) throw statErr
-            console.warn(`[ASG Camera API] downloadCapture: could not validate size for ${file.name}:`, statErr)
-          }
+        try {
+          const mediaKind = file.role === "sidecar" ? "unknown" : isVideo ? "video" : "photo"
+          await validateDownloadedMediaFile({
+            path: localFilePath,
+            name: file.name,
+            expectedSize: file.size,
+            mediaKind,
+          })
+        } catch (validationErr) {
+          await RNFS.unlink(localFilePath).catch(() => {})
+          throw validationErr
         }
 
         console.log(`[ASG Camera API] downloadCapture: completed ${file.name} (${file.size} bytes)`)
@@ -1035,7 +1029,7 @@ export class AsgCameraApiClient {
           RNFS.stopDownload(jobId)
           throw new Error("Sync cancelled")
         }
-        abortPollTimer = BackgroundTimer.setInterval(() => {
+        abortPollTimer = BgTimer.setInterval(() => {
           if (abortSignal.aborted) {
             RNFS.stopDownload(jobId)
           }
@@ -1046,7 +1040,7 @@ export class AsgCameraApiClient {
       try {
         downloadResult = await downloadPromise
       } finally {
-        if (abortPollTimer !== undefined) BackgroundTimer.clearInterval(abortPollTimer)
+        if (abortPollTimer !== undefined) BgTimer.clearInterval(abortPollTimer)
       }
 
       if (downloadResult.statusCode !== 200) {
@@ -1065,21 +1059,19 @@ export class AsgCameraApiClient {
       // Use Content-Length from the HTTP response if available, otherwise fall back
       // to expectedSize from the sync response metadata. This catches truncated
       // downloads even when the server uses chunked transfer encoding (no Content-Length).
-      const sizeToCheck = expectedContentLength > 0 ? expectedContentLength : (expectedSize && expectedSize > 0 ? expectedSize : 0)
-      if (sizeToCheck > 0) {
-        try {
-          const stat = await RNFS.stat(localFilePath)
-          if (stat.size !== sizeToCheck) {
-            console.error(
-              `[ASG Camera API] File size mismatch for ${filename}: expected ${sizeToCheck}, got ${stat.size}`,
-            )
-            await RNFS.unlink(localFilePath).catch(() => {})
-            throw new Error(`File size mismatch for ${filename}: expected ${sizeToCheck}, got ${stat.size}`)
-          }
-        } catch (statError: any) {
-          if (statError?.message?.includes("File size mismatch")) throw statError
-          console.warn(`[ASG Camera API] Could not validate file size for ${filename}:`, statError)
-        }
+      const sizeToCheck =
+        expectedContentLength > 0 ? expectedContentLength : expectedSize && expectedSize > 0 ? expectedSize : 0
+
+      try {
+        await validateDownloadedMediaFile({
+          path: localFilePath,
+          name: filename,
+          expectedSize: sizeToCheck,
+          mediaKind: isVideo ? "video" : "photo",
+        })
+      } catch (validationErr) {
+        await RNFS.unlink(localFilePath).catch(() => {})
+        throw validationErr
       }
 
       console.log(`[ASG Camera API] Successfully downloaded ${filename} to filesystem`)

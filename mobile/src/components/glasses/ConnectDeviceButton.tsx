@@ -1,11 +1,11 @@
-import {ControllerTypes, DeviceTypes} from "@/../../cloud/packages/types/src"
-import CoreModule from "core"
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {ActivityIndicator, View} from "react-native"
 
-import {Button, Icon} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {Button} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useGlassesStore} from "@/stores/glasses"
+import {useNavigationStore} from "@/stores/navigation"
+import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
@@ -13,9 +13,9 @@ import {useCoreStore} from "@/stores/core"
 
 export const ConnectDeviceButton = () => {
   const {theme} = useAppTheme()
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
   const isSearching = useCoreStore((state) => state.searching)
 
   if (glassesConnected) {
@@ -36,7 +36,7 @@ export const ConnectDeviceButton = () => {
         return
       }
 
-      await CoreModule.connectDefault()
+      await BluetoothSdk.connectDefault()
     } catch (err) {
       console.error("connect to glasses error:", err)
       showAlert("Connection Error", "Failed to connect to glasses. Please try again.", [{text: "OK"}])
@@ -46,7 +46,7 @@ export const ConnectDeviceButton = () => {
   // New handler: if already connecting, pressing the button calls disconnect.
   const handleConnectOrDisconnect = async () => {
     if (isSearching) {
-      await CoreModule.disconnectController()
+      await BluetoothSdk.disconnect()
     } else {
       await connectGlasses()
     }
@@ -100,7 +100,7 @@ export const ConnectDeviceButton = () => {
 
 export const ConnectControllerButton = () => {
   const {theme} = useAppTheme()
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
   const [defaultController] = useSetting(SETTINGS.default_controller.key)
   const controllerConnected = useGlassesStore((state) => state.controllerConnected)
   const isSearching = useCoreStore((state) => state.searchingController)
@@ -123,7 +123,7 @@ export const ConnectControllerButton = () => {
         return
       }
 
-      await CoreModule.connectDefaultController()
+      await BluetoothSdk.connectDefaultController()
     } catch (err) {
       console.error("connect to glasses error:", err)
       showAlert("Connection Error", "Failed to connect to glasses. Please try again.", [{text: "OK"}])
@@ -133,7 +133,7 @@ export const ConnectControllerButton = () => {
   // New handler: if already connecting, pressing the button calls disconnect.
   const handleConnectOrDisconnect = async () => {
     if (isSearching) {
-      await CoreModule.disconnect()
+      await BluetoothSdk.disconnectController()
     } else {
       await connectController()
     }

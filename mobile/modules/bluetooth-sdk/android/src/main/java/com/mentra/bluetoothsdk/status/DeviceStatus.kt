@@ -1,0 +1,607 @@
+package com.mentra.bluetoothsdk
+
+data class WifiScanResult(
+    val ssid: String,
+    val requiresPassword: Boolean,
+    val signalStrength: Int,
+    val frequency: Int? = null,
+) {
+    internal fun toMap(): Map<String, Any> {
+        val map =
+            mutableMapOf<String, Any>(
+                "ssid" to ssid,
+                "requiresPassword" to requiresPassword,
+                "signalStrength" to signalStrength,
+            )
+        frequency?.let { map["frequency"] = it }
+        return map
+    }
+
+    companion object {
+        internal fun fromMap(values: Map<String, Any>): WifiScanResult =
+            WifiScanResult(
+                ssid = stringValue(values, "ssid") ?: "",
+                requiresPassword = boolValue(values, "requiresPassword") ?: false,
+                signalStrength = numberValue(values, "signalStrength") ?: -1,
+                frequency = numberValue(values, "frequency"),
+            )
+    }
+}
+
+internal data class GlassesStatus(
+    val fullyBooted: Boolean,
+    val connected: Boolean,
+    val micEnabled: Boolean,
+    val voiceActivityDetectionEnabled: Boolean,
+    val connectionState: GlassesConnectionState,
+    val bluetoothClassicConnected: Boolean,
+    val signalStrength: Int,
+    val signalStrengthUpdatedAt: Long,
+    val deviceModel: String,
+    val androidVersion: String,
+    val firmwareVersion: String,
+    val besFirmwareVersion: String,
+    val mtkFirmwareVersion: String,
+    val bluetoothMacAddress: String,
+    val leftMacAddress: String,
+    val rightMacAddress: String,
+    val macAddress: String,
+    val buildNumber: String,
+    val otaVersionUrl: String,
+    val appVersion: String,
+    val bluetoothName: String,
+    val serialNumber: String,
+    val style: String,
+    val color: String,
+    val wifi: WifiStatus,
+    val batteryLevel: Int,
+    val charging: Boolean,
+    val caseBatteryLevel: Int,
+    val caseCharging: Boolean,
+    val caseOpen: Boolean,
+    val caseRemoved: Boolean,
+    val hotspot: HotspotStatus,
+    val headUp: Boolean,
+    val controllerConnected: Boolean,
+    val controllerFullyBooted: Boolean,
+    val controllerMacAddress: String,
+    val controllerBatteryLevel: Int,
+    val controllerSignalStrength: Int,
+    val ringSignalStrength: Int,
+) {
+    internal fun toMap(): Map<String, Any> =
+        mapOf(
+            "connection" to connectionState.toStatusMap(connected, fullyBooted),
+            "micEnabled" to micEnabled,
+            "voiceActivityDetectionEnabled" to voiceActivityDetectionEnabled,
+            "bluetoothClassicConnected" to bluetoothClassicConnected,
+            "signalStrength" to signalStrength,
+            "signalStrengthUpdatedAt" to signalStrengthUpdatedAt,
+            "deviceModel" to deviceModel,
+            "androidVersion" to androidVersion,
+            "firmwareVersion" to firmwareVersion,
+            "besFirmwareVersion" to besFirmwareVersion,
+            "mtkFirmwareVersion" to mtkFirmwareVersion,
+            "bluetoothMacAddress" to bluetoothMacAddress,
+            "leftMacAddress" to leftMacAddress,
+            "rightMacAddress" to rightMacAddress,
+            "macAddress" to macAddress,
+            "buildNumber" to buildNumber,
+            "otaVersionUrl" to otaVersionUrl,
+            "appVersion" to appVersion,
+            "bluetoothName" to bluetoothName,
+            "serialNumber" to serialNumber,
+            "style" to style,
+            "color" to color,
+            "wifi" to wifi.toMap(),
+            "batteryLevel" to batteryLevel,
+            "charging" to charging,
+            "caseBatteryLevel" to caseBatteryLevel,
+            "caseCharging" to caseCharging,
+            "caseOpen" to caseOpen,
+            "caseRemoved" to caseRemoved,
+            "hotspot" to hotspot.toMap(),
+            "headUp" to headUp,
+            "controllerConnected" to controllerConnected,
+            "controllerFullyBooted" to controllerFullyBooted,
+            "controllerMacAddress" to controllerMacAddress,
+            "controllerBatteryLevel" to controllerBatteryLevel,
+            "controllerSignalStrength" to controllerSignalStrength,
+            "ringSignalStrength" to ringSignalStrength,
+        )
+
+    companion object {
+        internal fun fromMap(values: Map<String, Any>): GlassesStatus =
+            GlassesStatus(
+                fullyBooted = boolValue(values, "fullyBooted") ?: false,
+                connected = boolValue(values, "connected") ?: false,
+                micEnabled = boolValue(values, "micEnabled") ?: false,
+                voiceActivityDetectionEnabled = boolValue(values, "voiceActivityDetectionEnabled") ?: true,
+                connectionState = GlassesConnectionState.fromValue(stringValue(values, "connectionState")),
+                bluetoothClassicConnected = boolValue(values, "bluetoothClassicConnected") ?: false,
+                signalStrength = numberValue(values, "signalStrength") ?: -1,
+                signalStrengthUpdatedAt = longValue(values, "signalStrengthUpdatedAt") ?: 0L,
+                deviceModel = stringValue(values, "deviceModel") ?: "",
+                androidVersion = stringValue(values, "androidVersion") ?: "",
+                firmwareVersion = stringValue(values, "firmwareVersion") ?: "",
+                besFirmwareVersion = stringValue(values, "besFirmwareVersion") ?: "",
+                mtkFirmwareVersion = stringValue(values, "mtkFirmwareVersion") ?: "",
+                bluetoothMacAddress = stringValue(values, "bluetoothMacAddress") ?: "",
+                leftMacAddress = stringValue(values, "leftMacAddress") ?: "",
+                rightMacAddress = stringValue(values, "rightMacAddress") ?: "",
+                macAddress = stringValue(values, "macAddress") ?: "",
+                buildNumber = stringValue(values, "buildNumber") ?: "",
+                otaVersionUrl = stringValue(values, "otaVersionUrl") ?: "",
+                appVersion = stringValue(values, "appVersion") ?: "",
+                bluetoothName = stringValue(values, "bluetoothName") ?: "",
+                serialNumber = stringValue(values, "serialNumber") ?: "",
+                style = stringValue(values, "style") ?: "",
+                color = stringValue(values, "color") ?: "",
+                wifi = WifiStatus.fromStoreMap(values) ?: WifiStatus.Disconnected,
+                batteryLevel = numberValue(values, "batteryLevel") ?: -1,
+                charging = boolValue(values, "charging") ?: false,
+                caseBatteryLevel = numberValue(values, "caseBatteryLevel") ?: -1,
+                caseCharging = boolValue(values, "caseCharging") ?: false,
+                caseOpen = boolValue(values, "caseOpen") ?: true,
+                caseRemoved = boolValue(values, "caseRemoved") ?: true,
+                hotspot = HotspotStatus.fromStoreMap(values) ?: HotspotStatus.Disabled,
+                headUp = boolValue(values, "headUp") ?: false,
+                controllerConnected = boolValue(values, "controllerConnected") ?: false,
+                controllerFullyBooted = boolValue(values, "controllerFullyBooted") ?: false,
+                controllerMacAddress = stringValue(values, "controllerMacAddress") ?: "",
+                controllerBatteryLevel = numberValue(values, "controllerBatteryLevel") ?: -1,
+                controllerSignalStrength = numberValue(values, "controllerSignalStrength") ?: -1,
+                ringSignalStrength = numberValue(values, "ringSignalStrength") ?: -1,
+            )
+    }
+}
+
+internal data class BluetoothStatus(
+    val searching: Boolean,
+    val searchingController: Boolean,
+    val systemMicUnavailable: Boolean,
+    val micEnabled: Boolean,
+    val currentMic: String,
+    val micRanking: List<String>,
+    /**
+     * Nearby glasses in stable discovery order. Existing entries keep their array position as
+     * details refresh; new glasses append at the end, and removals should not reorder remaining
+     * entries.
+     */
+    val searchResults: List<Device>,
+    val wifiScanResults: List<WifiScanResult>,
+    val lastLog: List<String>,
+    val otherBtConnected: Boolean,
+    val defaultWearable: String,
+    val pendingWearable: String,
+    val deviceName: String,
+    val deviceAddress: String,
+    val defaultController: String,
+    val pendingController: String,
+    val controllerDeviceName: String,
+    val screenDisabled: Boolean,
+    val preferredMic: String,
+    val sensingEnabled: Boolean,
+    val powerSavingMode: Boolean,
+    val brightness: Int,
+    val autoBrightness: Boolean,
+    val dashboardHeight: Int,
+    val dashboardDepth: Int,
+    val headUpAngle: Int,
+    val contextualDashboard: Boolean,
+    val galleryModeEnabled: Boolean,
+    val buttonPhotoSize: ButtonPhotoSize,
+    val buttonCameraLed: Boolean,
+    val buttonMaxRecordingTime: Int,
+    val buttonVideoWidth: Int,
+    val buttonVideoHeight: Int,
+    val buttonVideoFrameRate: Int,
+    val shouldSendPcm: Boolean,
+    val shouldSendLc3: Boolean,
+    val shouldSendTranscript: Boolean,
+    val offlineCaptionsRunning: Boolean,
+    val localSttFallbackActive: Boolean,
+    val shouldSendBootingMessage: Boolean,
+) {
+    val defaultDevice: Device?
+        get() =
+            defaultWearable.takeIf { it.isNotBlank() }?.let {
+                Device(
+                    model = DeviceModel.fromDeviceType(it),
+                    name = deviceName,
+                    address = deviceAddress.takeIf(String::isNotBlank),
+                )
+            }
+
+    internal fun toMap(): Map<String, Any> =
+        mapOf(
+            "searching" to searching,
+            "searchingController" to searchingController,
+            "systemMicUnavailable" to systemMicUnavailable,
+            "micEnabled" to micEnabled,
+            "currentMic" to currentMic,
+            "micRanking" to micRanking,
+            "searchResults" to searchResults.map(Device::toMap),
+            "wifiScanResults" to wifiScanResults.map { it.toMap() },
+            "lastLog" to lastLog,
+            "otherBtConnected" to otherBtConnected,
+            "default_wearable" to defaultWearable,
+            "pending_wearable" to pendingWearable,
+            "device_name" to deviceName,
+            "device_address" to deviceAddress,
+            "default_controller" to defaultController,
+            "pending_controller" to pendingController,
+            "controller_device_name" to controllerDeviceName,
+            "screen_disabled" to screenDisabled,
+            "preferred_mic" to preferredMic,
+            "sensing_enabled" to sensingEnabled,
+            "power_saving_mode" to powerSavingMode,
+            "brightness" to brightness,
+            "auto_brightness" to autoBrightness,
+            "dashboard_height" to dashboardHeight,
+            "dashboard_depth" to dashboardDepth,
+            "head_up_angle" to headUpAngle,
+            "contextual_dashboard" to contextualDashboard,
+            "galleryModeEnabled" to galleryModeEnabled,
+            "button_photo_size" to buttonPhotoSize.value,
+            "button_camera_led" to buttonCameraLed,
+            "button_max_recording_time" to buttonMaxRecordingTime,
+            "button_video_width" to buttonVideoWidth,
+            "button_video_height" to buttonVideoHeight,
+            "button_video_fps" to buttonVideoFrameRate,
+            "should_send_pcm" to shouldSendPcm,
+            "should_send_lc3" to shouldSendLc3,
+            "should_send_transcript" to shouldSendTranscript,
+            "offline_captions_running" to offlineCaptionsRunning,
+            "local_stt_fallback_active" to localSttFallbackActive,
+            "shouldSendBootingMessage" to shouldSendBootingMessage,
+        )
+
+    companion object {
+        internal fun fromMap(values: Map<String, Any>): BluetoothStatus =
+            BluetoothStatus(
+                searching = boolValue(values, "searching") ?: false,
+                searchingController = boolValue(values, "searchingController") ?: false,
+                systemMicUnavailable = boolValue(values, "systemMicUnavailable") ?: false,
+                micEnabled = boolValue(values, "micEnabled") ?: false,
+                currentMic = stringValue(values, "currentMic") ?: "",
+                micRanking = stringListValue(values, "micRanking"),
+                searchResults =
+                    mapListValue(values, "searchResults").mapNotNull(Device::fromMap),
+                wifiScanResults =
+                    mapListValue(values, "wifiScanResults").map(WifiScanResult::fromMap),
+                lastLog = stringListValue(values, "lastLog"),
+                otherBtConnected = boolValue(values, "otherBtConnected") ?: false,
+                defaultWearable = stringValue(values, "default_wearable") ?: "",
+                pendingWearable = stringValue(values, "pending_wearable") ?: "",
+                deviceName = stringValue(values, "device_name") ?: "",
+                deviceAddress = stringValue(values, "device_address") ?: "",
+                defaultController = stringValue(values, "default_controller") ?: "",
+                pendingController = stringValue(values, "pending_controller") ?: "",
+                controllerDeviceName = stringValue(values, "controller_device_name") ?: "",
+                screenDisabled = boolValue(values, "screen_disabled") ?: false,
+                preferredMic = stringValue(values, "preferred_mic") ?: "auto",
+                sensingEnabled = boolValue(values, "sensing_enabled") ?: true,
+                powerSavingMode = boolValue(values, "power_saving_mode") ?: false,
+                brightness = numberValue(values, "brightness") ?: 50,
+                autoBrightness = boolValue(values, "auto_brightness") ?: true,
+                dashboardHeight = numberValue(values, "dashboard_height") ?: 4,
+                dashboardDepth = numberValue(values, "dashboard_depth") ?: 2,
+                headUpAngle = numberValue(values, "head_up_angle") ?: 30,
+                contextualDashboard = boolValue(values, "contextual_dashboard") ?: true,
+                galleryModeEnabled =
+                    boolValue(values, "gallery_mode") ?: boolValue(values, "galleryModeEnabled") ?: true,
+                buttonPhotoSize = ButtonPhotoSize.fromValue(stringValue(values, "button_photo_size")),
+                buttonCameraLed = boolValue(values, "button_camera_led") ?: true,
+                buttonMaxRecordingTime = numberValue(values, "button_max_recording_time") ?: 10,
+                buttonVideoWidth = numberValue(values, "button_video_width") ?: 1280,
+                buttonVideoHeight = numberValue(values, "button_video_height") ?: 720,
+                buttonVideoFrameRate = numberValue(values, "button_video_fps") ?: 30,
+                shouldSendPcm = boolValue(values, "should_send_pcm") ?: false,
+                shouldSendLc3 = boolValue(values, "should_send_lc3") ?: false,
+                shouldSendTranscript = boolValue(values, "should_send_transcript") ?: false,
+                offlineCaptionsRunning = boolValue(values, "offline_captions_running") ?: false,
+                localSttFallbackActive = boolValue(values, "local_stt_fallback_active") ?: false,
+                shouldSendBootingMessage = boolValue(values, "shouldSendBootingMessage") ?: true,
+            )
+    }
+}
+
+internal data class GlassesStatusUpdate(
+    val fullyBooted: Boolean? = null,
+    val connected: Boolean? = null,
+    val micEnabled: Boolean? = null,
+    val voiceActivityDetectionEnabled: Boolean? = null,
+    val connectionState: GlassesConnectionState? = null,
+    val bluetoothClassicConnected: Boolean? = null,
+    val signalStrength: Int? = null,
+    val signalStrengthUpdatedAt: Long? = null,
+    val deviceModel: String? = null,
+    val androidVersion: String? = null,
+    val firmwareVersion: String? = null,
+    val besFirmwareVersion: String? = null,
+    val mtkFirmwareVersion: String? = null,
+    val bluetoothMacAddress: String? = null,
+    val leftMacAddress: String? = null,
+    val rightMacAddress: String? = null,
+    val macAddress: String? = null,
+    val buildNumber: String? = null,
+    val otaVersionUrl: String? = null,
+    val appVersion: String? = null,
+    val bluetoothName: String? = null,
+    val serialNumber: String? = null,
+    val style: String? = null,
+    val color: String? = null,
+    val wifi: WifiStatus? = null,
+    val batteryLevel: Int? = null,
+    val charging: Boolean? = null,
+    val caseBatteryLevel: Int? = null,
+    val caseCharging: Boolean? = null,
+    val caseOpen: Boolean? = null,
+    val caseRemoved: Boolean? = null,
+    val hotspot: HotspotStatus? = null,
+    val headUp: Boolean? = null,
+    val controllerConnected: Boolean? = null,
+    val controllerFullyBooted: Boolean? = null,
+    val controllerMacAddress: String? = null,
+    val controllerBatteryLevel: Int? = null,
+    val controllerSignalStrength: Int? = null,
+    val ringSignalStrength: Int? = null,
+) {
+    internal fun toMap(): Map<String, Any> =
+        buildMap {
+            if (fullyBooted != null || connected != null || connectionState != null) {
+                val state =
+                    connectionState
+                        ?: if (connected == true || fullyBooted == true) {
+                            GlassesConnectionState.CONNECTED
+                        } else {
+                            GlassesConnectionState.DISCONNECTED
+                        }
+                put("connection", state.toStatusMap(connected == true, fullyBooted == true))
+            }
+            putIfNotNull("micEnabled", micEnabled)
+            putIfNotNull("voiceActivityDetectionEnabled", voiceActivityDetectionEnabled)
+            putIfNotNull("bluetoothClassicConnected", bluetoothClassicConnected)
+            putIfNotNull("signalStrength", signalStrength)
+            putIfNotNull("signalStrengthUpdatedAt", signalStrengthUpdatedAt)
+            putIfNotNull("deviceModel", deviceModel)
+            putIfNotNull("androidVersion", androidVersion)
+            putIfNotNull("firmwareVersion", firmwareVersion)
+            putIfNotNull("besFirmwareVersion", besFirmwareVersion)
+            putIfNotNull("mtkFirmwareVersion", mtkFirmwareVersion)
+            putIfNotNull("bluetoothMacAddress", bluetoothMacAddress)
+            putIfNotNull("leftMacAddress", leftMacAddress)
+            putIfNotNull("rightMacAddress", rightMacAddress)
+            putIfNotNull("macAddress", macAddress)
+            putIfNotNull("buildNumber", buildNumber)
+            putIfNotNull("otaVersionUrl", otaVersionUrl)
+            putIfNotNull("appVersion", appVersion)
+            putIfNotNull("bluetoothName", bluetoothName)
+            putIfNotNull("serialNumber", serialNumber)
+            putIfNotNull("style", style)
+            putIfNotNull("color", color)
+            wifi?.let {
+                put("wifi", it.toMap())
+            }
+            putIfNotNull("batteryLevel", batteryLevel)
+            putIfNotNull("charging", charging)
+            putIfNotNull("caseBatteryLevel", caseBatteryLevel)
+            putIfNotNull("caseCharging", caseCharging)
+            putIfNotNull("caseOpen", caseOpen)
+            putIfNotNull("caseRemoved", caseRemoved)
+            hotspot?.let {
+                put("hotspot", it.toMap())
+            }
+            putIfNotNull("headUp", headUp)
+            putIfNotNull("controllerConnected", controllerConnected)
+            putIfNotNull("controllerFullyBooted", controllerFullyBooted)
+            putIfNotNull("controllerMacAddress", controllerMacAddress)
+            putIfNotNull("controllerBatteryLevel", controllerBatteryLevel)
+            putIfNotNull("controllerSignalStrength", controllerSignalStrength)
+            putIfNotNull("ringSignalStrength", ringSignalStrength)
+        }
+
+    companion object {
+        internal fun fromMap(values: Map<String, Any>): GlassesStatusUpdate =
+            GlassesStatusUpdate(
+                fullyBooted = optionalBoolValue(values, "fullyBooted"),
+                connected = optionalBoolValue(values, "connected"),
+                micEnabled = optionalBoolValue(values, "micEnabled"),
+                voiceActivityDetectionEnabled = optionalBoolValue(values, "voiceActivityDetectionEnabled"),
+                connectionState = GlassesConnectionState.optionalFromValue(optionalStringValue(values, "connectionState")),
+                bluetoothClassicConnected = optionalBoolValue(values, "bluetoothClassicConnected"),
+                signalStrength = optionalNumberValue(values, "signalStrength"),
+                signalStrengthUpdatedAt = optionalLongValue(values, "signalStrengthUpdatedAt"),
+                deviceModel = optionalStringValue(values, "deviceModel"),
+                androidVersion = optionalStringValue(values, "androidVersion"),
+                firmwareVersion = optionalStringValue(values, "firmwareVersion"),
+                besFirmwareVersion = optionalStringValue(values, "besFirmwareVersion"),
+                mtkFirmwareVersion = optionalStringValue(values, "mtkFirmwareVersion"),
+                bluetoothMacAddress = optionalStringValue(values, "bluetoothMacAddress"),
+                leftMacAddress = optionalStringValue(values, "leftMacAddress"),
+                rightMacAddress = optionalStringValue(values, "rightMacAddress"),
+                macAddress = optionalStringValue(values, "macAddress"),
+                buildNumber = optionalStringValue(values, "buildNumber"),
+                otaVersionUrl = optionalStringValue(values, "otaVersionUrl"),
+                appVersion = optionalStringValue(values, "appVersion"),
+                bluetoothName = optionalStringValue(values, "bluetoothName"),
+                serialNumber = optionalStringValue(values, "serialNumber"),
+                style = optionalStringValue(values, "style"),
+                color = optionalStringValue(values, "color"),
+                wifi =
+                    if (hasAnyKey(values, "wifi")) {
+                        WifiStatus.fromMap(values)
+                    } else if (hasAnyKey(values, "wifiConnected", "wifiSsid", "wifiLocalIp")) {
+                        WifiStatus.fromStoreMap(values)
+                    } else {
+                        null
+                    },
+                batteryLevel = optionalNumberValue(values, "batteryLevel"),
+                charging = optionalBoolValue(values, "charging"),
+                caseBatteryLevel = optionalNumberValue(values, "caseBatteryLevel"),
+                caseCharging = optionalBoolValue(values, "caseCharging"),
+                caseOpen = optionalBoolValue(values, "caseOpen"),
+                caseRemoved = optionalBoolValue(values, "caseRemoved"),
+                hotspot =
+                    if (hasAnyKey(values, "hotspot")) {
+                        HotspotStatus.fromMap(values)
+                    } else if (hasAnyKey(values, "hotspotEnabled", "hotspotSsid", "hotspotPassword", "hotspotGatewayIp")) {
+                        HotspotStatus.fromStoreMap(values)
+                    } else {
+                        null
+                    },
+                headUp = optionalBoolValue(values, "headUp"),
+                controllerConnected = optionalBoolValue(values, "controllerConnected"),
+                controllerFullyBooted = optionalBoolValue(values, "controllerFullyBooted"),
+                controllerMacAddress = optionalStringValue(values, "controllerMacAddress"),
+                controllerBatteryLevel = optionalNumberValue(values, "controllerBatteryLevel"),
+                controllerSignalStrength = optionalNumberValue(values, "controllerSignalStrength"),
+                ringSignalStrength = optionalNumberValue(values, "ringSignalStrength"),
+            )
+    }
+}
+
+internal data class BluetoothStatusUpdate(
+    val searching: Boolean? = null,
+    val searchingController: Boolean? = null,
+    val systemMicUnavailable: Boolean? = null,
+    val micEnabled: Boolean? = null,
+    val currentMic: String? = null,
+    val micRanking: List<String>? = null,
+    /**
+     * Nearby glasses in stable discovery order when included in an update. Existing entries keep
+     * their array position as details refresh; new glasses append at the end, and removals should
+     * not reorder remaining entries.
+     */
+    val searchResults: List<Device>? = null,
+    val wifiScanResults: List<WifiScanResult>? = null,
+    val lastLog: List<String>? = null,
+    val otherBtConnected: Boolean? = null,
+    val defaultWearable: String? = null,
+    val pendingWearable: String? = null,
+    val deviceName: String? = null,
+    val deviceAddress: String? = null,
+    val defaultController: String? = null,
+    val pendingController: String? = null,
+    val controllerDeviceName: String? = null,
+    val screenDisabled: Boolean? = null,
+    val preferredMic: String? = null,
+    val sensingEnabled: Boolean? = null,
+    val powerSavingMode: Boolean? = null,
+    val brightness: Int? = null,
+    val autoBrightness: Boolean? = null,
+    val dashboardHeight: Int? = null,
+    val dashboardDepth: Int? = null,
+    val headUpAngle: Int? = null,
+    val contextualDashboard: Boolean? = null,
+    val galleryModeEnabled: Boolean? = null,
+    val buttonPhotoSize: ButtonPhotoSize? = null,
+    val buttonCameraLed: Boolean? = null,
+    val buttonMaxRecordingTime: Int? = null,
+    val buttonVideoWidth: Int? = null,
+    val buttonVideoHeight: Int? = null,
+    val buttonVideoFrameRate: Int? = null,
+    val shouldSendPcm: Boolean? = null,
+    val shouldSendLc3: Boolean? = null,
+    val shouldSendTranscript: Boolean? = null,
+    val offlineCaptionsRunning: Boolean? = null,
+    val localSttFallbackActive: Boolean? = null,
+    val shouldSendBootingMessage: Boolean? = null,
+) {
+    internal fun toMap(): Map<String, Any> =
+        buildMap {
+            putIfNotNull("searching", searching)
+            putIfNotNull("searchingController", searchingController)
+            putIfNotNull("systemMicUnavailable", systemMicUnavailable)
+            putIfNotNull("micEnabled", micEnabled)
+            putIfNotNull("currentMic", currentMic)
+            putIfNotNull("micRanking", micRanking)
+            searchResults?.let { put("searchResults", it.map(Device::toMap)) }
+            wifiScanResults?.let { put("wifiScanResults", it.map(WifiScanResult::toMap)) }
+            putIfNotNull("lastLog", lastLog)
+            putIfNotNull("otherBtConnected", otherBtConnected)
+            putIfNotNull("default_wearable", defaultWearable)
+            putIfNotNull("pending_wearable", pendingWearable)
+            putIfNotNull("device_name", deviceName)
+            putIfNotNull("device_address", deviceAddress)
+            putIfNotNull("default_controller", defaultController)
+            putIfNotNull("pending_controller", pendingController)
+            putIfNotNull("controller_device_name", controllerDeviceName)
+            putIfNotNull("screen_disabled", screenDisabled)
+            putIfNotNull("preferred_mic", preferredMic)
+            putIfNotNull("sensing_enabled", sensingEnabled)
+            putIfNotNull("power_saving_mode", powerSavingMode)
+            putIfNotNull("brightness", brightness)
+            putIfNotNull("auto_brightness", autoBrightness)
+            putIfNotNull("dashboard_height", dashboardHeight)
+            putIfNotNull("dashboard_depth", dashboardDepth)
+            putIfNotNull("head_up_angle", headUpAngle)
+            putIfNotNull("contextual_dashboard", contextualDashboard)
+            putIfNotNull("galleryModeEnabled", galleryModeEnabled)
+            buttonPhotoSize?.let { put("button_photo_size", it.value) }
+            putIfNotNull("button_camera_led", buttonCameraLed)
+            putIfNotNull("button_max_recording_time", buttonMaxRecordingTime)
+            putIfNotNull("button_video_width", buttonVideoWidth)
+            putIfNotNull("button_video_height", buttonVideoHeight)
+            putIfNotNull("button_video_fps", buttonVideoFrameRate)
+            putIfNotNull("should_send_pcm", shouldSendPcm)
+            putIfNotNull("should_send_lc3", shouldSendLc3)
+            putIfNotNull("should_send_transcript", shouldSendTranscript)
+            putIfNotNull("offline_captions_running", offlineCaptionsRunning)
+            putIfNotNull("local_stt_fallback_active", localSttFallbackActive)
+            putIfNotNull("shouldSendBootingMessage", shouldSendBootingMessage)
+        }
+
+    companion object {
+        internal fun fromMap(values: Map<String, Any>): BluetoothStatusUpdate =
+            BluetoothStatusUpdate(
+                searching = optionalBoolValue(values, "searching"),
+                searchingController = optionalBoolValue(values, "searchingController"),
+                systemMicUnavailable = optionalBoolValue(values, "systemMicUnavailable"),
+                micEnabled = optionalBoolValue(values, "micEnabled"),
+                currentMic = optionalStringValue(values, "currentMic"),
+                micRanking = optionalStringListValue(values, "micRanking"),
+                searchResults =
+                    optionalMapListValue(values, "searchResults")
+                        ?.mapNotNull(Device::fromMap),
+                wifiScanResults =
+                    optionalMapListValue(values, "wifiScanResults")
+                        ?.map(WifiScanResult::fromMap),
+                lastLog = optionalStringListValue(values, "lastLog"),
+                otherBtConnected = optionalBoolValue(values, "otherBtConnected"),
+                defaultWearable = optionalStringValue(values, "default_wearable"),
+                pendingWearable = optionalStringValue(values, "pending_wearable"),
+                deviceName = optionalStringValue(values, "device_name"),
+                deviceAddress = optionalStringValue(values, "device_address"),
+                defaultController = optionalStringValue(values, "default_controller"),
+                pendingController = optionalStringValue(values, "pending_controller"),
+                controllerDeviceName = optionalStringValue(values, "controller_device_name"),
+                screenDisabled = optionalBoolValue(values, "screen_disabled"),
+                preferredMic = optionalStringValue(values, "preferred_mic"),
+                sensingEnabled = optionalBoolValue(values, "sensing_enabled"),
+                powerSavingMode = optionalBoolValue(values, "power_saving_mode"),
+                brightness = optionalNumberValue(values, "brightness"),
+                autoBrightness = optionalBoolValue(values, "auto_brightness"),
+                dashboardHeight = optionalNumberValue(values, "dashboard_height"),
+                dashboardDepth = optionalNumberValue(values, "dashboard_depth"),
+                headUpAngle = optionalNumberValue(values, "head_up_angle"),
+                contextualDashboard = optionalBoolValue(values, "contextual_dashboard"),
+                galleryModeEnabled =
+                    optionalBoolValue(values, "gallery_mode") ?: optionalBoolValue(values, "galleryModeEnabled"),
+                buttonPhotoSize =
+                    optionalStringValue(values, "button_photo_size")?.let(ButtonPhotoSize::fromValue),
+                buttonCameraLed = optionalBoolValue(values, "button_camera_led"),
+                buttonMaxRecordingTime = optionalNumberValue(values, "button_max_recording_time"),
+                buttonVideoWidth = optionalNumberValue(values, "button_video_width"),
+                buttonVideoHeight = optionalNumberValue(values, "button_video_height"),
+                buttonVideoFrameRate = optionalNumberValue(values, "button_video_fps"),
+                shouldSendPcm = optionalBoolValue(values, "should_send_pcm"),
+                shouldSendLc3 = optionalBoolValue(values, "should_send_lc3"),
+                shouldSendTranscript = optionalBoolValue(values, "should_send_transcript"),
+                offlineCaptionsRunning = optionalBoolValue(values, "offline_captions_running"),
+                localSttFallbackActive = optionalBoolValue(values, "local_stt_fallback_active"),
+                shouldSendBootingMessage = optionalBoolValue(values, "shouldSendBootingMessage"),
+            )
+    }
+}

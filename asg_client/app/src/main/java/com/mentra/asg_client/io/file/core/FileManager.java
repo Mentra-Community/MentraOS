@@ -19,7 +19,14 @@ import java.io.File;
  */
 public interface FileManager extends FileOperations, FileMetadataOperations, PackageOperations, StorageOperations {
 
-
+    /**
+     * Reserved subdirectory name inside a package directory for SDK photo captures that the
+     * caller asked us NOT to keep ({@code save=false}). Files written under this directory are
+     * intentionally hidden from {@link #listFiles(String)} so they cannot leak into gallery
+     * counts or Wi-Fi sync responses while their upload is still in flight. The directory is
+     * still walked by {@link #cleanupOldFiles(String, long)} so orphans get age-cleaned.
+     */
+    String SDK_PENDING_DIR_NAME = "_sdk_pending";
 
     /**
      * File operation result containing success status and metadata

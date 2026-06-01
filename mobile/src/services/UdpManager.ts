@@ -17,7 +17,7 @@
  */
 
 import socketComms from "@/services/SocketComms"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 import {Buffer} from "buffer"
 
 import dgram from "react-native-udp"
@@ -173,7 +173,7 @@ class UdpManager {
       // Wait initial delay on first attempt to let server register user
       if (!isRetry) {
         // console.log(`UDP: Waiting ${UDP_INITIAL_DELAY_MS}ms before first probe...`)
-        await new Promise<void>((resolve) => BackgroundTimer.setTimeout(() => resolve(), UDP_INITIAL_DELAY_MS))
+        await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), UDP_INITIAL_DELAY_MS))
 
         // Re-check WebSocket after delay
         if (!socketComms.isWebSocketConnected()) {
@@ -224,7 +224,7 @@ class UdpManager {
   }
 
   /**
-   * Start periodic UDP retry interval (uses BackgroundTimer for Android background support)
+   * Start periodic UDP retry interval (uses BgTimer for Android background support)
    */
   private startUdpRetryInterval(): void {
     // Don't start if already running or no config
@@ -233,7 +233,7 @@ class UdpManager {
     }
 
     // console.log(`UDP: Starting periodic retry every ${UDP_RETRY_INTERVAL_MS / 1000}s`)
-    this.retryIntervalId = BackgroundTimer.setInterval(() => {
+    this.retryIntervalId = BgTimer.setInterval(() => {
       // Skip if already connected or no config
       if (this.isReady || !this.config) {
         this.stopUdpRetryInterval()
@@ -259,7 +259,7 @@ class UdpManager {
   private stopUdpRetryInterval(): void {
     if (this.retryIntervalId !== null) {
       // console.log("UDP: Stopping periodic retry")
-      BackgroundTimer.clearInterval(this.retryIntervalId)
+      BgTimer.clearInterval(this.retryIntervalId)
       this.retryIntervalId = null
     }
   }
@@ -343,17 +343,17 @@ class UdpManager {
 
       // Bind to any available port (we're only sending, not receiving)
       await new Promise<void>((resolve, reject) => {
-        const timeout = BackgroundTimer.setTimeout(() => {
+        const timeout = BgTimer.setTimeout(() => {
           reject(new Error("Socket bind timeout"))
         }, 5000)
 
         this.socket!.bind(0, () => {
-          BackgroundTimer.clearTimeout(timeout)
+          BgTimer.clearTimeout(timeout)
           resolve()
         })
 
         this.socket!.once("error", (err: Error) => {
-          BackgroundTimer.clearTimeout(timeout)
+          BgTimer.clearTimeout(timeout)
           reject(err)
         })
       })
@@ -376,7 +376,7 @@ class UdpManager {
    */
   public stop(): void {
     if (this.pingTimeout) {
-      BackgroundTimer.clearTimeout(this.pingTimeout)
+      BgTimer.clearTimeout(this.pingTimeout)
       this.pingTimeout = null
     }
 
@@ -642,7 +642,7 @@ class UdpManager {
       this.pingRetryCount = 0
 
       // Set overall timeout
-      this.pingTimeout = BackgroundTimer.setTimeout(() => {
+      this.pingTimeout = BgTimer.setTimeout(() => {
         console.log("UDP: Probe timed out after all retries")
         this.pingResolve = null
         this.pingTimeout = null
@@ -670,7 +670,7 @@ class UdpManager {
 
         // Schedule next retry if we haven't received ack yet
         if (this.pingResolve && this.pingRetryCount < PING_RETRY_COUNT) {
-          BackgroundTimer.setTimeout(() => {
+          BgTimer.setTimeout(() => {
             if (this.pingResolve) {
               this.sendPingWithRetry()
             }
@@ -690,7 +690,7 @@ class UdpManager {
     // console.log("UDP: Ping ack received - UDP is working")
 
     if (this.pingTimeout) {
-      BackgroundTimer.clearTimeout(this.pingTimeout)
+      BgTimer.clearTimeout(this.pingTimeout)
       this.pingTimeout = null
     }
 

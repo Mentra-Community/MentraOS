@@ -1,8 +1,0 @@
-{
-  "name": "mentra-webview",
-  "private": true,
-  "workspaces": [
-    "sdk",
-    "examples/*"
-  ]
-}

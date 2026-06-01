@@ -2,20 +2,21 @@ import {useEffect} from "react"
 import {Button, Screen} from "@/components/ignite"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {translate} from "@/i18n"
-import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack, usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {useGlassesStore} from "@/stores/glasses"
-import CoreModule from "core"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {useCoreStore} from "@/stores/core"
 import {View} from "react-native"
-import {ExpoAvRoutePickerView} from "@douglowder/expo-av-route-picker-view"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import CrustModule from "crust"
 
 export default function BtClassicPairingScreen() {
-  const {pushPrevious, goBack} = useNavigationHistory()
-  const btcConnected = useGlassesStore((state) => state.btcConnected)
+  const {goBack} = useNavigationStore.getState()
+  const pushPrevious = usePushPrevious()
+  const bluetoothClassicConnected = useGlassesStore((state) => state.bluetoothClassicConnected)
   const otherBtConnected = useCoreStore((state) => state.otherBtConnected)
   const [deviceName] = useSetting(SETTINGS.device_name.key)
   const {theme} = useAppTheme()
@@ -23,8 +24,9 @@ export default function BtClassicPairingScreen() {
   focusEffectPreventBack()
 
   const handleSuccess = () => {
-    // we should have a device name saved in the core:
-    CoreModule.connectByName(deviceName)
+    BluetoothSdk.connectDefault().catch((error) => {
+      console.error("Failed to connect default glasses after Bluetooth Classic pairing:", error)
+    })
     pushPrevious()
   }
 
@@ -40,11 +42,11 @@ export default function BtClassicPairingScreen() {
   }
 
   useEffect(() => {
-    console.log("BTCLASSIC: check btcConnected", btcConnected)
-    if (btcConnected) {
+    console.log("BTCLASSIC: check bluetoothClassicConnected", bluetoothClassicConnected)
+    if (bluetoothClassicConnected) {
       handleSuccess()
     }
-  }, [btcConnected])
+  }, [bluetoothClassicConnected])
 
   useEffect(() => {
     console.log("BTCLASSIC: check deviceName", deviceName)

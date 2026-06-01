@@ -1,6 +1,6 @@
-import en, {Translations} from "./en"
+import en, {type TranslationResource} from "./en"
 
-const hi: Translations = {
+const hi = {
   ...en,
   common: {
     ok: "ठीक है!",
@@ -48,10 +48,6 @@ const hi: Translations = {
     hardwareIncompatible: "हार्डवेयर असंगत",
     hardwareIncompatibleMessage:
       "{{app}} को ऐसे हार्डवेयर की आवश्यकता है जो आपके कनेक्टेड चश्मे में उपलब्ध नहीं है: {{missing}}",
-    incompatibleApps: "असंगत ऐप्स",
-    incompatibleAppsDescription:
-      "इन ऐप्स को ऐसी हार्डवेयर सुविधाओं की आवश्यकता है जो आपके कनेक्टेड चश्मे में उपलब्ध नहीं हैं",
-    incompatible: "असंगत",
   },
   demoNavigator: {
     componentsTab: "कंपोनेंट्स",
@@ -128,6 +124,6 @@ const hi: Translations = {
         "अभी तक कोई पसंदीदा नहीं जोड़ा गया है। इसे अपने पसंदीदा में जोड़ने के लिए किसी एपिसोड पर दिल पर टैप करें!",
     },
   },
-}
+} satisfies TranslationResource
 
 export default hi

@@ -200,7 +200,6 @@ export const TextField = forwardRef(function TextField(props: TextFieldProps, re
 
         <TextInput
           ref={input}
-          underlineColorAndroid={colors.transparent}
           textAlignVertical="top"
           placeholder={placeholderContent}
           placeholderTextColor={colors.textDim}
@@ -246,7 +245,7 @@ const $inputWrapperStyle: ThemedStyle<ViewStyle> = ({colors}) => ({
   overflow: "hidden",
 })
 
-const $inputStyle: ThemedStyle<ViewStyle> = ({colors, typography, spacing}) => ({
+const $inputStyle: ThemedStyle<TextStyle> = ({colors, typography, spacing}) => ({
   flex: 1,
   alignSelf: "stretch",
   fontFamily: typography.primary.normal,

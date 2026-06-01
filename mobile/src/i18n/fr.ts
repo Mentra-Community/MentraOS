@@ -1,6 +1,6 @@
-import en, {Translations} from "./en"
+import en, {type TranslationResource} from "./en"
 
-const fr: Translations = {
+const fr = {
   ...en,
   common: {
     ok: "OK !",
@@ -49,10 +49,6 @@ const fr: Translations = {
     hardwareIncompatible: "Matériel Incompatible",
     hardwareIncompatibleMessage:
       "{{app}} nécessite du matériel qui n'est pas disponible sur vos lunettes connectées : {{missing}}",
-    incompatibleApps: "Applications Incompatibles",
-    incompatibleAppsDescription:
-      "Ces applications nécessitent des fonctionnalités matérielles non disponibles sur vos lunettes connectées",
-    incompatible: "Incompatible",
   },
   demoNavigator: {
     componentsTab: "Composants",
@@ -131,6 +127,6 @@ const fr: Translations = {
         "Aucun favori n'a été ajouté pour le moment. Appuyez sur le cœur d'un épisode pour l'ajouter à vos favoris !",
     },
   },
-}
+} satisfies TranslationResource
 
 export default fr

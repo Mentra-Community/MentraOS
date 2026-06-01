@@ -32,6 +32,12 @@ const MIN_PACKET_SIZE = 6; // 4 bytes hash + 2 bytes sequence
 const MIN_ENCRYPTED_PACKET_SIZE = 6 + NONCE_SIZE + TAG_SIZE; // header + nonce + minimum ciphertext (just tag)
 const LOG_INTERVAL = 100; // Log every N packets for debugging
 
+// Issue 102: warn when one UDP audio handler invocation takes longer than this.
+// Steady-state per-call duration is ~115μs (~400ms cumulative / 30s / ~3500 calls).
+// 50ms = ~400× normal, indicates either a pathological call, a packetsToProcess
+// flush from the reorder buffer, or a fan-out blowup downstream.
+const SLOW_AUDIO_CALL_MS = 50;
+
 export class UdpAudioServer {
   private socket: any = null;
   private sessionMap: Map<number, UserSession> = new Map(); // userIdHash → session
@@ -64,6 +70,30 @@ export class UdpAudioServer {
       this.logger.error({ error, port: UDP_PORT, feature: "udp-audio" }, "Failed to start UDP Audio Server");
       throw error;
     }
+  }
+
+  /**
+   * Issue 102: snapshot of all cumulative counters + active session count,
+   * for SystemVitalsLogger to compute per-vitals-window deltas. JS read of
+   * scalar fields is atomic on Bun's single-threaded loop, no concern about
+   * partial reads.
+   */
+  public getStatsSnapshot(): {
+    packetsReceived: number;
+    packetsDropped: number;
+    pingsReceived: number;
+    packetsDecrypted: number;
+    decryptionFailures: number;
+    registeredSessions: number;
+  } {
+    return {
+      packetsReceived: this.packetsReceived,
+      packetsDropped: this.packetsDropped,
+      pingsReceived: this.pingsReceived,
+      packetsDecrypted: this.packetsDecrypted,
+      decryptionFailures: this.decryptionFailures,
+      registeredSessions: this.sessionMap.size,
+    };
   }
 
   /**
@@ -256,26 +286,58 @@ export class UdpAudioServer {
 
     // Forward reordered packets to AudioManager
     // AudioManager handles LC3→PCM decoding if needed based on client's audio config
+    //
+    // Issue 102: processAudioData is async with an `await` on LC3 decode for LC3
+    // sessions. A plain sync for-loop measured with t0..finally would STOP timing
+    // at the first await, missing the post-await substages (appFanout,
+    // transcriptionFeed, translationFeed, microphoneUpdate). That would
+    // systematically underreport slow-audio-call durations for LC3 sessions — the
+    // exact observability gap this PR is supposed to close.
+    //
+    // Fix: capture the promises and record timing + emit the slow-call warning
+    // AFTER all of them settle. The function remains synchronous to its caller
+    // (Bun's UDP socket handler); the timing log is deferred to a microtask that
+    // fires once the real wall-clock is known. Per-promise .catch() prevents
+    // rejections from becoming unhandled, preserving existing error-log shape.
     const t0 = performance.now();
-    try {
-      for (const audioChunk of packetsToProcess) {
-        session.audioManager.processAudioData(audioChunk, "udp");
+    const activeSessionsAtStart = this.sessionMap.size;
+    const pending = packetsToProcess.map((audioChunk) =>
+      Promise.resolve(session.audioManager.processAudioData(audioChunk, "udp")).catch((error: unknown) => {
+        this.logger.error(
+          {
+            error,
+            userId: session.userId,
+            userIdHash,
+            sequence,
+            audioBytes: audioData.length,
+            feature: "udp-audio",
+          },
+          "Error processing UDP audio in AudioManager",
+        );
+      }),
+    );
+    Promise.all(pending).finally(() => {
+      const durationMs = performance.now() - t0;
+      operationTimers.addTiming("audioProcessing", durationMs);
+      // Catch outlier per-handler durations to disambiguate the cascade hypotheses.
+      // Many slow entries with normal-ish durations = high-volume cascade;
+      // a single multi-second entry = pathological call;
+      // high packetsToProcess = reorder-buffer flush.
+      // See cloud/issues/102-pod-loop-stall-cascade/.
+      if (durationMs > SLOW_AUDIO_CALL_MS) {
+        this.logger.warn(
+          {
+            feature: "slow-audio-call",
+            durationMs: Math.round(durationMs * 10) / 10,
+            packetsToProcess: packetsToProcess.length,
+            userIdHash,
+            activeSessions: activeSessionsAtStart,
+            rssMB: Math.round(process.memoryUsage().rss / 1048576),
+          },
+          `Slow UDP audio handler: ${Math.round(durationMs)}ms over ${packetsToProcess.length} packet(s)`,
+        );
       }
-    } catch (error) {
-      this.logger.error(
-        {
-          error,
-          userId: session.userId,
-          userIdHash,
-          sequence,
-          audioBytes: audioData.length,
-          feature: "udp-audio",
-        },
-        "Error processing UDP audio in AudioManager",
-      );
-    } finally {
-      operationTimers.addTiming("audioProcessing", performance.now() - t0);
-    }
+    });
   }
 
   /**

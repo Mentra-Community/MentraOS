@@ -7,17 +7,17 @@ import AppIcon from "@/components/home/AppIcon"
 import {Group} from "@/components/ui/Group"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
-import {ClientAppletInterface} from "@/stores/applets"
+import type {ClientApp} from "@mentra/island"
 import {ThemedStyle} from "@/theme"
 
 interface AppPickerProps {
   visible: boolean
   onClose: () => void
-  onSelect: (app: ClientAppletInterface) => void
-  apps: ClientAppletInterface[]
+  onSelect: (app: ClientApp) => void
+  apps: ClientApp[]
   selectedPackageName?: string
   title?: string
-  filterPredicate?: (app: ClientAppletInterface) => boolean
+  filterPredicate?: (app: ClientApp) => boolean
   showCompatibilityWarnings?: boolean
 }
 
@@ -97,7 +97,7 @@ export const AppPicker: FC<AppPickerProps> = ({
   }, [apps, searchQuery, filterPredicate])
 
   const handleAppPress = useCallback(
-    (app: ClientAppletInterface) => {
+    (app: ClientApp) => {
       onSelect(app)
       onClose()
       setSearchQuery("") // Reset search
@@ -159,7 +159,7 @@ export const AppPicker: FC<AppPickerProps> = ({
                 filteredApps.map((app) => {
                   const isSelected = app.packageName === selectedPackageName
                   const isCompatible = app.compatibility?.isCompatible !== false
-                  const compatibilityMessage = app.compatibility?.message || ""
+                  const compatibilityMessage = getCompatibilityMessage(app.compatibility)
                   const isOffline = app.offline
 
                   return (
@@ -200,6 +200,10 @@ export const AppPicker: FC<AppPickerProps> = ({
       </View>
     </Modal>
   )
+}
+
+function getCompatibilityMessage(compatibility: ClientApp["compatibility"]): string {
+  return (compatibility as {message?: string} | undefined)?.message || ""
 }
 
 // Styles
@@ -246,7 +250,7 @@ const $searchContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   paddingHorizontal: spacing.s3,
 })
 
-const $searchIcon: ThemedStyle<ViewStyle> = ({spacing}) => ({
+const $searchIcon: ThemedStyle<TextStyle> = ({spacing}) => ({
   marginRight: spacing.s2,
 })
 

@@ -6,7 +6,7 @@ import {
   ConfigPlugin,
   withAppBuildGradle,
   withProjectBuildGradle,
-  // withSettingsGradle,
+  withSettingsGradle,
   withGradleProperties,
   withAndroidManifest,
 } from "@expo/config-plugins"
@@ -22,9 +22,16 @@ const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   config = withAndroidManifestModifications(config)
   config = withXmlResourceFiles(config)
   config = withGradlePropertiesModifications(config)
-  // config = withSettingsGradleModifications(config)
+  config = withSettingsGradleModifications(config)
 
   return config
+}
+
+// Derive the active Android applicationId. Honors MENTRAOS_BUILD_NAME so that
+// build-variant suffixes flow through manifest entries that would otherwise
+// hardcode the base package (e.g. the DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION).
+function getAndroidPackageName(config: any): string {
+  return config?.android?.package || "com.mentra.mentra"
 }
 
 /**
@@ -66,20 +73,27 @@ function withAppBuildGradleModifications(config: any) {
 
     // 1. Add release credentials and conditional Sentry script (after jscFlavor)
     if (!buildGradle.includes("releaseStorePassword =")) {
+      // China builds (EXPO_PUBLIC_DEPLOYMENT_REGION=china) use a separate keystore
+      // so the global upload key cannot accidentally sign a China APK.
+      const isChinaBuild = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
+      const keystoreFilename = isChinaBuild ? "china-upload-keystore.jks" : "upload-keystore.jks"
+      const regionLabel = isChinaBuild ? "china" : "default"
       const credentialsAndSentry = `
 /**
  * Release-Store credentials.
  * Looks for keystore in shared location (~/.mentra/credentials/) first,
  * then falls back to repo-local credentials/ folder.
+ * Keystore filename is selected at prebuild time based on EXPO_PUBLIC_DEPLOYMENT_REGION.
  * If no keystore is found, falls back to debug keystore for local development.
  */
 def releaseStorePassword = project.hasProperty("MENTRAOS_UPLOAD_STORE_PASSWORD") ? project.property("MENTRAOS_UPLOAD_STORE_PASSWORD") : ""
 def releaseKeyPassword = project.hasProperty("MENTRAOS_UPLOAD_KEY_PASSWORD") ? project.property("MENTRAOS_UPLOAD_KEY_PASSWORD") : ""
 def releaseKeyAlias = project.hasProperty("MENTRAOS_UPLOAD_KEY_ALIAS") ? project.property("MENTRAOS_UPLOAD_KEY_ALIAS") : "upload"
+def releaseRegion = "${regionLabel}"
 
 // Find keystore: check shared location first, then local
-def sharedKeystore = new File(System.getProperty("user.home"), ".mentra/credentials/upload-keystore.jks")
-def localKeystore = file('../../credentials/upload-keystore.jks')
+def sharedKeystore = new File(System.getProperty("user.home"), ".mentra/credentials/${keystoreFilename}")
+def localKeystore = file('../../credentials/${keystoreFilename}')
 def releaseKeystoreFile = sharedKeystore.exists() ? sharedKeystore : (localKeystore.exists() ? localKeystore : null)
 
 // Check if we have valid release signing credentials
@@ -90,6 +104,7 @@ println ""
 println "=============================================="
 println "[MentraOS] Signing Configuration"
 println "=============================================="
+println "  Region: \${releaseRegion}"
 if (hasReleaseSigningConfig) {
     println "  Using RELEASE keystore: \${releaseKeystoreFile.absolutePath}"
     println "  Key alias: \${releaseKeyAlias}"
@@ -119,8 +134,8 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
       )
     }
 
-    // 2. Update versionName to 2.10.0
-    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.10.0"')
+    // 2. Update versionName to 2.11.0
+    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.11.0"')
 
     // 3. Add externalNativeBuild configuration in defaultConfig
     if (!buildGradle.includes("externalNativeBuild")) {
@@ -135,6 +150,30 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
                 cppFlags "-std=c++20"
             }
         }`,
+      )
+    }
+
+    // 4a. Enable Core Library Desugaring (required by :crust → Google Nav SDK).
+    if (!buildGradle.includes("coreLibraryDesugaringEnabled")) {
+      buildGradle = buildGradle.replace(
+        /(namespace\s+['"]com\.mentra\.mentra['"])/,
+        `$1
+    compileOptions {
+        coreLibraryDesugaringEnabled true
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }`,
+      )
+    }
+
+    // 4b. Add desugar_jdk_libs dependency (paired with coreLibraryDesugaringEnabled).
+    if (!buildGradle.includes("coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs")) {
+      buildGradle = buildGradle.replace(
+        /(implementation\("com\.facebook\.react:react-android"\))/,
+        `$1
+
+    // Required by :crust (Google Navigation SDK uses Java 8+ APIs).
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'`,
       )
     }
 
@@ -199,6 +238,7 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
 function withAndroidManifestModifications(config: any) {
   return withAndroidManifest(config, (config) => {
     const manifest: any = config.modResults.manifest
+    const pkg = getAndroidPackageName(config)
 
     // Remove permissions that Google Play doesn't allow for our use case
     // We only SAVE photos from glasses - we don't need to READ the user's photo library
@@ -259,7 +299,6 @@ function withAndroidManifestModifications(config: any) {
 
     // Add permissions that need to be added
     const permissionsToAdd = [
-      {name: "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"},
       {name: "android.permission.BLUETOOTH", maxSdkVersion: 30},
       {name: "android.permission.BLUETOOTH_ADMIN", maxSdkVersion: 30},
       {name: "android.permission.BLUETOOTH_ADVERTISE"},
@@ -275,7 +314,7 @@ function withAndroidManifestModifications(config: any) {
       {name: "android.permission.QUERY_ALL_PACKAGES"},
       {name: "android.permission.READ_PHONE_STATE"},
       {name: "android.permission.RECEIVE_BOOT_COMPLETED"},
-      {name: "com.mentra.mentra.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"},
+      {name: `${config.android?.package}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`},
     ]
 
     // Ensure uses-permission array exists
@@ -317,13 +356,12 @@ function withAndroidManifestModifications(config: any) {
     if (!manifest.permission) {
       manifest.permission = []
     }
-    const customPermExists = manifest.permission.find(
-      (p: any) => p.$["android:name"] === "com.mentra.mentra.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
-    )
+    const customPermName = `${pkg}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`
+    const customPermExists = manifest.permission.find((p: any) => p.$["android:name"] === customPermName)
     if (!customPermExists) {
       manifest.permission.push({
         $: {
-          "android:name": "com.mentra.mentra.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+          "android:name": customPermName,
         },
       })
     }
@@ -337,6 +375,43 @@ function withAndroidManifestModifications(config: any) {
       if (!app.$["android:enableOnBackInvokedCallback"]) {
         app.$["android:enableOnBackInvokedCallback"] = "true"
       }
+
+      // Inject Google Navigation SDK API key from env. Read at build time.
+      // The Nav SDK reads this meta-data tag from the merged manifest at runtime.
+      //
+      // If the key is missing, navigation is broken at runtime with a
+      // cryptic Google SDK error. Fail loudly in CI/EAS so the broken
+      // build never ships; warn (don't fail) in local-dev so new
+      // contributors who aren't touching nav can still build.
+      const navApiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY ?? ""
+      if (!navApiKey) {
+        const isCiOrEas =
+          process.env.CI === "true" ||
+          process.env.CI === "1" ||
+          process.env.EAS_BUILD === "true" ||
+          process.env.NODE_ENV === "production"
+        const msg =
+          "EXPO_PUBLIC_GOOGLE_NAV_API_KEY is not set. Navigation will fail at runtime — " +
+          "set it in mobile/.env (see mobile/.env.example) before building."
+        if (isCiOrEas) {
+          throw new Error(msg)
+        }
+        console.warn(`[mobile/plugins/android] ${msg}`)
+      }
+      if (!app["meta-data"]) {
+        app["meta-data"] = []
+      }
+      const existing = app["meta-data"].find((m: any) => m.$["android:name"] === "com.google.android.geo.API_KEY")
+      if (existing) {
+        existing.$["android:value"] = navApiKey
+      } else {
+        app["meta-data"].push({
+          $: {
+            "android:name": "com.google.android.geo.API_KEY",
+            "android:value": navApiKey,
+          },
+        })
+      }
     }
 
     // Add additional scheme to MainActivity intent-filter
@@ -348,11 +423,11 @@ function withAndroidManifestModifications(config: any) {
       })
 
       if (schemeFilter && schemeFilter.data) {
-        const hasExtraScheme = schemeFilter.data.some((d: any) => d.$["android:scheme"] === "com.mentra.mentra")
+        const hasExtraScheme = schemeFilter.data.some((d: any) => d.$["android:scheme"] === config.android?.package)
 
         if (!hasExtraScheme) {
           schemeFilter.data.push({
-            $: {"android:scheme": "com.mentra.mentra"},
+            $: {"android:scheme": config.android?.package},
           })
         }
       }
@@ -498,23 +573,28 @@ function withGradlePropertiesModifications(config: any) {
 }
 
 /**
- * Modify settings.gradle to include lc3Lib module
+ * Modify settings.gradle to include lc3Lib module.
+ *
+ * The native LC3 codec lives inside `modules/bluetooth-sdk/android/lc3Lib`
+ * (it moved from the legacy `core` module during the bluetooth-sdk refactor).
+ * The bluetooth-sdk's build.gradle references `implementation project(':lc3Lib')`,
+ * so we have to register that gradle subproject pointing at the right path —
+ * Expo prebuild doesn't generate this on its own.
  */
-// function withSettingsGradleModifications(config: any) {
-//   return withSettingsGradle(config, config => {
-//     let settingsGradle = config.modResults.contents
+function withSettingsGradleModifications(config: any) {
+  return withSettingsGradle(config, (config) => {
+    let settingsGradle = config.modResults.contents
 
-//     // Add lc3Lib module if not present
-//     if (!settingsGradle.includes("include ':lc3Lib'")) {
-//       settingsGradle += `
-// include ':lc3Lib'
-// project(':lc3Lib').projectDir = new File(rootDir, '../modules/core/android/lc3Lib')
-// `
-//     }
+    if (!settingsGradle.includes("include ':lc3Lib'")) {
+      settingsGradle += `
+include ':lc3Lib'
+project(':lc3Lib').projectDir = new File(rootDir, '../modules/bluetooth-sdk/android/lc3Lib')
+`
+    }
 
-//     config.modResults.contents = settingsGradle
-//     return config
-//   })
-// }
+    config.modResults.contents = settingsGradle
+    return config
+  })
+}
 
 export default withAndroidWorkingConfig

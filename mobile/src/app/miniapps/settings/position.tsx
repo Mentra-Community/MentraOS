@@ -4,23 +4,22 @@ import {View} from "react-native"
 
 import {Header, Screen} from "@/components/ignite"
 import SliderSetting from "@/components/settings/SliderSetting"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {useKonamiCode} from "@/utils/dev/konami"
 
 export default function ScreenSettingsScreen() {
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
   const [dashboardDepth, setDashboardDepth] = useSetting(SETTINGS.dashboard_depth.key)
   const [dashboardHeight, setDashboardHeight] = useSetting(SETTINGS.dashboard_height.key)
   const [_screenDisabled, setScreenDisabled] = useSetting(SETTINGS.screen_disabled.key)
-  const deviceModel = useGlassesStore(state => state.deviceModel)
+  const deviceModel = useGlassesStore((state) => state.deviceModel)
   const {setEnabled} = useKonamiCode()
 
   const depthClamped = Math.min(3, Math.max(1, Number(dashboardDepth ?? 2)))
 
-  const isG1 =
-    deviceModel === "Even Realities G1" || deviceModel === "evenrealities_g1" || deviceModel === "g1"
+  const isG1 = deviceModel === "Even Realities G1" || deviceModel === "evenrealities_g1" || deviceModel === "g1"
 
   useFocusEffect(
     useCallback(() => {

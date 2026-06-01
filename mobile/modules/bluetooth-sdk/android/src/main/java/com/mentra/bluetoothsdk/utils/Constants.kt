@@ -1,0 +1,44 @@
+package com.mentra.bluetoothsdk.utils
+
+object DeviceTypes {
+    const val SIMULATED = "Simulated Glasses"
+    const val G1 = "Even Realities G1"
+    const val NEX = "Mentra Display"
+    const val MACH1 = "Mentra Mach1"
+    const val LIVE = "Mentra Live"
+    const val Z100 = "Vuzix Z100"
+    const val FRAME = "Brilliant Frame"
+    const val G2 = "Even Realities G2"
+    val ALL = arrayOf(SIMULATED, G1, G2, MACH1, LIVE, Z100, FRAME, NEX)
+}
+
+object ControllerTypes {
+    const val R1 = "Even Realities R1"
+    val ALL = arrayOf(R1)
+}
+
+object ConnTypes {
+    const val CONNECTING = "CONNECTING"
+    const val CONNECTED = "CONNECTED"
+    const val DISCONNECTED = "DISCONNECTED"
+    const val SCANNING = "SCANNING"
+    const val BONDING = "BONDING"
+}
+
+object MicTypes {
+    const val PHONE_INTERNAL = "phone"
+    const val GLASSES_CUSTOM = "glasses"
+    const val BLUETOOTH_CLASSIC = "bluetoothClassic"
+    const val BLUETOOTH = "bluetooth"
+    val ALL = arrayOf(PHONE_INTERNAL, GLASSES_CUSTOM, BLUETOOTH_CLASSIC, BLUETOOTH)
+}
+
+// convert to kotlin:
+object MicMap {
+    val map: Map<String, List<String>> = mapOf(
+        "auto" to listOf(MicTypes.GLASSES_CUSTOM, MicTypes.PHONE_INTERNAL, MicTypes.BLUETOOTH, MicTypes.BLUETOOTH_CLASSIC),
+        "glasses" to listOf(MicTypes.GLASSES_CUSTOM),
+        "phone" to listOf(MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM),
+        "bluetooth" to listOf(MicTypes.BLUETOOTH, MicTypes.BLUETOOTH_CLASSIC, MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM),
+    )
+}

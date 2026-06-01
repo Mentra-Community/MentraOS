@@ -8,6 +8,8 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+
+import androidx.annotation.NonNull;
 import com.mentra.asg_client.service.core.AsgClientService;
 
 /**
@@ -96,9 +98,23 @@ public class AsgClientBootReceiver extends BroadcastReceiver {
     /**
      * Record boot events in SharedPreferences for debugging
      */
+    /**
+     * Device-protected prefs work during direct boot ({@code LOCKED_BOOT_COMPLETED});
+     * default CE prefs throw until the user unlocks the device.
+     */
+    @NonNull
+    private static SharedPreferences bootStatsPrefs(Context context) {
+        Context app = context.getApplicationContext();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            return app.createDeviceProtectedStorageContext()
+                    .getSharedPreferences("boot_stats", Context.MODE_PRIVATE);
+        }
+        return app.getSharedPreferences("boot_stats", Context.MODE_PRIVATE);
+    }
+
     private void recordBootReceived(Context context, String action) {
         try {
-            SharedPreferences prefs = context.getSharedPreferences("boot_stats", Context.MODE_PRIVATE);
+            SharedPreferences prefs = bootStatsPrefs(context);
             SharedPreferences.Editor editor = prefs.edit();
             
             // Increment boot counter
@@ -122,7 +138,7 @@ public class AsgClientBootReceiver extends BroadcastReceiver {
      */
     private void recordActivityLaunchAttempt(Context context, boolean success, String errorMsg) {
         try {
-            SharedPreferences prefs = context.getSharedPreferences("boot_stats", Context.MODE_PRIVATE);
+            SharedPreferences prefs = bootStatsPrefs(context);
             SharedPreferences.Editor editor = prefs.edit();
             
             // Increment counter

@@ -196,4 +196,5 @@ export const colors = {
   sidebar_border: design.sidebar_border,
   sidebar_ring: design.sidebar_ring,
   background_color: design.background_color,
+  gradient: design.gradient,
 } as const

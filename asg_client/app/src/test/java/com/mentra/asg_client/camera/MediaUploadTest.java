@@ -2,6 +2,7 @@ package com.mentra.asg_client.camera;
 
 import org.json.JSONObject;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.Assert;
@@ -15,6 +16,11 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 
+/**
+ * Manual / dev integration test: hardcoded filesystem path and bearer token.
+ * Ignored so {@code :app:testDebugUnitTest} stays portable in CI and on other machines.
+ */
+@Ignore("Hardcoded image path and auth token; run manually when validating upload")
 @RunWith(org.junit.runners.JUnit4.class)
 public class MediaUploadTest {
     private static final String TAG = "MediaUploadTest";

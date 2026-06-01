@@ -1,4 +1,5 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {useEffect, useRef, useState} from "react"
 import {ScrollView, View} from "react-native"
 
 import BackendUrl from "@/components/dev/BackendUrl"
@@ -9,12 +10,17 @@ import ToggleSetting from "@/components/settings/ToggleSetting"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
+import navigationService from "@/services/NavigationService"
 import ws from "@/services/WebSocketManager"
 import socketComms from "@/services/SocketComms"
+import showAlert from "@/utils/AlertUtils"
+
+// Hardcoded test destination for the nav POC. SF Ferry Building.
+const TEST_NAV_DESTINATION = {lat: 37.7956, lng: -122.3933}
 
 // LC3 frame size options - maps to bitrates
 // Frame size = bytes per 10ms frame, bitrate = frameSize * 800 bps
@@ -26,7 +32,7 @@ const LC3_FRAME_SIZE_OPTIONS = [
 
 export default function DeveloperSettingsScreen() {
   const {theme} = useAppTheme()
-  const {goBack, push, replaceAll, clearHistoryAndGoHome} = useNavigationHistory()
+  const {goBack, push, replaceAll, clearHistoryAndGoHome} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [devMode, setDevMode] = useSetting(SETTINGS.dev_mode.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
@@ -37,6 +43,15 @@ export default function DeveloperSettingsScreen() {
   const [_onboardingOsCompleted, setOnboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
   const [_onboardingLiveCompleted, setOnboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
   const [lc3FrameSize, setLc3FrameSize] = useSetting(SETTINGS.lc3_frame_size.key)
+  const [navRunning, setNavRunning] = useState(false)
+  const navUnsubRef = useRef<(() => void) | null>(null)
+
+  useEffect(() => {
+    return () => {
+      navUnsubRef.current?.()
+      navUnsubRef.current = null
+    }
+  }, [])
 
   return (
     <Screen preset="fixed">
@@ -138,6 +153,19 @@ export default function DeveloperSettingsScreen() {
             />
           </Group>
 
+          <Group title={translate("devSettings:miniappDevGroupTitle")}>
+            <RouteButton
+              label={translate("devSettings:miniappDevLoadUrlLabel")}
+              subtitle={translate("devSettings:miniappDevLoadUrlSubtitle")}
+              onPress={() => push("/miniapps/miniappdev/developer-url")}
+            />
+            <RouteButton
+              label={translate("devSettings:miniappDevScanLabel")}
+              subtitle={translate("devSettings:miniappDevScanSubtitle")}
+              onPress={() => push("/miniapps/miniappdev/scanner")}
+            />
+          </Group>
+
           <Group title="Misc">
             <RouteButton label="Test Mini App" subtitle="Test the Mini App" onPress={() => push("/test/mini-app")} />
 
@@ -148,13 +176,44 @@ export default function DeveloperSettingsScreen() {
             />
 
             <RouteButton
+              label={navRunning ? "Stop Test Nav" : "Start Test Nav"}
+              subtitle={
+                navRunning
+                  ? "Logging nav events to console — tap to stop"
+                  : `Navigate to SF Ferry Building (${TEST_NAV_DESTINATION.lat}, ${TEST_NAV_DESTINATION.lng})`
+              }
+              onPress={async () => {
+                if (navRunning) {
+                  navUnsubRef.current?.()
+                  navUnsubRef.current = null
+                  const result = await navigationService.stop()
+                  setNavRunning(false)
+                  console.log("NAV_TEST: stopped", result)
+                  return
+                }
+                navUnsubRef.current = navigationService.addListener((update) => {
+                  console.log("NAV_TEST:", JSON.stringify(update))
+                })
+                const result = await navigationService.start(TEST_NAV_DESTINATION)
+                console.log("NAV_TEST: start result", result)
+                if (!result.ok) {
+                  navUnsubRef.current?.()
+                  navUnsubRef.current = null
+                  showAlert("Nav", `Start failed: ${result.error ?? "unknown"}`)
+                  return
+                }
+                setNavRunning(true)
+              }}
+            />
+
+            <RouteButton
               label="Clear Websocket"
               subtitle="Clear the Websocket"
               onPress={async () => {
-                ws.cleanup()
-                socketComms.cleanup()
+                await ws.cleanup()
+                await socketComms.cleanup()
                 await new Promise((resolve) => setTimeout(resolve, 3000))
-                socketComms.restartConnection()
+                await socketComms.restartConnection()
               }}
             />
           </Group>

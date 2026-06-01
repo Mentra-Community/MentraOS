@@ -5,6 +5,7 @@
  * Apps can request managed streams and receive HLS/DASH URLs without managing RTMP endpoints.
  */
 
+// eslint-disable-next-line no-restricted-imports -- SDK has no @/ alias; relative path is required for build/type emission
 import {
   ManagedStreamRequest,
   ManagedStreamStopRequest,
@@ -15,7 +16,13 @@ import {
   StreamType,
   RestreamDestination,
 } from "../../../types";
-import { VideoConfig, AudioConfig, StreamConfig } from "../../../types/rtmp-stream";
+// eslint-disable-next-line no-restricted-imports -- SDK has no @/ alias; relative path is required for build/type emission
+import {
+  VideoConfig,
+  AudioConfig,
+  StreamConfig,
+  validateVideoConfig,
+} from "../../../types/rtmp-stream";
 import { Logger } from "pino";
 
 /**
@@ -146,6 +153,8 @@ export class CameraManagedExtension {
    */
   async startManagedStream(options: ManagedStreamOptions = {}): Promise<ManagedStreamResult> {
     this.logger.info({ options }, "Managed stream request starting");
+
+    validateVideoConfig(options.video);
 
     if (this.isManagedStreaming) {
       this.logger.error(

@@ -1,4 +1,4 @@
-name: Mobile App Jest Tests
+name: Mobile App Quality Checks
 
 on:
   pull_request:
@@ -43,6 +43,10 @@ jobs:
       - name: Install dependencies
         working-directory: ./mobile
         run: bun install
+
+      - name: Run TypeScript type check
+        working-directory: ./mobile
+        run: bun run compile
 
       - name: Run Jest tests
         working-directory: ./mobile

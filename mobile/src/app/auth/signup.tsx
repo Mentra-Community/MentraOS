@@ -14,8 +14,8 @@ import {
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {spacing, ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -31,7 +31,7 @@ export default function SignupScreen() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
 
-  const {goBack, replace, push} = useNavigationHistory()
+  const {goBack, replace, push} = useNavigationStore.getState()
   const {theme, themed} = useAppTheme()
 
   const passwordsMatch = password === confirmPassword && password.length > 0

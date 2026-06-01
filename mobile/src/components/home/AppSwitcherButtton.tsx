@@ -7,12 +7,12 @@ import AppIcon from "@/components/home/AppIcon"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {
-  ClientAppletInterface,
   sortAppsByLastOpenTime,
   useActiveApps,
   useActiveBackgroundApps,
   useActiveForegroundApp,
-} from "@/stores/applets"
+  type ClientApp,
+} from "@mentra/island"
 import {RefObject, useEffect, useRef, useState} from "react"
 import {scheduleOnRN} from "react-native-worklets"
 import {BlurView} from "expo-blur"
@@ -42,7 +42,7 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
   const apps = useActiveApps()
   const appsCount = apps.length
   const hasBuzzedRef = useRef(false)
-  const [appsList, setAppsList] = useState<ClientAppletInterface[]>([])
+  const [appsList, setAppsList] = useState<ClientApp[]>([])
   const insets = useSaferAreaInsets()
   const translateY = useSharedValue(0)
   const [androidBlur] = useSetting(SETTINGS.android_blur.key)
@@ -139,6 +139,8 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
     //   <BlurView intensity={50} className="absolute inset-0" blurTarget={blurTargetRef} blurMethod="dimezisBlurViewSdk31Plus" />
     // )
 
+    const linGradientOnly = Platform.OS === "android" && !androidBlur
+
     return (
       //       {/* <BlurView intensity={20} className="absolute inset-0" /> */}
       // {/* <LinearGradient
@@ -160,7 +162,7 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
         maskElement={
           <LinearGradient
             colors={["black", "transparent"]}
-            locations={[0.4, 1]}
+            locations={linGradientOnly ? [0.2, 20] : [0.4, 1]}
             start={{x: 0, y: 1}}
             end={{x: 0, y: 0}}
             style={{
@@ -182,7 +184,7 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
           />
         )}
 
-        {Platform.OS === "android" && !androidBlur && <View className="flex-1 h-full" />}
+        {linGradientOnly && <View className="flex-1 h-full bg-background" />}
 
         {Platform.OS === "ios" && (
           <BlurView intensity={70} className="absolute inset-0" blurMethod="dimezisBlurViewSdk31Plus" />
@@ -210,7 +212,7 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
 
   const renderGridButton = () => {
     return (
-      <GlassView className={`bg-primary-foreground h-16 rounded-2xl`} style={{marginBottom: bottomPadding}}>
+      <GlassView className={`h-16 rounded-2xl`} style={{marginBottom: bottomPadding}}>
         <TouchableOpacity onPress={onGridButtonPress} className="items-center justify-center w-16 h-16">
           <Icon name="grid" color={theme.colors.foreground} size={26} />
         </TouchableOpacity>
@@ -226,8 +228,7 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
         {renderBackground()}
         <TouchableOpacity onPress={handleNoAppsPress} className="flex-1">
           <View className="flex-1" style={{paddingBottom: bottomPadding}}>
-            <GlassView
-              className={`bg-primary-foreground flex-1 py-1.5 pl-3 min-h-16 rounded-2xl flex-row justify-between items-center`}>
+            <GlassView className={`flex-1 py-1.5 pl-3 h-16 rounded-2xl flex-row justify-between items-center`}>
               <View className="flex-row items-center justify-center flex-1">
                 <Text className="text-muted-foreground text-md" tx="home:appletPlaceholder2" />
               </View>
@@ -247,8 +248,7 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
         {renderBackground()}
         <GestureDetector gesture={composedGesture}>
           <View className="flex-1" style={{paddingBottom: bottomPadding}}>
-            <GlassView
-              className={`bg-primary-foreground flex-1 py-1.5 pl-3 min-h-16 rounded-2xl flex-row justify-between items-center`}>
+            <GlassView className={`flex-1 py-1.5 pl-3 min-h-16 rounded-2xl flex-row justify-between items-center`}>
               <View className="flex-row items-center justify-center flex-1">
                 <Text className="text-muted-foreground text-md" tx="home:appletPlaceholder2" />
               </View>
@@ -268,8 +268,7 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
       {renderBackground()}
       <GestureDetector gesture={composedGesture}>
         <View className="flex-1" style={{paddingBottom: bottomPadding}}>
-          <GlassView
-            className={`bg-primary-foreground flex-1 pl-5 pr-1.5 rounded-2xl flex-row justify-between items-center min-h-16`}>
+          <GlassView className={`flex-1 pl-5 pr-1.5 rounded-2xl flex-row justify-between items-center min-h-16`}>
             <Pressable style={({pressed}) => [{opacity: pressed ? 0.7 : 1}]} className="flex-1 flex-row">
               <View className="flex-row flex-1">
                 <View className="flex-col gap-1 flex-1 justify-center">

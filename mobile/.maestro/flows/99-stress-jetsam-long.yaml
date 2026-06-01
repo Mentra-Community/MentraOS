@@ -1,0 +1,29 @@
+appId: ${MAESTRO_APP_ID}
+env:
+  MB_PER_APP: "25"
+  MAX_MOUNTS: "5"
+---
+# Jetsam stress test — background scenario.
+# Mount N dummies, then send the app to background. The harness's dwell
+# timer takes over from there and polls the device for app liveness.
+
+- launchApp:
+    clearState: false
+
+- tapOn: "Settings"
+- tapOn: "Super Settings"
+- tapOn: "Stress Test (Jetsam)"
+
+- tapOn: "${MB_PER_APP} MB"
+- tapOn: "Start logging"
+
+- repeat:
+    times: ${MAX_MOUNTS}
+    commands:
+      - tapOn: "Mount 1"
+      - waitForAnimationToEnd:
+          timeout: 1500
+
+# Send to background by going to home. Maestro's `pressKey: Home` works on
+# both iOS and Android.
+- pressKey: Home

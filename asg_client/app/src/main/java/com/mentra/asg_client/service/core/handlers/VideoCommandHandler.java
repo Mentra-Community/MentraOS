@@ -3,7 +3,6 @@ package com.mentra.asg_client.service.core.handlers;
 import android.content.Context;
 import android.util.Log;
 
-import com.mentra.asg_client.camera.CameraNeo;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
@@ -39,8 +38,7 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("start_video_recording", "stop_video_recording", "get_video_recording_status",
-                      "start_buffer_recording", "stop_buffer_recording", "save_buffer_video");
+        return Set.of("start_video_recording", "stop_video_recording", "get_video_recording_status");
     }
 
     @Override
@@ -53,12 +51,6 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
                     return handleStopCommand(data);
                 case "get_video_recording_status":
                     return handleStatusCommand();
-                case "start_buffer_recording":
-                    return handleStartBufferRecording(data);
-                case "stop_buffer_recording":
-                    return handleStopBufferRecording(data);
-                case "save_buffer_video":
-                    return handleSaveBufferVideo(data);
                 default:
                     Log.e(TAG, "Unsupported video command: " + commandType);
                     return false;
@@ -248,98 +240,4 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
         seconds = seconds % 60;
         return String.format(Locale.US, "%02d:%02d", minutes, seconds);
     }
-    
-    /**
-     * Handle start buffer recording command
-     */
-    private boolean handleStartBufferRecording(JSONObject data) {
-        try {
-            MediaCaptureService captureService = serviceManager.getMediaCaptureService();
-            if (captureService == null) {
-                Log.e(TAG, "Media capture service is not initialized");
-                streamingManager.sendBufferStatusResponse(false, "service_unavailable", null);
-                return false;
-            }
-            
-            // Check if camera is already in use
-            if (CameraNeo.isCameraInUse()) {
-                Log.d(TAG, "Camera already in use, cannot start buffer recording");
-                streamingManager.sendBufferStatusResponse(false, "camera_busy", null);
-                return false;
-            }
-            
-            // Close kept-alive camera if it exists to free resources for buffer recording
-            CameraNeo.closeKeptAliveCamera();
-            
-            Log.d(TAG, "Starting buffer recording");
-            captureService.startBufferRecording();
-            streamingManager.sendBufferStatusResponse(true, "buffer_started", null);
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "Error handling start buffer command", e);
-            streamingManager.sendBufferStatusResponse(false, "error", e.getMessage());
-            return false;
-        }
-    }
-    
-    /**
-     * Handle stop buffer recording command
-     */
-    private boolean handleStopBufferRecording(JSONObject data) {
-        try {
-            MediaCaptureService captureService = serviceManager.getMediaCaptureService();
-            if (captureService == null) {
-                Log.e(TAG, "Media capture service is not initialized");
-                streamingManager.sendBufferStatusResponse(false, "service_unavailable", null);
-                return false;
-            }
-            
-            Log.d(TAG, "Stopping buffer recording");
-            captureService.stopBufferRecording();
-            streamingManager.sendBufferStatusResponse(true, "buffer_stopped", null);
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "Error handling stop buffer command", e);
-            streamingManager.sendBufferStatusResponse(false, "error", e.getMessage());
-            return false;
-        }
-    }
-    
-    /**
-     * Handle save buffer video command
-     */
-    private boolean handleSaveBufferVideo(JSONObject data) {
-        try {
-            String bufferRequestId = data.optString("requestId", "");
-            int secondsToSave = data.optInt("duration", 30); // Default to 30 seconds
-            
-            if (bufferRequestId.isEmpty()) {
-                Log.e(TAG, "Cannot save buffer - missing requestId");
-                streamingManager.sendBufferStatusResponse(false, "missing_request_id", null);
-                return false;
-            }
-            
-            MediaCaptureService captureService = serviceManager.getMediaCaptureService();
-            if (captureService == null) {
-                Log.e(TAG, "Media capture service is not initialized");
-                streamingManager.sendBufferStatusResponse(false, "service_unavailable", null);
-                return false;
-            }
-            
-            if (!captureService.isBuffering()) {
-                Log.e(TAG, "Cannot save buffer - not currently buffering");
-                streamingManager.sendBufferStatusResponse(false, "not_buffering", null);
-                return false;
-            }
-            
-            Log.d(TAG, "Saving last " + secondsToSave + " seconds of buffer, requestId: " + bufferRequestId);
-            captureService.saveBufferVideo(secondsToSave, bufferRequestId);
-            streamingManager.sendBufferStatusResponse(true, "buffer_saving", null);
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "Error handling save buffer command", e);
-            streamingManager.sendBufferStatusResponse(false, "error", e.getMessage());
-            return false;
-        }
-    }
-} 
+}

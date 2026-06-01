@@ -1,5 +1,38 @@
 import "tsx/cjs"
 import {ExpoConfig, ConfigContext} from "@expo/config"
+import {getBuildNumber} from "./scripts/build-number.mjs"
+
+const VARIANTS = {
+  default: {
+    appName: "Mentra",
+    packageName: "com.mentra.mentra",
+    includeFirebase: true,
+    googleServicesFile: "./google-services.json",
+    googleServicesPlist: "./GoogleService-Info.plist",
+    icon: "./assets/app-icons/ic_launcher.png",
+    adaptiveIcon: "./assets/app-icons/ic_launcher_foreground.png",
+  },
+  cn: {
+    appName: "Mentra",
+    packageName: "com.mentra.mentra.cn",
+    includeFirebase: false,
+    googleServicesFile: null,
+    googleServicesPlist: null,
+    icon: "./assets/app-icons/ic_launcher_china.png",
+    adaptiveIcon: "./assets/app-icons/ic_launcher_foreground_china.png",
+  },
+  stable: {
+    appName: "Mentra Stable",
+    packageName: "com.mentra.mentra.stable",
+    includeFirebase: true,
+    googleServicesFile: "./google-services.json",
+    googleServicesPlist: "./GoogleService-Info.plist",
+    icon: "./assets/app-icons/ic_launcher.png",
+    adaptiveIcon: "./assets/app-icons/ic_launcher_foreground.png",
+  },
+} as const
+
+const variant = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? VARIANTS.cn : VARIANTS.default
 
 /**
  * @param config ExpoConfig coming from the static config app.json if it exists
@@ -8,15 +41,54 @@ import {ExpoConfig, ConfigContext} from "@expo/config"
  * https://docs.expo.dev/workflow/configuration/#configuration-resolution-rules
  */
 module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
+  // Optional build-variant suffix. Set MENTRAOS_BUILD_NAME=stable to produce
+  // a parallel-installable build with package com.mentra.mentra.stable and app
+  // label "stable". Leave unset for the normal Mentra build.
+  const variantName = process.env.MENTRAOS_BUILD_NAME?.trim() || null
+  const isValidVariant = variantName && /^[a-zA-Z][a-zA-Z0-9_ ]*$/.test(variantName)
+  if (variantName && !isValidVariant) {
+    throw new Error(
+      `MENTRAOS_BUILD_NAME="${variantName}" is invalid. Must start with a letter and contain only letters, digits, spaces, or underscores.`,
+    )
+  }
+  const appName = isValidVariant ? variantName : variant.appName
+  const baseId = variant.packageName
+  // replace non-alphanumeric characters with underscores:
+  const normalizedVariantId = variantName?.toLowerCase().replace(/[^a-zA-Z0-9_]/g, "")
+  const androidPackage = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
+  const iosBundleId = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
+
+  // Google Navigation SDK API key — required for the iOS Nav SDK to
+  // boot. Fail loudly in CI/EAS so a release build never ships without
+  // it; warn (don't fail) in local-dev so contributors who don't touch
+  // nav can still build.
+  const googleNavApiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY ?? ""
+  if (!googleNavApiKey) {
+    const isCiOrEas =
+      process.env.CI === "true" ||
+      process.env.CI === "1" ||
+      process.env.EAS_BUILD === "true" ||
+      process.env.NODE_ENV === "production"
+    const msg =
+      "EXPO_PUBLIC_GOOGLE_NAV_API_KEY is not set. Navigation will fail at runtime — " +
+      "set it in mobile/.env (see mobile/.env.example) before building."
+    if (isCiOrEas) {
+      throw new Error(msg)
+    }
+    console.warn(`[mobile/app.config] ${msg}`)
+  }
+
+  const buildNumber = getBuildNumber()
+
   return {
     ...config,
-    name: "Mentra",
+    name: appName,
     slug: "Mentra",
-    version: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "0.0.1",
+    version: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "2.9.1",
     scheme: "com.mentra",
     orientation: "portrait",
     userInterfaceStyle: "automatic",
-    icon: "./assets/app-icons/ic_launcher.png",
+    icon: variant.icon,
     updates: {
       fallbackToCacheTimeout: 0,
     },
@@ -24,11 +96,11 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     assetBundlePatterns: ["**/*"],
     android: {
       // icon: "./assets/app-icons/ic_launcher.png",
-      package: "com.mentra.mentra",
-      googleServicesFile: "./google-services.json",
-      versionCode: 193,
+      package: androidPackage,
+      ...(variant.googleServicesFile ? {googleServicesFile: variant.googleServicesFile} : {}),
+      versionCode: buildNumber,
       adaptiveIcon: {
-        foregroundImage: "./assets/app-icons/ic_launcher_foreground.png",
+        foregroundImage: variant.adaptiveIcon,
         // backgroundImage: "./assets/app-icons/ic_launcher.png",
         backgroundColor: "#fff",
       },
@@ -61,12 +133,13 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       ],
     },
     ios: {
-      icon: "./assets/app-icons/ic_launcher.png",
+      icon: variant.icon,
       supportsTablet: false,
       requireFullScreen: true,
-      buildNumber: "193",
-      bundleIdentifier: "com.mentra.mentra",
-      googleServicesFile: "./GoogleService-Info.plist",
+      buildNumber: String(buildNumber),
+      bundleIdentifier: iosBundleId,
+      appleTeamId: "T5XXXL6N36",
+      ...(variant.googleServicesPlist ? {googleServicesFile: variant.googleServicesPlist} : {}),
       associatedDomains: ["applinks:apps.mentra.glass", "applinks:apps.mentraglass.com"],
       infoPlist: {
         NSCameraUsageDescription: "This app needs access to your camera to capture images.",
@@ -90,6 +163,12 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           "This app needs access to your notifications to provide you with notifications.",
         NSLocalNetworkUsageDescription:
           "Mentra needs to access your local network to connect to Mentra Live glasses for viewing photos and media stored on the device.",
+        // Required because miniapps subscribed to `heading_update` cause
+        // the host's HeadingService to read the device compass via
+        // CoreMotion. iOS hard-crashes any access to motion sensors
+        // without this usage string declared.
+        NSMotionUsageDescription:
+          "Mentra reads your device compass to show heading direction in navigation and similar miniapps on your glasses.",
         NSBonjourServices: ["_mentra-live._tcp", "_http._tcp"],
         NSAppTransportSecurity: {
           NSAllowsLocalNetworking: true,
@@ -109,6 +188,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           "UIInterfaceOrientationPortraitUpsideDown",
         ],
         BGTaskSchedulerPermittedIdentifiers: ["com.mentra.background-timer"],
+        GOOGLE_NAV_API_KEY: googleNavApiKey,
       },
       config: {
         usesNonExemptEncryption: false,
@@ -123,7 +203,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       "./plugins/remove-ipad-orientations.js",
       "./plugins/android.ts",
       [
-        "./modules/core/app.plugin.js",
+        "./modules/bluetooth-sdk/app.plugin.js",
         {
           node: true,
         },
@@ -190,10 +270,35 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
             minSdkVersion: 28,
             targetSdkVersion: 35,
             compileSdkVersion: 36,
+            enableCoreLibraryDesugaring: true,
           },
           ios: {
             deploymentTarget: "15.5", // for react-native-zip-archive
             extraPods: [
+              {
+                name: "FirebaseCore",
+                modular_headers: true,
+              },
+              {
+                name: "FirebaseCoreInternal",
+                modular_headers: true,
+              },
+              {
+                name: "FirebaseInstallations",
+                modular_headers: true,
+              },
+              {
+                name: "GoogleAppMeasurement",
+                modular_headers: true,
+              },
+              {
+                name: "GoogleUtilities",
+                modular_headers: true,
+              },
+              {
+                name: "nanopb",
+                modular_headers: true,
+              },
               {
                 name: "SDWebImage",
                 modular_headers: true,
@@ -234,7 +339,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           locationAlwaysAndWhenInUsePermission: "Allow Mentra to use your location.",
         },
       ],
-      "@react-native-firebase/app",
+      ...(variant.includeFirebase ? ["@react-native-firebase/app"] : []),
       "expo-audio",
       [
         "expo-video",
@@ -244,6 +349,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         },
       ],
       "expo-web-browser",
+      "expo-image",
     ],
     experiments: {
       tsconfigPaths: true,

@@ -16,12 +16,15 @@
  * See: cloud/issues/069-ws-disconnect-observability/spike.md
  */
 
+import { PerformanceObserver, monitorEventLoopDelay } from "node:perf_hooks";
 import { heapStats } from "bun:jsc";
 import { logger as rootLogger } from "../logging/pino-logger";
 import { UserSession } from "../session/UserSession";
 import { memoryLeakDetector } from "../debug/MemoryLeakDetector";
 import { mongoQueryStats } from "../../connections/mongodb.connection";
+import { udpAudioServer } from "../udp/UdpAudioServer";
 import { getDeviceStateCounters, resetDeviceStateCounters } from "./device-state-counters";
+import { cascadeDiagnostics } from "./cascade-diagnostics";
 
 const logger = rootLogger.child({ service: "SystemVitalsLogger" });
 
@@ -29,6 +32,23 @@ const VITALS_INTERVAL_MS = 30_000; // 30 seconds
 const GC_PROBE_INTERVAL_MS = 60_000; // 60 seconds
 const GAP_DETECTOR_INTERVAL_MS = 1_000; // 1 second
 const GAP_THRESHOLD_MS = 2_000; // log when interval takes >2x expected (event loop blocked >1s)
+
+// Issue 102: finer-grained loop-liveness signal at 500ms interval.
+// The existing 1s/2s gap detector misses sub-2s hiccups; in cascade conditions
+// the *first* hiccup that kicks off the cascade is often sub-2s. Catching the
+// leading edge at 500ms resolution is what tells us the trigger moment.
+const HEARTBEAT_INTERVAL_MS = 500;
+const HEARTBEAT_GAP_THRESHOLD_MS = 1_000;
+
+// Issue 102: warn when logVitals() itself runs longer than this.
+// Rules the "vitals census blocks the loop" hypothesis in or out.
+const VITALS_SELF_SLOW_MS = 500;
+
+// Issue 102: warn when a natural V8 GC pause exceeds this.
+// Natural minor GCs are typically <10ms; 100ms catches plausibly-relevant
+// pauses without flooding.
+const NATURAL_GC_THRESHOLD_MS = 100;
+const EVENT_LOOP_DELAY_HISTOGRAM_RESOLUTION_MS = 10;
 
 /**
  * Operation timing accumulator.
@@ -113,6 +133,31 @@ class SystemVitalsLogger {
   private previousOwnerBytes = new Map<string, number>();
   private previousSessionOwnerBytes = new Map<string, number>();
   private memoryOwnerWarnCooldown = new Map<string, number>();
+  // Issue 102: finer-grained heartbeat tick (500ms) and natural-GC observer.
+  private heartbeatInterval?: NodeJS.Timeout;
+  private lastHeartbeatTick: number = Date.now();
+  private gcObserver?: PerformanceObserver;
+  private eventLoopDelayHistogram?: ReturnType<typeof monitorEventLoopDelay>;
+  // Issue 102: previous UDP stats snapshot for delta calculation per vitals window.
+  // Initialized to all-zeros (not null) so the first vitals window after pod
+  // start captures the from-boot traffic as its delta instead of hardcoding 0.
+  // Otherwise startup-burst traffic in the first 30s is invisible — defeats
+  // the point of the instrumentation. Since UdpAudioServer's counters also
+  // start at 0, subtracting zeros from the current snapshot yields "packets
+  // received since boot," which IS the right value for the first window.
+  private prevUdpStats: {
+    packetsReceived: number;
+    packetsDropped: number;
+    pingsReceived: number;
+    packetsDecrypted: number;
+    decryptionFailures: number;
+  } = {
+    packetsReceived: 0,
+    packetsDropped: 0,
+    pingsReceived: 0,
+    packetsDecrypted: 0,
+    decryptionFailures: 0,
+  };
 
   start(): void {
     if (this.vitalsInterval) return;
@@ -131,9 +176,25 @@ class SystemVitalsLogger {
     // If the 1s interval takes >2s, the event loop was blocked for the excess.
     this.startGapDetector();
 
+    // Issue 102: heartbeat tick at 500ms for finer trigger-moment resolution.
+    this.startHeartbeat();
+
+    // Issue 102: observe natural V8 GC pauses (not just our forced gc-probe).
+    this.startGcObserver();
+
+    // Issue 105: continuous event-loop delay histogram. This catches isolated
+    // blocks that rolling p99 sampling can miss. Use maxMs as the primary
+    // cascade signal; local Bun 1.3.13 testing showed p99 may miss one-off
+    // stalls while maxMs catches them.
+    this.startEventLoopDelayHistogram();
+
     logger.info(
-      { vitalsIntervalMs: VITALS_INTERVAL_MS, gcProbeIntervalMs: GC_PROBE_INTERVAL_MS },
-      "SystemVitalsLogger started (vitals + GC probe + gap detector)",
+      {
+        vitalsIntervalMs: VITALS_INTERVAL_MS,
+        gcProbeIntervalMs: GC_PROBE_INTERVAL_MS,
+        eventLoopDelayHistogramResolutionMs: EVENT_LOOP_DELAY_HISTOGRAM_RESOLUTION_MS,
+      },
+      "SystemVitalsLogger started (vitals + GC probe + gap detector + heartbeat + natural-GC observer + event-loop histogram)",
     );
   }
 
@@ -150,7 +211,66 @@ class SystemVitalsLogger {
       clearInterval(this.gapDetectorInterval);
       this.gapDetectorInterval = undefined;
     }
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = undefined;
+    }
+    if (this.gcObserver) {
+      this.gcObserver.disconnect();
+      this.gcObserver = undefined;
+    }
+    if (this.eventLoopDelayHistogram) {
+      this.eventLoopDelayHistogram.disable();
+      this.eventLoopDelayHistogram = undefined;
+    }
     logger.info("SystemVitalsLogger stopped");
+  }
+
+  private startEventLoopDelayHistogram(): void {
+    try {
+      this.eventLoopDelayHistogram = monitorEventLoopDelay({
+        resolution: EVENT_LOOP_DELAY_HISTOGRAM_RESOLUTION_MS,
+      });
+      this.eventLoopDelayHistogram.enable();
+      logger.info(
+        {
+          feature: "event-loop-delay-histogram",
+          resolutionMs: EVENT_LOOP_DELAY_HISTOGRAM_RESOLUTION_MS,
+        },
+        "Event-loop delay histogram started",
+      );
+    } catch (err) {
+      logger.warn(
+        {
+          feature: "event-loop-delay-histogram-unsupported",
+          err,
+        },
+        "Event-loop delay histogram NOT installed",
+      );
+    }
+  }
+
+  private getEventLoopDelayHistogramSnapshot(): Record<string, number> {
+    const histogram = this.eventLoopDelayHistogram;
+    if (!histogram) {
+      return {};
+    }
+
+    try {
+      const maxMs = histogram.max / 1_000_000;
+      const meanMs = histogram.mean / 1_000_000;
+      const p99Ms = histogram.percentile(99) / 1_000_000;
+      const snapshot = {
+        eventLoopDelayMaxMs: Math.round(maxMs * 10) / 10,
+        eventLoopDelayMeanMs: Number.isFinite(meanMs) ? Math.round(meanMs * 10) / 10 : 0,
+        eventLoopDelayP99Ms: Math.round(p99Ms * 10) / 10,
+      };
+      histogram.reset();
+      return snapshot;
+    } catch (err) {
+      logger.warn({ err }, "Failed to read event-loop delay histogram");
+      return {};
+    }
   }
 
   /**
@@ -182,6 +302,103 @@ class SystemVitalsLogger {
         );
       }
     }, GAP_DETECTOR_INTERVAL_MS);
+  }
+
+  /**
+   * Issue 102: 500ms heartbeat tick for finer-grained loop-liveness signal.
+   * The existing 1s/2s gap detector misses sub-2s hiccups and (more importantly)
+   * the *first* hiccup before a cascade may be sub-2s. Catch the leading edge
+   * with 500ms resolution so the trigger moment is identifiable post-incident.
+   *
+   * Same payload shape as event-loop-gap but with feature="heartbeat-gap" so
+   * queries can be filtered separately from the existing gap stream.
+   */
+  private startHeartbeat(): void {
+    this.lastHeartbeatTick = Date.now();
+    this.heartbeatInterval = setInterval(() => {
+      const now = Date.now();
+      const elapsed = now - this.lastHeartbeatTick;
+      this.lastHeartbeatTick = now;
+
+      if (elapsed > HEARTBEAT_GAP_THRESHOLD_MS) {
+        const gapMs = elapsed - HEARTBEAT_INTERVAL_MS;
+        // Issue 102: gapStartedAtMs is the approximate trigger time, not log time.
+        // The log fires when the timer callback finally runs after starvation,
+        // so without this field investigators would query the wrong window
+        // (recovery flush logs instead of trigger logs).
+        const gapStartedAtMs = now - elapsed;
+        logger.warn(
+          {
+            feature: "heartbeat-gap",
+            gapMs,
+            expectedMs: HEARTBEAT_INTERVAL_MS,
+            actualMs: elapsed,
+            gapStartedAtMs,
+            rssMB: Math.round(process.memoryUsage().rss / 1048576),
+            activeSessions: UserSession.getAllSessions().length,
+          },
+          `Heartbeat gap: ${gapMs}ms (started ~${new Date(gapStartedAtMs).toISOString()}, recovered after ${elapsed}ms)`,
+        );
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  /**
+   * Issue 102: observe natural V8 GC events (not just our forced gc-probe).
+   *
+   * Gated behind an explicit runtime support check. As of investigation
+   * 2026-04-23, Bun's PerformanceObserver.supportedEntryTypes returns
+   * ["mark","measure","resource"] — it does NOT support "gc". Installing
+   * an observer for "gc" without checking would silently emit nothing,
+   * which post-deploy would look like "no natural GC pauses" when it
+   * really means "this instrumentation source is broken in this runtime."
+   *
+   * We log the unsupported state once at startup so that absence of
+   * natural-gc data is itself an explicit signal rather than ambiguous
+   * silence. If a future Bun release adds gc support, this auto-activates.
+   *
+   * For real natural-GC visibility on Bun today, a follow-up needs a
+   * Bun/JSC-specific mechanism (e.g. periodic bun:jsc.heapStats() snapshots
+   * and inferring GC behavior from heap deltas).
+   */
+  private startGcObserver(): void {
+    const supported = (PerformanceObserver as { supportedEntryTypes?: string[] }).supportedEntryTypes ?? [];
+    if (!supported.includes("gc")) {
+      logger.warn(
+        {
+          feature: "natural-gc-unsupported",
+          supportedEntryTypes: supported,
+        },
+        `Natural GC observer NOT installed: 'gc' entryType not supported by this runtime`,
+      );
+      return;
+    }
+    try {
+      this.gcObserver = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          if (entry.duration > NATURAL_GC_THRESHOLD_MS) {
+            const memUsage = process.memoryUsage();
+            logger.warn(
+              {
+                feature: "natural-gc",
+                durationMs: Math.round(entry.duration * 10) / 10,
+                kind: (entry as any).detail?.kind ?? "unknown",
+                rssMB: Math.round(memUsage.rss / 1048576),
+                heapUsedMB: Math.round(memUsage.heapUsed / 1048576),
+              },
+              `Natural GC: ${Math.round(entry.duration)}ms`,
+            );
+          }
+        }
+      });
+      this.gcObserver.observe({ entryTypes: ["gc"] });
+      logger.info(
+        { thresholdMs: NATURAL_GC_THRESHOLD_MS },
+        `Natural GC observer started (logging GCs > ${NATURAL_GC_THRESHOLD_MS}ms)`,
+      );
+    } catch (err) {
+      logger.warn({ err }, "Could not install natural GC observer");
+    }
   }
 
   /**
@@ -276,10 +493,46 @@ class SystemVitalsLogger {
   }
 
   private logVitals(): void {
+    // Issue 102: self-timing. logVitals iterates all sessions and walks
+    // per-session memory census; this is a candidate trigger for the
+    // event-loop cascade. Always log the duration so we have a baseline
+    // distribution; warn if it ever exceeds VITALS_SELF_SLOW_MS.
+    //
+    // sessionCountForLog is captured once here and reused in the finally
+    // block so the self-timing payload does NOT do a second getAllSessions()
+    // call in the measurement path — that would add noise to the very
+    // measurement we're trying to take.
+    const vitalsT0 = performance.now();
+    let sessionCountForLog = 0;
     try {
       const memUsage = process.memoryUsage();
       const sessions = UserSession.getAllSessions();
+      sessionCountForLog = sessions.length;
       const mongoStats = mongoQueryStats.getAndReset();
+      const cascadeSnapshot = cascadeDiagnostics.getAndReset();
+      const eventLoopDelaySnapshot = this.getEventLoopDelayHistogramSnapshot();
+
+      // Issue 102: pod-level UDP counter deltas per 30s vitals window.
+      // UdpAudioServer exposes cumulative counters; we compute deltas against
+      // the previous snapshot so the vitals row shows per-window traffic.
+      // The prev snapshot is initialized to all-zeros (see field init above),
+      // so the first window correctly captures from-boot traffic instead of
+      // being hardcoded to 0s.
+      const udpStats = udpAudioServer.getStatsSnapshot();
+      const udpDelta = {
+        udpPacketsReceivedDelta: udpStats.packetsReceived - this.prevUdpStats.packetsReceived,
+        udpPacketsDroppedDelta: udpStats.packetsDropped - this.prevUdpStats.packetsDropped,
+        udpPingsReceivedDelta: udpStats.pingsReceived - this.prevUdpStats.pingsReceived,
+        udpPacketsDecryptedDelta: udpStats.packetsDecrypted - this.prevUdpStats.packetsDecrypted,
+        udpDecryptionFailuresDelta: udpStats.decryptionFailures - this.prevUdpStats.decryptionFailures,
+      };
+      this.prevUdpStats = {
+        packetsReceived: udpStats.packetsReceived,
+        packetsDropped: udpStats.packetsDropped,
+        pingsReceived: udpStats.pingsReceived,
+        packetsDecrypted: udpStats.packetsDecrypted,
+        decryptionFailures: udpStats.decryptionFailures,
+      };
 
       let totalAppWebsockets = 0;
       let totalTranscriptionStreams = 0;
@@ -520,11 +773,46 @@ class SystemVitalsLogger {
           ...Object.fromEntries(Object.entries(operationSnapshot).map(([k, v]) => [`op_${k}_ms`, Math.round(v)])),
           opTotalMs: Math.round(totalOperationMs),
           opBudgetUsedPct: Math.round((totalOperationMs / VITALS_INTERVAL_MS) * 100),
+
+          // Issue 105 Phase 1.5 diagnostic timers/counters. These are logged
+          // as op_* fields for query consistency but excluded from opTotalMs so
+          // the long-lived coarse budget signal does not double-count nested
+          // phase timings.
+          ...Object.fromEntries(
+            Object.entries(cascadeSnapshot.timers).map(([k, v]) => [`op_${k}_ms`, Math.round(v)]),
+          ),
+          ...Object.fromEntries(Object.entries(cascadeSnapshot.counters).map(([k, v]) => [k, Math.round(v)])),
+
+          // Continuous event-loop delay histogram. maxMs is the main signal for
+          // isolated sync blocks; p99 is useful only for broader degradation.
+          ...eventLoopDelaySnapshot,
+
+          // Issue 102: pod-level UDP load per 30s window. Quantifies the regime
+          // where the cascade fires (per the independent spike, dangerous
+          // load was ~96 pkt/s pod-wide with ~70 sessions).
+          ...udpDelta,
+          udpRegisteredSessions: udpStats.registeredSessions,
         },
         "system-vitals",
       );
     } catch (error) {
       logger.error(error, "Failed to log system vitals");
+    } finally {
+      // Issue 102: self-timing for the vitals callback itself. Reuse the
+      // session count captured at the top of try{} — do NOT call
+      // getAllSessions() again here, since that would add noise to the
+      // very measurement we're trying to take.
+      const vitalsDurationMs = performance.now() - vitalsT0;
+      const baseLog = {
+        feature: "vitals-self-timing",
+        durationMs: Math.round(vitalsDurationMs * 10) / 10,
+        activeSessions: sessionCountForLog,
+      };
+      if (vitalsDurationMs > VITALS_SELF_SLOW_MS) {
+        logger.warn(baseLog, `⚠️ logVitals slow: ${Math.round(vitalsDurationMs)}ms`);
+      } else {
+        logger.info(baseLog, `logVitals: ${Math.round(vitalsDurationMs)}ms`);
+      }
     }
   }
 }

@@ -28,45 +28,32 @@ jobs:
           # Clean checkout to avoid merge conflicts
           clean: true
           
-      # For Node.js projects with pnpm
+      # For Node.js projects with bun
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
       - name: Setup Node.js (if needed)
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
-          # Note: caching might not work well on self-hosted runners
-          # Consider disabling or using project-local cache
-          
-      - name: Install pnpm globally
-        run: |
-          npm install -g pnpm@8
-          pnpm --version
-          
-      - name: Configure pnpm for self-hosted runner
-        run: |
-          # Use project-local store to avoid permission issues
-          pnpm config set store-dir .pnpm-store
-          # Disable global store
-          pnpm config set use-store-server false
-          
-      - name: Install dependencies with pnpm
-        run: pnpm install --no-frozen-lockfile
-        env:
-          # Ensure pnpm uses local paths
-          PNPM_HOME: ${{ github.workspace }}/.pnpm
-          PNPM_STORE_PATH: ${{ github.workspace }}/.pnpm-store
-          
+          node-version: "20"
+
+      - name: Install dependencies with bun
+        run: bun install --no-frozen-lockfile
+
       # For Android builds
       - name: Setup Java (if needed)
         uses: actions/setup-java@v3
         with:
           java-version: "17"
           distribution: "temurin"
-          
+
       # Clean up after job
       - name: Post-job cleanup
         if: always()
         run: |
           # Clean up large directories to save space
-          rm -rf node_modules .pnpm-store .pnpm
+          rm -rf node_modules
           rm -rf android/build android/.gradle
           # Add more cleanup as needed

@@ -1,19 +1,20 @@
 package com.mentra.asg_client.service.core;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
-
-
+import androidx.annotation.NonNull;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.file.core.FileManagerFactory;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
-import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.service.communication.managers.CommunicationManager;
 import com.mentra.asg_client.service.communication.managers.ResponseBuilder;
-import com.mentra.asg_client.service.core.processors.CommandProcessor;
+import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
+import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 import com.mentra.asg_client.service.media.managers.MediaManager;
@@ -25,12 +26,15 @@ import com.mentra.asg_client.service.system.managers.ConfigurationManager;
 import com.mentra.asg_client.service.system.managers.ServiceLifecycleManager;
 import com.mentra.asg_client.service.system.managers.StateManager;
 
-
 /**
- * Dependency injection container for service components.
- * Follows Dependency Inversion Principle by managing dependencies through interfaces.
+ * Dependency injection container for service components. Follows Dependency Inversion Principle by
+ * managing dependencies through interfaces.
  */
 public class ServiceContainer {
+
+    private static final String TAG = "ServiceContainer";
+    private static final long OTA_WIRE_RETRY_INTERVAL_MS = 2000;
+    private static final int OTA_WIRE_MAX_ATTEMPTS = 15;
 
     private final Context context;
     private final AsgClientServiceManager serviceManager;
@@ -47,16 +51,26 @@ public class ServiceContainer {
 
     private final FileManager fileManager;
 
-    public ServiceContainer(Context context, AsgClientService service) {
+    private boolean phoneControlledOtaWired;
+    private Handler otaWireHandler;
+    private Runnable otaWireRetryRunnable;
+    private int otaWireAttemptCount;
+
+    private final OtaHelper.OnInitializedListener otaInitializedListener =
+            helper -> wireUpPhoneControlledOta();
+
+    public ServiceContainer(Context context, @NonNull AsgClientService service) {
         this.context = context;
 
         this.fileManager = FileManagerFactory.getInstance();
 
         // Initialize interface implementations first
-        this.communicationManager = new CommunicationManager(null); // Will be updated after serviceManager creation
+        this.communicationManager =
+                new CommunicationManager(null); // Will be updated after serviceManager creation
 
         // Initialize core components with service reference
-        this.serviceManager = new AsgClientServiceManager(context, service, communicationManager, fileManager);
+        this.serviceManager =
+                new AsgClientServiceManager(context, service, communicationManager, fileManager);
         this.notificationManager = new AsgNotificationManager(context);
 
         // Update communication manager with service manager reference
@@ -69,46 +83,51 @@ public class ServiceContainer {
 
         this.streamingManager = new MediaManager(context, serviceManager);
 
-
         // Create RGB LED command handler and set reference in service manager
         RgbLedCommandHandler rgbLedHandler = new RgbLedCommandHandler(serviceManager);
-        Log.i("ServiceContainer", "🚨 Created RGB LED command handler: " + (rgbLedHandler != null ? "✅ SUCCESS" : "❌ FAILED"));
+        Log.i(
+                "ServiceContainer",
+                "🚨 Created RGB LED command handler: "
+                        + (rgbLedHandler != null ? "✅ SUCCESS" : "❌ FAILED"));
         serviceManager.setRgbLedCommandHandler(rgbLedHandler);
-        Log.i("ServiceContainer", "🚨 Set RGB LED handler in service manager: " + (serviceManager.getRgbLedCommandHandler() != null ? "✅ SUCCESS" : "❌ FAILED"));
+        Log.i(
+                "ServiceContainer",
+                "🚨 Set RGB LED handler in service manager: "
+                        + (serviceManager.getRgbLedCommandHandler() != null
+                                ? "✅ SUCCESS"
+                                : "❌ FAILED"));
 
         // Initialize CommandProcessor with interface-based managers
         this.responseBuilder = new ResponseBuilder();
-        this.commandProcessor = new CommandProcessor(context,
-                communicationManager,
-                stateManager,
-                streamingManager,
-                responseBuilder,
-                configurationManager,
-                serviceManager,
-                fileManager,
-                rgbLedHandler);
+        this.commandProcessor =
+                new CommandProcessor(
+                        context,
+                        communicationManager,
+                        stateManager,
+                        streamingManager,
+                        responseBuilder,
+                        configurationManager,
+                        serviceManager,
+                        fileManager,
+                        rgbLedHandler);
 
         // Initialize lifecycle manager with all components
-        this.lifecycleManager = new ServiceLifecycleManager(context, serviceManager, commandProcessor, notificationManager);
+        this.lifecycleManager =
+                new ServiceLifecycleManager(
+                        context, serviceManager, commandProcessor, notificationManager);
     }
 
-    /**
-     * Get service lifecycle manager
-     */
+    /** Get service lifecycle manager */
     public IServiceLifecycle getLifecycleManager() {
         return lifecycleManager;
     }
 
-    /**
-     * Get communication manager
-     */
+    /** Get communication manager */
     public ICommunicationManager getCommunicationManager() {
         return communicationManager;
     }
 
-    /**
-     * Get configuration manager
-     */
+    /** Get configuration manager */
     public IConfigurationManager getConfigurationManager() {
         return configurationManager;
     }
@@ -117,89 +136,117 @@ public class ServiceContainer {
         return responseBuilder;
     }
 
-    /**
-     * Get state manager
-     */
+    /** Get state manager */
     public IStateManager getStateManager() {
         return stateManager;
     }
 
-    /**
-     * Get streaming manager
-     */
+    /** Get streaming manager */
     public IMediaManager getStreamingManager() {
         return streamingManager;
     }
 
-    /**
-     * Get service manager
-     */
+    /** Get service manager */
     public AsgClientServiceManager getServiceManager() {
         return serviceManager;
     }
 
-    /**
-     * Get command processor
-     */
+    /** Get command processor */
     public CommandProcessor getCommandProcessor() {
         return commandProcessor;
     }
 
-    /**
-     * Get notification manager
-     */
+    /** Get notification manager */
     public AsgNotificationManager getNotificationManager() {
         return notificationManager;
     }
 
-    /**
-     * Initialize all components
-     */
+    /** Initialize all components */
     public void initialize() {
-        Log.d("ServiceContainer", "Initializing service container");
+        Log.d(TAG, "Initializing service container");
 
         // Initialize lifecycle manager first
         lifecycleManager.initialize();
 
-        // Wire up phone-controlled OTA after OtaService has started (delayed)
-        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-            wireUpPhoneControlledOta();
-        }, 6000); // After OtaService starts (5s delay + 1s buffer)
+        phoneControlledOtaWired = false;
+        otaWireHandler = new Handler(Looper.getMainLooper());
+        OtaHelper.addOnInitializedListener(otaInitializedListener);
+        wireUpPhoneControlledOta();
+        scheduleOtaWireRetryIfNeeded();
 
-        Log.d("ServiceContainer", "Service container initialized successfully");
+        Log.d(TAG, "Service container initialized successfully");
     }
 
     /**
-     * Wire up phone-controlled OTA connections.
-     * Called after OtaService has started and OtaHelper singleton is available.
+     * Wire up phone-controlled OTA connections. Called when OtaHelper becomes available
+     * (OtaService) or on bounded retry until wired.
      */
     private void wireUpPhoneControlledOta() {
-        Log.d("ServiceContainer", "Wiring up phone-controlled OTA...");
+        Log.d(TAG, "Wiring up phone-controlled OTA...");
 
         // Always set CommunicationManager on OtaCommandHandler for error reporting
-        // This is needed even if OtaHelper isn't ready yet
         OtaCommandHandler.setCommunicationManager(communicationManager);
-        Log.i("ServiceContainer", "✅ CommunicationManager set on OtaCommandHandler");
+        Log.i(TAG, "✅ CommunicationManager set on OtaCommandHandler");
 
         OtaHelper otaHelper = OtaHelper.getInstance();
         if (otaHelper != null) {
-            // Set CommunicationManager as the PhoneConnectionProvider
             otaHelper.setPhoneConnectionProvider((CommunicationManager) communicationManager);
-            Log.i("ServiceContainer", "✅ PhoneConnectionProvider set on OtaHelper");
+            Log.i(TAG, "✅ PhoneConnectionProvider set on OtaHelper");
 
-            // Set OtaHelper on OtaCommandHandler for handling ota_start commands
             OtaCommandHandler.setOtaHelper(otaHelper);
-            Log.i("ServiceContainer", "✅ OtaHelper set on OtaCommandHandler");
+            Log.i(TAG, "✅ OtaHelper set on OtaCommandHandler");
+
+            phoneControlledOtaWired = true;
+            cancelOtaWireRetry();
+            OtaHelper.removeOnInitializedListener(otaInitializedListener);
         } else {
-            Log.w("ServiceContainer", "⚠️ OtaHelper not yet initialized - phone-controlled OTA not available");
+            Log.w(TAG, "⚠️ OtaHelper not yet initialized - will retry when OtaService starts");
         }
     }
 
-    /**
-     * Clean up all components
-     */
+    private void scheduleOtaWireRetryIfNeeded() {
+        if (phoneControlledOtaWired || otaWireHandler == null) {
+            return;
+        }
+        cancelOtaWireRetry();
+        otaWireAttemptCount = 0;
+        otaWireRetryRunnable =
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        if (phoneControlledOtaWired) {
+                            return;
+                        }
+                        wireUpPhoneControlledOta();
+                        if (!phoneControlledOtaWired
+                                && otaWireAttemptCount++ < OTA_WIRE_MAX_ATTEMPTS) {
+                            otaWireHandler.postDelayed(this, OTA_WIRE_RETRY_INTERVAL_MS);
+                        } else if (!phoneControlledOtaWired) {
+                            Log.e(
+                                    TAG,
+                                    "Phone-controlled OTA wiring failed after "
+                                            + OTA_WIRE_MAX_ATTEMPTS
+                                            + " attempts — OtaHelper never became available");
+                        }
+                    }
+                };
+        otaWireHandler.postDelayed(otaWireRetryRunnable, OTA_WIRE_RETRY_INTERVAL_MS);
+    }
+
+    private void cancelOtaWireRetry() {
+        if (otaWireHandler != null && otaWireRetryRunnable != null) {
+            otaWireHandler.removeCallbacks(otaWireRetryRunnable);
+            otaWireRetryRunnable = null;
+        }
+    }
+
+    /** Clean up all components */
     public void cleanup() {
-        Log.d("ServiceContainer", "Cleaning up service container");
+        Log.d(TAG, "Cleaning up service container");
+
+        OtaHelper.removeOnInitializedListener(otaInitializedListener);
+        cancelOtaWireRetry();
+        otaWireHandler = null;
 
         // Clean up streaming manager first (unregisters callbacks)
         streamingManager.cleanup();
@@ -207,6 +254,6 @@ public class ServiceContainer {
         // Clean up lifecycle manager
         lifecycleManager.cleanup();
 
-        Log.d("ServiceContainer", "Service container cleanup completed");
+        Log.d(TAG, "Service container cleanup completed");
     }
 }

@@ -18,7 +18,13 @@ import {
   CameraFovSetRequest,
   CameraRoiPosition,
 } from "../../../types";
-import { VideoConfig, AudioConfig, StreamConfig, StreamStatusHandler } from "../../../types/rtmp-stream";
+import {
+  VideoConfig,
+  AudioConfig,
+  StreamConfig,
+  StreamStatusHandler,
+  validateVideoConfig,
+} from "../../../types/rtmp-stream";
 import { StreamType } from "../../../types/streams";
 import { Logger } from "pino";
 import { CameraManagedExtension, ManagedStreamOptions, ManagedStreamResult } from "./camera-managed-extension";
@@ -46,6 +52,11 @@ export interface PhotoRequestOptions {
   compress?: "none" | "medium" | "heavy";
   /** Controls shutter sound. Defaults to true if omitted. */
   sound?: boolean;
+  /**
+   * Sensor exposure time for this photo request only (nanoseconds). Not persisted.
+   * Invalid values are ignored on the wire; device falls back to auto exposure.
+   */
+  exposureTimeNs?: number;
 }
 
 /**
@@ -72,7 +83,7 @@ export interface StreamOptions {
  * Options for setting the camera FOV and ROI position
  */
 export interface CameraFovOptions {
-  /** Field of view in degrees (82-118). 118 means full sensor, no crop. */
+  /** Field of view in degrees (62-118). 118 means full sensor, no crop. */
   fov: number;
   /** ROI crop position. Ignored when fov is 118. Defaults to "center". */
   roiPosition?: CameraRoiPosition;
@@ -187,6 +198,9 @@ export class CameraModule {
         });
 
         // Create photo request message
+        const expNs = options?.exposureTimeNs;
+        const includeExp = typeof expNs === "number" && Number.isFinite(expNs) && expNs > 0;
+
         const message: PhotoRequest = {
           type: AppToCloudMessageType.PHOTO_REQUEST,
           packageName: this.packageName,
@@ -199,6 +213,7 @@ export class CameraModule {
           size: options?.size || "medium",
           compress: options?.compress || "none",
           sound: options?.sound,
+          ...(includeExp ? { exposureTimeNs: expNs } : {}),
         };
 
         // Send request to cloud
@@ -210,6 +225,7 @@ export class CameraModule {
             saveToGallery: options?.saveToGallery,
             hasCustomWebhook: !!options?.customWebhookUrl,
             hasAuthToken: !!options?.authToken,
+            exposureTimeNs: includeExp ? expNs : undefined,
           },
           `📸 Photo request sent`,
         );
@@ -301,7 +317,7 @@ export class CameraModule {
    * Fire-and-forget: the promise resolves once the message is sent.
    * The phone applies the setting and pushes it to the glasses over BLE.
    *
-   * @param options - FOV (82-118) and optional ROI position
+   * @param options - FOV (62-118) and optional ROI position
    *
    * @example
    * ```typescript
@@ -316,8 +332,8 @@ export class CameraModule {
     const { fov } = options;
     let roiPosition: CameraRoiPosition = options.roiPosition ?? "center";
 
-    if (fov < 82 || fov > 118) {
-      throw new Error(`fov must be between 82 and 118, got ${fov}`);
+    if (fov < 62 || fov > 118) {
+      throw new Error(`fov must be between 62 and 118, got ${fov}`);
     }
 
     if (!VALID_ROI_POSITIONS.includes(roiPosition)) {
@@ -369,12 +385,20 @@ export class CameraModule {
 
     cameraWarnLog(this.session.getHttpsServerUrl?.(), this.packageName, "startLocalLivestream");
 
+    validateVideoConfig(options.video);
+
     if (!options.streamUrl) {
       throw new Error("streamUrl is required");
     }
 
     const url = options.streamUrl;
-    if (!url.startsWith("rtmp://") && !url.startsWith("rtmps://") && !url.startsWith("srt://") && !url.startsWith("https://") && !url.startsWith("http://")) {
+    if (
+      !url.startsWith("rtmp://") &&
+      !url.startsWith("rtmps://") &&
+      !url.startsWith("srt://") &&
+      !url.startsWith("https://") &&
+      !url.startsWith("http://")
+    ) {
       throw new Error("Invalid stream URL: must start with rtmp://, rtmps://, srt://, https://, or http://");
     }
 

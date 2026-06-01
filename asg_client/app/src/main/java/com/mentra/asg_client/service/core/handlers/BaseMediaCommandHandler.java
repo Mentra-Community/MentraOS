@@ -150,6 +150,30 @@ public abstract class BaseMediaCommandHandler implements ICommandHandler {
     }
 
     /**
+     * Generate a capture path under the reserved {@link FileManager#SDK_PENDING_DIR_NAME}
+     * subdirectory. Use this for captures the caller does NOT want saved to the gallery
+     * (e.g. SDK photo requests with {@code save=false}): the file is invisible to
+     * {@link FileManager#listFiles(String)} so it cannot leak into the gallery count or the
+     * Wi-Fi sync server's listing while the upload is in flight, and the existing periodic
+     * {@code cleanupOldFiles} sweep still age-cleans any orphans left by a crash.
+     */
+    protected String generateTransientCaptureFilePath(String packageName, String prefix, String extension) {
+        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
+        int randomSuffix = (int)(Math.random() * 1000);
+        String captureDir = prefix + timeStamp + "_" + randomSuffix;
+        File packageDir = getPackageDirectory(packageName);
+        if (packageDir == null) {
+            return null;
+        }
+        File pendingRoot = new File(packageDir, FileManager.SDK_PENDING_DIR_NAME);
+        File captureDirFile = new File(pendingRoot, captureDir);
+        captureDirFile.mkdirs();
+        String filePath = new File(captureDirFile, "base" + extension).getAbsolutePath();
+        Log.d(TAG, "Generated transient (sync-hidden) capture file path: " + filePath);
+        return filePath;
+    }
+
+    /**
      * Log command processing result.
      *
      * @param commandType The command type

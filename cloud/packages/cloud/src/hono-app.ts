@@ -33,6 +33,8 @@ import {
   notificationsApi,
   photoApi,
   deviceStateApi,
+  v2StreamsApi,
+  v2PhotoApi,
   // SDK APIs (third-party apps)
   sdkVersionApi,
   simpleStorageApi,
@@ -314,6 +316,8 @@ app.route("/api/client/notifications", notificationsApi);
 app.route("/api/client/photo", photoApi);
 app.route("/api/client/device/state", deviceStateApi);
 app.route("/api/client/audio/configure", audioConfigApi);
+app.route("/api/v2/client/streams/managed", v2StreamsApi);
+app.route("/api/v2/client/photo", v2PhotoApi);
 
 // ============================================================================
 // SDK API Routes (Hono native)

@@ -1,7 +1,7 @@
 /**
  * @fileoverview Barrel export for Hono client APIs.
  * These APIs are used by the mobile app and glasses client.
- * Mounted at: /api/client/*
+ * Mounted at: /api/client/* (legacy) and /api/v2/client/* (v2).
  */
 
 export { default as audioConfigApi } from "./audio-config.api";
@@ -15,3 +15,5 @@ export { default as minVersionApi } from "./min-version.api";
 export { default as notificationsApi } from "./notifications.api";
 export { default as photoApi } from "./photo.api";
 export { default as userSettingsApi } from "./user-settings.api";
+export { default as v2StreamsApi } from "./v2/streams.api";
+export { default as v2PhotoApi } from "./v2/photo.api";

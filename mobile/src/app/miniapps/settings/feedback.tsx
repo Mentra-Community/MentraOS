@@ -13,13 +13,16 @@ import {translate} from "@/i18n"
 import {buildBugReportFeedbackDataForBug, submitBugIncident} from "@/services/bugReport/bugReportIncident"
 import {buildIncidentCategorization} from "@/services/bugReport/incidentCategorization"
 import restComms from "@/services/RestComms"
-import {feedbackPackageName, settingsPackageName, useAppletStatusStore} from "@/stores/applets"
-import {useGlassesStore} from "@/stores/glasses"
+import {useAppStatusStore} from "@mentra/island"
+
+import {feedbackPackageName, settingsPackageName} from "@/constants/miniapps"
+import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
+import {APP_STORE_REVIEW_URL, PLAY_STORE_URL} from "@/constants/appConfig"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
-import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useNavigationStore} from "@/stores/navigation"
+import { useRegisterCapsule } from "@/stores/capsule"
 
 export default function FeedbackPage() {
   const params = useLocalSearchParams<{
@@ -43,10 +46,16 @@ export default function FeedbackPage() {
   const MAX_SCREENSHOTS = 5
 
   const {theme} = useAppTheme()
-  const apps = useAppletStatusStore((state) => state.apps)
+  const apps = useAppStatusStore((state) => state.apps)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const viewShotRef = useRef<View>(null)
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
+
+  useRegisterCapsule({
+    packageName: "com.mentra.settings",
+    viewShotRef,
+    visibleOnRoutes: ["/miniapps/settings/feedback"],
+  })
 
   const resolveScreenshotPackageName = useCallback(() => {
     if (apps.some((app) => app.packageName === feedbackPackageName && app.running)) {
@@ -59,16 +68,19 @@ export default function FeedbackPage() {
   }, [apps])
 
   // Glasses info for bug reports
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
   const deviceModel = useGlassesStore((state) => state.deviceModel)
   const glassesBluetoothName = useGlassesStore((state) => state.bluetoothName)
   const buildNumber = useGlassesStore((state) => state.buildNumber)
-  const glassesFwVersion = useGlassesStore((state) => state.fwVersion)
+  const glassesFirmwareVersion = useGlassesStore((state) => state.firmwareVersion)
   const appVersion = useGlassesStore((state) => state.appVersion)
   const serialNumber = useGlassesStore((state) => state.serialNumber)
   const androidVersion = useGlassesStore((state) => state.androidVersion)
-  const glassesWifiConnected = useGlassesStore((state) => state.wifiConnected)
-  const glassesWifiSsid = useGlassesStore((state) => state.wifiSsid)
+  const glassesWifi = useGlassesStore((state) => state.wifi)
+  const glassesWifiInfo =
+    glassesWifi.state === "connected"
+      ? {wifiConnected: true, wifiSsid: glassesWifi.ssid}
+      : {wifiConnected: false}
   const glassesBatteryLevel = useGlassesStore((state) => state.batteryLevel)
 
   const [userEmail, setUserEmail] = useState("")
@@ -252,11 +264,10 @@ export default function FeedbackPage() {
             bluetoothId: glassesBluetoothId || undefined,
             serialNumber: serialNumber || undefined,
             buildNumber: buildNumber || undefined,
-            fwVersion: glassesFwVersion || undefined,
+            firmwareVersion: glassesFirmwareVersion || undefined,
             appVersion: appVersion || undefined,
             androidVersion: androidVersion || undefined,
-            wifiConnected: glassesWifiConnected,
-            ...(glassesWifiConnected && glassesWifiSsid && {wifiSsid: glassesWifiSsid}),
+            ...glassesWifiInfo,
             ...(glassesBatteryLevel >= 0 && {batteryLevel: glassesBatteryLevel}),
           },
         }),
@@ -308,8 +319,8 @@ export default function FeedbackPage() {
                   onPress: () => {
                     const appStoreUrl =
                       Platform.OS === "ios"
-                        ? "https://apps.apple.com/app/id6747363193?action=write-review"
-                        : "https://play.google.com/store/apps/details?id=com.mentra.mentra"
+                        ? APP_STORE_REVIEW_URL
+                        : PLAY_STORE_URL
                     Linking.openURL(appStoreUrl)
                   },
                 },
@@ -334,8 +345,6 @@ export default function FeedbackPage() {
   }
 
   return (
-    <>
-      <MiniAppCapsuleMenu packageName={resolveScreenshotPackageName() || ""} viewShotRef={viewShotRef} />
       <Screen preset="fixed" ref={viewShotRef} safeAreaEdges={["top", "bottom"]}>
         <View className="h-12 justify-center">
           <Text tx="feedback:giveFeedback" className="text-xl text-foreground" />
@@ -507,6 +516,5 @@ export default function FeedbackPage() {
           </Button>
         </ScrollView>
       </Screen>
-    </>
   )
 }

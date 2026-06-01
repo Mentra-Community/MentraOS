@@ -113,7 +113,10 @@ aiohttp/_http_writer.c
 aiohttp/_http_writer.html
 aiohttp/_websocket.c
 aiohttp/_websocket.html
+# Python virtualenv bin directories. Negation lets through real
+# `bin/` directories that ship CLI entry points (scaffolders, etc.).
 bin
+!sdk/*/bin/
 # Python build directory (specific to Python projects)
 **/python/build
 coverage.xml
@@ -367,3 +370,17 @@ mobile/ios/Packages/SherpaOnnx/sherpa-onnx.xcframework/
 # ONNX Model files (large ML models)
 mobile/ios/Packages/SherpaOnnx/Model/*
 nicelogs.txt
+
+# mentra-miniapp install cache (built+packed zips ready to serve)
+**/.mentra/
+
+
+issues
+
+# Local session notes
+MEMORY.md
+# Cursor IDE local config (MCP, etc.)
+.cursor/
+
+# Nested starter-kit repo (separate git history)
+Mentra-Bluetooth-SDK-Starter-Kit/

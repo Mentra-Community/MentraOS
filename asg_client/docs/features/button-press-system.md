@@ -1,147 +1,131 @@
-# Button Press System
+# Button press system
 
-The button press system in ASG Client handles physical button interactions on the smart glasses and determines what actions to take.
+The hardware camera button on Mentra Live is the only physical control with rich behavior — it triggers photos, starts/stops videos, and can be forwarded to apps. This doc covers how those events flow from the BES microcontroller to apps and to local capture, including the **gallery-mode** gate that decides whether to capture locally.
 
-## How It Works
+Source: `service/core/handlers/K900CommandHandler.java` (`handleConfigurableButtonPress`, `handlePhotoCapture`).
 
-### Button Press Flow
+## Hardware to software path
 
-1. **Physical Press**: User presses the camera button on the glasses
-2. **MCU Detection**: The glasses' microcontroller detects the press
-3. **Command Generation**: MCU sends a command to ASG Client:
-   - `cs_pho` - Short press (photo)
-   - `cs_vdo` - Long press (video)
-4. **ASG Client Processing**: The service receives and processes the command
-5. **Action Execution**: Based on configuration, takes appropriate action
+1. **Physical press** — user presses the camera button.
+2. **MCU detection** — the BES MCU debounces and classifies the press.
+3. **UART command** — MCU sends a K900 protocol packet:
+   - `cs_pho` — short press
+   - `cs_vdo` — long press
+   - `hs_ntfy` with `msg: "button click"` / `"button long click"` — newer firmware format
+4. **`K900CommandHandler` dispatches** to `handleCameraButtonShortPress()` or `handleCameraButtonLongPress()`, which both call `handleConfigurableButtonPress(isLongPress)`.
+5. **Universal forwarding** — _every_ press is forwarded to the phone as a `button_press` event, regardless of any local-capture decision.
+6. **Local capture decision** — runs through the gallery-mode gate (below), then takes the appropriate action.
 
-### Button Press Modes
+## Universal forwarding to the phone
 
-The ASG Client supports two configurable modes for handling button presses:
-
-**IMPORTANT**: As of the latest update, **ALL button presses are now forwarded to phone/apps regardless of mode**. The mode now only controls additional local actions.
-
-#### PHOTO Mode (Default)
-
-- Button press is **ALWAYS forwarded** to phone/apps
-- Additionally triggers local photo/video capture
-- Apps receive the button press event AND local capture occurs
-
-```java
-// Universal forwarding + local capture in PHOTO mode
-sendButtonPressToPhone(isLongPress); // Always forwarded
-mMediaCaptureService.takePhotoLocally(); // Local action
-```
-
-#### APPS Mode
-
-- Button press events are sent to the phone/apps only
-- No additional local photo capture
-- Apps receive the button press event and decide what to do
-
-```java
-// Universal forwarding in APPS mode
-sendButtonPressToPhone(isLongPress); // Always forwarded
-// No local actions
-```
-
-### Implementation Details
-
-The button handling is implemented in `K900CommandHandler.java`:
-
-```java
-private void handleConfigurableButtonPress(boolean isLongPress) {
-    AsgSettings.ButtonPressMode mode = serviceManager.getAsgSettings().getButtonPressMode();
-    String pressType = isLongPress ? "long" : "short";
-    Log.d(TAG, "Handling " + pressType + " button press with mode: " + mode.getValue());
-
-    // ALWAYS send button press to phone/apps regardless of mode
-    Log.d(TAG, "📱 ALWAYS forwarding button press to phone/apps (universal forwarding)");
-    sendButtonPressToPhone(isLongPress);
-
-    // Then handle mode-specific local actions
-    switch (mode) {
-        case PHOTO:
-            handlePhotoMode(isLongPress); // Local capture + forwarding
-            break;
-
-        case APPS:
-            // APPS mode: only forwarding (already done above)
-            Log.d(TAG, "📱 APPS mode: button press forwarded, no local action");
-            break;
-    }
-}
-```
-
-### Button Press Message Format
-
-When sending button press to phone (now **ALL modes**):
+Every button press emits the following over BLE, before any local-capture logic:
 
 ```json
 {
   "type": "button_press",
   "buttonId": "camera",
-  "pressType": "short", // or "long"
-  "timestamp": 1234567890
+  "pressType": "short",
+  "timestamp": 1708963201234
 }
 ```
 
-### Other Button Commands
+`pressType` is `"short"` or `"long"`. Apps subscribed via the phone get the event whether or not local capture happens.
 
-Besides camera button, the system also handles:
+## Local capture and gallery mode
 
-- **Swipe gestures**: `cs_swst` commands from arm swipes
-- **Battery status**: `hm_batv` with battery percentage and voltage
-- **Hotspot control**: `hm_htsp`/`mh_htsp` for WiFi hotspot
+Whether the button _also_ captures a photo/video locally is governed by a single boolean: `AsgSettings.isSaveInGalleryMode()`. The phone toggles this via the [`save_in_gallery_mode`](../ASG_CLIENT_API.md#save_in_gallery_mode) command — typically when the user enters or leaves the gallery view in the phone app.
 
-## Configuration
+### Decision rules
 
-### Setting Button Mode
+```
+isSaveInGalleryMode  isConnected       Local capture?
+       true               *                 yes
+       false              true              no — phone app handles it
+       false              false             yes — fallback so disconnected glasses still capture
+```
 
-The button mode can be configured via:
+In words:
 
-1. Settings in the MentraOS app
-2. Direct configuration through AsgSettings
-3. Debug commands during development
+- **Gallery mode active** → always capture locally.
+- **Gallery mode inactive but glasses connected to phone** → skip local capture (the phone routes the press to apps).
+- **Gallery mode inactive and glasses disconnected** → still capture locally so a press isn't lost.
 
-### Mode Selection Guidelines
+### Persistence
 
-- **Use PHOTO mode** for camera glasses functionality with universal app forwarding
-- **Use APPS mode** when apps need full control over button behavior (no local capture)
+`saveInGalleryMode` is **persisted in SharedPreferences** under the key `save_in_gallery_mode` (`AsgSettings.java:22, 215, 229`). It defaults to `true` on first read. The default ensures button presses still capture before the phone has a chance to set the flag explicitly.
 
-**Note**: Both modes now forward button presses to apps. The mode only controls whether local photo/video capture also occurs.
+## Short press: photo or stop video
 
-## Photo Capture Process
+If a video is currently recording, a short press **stops the recording**. Otherwise it **takes a photo**:
 
-When a photo is triggered (PHOTO mode):
+```java
+if (captureService.isRecordingVideo()) {
+    captureService.stopVideoRecording();
+} else {
+    String photoSize = serviceManager.getAsgSettings().getButtonPhotoSize();
+    captureService.takePhotoLocally(photoSize, ledEnabled, true /* sound */);
+}
+```
 
-1. **Capture**: CameraNeo takes the photo
-2. **Save**: Photo saved to device storage
-3. **Queue**: Added to upload queue if online
-4. **Upload**: Sent to cloud when connection available
-5. **Cleanup**: Local copy managed based on settings
+Settings consulted:
 
-## Video Recording
+- `getButtonPhotoSize()` — `small` / `medium` / `large`. Set via [`button_photo_setting`](../ASG_CLIENT_API.md#button_photo_setting).
+- `getButtonCameraLedEnabled()` — privacy LED on/off during capture. Set via [`button_camera_led`](../ASG_CLIENT_API.md#button_camera_led).
 
-Video recording on long press is currently in development. The infrastructure is in place but the full implementation is pending.
+## Long press: video record / stop
+
+If a video is recording, a long press **stops it**. Otherwise it **starts video recording** with persisted settings, after a battery check:
+
+```java
+if (captureService.isRecordingVideo()) {
+    captureService.stopVideoRecording();
+} else {
+    if (batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+        captureService.playBatteryLowSound();
+        return;
+    }
+    VideoSettings videoSettings = serviceManager.getAsgSettings().getButtonVideoSettings();
+    int maxRecordingTimeMinutes = serviceManager.getAsgSettings().getButtonMaxRecordingTimeMinutes();
+    captureService.startVideoRecording(videoSettings, ledEnabled, maxRecordingTimeMinutes, batteryLevel);
+}
+```
+
+Settings consulted:
+
+- `getButtonVideoSettings()` — width × height × fps. Set via [`button_video_recording_setting`](../ASG_CLIENT_API.md#button_video_recording_setting).
+- `getButtonMaxRecordingTimeMinutes()` — auto-stop after N minutes. Set via [`button_max_recording_time`](../ASG_CLIENT_API.md#button_max_recording_time).
+
+## Other buttons / events from the MCU
+
+While the camera button is the main user-facing control, the same K900 dispatcher handles:
+
+- **Touch / swipe** on the temple — `sr_swst`, `sr_tpevt`, `sr_fbvol` → forwarded to phone as `switch_status`, `touch_event`, `swipe_volume_status`.
+- **Power-button short press** — `sr_keyevt` (button=0, type=0). Triggers an audio battery-level announcement (`AudioAssets.getBatteryLevelAsset(level)`).
+- **Power-button hold (graceful shutdown)** — `cs_shut`. ASG client acks with `sr_shut`, finalizes any active video, then calls `SysControl.shut()` to avoid corrupted recordings.
+
+These don't go through the gallery-mode gate — they have their own per-event handlers.
+
+## Configuration via the phone app
+
+The phone app sets button-related settings via the [API commands](../ASG_CLIENT_API.md#settings):
+
+- `save_in_gallery_mode` — gallery-mode flag (the gate above)
+- `button_photo_setting` — short-press photo resolution
+- `button_video_recording_setting` — long-press video resolution + fps
+- `button_max_recording_time` — max long-press recording duration
+- `button_camera_led` — privacy LED enable
+
+## Logcat tags
+
+| Tag                                                 | What                                 |
+| --------------------------------------------------- | ------------------------------------ |
+| `K900CommandHandler`                                | Press detection and capture decision |
+| `MediaCaptureService` (`PhotoTest`, `MediaCapture`) | Capture pipeline                     |
+| `AsgSettings`                                       | Settings persistence                 |
 
 ## Troubleshooting
 
-### Button Press Not Working
-
-1. **Check logs**: Look for `cs_pho` or `cs_vdo` in logcat
-2. **Verify mode**: Ensure correct button mode is set
-3. **Service status**: Confirm AsgClientService is running
-4. **Permissions**: Check camera and storage permissions
-
-### Common Issues
-
-- **No MCU commands**: Check hardware connection to microcontroller
-- **Service not responding**: May need to restart AsgClientService
-- **Wrong mode active**: Verify configuration in settings
-
-## Future Enhancements
-
-- Full video recording implementation
-- Custom button mappings
-- Gesture combinations
-- Multi-button support
+- **Press doesn't capture locally** — check `📸 Photo capture decision` log line in `K900CommandHandler` for `Gallery Mode` and `Connection State`. If gallery mode is INACTIVE and connection state is CONNECTED, that's expected — the phone will route the press to apps but won't capture locally. Toggle gallery mode on the phone or disconnect to verify.
+- **Press doesn't reach apps** — verify a `button_press` JSON is being sent over BLE. If not, check that the `cs_pho` / `cs_vdo` / `hs_ntfy` packet is arriving at all (TAG: `K900CommandHandler`, `📦 Received K900 command`).
+- **Long press doesn't start video** — check battery level; recording is rejected below `BatteryConstants.MIN_BATTERY_LEVEL` (10%) with an audio cue.
+- **Recording auto-stops too soon** — check `button_max_recording_time` setting; the default is 10 minutes.

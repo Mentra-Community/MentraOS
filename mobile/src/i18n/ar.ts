@@ -1,6 +1,6 @@
-import en, {Translations} from "./en"
+import en, {type TranslationResource} from "./en"
 
-const ar: Translations = {
+const ar = {
   ...en,
   common: {
     ok: "نعم",
@@ -46,9 +46,6 @@ const ar: Translations = {
   home: {
     hardwareIncompatible: "الأجهزة غير متوافقة",
     hardwareIncompatibleMessage: "{{app}} يتطلب أجهزة غير متوفرة في النظارات المتصلة: {{missing}}",
-    incompatibleApps: "التطبيقات غير المتوافقة",
-    incompatibleAppsDescription: "تتطلب هذه التطبيقات ميزات أجهزة غير متوفرة في النظارات المتصلة",
-    incompatible: "غير متوافق",
   },
   demoNavigator: {
     componentsTab: "عناصر",
@@ -119,6 +116,6 @@ const ar: Translations = {
       content: "لم تتم اضافة اي مفضلات حتى الان. اضغط على القلب في إحدى الحلقات لإضافته الى المفضلة.",
     },
   },
-}
+} satisfies TranslationResource
 
 export default ar

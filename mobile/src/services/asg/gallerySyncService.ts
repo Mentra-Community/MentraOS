@@ -5,26 +5,29 @@
 
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import NetInfo from "@react-native-community/netinfo"
-import CoreModule from "core"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {AppState, AppStateStatus, Platform} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
 
 import {useGallerySyncStore, HotspotInfo} from "@/stores/gallerySync"
-import {useGlassesStore} from "@/stores/glasses"
+import {isGlassesConnected, selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {PhotoInfo, CaptureGroup} from "@/types/asg"
 import {showAlert} from "@/utils/AlertUtils"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
 
 import {translate} from "@/i18n"
 import {asgCameraApi} from "./asgCameraApi"
+import {fixGlassesClockIfSkewed} from "./glassesClockSync"
+import {detectClockSkew, isSyncManifestEmpty} from "./gallerySyncClock"
 import {gallerySettingsService} from "./gallerySettingsService"
 import {gallerySyncNotifications} from "./gallerySyncNotifications"
 import {localStorageService} from "./localStorageService"
 import {mediaProcessingQueue} from "./mediaProcessingQueue"
+import {validateCaptureMetadataForDownload} from "./galleryMediaValidation"
 import {
   checkConnectivityRequirementsUI,
   checkFeaturePermissions,
@@ -47,6 +50,17 @@ const TIMING = {
   WIFI_COOLDOWN_MS: 3000, // Wait 3 seconds after user visits WiFi settings before showing alert again
 } as const
 
+type SyncManifestData = {
+  api_version?: number
+  client_id: string
+  captures?: CaptureGroup[]
+  changed_files: PhotoInfo[]
+  deleted_files?: string[]
+  server_time: number
+  total_changed?: number
+  total_size?: number
+}
+
 class GallerySyncService {
   private static instance: GallerySyncService
   private hotspotListenerRegistered = false
@@ -57,6 +71,10 @@ class GallerySyncService {
   private glassesStoreUnsubscribe: (() => void) | null = null
   private appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null
   private waitingForWifiRetry = false
+  // Guards full-sync recovery so we don't re-download the entire gallery every sync
+  // when glasses retain leftover files (e.g. a previous delete-from-glasses failed).
+  // Keyed by `${client_id}:${last_sync_time}` — same pair = already tried, skip.
+  private lastFullSyncRetryKey: string | null = null
   private wifiSettingsOpenedAt: number | null = null // Timestamp when user was sent to WiFi settings
 
   private constructor() {}
@@ -80,15 +98,12 @@ class GallerySyncService {
     GlobalEventEmitter.addListener("gallery_status", this.handleGalleryStatus)
 
     // Subscribe to glasses store to detect disconnection during sync
-    this.glassesStoreUnsubscribe = useGlassesStore.subscribe(
-      (state) => state.connected,
-      (connected, prevConnected) => {
-        // Only trigger on disconnect (was connected, now not connected)
-        if (prevConnected && !connected) {
-          this.handleGlassesDisconnected()
-        }
-      },
-    )
+    this.glassesStoreUnsubscribe = useGlassesStore.subscribe(selectGlassesConnected, (connected, prevConnected) => {
+      // Only trigger on disconnect (was connected, now not connected)
+      if (prevConnected && !connected) {
+        this.handleGlassesDisconnected()
+      }
+    })
 
     // Listen for app state changes to auto-retry sync after user enables WiFi
     this.appStateSubscription = AppState.addEventListener("change", this.handleAppStateChange)
@@ -124,12 +139,12 @@ class GallerySyncService {
     }
 
     if (this.hotspotConnectionTimeout) {
-      BackgroundTimer.clearTimeout(this.hotspotConnectionTimeout!)
+      BgTimer.clearTimeout(this.hotspotConnectionTimeout!)
       this.hotspotConnectionTimeout = null
     }
 
     if (this.hotspotRequestTimeout) {
-      BackgroundTimer.clearTimeout(this.hotspotRequestTimeout!)
+      BgTimer.clearTimeout(this.hotspotRequestTimeout!)
       this.hotspotRequestTimeout = null
     }
 
@@ -159,11 +174,11 @@ class GallerySyncService {
 
     // Clear timeouts
     if (this.hotspotConnectionTimeout) {
-      BackgroundTimer.clearTimeout(this.hotspotConnectionTimeout!)
+      BgTimer.clearTimeout(this.hotspotConnectionTimeout!)
       this.hotspotConnectionTimeout = null
     }
     if (this.hotspotRequestTimeout) {
-      BackgroundTimer.clearTimeout(this.hotspotRequestTimeout!)
+      BgTimer.clearTimeout(this.hotspotRequestTimeout!)
       this.hotspotRequestTimeout = null
     }
 
@@ -188,9 +203,10 @@ class GallerySyncService {
 
     const store = useGallerySyncStore.getState()
     const glassesStore = useGlassesStore.getState()
+    const glassesConnected = isGlassesConnected(glassesStore.connection)
 
     // Check if glasses are still connected
-    if (!glassesStore.connected) {
+    if (!glassesConnected) {
       console.log("[GallerySyncService] Glasses disconnected - not retrying sync")
       this.waitingForWifiRetry = false
       return
@@ -206,7 +222,7 @@ class GallerySyncService {
 
       for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
-          await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, RETRY_DELAY_MS))
+          await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), RETRY_DELAY_MS))
 
           const netState = await NetInfo.fetch()
           console.log(
@@ -271,12 +287,12 @@ class GallerySyncService {
 
     // Clear the hotspot request timeout since we got a response
     if (this.hotspotRequestTimeout) {
-      BackgroundTimer.clearTimeout(this.hotspotRequestTimeout!)
+      BgTimer.clearTimeout(this.hotspotRequestTimeout!)
       this.hotspotRequestTimeout = null
     }
 
     // Pre-flight: do not start the wait if already disconnected (e.g. BT dropped right after hotspot enabled)
-    if (!useGlassesStore.getState().connected) {
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) {
       console.log("[GallerySyncService] ❌ Glasses disconnected on hotspot_status_change - aborting (no wait)")
       store.setSyncError("Glasses disconnected")
       gallerySyncNotifications.showSyncError("Glasses disconnected")
@@ -298,13 +314,13 @@ class GallerySyncService {
     console.log("[GallerySyncService] 📡 Glasses need time to start WiFi AP and broadcast SSID")
 
     if (this.hotspotConnectionTimeout) {
-      BackgroundTimer.clearTimeout(this.hotspotConnectionTimeout!)
+      BgTimer.clearTimeout(this.hotspotConnectionTimeout!)
     }
 
-    this.hotspotConnectionTimeout = BackgroundTimer.setTimeout(() => {
+    this.hotspotConnectionTimeout = BgTimer.setTimeout(() => {
       this.hotspotConnectionTimeout = null
       // Pre-flight: abort if Bluetooth disconnected during the wait
-      const stillConnected = useGlassesStore.getState().connected
+      const stillConnected = isGlassesConnected(useGlassesStore.getState().connection)
       if (!stillConnected) {
         console.log("[GallerySyncService] ❌ Glasses disconnected during hotspot wait - skipping WiFi connection")
         const currentStore = useGallerySyncStore.getState()
@@ -326,7 +342,7 @@ class GallerySyncService {
     const store = useGallerySyncStore.getState()
 
     if (this.hotspotConnectionTimeout) {
-      BackgroundTimer.clearTimeout(this.hotspotConnectionTimeout!)
+      BgTimer.clearTimeout(this.hotspotConnectionTimeout!)
       this.hotspotConnectionTimeout = null
     }
 
@@ -344,6 +360,15 @@ class GallerySyncService {
 
     const store = useGallerySyncStore.getState()
     const glassesStore = useGlassesStore.getState()
+    const glassesConnected = isGlassesConnected(glassesStore.connection)
+    const glassesHotspot =
+      glassesStore.hotspot.state === "enabled"
+        ? {
+            ssid: glassesStore.hotspot.ssid,
+            password: glassesStore.hotspot.password,
+            ip: glassesStore.hotspot.localIp,
+          }
+        : null
 
     // Reset processing queue for new sync session
     mediaProcessingQueue.reset()
@@ -367,7 +392,7 @@ class GallerySyncService {
     }
 
     // Check if glasses are connected (store-based, secondary check)
-    if (!glassesStore.connected) {
+    if (!glassesConnected) {
       console.warn("[GallerySyncService] Sync aborted - Glasses not connected")
       store.setSyncError("Glasses not connected")
       showAlert("Glasses Disconnected", "Please connect your glasses before syncing the gallery.", [{text: "OK"}])
@@ -376,8 +401,8 @@ class GallerySyncService {
 
     console.log("[GallerySyncService] ✅ Pre-flight check passed - BT enabled, Glasses connected")
     console.log("[GallerySyncService] 📊 Glasses info:", {
-      connected: glassesStore.connected,
-      hotspotEnabled: glassesStore.hotspotEnabled,
+      connected: glassesConnected,
+      hotspotEnabled: glassesHotspot !== null,
     })
 
     // Request all permissions upfront so user isn't interrupted during WiFi/download
@@ -590,18 +615,18 @@ class GallerySyncService {
     // not just that the glasses reported hotspot is enabled (which persists across app restarts)
     console.log("[GallerySyncService] 🔌 Step 3/6: Checking hotspot connection status...")
     let isAlreadyConnected = false
-    if (glassesStore.hotspotEnabled && glassesStore.hotspotGatewayIp && glassesStore.hotspotSsid) {
+    if (glassesHotspot) {
       console.log("[GallerySyncService]   📊 Glasses hotspot status:")
-      console.log(`[GallerySyncService]      - Enabled: ${glassesStore.hotspotEnabled}`)
-      console.log(`[GallerySyncService]      - SSID: ${glassesStore.hotspotSsid}`)
-      console.log(`[GallerySyncService]      - IP: ${glassesStore.hotspotGatewayIp}`)
+      console.log("[GallerySyncService]      - Enabled: true")
+      console.log(`[GallerySyncService]      - SSID: ${glassesHotspot.ssid}`)
+      console.log(`[GallerySyncService]      - IP: ${glassesHotspot.ip}`)
 
       try {
         const currentSSID = await WifiManager.getCurrentWifiSSID()
         console.log(`[GallerySyncService]   📱 Phone current WiFi SSID: "${currentSSID}"`)
-        console.log(`[GallerySyncService]   🔍 Comparing with glasses hotspot SSID: "${glassesStore.hotspotSsid}"`)
+        console.log(`[GallerySyncService]   🔍 Comparing with glasses hotspot SSID: "${glassesHotspot.ssid}"`)
 
-        isAlreadyConnected = currentSSID === glassesStore.hotspotSsid
+        isAlreadyConnected = currentSSID === glassesHotspot.ssid
         if (isAlreadyConnected) {
           console.log("[GallerySyncService]   ✅ Phone is already connected to glasses hotspot!")
         } else if (currentSSID) {
@@ -620,13 +645,9 @@ class GallerySyncService {
       console.log("[GallerySyncService]   ➡️ Will request hotspot activation")
     }
 
-    if (isAlreadyConnected) {
+    if (isAlreadyConnected && glassesHotspot) {
       console.log("[GallerySyncService] 🚀 Skipping hotspot request - already connected!")
-      const hotspotInfo: HotspotInfo = {
-        ssid: glassesStore.hotspotSsid,
-        password: glassesStore.hotspotPassword,
-        ip: glassesStore.hotspotGatewayIp,
-      }
+      const hotspotInfo: HotspotInfo = glassesHotspot
       store.setHotspotInfo(hotspotInfo)
       store.setSyncState("connecting_wifi")
       await this.startFileDownload(hotspotInfo)
@@ -639,7 +660,7 @@ class GallerySyncService {
     store.setSyncServiceOpenedHotspot(true)
 
     // Set timeout for hotspot request - if we don't get a response, fail gracefully
-    this.hotspotRequestTimeout = BackgroundTimer.setTimeout(() => {
+    this.hotspotRequestTimeout = BgTimer.setTimeout(() => {
       const currentStore = useGallerySyncStore.getState()
       if (currentStore.syncState === "requesting_hotspot") {
         console.error("[GallerySyncService] Hotspot request timed out")
@@ -652,13 +673,13 @@ class GallerySyncService {
 
     try {
       console.log("[GallerySyncService]   📤 Sending hotspot enable command to glasses...")
-      await CoreModule.setHotspotState(true)
+      await BluetoothSdk.setHotspotState(true)
       console.log("[GallerySyncService]   ✅ Hotspot request sent successfully")
       console.log("[GallerySyncService]   ⏳ Waiting for hotspot_status_change event (timeout: 30s)...")
     } catch (error) {
       // Clear the timeout since we got an immediate error
       if (this.hotspotRequestTimeout) {
-        BackgroundTimer.clearTimeout(this.hotspotRequestTimeout!)
+        BgTimer.clearTimeout(this.hotspotRequestTimeout!)
         this.hotspotRequestTimeout = null
       }
       console.error("[GallerySyncService]   ❌ Failed to request hotspot:", error)
@@ -718,7 +739,7 @@ class GallerySyncService {
     const store = useGallerySyncStore.getState()
 
     // Pre-flight: do not attempt WiFi connection if Bluetooth already disconnected
-    if (!useGlassesStore.getState().connected) {
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) {
       console.log("[GallerySyncService] ❌ Glasses not connected - aborting WiFi connection")
       store.setSyncError("Glasses disconnected")
       gallerySyncNotifications.showSyncError("Glasses disconnected")
@@ -878,7 +899,7 @@ class GallerySyncService {
 
               // Don't wait after last attempt
               if (i < maxVerifyAttempts - 1) {
-                await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, 500))
+                await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 500))
               }
             }
 
@@ -910,8 +931,8 @@ class GallerySyncService {
             const finalSSID = await WifiManager.getCurrentWifiSSID()
             console.log(`[GallerySyncService] 📶 Final SSID check before download: "${finalSSID}"`)
             if (Platform.OS === "android") {
-              // Some local builds can have stale generated typings for the core module.
-              ;(CoreModule as any).logCurrentWifiFrequency?.()
+              // Some local builds can have stale generated typings for the Bluetooth SDK module.
+              ;(BluetoothSdk as any).logCurrentWifiFrequency?.()
             }
             if (finalSSID !== hotspotInfo.ssid) {
               console.error(
@@ -940,14 +961,14 @@ class GallerySyncService {
 
                 // Try to reach the glasses health endpoint with a short timeout
                 const probeController = new AbortController()
-                const probeTimeout = BackgroundTimer.setTimeout(() => probeController.abort(), 1000) // 1 second timeout per probe
+                const probeTimeout = BgTimer.setTimeout(() => probeController.abort(), 1000) // 1 second timeout per probe
 
                 const probeStartTime = Date.now()
                 const probeResponse = await fetch(`http://${hotspotInfo.ip}:8089/api/health`, {
                   method: "GET",
                   signal: probeController.signal,
                 })
-                BackgroundTimer.clearTimeout(probeTimeout)
+                BgTimer.clearTimeout(probeTimeout)
 
                 const probeDuration = Date.now() - probeStartTime
                 console.log(
@@ -973,7 +994,7 @@ class GallerySyncService {
 
               // Wait 500ms before next probe (unless this was the last attempt)
               if (probeNum < maxProbeAttempts) {
-                await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, 500))
+                await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 500))
               }
             }
 
@@ -1106,7 +1127,7 @@ class GallerySyncService {
             console.log(`[GallerySyncService] 🔄 Preparing retry ${attempt + 1}/${TIMING.IOS_WIFI_MAX_RETRIES}`)
             console.log(`[GallerySyncService] ⏱️ Waiting ${TIMING.IOS_WIFI_RETRY_DELAY_MS}ms (${reason})`)
             console.log(`[GallerySyncService] 📱 App currently: ${AppState.currentState}`)
-            await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, TIMING.IOS_WIFI_RETRY_DELAY_MS))
+            await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), TIMING.IOS_WIFI_RETRY_DELAY_MS))
             console.log(`[GallerySyncService] ⏱️ Wait complete - starting retry`)
           } else {
             console.error("[GallerySyncService] 🚫 No more retry attempts available")
@@ -1150,6 +1171,61 @@ class GallerySyncService {
     }
   }
 
+  private async fetchSyncManifest(clientId: string, lastSyncTime: number): Promise<SyncManifestData> {
+    const syncResponse = await asgCameraApi.syncWithServer(clientId, lastSyncTime, true)
+    return (syncResponse.data || syncResponse) as SyncManifestData
+  }
+
+  /**
+   * Resolve sync manifest: detect skew, optionally fix clock, retry full sync when needed.
+   */
+  private async resolveSyncManifest(
+    clientId: string,
+    lastSyncTime: number,
+  ): Promise<{syncData: SyncManifestData; usedFullSync: boolean} | null> {
+    const store = useGallerySyncStore.getState()
+    let syncData = await this.fetchSyncManifest(clientId, lastSyncTime)
+    let clockFixed = false
+
+    const skewOnFirst = detectClockSkew(Date.now(), syncData.server_time, lastSyncTime)
+    if (skewOnFirst.skewed) {
+      clockFixed = await fixGlassesClockIfSkewed(syncData.server_time, lastSyncTime)
+      if (clockFixed) {
+        console.log("[GallerySyncService]   🔄 Retrying /api/sync with last_sync_time=0 after clock fix")
+        syncData = await this.fetchSyncManifest(clientId, 0)
+      }
+    }
+
+    if (!isSyncManifestEmpty(syncData)) {
+      return {syncData, usedFullSync: clockFixed || lastSyncTime === 0}
+    }
+
+    // Guard against re-firing the full-sync retry every sync when glasses retain leftover files
+    // from a failed delete-from-glasses: at most one retry per (client_id, last_sync_time) pair
+    // per process lifetime. Without this, we'd re-download the entire gallery on every sync.
+    const retryKey = `${clientId}:${lastSyncTime}`
+    const alreadyRetriedForThisWatermark = this.lastFullSyncRetryKey === retryKey
+    if (!clockFixed && store.glassesHasContent && lastSyncTime !== 0 && !alreadyRetriedForThisWatermark) {
+      this.lastFullSyncRetryKey = retryKey
+      console.log("[GallerySyncService]   🔄 Empty sync but glasses report content — retrying with last_sync_time=0")
+      syncData = await this.fetchSyncManifest(clientId, 0)
+      if (!isSyncManifestEmpty(syncData)) {
+        return {syncData, usedFullSync: true}
+      }
+    } else if (!clockFixed && store.glassesHasContent && lastSyncTime !== 0 && alreadyRetriedForThisWatermark) {
+      console.warn(
+        "[GallerySyncService]   ⚠️ Glasses still report content but /api/sync empty — already retried this watermark, skipping to avoid re-download loop",
+      )
+    }
+
+    if (store.glassesHasContent) {
+      console.warn("[GallerySyncService]   ⚠️ Empty sync while glasses still report gallery content")
+      return null
+    }
+
+    return {syncData, usedFullSync: false}
+  }
+
   /**
    * Start downloading files
    */
@@ -1182,15 +1258,33 @@ class GallerySyncService {
 
       console.log("[GallerySyncService]   📡 Calling /api/sync endpoint...")
       const syncStartTime = Date.now()
-      const syncResponse = await asgCameraApi.syncWithServer(syncState.client_id, syncState.last_sync_time, true)
+      const resolved = await this.resolveSyncManifest(syncState.client_id, syncState.last_sync_time)
       const _syncDuration = Date.now() - syncStartTime
       console.log(`[GallerySyncService]   ✅ /api/sync completed in ${_syncDuration}ms`)
 
-      const syncData = syncResponse.data || syncResponse
+      if (!resolved) {
+        const syncErrorMessage = "Could not sync gallery — try again"
+        store.setSyncError(syncErrorMessage)
+        await gallerySyncNotifications.showSyncError(syncErrorMessage)
+        if (store.syncServiceOpenedHotspot) {
+          await this.closeHotspot()
+        }
+        return
+      }
+
+      const {syncData} = resolved
 
       console.log("[GallerySyncService]   📋 Sync response received:")
       console.log(`[GallerySyncService]      - Server time: ${syncData.server_time}`)
       console.log(`[GallerySyncService]      - Changed files: ${syncData.changed_files?.length || 0}`)
+      console.log(`[GallerySyncService]      - Captures: ${syncData.captures?.length || 0}`)
+
+      if (isSyncManifestEmpty(syncData)) {
+        console.log("[GallerySyncService]   ✅ No new files to sync - already up to date!")
+        store.setSyncComplete()
+        await this.onSyncComplete(0, 0)
+        return
+      }
 
       // Detect API version and route to appropriate download path
       const useCaptures = syncData.api_version === 2 && syncData.captures && syncData.captures.length > 0
@@ -1239,11 +1333,6 @@ class GallerySyncService {
 
         console.log("[GallerySyncService]   🚀 Beginning capture download execution...")
         await this.executeCaptureDownload(captures, syncData.server_time)
-      } else if (!syncData.changed_files || syncData.changed_files.length === 0) {
-        console.log("[GallerySyncService]   ✅ No new files to sync - already up to date!")
-        store.setSyncComplete()
-        await this.onSyncComplete(0, 0)
-        return
       } else {
         // Legacy flat file sync path
         const filesToSync = syncData.changed_files
@@ -1493,10 +1582,14 @@ class GallerySyncService {
       await mediaProcessingQueue.waitUntilDrained()
       console.log("[GallerySyncService]   ✅ Processing queue drained")
 
-      // Update sync state — only advance watermark if all files succeeded.
+      // Update sync state — only advance watermark if files were downloaded.
       // If any failed, set it before the oldest failure so they get retried.
       let syncWatermark = serverTime
-      if (downloadResult.failed.length > 0) {
+      if (downloadedCount === 0) {
+        const currentSyncState = await localStorageService.getSyncState()
+        syncWatermark = currentSyncState.last_sync_time
+        console.log("[GallerySyncService]   ℹ️ No files downloaded — last_sync_time unchanged")
+      } else if (downloadResult.failed.length > 0) {
         const failedSet = new Set(downloadResult.failed)
         let oldestFailed = Infinity
         for (const f of files) {
@@ -1511,14 +1604,30 @@ class GallerySyncService {
             `[GallerySyncService]   ⚠️ ${downloadResult.failed.length} files failed — sync watermark set to ${syncWatermark} instead of ${serverTime}`,
           )
         }
+      } else {
+        let maxModified = 0
+        const failedSet = new Set(downloadResult.failed)
+        for (const f of files) {
+          if (failedSet.has(f.name)) continue
+          const ts = typeof f.modified === "number" ? f.modified : parseInt(String(f.modified), 10)
+          if (!isNaN(ts)) maxModified = Math.max(maxModified, ts)
+        }
+        if (maxModified > 0) {
+          syncWatermark = maxModified
+        }
       }
       console.log("[GallerySyncService]   💾 Updating sync state in local storage...")
       const currentSyncState = await localStorageService.getSyncState()
-      await localStorageService.updateSyncState({
-        last_sync_time: syncWatermark,
-        total_downloaded: currentSyncState.total_downloaded + downloadedCount,
-        total_size: currentSyncState.total_size + downloadResult.total_size,
-      })
+      // Persist if we downloaded anything OR if a failure needs the watermark rolled back.
+      // (Otherwise a clock-skew-triggered full sync where every legacy file fails would
+      // leave the stale future watermark on disk and never retry those files.)
+      if (downloadedCount > 0 || downloadResult.failed.length > 0) {
+        await localStorageService.updateSyncState({
+          last_sync_time: syncWatermark,
+          total_downloaded: currentSyncState.total_downloaded + downloadedCount,
+          total_size: currentSyncState.total_size + downloadResult.total_size,
+        })
+      }
       console.log("[GallerySyncService]   ✅ Sync state updated:")
       console.log(
         `[GallerySyncService]      - New last_sync_time: ${syncWatermark} (${new Date(syncWatermark).toISOString()})`,
@@ -1576,6 +1685,7 @@ class GallerySyncService {
     let failedCount = 0
     let totalSizeDownloaded = 0
     let oldestFailedTimestamp = Infinity // Track for sync watermark
+    let maxSuccessfulTimestamp = 0
 
     const shouldAutoSave = await gallerySettingsService.getAutoSaveToCameraRoll()
     const shouldProcessImages = useSettingsStore.getState().getSetting(SETTINGS.media_post_processing.key)
@@ -1603,6 +1713,8 @@ class GallerySyncService {
             `[GallerySyncService]   📦 Downloading capture ${i + 1}/${captures.length}: ${capture.capture_id} (${capture.files.length} files)`,
           )
 
+          validateCaptureMetadataForDownload(capture)
+
           // Download all files in this capture
           const result = await asgCameraApi.downloadCapture(
             capture,
@@ -1623,6 +1735,9 @@ class GallerySyncService {
 
           totalSizeDownloaded += capture.total_size
           downloadedCount++
+          if (capture.timestamp > maxSuccessfulTimestamp) {
+            maxSuccessfulTimestamp = capture.timestamp
+          }
 
           // Enqueue for processing (runs concurrently with next download)
           // Delete from glasses happens after processing completes to avoid data loss on crash
@@ -1677,23 +1792,56 @@ class GallerySyncService {
       await mediaProcessingQueue.waitUntilDrained()
       console.log("[GallerySyncService]   ✅ Processing queue drained")
 
-      // Update sync state — only advance the watermark to serverTime if all
-      // captures succeeded. If any failed, set it just before the oldest failure
-      // so those captures are retried on the next sync.
-      const syncWatermark =
-        failedCount > 0 && oldestFailedTimestamp < Infinity
-          ? Math.max(0, oldestFailedTimestamp - 1)
-          : serverTime
+      // Reconcile failures from the processing queue. validateDownloadedMediaFile
+      // (post-download validation in mediaProcessingQueue) runs AFTER enqueue
+      // returns, so a failure there doesn't reach the per-capture catch above. The
+      // gallerySync store collects those failures via onFileFailed — pull them in
+      // here so the watermark holds them back for retry on the next sync.
+      const captureTimestampById = new Map<string, number>()
+      for (const c of captures) {
+        if (typeof c.timestamp === "number") {
+          captureTimestampById.set(c.capture_id, c.timestamp)
+        }
+      }
+      const failedSnapshot = useGallerySyncStore.getState().failedFiles
+      const observedFailures = new Set<string>(failedSnapshot)
+      for (const failedId of observedFailures) {
+        const ts = captureTimestampById.get(failedId)
+        if (ts === undefined) continue // failure from a different scope (e.g. file-level), skip
+        if (ts < oldestFailedTimestamp) {
+          oldestFailedTimestamp = ts
+        }
+      }
+      // failedCount should reflect the total set of failed captures from THIS batch.
+      const failedFromThisBatch = captures.filter((c) => observedFailures.has(c.capture_id)).length
+      if (failedFromThisBatch > failedCount) {
+        failedCount = failedFromThisBatch
+      }
+
+      // Update sync state — only advance watermark when captures were downloaded.
+      let syncWatermark = serverTime
       const currentSyncState = await localStorageService.getSyncState()
-      await localStorageService.updateSyncState({
-        last_sync_time: syncWatermark,
-        total_downloaded: currentSyncState.total_downloaded + downloadedCount,
-        total_size: currentSyncState.total_size + totalSizeDownloaded,
-      })
-      if (failedCount > 0) {
+      if (failedCount > 0 && oldestFailedTimestamp < Infinity) {
+        // Failures take priority — roll the watermark back before the oldest failure so it
+        // gets retried, regardless of whether anything else succeeded in this batch.
+        syncWatermark = Math.max(0, oldestFailedTimestamp - 1)
         console.log(
           `[GallerySyncService]   ⚠️ ${failedCount} captures failed — sync watermark set to ${syncWatermark} instead of ${serverTime} so they will be retried`,
         )
+      } else if (downloadedCount === 0) {
+        syncWatermark = currentSyncState.last_sync_time
+        console.log("[GallerySyncService]   ℹ️ No captures downloaded — last_sync_time unchanged")
+      } else if (maxSuccessfulTimestamp > 0) {
+        syncWatermark = maxSuccessfulTimestamp
+      }
+      // Persist if we downloaded anything OR if a failure needs the watermark rolled back
+      // (zero-byte / validation failures otherwise leave a stale watermark on disk).
+      if (downloadedCount > 0 || (failedCount > 0 && oldestFailedTimestamp < Infinity)) {
+        await localStorageService.updateSyncState({
+          last_sync_time: syncWatermark,
+          total_downloaded: currentSyncState.total_downloaded + downloadedCount,
+          total_size: currentSyncState.total_size + totalSizeDownloaded,
+        })
       }
 
       store.setSyncComplete()
@@ -1881,7 +2029,7 @@ class GallerySyncService {
     // sees syncState="complete" + hasContent=true and immediately resets to idle,
     // making it look like sync accomplished nothing (circular sync loop).
     console.log("[GallerySyncService]   ⏲️ Scheduling auto-reset to idle in 4 seconds...")
-    BackgroundTimer.setTimeout(async () => {
+    BgTimer.setTimeout(async () => {
       const currentStore = useGallerySyncStore.getState()
       if (currentStore.syncState === "complete") {
         console.log("[GallerySyncService]   🔄 Auto-resetting sync state to idle")
@@ -1912,7 +2060,7 @@ class GallerySyncService {
 
     // Clear timeout
     if (this.hotspotConnectionTimeout) {
-      BackgroundTimer.clearTimeout(this.hotspotConnectionTimeout!)
+      BgTimer.clearTimeout(this.hotspotConnectionTimeout!)
       this.hotspotConnectionTimeout = null
     }
 
@@ -1941,7 +2089,7 @@ class GallerySyncService {
 
     try {
       console.log("[GallerySyncService] Closing hotspot...")
-      await CoreModule.setHotspotState(false)
+      await BluetoothSdk.setHotspotState(false)
       store.setSyncServiceOpenedHotspot(false)
       store.setHotspotInfo(null)
       console.log("[GallerySyncService] Hotspot closed")
@@ -2000,7 +2148,7 @@ class GallerySyncService {
    */
   async queryGlassesGalleryStatus(): Promise<void> {
     try {
-      await CoreModule.queryGalleryStatus()
+      await BluetoothSdk.queryGalleryStatus()
     } catch (error) {
       console.error("[GallerySyncService] Failed to query gallery status:", error)
     }

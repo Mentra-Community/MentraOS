@@ -69,5 +69,8 @@
     "tsx": "^4.19.3",
     "typescript": "^5.2.0",
     "typescript-eslint": "^8.24.0"
+  },
+  "patchedDependencies": {
+    "@soniox/node@2.0.0": "patches/@soniox%2Fnode@2.0.0.patch"
   }
 }

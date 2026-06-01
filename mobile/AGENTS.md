@@ -23,6 +23,21 @@ MentraOS Manager is a React Native app built with Expo and expo-router for file-
 - Upload to Google Play: `bun upload:google:play` (builds AAB and uploads to Play Store)
 - Build iOS archive: `bun build:ios:archive`
 
+### Versioning
+
+The user-facing app version (`CFBundleShortVersionString` on iOS,
+`versionName` on Android) comes from `EXPO_PUBLIC_MENTRAOS_VERSION` in
+`.env`. **The CI staging-builds workflow uses `.env.example`** (it does
+`cp .env.example .env` on each runner), so:
+
+- Bump `EXPO_PUBLIC_MENTRAOS_VERSION` in **both `.env` and `.env.example`**
+  whenever starting work on a new version (e.g. 2.10 → 2.11). Otherwise
+  CI keeps building the old train and TestFlight will reject with
+  "train is closed for new build submissions" once that train is approved.
+- The build number (`CFBundleVersion` / `versionCode`) is derived at
+  build time from wall-clock seconds — see `mobile/scripts/build-number.mjs`.
+  Nothing to bump manually; just don't downgrade `EXPO_PUBLIC_MENTRAOS_VERSION`.
+
 ### Testing
 
 - Run tests: `bun test`
@@ -55,7 +70,7 @@ bun ios
 - **Routing**: File-based routing with expo-router (no more src/screens folder)
 - **Imports**: Absolute paths instead of relative paths
 - **Components**: Categorized into folders or misc/ folder
-- **Theming**: Components use theme/themed from useAppTheme() hook
+- **Theming**: Components use theme/themed from useAppTheme() hook, but strongly prefer to use tailwindcss
 - **Entry Point**: expo-router/entry instead of traditional App.js
 
 ### File Structure
@@ -63,7 +78,7 @@ bun ios
 - `src/app/` - File-based routes (expo-router)
 - `src/components/` - Reusable components (categorized by feature)
 - `src/contexts/` - React Context providers
-- `src/utils/` - Utility functions and helpers
+- `src/utils/` - Utility functions and helpers, always put new utilities into an existing folder or make one
 - `src/theme/` - Theme configuration and styling
 
 ## Code Style

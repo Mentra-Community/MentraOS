@@ -15,11 +15,19 @@ const TOGGLE_MAX_X = 70
 const OPEN_MIN_X = 0
 const OPEN_PADDING = 80
 
+type ConsoleLogType = "log" | "warn" | "error"
+
+type ConsoleLogEntry = {
+  type: ConsoleLogType
+  message: string
+  timestamp: string
+}
+
 export const ConsoleLogger = () => {
   const {themed} = useAppTheme()
-  const [logs, setLogs] = useState([])
+  const [logs, setLogs] = useState<ConsoleLogEntry[]>([])
   const [isVisible, setIsVisible] = useState(false)
-  const scrollViewRef = useRef(null)
+  const scrollViewRef = useRef<ScrollView | null>(null)
   const [debugConsole] = useSetting(SETTINGS.debug_console.key)
   const consoleOverrideSetup = useRef(false)
   const isAtBottom = useRef(true)
@@ -115,7 +123,7 @@ export const ConsoleLogger = () => {
       const originalWarn = console.warn
       const originalError = console.error
 
-      const addLog = (type: any, args: any[]) => {
+      const addLog = (type: ConsoleLogType, args: unknown[]) => {
         const message = args
           .map((arg) => (typeof arg === "object" ? JSON.stringify(arg, null, 2) : String(arg)))
           .join(" ")

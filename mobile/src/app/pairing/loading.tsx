@@ -1,5 +1,5 @@
 import {useRoute} from "@react-navigation/native"
-import CoreModule, {PairFailureEvent, GlassesNotReadyEvent} from "core"
+import BluetoothSdk, {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {View} from "react-native"
 
@@ -8,12 +8,13 @@ import {Header} from "@/components/ignite/Header"
 import {Screen} from "@/components/ignite/Screen"
 import GlassesPairingLoader from "@/components/glasses/GlassesPairingLoader"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
-import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
-import {useGlassesStore} from "@/stores/glasses"
+import {selectGlassesReady, useGlassesStore} from "@/stores/glasses"
+import {useNavigationStore} from "@/stores/navigation"
 
 export default function GlassesPairingLoadingScreen() {
-  const {replace, goBack} = useNavigationHistory()
+  const {replace, goBack} = useNavigationStore.getState()
   const route = useRoute()
   const {deviceModel, deviceName} = route.params as {deviceModel: string; deviceName?: string}
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
@@ -22,7 +23,7 @@ export default function GlassesPairingLoadingScreen() {
   const showGlassesBootingRef = useRef(false)
   const hasSubmittedTimeoutIncidentRef = useRef(false)
   const hasNavigatedRef = useRef(false)
-  const glassesFullyBooted = useGlassesStore((state) => state.fullyBooted)
+  const glassesFullyBooted = useGlassesStore(selectGlassesReady)
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
 
   const clearPairingTimeout = useCallback(() => {
@@ -33,7 +34,7 @@ export default function GlassesPairingLoadingScreen() {
   }, [])
 
   useEffect(() => {
-    let sub = CoreModule.addListener("glasses_not_ready", (_event: GlassesNotReadyEvent) => {
+    let sub = BluetoothSdk.addListener("glasses_not_ready", (_event: GlassesNotReadyEvent) => {
       setShowGlassesBooting(true)
     })
     return () => {
@@ -51,14 +52,18 @@ export default function GlassesPairingLoadingScreen() {
   const handlePairFailure = useCallback(
     (error: string) => {
       clearPairingTimeout()
-      CoreModule.forget()
+      BluetoothSdk.forget()
+      if (error === "errors:pairNeedDisconnect") {
+        replace("/pairing/unpair-even", {deviceModel: deviceModel})
+        return
+      }
       replace("/pairing/failure", {error: error, deviceModel: deviceModel})
     },
     [clearPairingTimeout, replace, deviceModel],
   )
 
   useEffect(() => {
-    let sub = CoreModule.addListener("pair_failure", (event: PairFailureEvent) => {
+    let sub = BluetoothSdk.addListener("pair_failure", (event: PairFailureEvent) => {
       handlePairFailure(event.error)
     })
     return () => {

@@ -8,7 +8,42 @@ export const SentryNavigationIntegration = Sentry.reactNavigationIntegration({
   ignoreEmptyBackNavigationTransactions: true, // default: true
 })
 
+/**
+ * Demote known third-party fatal errors to non-fatal Sentry reports so the
+ * app doesn't get torn down by them. Currently filters:
+ *   - PostHog session-id uuidv7 generation throwing `RangeError: invalid field value`
+ *     (MENTRA-OS-1SE). Affects devices with clock skew; can't be fixed from app code
+ *     without upgrading @posthog/core.
+ */
+const installKnownErrorFilter = () => {
+  const ErrorUtils = (global as any).ErrorUtils
+  if (!ErrorUtils || typeof ErrorUtils.getGlobalHandler !== "function") return
+  const previous = ErrorUtils.getGlobalHandler()
+  ErrorUtils.setGlobalHandler((error: any, isFatal?: boolean) => {
+    try {
+      const msg = error?.message ?? String(error)
+      const stack = error?.stack ?? ""
+      const isPosthogUuidV7 =
+        msg === "invalid field value" &&
+        (stack.includes("fromFieldsV7") || stack.includes("uuidv7") || stack.includes("getSessionId"))
+      if (isPosthogUuidV7) {
+        Sentry.captureException(error, {
+          tags: {filtered: "posthog_uuidv7_rangeerror"},
+          level: "warning",
+        })
+        return
+      }
+    } catch {
+      // fall through to default handler on any meta-error
+    }
+    previous?.(error, isFatal)
+  })
+}
+
 export const SentrySetup = () => {
+  // Always install — the filter prevents a known-fatal PostHog bug from killing
+  // the app even when Sentry itself isn't initialized.
+  installKnownErrorFilter()
   // Only initialize Sentry if DSN is provided
   const sentryDsn = process.env.EXPO_PUBLIC_SENTRY_DSN
   const isChina = useSettingsStore.getState().getSetting(SETTINGS.china_deployment.key)

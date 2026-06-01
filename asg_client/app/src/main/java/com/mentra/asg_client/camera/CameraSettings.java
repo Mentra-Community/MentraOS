@@ -12,8 +12,8 @@ import com.mentra.asg_client.settings.AsgSettings;
 import java.util.List;
 
 /**
- * Camera settings helper for MediaTek vendor-specific features (ZSL, MFNR)
- * Handles vendor key detection and configuration for enhanced photo quality
+ * Camera settings helper for MediaTek vendor-specific features (ZSL, MFNR).
+ * Handles vendor key detection and configuration for enhanced photo quality.
  */
 public class CameraSettings {
   private static final String TAG = "CameraSettings";
@@ -33,7 +33,7 @@ public class CameraSettings {
   private CaptureRequest.Key<int[]> mKeyEisMode;  // EIS for video (optional)
 
   private final Context mContext;
-  public final AsgSettings mAsgSettings;  // Public for access in CameraNeo
+  public final AsgSettings mAsgSettings;  // Public for access in CameraNeoService
   private CameraCharacteristics mCharacteristics;
 
   public CameraSettings(Context context) {
@@ -101,8 +101,8 @@ public class CameraSettings {
   }
 
   /**
-   * Configure preview builder with ZSL enabled (for photo preview)
-   * ZSL must be enabled during preview to fill the circular buffer for MFNR
+   * Configure preview builder with ZSL enabled (for photo preview).
+   * ZSL must be enabled during preview to fill the circular buffer for MFNR.
    * @param builder Capture request builder for preview
    */
   public void configurePreviewBuilder(CaptureRequest.Builder builder) {
@@ -125,13 +125,13 @@ public class CameraSettings {
     }
 
     Log.d(TAG, "🔍 DIAGNOSTIC: Configuring preview builder with ZSL");
-    
+
     // Enable ZSL during preview to fill circular buffer
     // ZSL works by: preview accumulates full-resolution frames -> capture reads from buffer -> MFNR gets 6 frames for merging
     // If ZSL is disabled during preview, buffer will be empty and MFNR cannot get enough frames!
     builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, true);
     Log.d(TAG, "🔍 Set CONTROL_ENABLE_ZSL = true in preview builder");
-    
+
     if (mKeyZslMode != null) {
       byte[] zslMode = new byte[]{1};
       builder.set(mKeyZslMode, zslMode);
@@ -181,7 +181,7 @@ public class CameraSettings {
   }
 
   /**
-   * Configure capture builder with ZSL + MFNR enabled (for photo capture)
+   * Configure capture builder with ZSL + MFNR enabled (for photo capture).
    * @param builder Capture request builder for still capture
    */
   public void configureCaptureBuilder(CaptureRequest.Builder builder) {
@@ -200,12 +200,12 @@ public class CameraSettings {
     }
 
     Log.d(TAG, "🔍 DIAGNOSTIC: Configuring capture builder with ZSL/MFNR");
-    
+
     // Enable ZSL for capture
     if (zslEnabled && isZslSupported()) {
       builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, true);
       Log.d(TAG, "🔍 Set CONTROL_ENABLE_ZSL = true in capture builder");
-      
+
       if (mKeyZslMode != null) {
         byte[] zslMode = new byte[]{1};
         builder.set(mKeyZslMode, zslMode);

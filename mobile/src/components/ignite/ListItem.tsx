@@ -1,4 +1,4 @@
-import {forwardRef, ReactElement, ComponentType} from "react"
+import {forwardRef, ReactElement} from "react"
 import {StyleProp, TextStyle, TouchableOpacity, TouchableOpacityProps, View, ViewStyle} from "react-native"
 
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -134,7 +134,7 @@ export const ListItem = forwardRef<View, ListItemProps>(function ListItem(props:
 
   const $touchableStyles = [$styles.row, $touchableStyle, {minHeight: height}, style]
 
-  const Wrapper: ComponentType<TouchableOpacityProps> = isTouchable ? TouchableOpacity : View
+  const Wrapper = isTouchable ? TouchableOpacity : View
 
   return (
     <View ref={ref} style={themed($containerStyles)}>

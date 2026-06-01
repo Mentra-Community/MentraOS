@@ -4,24 +4,24 @@ import {ConnectDeviceButton} from "@/components/glasses/ConnectDeviceButton"
 import {NotConnectedInfo} from "@/components/glasses/info/NotConnectedInfo"
 import {Header, Screen, Icon} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {useGlassesStore} from "@/stores/glasses"
+import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 import {Group} from "@/components/ui"
 import {RouteButton} from "@/components/ui/RouteButton"
 
 import {Capabilities, DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import CoreModule from "core"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
 import {BatteryStatus} from "@/components/glasses/info/BatteryStatus"
 import {EmptyState} from "@/components/glasses/info/EmptyState"
 import {ButtonSettings} from "@/components/glasses/settings/ButtonSettings"
 import BrightnessSetting from "@/components/settings/BrightnessSetting"
-import {useApplets, useAppletStatusStore} from "@/stores/applets"
+import {useApps} from "@mentra/island"
 // import showAlert from "@/utils/AlertUtils"
 import {showAlert} from "@/contexts/ModalContext"
 
@@ -35,13 +35,13 @@ function DeviceSettings() {
   )
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [defaultButtonActionApp, setDefaultButtonActionApp] = useSetting(SETTINGS.default_button_action_app.key)
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
 
-  const {push, goBack} = useNavigationHistory()
-  const applets = useApplets()
+  const {push} = useNavigationStore.getState()
+  const applets = useApps()
   const features: Capabilities = getModelCapabilities(defaultWearable)
 
-  const wifiLocalIp = useGlassesStore((state) => state.wifiSsid)
+  const wifiLocalIp = useGlassesStore((state) => (state.wifi.state === "connected" ? state.wifi.localIp : undefined))
   const bluetoothName = useGlassesStore((state) => state.bluetoothName)
   const buildNumber = useGlassesStore((state) => state.buildNumber)
   const otaProgress = useGlassesStore((state) => state.otaProgress)
@@ -56,7 +56,7 @@ function DeviceSettings() {
       options: {allowDismiss: false},
     })
     if (result === 1) {
-      CoreModule.forget()
+      BluetoothSdk.forget()
       // useAppletStatusStore.getState().stopAllApplets()
       // useAppletStatusStore.getState().refreshApplets()
       // // give us a second to forget the glasses before going back
@@ -75,7 +75,7 @@ function DeviceSettings() {
     })
 
     if (result === 1) {
-      CoreModule.disconnect()
+      BluetoothSdk.disconnect()
     }
   }
 
@@ -150,8 +150,8 @@ function DeviceSettings() {
 
       {/* Camera Settings button moved to Gallery Settings page */}
 
-      {/* Button Settings - Only show for glasses with configurable buttons */}
-      {glassesConnected && defaultWearable && features?.hasButton && (
+      {/* Button Settings - Mentra Live only (G2's button is a touchpad and conflicts with the native menu) */}
+      {glassesConnected && defaultWearable === DeviceTypes.LIVE && (
         <ButtonSettings
           enabled={defaultButtonActionEnabled}
           selectedApp={defaultButtonActionApp}
@@ -239,8 +239,8 @@ function DeviceSettings() {
 export default function Glasses() {
   const {theme} = useAppTheme()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const {goBack} = useNavigationHistory()
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const {goBack} = useNavigationStore.getState()
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
 
   const formatGlassesTitle = (title: string) => title.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
   let pageSubtitle
@@ -273,6 +273,7 @@ export default function Glasses() {
         {!glassesConnected && defaultWearable && <NotConnectedInfo />}
         <Spacer height={theme.spacing.s6} />
         <DeviceSettings />
+        <Spacer height={theme.spacing.s8} />
       </ScrollView>
     </Screen>
   )

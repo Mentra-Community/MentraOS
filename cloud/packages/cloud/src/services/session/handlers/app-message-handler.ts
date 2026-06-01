@@ -38,6 +38,12 @@ import {
 import App from "../../../models/app.model";
 import { appCache } from "../../core/app-cache.service";
 import { SimplePermissionChecker } from "../../permissions/simple-permission-checker";
+import {
+  appMessageTimerName,
+  cascadeDiagnostics,
+  hashUserId,
+  logSlowAppMessage,
+} from "../../metrics/cascade-diagnostics";
 import { metricsService } from "../../metrics/MetricsService";
 import { IWebSocket, WebSocketReadyState } from "../../websocket/types";
 import type UserSession from "../UserSession";
@@ -91,6 +97,9 @@ export async function handleAppMessage(
   message: AppToCloudMessage,
 ): Promise<void> {
   const logger = userSession.logger.child({ service: SERVICE_NAME });
+  const startedAt = performance.now();
+  const messageType = String((message as any)?.type ?? "unknown");
+  const timerName = appMessageTimerName(messageType);
 
   try {
     switch (message.type) {
@@ -193,6 +202,16 @@ export async function handleAppMessage(
   } catch (error) {
     logger.error({ error, type: message.type }, "Error handling App message");
     throw error;
+  } finally {
+    const durationMs = performance.now() - startedAt;
+    cascadeDiagnostics.addTimer(timerName, durationMs);
+    cascadeDiagnostics.increment(`${timerName}_count`);
+    logSlowAppMessage({
+      messageType,
+      packageName: (message as any)?.packageName,
+      userIdHash: hashUserId(userSession.userId),
+      durationMs,
+    });
   }
 }
 
@@ -345,15 +364,16 @@ async function handleCameraFovSet(
     }
 
     // Validate FOV and ROI values before forwarding to glasses
-    const SUPPORTED_FOV = [82, 92, 102, 118];
+    const MIN_FOV = 62;
+    const MAX_FOV = 118;
     const VALID_ROI_POSITIONS: CameraRoiPosition[] = ["center", "top", "bottom"];
     const { fov, roiPosition } = message;
-    if (!SUPPORTED_FOV.includes(fov) || !VALID_ROI_POSITIONS.includes(roiPosition)) {
+    if (fov < MIN_FOV || fov > MAX_FOV || !VALID_ROI_POSITIONS.includes(roiPosition)) {
       logger.warn({ fov, roiPosition, packageName: message.packageName }, "Invalid camera FOV/ROI values");
       sendError(
         appWebsocket,
         AppErrorCode.MALFORMED_MESSAGE,
-        `Invalid FOV/ROI: fov must be one of [${SUPPORTED_FOV.join(", ")}], roiPosition must be one of ${VALID_ROI_POSITIONS.map((p) => `"${p}"`).join(", ")}`,
+        `Invalid FOV/ROI: fov must be between ${MIN_FOV} and ${MAX_FOV}, roiPosition must be one of ${VALID_ROI_POSITIONS.map((p) => `"${p}"`).join(", ")}`,
         logger,
       );
       return;

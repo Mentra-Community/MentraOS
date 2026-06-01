@@ -1,94 +1,85 @@
 import {useLocalSearchParams} from "expo-router"
-import {useRef, useState, useEffect} from "react"
-import {View, StyleSheet} from "react-native"
-import Animated, {useSharedValue, useAnimatedStyle, withTiming, runOnJS} from "react-native-reanimated"
-import {Screen, Text} from "@/components/ignite"
-import LoadingOverlay from "@/components/ui/LoadingOverlay"
-import {useAppletStatusStore} from "@/stores/applets"
-import {Image} from "expo-image"
-import composer from "@/services/Composer"
-import LocalMiniApp from "@/components/home/LocalMiniApp"
-import {scheduleOnRN} from "react-native-worklets"
-import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useCallback, useEffect, useRef, useState} from "react"
+import {Platform, View} from "react-native"
 
+import {Text} from "@/components/ignite"
+import LocalMiniappView, {type LocalMiniappViewHandle} from "@/components/miniapp/LocalMiniappView"
+import {useNavigationStore} from "@/stores/navigation"
+import {useRegisterCapsule} from "@/stores/capsule"
+
+/**
+ * Route mount for a DEV local miniapp (QR scanner, developer-url, dev-offline,
+ * catalog launch). Installed local miniapps are foregrounded through the
+ * <Compositor /> overlay instead (see AppSwitcher → setForeground); this route
+ * stays for the dev flows because the dev app often isn't in the apps store
+ * yet — it gets installed during LocalMiniappView's launch.
+ *
+ * The route owns the capsule button + React-Navigation back-gesture wiring
+ * (the Compositor owns those for the overlay path). LocalMiniappView owns the
+ * WebView + JSContext lifecycle.
+ */
 export default function LocalMiniAppPage() {
-  const {appName, packageName, version} = useLocalSearchParams()
-  const viewShotRef = useRef<View>(null)
-  // const [html, setHtml] = useState<string | null>(null)
-  // const [showLoadingOverlay, setShowLoadingOverlay] = useState(true)
-  // const {push} = useNavigationHistory()
+  const {appName, packageName, version, devUrl, iconUrl, devPort} = useLocalSearchParams<{
+    appName: string
+    packageName: string
+    version?: string
+    devUrl?: string
+    iconUrl?: string
+    devPort?: string
+  }>()
+  const {goBack, setForceGestureEnabled} = useNavigationStore.getState()
 
-  // const contentOpacity = useSharedValue(0)
-  // const loadingOpacity = useSharedValue(1)
+  const goBackRef = useRef(goBack)
+  goBackRef.current = goBack
 
-  // const contentAnimatedStyle = useAnimatedStyle(() => ({
-  //   opacity: contentOpacity.value,
-  // }))
+  const viewRef = useRef<LocalMiniappViewHandle | null>(null)
+  const viewShotRef = useRef<View | null>(null)
+  const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
 
-  // const loadingAnimatedStyle = useAnimatedStyle(() => ({
-  //   opacity: loadingOpacity.value,
-  // }))
+  // Drive React Navigation's swipe-back gesture: enabled only when the WebView
+  // has no in-app history. Mirrors /applet/webview so iOS users get the native
+  // pop-gesture animation when exiting the miniapp.
+  useEffect(() => {
+    setForceGestureEnabled(!webViewCanGoBack)
+    return () => setForceGestureEnabled(false)
+  }, [webViewCanGoBack, setForceGestureEnabled])
 
-  // if (typeof appName !== "string" || typeof packageName !== "string") {
-  //   return <Text>Missing required parameters</Text>
-  // }
+  // Capsule menu back press: pop the WebView's history first, else pop the
+  // route. Mirrors webview.tsx's handleWebViewBack for the two-layer path.
+  const handleCapsuleBack = useCallback(() => {
+    const popped = viewRef.current?.goBack() ?? false
+    if (popped) return
+    if (Platform.OS === "android") {
+      goBackRef.current()
+    }
+    // iOS handles the route pop via the gesture or the capsule's own
+    // captureScreenshot+exit pipeline inside useRegisterCapsule.
+  }, [])
 
-  // useEffect(() => {
-  //   const loadHtml = async () => {
-  //     const htmlRes = composer.getLocalMiniAppHtml(packageName, version as string)
-  //     if (htmlRes.is_ok()) {
-  //       setHtml(htmlRes.value)
-  //     } else {
-  //       console.error("LOCAL: Error getting local mini app html", htmlRes.error)
-  //       setHtml("<div>Error loading local mini app</div>")
-  //     }
+  useRegisterCapsule({
+    packageName: packageName ?? "",
+    viewShotRef,
+    visibleOnRoutes: ["/applet/local"],
+    onBackPress: handleCapsuleBack,
+  })
 
-  //     // Fade in content, fade out loading
-  //     contentOpacity.value = withTiming(1, {duration: 200})
-  //     loadingOpacity.value = withTiming(0, {duration: 600}, (finished) => {
-  //       if (finished) {
-  //         scheduleOnRN(() => setShowLoadingOverlay(false))
-  //       }
-  //     })
-  //   }
-  //   loadHtml()
-  // }, [packageName, version])
-
-  // const getScreenshot = () => {
-  //   const screenshot = useAppletStatusStore.getState().apps.find((a) => a.packageName === packageName)?.screenshot
-  //   if (screenshot) {
-  //     return <Image source={{uri: screenshot}} style={StyleSheet.absoluteFill} />
-  //   }
-  //   return null
-  // }
+  if (!packageName) {
+    return <Text text="Missing required parameters" />
+  }
 
   return (
-    <Screen preset="fixed" safeAreaEdges={["top"]} KeyboardAvoidingViewProps={{enabled: true}} ref={viewShotRef}>
-      {/* <MiniAppCapsuleMenu
+    <View ref={viewShotRef} className="flex-1 bg-background">
+      <LocalMiniappView
+        ref={viewRef}
         packageName={packageName}
-        viewShotRef={viewShotRef}
-        onEllipsisPress={() => {
-          push("/applet/settings", {
-            packageName: packageName as string,
-            appName: appName as string,
-            fromWebView: "true",
-          })
-        }}
+        appName={appName}
+        version={version}
+        devUrl={devUrl}
+        iconUrl={iconUrl}
+        devPort={devPort}
+        onExit={() => goBackRef.current()}
+        onCanGoBackChange={setWebViewCanGoBack}
       />
-      <View className="flex-1 -mx-6">
-        {showLoadingOverlay && (
-          <Animated.View style={[StyleSheet.absoluteFill, loadingAnimatedStyle, {zIndex: 1}]} pointerEvents="none">
-            {getScreenshot() || <LoadingOverlay />}
-          </Animated.View>
-        )}
-        <Animated.View style={[{flex: 1}, contentAnimatedStyle]}>
-          {html && <LocalMiniApp html={html} packageName={packageName} />}
-        </Animated.View>
-      </View> */}
-      <Text>
-        Local Mini App: {appName} {packageName} {version}
-      </Text>
-    </Screen>
+    </View>
   )
 }

@@ -18,24 +18,27 @@ The server package follows SOLID principles with a modular, interface-based arch
 
 ```
 server/
-├── interfaces/           # Interface definitions
+├── interfaces/                     # Interface definitions
 │   ├── ServerConfig.java
-│   ├── Logger.java
 │   ├── NetworkProvider.java
 │   ├── CacheManager.java
 │   └── RateLimiter.java
-├── impl/                # Concrete implementations
+├── core/                           # Abstract base + default implementations
+│   ├── AsgServer.java              # Abstract base server class
 │   ├── DefaultServerConfig.java
-│   ├── AndroidLogger.java
 │   ├── DefaultNetworkProvider.java
 │   ├── DefaultCacheManager.java
 │   ├── DefaultRateLimiter.java
 │   └── DefaultServerFactory.java
-├── AsgServer.java       # Abstract base server class
-├── CameraWebServer.java # Camera-specific implementation
-├── ServerManager.java   # Centralized server management
-└── README.md           # This documentation
+├── services/                       # Concrete server implementations
+│   ├── AsgCameraServer.java        # Camera HTTP server
+│   └── KeepAliveInputStream.java
+├── managers/
+│   └── AsgServerManager.java       # Centralized server lifecycle management
+└── README.md                       # This documentation
 ```
+
+`Logger` lives at `com.mentra.asg_client.logging.Logger`; the `AndroidLogger` implementation is in the `logging/` package.
 
 ## Core Components
 
@@ -56,9 +59,9 @@ server/
   - Error handling and security measures
   - Static file serving from assets
 
-### 2. **CameraWebServer** (Concrete Implementation)
+### 2. **AsgCameraServer** (Concrete Implementation)
 
-- **File**: `CameraWebServer.java`
+- **File**: `AsgCameraServer.java`
 - **Purpose**: Camera-specific web server extending AsgServer
 - **Features**:
   - RESTful API for photo capture and management
@@ -68,9 +71,9 @@ server/
   - Integration with existing CameraNeo system
   - Picture request listener for external integration
 
-### 3. **ServerManager** (Centralized Management)
+### 3. **AsgServerManager** (Centralized Management)
 
-- **File**: `ServerManager.java`
+- **File**: `AsgServerManager.java`
 - **Purpose**: Singleton manager for multiple server instances
 - **Features**:
   - Centralized server registration and lifecycle management
@@ -127,13 +130,13 @@ RateLimiter rateLimiter = new DefaultRateLimiter(100, 60000, logger);
 // Create server configuration
 ServerConfig config = new DefaultServerConfig.Builder()
     .port(8089)
-    .serverName("CameraWebServer")
+    .serverName("AsgCameraServer")
     .context(context)
     .corsEnabled(true)
     .build();
 
 // Create camera web server with dependencies
-CameraWebServer cameraServer = new CameraWebServer(
+AsgCameraServer cameraServer = new AsgCameraServer(
     config, networkProvider, cacheManager, rateLimiter, logger
 );
 
@@ -147,14 +150,14 @@ cameraServer.setOnPictureRequestListener(() -> {
 cameraServer.startServer();
 ```
 
-### Using ServerManager with Factory Pattern
+### Using AsgServerManager with Factory Pattern
 
 ```java
 // Get server manager instance
-ServerManager manager = ServerManager.getInstance(context);
+AsgServerManager manager = AsgServerManager.getInstance(context);
 
 // Create camera server with default implementations
-CameraWebServer cameraServer = new CameraWebServer(context, 8089);
+AsgCameraServer cameraServer = new AsgCameraServer(context, 8089);
 cameraServer.setOnPictureRequestListener(() -> {
     mediaCaptureService.takePicture();
 });
@@ -174,19 +177,19 @@ boolean isRunning = manager.isServerRunning("camera");
 
 ```java
 // In AsgClientService.java
-private CameraWebServer cameraWebServer;
-private ServerManager serverManager;
+private AsgCameraServer cameraServer;
+private AsgServerManager serverManager;
 
 @Override
 public void onCreate() {
     super.onCreate();
 
     // Initialize server manager
-    serverManager = ServerManager.getInstance(this);
+    serverManager = AsgServerManager.getInstance(this);
 
     // Create and configure camera server
-    cameraWebServer = new CameraWebServer(this, 8089);
-    cameraWebServer.setOnPictureRequestListener(() -> {
+    cameraServer = new AsgCameraServer(this, 8089);
+    cameraServer.setOnPictureRequestListener(() -> {
         // Trigger photo capture via existing service
         if (mediaCaptureService != null) {
             mediaCaptureService.takePicture();
@@ -194,7 +197,7 @@ public void onCreate() {
     });
 
     // Register with server manager
-    serverManager.registerServer("camera", cameraWebServer);
+    serverManager.registerServer("camera", cameraServer);
 
     // Start the server
     serverManager.startServer("camera");
@@ -216,8 +219,8 @@ public void onDestroy() {
 ### Single Responsibility Principle
 
 - **AsgServer**: Handles HTTP serving and request routing
-- **CameraWebServer**: Handles camera-specific operations
-- **ServerManager**: Manages server lifecycle
+- **AsgCameraServer**: Handles camera-specific operations
+- **AsgServerManager**: Manages server lifecycle
 - **CacheManager**: Handles caching operations
 - **RateLimiter**: Handles rate limiting logic
 
@@ -311,8 +314,8 @@ All server components use detailed logging with emojis for easy identification:
 
 ### Log Tags
 
-- `CameraWebServer` - Camera server operations
-- `ServerManager` - Server management operations
+- `AsgCameraServer` - Camera server operations
+- `AsgServerManager` - Server management operations
 - `AsgServer` - Base server operations
 - `CacheManager` - Cache operations
 - `RateLimiter` - Rate limiting events
@@ -348,7 +351,7 @@ curl http://[GLASSES_IP]:8089/api/download?file=photo.jpg
 ```java
 ServerConfig config = new DefaultServerConfig.Builder()
     .port(8089)                    // Server port
-    .serverName("CameraWebServer") // Server name
+    .serverName("AsgCameraServer") // Server name
     .context(context)              // Android context
     .corsEnabled(true)             // Enable CORS
     .maxRequestSize(50 * 1024 * 1024) // 50MB max request size
@@ -431,7 +434,7 @@ When adding new server implementations:
 
 1. **Extend `AsgServer`** class and implement required abstract methods
 2. **Use dependency injection** through interfaces
-3. **Register with `ServerManager`** for centralized management
+3. **Register with `AsgServerManager`** for centralized management
 4. **Add comprehensive logging** with appropriate tags
 5. **Include security measures** and input validation
 6. **Follow SOLID principles** in design

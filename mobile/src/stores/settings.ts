@@ -36,9 +36,16 @@ export const SETTINGS: Record<string, Setting> = {
   android_blur: {
     key: "android_blur",
     defaultValue: () => {
-      if (Platform.OS !== "android") return true
-      const ram = Device.totalMemory
-      return ram ? ram >= 4 * 1024 * 1024 * 1024 : true
+      return false
+    },
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  android_inner_shadow: {
+    key: "android_inner_shadow",
+    defaultValue: () => {
+      return false
     },
     writable: true,
     saveOnServer: true,
@@ -104,7 +111,7 @@ export const SETTINGS: Record<string, Setting> = {
         return process.env.EXPO_PUBLIC_STORE_URL_OVERRIDE
       }
       if (process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china") {
-        return "https://dev-store.mentraglass.cn"
+        return "https://apps.mentraglass.cn"
       }
       return "https://apps.mentra.glass"
     },
@@ -256,7 +263,7 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
 
-  // core settings:
+  // Bluetooth SDK settings:
   sensing_enabled: {
     key: "sensing_enabled",
     defaultValue: () => true,
@@ -278,9 +285,10 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  // Legacy cloud/mobile setting name. Locally it maps to glasses-side Voice Activity Detection.
   bypass_vad_for_debugging: {
     key: "bypass_vad_for_debugging",
-    defaultValue: () => true,
+    defaultValue: () => false,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -295,6 +303,13 @@ export const SETTINGS: Record<string, Setting> = {
   metric_system: {
     key: "metric_system",
     defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  twelve_hour_time: {
+    key: "twelve_hour_time",
+    defaultValue: () => true,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -344,6 +359,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  use_native_dashboard: {
+    key: "use_native_dashboard",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   head_up_angle: {key: "head_up_angle", defaultValue: () => 45, writable: true, saveOnServer: true, persist: true},
   brightness: {key: "brightness", defaultValue: () => 50, writable: true, saveOnServer: true, persist: true},
   auto_brightness: {
@@ -367,14 +389,22 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  glasses_menu_apps: {
-    key: "glasses_menu_apps",
+  menu_apps: {
+    key: "menu_apps",
     defaultValue: () => null,
     writable: true,
     saveOnServer: true,
     persist: true,
   },
+  calendar_events: {
+    key: "calendar_events",
+    defaultValue: () => [],
+    writable: true,
+    saveOnServer: false,
+    persist: false,
+  },
   // button settings
+  // Legacy persisted/cloud key; hardware behavior is now controlled by gallery_mode plus capture settings.
   button_mode: {key: "button_mode", defaultValue: () => "photo", writable: true, saveOnServer: true, persist: true},
   button_photo_size: {
     key: "button_photo_size",
@@ -450,7 +480,16 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  gallery_mode: {key: "gallery_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  // Runtime flag: coordinator flips this on when cloud STT has failed and fallback is active.
+  // Native GlassesStore watches it to gate PCM → Sherpa feeding. Not user-facing.
+  local_stt_fallback_active: {
+    key: "local_stt_fallback_active",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: false,
+  },
+  gallery_mode: {key: "gallery_mode", defaultValue: () => true, writable: true, saveOnServer: true, persist: true},
   gallery_sync_explained: {
     key: "gallery_sync_explained",
     defaultValue: () => false,
@@ -545,16 +584,12 @@ export const SETTINGS: Record<string, Setting> = {
 
 export const OFFLINE_APPLETS: string[] = ["com.mentra.livecaptions", "com.mentra.camera"]
 
-// these settings are automatically synced to the core:
+// These settings are automatically synced to core.
+// Keep this list hardware-facing; app/UI/cloud-only preferences should stay in JS/Crust.
 const CORE_SETTINGS_KEYS: string[] = [
   // core settings:
   SETTINGS.sensing_enabled.key,
   SETTINGS.power_saving_mode.key,
-  SETTINGS.always_on_status_bar.key,
-  SETTINGS.bypass_vad_for_debugging.key,
-  SETTINGS.bypass_audio_encoding_for_debugging.key,
-  SETTINGS.metric_system.key,
-  SETTINGS.enforce_local_transcription.key,
   SETTINGS.lc3_frame_size.key,
   SETTINGS.preferred_mic.key,
   SETTINGS.screen_disabled.key,
@@ -567,9 +602,14 @@ const CORE_SETTINGS_KEYS: string[] = [
   SETTINGS.auto_brightness.key,
   SETTINGS.dashboard_height.key,
   SETTINGS.dashboard_depth.key,
+  SETTINGS.menu_apps.key,
+  SETTINGS.calendar_events.key,
+  SETTINGS.use_native_dashboard.key,
+  SETTINGS.twelve_hour_time.key,
+  SETTINGS.metric_system.key,
   // button:
-  SETTINGS.button_mode.key,
   SETTINGS.button_photo_size.key,
+  // Legacy MentraLive native code reads the object form when syncing video settings.
   SETTINGS.button_video_settings.key,
   SETTINGS.button_camera_led.key,
   SETTINGS.button_max_recording_time.key,
@@ -586,13 +626,11 @@ const CORE_SETTINGS_KEYS: string[] = [
   // offline applets:
   SETTINGS.offline_mode.key,
   SETTINGS.offline_captions_running.key,
-  SETTINGS.offline_translation_running.key,
-  SETTINGS.offline_translation_source.key,
-  SETTINGS.offline_translation_target.key,
+  // Runtime flag flipped by LocalSttFallbackCoordinator. Native reads it from
+  // GlassesStore to gate PCM → Sherpa feeding in handlePcm and to keep the
+  // mic on while local STT is the active engine.
+  SETTINGS.local_stt_fallback_active.key,
   SETTINGS.gallery_mode.key,
-  // notifications:
-  SETTINGS.notifications_enabled.key,
-  SETTINGS.notifications_blocklist.key,
 ]
 
 // const PER_GLASSES_SETTINGS_KEYS: string[] = [SETTINGS.preferred_mic.key]
@@ -616,13 +654,10 @@ interface SettingsState {
 }
 
 const getDefaultSettings = () =>
-  Object.keys(SETTINGS).reduce(
-    (acc, key) => {
-      acc[key] = SETTINGS[key].defaultValue()
-      return acc
-    },
-    {} as Record<string, any>,
-  )
+  Object.keys(SETTINGS).reduce((acc, key) => {
+    acc[key] = SETTINGS[key].defaultValue()
+    return acc
+  }, {} as Record<string, any>)
 
 export const useSettingsStore = create<SettingsState>()(
   subscribeWithSelector((set, get) => ({
@@ -779,6 +814,40 @@ export const useSettingsStore = create<SettingsState>()(
           isInitialized: true,
           settings: {...state.settings, ...loadedSettings},
         }))
+
+        // One-time migration: force android_blur=false for existing users.
+        // The setting's default is already false; this migration covers users
+        // who explicitly opted into Android blur effects before we discovered
+        // they're a major source of frame drops on cheap Android phones.
+        // The dimezisBlurViewSdk31Plus blur each costs ~5-10ms/frame; with
+        // multiple blurs on home (top fade + AppSwitcherButton x2) a low-end
+        // device misses the 16ms budget consistently. Users can turn it back
+        // on under Settings → Appearance once we've optimized further.
+        //
+        // The setSetting call also pushes to the server (saveOnServer: true)
+        // so the server-stored value flips too — otherwise the next sync
+        // from the user's server-stored prefs would re-enable blur.
+        // Best-effort: a server failure (offline, 5xx) shouldn't block boot;
+        // we still mark the migration done locally so we don't loop.
+        const MIGRATION_KEY = "migration:android_blur_default_false_v1"
+        const migrationDone = storage.load<boolean>(MIGRATION_KEY)
+        if (migrationDone.is_error() || !migrationDone.value) {
+          const current = get().getSetting(SETTINGS.android_blur.key)
+          if (current === true) {
+            const result = await get().setSetting(SETTINGS.android_blur.key, false, true)
+            if (result.is_error()) {
+              // Server push failed (offline / 5xx). Local storage was still
+              // updated, so the user immediately gets the new behavior. The
+              // server-side stale `true` will be overwritten the next time
+              // the user opens Appearance settings and the auto-sync runs.
+              console.log("SETTINGS: android_blur migration server-push failed:", result.error)
+            }
+          }
+          // Mark done unconditionally — even on server-push failure we don't
+          // want to retry the migration on every boot. The local value is
+          // already correct.
+          storage.save(MIGRATION_KEY, true)
+        }
       })
     },
     getRestUrl: () => {

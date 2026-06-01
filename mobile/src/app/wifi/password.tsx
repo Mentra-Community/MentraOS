@@ -6,8 +6,8 @@ import {EyeIcon} from "@/components/icons/EyeIcon"
 import {EyeOffIcon} from "@/components/icons/EyeOffIcon"
 import {WifiIcon} from "@/components/icons/WifiIcon"
 import {Screen, Header, Checkbox, Button, Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
@@ -20,7 +20,7 @@ export default function WifiPasswordScreen() {
   const nextRoute = params.nextRoute as string | undefined
 
   const {theme} = useAppTheme()
-  const {push, goBack} = useNavigationHistory()
+  const {push, goBack} = useNavigationStore.getState()
   const [ssid, setSsid] = useState(initialSsid)
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
@@ -69,7 +69,7 @@ export default function WifiPasswordScreen() {
   }
 
   return (
-    <Screen preset="fixed">
+    <Screen preset="fixed" KeyboardAvoidingViewProps={{enabled: false}}>
       <Header title={translate("wifi:wifi")} leftIcon="chevron-left" onLeftPress={goBack} />
       <View className="bg-primary-foreground rounded-3xl p-6 w-full items-center mt-12">
         {/* WiFi Icon */}

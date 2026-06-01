@@ -1,22 +1,24 @@
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
-import {CoreStatus} from "core"
+import {BluetoothStatus} from "@mentra/bluetooth-sdk-internal"
 
-interface CoreState extends CoreStatus {
-  setCoreInfo: (info: Partial<CoreStatus>) => void
+interface CoreState extends BluetoothStatus {
+  setCoreInfo: (info: Partial<BluetoothStatus>) => void
   reset: () => void
 }
 
-const initialState: CoreStatus = {
+const initialState: BluetoothStatus = {
   // state:
   searching: false,
-  micRanking: ["glasses", "phone", "bluetooth"],
+  searchingController: false,
+  micRanking: ["glasses", "phone", "bluetooth", "bluetoothClassic"],
   systemMicUnavailable: false,
   currentMic: null,
   searchResults: [],
   wifiScanResults: [],
   lastLog: [],
   otherBtConnected: false,
+  galleryModeEnabled: true,
 }
 
 export const useCoreStore = create<CoreState>()(

@@ -62,7 +62,7 @@ public class OtaCommandHandler implements ICommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("ota_start", "ota_update_response");
+        return Set.of("ota_start", "ota_update_response", "ota_query_status", "ota_retry_version_check");
     }
 
     @Override
@@ -73,6 +73,10 @@ public class OtaCommandHandler implements ICommandHandler {
                     return handleOtaStart(data);
                 case "ota_update_response":
                     return handleOtaUpdateResponse(data);
+                case "ota_query_status":
+                    return handleOtaQueryStatus();
+                case "ota_retry_version_check":
+                    return handleOtaRetryVersionCheck();
                 default:
                     Log.e(TAG, "Unsupported OTA command: " + commandType);
                     return false;
@@ -143,10 +147,36 @@ public class OtaCommandHandler implements ICommandHandler {
         }
     }
     
+    private boolean handleOtaQueryStatus() {
+        Log.i(TAG, "📱 Received ota_query_status from phone");
+
+        if (otaHelperInstance == null) {
+            Log.w(TAG, "OtaHelper not initialized — cannot respond to ota_query_status");
+            return false;
+        }
+
+        JSONObject state = otaHelperInstance.getOtaSessionState();
+        if (state != null && communicationManager != null) {
+            communicationManager.sendOtaStatus(state);
+            JSONObject data = state.optJSONObject("data");
+            String statusStr = data != null ? data.optString("status", "?") : "?";
+            Log.i(TAG, "📱 Sent ota_status response: " + statusStr);
+        }
+        return true;
+    }
+
+    private boolean handleOtaRetryVersionCheck() {
+        Log.i(TAG, "📱 Received ota_retry_version_check from phone");
+        if (otaHelperInstance == null) {
+            Log.w(TAG, "OtaHelper not initialized — cannot retry version check");
+            return false;
+        }
+        otaHelperInstance.retryBackgroundVersionCheck();
+        return true;
+    }
+
     /**
-     * Send OTA error message to phone.
-     * Creates an ota_progress message with FAILED status.
-     * @param errorMessage Human-readable error message for user
+     * Send OTA error to the phone as {@code ota_status} with {@code failed}.
      */
     private void sendOtaError(String errorMessage) {
         if (communicationManager == null) {
@@ -155,17 +185,19 @@ public class OtaCommandHandler implements ICommandHandler {
         }
         
         try {
-            JSONObject progress = new JSONObject();
-            progress.put("type", "ota_progress");
-            progress.put("stage", "download");
-            progress.put("status", "FAILED");
-            progress.put("progress", 0);
-            progress.put("bytes_downloaded", 0);
-            progress.put("total_bytes", 0);
-            progress.put("current_update", "apk");
-            progress.put("error_message", errorMessage);
+            JSONObject st = new JSONObject();
+            st.put("type", "ota_status");
+            st.put("session_id", "");
+            st.put("total_steps", 0);
+            st.put("current_step", 0);
+            st.put("step_type", "apk");
+            st.put("phase", "download");
+            st.put("step_percent", 0);
+            st.put("overall_percent", 0);
+            st.put("status", "failed");
+            st.put("error_message", errorMessage);
             
-            communicationManager.sendOtaProgress(progress);
+            communicationManager.sendOtaStatus(st);
             Log.i(TAG, "📱 Sent OTA error to phone: " + errorMessage);
         } catch (JSONException e) {
             Log.e(TAG, "Error creating OTA error message", e);

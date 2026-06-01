@@ -1,6 +1,6 @@
-import en, {Translations} from "./en"
+import en, {type TranslationResource} from "./en"
 
-const es: Translations = {
+const es = {
   ...en,
   common: {
     ok: "OK",
@@ -49,10 +49,6 @@ const es: Translations = {
     hardwareIncompatible: "Hardware Incompatible",
     hardwareIncompatibleMessage:
       "{{app}} requiere hardware que no está disponible en tus lentes conectados: {{missing}}",
-    incompatibleApps: "Apps Incompatibles",
-    incompatibleAppsDescription:
-      "Estas apps requieren características de hardware no disponibles en tus lentes conectados",
-    incompatible: "Incompatible",
   },
   demoNavigator: {
     componentsTab: "Componentes",
@@ -132,6 +128,6 @@ const es: Translations = {
         "No se han agregado episodios favoritos todavía. ¡Presiona el corazón dentro de un episodio para agregarlo a tus favoritos!",
     },
   },
-}
+} satisfies TranslationResource
 
 export default es

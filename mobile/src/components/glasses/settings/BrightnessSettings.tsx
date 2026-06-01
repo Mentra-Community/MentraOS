@@ -43,7 +43,6 @@ export function BrightnessSettings({
           min={0}
           max={100}
           onValueSet={onBrightnessChange}
-          containerStyle={{paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0}}
           disableBorder
         />
       )}

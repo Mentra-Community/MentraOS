@@ -1,18 +1,19 @@
 import {useEffect, useState} from "react"
 import {TouchableOpacity, ViewStyle, Platform, Linking} from "react-native"
 
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {Icon} from "@/components/ignite/Icon"
+import {PLAY_STORE_BETA_URL} from "@/constants/appConfig"
 
 export default function NonProdWarning() {
   const {theme, themed} = useAppTheme()
   const [isProdBackend, setIsProdBackend] = useState(true)
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
   const [backendUrl, _setBackendUrl] = useSetting(SETTINGS.backend_url.key)
 
   const checkNonProdBackend = async () => {
@@ -80,7 +81,7 @@ export default function NonProdWarning() {
           {
             text: translate("warning:optOutOfBeta"),
             onPress: () => {
-              Linking.openURL("https://play.google.com/apps/testing/com.mentra.mentra")
+              Linking.openURL(PLAY_STORE_BETA_URL)
             },
           },
           {

@@ -15,6 +15,7 @@ import {
 import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityIcons"
 
 import {Icon, Text} from "@/components/ignite"
+import GlassView from "@/components/ui/GlassView"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {ThemedStyle} from "@/theme"
@@ -77,16 +78,18 @@ const SelectSetting: React.FC<SelectSettingProps> = ({
 
   return (
     <View style={themed($container)}>
-      <TouchableOpacity
-        style={[themed($selectButton), groupedStyle, isVertical && themed($selectButtonVertical)]}
-        onPress={() => setModalVisible(true)}
-        activeOpacity={0.7}>
-        <Text text={label} style={[themed($label), isVertical && themed($labelVertical)]} />
-        <View style={[themed($valueContainer), isVertical && themed($valueContainerVertical)]}>
-          <Text text={selectedLabel} style={themed($valueText)} />
-          <Icon icon="caretRight" size={16} color={theme.colors.textDim} />
-        </View>
-      </TouchableOpacity>
+      <GlassView className="bg-primary-foreground" style={[themed($selectButtonWrap), groupedStyle]}>
+        <TouchableOpacity
+          style={[themed($selectButton), isVertical && themed($selectButtonVertical)]}
+          onPress={() => setModalVisible(true)}
+          activeOpacity={0.7}>
+          <Text text={label} style={[themed($label), isVertical && themed($labelVertical)]} />
+          <View style={[themed($valueContainer), isVertical && themed($valueContainerVertical)]}>
+            <Text text={selectedLabel} style={themed($valueText)} />
+            <Icon icon="caretRight" size={16} color={theme.colors.textDim} />
+          </View>
+        </TouchableOpacity>
+      </GlassView>
       {description && <Text text={description} style={themed($description)} />}
 
       <Modal
@@ -137,15 +140,18 @@ const $container: ThemedStyle<ViewStyle> = () => ({
   width: "100%",
 })
 
-const $selectButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+const $selectButtonWrap: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  borderRadius: spacing.s4,
+  overflow: "hidden",
+})
+
+const $selectButton: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flexDirection: "row",
   justifyContent: "space-between",
   alignItems: "center",
   width: "100%",
-  backgroundColor: colors.primary_foreground,
   paddingVertical: spacing.s4,
   paddingHorizontal: spacing.s4,
-  borderRadius: spacing.s4,
 })
 
 const $selectButtonVertical: ThemedStyle<ViewStyle> = () => ({
