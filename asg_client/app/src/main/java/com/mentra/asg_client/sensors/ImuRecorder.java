@@ -74,6 +74,8 @@ public class ImuRecorder implements SensorEventListener {
         synchronized (mSamples) {
             mSamples.clear();
         }
+        mLatestAccel[0] = mLatestAccel[1] = mLatestAccel[2] = 0f;
+        mLatestGyro[0] = mLatestGyro[1] = mLatestGyro[2] = 0f;
         mStartTimeNs = System.nanoTime();
         mRecording = true;
 

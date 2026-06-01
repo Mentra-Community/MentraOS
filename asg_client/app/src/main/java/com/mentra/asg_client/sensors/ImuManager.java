@@ -109,10 +109,6 @@ public class ImuManager implements SensorEventListener {
         this.dataCallback = callback;
     }
 
-    public ImuDataCallback getDataCallback() {
-        return dataCallback;
-    }
-
     /** Request a single IMU reading with minimal power usage */
     public void requestSingleReading() {
         Log.d(TAG, "Requesting single IMU reading");

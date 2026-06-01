@@ -46,7 +46,7 @@ final class HeifExifTagReader {
         boolean littleEndian = fileBytes[tiff] == 'I' && fileBytes[tiff + 1] == 'I';
         int ifd0 = readInt(fileBytes, tiff + 4, littleEndian);
         int ifd0Offset = tiff + ifd0;
-        if (ifd0 < 0 || ifd0Offset < tiff || ifd0Offset + 2 > fileBytes.length) {
+        if (ifd0 < 0 || ifd0Offset < tiff || (long) ifd0Offset + 2 > fileBytes.length) {
             return null;
         }
         String userComment = readTagString(fileBytes, tiff, ifd0Offset, TAG_USER_COMMENT, littleEndian);
@@ -75,14 +75,14 @@ final class HeifExifTagReader {
             int pointerTag,
             int targetTag,
             boolean littleEndian) {
-        if (ifdOffset + 2 > data.length) {
+        if ((long) ifdOffset + 2 > data.length) {
             return null;
         }
         int count = readUInt16(data, ifdOffset, littleEndian);
         int entryStart = ifdOffset + 2;
         for (int i = 0; i < count; i++) {
             int entry = entryStart + i * 12;
-            if (entry + 12 > data.length) {
+            if ((long) entry + 12 > data.length) {
                 return null;
             }
             int tag = readUInt16(data, entry, littleEndian);
@@ -91,7 +91,9 @@ final class HeifExifTagReader {
             }
             int subIfdOffset = readInt(data, entry + 8, littleEndian);
             int subIfdAbs = tiffStart + subIfdOffset;
-            if (subIfdOffset < 0 || subIfdAbs < tiffStart || subIfdAbs + 2 > data.length) {
+            if (subIfdOffset < 0
+                    || subIfdAbs < tiffStart
+                    || (long) subIfdAbs + 2 > data.length) {
                 return null;
             }
             return readTagString(data, tiffStart, subIfdAbs, targetTag, littleEndian);
@@ -115,14 +117,14 @@ final class HeifExifTagReader {
     @Nullable
     private static String readTagString(
             byte[] data, int tiffStart, int ifdOffset, int tagId, boolean littleEndian) {
-        if (ifdOffset + 2 > data.length) {
+        if ((long) ifdOffset + 2 > data.length) {
             return null;
         }
         int count = readUInt16(data, ifdOffset, littleEndian);
         int entryStart = ifdOffset + 2;
         for (int i = 0; i < count; i++) {
             int entry = entryStart + i * 12;
-            if (entry + 12 > data.length) {
+            if ((long) entry + 12 > data.length) {
                 return null;
             }
             int tag = readUInt16(data, entry, littleEndian);

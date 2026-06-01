@@ -115,41 +115,56 @@ public final class PhotoExifMetadataWriter {
                         TAG,
                         "encodeAvifForBle: hasImuMetadata true but readImuJsonFromJpeg returned null");
             } else {
-                JSONObject payload = new JSONObject(json);
-                byte[] exifSegment = buildExifApp1Segment(payload);
-                byte[] exifTiff = Arrays.copyOfRange(exifSegment, 4, exifSegment.length);
+                try {
+                    JSONObject payload = new JSONObject(json);
+                    byte[] exifSegment = buildExifApp1Segment(payload);
+                    byte[] exifTiff = Arrays.copyOfRange(exifSegment, 4, exifSegment.length);
 
-                if (isAv1EncoderAvailable()) {
-                    try {
-                        byte[] withExif = encodeAvifWithExif(bitmap, quality, payload);
+                    if (isAv1EncoderAvailable()) {
+                        try {
+                            byte[] withExif = encodeAvifWithExif(bitmap, quality, payload);
+                            Log.d(
+                                    TAG,
+                                    "encodeAvifForBle: AvifWriter+EXIF, "
+                                            + withExif.length
+                                            + " bytes, rawHasExifMarker="
+                                            + containsExifMarker(withExif));
+                            return withExif;
+                        } catch (Exception e) {
+                            Log.w(
+                                    TAG,
+                                    "AvifWriter+EXIF failed, using HeifCoder+BMFF EXIF inject: "
+                                            + e.getMessage());
+                        }
+                    } else {
                         Log.d(
                                 TAG,
-                                "encodeAvifForBle: AvifWriter+EXIF, "
+                                "encodeAvifForBle: no AV1 encoder; using HeifCoder+BMFF EXIF inject");
+                    }
+
+                    byte[] avif = heifCoder.encodeAvif(bitmap, quality, PreciseMode.LOSSY);
+                    try {
+                        byte[] withExif = AvifBmffExifInjector.injectExif(avif, exifTiff);
+                        Log.d(
+                                TAG,
+                                "encodeAvifForBle: HeifCoder+EXIF, "
                                         + withExif.length
                                         + " bytes, rawHasExifMarker="
                                         + containsExifMarker(withExif));
                         return withExif;
-                    } catch (Exception e) {
+                    } catch (Exception injectError) {
                         Log.w(
                                 TAG,
-                                "AvifWriter+EXIF failed, using HeifCoder+BMFF EXIF inject: "
-                                        + e.getMessage());
+                                "BMFF EXIF inject failed, sending plain AVIF: "
+                                        + injectError.getMessage());
+                        return avif;
                     }
-                } else {
-                    Log.d(
+                } catch (Exception exifPathError) {
+                    Log.w(
                             TAG,
-                            "encodeAvifForBle: no AV1 encoder; using HeifCoder+BMFF EXIF inject");
+                            "encodeAvifForBle: IMU EXIF path failed, sending plain AVIF: "
+                                    + exifPathError.getMessage());
                 }
-
-                byte[] avif = heifCoder.encodeAvif(bitmap, quality, PreciseMode.LOSSY);
-                byte[] withExif = AvifBmffExifInjector.injectExif(avif, exifTiff);
-                Log.d(
-                        TAG,
-                        "encodeAvifForBle: HeifCoder+EXIF, "
-                                + withExif.length
-                                + " bytes, rawHasExifMarker="
-                                + containsExifMarker(withExif));
-                return withExif;
             }
         }
         byte[] plain = heifCoder.encodeAvif(bitmap, quality, PreciseMode.LOSSY);
