@@ -53,7 +53,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     func requestPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, includeImu _: Bool,
+        compress _: String?, flash _: Bool, save _: Bool, sound _: Bool,
         exposureTimeNs _: Double?
     ) {}
 

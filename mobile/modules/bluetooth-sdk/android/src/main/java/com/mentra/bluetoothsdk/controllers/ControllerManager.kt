@@ -24,7 +24,6 @@ abstract class ControllerManager {
         flash: Boolean,
         save: Boolean,
         sound: Boolean,
-        includeImu: Boolean,
         exposureTimeNs: Long?,
     )
     abstract fun startStream(message: Map<String, Any>)

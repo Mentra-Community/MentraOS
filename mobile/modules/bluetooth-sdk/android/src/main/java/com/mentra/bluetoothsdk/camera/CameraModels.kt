@@ -62,7 +62,6 @@ data class PhotoRequest @JvmOverloads constructor(
     val flash: Boolean = true,
     val save: Boolean = false,
     val sound: Boolean = true,
-    val includeImu: Boolean = false,
     /** Sensor exposure time for this capture only (ns), or null for auto exposure */
     val exposureTimeNs: Double? = null,
 ) {
@@ -86,7 +85,6 @@ data class PhotoRequest @JvmOverloads constructor(
                 flash = boolValue(values, "flash") ?: true,
                 save = boolValue(values, "save", "saveToGallery") ?: false,
                 sound = boolValue(values, "sound") ?: true,
-                includeImu = boolValue(values, "includeImu", "include_imu") ?: false,
                 exposureTimeNs = exposureTimeNs,
             )
         }
@@ -212,8 +210,3 @@ data class PhotoResponseEvent(
     val values: Map<String, Any> get() = response.toEventMap()
 }
 
-data class PhotoImuEvent(
-    val values: Map<String, Any>,
-) {
-    val requestId: String get() = stringValue(values, "requestId").orEmpty()
-}

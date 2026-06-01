@@ -12,7 +12,6 @@ export function photoRequestParamsForNative(
     compress: params.compress,
     flash: true,
     sound: params.sound,
-    includeImu: params.includeImu ?? false,
   }
   if (params.authToken != null && params.authToken.length > 0) {
     payload.authToken = params.authToken
