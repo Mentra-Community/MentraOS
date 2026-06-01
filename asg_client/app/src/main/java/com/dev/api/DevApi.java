@@ -53,7 +53,7 @@ public class DevApi {
 
     /**
      * Set camera FOV and ROI position (K900 HAL). Caller must call SysControl.restartCameraHal(context) after this.
-     * @param fov FOV value from 82-118 inclusive
+     * @param fov FOV value from 62-118 inclusive
      * @param roiPosition ROI_POSITION_CENTER, ROI_POSITION_BOTTOM, or ROI_POSITION_TOP
      */
     public static void setCameraFov(int fov, int roiPosition) {
