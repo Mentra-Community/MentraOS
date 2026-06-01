@@ -4,7 +4,7 @@ import android.content.Context;
 import android.util.Log;
 
 import com.dev.api.DevApi;
-import com.mentra.asg_client.SysControl;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
@@ -227,7 +227,7 @@ public class SettingsCommandHandler implements ICommandHandler {
             }
             try {
                 DevApi.setCameraFov(fov, roiPosition);
-                SysControl.restartCameraHal(context);
+                SystemControllerFactory.get(context).restartCameraHal();
                 CameraRestartCooldown.setCooldown();
                 Log.d(TAG, "Camera FOV applied to hardware and HAL restarted");
             } catch (UnsatisfiedLinkError e) {

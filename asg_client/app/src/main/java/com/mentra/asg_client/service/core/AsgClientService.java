@@ -18,16 +18,17 @@ import android.os.Looper;
 import android.util.Log;
 import android.util.Size;
 import com.dev.api.DevApi;
-import com.mentra.asg_client.SysControl;
 import com.mentra.asg_client.camera.UvcStreamingState;
 import com.mentra.asg_client.hardware.K900RgbLedController;
-import com.mentra.asg_client.io.bluetooth.interfaces.BluetoothStateListener;
-import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
+import com.mentra.asg_client.io.bluetooth.interfaces.TransportListener;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
+import com.mentra.asg_client.io.bes.BesOtaRegistry;
+import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
@@ -50,6 +51,10 @@ import org.greenrobot.eventbus.ThreadMode;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import javax.inject.Inject;
+
+import dagger.hilt.android.AndroidEntryPoint;
+
 /**
  * Fully refactored AsgClientService that follows SOLID principles.
  *
@@ -58,8 +63,14 @@ import org.json.JSONObject;
  * managers implement interfaces - Interface Segregation Principle: Focused interfaces for each
  * concern - Dependency Inversion Principle: Depends on abstractions, not concretions
  */
+@AndroidEntryPoint
 public class AsgClientService extends Service
-        implements NetworkStateListener, BluetoothStateListener {
+        implements NetworkStateListener, TransportListener {
+
+    @Inject FileManager fileManager;
+    @Inject OtaHelper otaHelper;
+    @Inject IHardwareManager hardwareManager;
+    @Inject BesOtaRegistry besOtaRegistry;
 
     // ---------------------------------------------
     // Constants //TODO: Extract all the Constants and Magic Number/Text to AsgConstants
@@ -103,7 +114,7 @@ public class AsgClientService extends Service
     // ---------------------------------------------
     // Dependency Injection Container
     // ---------------------------------------------
-    private ServiceContainer serviceContainer;
+    private ServiceInitializer serviceInitializer;
 
     // Interface references (Dependency Inversion Principle)
     private IServiceLifecycle lifecycleManager;
@@ -117,17 +128,12 @@ public class AsgClientService extends Service
     // ---------------------------------------------
     // Service State
     // ---------------------------------------------
-    // Note: AugmentosService removed - legacy dependency no longer needed
-    // private AugmentosService augmentosService = null;
-    // private boolean isAugmentosBound = false;
     private static AsgClientService instance;
     private boolean lastI2sPlaying = false;
     private boolean lastUvcStreaming = false;
     private boolean isConnected = false; // Track connection state based on heartbeat
 
-    /**
-     * Used before {@link ServiceContainer} exists so FGS promotion is not delayed by heavy init.
-     */
+    /** Used before {@link ServiceInitializer} exists so FGS promotion is not delayed by heavy init. */
     private AsgNotificationManager mEarlyNotificationManager;
 
     private boolean mForegroundStarted;
@@ -156,58 +162,6 @@ public class AsgClientService extends Service
     private Runnable heartbeatTimeoutRunnable;
 
     // ---------------------------------------------
-    // ServiceConnection for AugmentosService - DISABLED (legacy code)
-    // ---------------------------------------------
-    // Note: AugmentosService binding removed - no longer needed for standalone ASG client
-    /*
-    private final ServiceConnection augmentosConnection = new ServiceConnection() {
-        @Override
-        public void onServiceConnected(ComponentName name, IBinder service) {
-            Log.i(TAG, "🔗 AugmentosService connected successfully");
-            Log.d(TAG, "📋 Component name: " + name.getClassName());
-
-            try {
-                AugmentosService.LocalBinder binder = (AugmentosService.LocalBinder) service;
-                augmentosService = binder.getService();
-                isAugmentosBound = true;
-                Log.d(TAG, "✅ AugmentosService bound and ready");
-
-                // Update state manager
-                if (stateManager instanceof StateManager) {
-                    Log.d(TAG, "📊 Updating state manager with AugmentosService binding");
-                    ((StateManager) stateManager).setAugmentosServiceBound(true);
-                }
-
-                // Check WiFi connectivity
-                if (stateManager.isConnectedToWifi()) {
-                    Log.d(TAG, "🌐 WiFi is connected - triggering onWifiConnected");
-                    onWifiConnected();
-                } else {
-                    Log.d(TAG, "📶 WiFi is not connected - skipping onWifiConnected");
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "💥 Error in AugmentosService connection", e);
-            }
-        }
-
-        @Override
-        public void onServiceDisconnected(ComponentName name) {
-            Log.w(TAG, "🔌 AugmentosService disconnected");
-            Log.d(TAG, "📋 Component name: " + name.getClassName());
-
-            isAugmentosBound = false;
-            augmentosService = null;
-
-            // Update state manager
-            if (stateManager instanceof StateManager) {
-                Log.d(TAG, "📊 Updating state manager with AugmentosService unbinding");
-                ((StateManager) stateManager).setAugmentosServiceBound(false);
-            }
-        }
-    };
-    */
-
-    // ---------------------------------------------
     // Lifecycle Methods
     // ---------------------------------------------
     @Override
@@ -231,11 +185,11 @@ public class AsgClientService extends Service
             // EIS is toggled on/off at point of use:
             // - Enabled before video recording (CameraNeoService)
             // - Disabled before streaming (StreamCommandHandler)
-            SysControl.setEisEnable(this, false);
+            SystemControllerFactory.get(this).setEisEnabled( false);
 
             // Initialize dependency injection container
             Log.d(TAG, "🔧 Initializing service container");
-            initializeServiceContainer();
+            initializeServiceInitializer();
 
             // Apply saved camera FOV on start (K900) so last user choice survives reboot
             applySavedCameraFovOnStart();
@@ -249,7 +203,7 @@ public class AsgClientService extends Service
                     .postDelayed(
                             () -> {
                                 Log.d(TAG, "📶 Enabling 5 GHz Hotspot scan via SysControl");
-                                SysControl.setHotspot5G(this, true);
+                                SystemControllerFactory.get(this).setHotspot5GEnabled( true);
                             },
                             3000);
 
@@ -334,9 +288,9 @@ public class AsgClientService extends Service
             }
 
             // Clean up service container
-            if (serviceContainer != null) {
+            if (serviceInitializer != null) {
                 Log.d(TAG, "🧹 Cleaning up service container");
-                serviceContainer.cleanup();
+                serviceInitializer.cleanup();
                 Log.d(TAG, "✅ Service container cleanup completed");
             } else {
                 Log.d(TAG, "⏭️ Service container is null - skipping cleanup");
@@ -345,19 +299,6 @@ public class AsgClientService extends Service
             // Unregister receivers
             Log.d(TAG, "📻 Unregistering broadcast receivers");
             unregisterReceivers();
-
-            // Note: AugmentosService unbinding removed - no longer used
-            /*
-            // Unbind from AugmentosService
-            if (isAugmentosBound) {
-                Log.d(TAG, "🔌 Unbinding from AugmentosService");
-                unbindService(augmentosConnection);
-                isAugmentosBound = false;
-                Log.d(TAG, "✅ AugmentosService unbound");
-            } else {
-                Log.d(TAG, "⏭️ Not bound to AugmentosService - skipping unbind");
-            }
-            */
 
             // Clean up WiFi debouncing
             if (wifiDebounceHandler != null && wifiDebounceRunnable != null) {
@@ -455,14 +396,17 @@ public class AsgClientService extends Service
     }
 
     private IHardwareManager getHardwareManagerForLed() {
-        IHardwareManager hardwareManager = HardwareManagerFactory.getInstance(this);
-        if (serviceContainer != null && serviceContainer.getServiceManager() != null) {
-            var bluetoothManager = serviceContainer.getServiceManager().getBluetoothManager();
-            if (bluetoothManager != null) {
-                hardwareManager.setBluetoothManager(bluetoothManager);
+        IHardwareManager ledHardwareManager = this.hardwareManager;
+        if (ledHardwareManager == null) {
+            return null;
+        }
+        if (serviceInitializer != null && serviceInitializer.getServiceManager() != null) {
+            var transport = serviceInitializer.getServiceManager().getBluetoothManager();
+            if (transport != null) {
+                ledHardwareManager.setTransport(transport);
             }
         }
-        return hardwareManager;
+        return ledHardwareManager;
     }
 
     public void handleI2SAudioState(boolean playing) {
@@ -547,12 +491,12 @@ public class AsgClientService extends Service
     }
 
     private boolean sendK900Command(String payload) {
-        if (serviceContainer == null || serviceContainer.getServiceManager() == null) {
-            Log.w(TAG, "ServiceContainer not initialized; cannot send I2S command");
+        if (serviceInitializer == null || serviceInitializer.getServiceManager() == null) {
+            Log.w(TAG, "ServiceInitializer not initialized; cannot send I2S command");
             return false;
         }
 
-        var bluetoothManager = serviceContainer.getServiceManager().getBluetoothManager();
+        var bluetoothManager = serviceInitializer.getServiceManager().getBluetoothManager();
         if (bluetoothManager == null) {
             Log.w(TAG, "Bluetooth manager unavailable; cannot send I2S command");
             return false;
@@ -563,7 +507,7 @@ public class AsgClientService extends Service
             return false;
         }
 
-        boolean sent = bluetoothManager.sendData(payload.getBytes(StandardCharsets.UTF_8));
+        boolean sent = bluetoothManager.sendMessage(payload.getBytes(StandardCharsets.UTF_8));
         Log.i(TAG, "I2S command sent (" + payload + ") result=" + sent);
         return sent;
     }
@@ -591,14 +535,14 @@ public class AsgClientService extends Service
             String commandStr = authorityCommand.toString();
             Log.i(TAG, "🚨 Sending RGB LED authority command: " + commandStr);
 
-            if (serviceContainer == null || serviceContainer.getServiceManager() == null) {
+            if (serviceInitializer == null || serviceInitializer.getServiceManager() == null) {
                 Log.w(
                         TAG,
-                        "⚠️ ServiceContainer not initialized; deferring RGB LED authority claim");
+                        "⚠️ ServiceInitializer not initialized; deferring RGB LED authority claim");
                 return;
             }
 
-            var bluetoothManager = serviceContainer.getServiceManager().getBluetoothManager();
+            var bluetoothManager = serviceInitializer.getServiceManager().getBluetoothManager();
             if (bluetoothManager == null) {
                 Log.w(
                         TAG,
@@ -613,7 +557,7 @@ public class AsgClientService extends Service
                 return;
             }
 
-            boolean sent = bluetoothManager.sendData(commandStr.getBytes(StandardCharsets.UTF_8));
+            boolean sent = bluetoothManager.sendMessage(commandStr.getBytes(StandardCharsets.UTF_8));
             if (sent) {
                 Log.i(
                         TAG,
@@ -633,7 +577,6 @@ public class AsgClientService extends Service
     // ---------------------------------------------
     // Initialization Methods
     // ---------------------------------------------
-
     /**
      * Promote to a foreground service. Idempotent; safe from {@link #onCreate()} and {@link
      * #onStartCommand()}. Not wrapped in onCreate's catch-all so AMS failures are visible.
@@ -653,8 +596,8 @@ public class AsgClientService extends Service
     }
 
     private AsgNotificationManager resolveNotificationManager() {
-        if (serviceContainer != null) {
-            return serviceContainer.getNotificationManager();
+        if (serviceInitializer != null) {
+            return serviceInitializer.getNotificationManager();
         }
         if (mEarlyNotificationManager == null) {
             mEarlyNotificationManager = new AsgNotificationManager(this);
@@ -662,26 +605,28 @@ public class AsgClientService extends Service
         return mEarlyNotificationManager;
     }
 
-    private void initializeServiceContainer() {
-        Log.d(TAG, "🔧 initializeServiceContainer() started");
+    private void initializeServiceInitializer() {
+        Log.d(TAG, "🔧 initializeServiceInitializer() started");
 
         try {
-            serviceContainer = new ServiceContainer(this, this);
-            Log.d(TAG, "✅ ServiceContainer created successfully");
+            serviceInitializer =
+                    new ServiceInitializer(
+                            this, fileManager, otaHelper, hardwareManager, besOtaRegistry);
+            Log.d(TAG, "✅ ServiceInitializer created successfully");
 
             // Initialize container
             Log.d(TAG, "🚀 Initializing service container");
-            serviceContainer.initialize();
+            serviceInitializer.initialize();
             Log.d(TAG, "✅ Service container initialization completed");
 
             // Get interface references
             Log.d(TAG, "📋 Getting interface references from service container");
-            lifecycleManager = serviceContainer.getLifecycleManager();
-            communicationManager = serviceContainer.getCommunicationManager();
-            configurationManager = serviceContainer.getConfigurationManager();
-            stateManager = serviceContainer.getStateManager();
-            streamingManager = serviceContainer.getStreamingManager();
-            commandProcessor = serviceContainer.getCommandProcessor();
+            lifecycleManager = serviceInitializer.getLifecycleManager();
+            communicationManager = serviceInitializer.getCommunicationManager();
+            configurationManager = serviceInitializer.getConfigurationManager();
+            stateManager = serviceInitializer.getStateManager();
+            streamingManager = serviceInitializer.getStreamingManager();
+            commandProcessor = serviceInitializer.getCommandProcessor();
 
             Log.d(TAG, "✅ All interface references obtained");
             Log.d(
@@ -737,10 +682,10 @@ public class AsgClientService extends Service
      */
     private void applySavedCameraFovOnStart() {
         try {
-            if (serviceContainer == null || serviceContainer.getServiceManager() == null) {
+            if (serviceInitializer == null || serviceInitializer.getServiceManager() == null) {
                 return;
             }
-            var asgSettings = serviceContainer.getServiceManager().getAsgSettings();
+            var asgSettings = serviceInitializer.getServiceManager().getAsgSettings();
             if (asgSettings == null) {
                 return;
             }
@@ -748,7 +693,7 @@ public class AsgClientService extends Service
             int roiPosition = asgSettings.getCameraRoiPosition();
             try {
                 DevApi.setCameraFov(fov, roiPosition);
-                SysControl.restartCameraHal(this);
+                SystemControllerFactory.get(this).restartCameraHal();
                 CameraRestartCooldown.setCooldown();
                 Log.d(
                         TAG,
@@ -869,9 +814,9 @@ public class AsgClientService extends Service
 
         // Send hotspot status update to phone
         try {
-            if (serviceContainer != null && serviceContainer.getServiceManager() != null) {
-                var networkManager = serviceContainer.getServiceManager().getNetworkManager();
-                var commManager = serviceContainer.getCommunicationManager();
+            if (serviceInitializer != null && serviceInitializer.getServiceManager() != null) {
+                var networkManager = serviceInitializer.getServiceManager().getNetworkManager();
+                var commManager = serviceInitializer.getCommunicationManager();
 
                 if (networkManager != null && commManager != null) {
                     // Build hotspot status JSON
@@ -922,8 +867,8 @@ public class AsgClientService extends Service
 
         // Send hotspot error to phone
         try {
-            if (serviceContainer != null && serviceContainer.getServiceManager() != null) {
-                var commManager = serviceContainer.getCommunicationManager();
+            if (serviceInitializer != null && serviceInitializer.getServiceManager() != null) {
+                var commManager = serviceInitializer.getCommunicationManager();
 
                 if (commManager != null) {
                     // Build hotspot error JSON
@@ -952,7 +897,7 @@ public class AsgClientService extends Service
     }
 
     // ---------------------------------------------
-    // BluetoothStateListener Implementation
+    // TransportListener Implementation
     // ---------------------------------------------
     @Override
     public void onConnectionStateChanged(boolean connected) {
@@ -964,7 +909,6 @@ public class AsgClientService extends Service
         if (connected) {
             // Send the pending APK-done signal immediately on reconnect (before WiFi/version info).
             // This is the primary path for the phone to learn the APK updated successfully.
-            OtaHelper otaHelper = OtaHelper.getInstance();
             if (otaHelper != null) {
                 otaHelper.onPhoneConnected();
             }
@@ -1059,10 +1003,10 @@ public class AsgClientService extends Service
     private void processMediaQueue() {
         Log.d(TAG, "📁 processMediaQueue() called");
 
-        if (serviceContainer.getServiceManager().getMediaQueueManager() != null) {
-            if (!serviceContainer.getServiceManager().getMediaQueueManager().isQueueEmpty()) {
+        if (serviceInitializer.getServiceManager().getMediaQueueManager() != null) {
+            if (!serviceInitializer.getServiceManager().getMediaQueueManager().isQueueEmpty()) {
                 Log.i(TAG, "📁 WiFi connected - processing media upload queue");
-                serviceContainer.getServiceManager().getMediaQueueManager().processQueue();
+                serviceInitializer.getServiceManager().getMediaQueueManager().processQueue();
                 Log.d(TAG, "✅ Media queue processing initiated");
             } else {
                 Log.d(TAG, "📁 Media queue is empty - no processing needed");
@@ -1110,17 +1054,17 @@ public class AsgClientService extends Service
 
             // Include BES firmware version (cached from hs_syvr command)
             String besFirmwareVersion = "";
-            if (serviceContainer.getServiceManager() != null
-                    && serviceContainer.getServiceManager().getAsgSettings() != null) {
+            if (serviceInitializer.getServiceManager() != null
+                    && serviceInitializer.getServiceManager().getAsgSettings() != null) {
                 besFirmwareVersion =
-                        serviceContainer
+                        serviceInitializer
                                 .getServiceManager()
                                 .getAsgSettings()
                                 .getBesFirmwareVersion();
             }
 
             // Include MTK firmware version (from system property)
-            String mtkFirmwareVersion = SysControl.getSystemCurrentVersion(this);
+            String mtkFirmwareVersion = SystemControllerFactory.get(this).getSystemOtaVersion();
 
             // Include BES BT MAC address as unique device identifier (stored in system properties)
             String besBtMac = SysProp.getBesBtMac(this);
@@ -1140,8 +1084,8 @@ public class AsgClientService extends Service
                             + ", OTA URL: "
                             + otaVersionUrl);
 
-            if (serviceContainer.getServiceManager().getBluetoothManager() != null
-                    && serviceContainer.getServiceManager().getBluetoothManager().isConnected()) {
+            if (serviceInitializer.getServiceManager().getBluetoothManager() != null
+                    && serviceInitializer.getServiceManager().getBluetoothManager().isConnected()) {
 
                 // Chunk 1: Basic device info (smaller payload)
                 JSONObject chunk1 = new JSONObject();
@@ -1153,10 +1097,10 @@ public class AsgClientService extends Service
                 chunk1.put("system_time_ms", System.currentTimeMillis());
 
                 Log.d(TAG, "📤 Sending version_info_1: " + chunk1.toString());
-                serviceContainer
+                serviceInitializer
                         .getServiceManager()
                         .getBluetoothManager()
-                        .sendData(chunk1.toString().getBytes(StandardCharsets.UTF_8));
+                        .sendMessage(chunk1.toString().getBytes(StandardCharsets.UTF_8));
 
                 // Small delay between chunks to ensure proper ordering
                 try {
@@ -1171,10 +1115,10 @@ public class AsgClientService extends Service
                 chunk2.put("ota_version_url", otaVersionUrl);
 
                 Log.d(TAG, "📤 Sending version_info_2: " + chunk2.toString());
-                serviceContainer
+                serviceInitializer
                         .getServiceManager()
                         .getBluetoothManager()
-                        .sendData(chunk2.toString().getBytes(StandardCharsets.UTF_8));
+                        .sendMessage(chunk2.toString().getBytes(StandardCharsets.UTF_8));
 
                 // Small delay between chunks to ensure proper ordering
                 try {
@@ -1191,10 +1135,10 @@ public class AsgClientService extends Service
                 chunk3.put("bt_mac_address", besBtMac);
 
                 Log.d(TAG, "📤 Sending version_info_3: " + chunk3.toString());
-                serviceContainer
+                serviceInitializer
                         .getServiceManager()
                         .getBluetoothManager()
-                        .sendData(chunk3.toString().getBytes(StandardCharsets.UTF_8));
+                        .sendMessage(chunk3.toString().getBytes(StandardCharsets.UTF_8));
 
                 Log.i(TAG, "✅ Sent version info chunks to phone successfully");
             } else {
@@ -1304,9 +1248,9 @@ public class AsgClientService extends Service
                         "📤 sendThroughBluetooth() called - Data length: "
                                 + (data != null ? data.length : "null"));
 
-                if (serviceContainer.getServiceManager().getBluetoothManager() != null) {
+                if (serviceInitializer.getServiceManager().getBluetoothManager() != null) {
                     Log.d(TAG, "📶 Sending data through Bluetooth");
-                    serviceContainer.getServiceManager().getBluetoothManager().sendData(data);
+                    serviceInitializer.getServiceManager().getBluetoothManager().sendMessage(data);
                     Log.d(TAG, "✅ Data sent through Bluetooth successfully");
                 } else {
                     Log.w(TAG, "⚠️ Bluetooth manager is null - cannot send data");
@@ -1317,13 +1261,13 @@ public class AsgClientService extends Service
             public boolean sendFileViaBluetooth(String filePath) {
                 Log.d(TAG, "📁 sendFileViaBluetooth() called - File: " + filePath);
 
-                if (serviceContainer.getServiceManager().getBluetoothManager() != null) {
+                if (serviceInitializer.getServiceManager().getBluetoothManager() != null) {
                     Log.d(TAG, "📶 Starting BLE file transfer");
                     boolean started =
-                            serviceContainer
+                            serviceInitializer
                                     .getServiceManager()
                                     .getBluetoothManager()
-                                    .sendImageFile(filePath);
+                                    .sendFile(filePath);
                     if (started) {
                         Log.i(TAG, "✅ BLE file transfer started successfully for: " + filePath);
                     } else {
@@ -1340,9 +1284,9 @@ public class AsgClientService extends Service
             public boolean isBleTransferInProgress() {
                 Log.d(TAG, "📊 isBleTransferInProgress() called");
 
-                if (serviceContainer.getServiceManager().getBluetoothManager() != null) {
+                if (serviceInitializer.getServiceManager().getBluetoothManager() != null) {
                     boolean inProgress =
-                            serviceContainer
+                            serviceInitializer
                                     .getServiceManager()
                                     .getBluetoothManager()
                                     .isFileTransferInProgress();
@@ -1699,11 +1643,11 @@ public class AsgClientService extends Service
         try {
             if (bEnable) {
                 Log.d(TAG, "📶 Enabling WiFi via ADB command");
-                SysControl.injectAdbCommand(context, "svc wifi enable");
+                SystemControllerFactory.get(context).injectAdbCommand( "svc wifi enable");
                 Log.d(TAG, "✅ WiFi enable command executed");
             } else {
                 Log.d(TAG, "📶 Disabling WiFi via ADB command");
-                SysControl.injectAdbCommand(context, "svc wifi disable");
+                SystemControllerFactory.get(context).injectAdbCommand( "svc wifi disable");
                 Log.d(TAG, "✅ WiFi disable command executed");
             }
         } catch (Exception e) {
@@ -1851,10 +1795,10 @@ public class AsgClientService extends Service
                                 + (totalSpaceFreed / 1024)
                                 + " KB");
                 // Optional: Show notification about cleanup
-                //                if (serviceContainer != null &&
-                // serviceContainer.getNotificationManager() != null) {
+                //                if (serviceInitializer != null &&
+                // serviceInitializer.getNotificationManager() != null) {
                 //
-                // serviceContainer.getNotificationManager().showDebugNotification("BLE Cleanup",
+                // serviceInitializer.getNotificationManager().showDebugNotification("BLE Cleanup",
                 //                        "Cleaned " + totalCleaned + " orphaned transfers (" +
                 // (totalSpaceFreed / 1024) + " KB)");
                 //                }

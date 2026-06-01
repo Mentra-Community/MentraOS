@@ -11,6 +11,7 @@ import android.util.Log;
 import androidx.core.app.NotificationCompat;
 
 import com.mentra.asg_client.MainActivity;
+import com.mentra.asg_client.R;
 
 import static com.mentra.asg_client.AsgConstants.asgServiceNotificationId;
 
@@ -72,7 +73,7 @@ public class AsgNotificationManager {
             .setContentIntent(action)
             .setContentTitle(notificationAppName)
             .setContentText(notificationDescription)
-            .setSmallIcon(com.mentra.asg_client.R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setTicker("...")
             .setOngoing(true);
 
@@ -94,7 +95,7 @@ public class AsgNotificationManager {
             .setContentIntent(action)
             .setContentTitle(title != null ? title : notificationAppName)
             .setContentText(content != null ? content : notificationDescription)
-            .setSmallIcon(com.mentra.asg_client.R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setTicker("...")
             .setOngoing(true);
 

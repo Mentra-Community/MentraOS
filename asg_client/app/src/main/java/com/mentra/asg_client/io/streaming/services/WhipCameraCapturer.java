@@ -22,6 +22,7 @@ import android.view.WindowManager;
 
 import androidx.annotation.NonNull;
 
+import com.mentra.asg_client.service.utils.DeviceProfile;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 
 import org.webrtc.CapturerObserver;
@@ -378,7 +379,8 @@ public class WhipCameraCapturer implements VideoCapturer {
   }
 
   private void initializeDeviceRotationState() {
-    mUseFixedDeviceRotation = ServiceUtils.isK900Device(mContext);
+    mUseFixedDeviceRotation =
+            DeviceProfile.detect(mContext).isK900();
     mFallbackDeviceRotation = ServiceUtils.determineDefaultRotationForDevice(mContext);
   }
 

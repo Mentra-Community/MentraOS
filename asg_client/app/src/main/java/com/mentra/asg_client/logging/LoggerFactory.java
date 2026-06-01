@@ -51,14 +51,11 @@ public class LoggerFactory {
      * @return Logger instance with custom tag
      */
     public static Logger createLogger(String defaultTag) {
-        Logger logger = createLoggerForPlatform();
-        if (logger instanceof AndroidLogger) {
-            // AndroidLogger already has DEFAULT_TAG, but we can create a custom one
-            return new AndroidLogger();
-        } else if (logger instanceof ConsoleLogger) {
-            // ConsoleLogger already has DEFAULT_TAG, but we can create a custom one
+        try {
+            Class.forName("android.util.Log");
+            return new AndroidLogger(defaultTag);
+        } catch (ClassNotFoundException e) {
             return new ConsoleLogger();
         }
-        return logger;
     }
 } 

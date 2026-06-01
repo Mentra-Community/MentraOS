@@ -15,6 +15,7 @@ import android.util.Log;
 import com.mentra.asg_client.io.network.core.BaseNetworkManager;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.utils.DebugNotificationManager;
+import com.mentra.asg_client.service.utils.DeviceProfile;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -56,8 +57,7 @@ public class FallbackNetworkManager extends BaseNetworkManager {
         this.wifiManager = (WifiManager) context.getSystemService(Context.WIFI_SERVICE);
         this.notificationManager = notificationManager;
         
-        // Check if this is a K900 device
-        this.isK900Device = checkIsK900Device();
+        this.isK900Device = DeviceProfile.detect(context).isK900();
         
         if (isK900Device) {
             notificationManager.showDebugNotification(

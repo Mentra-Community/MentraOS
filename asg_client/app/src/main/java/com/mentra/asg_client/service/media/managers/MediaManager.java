@@ -87,7 +87,7 @@ public class MediaManager implements IMediaManager {
             response.put("timestamp", System.currentTimeMillis());
             String jsonString = response.toString();
             Log.d(TAG, "📤 Sending stream status response: " + jsonString);
-            serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
+            serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes());
         } catch (JSONException e) {
             Log.e(TAG, "Error creating stream status response", e);
         }
@@ -112,7 +112,7 @@ public class MediaManager implements IMediaManager {
         }
         String jsonString = statusObject.toString();
         Log.d(TAG, "📤 Sending stream status response: " + jsonString);
-        serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
+        serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes());
     }
 
     @Override
@@ -130,7 +130,7 @@ public class MediaManager implements IMediaManager {
             response.put("timestamp", System.currentTimeMillis());
             String jsonString = response.toString();
             Log.d(TAG, "📤 Sending video recording status response: " + jsonString);
-            serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
+            serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes());
         } catch (JSONException e) {
             Log.e(TAG, "Error creating video recording status response", e);
         }
@@ -150,7 +150,7 @@ public class MediaManager implements IMediaManager {
             response.put("timestamp", System.currentTimeMillis());
             String jsonString = response.toString();
             Log.d(TAG, "📤 Sending video recording status response: " + jsonString);
-            serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
+            serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes());
         } catch (JSONException e) {
             Log.e(TAG, "Error creating video recording status response", e);
         }
@@ -195,7 +195,7 @@ public class MediaManager implements IMediaManager {
             response.put("timestamp", System.currentTimeMillis());
             String jsonString = response.toString();
             Log.d(TAG, "📤 " + (isRetry ? "Retrying" : "Sending") + " keep-alive ACK: " + jsonString);
-            serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
+            serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes());
         } catch (JSONException e) {
             Log.e(TAG, "Error creating keep-alive ACK response", e);
         }

@@ -1,5 +1,6 @@
 package com.mentra.asg_client.io.file.platform;
 
+import com.mentra.asg_client.logging.ConsoleLogger;
 import com.mentra.asg_client.logging.Logger;
 import java.io.File;
 
@@ -16,7 +17,7 @@ public class JavaSEPlatformStrategy implements PlatformStrategy {
     
     @Override
     public Logger createLogger() {
-        return new com.mentra.asg_client.logging.ConsoleLogger();
+        return new ConsoleLogger();
     }
     
     @Override

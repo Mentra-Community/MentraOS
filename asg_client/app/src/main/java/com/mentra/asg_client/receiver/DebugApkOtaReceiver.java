@@ -5,7 +5,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
 
+import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
+
+import dagger.hilt.android.EntryPointAccessors;
 
 /**
  * Debug receiver for testing APK OTA updates via adb.
@@ -45,7 +48,8 @@ public class DebugApkOtaReceiver extends BroadcastReceiver {
 
     Log.i(TAG, "Version JSON URL: " + url);
 
-    OtaHelper helper = OtaHelper.getInstance();
+    OtaHelper helper =
+            EntryPointAccessors.fromApplication(context, AsgClientEntryPoint.class).otaHelper();
     if (helper == null) {
       Log.e(TAG, "❌ OtaHelper not initialized - is OtaService running?");
       return;

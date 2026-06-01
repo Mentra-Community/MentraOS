@@ -44,6 +44,7 @@ import androidx.preference.PreferenceManager;
 
 // import com.firebase.ui.auth.AuthUI;
 import com.mentra.asg_client.service.core.AsgClientService;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.utils.PermissionsUtils;
 
 import com.mentra.asg_client.reporting.domains.GeneralReporting;
@@ -432,7 +433,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void stopFactoryTest() {
-        SysControl.stopApp(this, "com.android.factorytest");
+        SystemControllerFactory.get(this).stopApp("com.android.factorytest");
     }
 
     public void launchOdmLauncher(View view) {

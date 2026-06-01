@@ -3,6 +3,7 @@ package com.mentra.asg_client.di;
 import android.content.Context;
 import android.os.Build;
 import android.os.UserManager;
+import com.mentra.asg_client.BuildConfig;
 import android.util.Log;
 
 import com.mentra.asg_client.reporting.CrashHandler;
@@ -80,7 +81,7 @@ public class ReportingModule {
     private static boolean isDebugBuild() {
         try {
             // This will be true for debug builds, false for release
-            return com.mentra.asg_client.BuildConfig.DEBUG;
+            return BuildConfig.DEBUG;
         } catch (Exception e) {
             // Fallback to false if BuildConfig is not available
             return false;

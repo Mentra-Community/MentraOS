@@ -32,7 +32,7 @@ public class ResponseSender {
             data -> {
                 if (this.serviceManager != null &&
                     this.serviceManager.getBluetoothManager() != null) {
-                    return this.serviceManager.getBluetoothManager().sendData(data);
+                    return this.serviceManager.getBluetoothManager().sendMessage(data);
                 }
                 return false;
             }
@@ -254,7 +254,7 @@ public class ResponseSender {
      */
     private void sendDataOverBluetooth(byte[] data) {
         try {
-            serviceManager.getBluetoothManager().sendData(data);
+            serviceManager.getBluetoothManager().sendMessage(data);
         } catch (Exception e) {
             Log.e(TAG, "Error sending data over Bluetooth", e);
         }

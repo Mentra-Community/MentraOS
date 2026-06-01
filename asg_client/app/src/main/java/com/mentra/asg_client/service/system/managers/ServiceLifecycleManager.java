@@ -7,7 +7,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
-import com.mentra.asg_client.SysControl;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.io.ota.services.OtaService;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
@@ -47,8 +47,8 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
         
         Log.d(TAG, "Initializing service lifecycle");
         
-        // Initialize managers
-        serviceManager.initialize();
+        // Initialize managers (K900CommandHandler required for BesOtaManager on Mentra Live)
+        serviceManager.initialize(commandProcessor.getK900CommandHandler());
         
         // Schedule OTA service start
         scheduleOtaServiceStart();
@@ -125,8 +125,8 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
     }
     
     private void cleanupSystemPackages() {
-        SysControl.uninstallPackage(context, "com.lhs.btserver");
-        SysControl.uninstallPackageViaAdb(context, "com.lhs.btserver");
+        SystemControllerFactory.get(context).uninstallPackage( "com.lhs.btserver");
+        SystemControllerFactory.get(context).uninstallPackageViaAdb( "com.lhs.btserver");
     }
     
     private void handleStartService() {
@@ -147,11 +147,11 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
     private void handleRestartCamera() {
         Log.d(TAG, "Handling restart camera action");
         try {
-            SysControl.injectAdbCommand(context, 
+            SystemControllerFactory.get(context).injectAdbCommand( 
                 "pm grant " + context.getPackageName() + " android.permission.CAMERA");
-            SysControl.injectAdbCommand(context, 
+            SystemControllerFactory.get(context).injectAdbCommand( 
                 "kill $(pidof cameraserver)");
-            SysControl.injectAdbCommand(context, 
+            SystemControllerFactory.get(context).injectAdbCommand( 
                 "kill $(pidof mediaserver)");
         } catch (Exception e) {
             Log.e(TAG, "Error resetting camera service", e);

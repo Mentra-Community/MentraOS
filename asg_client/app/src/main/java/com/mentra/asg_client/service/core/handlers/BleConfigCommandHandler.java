@@ -2,7 +2,7 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.util.Log;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
-import com.mentra.asg_client.utils.smartglasses.K900ProtocolUtils;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
 
 import org.json.JSONObject;
 
@@ -56,9 +56,9 @@ public class BleConfigCommandHandler implements ICommandHandler {
         }
 
         Log.i(TAG, "📦 ✅ Setting pack size from MTU: " + mtu);
-        int oldPackSize = K900ProtocolUtils.getFilePackSize();
-        K900ProtocolUtils.setFilePackSizeFromMtu(mtu);
-        int newPackSize = K900ProtocolUtils.getFilePackSize();
+        int oldPackSize = BesWireFormat.getFilePackSize();
+        BesWireFormat.setFilePackSizeFromMtu(mtu);
+        int newPackSize = BesWireFormat.getFilePackSize();
 
         // Log the effective pack size for debugging
         int totalPacketSize = newPackSize + 32; // 32 bytes protocol overhead

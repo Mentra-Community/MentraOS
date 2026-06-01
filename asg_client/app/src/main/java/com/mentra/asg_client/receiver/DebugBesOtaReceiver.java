@@ -5,7 +5,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
 
+import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
 import com.mentra.asg_client.io.bes.BesOtaManager;
+
+import dagger.hilt.android.EntryPointAccessors;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 
 import java.io.File;
@@ -45,7 +48,10 @@ public class DebugBesOtaReceiver extends BroadcastReceiver {
         Log.i(TAG, "✅ Firmware file found: " + firmwareFile.length() + " bytes");
 
         // Get BesOtaManager instance
-        BesOtaManager manager = BesOtaManager.getInstance();
+        BesOtaManager manager =
+                EntryPointAccessors.fromApplication(context, AsgClientEntryPoint.class)
+                        .besOtaRegistry()
+                        .getInstance();
         if (manager == null) {
             Log.e(TAG, "❌ BesOtaManager not initialized - is AsgClientService running?");
             return;
