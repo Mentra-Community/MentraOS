@@ -2265,8 +2265,6 @@ public class MentraLive extends SGCManager {
             return;
         }
 
-        BleTraceLogger.logJson("glasses_to_phone", "sdk_ble_event", json, json.toString().length());
-
         // Check if this is an ACK response
         String type = json.optString("type", "");
         if ("msg_ack".equals(type)) {

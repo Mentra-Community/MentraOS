@@ -230,7 +230,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 byte[] chunkData = K900ProtocolUtils.formatMessageForTransmission(chunks.get(i).toString());
                 Log.d(TAG, "📡 🧩 Sending chunk " + (i + 1) + "/" + chunks.size()
                         + " (" + chunkData.length + " bytes packed)");
-                BleTraceLogger.logK900Frame("asg_to_bes", "asg_uart_output", chunkData);
                 boolean sent = comManager.send(chunkData);
                 allSent = allSent && sent;
 
@@ -1075,4 +1074,4 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             Log.e(TAG, "💥 Error deleting file after transfer", e);
         }
     }
-} 
+}
