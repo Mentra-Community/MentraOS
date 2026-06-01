@@ -51,7 +51,7 @@ The next generation of Mentra Cloud Core plus Mentra Runtime Services. Replaces 
 The proprietary cloud product (Hono on Bun). Hosts Mentra's central services: the App Store, Developer Console, OEM APIs and Portal, plus User Auth, OEM Auth, and bundle storage. "Cloud Core" for short. Mentra runs one central Cloud Core for the whole ecosystem; OEMs reach it through Cloud Proxy and never host their own.
 
 **Mentra Runtime Services**
-The self-hostable cloud product (`@mentra/cloud-runtime`, renamed from `cloud-audio`). The cloud half of the on-device Mentra OEM Integration Toolkit: STT, TTS, translation, streaming, photo capture and storage, and the phone-WS session coordination (the `__phone__` path). An OEM can run their own or proxy to Mentra's.
+The self-hostable cloud product (`@mentra/cloud-runtime`). The cloud half of the on-device Mentra OEM Integration Toolkit: STT, TTS, translation, streaming, photo capture and storage, and the phone-WS session coordination (the `__phone__` path). Audio is one subset of it. An OEM can run their own or proxy to Mentra's.
 
 **Local JS SDK**
 Older name for Mentra Local SDK. Same thing.
@@ -174,7 +174,7 @@ Every cloud capability falls into one of two tiers, and the tier decides how an 
 - **Mentra Runtime Services** (proxyable and self-hostable): STT, TTS, translation, streaming, photo requests. The per-user runtime capabilities that back the on-device Mentra OEM Integration Toolkit. An OEM can run their own or proxy to Mentra's.
 - **Mentra Proprietary Services** (proxyable only): incident reporting, the MiniApp Store, the Developer Console, mini-app-server auth, and OEM Auth / APIs / Portal. Mentra's central, proprietary services. OEMs always reach Mentra's through Cloud Proxy and cannot self-host them.
 
-These two tiers map onto two products. The Runtime Services live in **Mentra Runtime Services** (`@mentra/cloud-runtime`, renamed from `cloud-audio`): audio (STT, TTS, translation), streaming, and photo. The Proprietary Services live in **Cloud Core**. Cloud Proxy fronts both for OEMs.
+These two tiers map onto two products. The Runtime Services live in **Mentra Runtime Services** (`@mentra/cloud-runtime`): audio (STT, TTS, translation), streaming, and photo. The Proprietary Services live in **Cloud Core**. Cloud Proxy fronts both for OEMs.
 
 The naming is deliberately symmetric: **Mentra Runtime Services** is the cloud half of the on-device **Mentra OEM Integration Toolkit**, which makes "an OEM hosts their own Mentra Runtime Services" easy to reason about. (The exact tier membership is still being refined; the product sections below reflect this split.)
 
@@ -243,7 +243,7 @@ Implemented in v2 Cloud Core. End-to-end verified with a `test-oem` test issuer.
 
 ### Mentra Runtime Services (v2)
 
-Renamed from `cloud-audio`. The self-hostable product that backs the on-device Mentra OEM Integration Toolkit: the per-user runtime services an OEM can run themselves or proxy to Mentra's.
+The self-hostable product that backs the on-device Mentra OEM Integration Toolkit: the per-user runtime services an OEM can run themselves or proxy to Mentra's. Audio is one subset of it.
 
 **Why it exists**
 The on-device runtime needs cloud-side capabilities it can't do alone: the best STT, TTS, and translation models live in the cloud; live streams need provisioning; photos need durable storage and signed URLs; and transcripts and events have to flow back to the phone. Bundling these into one product (rather than scattering them under Cloud Core) is what makes them self-hostable: an OEM that needs data residency, lower cost, or sovereignty can run their own Mentra Runtime Services and reach Mentra's central Cloud Core through Cloud Proxy.
