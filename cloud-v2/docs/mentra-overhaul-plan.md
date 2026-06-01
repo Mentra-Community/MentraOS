@@ -80,9 +80,10 @@ graph TB
   end
 
   subgraph "Cloud Core services (proprietary)"
-    BundleStorage[Bundle storage]
     UserAuth[User Auth]
-    OEMAuth[OEM Auth]
+    OEMService["OEM service (auth, portal, APIs)"]
+    MiniAppService["MiniApp service (bundles, metadata)"]
+    DevConsoleService["Dev Console service (orgs, submissions)"]
   end
 
   subgraph "Cloud Runtime services (self-hostable)"
@@ -120,9 +121,10 @@ graph TB
   CloudProxy --> CloudCore
   CloudProxy --> CloudRuntime
 
-  CloudCore --> BundleStorage
   CloudCore --> UserAuth
-  CloudCore --> OEMAuth
+  CloudCore --> OEMService
+  CloudCore --> MiniAppService
+  CloudCore --> DevConsoleService
   CloudCore --> DB
 
   CloudRuntime --> STTSvc
@@ -136,7 +138,7 @@ graph TB
   TranslationSvc --> SttProvider
   StreamingSvc --> Video
   PhotoSvc --> Blob
-  BundleStorage --> Blob
+  MiniAppService --> Blob
 
   LocalSDK --> CoreEngine
   UIKit --> CoreEngine
