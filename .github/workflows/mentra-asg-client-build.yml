@@ -256,6 +256,10 @@ jobs:
               body: newBody
             });
 
+      - name: Run unit tests
+        working-directory: ./asg_client
+        run: ./gradlew testDebugUnitTest
+
       - name: Spotless check
         working-directory: ./asg_client
         run: ./gradlew spotlessCheck
