@@ -312,15 +312,26 @@ public class WhipCameraCapturer implements VideoCapturer {
     if (mCaptureSession != null) {
       try {
         mCaptureSession.stopRepeating();
-      } catch (CameraAccessException e) {
-        Log.w(TAG, "Error stopping repeating request", e);
+      } catch (CameraAccessException | IllegalStateException e) {
+        // Reconnect/teardown races can leave the session already closed by the
+        // time Camera2 processes stopRepeating(). Treat that as a best-effort
+        // shutdown instead of crashing the app.
+        Log.w(TAG, "Ignoring camera session error while stopping repeating request", e);
       }
-      mCaptureSession.close();
+      try {
+        mCaptureSession.close();
+      } catch (IllegalStateException e) {
+        Log.w(TAG, "Ignoring camera session error while closing capture session", e);
+      }
       mCaptureSession = null;
     }
 
     if (mCameraDevice != null) {
-      mCameraDevice.close();
+      try {
+        mCameraDevice.close();
+      } catch (IllegalStateException e) {
+        Log.w(TAG, "Ignoring camera device error while closing camera", e);
+      }
       mCameraDevice = null;
     }
 

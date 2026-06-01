@@ -23,6 +23,7 @@ import {
 } from "@mentra/sdk";
 
 import { StreamLifecycleController } from "../streaming/StreamLifecycleController";
+import { normalizeStreamTelemetry } from "../streaming/streamStatusTelemetry";
 import { ConnectionValidator } from "../validators/ConnectionValidator";
 import { WebSocketReadyState } from "../websocket/types";
 
@@ -292,7 +293,12 @@ export class UnmanagedStreamingExtension {
   /**
    * Update stream status (simplified from original)
    */
-  async updateStatus(streamId: string, status: UnmanagedStreamStatus): Promise<void> {
+  async updateStatus(
+    streamId: string,
+    status: UnmanagedStreamStatus,
+    errorDetails?: string,
+    stats?: StreamStatus["stats"],
+  ): Promise<void> {
     const runtime = this.unmanagedStreams.get(streamId);
     if (!runtime) {
       this.logger.warn({ streamId }, "Attempted to update status for unknown stream");
@@ -305,7 +311,7 @@ export class UnmanagedStreamingExtension {
     runtime.lastActivity = new Date();
     this.userSession.streamRegistry.updateLastActivity(this.userSession.userId);
 
-    await this.sendStreamStatusToApp(streamId, status);
+    await this.sendStreamStatusToApp(streamId, status, errorDetails, stats);
 
     if (status === "active") {
       runtime.lifecycle.setActive(true);
@@ -458,6 +464,8 @@ export class UnmanagedStreamingExtension {
    */
   handleStreamStatus(statusMessage: StreamStatus): void {
     const { streamId, status } = statusMessage;
+    const telemetry = normalizeStreamTelemetry(statusMessage as StreamStatus & Record<string, any>);
+    const { stats } = telemetry;
     this.logger.debug({ streamId, status, debugKey: "STREAM_STATUS" }, "STREAM_STATUS Handling stream status update");
 
     if (!streamId) {
@@ -523,7 +531,7 @@ export class UnmanagedStreamingExtension {
         break;
     }
 
-    void this.updateStatus(streamId, mappedStatus);
+    void this.updateStatus(streamId, mappedStatus, statusMessage.errorDetails, stats);
   }
 
   /**

@@ -109,6 +109,7 @@ public class WhipStreamingService extends Service {
 
   // Current stream configuration
   private WhipStreamConfig mStreamConfig = new WhipStreamConfig();
+  private WhipStreamConfig mRequestedStreamConfig = new WhipStreamConfig();
 
   // ---- WebRTC components ----
   private EglBase mEglBase;
@@ -140,6 +141,13 @@ public class WhipStreamingService extends Service {
   private Handler mBatteryMonitorHandler;
   private Runnable mBatteryCheckRunnable;
 
+  // ---- Thermal monitoring ----
+  private static final long THERMAL_POLL_INTERVAL_MS = 2000;
+  private Runnable mThermalPollRunnable;
+  private final WhipBitrateTemperatureController mBitrateTemperatureController =
+      new WhipBitrateTemperatureController();
+  private WhipBitrateTemperatureController.BitrateDecision mLastBitrateDecision;
+
   // ---- Reconnection ----
   private static final int MAX_RECONNECT_ATTEMPTS = 3;
   private static final long RECONNECT_DELAY_MS = 3000;
@@ -151,13 +159,29 @@ public class WhipStreamingService extends Service {
   private static final long STATS_INTERVAL_MS = 2000;
   private long mLastVideoBytesSent = 0;
   private long mLastAudioBytesSent = 0;
+  private long mLastStatsSampleAtMs = 0;
+  private long mStatsRequestGeneration = 0;
+  private long mStreamStartedAtMs = 0;
   private final Runnable mStatsRunnable = new Runnable() {
     @Override
     public void run() {
       if (mPeerConnection == null) return;
+      final long requestGeneration = ++mStatsRequestGeneration;
       mPeerConnection.getStats(report -> {
+        synchronized (mStateLock) {
+          if (requestGeneration != mStatsRequestGeneration
+              || mStreamState != StreamState.STREAMING
+              || mIsReconnecting
+              || mPeerConnection == null) {
+            Log.d(TAG, "Dropping stale stream stats sample");
+            return;
+          }
+        }
+
         long videoBytesTotal = 0, audioBytesTotal = 0;
         long videoPackets = 0, audioPackets = 0;
+        int videoFps = mStreamConfig.getVideoFps();
+        int droppedFrames = 0;
         for (RTCStats stats : report.getStatsMap().values()) {
           if (!"outbound-rtp".equals(stats.getType())) continue;
           Object kind  = stats.getMembers().get("kind");
@@ -166,17 +190,47 @@ public class WhipStreamingService extends Service {
           if (bytes == null) continue;
           long b = ((Number) bytes).longValue();
           long p = pkts != null ? ((Number) pkts).longValue() : 0;
-          if ("video".equals(kind)) { videoBytesTotal = b; videoPackets = p; }
+          if ("video".equals(kind)) {
+            videoBytesTotal = b;
+            videoPackets = p;
+            Object fps = stats.getMembers().get("framesPerSecond");
+            if (fps instanceof Number) {
+              videoFps = (int) Math.round(((Number) fps).doubleValue());
+            }
+            Object dropped = stats.getMembers().get("framesDropped");
+            if (dropped instanceof Number) {
+              droppedFrames = ((Number) dropped).intValue();
+            }
+          }
           else if ("audio".equals(kind)) { audioBytesTotal = b; audioPackets = p; }
         }
-        long videoDelta = videoBytesTotal - mLastVideoBytesSent;
-        long audioDelta = audioBytesTotal - mLastAudioBytesSent;
+        long nowMs = System.currentTimeMillis();
+        long elapsedMs = mLastStatsSampleAtMs > 0
+            ? nowMs - mLastStatsSampleAtMs
+            : STATS_INTERVAL_MS;
+        if (elapsedMs <= 0) {
+          elapsedMs = STATS_INTERVAL_MS;
+        }
+
+        long videoDelta = Math.max(0, videoBytesTotal - mLastVideoBytesSent);
+        long audioDelta = Math.max(0, audioBytesTotal - mLastAudioBytesSent);
         mLastVideoBytesSent = videoBytesTotal;
         mLastAudioBytesSent = audioBytesTotal;
+        mLastStatsSampleAtMs = nowMs;
+        long videoBitrateBps = videoDelta * 8 * 1000 / elapsedMs;
+        int cpuTempMilli = WhipThermalUtils.readCpuTemperature();
         Log.d(TAG, String.format(
             "↑ video: %d B/s (%d pkts total)  audio: %d B/s (%d pkts total)",
-            videoDelta * 1000 / STATS_INTERVAL_MS, videoPackets,
-            audioDelta * 1000 / STATS_INTERVAL_MS, audioPackets));
+            videoDelta * 1000 / elapsedMs, videoPackets,
+            audioDelta * 1000 / elapsedMs, audioPackets));
+        notifyStreamMetrics(
+            videoBitrateBps,
+            videoFps,
+            mStreamConfig.getVideoWidth(),
+            mStreamConfig.getVideoHeight(),
+            droppedFrames,
+            mStreamStartedAtMs > 0 ? System.currentTimeMillis() - mStreamStartedAtMs : 0,
+            cpuTempMilli > 0 ? WhipThermalUtils.toCelsius(cpuTempMilli) : -1);
       });
       mMainHandler.postDelayed(this, STATS_INTERVAL_MS);
     }
@@ -192,9 +246,9 @@ public class WhipStreamingService extends Service {
     sInstance = this;
 
     if (sPendingStreamConfig != null) {
-      mStreamConfig = sPendingStreamConfig;
+      updateRequestedStreamConfig(sPendingStreamConfig, false);
       sPendingStreamConfig = null;
-      Log.d(TAG, "Applied pending stream config: " + mStreamConfig);
+      Log.d(TAG, "Applied pending stream config: " + mRequestedStreamConfig);
     }
 
     mMainHandler = new Handler(Looper.getMainLooper());
@@ -285,6 +339,7 @@ public class WhipStreamingService extends Service {
 
     try {
       initWebRtc();
+      prepareStreamConfigForStartup();
       setupCamera();
       setupAudio();
       createPeerConnectionAndOffer();
@@ -311,6 +366,12 @@ public class WhipStreamingService extends Service {
     mMainHandler.removeCallbacks(mStatsRunnable);
     cancelStreamTimeout();
     stopBatteryMonitoring();
+    stopThermalMonitoring();
+    mStatsRequestGeneration++;
+    mLastVideoBytesSent = 0;
+    mLastAudioBytesSent = 0;
+    mLastStatsSampleAtMs = 0;
+    mStreamStartedAtMs = 0;
     Log.d(TAG, "Stopping WHIP streaming (forReconnect=" + forReconnect + ")");
 
     if (mWhipResourceUrl != null) {
@@ -499,12 +560,16 @@ public class WhipStreamingService extends Service {
    * frame rate when thermals get tight.
    */
   private void applyBitrateConstraints() {
+    if (mPeerConnection == null) {
+      return;
+    }
+
     for (RtpSender sender : mPeerConnection.getSenders()) {
       if (sender.track() == null) continue;
       if (!"video".equals(sender.track().kind())) continue;
 
       RtpParameters params = sender.getParameters();
-      if (params == null) continue;
+      if (params == null || params.encodings == null || params.encodings.isEmpty()) continue;
 
       params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE;
 
@@ -515,6 +580,122 @@ public class WhipStreamingService extends Service {
       sender.setParameters(params);
       Log.i(TAG, "Applied video bitrate cap: " + (mStreamConfig.getVideoBitrate() / 1000)
           + " kbps, degradation: MAINTAIN_FRAMERATE");
+    }
+  }
+
+  private void prepareStreamConfigForStartup() {
+    mBitrateTemperatureController.reset(mRequestedStreamConfig);
+    applyTemperatureControl(WhipThermalUtils.readCpuTemperature(), false);
+  }
+
+  private void updateRequestedStreamConfig(WhipStreamConfig config, boolean applyLiveChanges) {
+    if (config == null) {
+      return;
+    }
+
+    mRequestedStreamConfig = new WhipStreamConfig(config);
+    if (applyLiveChanges) {
+      mBitrateTemperatureController.updateRequestedConfig(mRequestedStreamConfig);
+      applyTemperatureControl(WhipThermalUtils.readCpuTemperature(), true);
+    } else {
+      mStreamConfig = new WhipStreamConfig(mRequestedStreamConfig);
+      mLastBitrateDecision = null;
+      mBitrateTemperatureController.reset(mRequestedStreamConfig);
+    }
+  }
+
+  private void applyTemperatureControl(int rawCpuTempMilli,
+      boolean applyLiveChanges) {
+    WhipBitrateTemperatureController.BitrateDecision decision =
+        mBitrateTemperatureController.update(rawCpuTempMilli, mRequestedStreamConfig);
+    WhipStreamConfig targetConfig = new WhipStreamConfig(mRequestedStreamConfig);
+    targetConfig.setVideoBitrate(decision.getTargetBitrateBps());
+
+    boolean changed = targetConfig.getVideoBitrate() != mStreamConfig.getVideoBitrate();
+
+    if (!changed) {
+      mLastBitrateDecision = decision;
+      return;
+    }
+
+    WhipStreamConfig previousConfig = new WhipStreamConfig(mStreamConfig);
+    mStreamConfig = targetConfig;
+    mLastBitrateDecision = decision;
+
+    Log.i(TAG, "Temperature control update (" + buildThermalDebugDetails(decision) + "): "
+        + WhipThermalUtils.describe(previousConfig)
+        + " to " + WhipThermalUtils.describe(mStreamConfig));
+
+    if (!applyLiveChanges) {
+      return;
+    }
+
+    synchronized (mStateLock) {
+      if (mStreamState == StreamState.IDLE || mStreamState == StreamState.STOPPING) {
+        return;
+      }
+    }
+
+    applyBitrateConstraints();
+    updateNotification(buildStreamingNotificationText());
+  }
+
+  private String buildStreamingNotificationText() {
+    boolean bitrateReduced = mStreamConfig.getVideoBitrate() < mRequestedStreamConfig.getVideoBitrate();
+    if (!bitrateReduced) {
+      return "Streaming";
+    }
+    return "Streaming (temp control: " + WhipThermalUtils.describe(mStreamConfig) + ")";
+  }
+
+  private String buildThermalDebugDetails(
+      WhipBitrateTemperatureController.BitrateDecision decision) {
+    StringBuilder details = new StringBuilder("source=sysfs")
+        .append(", raw=").append(WhipThermalUtils.formatTemperature(
+            decision.getRawCpuTempMilli()))
+        .append(", smoothed=").append(WhipThermalUtils.formatTemperature(
+            decision.getSmoothedCpuTempMilli()))
+        .append(", softTarget=").append(String.format(java.util.Locale.US, "%.1fC",
+            WhipBitrateTemperatureController.getSoftTargetTempC()))
+        .append(", max=").append(String.format(java.util.Locale.US, "%.1fC",
+            WhipBitrateTemperatureController.getHardLimitTempC()))
+        .append(", scale=").append(String.format(java.util.Locale.US, "%.2f", decision.getAppliedScale()))
+        .append(", integral=").append(String.format(java.util.Locale.US, "%.2fC", decision.getIntegralErrorC()))
+        .append(", bitrate=").append(decision.getTargetBitrateBps() / 1000)
+        .append("/").append(mRequestedStreamConfig.getVideoBitrate() / 1000).append("kbps");
+
+    if (decision.isHardLimitActive()) {
+      details.append(", hardLimit");
+    }
+
+    return details.toString();
+  }
+
+  private void startThermalMonitoring() {
+    stopThermalMonitoring();
+
+    int cpuTemp = WhipThermalUtils.readCpuTemperature();
+    mBitrateTemperatureController.reset(mRequestedStreamConfig);
+    applyTemperatureControl(cpuTemp, true);
+    if (mLastBitrateDecision != null) {
+      Log.i(TAG, "Temperature monitoring active (" + buildThermalDebugDetails(
+          mLastBitrateDecision) + ")");
+    }
+    startSysfsThermalPolling();
+  }
+
+  private void startSysfsThermalPolling() {
+    mThermalPollRunnable = () -> {
+      applyTemperatureControl(WhipThermalUtils.readCpuTemperature(), true);
+      mMainHandler.postDelayed(mThermalPollRunnable, THERMAL_POLL_INTERVAL_MS);
+    };
+    mMainHandler.postDelayed(mThermalPollRunnable, THERMAL_POLL_INTERVAL_MS);
+  }
+
+  private void stopThermalMonitoring() {
+    if (mThermalPollRunnable != null) {
+      mMainHandler.removeCallbacks(mThermalPollRunnable);
+      mThermalPollRunnable = null;
     }
   }
 
@@ -571,9 +752,13 @@ public class WhipStreamingService extends Service {
             }
             mLastVideoBytesSent = 0;
             mLastAudioBytesSent = 0;
+            mLastStatsSampleAtMs = 0;
+            mStatsRequestGeneration = 0;
+            mStreamStartedAtMs = System.currentTimeMillis();
             mMainHandler.postDelayed(mStatsRunnable, STATS_INTERVAL_MS);
             scheduleStreamTimeout(mCurrentStreamId);
             startBatteryMonitoring();
+            startThermalMonitoring();
             Log.d(TAG, "Streaming started via WHIP");
             if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
               mHardwareManager.setRecordingLedOn();
@@ -589,7 +774,7 @@ public class WhipStreamingService extends Service {
             } else {
               notifyStarted(mWhipUrl);
             }
-            updateNotification("Streaming");
+            updateNotification(buildStreamingNotificationText());
           }
 
           @Override
@@ -759,6 +944,28 @@ public class WhipStreamingService extends Service {
 
   private void notifyError(String error) {
     if (sStatusCallback != null) mMainHandler.post(() -> sStatusCallback.onStreamError(error, mCurrentStreamId));
+  }
+
+  private void notifyStreamMetrics(
+      long bitrateBps,
+      int fps,
+      int width,
+      int height,
+      int droppedFrames,
+      long durationMs,
+      double temperatureC) {
+    if (sStatusCallback == null) {
+      return;
+    }
+    mMainHandler.post(() -> sStatusCallback.onStreamMetrics(
+        mCurrentStreamId,
+        bitrateBps,
+        fps,
+        width,
+        height,
+        droppedFrames,
+        durationMs,
+        temperatureC));
   }
 
   // -----------------------------------------------------------------------
@@ -998,9 +1205,9 @@ public class WhipStreamingService extends Service {
   public static void setStreamConfig(WhipStreamConfig config) {
     if (config == null) return;
     if (sInstance != null) {
-      sInstance.mStreamConfig = config;
+      sInstance.updateRequestedStreamConfig(config, true);
     } else {
-      sPendingStreamConfig = config;
+      sPendingStreamConfig = new WhipStreamConfig(config);
     }
   }
 }

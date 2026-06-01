@@ -1,5 +1,5 @@
 import { Logger } from "pino";
-import { VideoConfig, AudioConfig, StreamConfig } from "@mentra/sdk";
+import { VideoConfig, AudioConfig, StreamConfig, StreamStats } from "@mentra/sdk";
 import { LiveInputResult, CloudflareOutput } from "./CloudflareStreamService";
 
 /**
@@ -36,6 +36,7 @@ export interface ManagedStreamState extends BaseStreamState {
     addedBy: string; // packageName of TPA that added it
     status?: CloudflareOutput;
   }>; // Restream outputs if configured
+  latestStats?: StreamStats;
 }
 
 /**
@@ -136,10 +137,7 @@ export class StreamRegistry {
   /**
    * Check for stream conflicts before starting a new stream
    */
-  checkStreamConflict(
-    userId: string,
-    newStreamType: StreamType,
-  ): StreamConflictResult {
+  checkStreamConflict(userId: string, newStreamType: StreamType): StreamConflictResult {
     const currentStream = this.userStreams.get(userId);
 
     if (!currentStream) {
@@ -171,9 +169,7 @@ export class StreamRegistry {
   /**
    * Create a new managed stream or add viewer to existing
    */
-  createOrJoinManagedStream(
-    options: CreateManagedStreamOptions,
-  ): ManagedStreamState {
+  createOrJoinManagedStream(options: CreateManagedStreamOptions): ManagedStreamState {
     const { userId, appId, liveInput } = options;
 
     // Check if user already has a managed stream
@@ -217,6 +213,7 @@ export class StreamRegistry {
         addedBy: appId, // Initial outputs are owned by the app that created the stream
         status: output,
       })),
+      latestStats: undefined,
     };
 
     // Update all maps
@@ -266,18 +263,8 @@ export class StreamRegistry {
   /**
    * Create an unmanaged stream
    */
-  createUnmanagedStream(
-    options: CreateUnmanagedStreamOptions,
-  ): UnmanagedStreamState {
-    const {
-      userId,
-      appId,
-      rtmpUrl,
-      streamId: providedStreamId,
-      video,
-      audio,
-      stream,
-    } = options;
+  createUnmanagedStream(options: CreateUnmanagedStreamOptions): UnmanagedStreamState {
+    const { userId, appId, rtmpUrl, streamId: providedStreamId, video, audio, stream } = options;
 
     const streamId = providedStreamId ?? this.generateStreamId("s");
 

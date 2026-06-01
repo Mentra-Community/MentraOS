@@ -30,6 +30,20 @@ public class WhipStreamConfig {
   public WhipStreamConfig() {
   }
 
+  public WhipStreamConfig(WhipStreamConfig other) {
+    if (other == null) {
+      return;
+    }
+
+    videoWidth = other.videoWidth;
+    videoHeight = other.videoHeight;
+    videoFps = other.videoFps;
+    videoBitrate = other.videoBitrate;
+    echoCancellation = other.echoCancellation;
+    noiseSuppression = other.noiseSuppression;
+    stunServer = other.stunServer;
+  }
+
   /**
    * Parse video and audio config from JSON objects sent by the SDK.
    * Supports both full key names and compact keys for MTU-constrained messages:
