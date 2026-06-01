@@ -5,9 +5,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
-
 import com.mentra.asg_client.audio.AudioAssets;
-import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.io.bes.log.BesLogManager;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
@@ -15,22 +13,21 @@ import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.hardware.managers.K900HardwareManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
-import com.mentra.asg_client.settings.VideoSettings;
-import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
+import com.mentra.asg_client.service.core.constants.BatteryConstants;
+import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
-import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.utils.SysProp;
-import com.mentra.asg_client.SysControl;
-
+import com.mentra.asg_client.settings.VideoSettings;
+import com.mentra.asg_client.utils.WakeLockManager;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
- * Handles K900 protocol commands.
- * Follows Single Responsibility Principle by handling only K900 protocol commands.
- * Follows Open/Closed Principle by being extensible for new K900 commands.
+ * Handles K900 protocol commands. Follows Single Responsibility Principle by handling only K900
+ * protocol commands. Follows Open/Closed Principle by being extensible for new K900 commands.
  */
 public class K900CommandHandler {
     private static final String TAG = "K900CommandHandler";
@@ -43,9 +40,10 @@ public class K900CommandHandler {
 
     private BesLogManager mBesLogSession;
 
-    public K900CommandHandler(AsgClientServiceManager serviceManager,
-                              IStateManager stateManager,
-                              ICommunicationManager communicationManager) {
+    public K900CommandHandler(
+            AsgClientServiceManager serviceManager,
+            IStateManager stateManager,
+            ICommunicationManager communicationManager) {
         this.mainHandler = new Handler(Looper.getMainLooper());
         this.serviceManager = serviceManager;
         this.stateManager = stateManager;
@@ -87,10 +85,10 @@ public class K900CommandHandler {
                     handleFileTransferAck(bData);
                     break;
 
-                // ---------------------------------------------
-                // BES → MTK Response Handlers (Touch/Swipe Only)
-                // ---------------------------------------------
-                
+                    // ---------------------------------------------
+                    // BES → MTK Response Handlers (Touch/Swipe Only)
+                    // ---------------------------------------------
+
                 case "sr_swst":
                     // Switch status report (touch events)
                     handleSwitchStatusReport(bData);
@@ -164,9 +162,8 @@ public class K900CommandHandler {
     }
 
     /**
-     * Handle camera button short press
-     * 1. Immediately send RGB LED authority claim
-     * 2. After 5 seconds, activate blue LED
+     * Handle camera button short press 1. Immediately send RGB LED authority claim 2. After 5
+     * seconds, activate blue LED
      */
     private void handleCameraButtonShortPress() {
         Log.d(TAG, "📸 Camera button short pressed - handling with configurable mode");
@@ -174,17 +171,15 @@ public class K900CommandHandler {
         handleConfigurableButtonPress(false); // false = short press
     }
 
-    /**
-     * Handle camera button long press
-     */
+    /** Handle camera button long press */
     private void handleCameraButtonLongPress() {
         Log.d(TAG, "📹 Camera button long pressed - handling with configurable mode");
         handleConfigurableButtonPress(true); // true = long press
     }
 
     /**
-     * Handle hardware notification (new firmware format for button presses)
-     * Parses the notification message and routes to appropriate button handler
+     * Handle hardware notification (new firmware format for button presses) Parses the notification
+     * message and routes to appropriate button handler
      */
     private void handleHardwareNotification(JSONObject bData) {
         if (bData == null) {
@@ -209,22 +204,21 @@ public class K900CommandHandler {
         }
     }
 
-    /**
-     * Handle voice activity detection events
-     * Just log these - no processing needed
-     */
+    /** Handle voice activity detection events Just log these - no processing needed */
     private void handleVoiceActivityDetection(JSONObject bData) {
         if (bData != null) {
             int on = bData.optInt("on", -1);
-            Log.d(TAG, "🎤 Voice Activity Detection event received - VAD " + (on == 1 ? "ON" : "OFF"));
+            Log.d(
+                    TAG,
+                    "🎤 Voice Activity Detection event received - VAD " + (on == 1 ? "ON" : "OFF"));
         } else {
             Log.d(TAG, "🎤 Voice Activity Detection event received");
         }
     }
 
     /**
-     * Handle system version report from MCU
-     * Logs firmware version and Bluetooth information, caches firmware version for sending to phone
+     * Handle system version report from MCU Logs firmware version and Bluetooth information, caches
+     * firmware version for sending to phone
      */
     private void handleSystemVersionReport(JSONObject bData) {
         if (bData != null) {
@@ -239,10 +233,12 @@ public class K900CommandHandler {
             Log.i(TAG, "📋 BT Address: " + btAddr + ", BLE Address: " + bleAddr);
 
             // Cache the MCU firmware version so it can be sent to phone when connected
-            if (serviceManager != null && serviceManager.getAsgSettings() != null &&
-                !version.equals("unknown") && !version.isEmpty()) {
+            if (serviceManager != null
+                    && serviceManager.getAsgSettings() != null
+                    && !version.equals("unknown")
+                    && !version.isEmpty()) {
                 serviceManager.getAsgSettings().setMcuFirmwareVersion(version);
-                
+
                 // Re-send version info to phone now that we have fresh BES version
                 // This ensures phone has accurate firmware version for OTA checking
                 if (serviceManager.getService() != null) {
@@ -270,8 +266,8 @@ public class K900CommandHandler {
     }
 
     /**
-     * Handle BT MAC address response from BES chip (sr_btaddr)
-     * Saves the MAC address to system properties for persistent storage
+     * Handle BT MAC address response from BES chip (sr_btaddr) Saves the MAC address to system
+     * properties for persistent storage
      */
     private void handleBtAddrResponse(JSONObject bData) {
         if (bData != null) {
@@ -286,7 +282,9 @@ public class K900CommandHandler {
                     SysProp.setBesBtMac(context, btAddr);
                     Log.i(TAG, "✅ BT MAC Address saved to system properties");
                 } else {
-                    Log.w(TAG, "⚠️ Context not available - cannot save BT MAC to system properties");
+                    Log.w(
+                            TAG,
+                            "⚠️ Context not available - cannot save BT MAC to system properties");
                 }
             } else {
                 Log.w(TAG, "⚠️ BT MAC Address response received but btaddr field is empty");
@@ -297,8 +295,8 @@ public class K900CommandHandler {
     }
 
     /**
-     * Handle key event report (sr_keyevt) - power button short press
-     * Announces current battery level via audio
+     * Handle key event report (sr_keyevt) - power button short press Announces current battery
+     * level via audio
      */
     private void handleKeyEventReport(JSONObject bData) {
         int button = bData != null ? bData.optInt("button", -1) : -1;
@@ -313,14 +311,20 @@ public class K900CommandHandler {
                 return;
             }
 
-            // Check if device is awake, wake it if not (without interfering with existing wake locks)
+            // Check if device is awake, wake it if not (without interfering with existing wake
+            // locks)
             Context context = serviceManager != null ? serviceManager.getContext() : null;
             if (context != null) {
-                PowerManager powerManager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+                PowerManager powerManager =
+                        (PowerManager) context.getSystemService(Context.POWER_SERVICE);
                 if (powerManager != null && !powerManager.isInteractive()) {
-                    // Device is asleep - acquire a short wake lock for battery query + audio playback
-                    Log.d(TAG, "🔋 Device is asleep, acquiring short wake lock for battery announcement");
-                    WakeLockManager.acquireScreenWakeLock(context, 5000); // 5 seconds for query + audio
+                    // Device is asleep - acquire a short wake lock for battery query + audio
+                    // playback
+                    Log.d(
+                            TAG,
+                            "🔋 Device is asleep, acquiring short wake lock for battery announcement");
+                    WakeLockManager.acquireScreenWakeLock(
+                            context, 5000); // 5 seconds for query + audio
                 }
             }
 
@@ -329,7 +333,7 @@ public class K900CommandHandler {
             if (batteryLevel >= 0) {
                 String asset = AudioAssets.getBatteryLevelAsset(batteryLevel);
                 Log.i(TAG, "🔋 Announcing battery level: " + batteryLevel + "% -> " + asset);
-                
+
                 // TODO: implement this at a later time
                 hardwareManager.playAudioAsset(asset);
             } else {
@@ -339,13 +343,11 @@ public class K900CommandHandler {
     }
 
     /**
-     * Handle shutdown command from BES (cs_shut).
-     * BES sends this when power button is held - we need to:
-     * 1. Send sr_shut acknowledgment back to BES
-     * 2. Perform graceful MTK shutdown
+     * Handle shutdown command from BES (cs_shut). BES sends this when power button is held - we
+     * need to: 1. Send sr_shut acknowledgment back to BES 2. Perform graceful MTK shutdown
      *
-     * This prevents sudden power cuts that could corrupt MTK firmware.
-     * BES will wait up to 2 seconds for sr_shut before force-cutting power.
+     * <p>This prevents sudden power cuts that could corrupt MTK firmware. BES will wait up to 2
+     * seconds for sr_shut before force-cutting power.
      */
     private void handleShutdownCommand() {
         Log.i(TAG, "🔌 Received shutdown command (cs_shut) from BES");
@@ -356,22 +358,25 @@ public class K900CommandHandler {
         // Step 2: Stop active video recording to finalize moov atom and prevent corruption
         stopActiveRecordingBeforeShutdown();
 
-        // Step 3: Perform graceful shutdown after delay to ensure ACK is sent and recording finalized
-        mainHandler.postDelayed(() -> {
-            Log.i(TAG, "🔌 Initiating MTK shutdown...");
-            Context context = serviceManager != null ? serviceManager.getContext() : null;
-            if (context != null) {
-                SysControl.shut(context);
-            } else {
-                Log.e(TAG, "🔌 Cannot shutdown - context not available");
-            }
-        }, 500); // 500ms delay to allow MediaRecorder.stop() to finalize
+        // Step 3: Perform graceful shutdown after delay to ensure ACK is sent and recording
+        // finalized
+        mainHandler.postDelayed(
+                () -> {
+                    Log.i(TAG, "🔌 Initiating MTK shutdown...");
+                    Context context = serviceManager != null ? serviceManager.getContext() : null;
+                    if (context != null) {
+                        SystemControllerFactory.get(context).shutdown();
+                    } else {
+                        Log.e(TAG, "🔌 Cannot shutdown - context not available");
+                    }
+                },
+                500); // 500ms delay to allow MediaRecorder.stop() to finalize
     }
 
     /**
-     * Stop any active video recording before shutdown to prevent file corruption.
-     * MPEG4 writes its moov atom during MediaRecorder.stop() — if the device powers off
-     * before that, the recorded file is unplayable.
+     * Stop any active video recording before shutdown to prevent file corruption. MPEG4 writes its
+     * moov atom during MediaRecorder.stop() — if the device powers off before that, the recorded
+     * file is unplayable.
      */
     private void stopActiveRecordingBeforeShutdown() {
         try {
@@ -382,7 +387,9 @@ public class K900CommandHandler {
 
             MediaCaptureService mediaCaptureService = serviceManager.getMediaCaptureService();
             if (mediaCaptureService != null && mediaCaptureService.isRecordingVideo()) {
-                Log.i(TAG, "🎥 Active video recording detected - stopping before shutdown to prevent corruption");
+                Log.i(
+                        TAG,
+                        "🎥 Active video recording detected - stopping before shutdown to prevent corruption");
                 mediaCaptureService.stopVideoRecording();
                 Log.i(TAG, "🎥 Video recording stopped successfully before shutdown");
             }
@@ -392,8 +399,8 @@ public class K900CommandHandler {
     }
 
     /**
-     * Send shutdown acknowledgment (sr_shut) back to BES.
-     * This tells BES that MTK received the shutdown command and is shutting down.
+     * Send shutdown acknowledgment (sr_shut) back to BES. This tells BES that MTK received the
+     * shutdown command and is shutting down.
      */
     private void sendShutdownAcknowledgment() {
         Log.i(TAG, "🔌 Sending shutdown acknowledgment (sr_shut) to BES");
@@ -417,8 +424,10 @@ public class K900CommandHandler {
                 return;
             }
 
-            boolean sent = serviceManager.getBluetoothManager().sendData(
-                commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            boolean sent =
+                    serviceManager
+                            .getBluetoothManager()
+                            .sendData(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
             if (sent) {
                 Log.i(TAG, "✅ Shutdown acknowledgment (sr_shut) sent to BES");
@@ -431,8 +440,8 @@ public class K900CommandHandler {
     }
 
     /**
-     * Handle a streamed sr_log packet from BES (response to our mh_logs request).
-     * Delegates reassembly to the active BesLogManager session.
+     * Handle a streamed sr_log packet from BES (response to our mh_logs request). Delegates
+     * reassembly to the active BesLogManager session.
      */
     private void handleBesLogPacket(JSONObject bData) {
         if (mBesLogSession == null) {
@@ -457,29 +466,31 @@ public class K900CommandHandler {
     }
 
     /**
-     * Send mh_logs to BES and collect the streamed sr_log response, then upload
-     * the assembled BES trace buffer to the incident backend as "glasses_firmware".
+     * Send mh_logs to BES and collect the streamed sr_log response, then upload the assembled BES
+     * trace buffer to the incident backend as "glasses_firmware".
      *
-     * @param incidentId      incident record to attach logs to
-     * @param context         application context
-     * @param configManager   provides coreToken for backend auth
+     * @param incidentId incident record to attach logs to
+     * @param context application context
+     * @param configManager provides coreToken for backend auth
      */
-    public void requestBesLogs(String incidentId, Context context,
-                               IConfigurationManager configManager) {
+    public void requestBesLogs(
+            String incidentId, Context context, IConfigurationManager configManager) {
         requestBesLogs(incidentId, context, configManager, "", null);
     }
 
     /**
-     * Like {@link #requestBesLogs(String, Context, IConfigurationManager)} but uploads to
-     * {@code apiBaseUrl} instead of the glasses' built-in server config. Falls back to
-     * {@link com.mentra.asg_client.utils.ServerConfigUtil} when {@code apiBaseUrl} is empty.
+     * Like {@link #requestBesLogs(String, Context, IConfigurationManager)} but uploads to {@code
+     * apiBaseUrl} instead of the glasses' built-in server config. Falls back to {@link
+     * com.mentra.asg_client.utils.ServerConfigUtil} when {@code apiBaseUrl} is empty.
      *
-     * @param apiBaseUrl      backend base URL from the phone (e.g. from sendIncidentId JSON);
-     *                        empty or null to use glasses' own ServerConfigUtil
+     * @param apiBaseUrl backend base URL from the phone (e.g. from sendIncidentId JSON); empty or
+     *     null to use glasses' own ServerConfigUtil
      */
-    public void requestBesLogs(String incidentId, Context context,
-                               IConfigurationManager configManager,
-                               String apiBaseUrl) {
+    public void requestBesLogs(
+            String incidentId,
+            Context context,
+            IConfigurationManager configManager,
+            String apiBaseUrl) {
         requestBesLogs(incidentId, context, configManager, apiBaseUrl, null);
     }
 
@@ -487,22 +498,26 @@ public class K900CommandHandler {
      * BLE-relay variant: assembled BES logs are delivered to {@code relayFirmwareJson} instead of
      * being uploaded over HTTP.
      */
-    public void requestBesLogs(String incidentId, Context context,
-                               IConfigurationManager configManager,
-                               java.util.function.Consumer<String> relayFirmwareJson) {
+    public void requestBesLogs(
+            String incidentId,
+            Context context,
+            IConfigurationManager configManager,
+            java.util.function.Consumer<String> relayFirmwareJson) {
         requestBesLogs(incidentId, context, configManager, "", relayFirmwareJson);
     }
 
     /**
-     * @param apiBaseUrl        backend base URL from the phone; empty/null to use glasses' own
-     *                          ServerConfigUtil (only used when {@code relayFirmwareJson} is null)
+     * @param apiBaseUrl backend base URL from the phone; empty/null to use glasses' own
+     *     ServerConfigUtil (only used when {@code relayFirmwareJson} is null)
      * @param relayFirmwareJson if non-null, assembled BES logs are passed to this consumer as
-     *                          glasses_firmware JSON instead of HTTP upload
+     *     glasses_firmware JSON instead of HTTP upload
      */
-    public void requestBesLogs(String incidentId, Context context,
-                               IConfigurationManager configManager,
-                               String apiBaseUrl,
-                               java.util.function.Consumer<String> relayFirmwareJson) {
+    public void requestBesLogs(
+            String incidentId,
+            Context context,
+            IConfigurationManager configManager,
+            String apiBaseUrl,
+            java.util.function.Consumer<String> relayFirmwareJson) {
         Log.i(TAG, "📋 Requesting BES logs (mh_logs) for incident: " + incidentId);
 
         if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
@@ -522,9 +537,10 @@ public class K900CommandHandler {
         }
 
         // Replace any stale session from a previous request
-        mBesLogSession = (relayFirmwareJson != null)
-                ? new BesLogManager(incidentId, context, configManager, relayFirmwareJson)
-                : new BesLogManager(incidentId, context, configManager, apiBaseUrl);
+        mBesLogSession =
+                (relayFirmwareJson != null)
+                        ? new BesLogManager(incidentId, context, configManager, relayFirmwareJson)
+                        : new BesLogManager(incidentId, context, configManager, apiBaseUrl);
 
         try {
             JSONObject k900Command = new JSONObject();
@@ -535,8 +551,10 @@ public class K900CommandHandler {
             String commandStr = k900Command.toString();
             Log.d(TAG, "📤 Sending mh_logs: " + commandStr);
 
-            boolean sent = serviceManager.getBluetoothManager().sendData(
-                commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            boolean sent =
+                    serviceManager
+                            .getBluetoothManager()
+                            .sendData(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
             if (sent) {
                 Log.i(TAG, "✅ mh_logs sent — starting BES log collection timeouts");
@@ -558,14 +576,12 @@ public class K900CommandHandler {
     }
 
     /**
-     * Request BES firmware version and MAC address from BES chipset.
-     * Sends sh_syvr command to BES, which responds with hs_syvr containing:
-     * - version: BES firmware version (e.g., "17.26.1.14")
-     * - btaddr: Bluetooth MAC address
-     * - bleaddr: BLE MAC address
+     * Request BES firmware version and MAC address from BES chipset. Sends sh_syvr command to BES,
+     * which responds with hs_syvr containing: - version: BES firmware version (e.g., "17.26.1.14")
+     * - btaddr: Bluetooth MAC address - bleaddr: BLE MAC address
      *
-     * This ensures version info is cached before phone connects, making it available
-     * for OTA patch matching and version_info messages to the phone.
+     * <p>This ensures version info is cached before phone connects, making it available for OTA
+     * patch matching and version_info messages to the phone.
      */
     public void requestSystemVersion() {
         Log.i(TAG, "🔧 Requesting BES system version (sh_syvr)");
@@ -591,8 +607,10 @@ public class K900CommandHandler {
             Log.d(TAG, "📤 Sending sh_syvr request: " + commandStr);
 
             // Send via BluetoothManager - response handled by handleSystemVersionReport()
-            boolean sent = serviceManager.getBluetoothManager().sendData(
-                commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            boolean sent =
+                    serviceManager
+                            .getBluetoothManager()
+                            .sendData(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
             if (sent) {
                 Log.i(TAG, "✅ BES system version request (sh_syvr) sent successfully");
@@ -605,8 +623,8 @@ public class K900CommandHandler {
     }
 
     /**
-     * Send request to BES chip to get BT MAC address (cs_btaddr)
-     * Call this on startup/UART connection to retrieve the unique device identifier
+     * Send request to BES chip to get BT MAC address (cs_btaddr) Call this on startup/UART
+     * connection to retrieve the unique device identifier
      */
     public void requestBtMacAddress() {
         Log.i(TAG, "📋 Requesting BT MAC address from BES chip");
@@ -630,8 +648,10 @@ public class K900CommandHandler {
                 return;
             }
 
-            boolean sent = serviceManager.getBluetoothManager().sendData(
-                commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            boolean sent =
+                    serviceManager
+                            .getBluetoothManager()
+                            .sendData(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
             if (sent) {
                 Log.i(TAG, "✅ BT MAC address request sent");
@@ -643,9 +663,7 @@ public class K900CommandHandler {
         }
     }
 
-    /**
-     * Handle hotspot start command
-     */
+    /** Handle hotspot start command */
     private void handleHotspotStart() {
         Log.d(TAG, "📦 Starting hotspot from K900 command");
         if (serviceManager != null && serviceManager.getNetworkManager() != null) {
@@ -653,9 +671,7 @@ public class K900CommandHandler {
         }
     }
 
-    /**
-     * Handle battery voltage command
-     */
+    /** Handle battery voltage command */
     private void handleBatteryVoltage(JSONObject bData) {
         Log.d(TAG, "🔋 Processing battery voltage data from K900");
         if (bData != null) {
@@ -671,7 +687,8 @@ public class K900CommandHandler {
 
             // Notify K900HardwareManager of battery response (for cache update)
             if (hardwareManager instanceof K900HardwareManager) {
-                ((K900HardwareManager) hardwareManager).onBatteryResponse(newBatteryPercentage, newBatteryVoltage);
+                ((K900HardwareManager) hardwareManager)
+                        .onBatteryResponse(newBatteryPercentage, newBatteryVoltage);
             }
 
             // Send battery status over BLE if we have valid data
@@ -683,9 +700,7 @@ public class K900CommandHandler {
         }
     }
 
-    /**
-     * Handle file transfer ACK from glasses
-     */
+    /** Handle file transfer ACK from glasses */
     private void handleFileTransferAck(JSONObject bData) {
         if (bData != null && serviceManager != null) {
             int state = bData.optInt("state", -1);
@@ -695,7 +710,8 @@ public class K900CommandHandler {
                 Log.d(TAG, "📦 File transfer ACK: state=" + state + ", index=" + index);
 
                 // Get K900BluetoothManager and forward the ACK
-                K900BluetoothManager bluetoothManager = (K900BluetoothManager) serviceManager.getBluetoothManager();
+                K900BluetoothManager bluetoothManager =
+                        (K900BluetoothManager) serviceManager.getBluetoothManager();
                 if (bluetoothManager != null) {
                     bluetoothManager.handleFileTransferAck(state, index);
                 }
@@ -706,22 +722,22 @@ public class K900CommandHandler {
     }
 
     /**
-     * Send BES OTA authorization request to BES chip
-     * Must be called before starting BES firmware update
+     * Send BES OTA authorization request to BES chip Must be called before starting BES firmware
+     * update
      */
     public void sendBesOtaAuthorizationRequest() {
         Log.i(TAG, "🔧 Sending BES OTA authorization request");
-        
+
         try {
             // Build full K900 format: C, V, B (all three required to avoid double-wrapping!)
             JSONObject k900Command = new JSONObject();
             k900Command.put("C", "mh_ota");
-            k900Command.put("V", 1);  // Version field - REQUIRED to prevent double-wrapping
-            k900Command.put("B", "{}");  // Empty body for authorization request
-            
+            k900Command.put("V", 1); // Version field - REQUIRED to prevent double-wrapping
+            k900Command.put("B", "{}"); // Empty body for authorization request
+
             String commandStr = k900Command.toString();
             Log.i(TAG, "🔧 Sending BES OTA authorization command: " + commandStr);
-            
+
             if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
                 Log.e(TAG, "❌ ServiceManager or Bluetooth manager unavailable");
                 // Notify BesOtaManager of failure
@@ -742,9 +758,11 @@ public class K900CommandHandler {
                 return;
             }
 
-            boolean sent = serviceManager.getBluetoothManager().sendData(
-                commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            
+            boolean sent =
+                    serviceManager
+                            .getBluetoothManager()
+                            .sendData(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
             if (sent) {
                 Log.i(TAG, "✅ BES OTA authorization request sent - waiting for response");
             } else {
@@ -772,22 +790,25 @@ public class K900CommandHandler {
         }
     }
 
-    /**
-     * Handle BES OTA authorization response from BES chip
-     * Response to our "mh_ota" request
-     */
+    /** Handle BES OTA authorization response from BES chip Response to our "mh_ota" request */
     private void handleBesOtaAuthorizationResponse(JSONObject bData) {
         Log.i(TAG, "🔧 Received BES OTA authorization response");
-        
+
         boolean authorized = false;
         if (bData != null) {
             int result = bData.optInt("result", 0);
             authorized = (result == 1);
-            Log.d(TAG, "🔧 BES OTA authorization: " + (authorized ? "GRANTED" : "DENIED") + " (result=" + result + ")");
+            Log.d(
+                    TAG,
+                    "🔧 BES OTA authorization: "
+                            + (authorized ? "GRANTED" : "DENIED")
+                            + " (result="
+                            + result
+                            + ")");
         } else {
             Log.w(TAG, "⚠️ BES OTA authorization response received but no B field data");
         }
-        
+
         // Notify BesOtaManager of authorization result
         BesOtaManager manager = BesOtaManager.getInstance();
         if (manager != null) {
@@ -802,9 +823,8 @@ public class K900CommandHandler {
     }
 
     /**
-     * Handle button press with universal forwarding and gallery mode check
-     * Button presses are ALWAYS forwarded to phone/apps
-     * Local capture only happens when camera/gallery app is active
+     * Handle button press with universal forwarding and gallery mode check Button presses are
+     * ALWAYS forwarded to phone/apps Local capture only happens when camera/gallery app is active
      * Also enables BES touch/swipe event listening
      */
     private void handleConfigurableButtonPress(boolean isLongPress) {
@@ -822,30 +842,36 @@ public class K900CommandHandler {
     }
 
     /**
-     * Handle photo/video capture based on gallery mode state
-     * Only captures if camera/gallery app is currently active OR if glasses are disconnected
+     * Handle photo/video capture based on gallery mode state Only captures if camera/gallery app is
+     * currently active OR if glasses are disconnected
      */
     private void handlePhotoCapture(boolean isLongPress) {
         // Check if gallery/camera app is active before capturing
-        boolean isSaveInGalleryMode = serviceManager
-            .getAsgSettings()
-            .isSaveInGalleryMode();
+        boolean isSaveInGalleryMode = serviceManager.getAsgSettings().isSaveInGalleryMode();
 
         // Check if glasses are connected to phone
         boolean isConnected = serviceManager.isConnected();
 
         // LOG CONNECTION STATE FOR DEBUGGING
-        Log.i(TAG, "📸 Photo capture decision - Gallery Mode: " + (isSaveInGalleryMode ? "ACTIVE" : "INACTIVE") +
-                   ", Connection State: " + (isConnected ? "CONNECTED" : "DISCONNECTED"));
+        Log.i(
+                TAG,
+                "📸 Photo capture decision - Gallery Mode: "
+                        + (isSaveInGalleryMode ? "ACTIVE" : "INACTIVE")
+                        + ", Connection State: "
+                        + (isConnected ? "CONNECTED" : "DISCONNECTED"));
 
         // Skip capture only if: camera app NOT running AND phone IS connected
         if (!isSaveInGalleryMode && isConnected) {
-            Log.d(TAG, "📸 Camera app not active and connected to phone - skipping local capture (button press already forwarded to apps)");
+            Log.d(
+                    TAG,
+                    "📸 Camera app not active and connected to phone - skipping local capture (button press already forwarded to apps)");
             return;
         }
 
         if (!isConnected) {
-            Log.d(TAG, "📸 Disconnected from phone - proceeding with local capture regardless of gallery mode");
+            Log.d(
+                    TAG,
+                    "📸 Disconnected from phone - proceeding with local capture regardless of gallery mode");
         } else {
             Log.d(TAG, "📸 Camera app active - proceeding with local capture");
         }
@@ -875,11 +901,23 @@ public class K900CommandHandler {
                 Log.d(TAG, "⏹️ Stopping video recording (long press during recording)");
                 captureService.stopVideoRecording();
             } else {
-                Log.d(TAG, "📹 Starting video recording (long press) with LED: " + ledEnabled + ", battery: " + batteryLevel + "%");
+                Log.d(
+                        TAG,
+                        "📹 Starting video recording (long press) with LED: "
+                                + ledEnabled
+                                + ", battery: "
+                                + batteryLevel
+                                + "%");
 
                 // Check if battery is too low to start recording
                 if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
-                    Log.w(TAG, "🚫 Battery too low to start recording: " + batteryLevel + "% (minimum " + BatteryConstants.MIN_BATTERY_LEVEL + "% required)");
+                    Log.w(
+                            TAG,
+                            "🚫 Battery too low to start recording: "
+                                    + batteryLevel
+                                    + "% (minimum "
+                                    + BatteryConstants.MIN_BATTERY_LEVEL
+                                    + "% required)");
 
                     // Play audio feedback
                     captureService.playBatteryLowSound();
@@ -888,9 +926,12 @@ public class K900CommandHandler {
                 }
 
                 // Get saved video settings for button press
-                VideoSettings videoSettings = serviceManager.getAsgSettings().getButtonVideoSettings();
-                int maxRecordingTimeMinutes = serviceManager.getAsgSettings().getButtonMaxRecordingTimeMinutes();
-                captureService.startVideoRecording(videoSettings, ledEnabled, maxRecordingTimeMinutes, batteryLevel);
+                VideoSettings videoSettings =
+                        serviceManager.getAsgSettings().getButtonVideoSettings();
+                int maxRecordingTimeMinutes =
+                        serviceManager.getAsgSettings().getButtonMaxRecordingTimeMinutes();
+                captureService.startVideoRecording(
+                        videoSettings, ledEnabled, maxRecordingTimeMinutes, batteryLevel);
             }
         } else {
             // Short press behavior
@@ -907,12 +948,11 @@ public class K900CommandHandler {
         }
     }
 
-    /**
-     * Send button press to phone via Bluetooth
-     */
+    /** Send button press to phone via Bluetooth */
     private void sendButtonPressToPhone(boolean isLongPress) {
-        if (serviceManager != null && serviceManager.getBluetoothManager() != null &&
-                serviceManager.getBluetoothManager().isConnected()) {
+        if (serviceManager != null
+                && serviceManager.getBluetoothManager() != null
+                && serviceManager.getBluetoothManager().isConnected()) {
             try {
                 JSONObject buttonObject = new JSONObject();
                 buttonObject.put("type", "button_press");
@@ -930,21 +970,21 @@ public class K900CommandHandler {
         }
     }
 
-    /**
-     * Send battery status over BLE
-     */
+    /** Send battery status over BLE */
     private void sendBatteryStatusOverBle(int batteryPercentage, int batteryVoltage) {
         // Calculate charging status based on voltage
         boolean isCharging = batteryVoltage > 3900;
 
         // Always update local state, regardless of BLE connection
         if (stateManager != null) {
-            stateManager.updateBatteryStatus(batteryPercentage, isCharging, System.currentTimeMillis());
+            stateManager.updateBatteryStatus(
+                    batteryPercentage, isCharging, System.currentTimeMillis());
         }
 
         // Send to phone only if BLE is connected
-        if (serviceManager != null && serviceManager.getBluetoothManager() != null &&
-                serviceManager.getBluetoothManager().isConnected()) {
+        if (serviceManager != null
+                && serviceManager.getBluetoothManager() != null
+                && serviceManager.getBluetoothManager().isConnected()) {
             try {
                 JSONObject obj = new JSONObject();
                 obj.put("type", "battery_status");
@@ -961,29 +1001,29 @@ public class K900CommandHandler {
     }
 
     /**
-     * Activate blue RGB LED
-     * Uses full K900 format (C, V, B) to avoid double-wrapping by K900ProtocolUtils
+     * Activate blue RGB LED Uses full K900 format (C, V, B) to avoid double-wrapping by
+     * K900ProtocolUtils
      */
     private void activateBlueRgbLedViaService() {
         Log.d(TAG, "🚨 💙 activateBlueRgbLedViaService() called");
-        
+
         try {
             // Build LED parameters JSON string
             JSONObject ledParams = new JSONObject();
-            ledParams.put("led", 2);  // Blue LED
-            ledParams.put("ontime", 5000);  // 5 seconds on
-            ledParams.put("offime", 1000);  // 1 second off
-            ledParams.put("count", 1);  // Single cycle
-            
+            ledParams.put("led", 2); // Blue LED
+            ledParams.put("ontime", 5000); // 5 seconds on
+            ledParams.put("offime", 1000); // 1 second off
+            ledParams.put("count", 1); // Single cycle
+
             // Build full K900 format: C, V, B (all three required to avoid double-wrapping!)
             JSONObject k900Command = new JSONObject();
             k900Command.put("C", "cs_ledon");
-            k900Command.put("V", 1);  // Version field - REQUIRED to prevent double-wrapping
+            k900Command.put("V", 1); // Version field - REQUIRED to prevent double-wrapping
             k900Command.put("B", ledParams.toString());
-            
+
             String commandStr = k900Command.toString();
             Log.i(TAG, "🚨 💙 Sending blue RGB LED command: " + commandStr);
-            
+
             if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
                 Log.w(TAG, "⚠️ ServiceManager or Bluetooth manager unavailable");
                 return;
@@ -994,9 +1034,11 @@ public class K900CommandHandler {
                 return;
             }
 
-            boolean sent = serviceManager.getBluetoothManager().sendData(
-                commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            
+            boolean sent =
+                    serviceManager
+                            .getBluetoothManager()
+                            .sendData(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
             if (sent) {
                 Log.i(TAG, "✅ 💙 Blue RGB LED activated successfully via camera button");
             } else {
@@ -1013,18 +1055,16 @@ public class K900CommandHandler {
     // BES → MTK Response Handlers (Touch/Swipe Only)
     // ---------------------------------------------
 
-    /**
-     * Handle switch status report (touch events)
-     */
+    /** Handle switch status report (touch events) */
     private void handleSwitchStatusReport(JSONObject bData) {
         Log.d(TAG, "📦 Processing switch status report");
-        
+
         if (bData != null) {
             int type = bData.optInt("type", -1);
             int switchValue = bData.optInt("switch", -1);
-            
+
             Log.i(TAG, "📦 Switch status - Type: " + type + ", Switch: " + switchValue);
-            
+
             // Send switch status over BLE
             sendSwitchStatusOverBle(type, switchValue);
         } else {
@@ -1033,41 +1073,50 @@ public class K900CommandHandler {
     }
 
     /**
-     * Send RGB LED control authority command to BES chipset.
-     * This tells BES whether MTK (our app) or BES should control the RGB LEDs.
-     * 
+     * Send RGB LED control authority command to BES chipset. This tells BES whether MTK (our app)
+     * or BES should control the RGB LEDs.
+     *
      * @param claimControl true = MTK claims control, false = BES resumes control
      */
     private void sendRgbLedControlAuthority(boolean claimControl) {
         Log.d(TAG, "🚨 sendRgbLedControlAuthority() called - Claim: " + claimControl);
-        
+
         try {
             // Build full K900 format (C, V, B) to avoid double-wrapping
             JSONObject authorityCommand = new JSONObject();
             authorityCommand.put("C", "android_control_led");
-            authorityCommand.put("V", 1);  // Version field - REQUIRED to prevent double-wrapping
-            
+            authorityCommand.put("V", 1); // Version field - REQUIRED to prevent double-wrapping
+
             // Create proper JSON object for B field
             JSONObject bField = new JSONObject();
             bField.put("on", claimControl);
             authorityCommand.put("B", bField.toString());
-            
+
             String commandStr = authorityCommand.toString();
             Log.i(TAG, "🚨 Sending RGB LED authority command: " + commandStr);
-            
+
             if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
                 Log.w(TAG, "⚠️ ServiceManager or Bluetooth manager unavailable");
                 return;
             }
 
             if (!serviceManager.getBluetoothManager().isConnected()) {
-                Log.w(TAG, "⚠️ Bluetooth not connected; RGB LED authority will be sent when connected");
+                Log.w(
+                        TAG,
+                        "⚠️ Bluetooth not connected; RGB LED authority will be sent when connected");
                 return;
             }
 
-            boolean sent = serviceManager.getBluetoothManager().sendData(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            boolean sent =
+                    serviceManager
+                            .getBluetoothManager()
+                            .sendData(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             if (sent) {
-                Log.i(TAG, "✅ RGB LED control authority " + (claimControl ? "CLAIMED" : "RELEASED") + " successfully");
+                Log.i(
+                        TAG,
+                        "✅ RGB LED control authority "
+                                + (claimControl ? "CLAIMED" : "RELEASED")
+                                + " successfully");
             } else {
                 Log.e(TAG, "❌ Failed to send RGB LED authority command");
             }
@@ -1078,18 +1127,16 @@ public class K900CommandHandler {
         }
     }
 
-    /**
-     * Handle touch event report
-     */
+    /** Handle touch event report */
     private void handleTouchEventReport(JSONObject bData) {
         Log.d(TAG, "#@$@@$Processing touch event report");
-        
+
         if (bData != null) {
             int type = bData.optInt("type", -1);
-            
+
             String gestureType = getTouchGestureType(type);
             Log.i(TAG, "📦 Touch event - Type: " + gestureType + " (" + type + ")");
-            
+
             // Send touch event over BLE
             sendTouchEventOverBle(type);
         } else {
@@ -1097,18 +1144,16 @@ public class K900CommandHandler {
         }
     }
 
-    /**
-     * Handle swipe volume status report
-     */
+    /** Handle swipe volume status report */
     private void handleSwipeVolumeStatusReport(JSONObject bData) {
         Log.d(TAG, "📦 Processing swipe volume status report");
-        
+
         if (bData != null) {
             int switchValue = bData.optInt("switch", -1);
             boolean isEnabled = (switchValue == 1);
-            
+
             Log.i(TAG, "📦 Swipe volume status - Enabled: " + isEnabled);
-            
+
             // Send swipe volume status over BLE
             sendSwipeVolumeStatusOverBle(isEnabled);
         } else {
@@ -1120,19 +1165,18 @@ public class K900CommandHandler {
     // BLE Response Senders (Touch/Swipe Only)
     // ---------------------------------------------
 
-    /**
-     * Send switch status over BLE
-     */
+    /** Send switch status over BLE */
     private void sendSwitchStatusOverBle(int type, int switchValue) {
-        if (serviceManager != null && serviceManager.getBluetoothManager() != null &&
-                serviceManager.getBluetoothManager().isConnected()) {
+        if (serviceManager != null
+                && serviceManager.getBluetoothManager() != null
+                && serviceManager.getBluetoothManager().isConnected()) {
             try {
                 JSONObject obj = new JSONObject();
                 obj.put("type", "switch_status");
                 obj.put("switch_type", type);
                 obj.put("switch_value", switchValue);
                 obj.put("timestamp", System.currentTimeMillis());
-                
+
                 String jsonString = obj.toString();
                 Log.d(TAG, "📤 Sending switch status: " + jsonString);
                 serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
@@ -1142,19 +1186,18 @@ public class K900CommandHandler {
         }
     }
 
-    /**
-     * Send touch event over BLE
-     */
+    /** Send touch event over BLE */
     private void sendTouchEventOverBle(int type) {
-        if (serviceManager != null && serviceManager.getBluetoothManager() != null &&
-                serviceManager.getBluetoothManager().isConnected()) {
+        if (serviceManager != null
+                && serviceManager.getBluetoothManager() != null
+                && serviceManager.getBluetoothManager().isConnected()) {
             try {
                 JSONObject obj = new JSONObject();
                 obj.put("type", "touch_event");
                 obj.put("gesture_type", type);
                 obj.put("gesture_name", getTouchGestureType(type));
                 obj.put("timestamp", System.currentTimeMillis());
-                
+
                 String jsonString = obj.toString();
                 Log.d(TAG, "📤 Sending touch event: " + jsonString);
                 serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
@@ -1164,18 +1207,17 @@ public class K900CommandHandler {
         }
     }
 
-    /**
-     * Send swipe volume status over BLE
-     */
+    /** Send swipe volume status over BLE */
     private void sendSwipeVolumeStatusOverBle(boolean isEnabled) {
-        if (serviceManager != null && serviceManager.getBluetoothManager() != null &&
-                serviceManager.getBluetoothManager().isConnected()) {
+        if (serviceManager != null
+                && serviceManager.getBluetoothManager() != null
+                && serviceManager.getBluetoothManager().isConnected()) {
             try {
                 JSONObject obj = new JSONObject();
                 obj.put("type", "swipe_volume_status");
                 obj.put("enabled", isEnabled);
                 obj.put("timestamp", System.currentTimeMillis());
-                
+
                 String jsonString = obj.toString();
                 Log.d(TAG, "📤 Sending swipe volume status: " + jsonString);
                 serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
@@ -1185,20 +1227,27 @@ public class K900CommandHandler {
         }
     }
 
-    /**
-     * Get touch gesture type name
-     */
+    /** Get touch gesture type name */
     private String getTouchGestureType(int type) {
         switch (type) {
-            case 0: return "single_tap";
-            case 1: return "double_tap";
-            case 2: return "triple_tap";
-            case 3: return "long_press";
-            case 4: return "forward_swipe";
-            case 5: return "backward_swipe";
-            case 6: return "up_swipe";
-            case 7: return "down_swipe";
-            default: return "unknown";
+            case 0:
+                return "single_tap";
+            case 1:
+                return "double_tap";
+            case 2:
+                return "triple_tap";
+            case 3:
+                return "long_press";
+            case 4:
+                return "forward_swipe";
+            case 5:
+                return "backward_swipe";
+            case 6:
+                return "up_swipe";
+            case 7:
+                return "down_swipe";
+            default:
+                return "unknown";
         }
     }
 }
