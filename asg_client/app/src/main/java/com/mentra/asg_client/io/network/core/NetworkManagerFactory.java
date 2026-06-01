@@ -2,6 +2,8 @@ package com.mentra.asg_client.io.network.core;
 
 import android.content.Context;
 import android.util.Log;
+import com.mentra.asg_client.BuildConfig;
+import com.mentra.asg_client.io.network.interfaces.INetworkController;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.managers.FallbackNetworkManager;
 import com.mentra.asg_client.io.network.managers.K900NetworkManager;
@@ -24,7 +26,7 @@ public class NetworkManagerFactory {
      * @param context The application context
      * @return The appropriate network manager
      */
-    public static INetworkManager getNetworkManager(Context context) {
+    public static INetworkController getNetworkManager(Context context) {
         DebugNotificationManager notificationManager = new DebugNotificationManager(context);
 
         if (DeviceProfile.detect(context).isK900()) {
@@ -52,34 +54,19 @@ public class NetworkManagerFactory {
     }
 
     /**
-     * Check if the device is a K900
-     *
-     * @param context The application context
-     * @return true if the device is a K900, false otherwise
-     * @deprecated Use ServiceUtils.isK900Device() instead - centralized implementation
-     */
-    @Deprecated
-    private static boolean isK900Device(Context context) {
-        Log.w(TAG, "⚠️ Using deprecated isK900Device() - switch to ServiceUtils.isK900Device()");
-        return ServiceUtils.isK900Device(context);
-    }
-
-    /**
-     * Check if the app has system permissions
-     *
-     * @param context The application context
-     * @return true if the app has system permissions, false otherwise
+     * Check if the app has system permissions (system/priv-app install path).
+     * Gated by {@link BuildConfig#ENABLE_SYSTEM_NETWORK_MANAGER} for rollback.
      */
     private static boolean hasSystemPermissions(Context context) {
-        return false;
-        //
-        //        try {
-        //            // Check if the app is installed in a system location
-        //            String appPath = context.getPackageCodePath();
-        //            return appPath.startsWith("/system/") || appPath.contains("/priv-app/");
-        //        } catch (Exception e) {
-        //            Log.e(TAG, "Error checking for system permissions", e);
-        //            return false;
-        //        }
+        if (!BuildConfig.ENABLE_SYSTEM_NETWORK_MANAGER) {
+            return false;
+        }
+        try {
+            String appPath = context.getPackageCodePath();
+            return appPath.startsWith("/system/") || appPath.contains("/priv-app/");
+        } catch (Exception e) {
+            Log.e(TAG, "Error checking for system permissions", e);
+            return false;
+        }
     }
 }

@@ -3,8 +3,8 @@ package com.mentra.asg_client.io.bluetooth.core;
 import android.content.Context;
 import android.util.Log;
 
-import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
-import com.mentra.asg_client.io.bluetooth.interfaces.BluetoothStateListener;
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+import com.mentra.asg_client.io.bluetooth.interfaces.TransportListener;
 import com.mentra.asg_client.receiver.IntentResponseBroadcaster;
 
 import org.json.JSONObject;
@@ -16,11 +16,11 @@ import java.util.List;
  * Base implementation of the IBluetoothManager interface.
  * Provides common functionality for all bluetooth manager implementations.
  */
-public abstract class BaseBluetoothManager implements IBluetoothManager {
+public abstract class BaseBluetoothManager implements ICompanionTransport {
     private static final String TAG = "BaseBluetoothManager";
     
     protected final Context context;
-    protected final List<BluetoothStateListener> listeners = new ArrayList<>();
+    protected final List<TransportListener> listeners = new ArrayList<>();
     protected boolean isConnected = false;
     
     /**
@@ -32,14 +32,14 @@ public abstract class BaseBluetoothManager implements IBluetoothManager {
     }
     
     @Override
-    public void addBluetoothListener(BluetoothStateListener listener) {
+    public void addBluetoothListener(TransportListener listener) {
         if (!listeners.contains(listener)) {
             listeners.add(listener);
         }
     }
     
     @Override
-    public void removeBluetoothListener(BluetoothStateListener listener) {
+    public void removeBluetoothListener(TransportListener listener) {
         listeners.remove(listener);
     }
     
@@ -50,7 +50,7 @@ public abstract class BaseBluetoothManager implements IBluetoothManager {
     protected void notifyConnectionStateChanged(boolean connected) {
         Log.d(TAG, "Bluetooth connection state changed: " + (connected ? "CONNECTED" : "DISCONNECTED"));
         this.isConnected = connected;
-        for (BluetoothStateListener listener : listeners) {
+        for (TransportListener listener : listeners) {
             try {
                 listener.onConnectionStateChanged(connected);
             } catch (Exception e) {
@@ -70,7 +70,7 @@ public abstract class BaseBluetoothManager implements IBluetoothManager {
         }
         
         Log.d(TAG, "Bluetooth data received: " + data.length + " bytes");
-        for (BluetoothStateListener listener : listeners) {
+        for (TransportListener listener : listeners) {
             try {
                 listener.onDataReceived(data);
             } catch (Exception e) {
@@ -84,7 +84,7 @@ public abstract class BaseBluetoothManager implements IBluetoothManager {
      * then delegates to the subclass-specific send implementation.
      */
     @Override
-    public final boolean sendData(byte[] data) {
+    public final boolean sendMessage(byte[] data) {
         if (data == null || data.length == 0) {
             return false;
         }
@@ -100,15 +100,16 @@ public abstract class BaseBluetoothManager implements IBluetoothManager {
             // Not valid JSON — skip broadcast, still send over BLE
         }
 
-        return sendDataInternal(data);
+        return sendMessageInternal(data);
     }
 
     /**
      * Subclass-specific send implementation.
+     *
      * @param data The data to send
      * @return true if the data was sent successfully
      */
-    protected abstract boolean sendDataInternal(byte[] data);
+    protected abstract boolean sendMessageInternal(byte[] data);
 
     @Override
     public boolean isConnected() {
@@ -146,8 +147,8 @@ public abstract class BaseBluetoothManager implements IBluetoothManager {
         return false;
     }
 
-    public boolean sendImageFile(String path){
-        Log.w(TAG, "sendImageFile not implemented in " + getClass().getSimpleName());
+    public boolean sendFile(String path) {
+        Log.w(TAG, "sendFile not implemented in " + getClass().getSimpleName());
         return false;
     }
 } 

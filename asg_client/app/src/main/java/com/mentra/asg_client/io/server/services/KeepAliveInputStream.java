@@ -1,4 +1,5 @@
 package com.mentra.asg_client.io.server.services;
+import android.util.Log;
 
 import java.io.FilterInputStream;
 import java.io.IOException;
@@ -57,7 +58,7 @@ public class KeepAliveInputStream extends FilterInputStream {
         if (timeSinceLastRead > KEEP_ALIVE_INTERVAL_MS && len > 0) {
             // Force read at least 1 byte to keep connection alive
             len = Math.max(MIN_KEEP_ALIVE_BYTES, Math.min(len, available()));
-            android.util.Log.d(TAG, "⏱️ Keep-alive: Forcing read of " + len + " bytes after " + 
+            Log.d(TAG, "⏱️ Keep-alive: Forcing read of " + len + " bytes after " + 
                              (timeSinceLastRead / 1000) + " seconds of inactivity");
         }
         
@@ -71,7 +72,7 @@ public class KeepAliveInputStream extends FilterInputStream {
             if (totalBytesRead % (10 * 1024 * 1024) == 0) {
                 long elapsedMs = System.currentTimeMillis() - startTime;
                 double speedMBps = (totalBytesRead / 1024.0 / 1024.0) / (elapsedMs / 1000.0);
-                android.util.Log.d(TAG, String.format("📊 Progress: %d MB transferred at %.2f MB/s", 
+                Log.d(TAG, String.format("📊 Progress: %d MB transferred at %.2f MB/s", 
                                                      totalBytesRead / (1024 * 1024), speedMBps));
             }
         }
@@ -85,7 +86,7 @@ public class KeepAliveInputStream extends FilterInputStream {
     private void checkKeepAlive() {
         long timeSinceLastRead = System.currentTimeMillis() - lastReadTime;
         if (timeSinceLastRead > KEEP_ALIVE_INTERVAL_MS) {
-            android.util.Log.w(TAG, "⚠️ Keep-alive warning: No data read for " + 
+            Log.w(TAG, "⚠️ Keep-alive warning: No data read for " + 
                              (timeSinceLastRead / 1000) + " seconds");
         }
     }
@@ -101,7 +102,7 @@ public class KeepAliveInputStream extends FilterInputStream {
     @Override
     public void close() throws IOException {
         long totalTimeMs = System.currentTimeMillis() - startTime;
-        android.util.Log.d(TAG, String.format("📏 Stream closed: %d bytes transferred in %.1f seconds", 
+        Log.d(TAG, String.format("📏 Stream closed: %d bytes transferred in %.1f seconds", 
                                              totalBytesRead, totalTimeMs / 1000.0));
         super.close();
     }

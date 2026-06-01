@@ -3,7 +3,12 @@ package com.mentra.asg_client.io.hardware.core;
 import android.content.Context;
 import android.util.Log;
 
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+import com.mentra.asg_client.io.hardware.interfaces.Capability;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+
+import java.util.Collections;
+import java.util.Set;
 
 /**
  * Base implementation of the IHardwareManager interface.
@@ -29,7 +34,12 @@ public class BaseHardwareManager implements IHardwareManager {
         Log.d(TAG, "Initializing BaseHardwareManager (no hardware-specific features)");
         isInitialized = true;
     }
-    
+
+    @Override
+    public Set<Capability> getCapabilities() {
+        return Collections.emptySet();
+    }
+
     @Override
     public boolean supportsRecordingLed() {
         // Base implementation doesn't support LED
@@ -85,11 +95,6 @@ public class BaseHardwareManager implements IHardwareManager {
     }
     
     @Override
-    public boolean isK900Device() {
-        return false;
-    }
-
-    @Override
     public boolean supportsAudioPlayback() {
         return false;
     }
@@ -105,8 +110,8 @@ public class BaseHardwareManager implements IHardwareManager {
     }
 
     @Override
-    public void setBluetoothManager(Object bluetoothManager) {
-        Log.d(TAG, "setBluetoothManager() called - no-op on base hardware");
+    public void setTransport(ICompanionTransport transport) {
+        Log.d(TAG, "setTransport() called - no-op on base hardware");
     }
 
     // ============================================
@@ -194,6 +199,11 @@ public class BaseHardwareManager implements IHardwareManager {
     public boolean getChargingStatus() {
         Log.d(TAG, "getChargingStatus() called - returning false on base hardware");
         return false;
+    }
+
+    @Override
+    public void notifyBatteryReading(int percent, int voltageMv) {
+        // No-op on base hardware
     }
 
     @Override

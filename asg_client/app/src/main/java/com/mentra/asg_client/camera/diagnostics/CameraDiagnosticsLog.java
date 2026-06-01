@@ -1,4 +1,5 @@
 package com.mentra.asg_client.camera.diagnostics;
+import android.util.Log;
 
 import com.mentra.asg_client.camera.policy.ManualExposurePolicy;
 
@@ -11,7 +12,7 @@ public final class CameraDiagnosticsLog {
 
     public static void savedFrameTimestampVsStill(
             long imageTimestampNs, Long stillSensorTimestampNs, boolean timestampsMatch, long deltaMs) {
-        android.util.Log.i(TAG,
+        Log.i(TAG,
                 "{\"sessionId\":\"d2b1f4\",\"hypothesisId\":\"H6\",\"location\":\"CameraNeo:onImageAvailable:savedFrame\",\"timestamp\":" + System.currentTimeMillis()
                         + ",\"message\":\"saved frame timestamp vs still capture timestamp\",\"data\":{"
                         + "\"image_timestamp_ns\":" + imageTimestampNs
@@ -22,7 +23,7 @@ public final class CameraDiagnosticsLog {
     }
 
     public static void manualExposureDecision(boolean decision, String reason, Long pendingExposureNs, boolean manualSupported) {
-        android.util.Log.i(TAG,
+        Log.i(TAG,
                 "{\"sessionId\":\"d2b1f4\",\"hypothesisId\":\"H0\",\"location\":\"CameraNeo:shouldUseManualExposure\",\"timestamp\":" + System.currentTimeMillis()
                         + ",\"message\":\"manual exposure decision\",\"data\":{"
                         + "\"decision\":" + decision
@@ -42,7 +43,7 @@ public final class CameraDiagnosticsLog {
             int isoFinalClamped,
             Integer sensorIsoLow,
             Integer sensorIsoHigh) {
-        android.util.Log.i(TAG,
+        Log.i(TAG,
                 "{\"sessionId\":\"d2b1f4\",\"hypothesisId\":\"H1\",\"location\":\"CameraNeo:pickSensitivityForManualCapture\",\"timestamp\":" + System.currentTimeMillis()
                         + ",\"message\":\"manual ISO computation\",\"data\":{"
                         + "\"meteredIso\":" + meteredIso
@@ -71,7 +72,7 @@ public final class CameraDiagnosticsLog {
             Boolean reqAeLock,
             Integer reqExpComp,
             android.util.Range<Integer> reqFps) {
-        android.util.Log.i(TAG,
+        Log.i(TAG,
                 "{\"sessionId\":\"d2b1f4\",\"hypothesisId\":\"H1+H2+H3+H4\",\"location\":\"CameraNeo:capturePhoto:beforeCapture\",\"timestamp\":" + System.currentTimeMillis()
                         + ",\"message\":\"still request keys (what HAL will see)\",\"data\":{"
                         + "\"useManual\":" + useManual
@@ -90,7 +91,7 @@ public final class CameraDiagnosticsLog {
     }
 
     public static void stillCaptureSensorTimestamp(Long stillSensorTs, double expMs, Integer iso) {
-        android.util.Log.i(TAG,
+        Log.i(TAG,
                 "{\"sessionId\":\"d2b1f4\",\"hypothesisId\":\"H6\",\"location\":\"CameraNeo:onCaptureCompleted:stillTs\",\"timestamp\":" + System.currentTimeMillis()
                         + ",\"message\":\"still capture sensor timestamp recorded\",\"data\":{"
                         + "\"still_SENSOR_TIMESTAMP_ns\":" + stillSensorTs
@@ -118,7 +119,7 @@ public final class CameraDiagnosticsLog {
             Long actualFrameDurNs,
             double totalLightProxyActual,
             double totalLightProxyXy) {
-        android.util.Log.i(TAG,
+        Log.i(TAG,
                 "{\"sessionId\":\"d2b1f4\",\"hypothesisId\":\"H1+H2+H3+H5\",\"location\":\"CameraNeo:onCaptureCompleted\",\"timestamp\":" + System.currentTimeMillis()
                         + ",\"message\":\"actual HAL-applied values vs requested\",\"data\":{"
                         + "\"isManualAttempt\":" + isManualAttempt

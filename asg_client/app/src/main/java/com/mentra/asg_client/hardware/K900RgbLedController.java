@@ -337,7 +337,7 @@ public class K900RgbLedController {
 
         try {
             byte[] commandBytes = k900Command.toString().getBytes(StandardCharsets.UTF_8);
-            boolean sent = bluetoothManager.sendData(commandBytes);
+            boolean sent = bluetoothManager.sendMessage(commandBytes);
             Log.d(TAG, "📡 Command sent result: " + sent);
             return sent;
         } catch (Exception e) {

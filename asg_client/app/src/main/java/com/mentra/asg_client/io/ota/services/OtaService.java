@@ -24,19 +24,24 @@ import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.events.BatteryStatusEvent;
-import com.mentra.asg_client.SysControl;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 
+import javax.inject.Inject;
+
+import dagger.hilt.android.AndroidEntryPoint;
+
+@AndroidEntryPoint
 public class OtaService extends Service {
     private static final String TAG = OtaConstants.TAG;
     private static final String CHANNEL_ID = "ota_service_channel";
     private static final int NOTIFICATION_ID = 2001;
     
-    private OtaHelper otaHelper;
-    
+    @Inject OtaHelper otaHelper;
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -52,15 +57,12 @@ public class OtaService extends Service {
         // This prevents dual OTA checks when updating from older versions
         try {
             Log.w(TAG, "Stopping external OTA updater app to prevent conflicts");
-            SysControl.stopApp(this, "com.augmentos.otaupdater");
+            SystemControllerFactory.get(this).stopApp("com.augmentos.otaupdater");
             Log.i(TAG, "External OTA updater stopped");
         } catch (Exception e) {
             Log.e(TAG, "Failed to stop external OTA updater", e);
         }
         
-        // Initialize OTA helper singleton
-        otaHelper = OtaHelper.initialize(this);
-
         // Clean up old firmware files from previous updates
         cleanupOldFirmwareFiles();
 
