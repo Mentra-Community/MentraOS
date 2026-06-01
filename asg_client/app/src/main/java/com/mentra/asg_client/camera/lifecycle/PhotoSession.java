@@ -548,19 +548,6 @@ public final class PhotoSession {
         }
     }
 
-    private void persistPhotoImuToExif(String photoPath, ImuRecorder imu) {
-        JSONObject imuPayload = imu.stopRecordingAndBuildPayload();
-        if (imuPayload == null) {
-            return;
-        }
-        boolean written = PhotoExifMetadataWriter.writeImuPayload(photoPath, imuPayload);
-        if (written) {
-            Log.d(TAG, "Embedded IMU payload in photo EXIF: " + photoPath);
-        } else {
-            Log.w(TAG, "Unable to embed IMU payload in photo EXIF: " + photoPath);
-        }
-    }
-
     private void notifyPhotoCaptured(String filePath) {
         long startMs = currentStartTimeMs();
         long e2eTimeMs = (startMs > 0) ? (System.currentTimeMillis() - startMs) : -1L;
