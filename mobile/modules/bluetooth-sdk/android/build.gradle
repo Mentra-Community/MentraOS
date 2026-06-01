@@ -100,6 +100,7 @@ if (!sherpaOnnxPom.exists()) {
 
 repositories {
   maven { url = uri(sherpaOnnxMavenRoot) }
+  maven { url 'https://jitpack.io' }
 }
 
 
@@ -148,6 +149,11 @@ android {
   lintOptions {
     abortOnError false
   }
+  testOptions {
+    unitTests {
+      includeAndroidResources = true
+    }
+  }
   packagingOptions {
     pickFirst '**/libjsc.so'
     pickFirst '**/libc++_shared.so'
@@ -179,6 +185,15 @@ dependencies {
 
   // OkHttp for HTTP requests
   implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+  implementation 'androidx.exifinterface:exifinterface:1.3.7'
+
+  // AVIF decode (system BitmapFactory/Kumiho rejects libavif-encoded AVIF on some OEMs)
+  implementation 'com.github.awxkee:avif-coder:1.7.3'
+
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.robolectric:robolectric:4.11.1'
+  testImplementation 'org.assertj:assertj-core:3.24.2'
+  testImplementation 'androidx.test:core:1.5.0'
 
   // LC3 audio codec library
   implementation project(':lc3Lib')
