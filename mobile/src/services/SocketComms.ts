@@ -16,27 +16,6 @@ import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUt
 import {throttle} from "@/utils/timers"
 import {logE2EMetric} from "@/utils/e2eMetrics"
 
-const summarizeDisplayPayload = (payload: any) => {
-  const layout = payload?.layout ?? {}
-  const text =
-    typeof layout.text === "string"
-      ? layout.text
-      : Array.isArray(layout.text)
-        ? layout.text.join(" | ")
-        : typeof layout.topText === "string" || typeof layout.bottomText === "string"
-          ? [layout.topText, layout.bottomText].filter(Boolean).join(" | ")
-          : ""
-
-  return {
-    view: payload?.view ?? "missing",
-    layoutType: layout.layoutType ?? "unknown",
-    packageName: payload?.packageName ?? "unknown",
-    durationMs: payload?.durationMs ?? null,
-    textLength: text.length,
-    textPreview: text.slice(0, 120),
-  }
-}
-
 class SocketComms {
   private static instance: SocketComms | null = null
   private coreToken: string = ""
@@ -492,8 +471,6 @@ class SocketComms {
       return
     }
 
-    console.log("SOCKET: handle_display_event raw", summarizeDisplayPayload(msg))
-
     let processedEvent
     try {
       processedEvent = displayProcessor.processDisplayEvent(msg)
@@ -502,15 +479,8 @@ class SocketComms {
       processedEvent = msg
     }
 
-    console.log("SOCKET: handle_display_event processed", summarizeDisplayPayload(processedEvent))
-
     CoreModule.displayEvent(processedEvent)
     const displayEventStr = JSON.stringify(processedEvent)
-    console.log("SOCKET: forwarding display_event to store", {
-      view: processedEvent?.view ?? "missing",
-      layoutType: processedEvent?.layout?.layoutType ?? "unknown",
-      payloadLength: displayEventStr.length,
-    })
     useDisplayStore.getState().setDisplayEvent(displayEventStr)
   }
 
@@ -727,10 +697,6 @@ class SocketComms {
   // Message Handling
   private handle_message(msg: any) {
     const type = msg.type
-
-    if (type === "display_event") {
-      console.log("SOCKET: dispatching display_event", summarizeDisplayPayload(msg))
-    }
 
     switch (type) {
       case "ping":
