@@ -69,89 +69,54 @@ The cloud is **three products, not one**, and they are hosted differently:
 Together, Cloud Core and Mentra Runtime Services back every product that needs the cloud: the Mobile App, the Mentra OEM Integration Toolkit, the OEM APIs and Portal, the App Store, the Dev Console, and the CLI.
 
 ```mermaid
-graph TB
-  subgraph "Websites"
-    AppStore[App Store]
-    DevConsole[Dev Console]
-    OEMPortal[OEM APIs and Portal]
+flowchart LR
+  subgraph DevToolkit["Dev Toolkit"]
+    LocalSDK["Mentra Local SDK"]
+    CLI["Mentra CLI"]
   end
 
-  subgraph "Cloud"
-    CloudCore[Cloud Core Services - proprietary, always Mentra-hosted]
-    CloudRuntime[Mentra Runtime Services - self-hostable]
-    CloudProxy[Cloud Proxy - OEM-hosted connector]
+  subgraph MobileClient["Mobile Client"]
+    subgraph OEMToolkit["OEM Toolkit"]
+      subgraph IntegrationToolkit["OEM Integration Toolkit"]
+        Runtime["Mentra Runtime (bundle executor)"]
+        InstallAuth["Install + OEM-auth APIs"]
+        BluetoothSDK["Mentra Bluetooth SDK"]
+      end
+      UIToolkit["OEM UI Toolkit"]
+    end
   end
 
-  subgraph "Cloud Core Services (proprietary)"
-    UserAuth[User Auth]
-    OEMService["OEM service (auth, portal, APIs)"]
-    MiniAppService["MiniApp service (bundles, metadata)"]
-    DevConsoleService["Dev Console service (orgs, submissions)"]
+  Glasses["Glasses clients (ASG / Zephyr)"]
+
+  subgraph RuntimeServices["Mentra Runtime Services"]
+    STT
+    TTS
+    Translation
+    Streaming
+    Photo
   end
 
-  subgraph "Mentra Runtime Services (self-hostable)"
-    STTSvc[STT]
-    TTSSvc[TTS]
-    TranslationSvc[Translation]
-    StreamingSvc[Streaming]
-    PhotoSvc[Photo]
+  subgraph CoreServices["Cloud Core Services"]
+    UserAuth["User Auth"]
+    OEMSvc["OEM service"]
+    MiniAppSvc["MiniApp service"]
+    DevConsoleSvc["Dev Console service"]
   end
 
-  subgraph "Client"
-    MobileApp[Mobile App]
-    UIKit[Mentra OEM UI Toolkit]
-    CoreEngine["Mentra OEM Integration Toolkit"]
-    LocalSDK[Mentra Local SDK]
-    CLI[Mentra CLI]
-    BTSDK[Mentra Bluetooth SDK]
-    Glasses[Glasses clients - ASG / Zephyr]
+  subgraph Websites["Websites"]
+    AppStore["App Store"]
+    DevConsoleSite["Dev Console"]
+    OEMPortal["OEM Portal"]
   end
 
-  subgraph "Third-party providers"
-    DB[Cloud Database]
-    Cache[Cloud Cache]
-    SttProvider[STT provider]
-    Blob[Blob storage]
-    Video[Live video]
-  end
-
-  MobileApp --> CloudCore
-  AppStore --> CloudCore
-  DevConsole --> CloudCore
-  OEMPortal --> CloudCore
-  CLI --> CloudCore
-  CoreEngine --> CloudRuntime
-  CloudProxy --> CloudCore
-  CloudProxy --> CloudRuntime
-
-  CloudCore --> UserAuth
-  CloudCore --> OEMService
-  CloudCore --> MiniAppService
-  CloudCore --> DevConsoleService
-  CloudCore --> DB
-
-  CloudRuntime --> STTSvc
-  CloudRuntime --> TTSSvc
-  CloudRuntime --> TranslationSvc
-  CloudRuntime --> StreamingSvc
-  CloudRuntime --> PhotoSvc
-  CloudRuntime --> Cache
-
-  STTSvc --> SttProvider
-  TranslationSvc --> SttProvider
-  StreamingSvc --> Video
-  PhotoSvc --> Blob
-  MiniAppService --> Blob
-
-  LocalSDK --> CoreEngine
-  UIKit --> CoreEngine
-  CoreEngine --> BTSDK
-  BTSDK --> Glasses
-
-  style CloudCore fill:#1f6feb,color:#ffffff
-  style CloudRuntime fill:#1f6feb,color:#ffffff
-  style CloudProxy fill:#1f6feb,color:#ffffff
+  BluetoothSDK --> Glasses
+  Runtime --> RuntimeServices
+  InstallAuth --> CoreServices
+  CLI --> CoreServices
+  Websites --> CoreServices
 ```
+
+**Hosting and providers.** Cloud Core Services are proprietary and always Mentra-hosted. Mentra Runtime Services are Mentra-hosted or OEM-self-hosted, and an OEM can route their app through their own proxy to either product. Every cloud service is backed by a swappable provider chosen per region (blob storage: Cloudflare R2 or Alibaba OSS; streaming: Cloudflare Stream; STT: Soniox; database: MongoDB Atlas).
 
 ## Mini App Platform
 
@@ -363,34 +328,13 @@ Stub. The detailed design (transport, auth flow, per-service mode configuration,
 
 ## Client
 
-How the client pieces nest: the Mobile App is composed of the Mentra OEM UI Toolkit and the Mentra OEM Integration Toolkit; the OEM Integration Toolkit contains the Local SDK and the Bluetooth SDK; the Bluetooth SDK is what talks to the glasses clients. The OEM Integration Toolkit and the CLI both talk to Mentra Cloud.
+How the client pieces group (shown in the at-a-glance diagram above):
 
-```mermaid
-flowchart LR
-  Cloud["Mentra Cloud"]
-  CLI["Mentra CLI"]
+- **Dev Toolkit** (developer-facing): the Mentra Local SDK and the Mentra CLI.
+- **OEM Toolkit** (what an OEM embeds): the **OEM Integration Toolkit**, which wraps the Bluetooth SDK and contains the Mentra Runtime plus the install / OEM-auth APIs, and the **OEM UI Toolkit**.
+- **Mobile Client** (Mentra's consumer app): built on the OEM Toolkit.
 
-  subgraph MobileApp["Mobile App"]
-    UIKit["Mentra OEM UI Toolkit"]
-
-    subgraph MentraCore["Mentra OEM Integration Toolkit"]
-      LocalSDK["Mentra Local SDK"]
-      BluetoothSDK["Mentra Bluetooth SDK"]
-      Runtime["Mentra Runtime (bundle executor)"]
-    end
-  end
-
-  subgraph GlassesClients["Glasses Clients"]
-    ASG["ASG_Client"]
-    Zephyr["Zephyr_Client"]
-  end
-
-  Cloud <--> MentraCore
-  Cloud <--> CLI
-
-  BluetoothSDK <--> ASG
-  BluetoothSDK <--> Zephyr
-```
+The Bluetooth SDK is what talks to the glasses clients (ASG / Zephyr).
 
 ### Mobile App
 
