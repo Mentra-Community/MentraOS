@@ -54,6 +54,7 @@
   "dependencies": {
     "@babel/runtime": "^7.28.6",
     "@config-plugins/react-native-webrtc": "^13.0.0",
+    "@craftzdog/react-native-buffer": "^6.1.2",
     "@douglowder/expo-av-route-picker-view": "^0.0.5",
     "@dr.pogodin/react-native-fs": "^2.37.0",
     "@expo-google-fonts/red-hat-display": "^0.4.1",
@@ -67,8 +68,8 @@
     "@livekit/react-native-webrtc": "^137.0.2",
     "@mentra/bluetooth-sdk": "workspace:*",
     "@mentra/island": "workspace:*",
-    "@mentra/miniapp": "workspace:*",
     "@mentra/jspolyfill": "workspace:*",
+    "@mentra/miniapp": "workspace:*",
     "@react-native-community/netinfo": "11.5.2",
     "@react-native-community/slider": "5.1.2",
     "@react-native-firebase/analytics": "^23.8.6",

@@ -51,6 +51,7 @@ import {logE2EMetric} from "@/utils/e2eMetrics"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
+import {Buffer} from "@craftzdog/react-native-buffer"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
 
@@ -406,6 +407,12 @@ class MantleManager {
         const {packageName, version} = parsed
 
         if (appRegistry.getInstalledVersions(packageName).includes(version)) {
+          continue
+        }
+
+        let superMode = await useSettingsStore.getState().getSetting(SETTINGS.super_mode.key)
+        if (!superMode && packageName === "com.mentra.example") {
+          // skip installing the example miniapp if super mode is not enabled
           continue
         }
 

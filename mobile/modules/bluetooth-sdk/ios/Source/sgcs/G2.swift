@@ -1481,6 +1481,7 @@ class G2: NSObject, SGCManager {
     // MARK: - BLE Sending
 
     private func sendToGlasses(_ packets: [Data], left: Bool = false, right: Bool = true) {
+        Bridge.log("G2: sendToGlasses() - sending \(packets.count) packets first byte: \(packets[0][0])")
         for packet in packets {
             if right, let char = rightWriteChar, let peripheral = rightPeripheral {
                 peripheral.writeValue(packet, for: char, type: .withoutResponse)
@@ -3216,7 +3217,7 @@ class G2: NSObject, SGCManager {
             return
         }
 
-        Bridge.log("G2: EvenHub incoming cmd=\(cmdValue), fields=\(Array(fields.keys).sorted())")
+        // Bridge.log("G2: EvenHub incoming cmd=\(cmdValue), fields=\(Array(fields.keys).sorted())")
 
         if cmdValue == EvenHubResponseCmd.osNotifyEventToApp.rawValue {
             // Touch/gesture event from glasses

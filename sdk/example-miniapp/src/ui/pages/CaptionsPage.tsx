@@ -39,7 +39,7 @@ export default function CaptionsPage() {
   const liveTranscript = liveUpdate?.text ?? snapshot?.liveTranscript ?? ""
   const history = historyUpdate?.history ?? snapshot?.history ?? []
   const lastButton = lastButtonUpdate?.label ?? snapshot?.lastButton ?? ""
-  const mirrorToGlasses = settingsUpdate?.mirrorToGlasses ?? snapshot?.settings?.mirrorToGlasses ?? true
+  const mirrorToGlasses = settingsUpdate?.mirrorToGlasses ?? snapshot?.settings?.mirrorToGlasses ?? false
   const capabilities = snapshot?.capabilities
   const connected = snapshot?.connection?.connected ?? false
 
