@@ -245,16 +245,8 @@ public class K900ProtocolUtils {
     public static byte[] formatMessageForTransmission(String jsonData) {
         try {
             android.util.Log.d("K900ProtocolUtils", "🔄 Formatting message: " + jsonData);
-            
-            // Validate that input is proper JSON
-            new JSONObject(jsonData);
-            
-            // First, create C wrapper: {"C": jsonData}
-            JSONObject wrapper = new JSONObject();
-            wrapper.put(FIELD_C, jsonData);
-            wrapper.put(FIELD_V, 1); // Optional version field
-            wrapper.put(FIELD_B, new JSONObject()); // Optional body field
-            String wrappedJson = wrapper.toString();
+
+            String wrappedJson = createTransmissionWrapperJson(jsonData);
             android.util.Log.d("K900ProtocolUtils", "🔄 After C-wrapping: " + wrappedJson);
             
             // Now format with BES2700 protocol
@@ -276,7 +268,24 @@ public class K900ProtocolUtils {
             return packJsonCommand(jsonData);
         }
     }
-    
+
+    /**
+     * Create the JSON envelope used by formatMessageForTransmission before BES2700 packing.
+     *
+     * @param jsonData The JSON string to wrap (must be valid JSON)
+     * @return Full K900 transmission wrapper: {"C": jsonData, "V": 1, "B": {}}
+     */
+    public static String createTransmissionWrapperJson(String jsonData) throws JSONException {
+        // Validate that input is proper JSON before embedding it as the C payload.
+        new JSONObject(jsonData);
+
+        JSONObject wrapper = new JSONObject();
+        wrapper.put(FIELD_C, jsonData);
+        wrapper.put(FIELD_V, 1); // Optional version field
+        wrapper.put(FIELD_B, new JSONObject()); // Optional body field
+        return wrapper.toString();
+    }
+
     /**
      * Create a C-wrapped JSON object ready for protocol formatting
      * Format: {"C": content}

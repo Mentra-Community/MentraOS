@@ -166,10 +166,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 if (originalData.startsWith("{") && !K900ProtocolUtils.isCWrappedJson(originalData)) {
                     Log.d(TAG, "📡 🔧 JSON data detected, applying C-wrapping and protocol formatting...");
                     Log.d(TAG, "📡 📦 JSON DATA BEFORE C-WRAPPING: " + originalData);
-                    JSONObject testWrapper = new JSONObject();
-                    testWrapper.put("C", originalData);
-                    String testWrappedJson = testWrapper.toString();
-                    if (MessageChunker.needsChunking(testWrappedJson)) {
+                    String wrappedJson = K900ProtocolUtils.createTransmissionWrapperJson(originalData);
+                    if (MessageChunker.needsChunking(wrappedJson)) {
                         return sendChunkedJson(originalData);
                     }
 
