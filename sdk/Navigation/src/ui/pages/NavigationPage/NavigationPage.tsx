@@ -175,6 +175,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const status = trip.status
   const maneuver = trip.maneuver
   const routePoints = trip.routePoints
+  const routeSteps = trip.routeSteps
   const activeDestination = trip.activeDestination
   const activeDestinationName = trip.activeDestinationName
   const offRouteAt = trip.offRouteAt
@@ -235,6 +236,12 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   // trip starts — unlike the SDK's getPivots(), which only populates
   // once navigation is running).
   const [previewTurns, setPreviewTurns] = useState<PreviewTurn[] | null>(null)
+  // Live counterpart to previewTurns — rebuilt from the active trip's
+  // route (routePoints + routeSteps from the nav:route channel) so the
+  // same red "fromRoad → toRoad / Turn left|right" dots that appear in
+  // preview also appear while navigating. Null when no trip is active
+  // or when steps haven't arrived yet.
+  const [liveTurns, setLiveTurns] = useState<PreviewTurn[] | null>(null)
   // Route-aware totals from computeRoute (mode-correct, follows the actual
   // walking path rather than crow-flies). Cleared when destination changes
   // or trip ends. Drawers prefer these over recomputing.
@@ -453,6 +460,84 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, destination?.lat, destination?.lng, coords?.lat, coords?.lng])
 
+  // Live turn dots — same shape and logic as the preview block above,
+  // but fed by the active trip's `routeSteps + routePoints` from the
+  // store (populated by the nav:route channel). Mirroring preview's
+  // ping-pong collapse + transition + snap + merge means the live and
+  // preview dots use the exact same rules; if they ever disagree, the
+  // bug is in the underlying steps, not in two divergent dot builders.
+  useEffect(() => {
+    if (!running || !routeSteps || routeSteps.length === 0 || !routePoints || routePoints.length === 0) {
+      setLiveTurns(null)
+      return
+    }
+    const steps = routeSteps
+    const polyline = routePoints
+    // Phantom A→B→A collapse pass (same as preview).
+    const annotated = (() => {
+      let cur = steps.map((s, i) => ({stepIdx: i, name: s.road ?? null}))
+      for (let pass = 0; pass < 4; pass++) {
+        const out: typeof cur = []
+        for (let i = 0; i < cur.length; i++) {
+          const prev = out[out.length - 1]
+          const next = cur[i + 1]
+          if (
+            prev?.name &&
+            next?.name &&
+            cur[i].name &&
+            !sameRoad(prev.name, cur[i].name!) &&
+            sameRoad(prev.name, next.name)
+          ) {
+            continue
+          }
+          out.push(cur[i])
+        }
+        if (out.length === cur.length) break
+        cur = out
+      }
+      return cur
+    })()
+    const dots: PreviewTurn[] = []
+    for (let i = 0; i < annotated.length - 1; i++) {
+      const here = annotated[i]
+      const next = annotated[i + 1]
+      if (!here.name || !next.name) continue
+      if (sameRoad(here.name, next.name)) continue
+      // NavRouteStep only has start coords. The "junction" between
+      // step[i] and step[i+1] is step[i+1].lat/lng (which IS the end
+      // of step[i] by definition).
+      const junction = steps[next.stepIdx]
+      if (!Number.isFinite(junction.lat) || !Number.isFinite(junction.lng)) continue
+      const bend = bendAngleAt(polyline, {lat: junction.lat, lng: junction.lng})
+      if (bend != null && bend < MIN_TURN_ANGLE_DEG) continue
+      const snapped = snapToPolyline(polyline, {lat: junction.lat, lng: junction.lng})
+      dots.push({
+        lat: snapped.lat,
+        lng: snapped.lng,
+        label: joinRoads(here.name, next.name),
+        direction: turnDirection(steps[next.stepIdx].maneuver),
+      })
+    }
+    const MERGE_RADIUS_M = 6
+    const merged: PreviewTurn[] = []
+    for (const d of dots) {
+      const prev = merged[merged.length - 1]
+      if (prev && haversineMeters(prev, d) < MERGE_RADIUS_M) {
+        const prevFrom = prev.label?.split(" → ")[0] ?? null
+        const dTo = d.label?.split(" → ")[1] ?? null
+        merged[merged.length - 1] = {
+          lat: d.lat,
+          lng: d.lng,
+          label: prevFrom && dTo ? `${prevFrom} → ${dTo}` : (d.label ?? prev.label),
+          direction: d.direction ?? prev.direction,
+        }
+        continue
+      }
+      merged.push(d)
+    }
+    setLiveTurns(merged)
+  }, [running, routeSteps, routePoints])
+
   // ---- trip lifecycle ------------------------------------------------------
   //
   // Background owns the live trip state. The UI fires-and-forgets the
@@ -575,11 +660,13 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           me={me}
           destination={activeDestination ?? (destination ? {lat: destination.lat, lng: destination.lng} : null)}
           routePoints={running ? routePoints : previewRoutePoints}
-          // Dev-only red turn dots. While previewing, the SDK's pivot
-          // list is empty (no active trip), so we feed turns derived
-          // from the computed route's steps. While running, NavMap pulls
-          // the live pivot list via the nav:get-pivots RPC.
-          previewTurns={running ? null : previewTurns}
+          // Red turn dots — same dots for preview and live, just sourced
+          // differently. Preview builds them from a one-shot
+          // `computeRoute` call. Live builds them from the active
+          // trip's `routeSteps + routePoints` (post-Phase-2 these come
+          // from the SAME Routes REST response, so the dots are
+          // identical end-to-end).
+          previewTurns={running ? liveTurns : previewTurns}
           // Idle map shows saved-place pins so the user can see their
           // home / work / starred locations at a glance. Hide them
           // while running so they don't compete with the active route.

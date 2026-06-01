@@ -31,6 +31,7 @@ const initialSnapshot: NavSnapshot = {
     activeDestination: null,
     activeDestinationName: null,
     routePoints: null,
+    routeSteps: null,
     offRouteAt: null,
   },
   activePivot: null,
@@ -65,8 +66,8 @@ export function installChannelSubscribers(): void {
   mentra.on("nav:pivots", ({active, upcoming}) =>
     useNavStore.setState({activePivot: active, upcomingPivot: upcoming}),
   )
-  mentra.on("nav:route", ({points}) => {
-    useNavStore.setState((s) => ({trip: {...s.trip, routePoints: points}}))
+  mentra.on("nav:route", ({points, steps}) => {
+    useNavStore.setState((s) => ({trip: {...s.trip, routePoints: points, routeSteps: steps}}))
   })
   mentra.on("nav:log-append", (entry) => useNavStore.getState().appendLog(entry))
   mentra.on("nav:log-clear", () => useNavStore.getState().clearLog())

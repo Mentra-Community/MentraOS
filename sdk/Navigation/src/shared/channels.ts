@@ -22,6 +22,7 @@ import type {
   Coords,
   DevSettings,
   LogEntry,
+  NavRouteStep,
   NavSnapshot,
   PlaceDetails,
   PlaceSuggestion,
@@ -35,7 +36,7 @@ export interface Channels {
   "nav:coords": Coords                                     // hot
   "nav:heading": {degrees: number}                         // hot, 10Hz throttled
   "nav:trip-state": TripState                              // on transitions
-  "nav:route": {points: {lat: number; lng: number}[]}      // on onRoute
+  "nav:route": {points: {lat: number; lng: number}[]; steps: NavRouteStep[] | null}      // on onRoute
   "nav:pivots": {active: Pivot | null; upcoming: Pivot | null}
   "nav:log-append": LogEntry
   "nav:log-clear": Record<string, never>

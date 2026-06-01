@@ -39,6 +39,24 @@ export type SavedPlace = PlaceDetails & {
  * `running` is true while `status` ∈ {"navigating","rerouting"}, false
  * otherwise. Collapsing into a single field is a separate refactor.
  */
+/**
+ * One step in the active trip's route, mirrored from the SDK's
+ * `NavStep` minus internal fields the UI doesn't need (`routeIndex`).
+ * Carries the resolved road name (host-side hybrid resolver) so the
+ * UI can build live turn dots from road→road transitions, matching
+ * the preview path. `maneuver` is the SDK's `ManeuverKind` string —
+ * widened to `string` here to avoid pulling the union into the
+ * shared types boundary (the channel layer doesn't gain anything
+ * from the narrower type).
+ */
+export type NavRouteStep = {
+  lat: number
+  lng: number
+  road: string | null
+  maneuver: string
+  distanceMeters: number
+}
+
 export type TripState = {
   status: NavStatus
   running: boolean
@@ -46,6 +64,14 @@ export type TripState = {
   activeDestination: LatLng | null
   activeDestinationName: string | null
   routePoints: LatLng[] | null
+  /**
+   * Step list for the active route, populated alongside `routePoints`
+   * from the SDK's onRoute event. Null until the first route lands.
+   * Used by NavigationPage to build live turn dots that mirror the
+   * preview from→to/direction labels — preview reads steps directly
+   * from `computeRoute`, live reads them from here.
+   */
+  routeSteps: NavRouteStep[] | null
   offRouteAt: number | null
 }
 

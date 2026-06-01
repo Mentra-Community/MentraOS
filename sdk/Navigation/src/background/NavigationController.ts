@@ -46,6 +46,7 @@ export class NavigationController {
     activeDestination: null,
     activeDestinationName: null,
     routePoints: null,
+    routeSteps: null,
     offRouteAt: null,
   }
   private activePivot: Pivot | null = null
@@ -173,6 +174,7 @@ export class NavigationController {
               maneuver: null,
               activeDestination: null,
               routePoints: null,
+              routeSteps: null,
               offRouteAt: null,
             }
             break
@@ -188,8 +190,21 @@ export class NavigationController {
     // Route updates (full polyline rebuild)
     this.unsubs.push(
       this.navigation.onRoute((route: NavRoute) => {
-        this.trip = {...this.trip, routePoints: route.points}
-        this.ui.send("nav:route", {points: route.points})
+        // Mirror NavStep → NavRouteStep, dropping `routeIndex` (UI
+        // doesn't need it) and widening `maneuver` from the SDK union
+        // to a plain string for the channel wire (see NavRouteStep).
+        const steps =
+          route.steps && route.steps.length > 0
+            ? route.steps.map((s) => ({
+                lat: s.lat,
+                lng: s.lng,
+                road: s.road ?? null,
+                maneuver: s.maneuver,
+                distanceMeters: s.distanceMeters,
+              }))
+            : null
+        this.trip = {...this.trip, routePoints: route.points, routeSteps: steps}
+        this.ui.send("nav:route", {points: route.points, steps})
         this.ui.send("nav:trip-state", this.trip)
         logLiveRoute(route)
       }),
@@ -257,6 +272,7 @@ export class NavigationController {
           maneuver: null,
           activeDestination: null,
           routePoints: null,
+          routeSteps: null,
           offRouteAt: null,
         }
         this.ui.send("nav:trip-state", this.trip)
