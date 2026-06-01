@@ -80,6 +80,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                     data.optString("compress", "none"); // Default to none (no compression)
             boolean flash = data.optBoolean("flash", true);
             boolean sound = data.optBoolean("sound", true);
+            boolean includeImu = data.optBoolean("includeImu", false);
             Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
             if (exposureTimeNs != null) {
                 Log.i(
@@ -180,7 +181,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                             + " transferMethod="
                             + transferMethod
                             + " size="
-                            + size);
+                            + size
+                            + " includeImu="
+                            + includeImu);
             boolean success =
                     processPhotoCapture(
                             captureService,
@@ -195,6 +198,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                             flash,
                             sound,
                             compress,
+                            includeImu,
                             exposureTimeNs);
             logCommandResult("take_photo", success, success ? null : "Photo capture failed");
             if (success) {
@@ -239,6 +243,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             boolean flash,
             boolean sound,
             String compress,
+            boolean includeImu,
             Long exposureTimeNs) {
         Log.d(TAG, "Processing photo capture with transfer method: " + transferMethod);
         switch (transferMethod) {
@@ -251,6 +256,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         size,
                         flash,
                         sound,
+                        includeImu,
                         exposureTimeNs);
                 return true;
             case "auto":
@@ -269,6 +275,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         flash,
                         sound,
                         compress,
+                        includeImu,
                         exposureTimeNs);
                 return true;
             default:
@@ -282,6 +289,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         flash,
                         sound,
                         compress,
+                        includeImu,
                         exposureTimeNs);
                 return true;
         }

@@ -32,7 +32,6 @@ import com.mentra.asg_client.camera.request.HdrBurstBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureCallback;
 import com.mentra.asg_client.sensors.ImuRecorder;
-import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -448,7 +447,10 @@ public final class PhotoSession {
                         public void onBurstComplete(String basePath) {
                             ImuRecorder imu = hooks.imuRecorderOrNull();
                             if (imu != null) {
-                                persistPhotoImuToExif(basePath, imu);
+                                String imuPath = imu.stopRecordingAndSave(basePath);
+                                if (imuPath != null) {
+                                    Log.d(TAG, "IMU sidecar saved: " + imuPath);
+                                }
                             }
                             notifyPhotoCaptured(basePath);
                             clearActiveCapture();
@@ -474,7 +476,10 @@ public final class PhotoSession {
             if (success) {
                 ImuRecorder imu = hooks.imuRecorderOrNull();
                 if (imu != null) {
-                    persistPhotoImuToExif(targetPath, imu);
+                    String imuPath = imu.stopRecordingAndSave(targetPath);
+                    if (imuPath != null) {
+                        Log.d(TAG, "IMU sidecar saved: " + imuPath);
+                    }
                 }
 
                 notifyPhotoCaptured(targetPath);
@@ -528,19 +533,6 @@ public final class PhotoSession {
         } catch (Exception e) {
             Log.e(TAG, "Error saving image", e);
             return false;
-        }
-    }
-
-    private void persistPhotoImuToExif(String photoPath, ImuRecorder imu) {
-        JSONObject imuPayload = imu.stopRecordingAndBuildPayload();
-        if (imuPayload == null) {
-            return;
-        }
-        boolean written = PhotoExifMetadataWriter.writeImuPayload(photoPath, imuPayload);
-        if (written) {
-            Log.d(TAG, "Embedded IMU payload in photo EXIF: " + photoPath);
-        } else {
-            Log.w(TAG, "Unable to embed IMU payload in photo EXIF: " + photoPath);
         }
     }
 

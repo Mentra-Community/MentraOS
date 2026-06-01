@@ -2408,6 +2408,9 @@ public class MentraLive extends SGCManager {
                     Bridge.log("LIVE: Photo request succeeded - requestId: " + requestId);
                 }
                 break;
+            case "photo_imu":
+                handlePhotoImu(json);
+                break;
 
             case "ble_photo_complete":
                 // Process BLE photo transfer completion
@@ -4180,9 +4183,9 @@ public class MentraLive extends SGCManager {
         }
     }
 
-    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean save, boolean sound, Long exposureTimeNs) {
+    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean save, boolean sound, boolean includeImu, Long exposureTimeNs) {
         boolean hasAuthToken = authToken != null && !authToken.isEmpty();
-        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", save=" + save + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs);
+        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", save=" + save + ", sound=" + sound + ", includeImu=" + includeImu + ", exposureTimeNs=" + exposureTimeNs);
         Bridge.log("LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry — requestId=" + requestId + ", appId=" + appId);
 
         try {
@@ -4207,6 +4210,7 @@ public class MentraLive extends SGCManager {
             json.put("flash", flash);
             json.put("save", save);
             json.put("sound", sound);
+            json.put("includeImu", includeImu);
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
                 Bridge.log("LIVE: Using manual exposure time for photo request " + requestId + ": " + exposureTimeNs + " ns");
                 json.put("exposureTimeNs", exposureTimeNs);
@@ -5616,6 +5620,22 @@ public class MentraLive extends SGCManager {
             Bridge.sendImuDataEvent(accelArray, gyroArray, magArray, quatArray, eulerArray, System.currentTimeMillis());
         } catch (JSONException e) {
             Log.e(TAG, "Error parsing single IMU data", e);
+        }
+    }
+
+    private void handlePhotoImu(JSONObject json) {
+        try {
+            String requestId = json.optString("requestId", "");
+            String imuStatus = json.optString("imuStatus", "unavailable");
+            long timestamp = json.optLong("timestamp", System.currentTimeMillis());
+            double[] accel = jsonArrayToDoubleArray(json.optJSONArray("accel"), 3);
+            double[] gyro = jsonArrayToDoubleArray(json.optJSONArray("gyro"), 3);
+            double[] mag = jsonArrayToDoubleArray(json.optJSONArray("mag"), 3);
+            double[] quat = jsonArrayToDoubleArray(json.optJSONArray("quat"), 4);
+            double[] euler = jsonArrayToDoubleArray(json.optJSONArray("euler"), 3);
+            Bridge.sendPhotoImuEvent(requestId, imuStatus, timestamp, accel, gyro, mag, quat, euler);
+        } catch (Exception e) {
+            Log.e(TAG, "Error parsing photo_imu message", e);
         }
     }
 

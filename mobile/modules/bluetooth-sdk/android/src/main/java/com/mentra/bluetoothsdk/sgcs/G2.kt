@@ -2660,6 +2660,7 @@ class G2 : SGCManager() {
             flash: Boolean,
             save: Boolean,
             sound: Boolean,
+            includeImu: Boolean,
             exposureTimeNs: Long?,
     ) {
         Bridge.log("G2: requestPhoto - not supported (no camera)")

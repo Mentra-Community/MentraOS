@@ -26,6 +26,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
+            "photo_imu",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",
@@ -339,6 +340,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             let flash = params["flash"] as? Bool ?? true
             let save = params["save"] as? Bool ?? params["saveToGallery"] as? Bool ?? false
             let sound = params["sound"] as? Bool ?? true
+            let includeImu = params["includeImu"] as? Bool ?? false
             let exposureTimeNs: Double?
             switch params["exposureTimeNs"] {
             case let value as Double:
@@ -363,6 +365,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                         flash: flash,
                         save: save,
                         sound: sound,
+                        includeImu: includeImu,
                         exposureTimeNs: exposureTimeNs
                     )
                 )
@@ -653,6 +656,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             sendEvent("hotspot_error", error.values)
         case let .photoResponse(response):
             sendEvent("photo_response", response.values)
+        case let .photoImu(response):
+            sendEvent("photo_imu", response.values)
         case let .streamStatus(status):
             sendEvent("stream_status", status.values)
         case let .keepAliveAck(ack):

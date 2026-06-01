@@ -479,7 +479,7 @@ public class AsgClientServiceManager {
             try {
                 mediaCaptureService =
                         new MediaCaptureService(
-                                context, mediaQueueManager, fileManager, stateManager) {
+                                context, mediaQueueManager, fileManager, stateManager, imuManager) {
                             @Override
                             protected void sendMediaSuccessResponse(
                                     String requestId, String mediaUrl, int mediaType) {

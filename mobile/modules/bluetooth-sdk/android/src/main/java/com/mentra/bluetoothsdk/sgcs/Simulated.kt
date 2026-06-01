@@ -37,9 +37,10 @@ class Simulated : SGCManager() {
             flash: Boolean,
             save: Boolean,
             sound: Boolean,
+            includeImu: Boolean,
             exposureTimeNs: Long?,
     ) {
-        Bridge.log("requestPhoto flash=$flash, save=$save, sound=$sound")
+        Bridge.log("requestPhoto flash=$flash, save=$save, sound=$sound, includeImu=$includeImu")
     }
 
     override fun startStream(message: MutableMap<String, Any>) {

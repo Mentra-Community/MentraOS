@@ -1,6 +1,7 @@
-const {photoRequestParamsForNative} = require("../_private/photoRequestPayload")
+import {photoRequestParamsForNative} from "../_private/photoRequestPayload"
+import type {PhotoRequestParams} from "../BluetoothSdk.types"
 
-const baseParams = {
+const baseParams: PhotoRequestParams = {
   requestId: "photo-1",
   appId: "com.test.app",
   size: "medium",
@@ -11,10 +12,16 @@ const baseParams = {
 }
 
 describe("photoRequestParamsForNative", () => {
-  it("produces only supported native payload keys", () => {
+  it("defaults includeImu to false when omitted", () => {
     const payload = photoRequestParamsForNative(baseParams)
-    expect(Object.keys(payload).sort()).toEqual(
-      ["appId", "compress", "flash", "requestId", "size", "sound", "webhookUrl"].sort(),
-    )
+    expect(payload.includeImu).toBe(false)
+  })
+
+  it("passes includeImu=true through to native payload", () => {
+    const payload = photoRequestParamsForNative({
+      ...baseParams,
+      includeImu: true,
+    })
+    expect(payload.includeImu).toBe(true)
   })
 })

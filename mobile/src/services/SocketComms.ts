@@ -539,10 +539,11 @@ class SocketComms {
     const authToken = typeof msg.authToken === "string" && msg.authToken.length > 0 ? msg.authToken : null
     const compress = normalizePhotoCompression(msg.compress)
     const sound = msg.sound ?? true
+    const includeImu = msg.includeImu === true
     const rawExp = msg.exposureTimeNs
     const exposureTimeNs = typeof rawExp === "number" && Number.isFinite(rawExp) && rawExp > 0 ? rawExp : null
     console.log(
-      `SOCKET: PHOTO PIPELINE [1/6] Received photo_request requestId=${requestId} appId=${appId} webhookUrl=${webhookUrl} size=${size} compress=${compress} sound=${sound} exposureTimeNs=${exposureTimeNs ?? "none"} authToken=${authToken ? "set" : "none"}`,
+      `SOCKET: PHOTO PIPELINE [1/6] Received photo_request requestId=${requestId} appId=${appId} webhookUrl=${webhookUrl} size=${size} compress=${compress} sound=${sound} includeImu=${includeImu} exposureTimeNs=${exposureTimeNs ?? "none"} authToken=${authToken ? "set" : "none"}`,
     )
     if (!requestId || !appId) {
       console.log(
@@ -559,6 +560,7 @@ class SocketComms {
       authToken,
       compress,
       sound,
+      includeImu,
       exposureTimeNs,
     })
       .then(() => {

@@ -24,6 +24,7 @@ abstract class SGCManager {
             flash: Boolean,
             save: Boolean,
             sound: Boolean,
+            includeImu: Boolean,
             exposureTimeNs: Long?,
     )
     abstract fun startStream(message: MutableMap<String, Any>)
