@@ -10,6 +10,7 @@ import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.io.bes.log.BesLogManager;
+import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
@@ -831,9 +832,8 @@ public class K900CommandHandler {
             .getAsgSettings()
             .isSaveInGalleryMode();
 
-        boolean isBluetoothConnected =
-                serviceManager.getBluetoothManager() != null
-                        && serviceManager.getBluetoothManager().isConnected();
+        IBluetoothManager bluetoothManager = serviceManager.getBluetoothManager();
+        boolean isBluetoothConnected = bluetoothManager != null && bluetoothManager.isConnected();
         boolean isHeartbeatConnected = serviceManager.isConnected();
         boolean isConnected = isBluetoothConnected || isHeartbeatConnected;
 
