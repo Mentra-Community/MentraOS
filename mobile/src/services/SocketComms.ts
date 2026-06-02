@@ -628,7 +628,7 @@ class SocketComms {
 
   private handle_camera_fov_set(msg: any) {
     const ROI_MAP: Record<string, number> = {center: 0, bottom: 1, top: 2}
-    const fov = typeof msg.fov === "number" ? Math.min(118, Math.max(82, msg.fov)) : 118
+    const fov = typeof msg.fov === "number" ? Math.min(118, Math.max(62, msg.fov)) : 118
     const roiStr: string = msg.roiPosition ?? "center"
     const numericRoi = ROI_MAP[roiStr] ?? 0
     console.log(`SOCKET: camera_fov_set fov=${fov} roi=${roiStr} (${numericRoi})`)

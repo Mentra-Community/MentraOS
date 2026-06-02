@@ -236,7 +236,7 @@ export interface CameraFovSetRequest extends BaseMessage {
   packageName: string;
   sessionId: string;
   requestId: string;
-  /** Field of view in degrees (82-118). 118 means no crop (full sensor). */
+  /** Field of view in degrees (62-118). 118 means no crop (full sensor). */
   fov: number;
   /** ROI crop position. Ignored when fov is 118. Defaults to "center". */
   roiPosition: CameraRoiPosition;

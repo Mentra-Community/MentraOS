@@ -10,6 +10,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
+import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.core.AsgClientService;
 
 /**
@@ -26,6 +27,7 @@ public class BootstrapActivity extends Activity {
         try {
             super.onCreate(savedInstanceState);
             Log.e(TAG, "BootstrapActivity onCreate - preparing to start AsgClientService");
+            BleTraceLogger.logLifecycle(this, "BootstrapActivity", "activity_create");
             
             // Log boot information for debugging
             logBootInfo();
@@ -63,6 +65,7 @@ public class BootstrapActivity extends Activity {
                         if (wakeLock.isHeld()) {
                             wakeLock.release();
                         }
+                        BleTraceLogger.logLifecycle(this, "BootstrapActivity", "activity_finish");
                         finish();
                     }, FINISH_DELAY_MS);
                     
@@ -136,6 +139,7 @@ public class BootstrapActivity extends Activity {
     protected void onDestroy() {
         try {
             Log.e(TAG, "BootstrapActivity onDestroy");
+            BleTraceLogger.logLifecycle(this, "BootstrapActivity", "activity_destroy");
             super.onDestroy();
         } catch (Exception e) {
             Log.e(TAG, "Error in onDestroy", e);
