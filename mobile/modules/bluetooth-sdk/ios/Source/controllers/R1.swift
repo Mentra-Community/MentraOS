@@ -767,7 +767,7 @@ extension R1: CBPeripheralDelegate {
     ) {
         Bridge.log("R1: didUpdateValueFor1: \(characteristic.uuid)")
         guard let data = characteristic.value, !data.isEmpty, error == nil else { return }
-        Bridge.log("R1: didUpdateValueFor: \(characteristic.uuid) data: \(data.toHexString())")
+        Bridge.log("R1: didUpdateValueFor: \(characteristic.uuid) data: \(data.hexEncodedString())")
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }

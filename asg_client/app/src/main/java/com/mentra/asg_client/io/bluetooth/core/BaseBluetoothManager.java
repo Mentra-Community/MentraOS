@@ -5,6 +5,7 @@ import android.util.Log;
 
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.BluetoothStateListener;
+import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.receiver.IntentResponseBroadcaster;
 
 import org.json.JSONObject;
@@ -70,6 +71,7 @@ public abstract class BaseBluetoothManager implements IBluetoothManager {
         }
         
         Log.d(TAG, "Bluetooth data received: " + data.length + " bytes");
+        BleTraceLogger.logBytes("phone_to_glasses", "asg_ble_input", data);
         for (BluetoothStateListener listener : listeners) {
             try {
                 listener.onDataReceived(data);
@@ -88,6 +90,8 @@ public abstract class BaseBluetoothManager implements IBluetoothManager {
         if (data == null || data.length == 0) {
             return false;
         }
+
+        BleTraceLogger.logBytes("glasses_to_phone", "asg_ble_output", data);
 
         // Try to broadcast JSON responses to intent listeners
         try {
@@ -150,4 +154,4 @@ public abstract class BaseBluetoothManager implements IBluetoothManager {
         Log.w(TAG, "sendImageFile not implemented in " + getClass().getSimpleName());
         return false;
     }
-} 
+}

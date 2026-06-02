@@ -14,6 +14,7 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import okhttp3.Call;
@@ -61,7 +62,7 @@ public class BesLogManager {
 
   private final StringBuilder mLogBuffer = new StringBuilder();
   private boolean mIsReceiving = false;
-  private boolean mFinished = false;
+  private final AtomicBoolean mFinished = new AtomicBoolean(false);
 
   private final Runnable mFirstPacketTimeout;
   private final Runnable mOverallTimeout;
@@ -71,6 +72,7 @@ public class BesLogManager {
    * background thread instead of posting to the backend — used for BLE relay to the phone.
    */
   private final Consumer<String> mRelayJsonCallback;
+  private final Consumer<String> mRawLogCallback;
 
   /**
    * Backend base URL for direct HTTP upload. When non-empty, takes precedence over
@@ -83,7 +85,7 @@ public class BesLogManager {
    */
   public BesLogManager(String incidentId, Context context,
                        IConfigurationManager configurationManager) {
-    this(incidentId, context, configurationManager, "", null);
+    this(incidentId, context, configurationManager, "", null, null);
   }
 
   /**
@@ -94,7 +96,7 @@ public class BesLogManager {
   public BesLogManager(String incidentId, Context context,
                        IConfigurationManager configurationManager,
                        String apiBaseUrl) {
-    this(incidentId, context, configurationManager, apiBaseUrl, null);
+    this(incidentId, context, configurationManager, apiBaseUrl, null, null);
   }
 
   /**
@@ -104,29 +106,37 @@ public class BesLogManager {
   public BesLogManager(String incidentId, Context context,
                        IConfigurationManager configurationManager,
                        Consumer<String> relayJsonCallback) {
-    this(incidentId, context, configurationManager, "", relayJsonCallback);
+    this(incidentId, context, configurationManager, "", relayJsonCallback, null);
+  }
+
+  public static BesLogManager forRawLogCallback(Context context,
+                                                IConfigurationManager configurationManager,
+                                                Consumer<String> rawLogCallback) {
+    return new BesLogManager("", context, configurationManager, "", null, rawLogCallback);
   }
 
   private BesLogManager(String incidentId, Context context,
                         IConfigurationManager configurationManager,
                         String apiBaseUrl,
-                        Consumer<String> relayJsonCallback) {
+                        Consumer<String> relayJsonCallback,
+                        Consumer<String> rawLogCallback) {
     mIncidentId = incidentId;
     mContext = context;
     mConfigurationManager = configurationManager;
     mApiBaseUrl = apiBaseUrl != null ? apiBaseUrl.trim() : "";
     mRelayJsonCallback = relayJsonCallback;
+    mRawLogCallback = rawLogCallback;
     mHandler = new Handler(Looper.getMainLooper());
 
     mFirstPacketTimeout = () -> {
-      if (!mIsReceiving && !mFinished) {
+      if (!mIsReceiving && !mFinished.get()) {
         Log.w(TAG, "⏰ No sr_log packet within 2 s — BES may not support mh_logs in this build");
         finish("first_packet_timeout");
       }
     };
 
     mOverallTimeout = () -> {
-      if (!mFinished) {
+      if (!mFinished.get()) {
         Log.w(TAG, "⏰ Overall safety timeout (terminator not received) — uploading partial ("
             + mLogBuffer.length() + " chars)");
         finish("overall_timeout");
@@ -142,6 +152,10 @@ public class BesLogManager {
     mHandler.postDelayed(mOverallTimeout, OVERALL_TIMEOUT_MS);
   }
 
+  public boolean isFinished() {
+    return mFinished.get();
+  }
+
   /**
    * Process one incoming {@code sr_log} packet.
    *
@@ -149,7 +163,7 @@ public class BesLogManager {
    * @param body log text chunk, or {@code "end"} for the terminator packet
    */
   public void onLogPacketReceived(int cur, String body) {
-    if (mFinished) return;
+    if (mFinished.get()) return;
 
     if (!mIsReceiving) {
       mIsReceiving = true;
@@ -178,8 +192,7 @@ public class BesLogManager {
    * @param timeoutReason null on normal completion, otherwise a reason string
    */
   private void finish(String timeoutReason) {
-    if (mFinished) return;
-    mFinished = true;
+    if (!mFinished.compareAndSet(false, true)) return;
     mHandler.removeCallbacks(mFirstPacketTimeout);
     mHandler.removeCallbacks(mOverallTimeout);
 
@@ -197,6 +210,17 @@ public class BesLogManager {
           mRelayJsonCallback.accept(json);
         } catch (Exception e) {
           Log.e(TAG, "relayJsonCallback failed", e);
+        }
+      }).start();
+      return;
+    }
+
+    if (mRawLogCallback != null) {
+      new Thread(() -> {
+        try {
+          mRawLogCallback.accept(fullLog);
+        } catch (Exception e) {
+          Log.e(TAG, "rawLogCallback failed", e);
         }
       }).start();
       return;

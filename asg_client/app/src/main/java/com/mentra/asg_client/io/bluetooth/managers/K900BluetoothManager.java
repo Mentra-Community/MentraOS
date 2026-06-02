@@ -8,6 +8,7 @@ import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import com.mentra.asg_client.io.bluetooth.utils.K900MessageParser;
 import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.utils.DebugNotificationManager;
+import com.mentra.asg_client.logging.BleTraceLogger;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
@@ -197,6 +198,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
 
         Log.d(TAG, "📡 📤 Sending " + data.length + " bytes via K900 serial");
+        BleTraceLogger.logK900Frame("asg_to_bes", "asg_uart_output", data);
 
         // Send the data via the serial port
         boolean sent = comManager.send(data);
@@ -480,6 +482,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     Log.d(TAG, "📥 Extracted " + completeMessages.size() + " complete messages");
                     // Process each complete message
                     for (byte[] message : completeMessages) {
+                        BleTraceLogger.logK900Frame("bes_to_asg", "asg_uart_input", message);
+
                         // Check for file transfer acknowledgments first
                         processReceivedMessage(message);
                         

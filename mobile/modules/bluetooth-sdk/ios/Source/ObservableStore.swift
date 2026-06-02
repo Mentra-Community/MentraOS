@@ -9,7 +9,7 @@ import Foundation
 
 @MainActor
 class ObservableStore {
-    private nonisolated(unsafe) var values: [String: Any] = [:]
+    private var values: [String: Any] = [:]
     private var onEmit: ((String, [String: Any]) -> Void)?
     private var listeners: [String: (String, [String: Any]) -> Void] = [:]
 
@@ -54,7 +54,7 @@ class ObservableStore {
         }
     }
 
-    nonisolated func get(_ category: String, _ key: String) -> Any? {
+    func get(_ category: String, _ key: String) -> Any? {
         values["\(Self.normalizeCategory(category)).\(key)"]
     }
 
