@@ -173,6 +173,13 @@ type ComputedStep = {
   distanceMeters: number
   maneuver?: ManeuverKind
   instruction?: string
+  /**
+   * Pre-resolved road name from the host's hybrid resolver (Phase 1).
+   * Preferred over `instruction` parsing when present — same parser
+   * runs host-side, just earlier in the pipeline. Older callers that
+   * only pass `instruction` still work via the parse fallback below.
+   */
+  road?: string | null
 }
 
 /**
@@ -237,8 +244,12 @@ export function extractPivotsFromComputedSteps(
   for (let i = 0; i < steps.length - 1; i++) {
     const s = steps[i]
     const next = steps[i + 1]
-    const fromRoad = roadNameFromInstruction(s.instruction)
-    const toRoad = roadNameFromInstruction(next.instruction)
+    // Prefer the host-resolved `road` field (Phase 1) — it's the same
+    // parser plus geocoder fallback, run once on the host. Falls back
+    // to local instruction parse for old callers that don't supply
+    // `road`.
+    const fromRoad = s.road ?? roadNameFromInstruction(s.instruction)
+    const toRoad = next.road ?? roadNameFromInstruction(next.instruction)
     // fromRoad is required; toRoad is nullable (last-turn-before-arrival
     // has no road name in the arrival step's instruction).
     if (!fromRoad) continue

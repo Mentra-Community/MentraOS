@@ -215,6 +215,9 @@ export class PivotEngine {
           distanceMeters: number
           maneuver?: ManeuverKind
           instruction?: string
+          /** Host-resolved road name (Phase 1). Optional for backward
+           *  compat with callers that only supply `instruction`. */
+          road?: string | null
         }>
       | undefined,
   ): void {
@@ -236,8 +239,30 @@ export class PivotEngine {
 
     const cumulative = cumulativeDistances(points)
     const instructionPivots = extractPivotsFromComputedSteps(computedSteps, points)
+    console.log(
+      `[PivotEngine] setRouteFromComputedSteps: steps=${computedSteps.length} instructionPivots=${instructionPivots.length}` +
+        (instructionPivots.length > 0
+          ? "\n" +
+            instructionPivots
+              .map(
+                (p, i) =>
+                  `  pivot[${i}] ${p.fromRoad ?? "—"} → ${p.toRoad ?? "—"} dir=${p.direction} @ (${p.lat.toFixed(5)}, ${p.lng.toFixed(5)})`,
+              )
+              .join("\n")
+          : ""),
+    )
     if (instructionPivots.length === 0) {
       // No survived turns from the instruction path — defer to geometry.
+      // eslint-disable-next-line no-console
+      console.log(
+        `[PivotEngine] falling back to setRoute (geometry) — input steps:\n` +
+          computedSteps
+            .map(
+              (s, i) =>
+                `  step[${i}] road=${s.road ?? "—"} maneuver=${s.maneuver ?? "—"} @ (${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}) → (${s.endLat.toFixed(5)}, ${s.endLng.toFixed(5)})`,
+            )
+            .join("\n"),
+      )
       this.setRoute(route, null)
       return
     }

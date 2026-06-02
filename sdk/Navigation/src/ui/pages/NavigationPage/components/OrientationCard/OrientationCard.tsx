@@ -41,6 +41,19 @@ export function OrientationCard({
   const snap = derivePivotView(activePivot, upcomingPivot, coords, maneuver, status)
   const real = pickDisplay(snap)
 
+  // Diagnostic: dump every input the card uses to choose its text, so a
+  // wrong card (e.g. "Arriving in 112 m" when there are pivots ahead)
+  // can be traced to the exact missing/empty field. Logs both the raw
+  // pivot store values and the derived snapshot.
+  console.log(
+    `[ManeuverCard] active=${activePivot ? `idx=${activePivot.index} dir=${activePivot.direction} to=${activePivot.toRoad ?? "—"}` : "null"} ` +
+      `upcoming=${upcomingPivot ? `idx=${upcomingPivot.index} dir=${upcomingPivot.direction} to=${upcomingPivot.toRoad ?? "—"}` : "null"} ` +
+      `distToNext=${snap.distanceToNextPivotMeters?.toFixed(0) ?? "—"}m ` +
+      `distToDest=${snap.distanceToDestinationMeters?.toFixed(0) ?? "—"}m ` +
+      `status=${status ?? "—"} arrived=${snap.arrived} → ` +
+      `nextRoad="${real.nextRoad ?? ""}" label="${real.label}" icon=${real.icon}`,
+  )
+
   // HARDCODED PREVIEW STUB — overrides every dynamic field with sample
   // text so we can iterate on the running-drawer layout. Remove this
   // block to restore live data.
@@ -197,45 +210,24 @@ function pickDisplay(
     return {label: "Arrived", icon: "ARRIVE", road: null, nextRoad: null}
   }
 
-  if (snap.activeManeuver === "CROSS_STREET") {
+  // Active turn — user is inside the pivot's radius. Two-line layout:
+  //   Onto <toRoad>
+  //   Turn left|right
+  // No distance, no "now" — the user is at the turn.
+  if (snap.activeDirection) {
+    const verb = snap.activeDirection === "right" ? "Turn right" : "Turn left"
+    const icon = snap.activeDirection === "right" ? "TURN_RIGHT" : "TURN_LEFT"
     return {
-      label: "Cross the road",
-      icon: "CROSS_STREET",
+      label: verb,
+      icon,
+      nextRoad: snap.activeToRoad,
       road: null,
-      nextRoad: null,
-    }
-  }
-  if (snap.activeDirection === "right") {
-    return {
-      label: "Turn right",
-      icon: "TURN_RIGHT",
-      road: snap.activeToRoad ? `onto ${snap.activeToRoad}` : null,
-      nextRoad: null,
-    }
-  }
-  if (snap.activeDirection === "left") {
-    return {
-      label: "Turn left",
-      icon: "TURN_LEFT",
-      road: snap.activeToRoad ? `onto ${snap.activeToRoad}` : null,
-      nextRoad: null,
     }
   }
 
-  // Continue layout: top small line is the road the user is currently
-  // on (the upcoming pivot's fromRoad), big bold middle line is the
-  // verb + distance to the upcoming turn, bottom line is the
-  // destination road (the upcoming pivot's toRoad).
-  if (snap.distanceToNextPivotMeters != null && snap.upcomingManeuver === "CROSS_STREET") {
-    const distStr = formatDistance(snap.distanceToNextPivotMeters)
-    return {
-      label: `Cross the road in ${distStr}`,
-      icon: "CROSS_STREET",
-      // Crossings stay on the same street — no toRoad to surface.
-      nextRoad: snap.upcomingFromRoad,
-      road: null,
-    }
-  }
+  // Approaching the next turn. Two-line layout:
+  //   Onto <toRoad>
+  //   Turn left|right in <distance>
   if (snap.distanceToNextPivotMeters != null && snap.upcomingDirection) {
     const verb = snap.upcomingDirection === "right" ? "Turn right" : "Turn left"
     const distStr = formatDistance(snap.distanceToNextPivotMeters)
@@ -243,12 +235,13 @@ function pickDisplay(
     return {
       label: `${verb} in ${distStr}`,
       icon,
-      nextRoad: snap.upcomingFromRoad,
-      road: snap.upcomingToRoad ? `onto ${snap.upcomingToRoad}` : null,
+      nextRoad: snap.upcomingToRoad,
+      road: null,
     }
   }
 
-  // No upcoming pivot — final approach to destination.
+  // No upcoming pivot — final approach to destination. Single-line:
+  //   Arriving in <distance>
   if (snap.distanceToDestinationMeters != null) {
     const distStr = formatDistance(snap.distanceToDestinationMeters)
     return {

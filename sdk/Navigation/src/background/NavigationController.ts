@@ -207,6 +207,25 @@ export class NavigationController {
         this.ui.send("nav:route", {points: route.points, steps})
         this.ui.send("nav:trip-state", this.trip)
         logLiveRoute(route)
+        // Push the initial pivot snapshot. The SDK's onPivot only fires
+        // on approaching/entered/exited transitions — at trip start the
+        // user can be far from every pivot, so no transition has fired
+        // yet and the UI would sit on stale (null, null) pivots until
+        // the user got close. Pull the current pair off the engine and
+        // ship it explicitly so the maneuver card has something to
+        // render from the moment the trip begins.
+        //
+        // Race window: the SDK's NavigationModule subscribes the pivot
+        // engine to the SAME onRoute event we're handling here. If the
+        // engine subscribed AFTER us, getUpcomingPivot() runs before
+        // the engine has built pivots from this route. Defer one
+        // microtask + macrotask hop so every subscriber finishes
+        // processing the event before we snapshot.
+        setTimeout(() => {
+          this.activePivot = this.navigation.getActivePivot()
+          this.upcomingPivot = this.navigation.getUpcomingPivot()
+          this.ui.send("nav:pivots", {active: this.activePivot, upcoming: this.upcomingPivot})
+        }, 0)
       }),
     )
   }
