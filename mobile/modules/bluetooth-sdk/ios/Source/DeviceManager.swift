@@ -870,6 +870,13 @@ struct ViewState {
 
         let connectionKey = "\(sgc.type):\(deviceName)"
         syncSystemTimeOnceForConnection(sgc, connectionKey: connectionKey)
+        
+        // re-apply display height after reconnection
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            let h = DeviceStore.shared.get("bluetooth", "dashboard_height") as? Int ?? 4
+            let d = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 2
+            sgc.setDashboardPosition(h, d)
+        }
 
         // Show welcome message on first connect for all display glasses
         if shouldSendBootingMessage {
@@ -899,13 +906,6 @@ struct ViewState {
         Bridge.saveSetting("default_wearable", defaultWearable)
         Bridge.saveSetting("device_name", deviceName)
         Bridge.saveSetting("device_address", deviceAddress)
-
-        // Re-apply display height after reconnection
-        let h = DeviceStore.shared.get("bluetooth", "dashboard_height") as? Int ?? 4
-        let d = NexDashboardDisplayWire.clampDepthFromStore(
-            DeviceStore.shared.get("bluetooth", "dashboard_depth")
-        )
-        sgc.setDashboardPosition(h, d)
     }
 
     private func syncSystemTimeOnceForConnection(_ sgc: SGCManager, connectionKey: String) {
