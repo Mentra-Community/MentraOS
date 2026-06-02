@@ -49,9 +49,9 @@ logm | ./scripts/ble-trace-pretty.mjs --pacific
 logm | ./scripts/ble-trace-pretty.mjs --timezone America/Los_Angeles
 ```
 
-If you source Philippe's local `~/.zshrc`, the pretty helpers already use
-`logcat -v epoch` so the formatter can render the time in the Mac's system
-timezone. Use the `t` suffix for explicit Pacific time:
+Optional pretty helpers should pipe `logcat -v epoch` output into the formatter
+so epoch timestamps can render in the system timezone. Use a `t` suffix for
+explicit Pacific time:
 
 ```bash
 logmp   # phone app, pretty, system timezone

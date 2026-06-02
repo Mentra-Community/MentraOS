@@ -2260,7 +2260,7 @@ public class MentraLive extends SGCManager {
         if (Log.isLoggable(TAG, Log.DEBUG)) {
             Log.d(TAG, "LIVE: Got some JSON from glasses: " + json.toString());
         }
-        BleTraceLogger.logJson("glasses_to_phone", "sdk_ble_event", json, json.toString().length());
+        BleTraceLogger.logJson("glasses_to_phone", "sdk_ble_event", json, null);
 
         // Check if this is an ACK response
         String type = json.optString("type", "");

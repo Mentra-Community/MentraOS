@@ -37,16 +37,30 @@ function resolveTimeZone() {
   const timeZoneFlag = rawArgs.find((arg) => arg.startsWith('--timezone='));
   if (timeZoneFlag) {
     const value = timeZoneFlag.slice('--timezone='.length).trim();
-    return value && value !== 'system' ? value : undefined;
+    return normalizeTimeZone(value);
   }
 
   const timeZoneIndex = rawArgs.indexOf('--timezone');
   if (timeZoneIndex !== -1) {
     const value = rawArgs[timeZoneIndex + 1]?.trim();
-    return value && value !== 'system' ? value : undefined;
+    return normalizeTimeZone(value);
   }
 
   return undefined;
+}
+
+function normalizeTimeZone(value) {
+  if (!value || value === 'system') {
+    return undefined;
+  }
+
+  try {
+    new Intl.DateTimeFormat('en-US', {timeZone: value});
+    return value;
+  } catch {
+    console.error(`Invalid timezone: ${value}`);
+    process.exit(1);
+  }
 }
 
 function compactLabel(direction, layer) {
@@ -165,11 +179,7 @@ function flatten(value, prefix = '', output = []) {
 
   for (const [key, child] of Object.entries(value)) {
     const childKey = prefix ? `${prefix}.${key}` : key;
-    if (child && typeof child === 'object' && !Array.isArray(child)) {
-      flatten(child, childKey, output);
-    } else {
-      flatten(child, childKey, output);
-    }
+    flatten(child, childKey, output);
   }
   return output;
 }

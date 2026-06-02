@@ -10,6 +10,7 @@ import org.json.JSONObject
 object BleTraceLogger {
     private const val TAG = "MentraBleTrace"
     private const val MAX_PAYLOAD_CHARS = 3000
+    private const val K900_TYPE = "k900"
     private val sensitiveKeyParts =
         listOf("password", "pass", "token", "secret", "authorization", "auth", "email")
 
@@ -26,8 +27,12 @@ object BleTraceLogger {
 
     @JvmStatic
     fun logMap(direction: String, layer: String, type: String?, payload: Map<String, Any>) {
-        val sanitized = sanitize(JSONObject(payload))
-        Log.i(TAG, format(direction, layer, caller(), type ?: extractType(sanitized), null, sanitized.toString()))
+        try {
+            val sanitized = sanitize(JSONObject(payload))
+            Log.i(TAG, format(direction, layer, caller(), type ?: extractType(sanitized), null, sanitized.toString()))
+        } catch (e: Exception) {
+            Log.d(TAG, "BLE trace map logging failed", e)
+        }
     }
 
     @JvmStatic
@@ -72,8 +77,9 @@ object BleTraceLogger {
                 val inner = JSONObject(cValue)
                 inner.optString("type").takeIf { it.isNotBlank() }?.let { return it }
             } catch (_: Exception) {
-                return "k900:${cValue.take(40)}"
+                return K900_TYPE
             }
+            return K900_TYPE
         }
         return "unknown"
     }
@@ -102,7 +108,7 @@ object BleTraceLogger {
             try {
                 return sanitize(JSONObject(value)).toString()
             } catch (_: Exception) {
-                return truncate(value)
+                return "<non-json C payload>"
             }
         }
         return when (value) {

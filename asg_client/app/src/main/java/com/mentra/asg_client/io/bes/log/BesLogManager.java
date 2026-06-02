@@ -61,7 +61,7 @@ public class BesLogManager {
 
   private final StringBuilder mLogBuffer = new StringBuilder();
   private boolean mIsReceiving = false;
-  private boolean mFinished = false;
+  private volatile boolean mFinished = false;
 
   private final Runnable mFirstPacketTimeout;
   private final Runnable mOverallTimeout;

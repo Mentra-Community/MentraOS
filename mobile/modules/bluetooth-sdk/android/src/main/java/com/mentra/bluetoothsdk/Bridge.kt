@@ -661,13 +661,17 @@ public class Bridge private constructor() {
                     return
                 }
 
-                if (type != "log") {
-                    BleTraceLogger.logMap(
-                        "phone_to_app",
-                        "sdk_event_dispatch",
-                        type,
-                        mutableBody as Map<String, Any>,
-                    )
+                if (shouldTraceTypedMessage(type)) {
+                    try {
+                        BleTraceLogger.logMap(
+                            "phone_to_app",
+                            "sdk_event_dispatch",
+                            type,
+                            mutableBody as Map<String, Any>,
+                        )
+                    } catch (e: Exception) {
+                        Log.d(TAG, "BLE trace logging failed for typed message '$type'", e)
+                    }
                 }
 
                 // Send directly using type as event name - no JSON serialization
@@ -687,6 +691,9 @@ public class Bridge private constructor() {
                 Log.e(TAG, "Error sending typed message of type '$type'", e)
             }
         }
+
+        private fun shouldTraceTypedMessage(type: String): Boolean =
+                type != "log" && type != "mic_pcm" && type != "mic_lc3"
     }
 
     init {

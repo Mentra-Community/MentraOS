@@ -16,6 +16,7 @@ import java.util.Locale;
 public final class BleTraceLogger {
     private static final String TAG = "MentraBleTrace";
     private static final int MAX_PAYLOAD_CHARS = 3000;
+    private static final String K900_TYPE = "k900";
     private static final String[] SENSITIVE_KEY_PARTS = {
         "password", "pass", "token", "secret", "authorization", "auth", "email"
     };
@@ -64,7 +65,7 @@ public final class BleTraceLogger {
 
         JSONObject payload = new JSONObject();
         try {
-            payload.put("line", line);
+            payload.put("line", sanitizeTraceText(line));
         } catch (Exception ignored) {
             // Keep trace logging non-fatal.
         }
@@ -151,7 +152,7 @@ public final class BleTraceLogger {
                     return innerType;
                 }
             }
-            return "k900:" + cValue.substring(0, Math.min(cValue.length(), 40));
+            return K900_TYPE;
         }
 
         return "unknown";
@@ -238,7 +239,7 @@ public final class BleTraceLogger {
             if (inner != null) {
                 return sanitize(inner).toString();
             }
-            return truncate((String) value);
+            return "<non-json C payload>";
         }
         if (value instanceof JSONObject) {
             return sanitize((JSONObject) value);
@@ -257,6 +258,20 @@ public final class BleTraceLogger {
             }
         }
         return false;
+    }
+
+    private static String sanitizeTraceText(String value) {
+        if (value == null) {
+            return null;
+        }
+        String sanitized = value;
+        for (String sensitivePart : SENSITIVE_KEY_PARTS) {
+            sanitized = sanitized.replaceAll(
+                "(?i)([\"']?" + sensitivePart + "[\"']?\\s*[:=]\\s*)([\"'][^\"']*[\"']|[^,;\\s}]+)",
+                "$1<redacted>"
+            );
+        }
+        return truncate(sanitized);
     }
 
     private static String caller() {
