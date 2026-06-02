@@ -1,6 +1,6 @@
 import os from 'os';
-import { readFileSync, existsSync } from 'fs';
-import { resolve } from 'path';
+import { readFileSync, existsSync, statSync } from 'fs';
+import { join, resolve } from 'path';
 import { printQR } from './qr.js';
 import { validateManifest } from './manifest.js';
 import { startDevSidecar } from './dev-server.js';
@@ -17,21 +17,47 @@ function getLanIp(): string | null {
   return null;
 }
 
-async function waitForPort(port: number, retries = 30, delayMs = 500): Promise<void> {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const res = await fetch(`http://localhost:${port}`);
-      // Any response means the server is up
-      return;
-    } catch {
-      await Bun.sleep(delayMs);
-    }
+function contentTypeFor(path: string): string {
+  if (path.endsWith('.json')) return 'application/json; charset=utf-8';
+  if (path.endsWith('.html')) return 'text/html; charset=utf-8';
+  if (path.endsWith('.js') || path.endsWith('.mjs')) return 'application/javascript; charset=utf-8';
+  if (path.endsWith('.css')) return 'text/css; charset=utf-8';
+  if (path.endsWith('.png')) return 'image/png';
+  if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg';
+  if (path.endsWith('.svg')) return 'image/svg+xml';
+  if (path.endsWith('.map')) return 'application/json; charset=utf-8';
+  return 'application/octet-stream';
+}
+
+/**
+ * Run the project's build script. Two-layer projects ship a `build.ts` at
+ * the project root that emits `dist/background/index.js` + `dist/ui/*`.
+ * The sidecar's `bundle.zip` endpoint reads from disk, so the build must
+ * finish before the phone fetches.
+ */
+async function runBuild(cwd: string): Promise<void> {
+  const buildScript = resolve(cwd, 'build.ts');
+  if (!existsSync(buildScript)) {
+    throw new Error(
+      'build.ts not found at project root. Two-layer miniapps emit ' +
+        '`dist/background/index.js` + `dist/ui/index.html` via a build.ts ' +
+        'script — see sdk/example-miniapp/build.ts for the canonical shape.',
+    );
   }
-  throw new Error(`Server did not become reachable on port ${port} after ${retries} attempts`);
+  const proc = Bun.spawn(['bun', 'run', 'build.ts'], {
+    cwd,
+    stdout: 'inherit',
+    stderr: 'inherit',
+  });
+  const code = await proc.exited;
+  if (code !== 0) {
+    throw new Error(`build.ts exited with code ${code}`);
+  }
 }
 
 export async function dev(): Promise<void> {
-  const manifestPath = resolve(process.cwd(), 'miniapp.json');
+  const cwd = process.cwd();
+  const manifestPath = resolve(cwd, 'miniapp.json');
   if (!existsSync(manifestPath)) {
     console.error('Error: miniapp.json not found in current directory');
     process.exit(1);
@@ -45,9 +71,9 @@ export async function dev(): Promise<void> {
     process.exit(1);
   }
 
-  // Validate the manifest before launching the dev server. Dev miniapps are
-  // served directly (not packed), so without this check a typo in permissions
-  // or hardwareRequirements wouldn't surface until the miniapp tried to
+  // Validate the manifest before launching. Dev miniapps are served
+  // directly (not packed), so without this check a typo in permissions or
+  // hardwareRequirements wouldn't surface until the miniapp tried to
   // subscribe on the phone — and the developer would have no idea why.
   const { valid, errors } = validateManifest(manifest);
   if (!valid) {
@@ -58,49 +84,99 @@ export async function dev(): Promise<void> {
     process.exit(1);
   }
 
+  const entry = manifest.entry as { background?: string; ui?: string } | undefined;
+  if (!entry || typeof entry.background !== 'string') {
+    console.error(
+      'Error: miniapp.json is missing `entry.background`. Two-layer miniapps ' +
+        'must declare `entry.background` (and optionally `entry.ui`) — see ' +
+        'sdk/docs/two-layer.md.',
+    );
+    process.exit(1);
+  }
+
   const name: string = (manifest.name as string) ?? 'unnamed';
   const packageName: string = (manifest.packageName as string) ?? 'unknown';
   const port: number = (manifest.port as number) ?? 3000;
 
   console.log(`Starting dev server for ${name} (${packageName}) on port ${port}...`);
 
-  const child = Bun.spawn(['bun', 'run', '--hot', 'server.ts'], {
-    cwd: process.cwd(),
-    stdout: 'inherit',
-    stderr: 'inherit',
-    stdin: 'inherit',
-  });
-
+  // Initial build before serving — a fresh `bun run dev` should always
+  // start from a clean, current `dist/`.
   try {
-    await waitForPort(port);
+    await runBuild(cwd);
   } catch (err) {
-    console.error((err as Error).message);
-    child.kill();
+    console.error('Initial build failed:', (err as Error).message);
     process.exit(1);
   }
+
+  // Static HTTP server on `port` serving the project root. The phone hits
+  // `${devUrl}/miniapp.json` (reachability + manifest) and `${devUrl}/icon.png`
+  // (icon preview) before falling through to the sidecar's `bundle.zip`
+  // for the actual install. Range requests aren't supported — files are
+  // small and short-lived.
+  const userServer = Bun.serve({
+    hostname: '0.0.0.0',
+    port,
+    fetch(req) {
+      const url = new URL(req.url);
+      // Strip leading slash and prevent ../ traversal. Path joining
+      // against cwd already canonicalises, but we double-check by
+      // refusing absolute paths and any segment starting with `..`.
+      const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '');
+      if (rel.split('/').some((seg) => seg === '..')) {
+        return new Response('forbidden', { status: 403 });
+      }
+      const abs = rel === '' ? join(cwd, 'miniapp.json') : join(cwd, rel);
+      try {
+        const stat = statSync(abs);
+        if (stat.isDirectory()) {
+          // Index of a directory isn't useful for the phone — refuse.
+          return new Response('not found', { status: 404 });
+        }
+        const buf = readFileSync(abs);
+        return new Response(buf, {
+          headers: {
+            'content-type': contentTypeFor(abs),
+            'cache-control': 'no-store',
+          },
+        });
+      } catch {
+        return new Response('not found', { status: 404 });
+      }
+    },
+  });
 
   let lanIp = getLanIp();
   if (!lanIp) {
     console.error('Warning: Could not detect LAN IP address');
-    child.kill();
+    userServer.stop(true);
     process.exit(1);
   }
 
-  // Start the sidecar dev server on userPort + 1 — it hosts the __mentra_dev
-  // WebSocket the phone uses for live reload + console-log forwarding.
+  // Sidecar on userPort + 1 — hosts the `__mentra_dev` WebSocket the
+  // phone uses for live reload + console-log forwarding. The
+  // `onBeforeBroadcast` hook rebuilds `dist/` before the phone is
+  // notified, so the next `bundle.zip` fetch ships current code.
   // Failure here is non-fatal; the miniapp still runs without live reload.
   let sidecarPort: number | null = null;
   let sidecar: ReturnType<typeof startDevSidecar> | null = null;
   try {
     sidecar = startDevSidecar({
       port: port + 1,
-      watchDir: process.cwd(),
+      watchDir: cwd,
+      onBeforeBroadcast: async () => {
+        try {
+          await runBuild(cwd);
+        } catch (err) {
+          console.error('Rebuild failed:', (err as Error).message);
+        }
+      },
     });
     sidecarPort = sidecar.port;
   } catch (err) {
     console.warn(
       `Warning: dev sidecar failed to start on port ${port + 1} (${(err as Error).message}). ` +
-      `Live reload + console bridge will be disabled.`,
+        `Live reload + console bridge will be disabled.`,
     );
   }
 
@@ -127,7 +203,7 @@ export async function dev(): Promise<void> {
   printQR(devUrl);
   console.log(`\n${devUrl}\n`);
 
-  // Monitor for LAN IP changes (e.g., WiFi switch)
+  // Monitor for LAN IP changes (e.g., WiFi switch).
   const ipCheckInterval = setInterval(() => {
     const newIp = getLanIp();
     if (newIp && newIp !== lanIp) {
@@ -138,23 +214,19 @@ export async function dev(): Promise<void> {
       printQR(newDevUrl);
       console.log(`\n${newDevUrl}\n`);
     }
-  }, 10_000); // check every 10s
+  }, 10_000);
 
-  // Clean up IP monitor + sidecar on exit
-  process.on('SIGINT', () => {
+  const shutdown = () => {
     clearInterval(ipCheckInterval);
     sidecar?.stop();
-    child.kill();
+    userServer.stop(true);
     process.exit(0);
-  });
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 
-  process.on('SIGTERM', () => {
-    clearInterval(ipCheckInterval);
-    sidecar?.stop();
-    child.kill();
-    process.exit(0);
-  });
-
-  // Keep the process alive until the child exits
-  await child.exited;
+  // Keep the process alive — the static server + sidecar hold the loop.
+  // Block on a never-resolving promise so the foreground stays on the
+  // dev process until SIGINT/SIGTERM fires.
+  await new Promise<void>(() => {});
 }

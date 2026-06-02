@@ -282,6 +282,7 @@ if (isAvifFile(fileContent)) {
 3. Monitor network requests in mobile app logs
 4. Check sync state in AsyncStorage
 5. Verify file permissions on glasses
+6. **Clock skew**: If `/api/sync` returns `changed_files: []` but `gallery_status` still shows items, compare phone `last_sync_time` with glasses `server_time`. When the watermark is ahead of glasses clock, the phone retries with `last_sync_time=0` and may send BLE `set_system_time` (only when skew is detected—not on every connect). Glasses firmware also clamps a future `last_sync_time` to full sync.
 
 ### Testing Checklist
 

@@ -97,7 +97,9 @@ class MentraNex : SGCManager() {
     private var context: Context? = null
     // private var isDebug: Boolean = true
 
-    private var isLc3AudioEnabled: Boolean = true
+    // Off by default; toggled from Nex Developer Settings via the nex_audio_playback flag.
+    private val isLc3AudioEnabled: Boolean
+        get() = DeviceStore.get("bluetooth", "nex_audio_playback") as? Boolean ?: false
     private var lc3AudioPlayer: Lc3Player? = null
 
     private var lc3DecoderPtr: Long = 0
@@ -211,6 +213,17 @@ class MentraNex : SGCManager() {
         }
     }
 
+    /** Start/stop the LC3 player when the nex_audio_playback flag changes. */
+    override fun applyNexAudioPlaybackSetting() {
+        if (isLc3AudioEnabled) {
+            Bridge.log("Nex: LC3 audio playback enabled - starting player")
+            lc3AudioPlayer?.startPlay()
+        } else {
+            Bridge.log("Nex: LC3 audio playback disabled - stopping player")
+            lc3AudioPlayer?.stopPlay()
+        }
+    }
+
     private val random: Random = Random()
 
     private val mainGattCallback: BluetoothGattCallback = createGattCallback()
@@ -303,7 +316,7 @@ class MentraNex : SGCManager() {
     override fun requestVersionInfo() { Bridge.log("Nex: requestVersionInfo operation not supported") }
 
     // Camera & Media: Not supported on Nex (No camera)
-    override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, flash: Boolean, sound: Boolean, exposureTimeNs: Long?) { Bridge.log("Nex: requestPhoto operation not supported") }
+    override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, flash: Boolean, save: Boolean, sound: Boolean, exposureTimeNs: Long?) { Bridge.log("Nex: requestPhoto operation not supported") }
     override fun startStream(message: MutableMap<String, Any>) { Bridge.log("Nex: startStream operation not supported") }
     override fun stopStream() { Bridge.log("Nex: stopStream operation not supported") }
     override fun sendStreamKeepAlive(message: MutableMap<String, Any>) { Bridge.log("Nex: sendStreamKeepAlive operation not supported") }
@@ -488,7 +501,13 @@ class MentraNex : SGCManager() {
         sendDataSequentially(textChunks)
     }
 
-    override fun displayBitmap(base64ImageData: String): Boolean {
+    override fun displayBitmap(
+            base64ImageData: String,
+            x: Int?,
+            y: Int?,
+            width: Int?,
+            height: Int?
+    ): Boolean {
         try {
             val bmpData: ByteArray? = android.util.Base64.decode(base64ImageData, android.util.Base64.DEFAULT)
             if (bmpData == null || bmpData.isEmpty()) {
@@ -1402,12 +1421,6 @@ class MentraNex : SGCManager() {
                     val headUpAngleResponse: HeadUpAngleResponse = glassesToPhone.headUpAngleSet
                     Bridge.log("headUpAngleResponse: $headUpAngleResponse")
                 }
-                GlassesToPhone.PayloadCase.PONG -> {
-                    // New schema: glasses-initiated heartbeat is named `pong`; phone replies with `ping`.
-                    lastHeartbeatReceivedTime = System.currentTimeMillis()
-                    Bridge.log("=== RECEIVED PING FROM GLASSES === (Time: $lastHeartbeatReceivedTime)")
-                    sendPongResponse()
-                }
                 GlassesToPhone.PayloadCase.VAD_EVENT -> {
                     // val vadEvent = glassesToPhone.vadEvent
                     // EventBus.getDefault().post(VadEvent(vadEvent.vad))
@@ -1487,38 +1500,6 @@ class MentraNex : SGCManager() {
         }
         
         sendDataSequentially(missingChunks)
-    }
-
-    private fun sendPongResponse() {
-        // Respond to ping from glasses with pong
-        lastHeartbeatReceivedTime = System.currentTimeMillis()
-        Bridge.log("=== SENDING PONG RESPONSE TO GLASSES === (Time: $lastHeartbeatReceivedTime)")
-        
-        val pongPacket = NexProtobufUtils.constructPongResponse()
-
-        // Send the pong response
-        if (pongPacket != null) {
-            sendDataSequentially(pongPacket, 100)
-            Bridge.log("Pong response sent successfully")
-            
-            // Notify mobile app about pong sent
-            lastHeartbeatSentTime = System.currentTimeMillis()
-            NexEventUtils.sendHeartbeatSentEvent(lastHeartbeatSentTime)
-            // EventBus.getDefault().post(HeartbeatSentEvent(timestamp))
-        } else {
-            Log.e(TAG,"Failed to construct pong response packet")
-        }
-
-        // Still query battery periodically (every 10 pings received)
-        if (batteryLevel == -1 || heartbeatCount % 10 == 0) {
-            mainTaskHandler.sendEmptyMessageDelayed(MAIN_TASK_HANDLER_CODE_BATTERY_QUERY, 500)
-        }
-
-        heartbeatCount++
-        
-        // Notify mobile app about heartbeat received
-        NexEventUtils.sendHeartbeatReceivedEvent(lastHeartbeatReceivedTime)
-        // EventBus.getDefault().post(HeartbeatReceivedEvent(lastHeartbeatReceivedTime))
     }
 
     private fun createTextWallChunksForNex(text: String): ByteArray {

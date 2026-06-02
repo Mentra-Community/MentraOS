@@ -319,6 +319,16 @@ Response:
 }
 ```
 
+#### `set_system_time`
+
+Sets the glasses system clock from the phone. Sent only when the phone detects clock skew during gallery sync or OTA version checks (not on every BLE connect).
+
+```json
+{"type": "set_system_time", "timestamp_ms": 1710000000000}
+```
+
+No response is required for V1 (fire-and-forget).
+
 #### `disconnect_wifi`
 
 ```json

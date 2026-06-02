@@ -83,7 +83,7 @@ export interface StreamOptions {
  * Options for setting the camera FOV and ROI position
  */
 export interface CameraFovOptions {
-  /** Field of view in degrees (82-118). 118 means full sensor, no crop. */
+  /** Field of view in degrees (62-118). 118 means full sensor, no crop. */
   fov: number;
   /** ROI crop position. Ignored when fov is 118. Defaults to "center". */
   roiPosition?: CameraRoiPosition;
@@ -317,7 +317,7 @@ export class CameraModule {
    * Fire-and-forget: the promise resolves once the message is sent.
    * The phone applies the setting and pushes it to the glasses over BLE.
    *
-   * @param options - FOV (82-118) and optional ROI position
+   * @param options - FOV (62-118) and optional ROI position
    *
    * @example
    * ```typescript
@@ -332,8 +332,8 @@ export class CameraModule {
     const { fov } = options;
     let roiPosition: CameraRoiPosition = options.roiPosition ?? "center";
 
-    if (fov < 82 || fov > 118) {
-      throw new Error(`fov must be between 82 and 118, got ${fov}`);
+    if (fov < 62 || fov > 118) {
+      throw new Error(`fov must be between 62 and 118, got ${fov}`);
     }
 
     if (!VALID_ROI_POSITIONS.includes(roiPosition)) {

@@ -80,14 +80,6 @@ struct Mentraos_Ble_PhoneToGlasses: Sendable {
     set {payload = .headUpAngle(newValue)}
   }
 
-  var ping: Mentraos_Ble_PingRequest {
-    get {
-      if case .ping(let v)? = payload {return v}
-      return Mentraos_Ble_PingRequest()
-    }
-    set {payload = .ping(newValue)}
-  }
-
   /// Audio System
   var micState: Mentraos_Ble_MicStateConfig {
     get {
@@ -310,7 +302,6 @@ struct Mentraos_Ble_PhoneToGlasses: Sendable {
     case pairingMode(Mentraos_Ble_PairingModeRequest)
     case headPosition(Mentraos_Ble_HeadPositionRequest)
     case headUpAngle(Mentraos_Ble_HeadUpAngleConfig)
-    case ping(Mentraos_Ble_PingRequest)
     /// Audio System
     case micState(Mentraos_Ble_MicStateConfig)
     case vadEnabled(Mentraos_Ble_VadEnabledConfig)
@@ -396,14 +387,6 @@ struct Mentraos_Ble_GlassesToPhone: Sendable {
     set {payload = .headUpAngleSet(newValue)}
   }
 
-  var pong: Mentraos_Ble_PongResponse {
-    get {
-      if case .pong(let v)? = payload {return v}
-      return Mentraos_Ble_PongResponse()
-    }
-    set {payload = .pong(newValue)}
-  }
-
   /// Audio System
   var vadEvent: Mentraos_Ble_VadEvent {
     get {
@@ -456,7 +439,6 @@ struct Mentraos_Ble_GlassesToPhone: Sendable {
     case deviceInfo(Mentraos_Ble_DeviceInfo)
     case headPosition(Mentraos_Ble_HeadPosition)
     case headUpAngleSet(Mentraos_Ble_HeadUpAngleResponse)
-    case pong(Mentraos_Ble_PongResponse)
     /// Audio System
     case vadEvent(Mentraos_Ble_VadEvent)
     /// Display System  
@@ -666,26 +648,6 @@ struct Mentraos_Ble_HeadUpAngleResponse: Sendable {
   // methods supported on all messages.
 
   var success: Bool = false
-
-  var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  init() {}
-}
-
-struct Mentraos_Ble_PingRequest: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  init() {}
-}
-
-struct Mentraos_Ble_PongResponse: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
 
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1438,7 +1400,7 @@ fileprivate let _protobuf_package = "mentraos.ble"
 
 extension Mentraos_Ble_PhoneToGlasses: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".PhoneToGlasses"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}msg_id\0\u{2}\u{9}disconnect\0\u{3}battery_state\0\u{3}glasses_info\0\u{3}pairing_mode\0\u{3}head_position\0\u{3}head_up_angle\0\u{1}ping\0\u{4}\u{4}mic_state\0\u{3}vad_enabled\0\u{3}vad_config\0\u{4}\u{8}display_text\0\u{3}display_image\0\u{3}preload_image\0\u{3}display_cached_image\0\u{3}clear_cached_image\0\u{3}display_scrolling_text\0\u{3}display_power\0\u{1}brightness\0\u{3}auto_brightness\0\u{3}auto_brightness_mult\0\u{3}draw_line\0\u{3}draw_rect\0\u{3}draw_circle\0\u{1}commit\0\u{3}display_distance\0\u{3}display_height\0\u{3}clear_display\0\u{4}\u{4}imu_enabled\0\u{3}imu_single\0\u{3}imu_stream\0\u{3}head_gesture\0\u{2}\u{7}restart\0\u{3}factory_reset\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}msg_id\0\u{2}\u{9}disconnect\0\u{3}battery_state\0\u{3}glasses_info\0\u{3}pairing_mode\0\u{3}head_position\0\u{3}head_up_angle\0\u{4}\u{5}mic_state\0\u{3}vad_enabled\0\u{3}vad_config\0\u{4}\u{8}display_text\0\u{3}display_image\0\u{3}preload_image\0\u{3}display_cached_image\0\u{3}clear_cached_image\0\u{3}display_scrolling_text\0\u{3}display_power\0\u{1}brightness\0\u{3}auto_brightness\0\u{3}auto_brightness_mult\0\u{3}draw_line\0\u{3}draw_rect\0\u{3}draw_circle\0\u{1}commit\0\u{3}display_distance\0\u{3}display_height\0\u{3}clear_display\0\u{4}\u{4}imu_enabled\0\u{3}imu_single\0\u{3}imu_stream\0\u{3}head_gesture\0\u{2}\u{7}restart\0\u{3}factory_reset\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1523,19 +1485,6 @@ extension Mentraos_Ble_PhoneToGlasses: SwiftProtobuf.Message, SwiftProtobuf._Mes
         if let v = v {
           if hadOneofValue {try decoder.handleConflictingOneOf()}
           self.payload = .headUpAngle(v)
-        }
-      }()
-      case 16: try {
-        var v: Mentraos_Ble_PingRequest?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .ping(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .ping(v)
         }
       }()
       case 20: try {
@@ -1914,10 +1863,6 @@ extension Mentraos_Ble_PhoneToGlasses: SwiftProtobuf.Message, SwiftProtobuf._Mes
       guard case .headUpAngle(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 15)
     }()
-    case .ping?: try {
-      guard case .ping(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 16)
-    }()
     case .micState?: try {
       guard case .micState(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 20)
@@ -2037,7 +1982,7 @@ extension Mentraos_Ble_PhoneToGlasses: SwiftProtobuf.Message, SwiftProtobuf._Mes
 
 extension Mentraos_Ble_GlassesToPhone: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".GlassesToPhone"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{4}\u{a}battery_status\0\u{3}charging_state\0\u{3}device_info\0\u{3}head_position\0\u{3}head_up_angle_set\0\u{1}pong\0\u{4}\u{5}vad_event\0\u{4}\u{a}image_transfer_complete\0\u{4}\u{a}imu_data\0\u{3}button_event\0\u{3}head_gesture\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{4}\u{a}battery_status\0\u{3}charging_state\0\u{3}device_info\0\u{3}head_position\0\u{3}head_up_angle_set\0\u{4}\u{6}vad_event\0\u{4}\u{a}image_transfer_complete\0\u{4}\u{a}imu_data\0\u{3}button_event\0\u{3}head_gesture\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2108,19 +2053,6 @@ extension Mentraos_Ble_GlassesToPhone: SwiftProtobuf.Message, SwiftProtobuf._Mes
         if let v = v {
           if hadOneofValue {try decoder.handleConflictingOneOf()}
           self.payload = .headUpAngleSet(v)
-        }
-      }()
-      case 15: try {
-        var v: Mentraos_Ble_PongResponse?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .pong(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .pong(v)
         }
       }()
       case 20: try {
@@ -2218,10 +2150,6 @@ extension Mentraos_Ble_GlassesToPhone: SwiftProtobuf.Message, SwiftProtobuf._Mes
     case .headUpAngleSet?: try {
       guard case .headUpAngleSet(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 14)
-    }()
-    case .pong?: try {
-      guard case .pong(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 15)
     }()
     case .vadEvent?: try {
       guard case .vadEvent(let v)? = self.payload else { preconditionFailure() }
@@ -2613,44 +2541,6 @@ extension Mentraos_Ble_HeadUpAngleResponse: SwiftProtobuf.Message, SwiftProtobuf
 
   static func ==(lhs: Mentraos_Ble_HeadUpAngleResponse, rhs: Mentraos_Ble_HeadUpAngleResponse) -> Bool {
     if lhs.success != rhs.success {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-extension Mentraos_Ble_PingRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  static let protoMessageName: String = _protobuf_package + ".PingRequest"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap()
-
-  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    // Load everything into unknown fields
-    while try decoder.nextFieldNumber() != nil {}
-  }
-
-  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  static func ==(lhs: Mentraos_Ble_PingRequest, rhs: Mentraos_Ble_PingRequest) -> Bool {
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-extension Mentraos_Ble_PongResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  static let protoMessageName: String = _protobuf_package + ".PongResponse"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap()
-
-  mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    // Load everything into unknown fields
-    while try decoder.nextFieldNumber() != nil {}
-  }
-
-  func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  static func ==(lhs: Mentraos_Ble_PongResponse, rhs: Mentraos_Ble_PongResponse) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

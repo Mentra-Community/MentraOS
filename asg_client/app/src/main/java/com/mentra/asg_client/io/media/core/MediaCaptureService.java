@@ -20,6 +20,7 @@ import com.mentra.asg_client.io.storage.StorageManager;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
 import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
+import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
@@ -29,9 +30,11 @@ import com.radzivon.bartoshyk.avif.coder.PreciseMode;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.net.URI;
 import java.text.SimpleDateFormat;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -164,7 +167,12 @@ public class MediaCaptureService {
     private final AtomicBoolean isCleaningUp = new AtomicBoolean(false);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
-    /** Exclude these capture directory names from Wi‑Fi sync until integrity check finishes. */
+    /**
+     * Capture IDs blocked from Wi‑Fi sync from the moment the output path is created until
+     * post-stop integrity validation completes (or the capture is cleaned up on error).
+     */
+    private final Set<String> videoCaptureIdsInFlight = ConcurrentHashMap.newKeySet();
+    /** Subset of in-flight captures that have stopped recording and are awaiting integrity check. */
     private final Set<String> videoCaptureIdsPendingIntegrityCheck = ConcurrentHashMap.newKeySet();
 
     private final ExecutorService videoIntegrityExecutor =
@@ -653,6 +661,11 @@ public class MediaCaptureService {
         currentVideoPath = videoFilePath;
         currentVideoLedEnabled = enableFlash; // Track LED state for this recording
         currentVideoSoundEnabled = enableSound; // Track sound state for this recording
+        final String captureIdAtStart = captureIdFromVideoAbsPath(videoFilePath);
+        if (captureIdAtStart != null) {
+            videoCaptureIdsInFlight.add(captureIdAtStart);
+            Log.d(TAG, "Video capture blocked from sync (in-flight): " + captureIdAtStart);
+        }
 
         try {
             // Play video start sound if enabled
@@ -744,10 +757,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onRecordingStopped(String videoId, String filePath) {
-                            Log.d(
-                                    TAG,
-                                    "Video recording stopped: " + videoId + ", file: " + filePath);
-                            isRecordingVideo = false;
+                            Log.d(TAG, "Video recording stopped: " + videoId + ", file: " + filePath);
 
                             // Cancel max recording time check
                             if (recordingTimeCheckRunnable != null) {
@@ -755,8 +765,7 @@ public class MediaCaptureService {
                                 recordingTimeCheckRunnable = null;
                             }
 
-                            // Note: RGB white LED already turned off in stopVideoRecording()
-                            // synchronized with sound
+                            // Note: RGB white LED already turned off in stopVideoRecording() synchronized with sound
 
                             // Turn off recording LED if it was enabled
                             if (enableFlash && hardwareManager.supportsRecordingLed()) {
@@ -765,15 +774,34 @@ public class MediaCaptureService {
                             }
 
                             final String pendingRequestId = requestId;
-                            final String captureId = captureIdFromVideoAbsPath(filePath);
+                            // Prefer the path-derived ID so the integrity check uses the actual file written.
+                            // Fall back to the start-time ID so we always release the in-flight block we added,
+                            // even when the recorder reports a null/altered path.
+                            final String captureIdFromCallback = captureIdFromVideoAbsPath(filePath);
+                            final String captureId = captureIdFromCallback != null ? captureIdFromCallback : captureIdAtStart;
+
+                            // Block sync before clearing session state — no gap between active and pending.
+                            // Add to pending BEFORE removing from in-flight so a concurrent
+                            // getPendingVideoIntegrityCaptureIds() snapshot always observes the captureId in
+                            // at least one of the two sets (their union is what callers actually consume).
+                            if (captureId != null) {
+                                videoCaptureIdsPendingIntegrityCheck.add(captureId);
+                                Log.d(TAG, "Video capture pending integrity check: " + captureId);
+                            }
+                            if (captureIdAtStart != null) {
+                                videoCaptureIdsInFlight.remove(captureIdAtStart);
+                            }
+
+                            isRecordingVideo = false;
                             currentVideoId = null;
                             currentVideoPath = null;
 
-                            if (filePath == null || captureId == null) {
-                                Log.e(
-                                        TAG,
-                                        "onRecordingStopped received null filePath for "
-                                                + pendingRequestId);
+                            if (filePath == null || captureIdFromCallback == null) {
+                                Log.e(TAG, "onRecordingStopped received null filePath for " + pendingRequestId);
+                                if (captureId != null) {
+                                    // Nothing to verify; release the pending block we just added.
+                                    videoCaptureIdsPendingIntegrityCheck.remove(captureId);
+                                }
                                 if (mMediaCaptureListener != null) {
                                     mMediaCaptureListener.onMediaError(
                                             pendingRequestId,
@@ -785,118 +813,89 @@ public class MediaCaptureService {
                             }
 
                             if (isCleaningUp.get()) {
-                                Log.w(
-                                        TAG,
-                                        "Skipping video integrity check because cleanup is already in progress");
+                                Log.w(TAG, "Skipping video integrity check because cleanup is already in progress");
                                 sendGalleryStatusUpdate();
                                 return;
                             }
 
-                            videoCaptureIdsPendingIntegrityCheck.add(captureId);
-
                             try {
-                                videoIntegrityExecutor.execute(
-                                        () -> {
-                                            try {
-                                                final boolean ok =
-                                                        RecordedVideoIntegrityChecker.verify(
-                                                                filePath);
-                                                mainHandler.post(
-                                                        () -> {
-                                                            videoCaptureIdsPendingIntegrityCheck
-                                                                    .remove(captureId);
-                                                            if (ok) {
-                                                                if (mMediaCaptureListener != null) {
-                                                                    mMediaCaptureListener
-                                                                            .onVideoRecordingStopped(
-                                                                                    pendingRequestId,
-                                                                                    filePath);
-                                                                }
-                                                                sendGalleryStatusUpdate();
-                                                                uploadVideo(
-                                                                        filePath, pendingRequestId);
-                                                            } else {
-                                                                final boolean cleaningUp =
-                                                                        isCleaningUp.get();
-                                                                if (!cleaningUp) {
-                                                                    File bad = new File(filePath);
-                                                                    if (bad.exists()
-                                                                            && !bad.delete()) {
-                                                                        Log.w(
-                                                                                TAG,
-                                                                                "Could not delete failed video file: "
-                                                                                        + filePath);
-                                                                    }
-                                                                } else {
-                                                                    Log.w(
-                                                                            TAG,
-                                                                            "Skipping failed video deletion because cleanup is in progress");
-                                                                }
-                                                                if (mMediaCaptureListener != null) {
-                                                                    mMediaCaptureListener
-                                                                            .onMediaError(
-                                                                                    pendingRequestId,
-                                                                                    cleaningUp
-                                                                                            ? "Video integrity check aborted during cleanup; file preserved"
-                                                                                            : "Video file failed integrity check and was removed",
-                                                                                    MediaUploadQueueManager
-                                                                                            .MEDIA_TYPE_VIDEO);
-                                                                }
-                                                                sendGalleryStatusUpdate();
-                                                            }
-                                                        });
-                                            } catch (Throwable t) {
-                                                Log.e(
-                                                        TAG,
-                                                        "Unexpected error during video integrity check",
-                                                        t);
-                                                mainHandler.post(
-                                                        () -> {
-                                                            videoCaptureIdsPendingIntegrityCheck
-                                                                    .remove(captureId);
-                                                            if (mMediaCaptureListener != null) {
-                                                                mMediaCaptureListener.onMediaError(
-                                                                        pendingRequestId,
-                                                                        "Video integrity check error: "
-                                                                                + t.getMessage(),
-                                                                        MediaUploadQueueManager
-                                                                                .MEDIA_TYPE_VIDEO);
-                                                            }
-                                                            sendGalleryStatusUpdate();
-                                                        });
+                                videoIntegrityExecutor.execute(() -> {
+                                    try {
+                                        final boolean ok = RecordedVideoIntegrityChecker.verify(filePath);
+                                        mainHandler.post(() -> {
+                                            videoCaptureIdsPendingIntegrityCheck.remove(captureId);
+                                            if (ok) {
+                                                if (mMediaCaptureListener != null) {
+                                                    mMediaCaptureListener.onVideoRecordingStopped(pendingRequestId, filePath);
+                                                }
+                                                sendGalleryStatusUpdate();
+                                                uploadVideo(filePath, pendingRequestId);
+                                            } else {
+                                                final boolean cleaningUp = isCleaningUp.get();
+                                                if (!cleaningUp) {
+                                                    File bad = new File(filePath);
+                                                    if (bad.exists() && !bad.delete()) {
+                                                        Log.w(TAG, "Could not delete failed video file: " + filePath);
+                                                    }
+                                                } else {
+                                                    Log.w(TAG, "Skipping failed video deletion because cleanup is in progress");
+                                                }
+                                                if (mMediaCaptureListener != null) {
+                                                    mMediaCaptureListener.onMediaError(
+                                                            pendingRequestId,
+                                                            cleaningUp
+                                                                    ? "Video integrity check aborted during cleanup; file preserved"
+                                                                    : "Video file failed integrity check and was removed",
+                                                            MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+                                                }
+                                                sendGalleryStatusUpdate();
                                             }
                                         });
-                            } catch (RejectedExecutionException e) {
-                                Log.w(
-                                        TAG,
-                                        "Video integrity check rejected because cleanup is in progress",
-                                        e);
-                                videoCaptureIdsPendingIntegrityCheck.remove(captureId);
-                                mainHandler.post(
-                                        () -> {
+                                    } catch (Throwable t) {
+                                        Log.e(TAG, "Unexpected error during video integrity check", t);
+                                        mainHandler.post(() -> {
+                                            videoCaptureIdsPendingIntegrityCheck.remove(captureId);
                                             if (mMediaCaptureListener != null) {
                                                 mMediaCaptureListener.onMediaError(
                                                         pendingRequestId,
-                                                        "Video integrity check unavailable during cleanup",
+                                                        "Video integrity check error: " + t.getMessage(),
                                                         MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
                                             }
                                             sendGalleryStatusUpdate();
                                         });
+                                    }
+                                });
+                            } catch (RejectedExecutionException e) {
+                                Log.w(TAG, "Video integrity check rejected because cleanup is in progress", e);
+                                videoCaptureIdsPendingIntegrityCheck.remove(captureId);
+                                mainHandler.post(() -> {
+                                    if (mMediaCaptureListener != null) {
+                                        mMediaCaptureListener.onMediaError(
+                                                pendingRequestId,
+                                                "Video integrity check unavailable during cleanup",
+                                                MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+                                    }
+                                    sendGalleryStatusUpdate();
+                                });
                             }
                         }
 
                         @Override
                         public void onRecordingError(String videoId, String errorMessage) {
-                            Log.e(
-                                    TAG,
-                                    "Video recording error: "
-                                            + videoId
-                                            + ", error: "
-                                            + errorMessage);
+                            Log.e(TAG, "Video recording error: " + videoId + ", error: " + errorMessage);
+                            // Release the exact ID we registered at start so the in-flight block can't
+                            // leak even if currentVideoPath has already been cleared.
+                            if (captureIdAtStart != null) {
+                                videoCaptureIdsInFlight.remove(captureIdAtStart);
+                                videoCaptureIdsPendingIntegrityCheck.remove(captureIdAtStart);
+                                Log.d(TAG, "Video capture unblocked from sync filters (error): " + captureIdAtStart);
+                            } else {
+                                clearVideoCaptureSyncBlocks(currentVideoPath);
+                            }
+
                             isRecordingVideo = false;
 
-                            // Turn off RGB white LED on error (error path may not go through
-                            // stopVideoRecording)
+                            // Turn off RGB white LED on error (error path may not go through stopVideoRecording)
                             stopVideoRecordingLed();
 
                             // Turn off recording LED on error if it was enabled
@@ -945,6 +944,7 @@ public class MediaCaptureService {
             }
 
             // Reset state on error
+            clearVideoCaptureSyncBlocks(videoFilePath);
             currentVideoId = null;
             currentVideoPath = null;
         }
@@ -1057,18 +1057,31 @@ public class MediaCaptureService {
      * sync/download while recording is in progress.
      */
     public String getActiveRecordingCaptureId() {
-        if (!isRecordingVideo || currentVideoPath == null) {
+        if (currentVideoPath == null) {
             return null;
         }
         return captureIdFromVideoAbsPath(currentVideoPath);
     }
 
     /**
-     * Capture directory names (e.g. VID_xxx) whose recording has stopped but integrity check has
-     * not finished — excluded from Wi‑Fi sync/download alongside in-progress recordings.
+     * Capture directory names excluded from Wi‑Fi sync/download: in-flight recordings (path
+     * created through MediaRecorder prepare/start) and captures awaiting integrity validation.
      */
     public Set<String> getPendingVideoIntegrityCaptureIds() {
-        return Collections.unmodifiableSet(videoCaptureIdsPendingIntegrityCheck);
+        Set<String> blocked = new HashSet<>();
+        blocked.addAll(videoCaptureIdsInFlight);
+        blocked.addAll(videoCaptureIdsPendingIntegrityCheck);
+        return Collections.unmodifiableSet(blocked);
+    }
+
+    private void clearVideoCaptureSyncBlocks(String videoAbsPath) {
+        String captureId = captureIdFromVideoAbsPath(videoAbsPath);
+        if (captureId == null) {
+            return;
+        }
+        videoCaptureIdsInFlight.remove(captureId);
+        videoCaptureIdsPendingIntegrityCheck.remove(captureId);
+        Log.d(TAG, "Video capture unblocked from sync filters: " + captureId);
     }
 
     private static String captureIdFromVideoAbsPath(String absolutePath) {
@@ -1655,6 +1668,178 @@ public class MediaCaptureService {
         Log.i(TAG, sb.toString());
     }
 
+    private void tracePhotoWifiRoute(
+            String requestId, String route, String reason, String webhookUrl, File photoFile) {
+        JSONObject payload = createPhotoWifiPayload(requestId, webhookUrl, photoFile);
+        putJson(payload, "route", route);
+        putJson(payload, "reason", reason);
+        putJson(payload, "timestampMs", System.currentTimeMillis());
+        logPhotoWifiTrace("glasses_network", "wifi_route", "photo_upload_route", payload);
+    }
+
+    private void tracePhotoUploadStart(
+            String requestId,
+            String webhookUrl,
+            File photoFile,
+            boolean hasAuthToken,
+            long startMs) {
+        JSONObject payload = createPhotoWifiPayload(requestId, webhookUrl, photoFile);
+        putJson(payload, "bearerHeaderPresent", hasAuthToken);
+        putJson(payload, "startMs", startMs);
+        logPhotoWifiTrace("glasses_to_wifi", "wifi_http_output", "photo_upload_start", payload);
+    }
+
+    private void tracePhotoUploadEnd(
+            String requestId,
+            String webhookUrl,
+            File photoFile,
+            long startMs,
+            long endMs,
+            int statusCode,
+            boolean success,
+            String outcome) {
+        JSONObject payload = createPhotoWifiPayload(requestId, webhookUrl, photoFile);
+        putJson(payload, "startMs", startMs);
+        putJson(payload, "endMs", endMs);
+        putJson(payload, "durationMs", endMs - startMs);
+        putJson(payload, "statusCode", statusCode);
+        putJson(payload, "success", success);
+        putJson(payload, "outcome", outcome);
+        logPhotoWifiTrace("wifi_to_glasses", "wifi_http_input", "photo_upload_end", payload);
+    }
+
+    private void tracePhotoUploadError(
+            String requestId,
+            String webhookUrl,
+            File photoFile,
+            long startMs,
+            Exception error,
+            String outcome) {
+        long endMs = System.currentTimeMillis();
+        JSONObject payload = createPhotoWifiPayload(requestId, webhookUrl, photoFile);
+        if (startMs > 0) {
+            putJson(payload, "startMs", startMs);
+            putJson(payload, "durationMs", endMs - startMs);
+        }
+        putJson(payload, "endMs", endMs);
+        putJson(payload, "success", false);
+        putJson(payload, "outcome", outcome);
+        if (error != null) {
+            putJson(payload, "errorClass", error.getClass().getSimpleName());
+            putJson(payload, "errorMessage", error.getMessage());
+        }
+        logPhotoWifiTrace("wifi_to_glasses", "wifi_http_input", "photo_upload_error", payload);
+    }
+
+    private void tracePhotoUploadFallback(
+            String requestId, String webhookUrl, File photoFile, String reason, String bleImgId) {
+        JSONObject payload = createPhotoWifiPayload(requestId, webhookUrl, photoFile);
+        putJson(payload, "fallback", "ble");
+        putJson(payload, "reason", reason);
+        putJson(payload, "hasBleImageId", bleImgId != null && !bleImgId.isEmpty());
+        putJson(payload, "timestampMs", System.currentTimeMillis());
+        logPhotoWifiTrace("glasses_network", "wifi_route", "photo_upload_fallback", payload);
+    }
+
+    private JSONObject createPhotoWifiPayload(String requestId, String webhookUrl, File photoFile) {
+        JSONObject payload = new JSONObject();
+        putJson(payload, "requestId", requestId);
+        if (photoFile != null) {
+            putJson(payload, "fileName", photoFile.getName());
+            putJson(payload, "fileExists", photoFile.exists());
+            putJson(payload, "fileBytes", photoFile.exists() ? photoFile.length() : 0);
+        }
+        putWebhookSummary(payload, webhookUrl);
+        putActiveNetworkSummary(payload);
+        return payload;
+    }
+
+    private void putWebhookSummary(JSONObject payload, String webhookUrl) {
+        if (webhookUrl == null || webhookUrl.isEmpty()) {
+            return;
+        }
+
+        try {
+            URI uri = URI.create(webhookUrl);
+            putJson(payload, "urlScheme", uri.getScheme());
+            putJson(payload, "urlHost", uri.getHost());
+            if (uri.getPort() != -1) {
+                putJson(payload, "urlPort", uri.getPort());
+            }
+            String path = uri.getRawPath();
+            putJson(payload, "urlPath", path == null || path.isEmpty() ? "/" : path);
+            putJson(
+                    payload,
+                    "urlHasQuery",
+                    uri.getRawQuery() != null && !uri.getRawQuery().isEmpty());
+        } catch (Exception e) {
+            putJson(payload, "urlParseError", e.getClass().getSimpleName());
+        }
+    }
+
+    private void putActiveNetworkSummary(JSONObject payload) {
+        try {
+            ConnectivityManager cm =
+                    (ConnectivityManager) mContext.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) {
+                putJson(payload, "networkAvailable", false);
+                return;
+            }
+
+            android.net.Network activeNetwork = cm.getActiveNetwork();
+            if (activeNetwork == null) {
+                putJson(payload, "networkAvailable", false);
+                return;
+            }
+
+            NetworkCapabilities caps = cm.getNetworkCapabilities(activeNetwork);
+            if (caps == null) {
+                putJson(payload, "networkAvailable", true);
+                putJson(payload, "networkCapabilitiesAvailable", false);
+                return;
+            }
+
+            putJson(payload, "networkAvailable", true);
+            putJson(
+                    payload,
+                    "wifiConnected",
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI));
+            putJson(
+                    payload,
+                    "cellularConnected",
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR));
+            putJson(
+                    payload,
+                    "internetCapable",
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+            putJson(
+                    payload,
+                    "internetValidated",
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED));
+        } catch (Exception e) {
+            putJson(payload, "networkSummaryError", e.getClass().getSimpleName());
+        }
+    }
+
+    private void putJson(JSONObject payload, String key, Object value) {
+        if (payload == null || key == null || value == null) {
+            return;
+        }
+        try {
+            payload.put(key, value);
+        } catch (JSONException ignored) {
+            // Keep trace logging non-fatal.
+        }
+    }
+
+    private void logPhotoWifiTrace(String direction, String layer, String type, JSONObject payload) {
+        try {
+            BleTraceLogger.logEvent(direction, layer, type, payload);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to write WiFi trace log", e);
+        }
+    }
+
     /** Upload photo directly to app webhook */
     private void uploadPhotoToWebhook(
             String photoFilePath,
@@ -1954,10 +2139,18 @@ public class MediaCaptureService {
         new Thread(
                         () -> {
                             recordTiming(requestId, "direct_upload_thread_start");
+                            File photoFile = new File(photoFilePath);
+                            long uploadStartTime = 0;
                             try {
-                                File photoFile = new File(photoFilePath);
                                 if (!photoFile.exists()) {
                                     Log.e(TAG, "❌ Photo file does not exist: " + photoFilePath);
+                                    tracePhotoUploadError(
+                                            requestId,
+                                            webhookUrl,
+                                            photoFile,
+                                            uploadStartTime,
+                                            new IllegalStateException("Photo file not found"),
+                                            "file_missing");
                                     if (mMediaCaptureListener != null) {
                                         mMediaCaptureListener.onMediaError(
                                                 requestId,
@@ -2010,7 +2203,8 @@ public class MediaCaptureService {
                                         new Request.Builder().url(webhookUrl).post(requestBody);
 
                                 // Add Authorization header if auth token is available
-                                if (authToken != null && !authToken.isEmpty()) {
+                                boolean hasAuthToken = authToken != null && !authToken.isEmpty();
+                                if (hasAuthToken) {
                                     requestBuilder.header("Authorization", "Bearer " + authToken);
                                     Log.d(TAG, "🔐 Adding Authorization header to webhook request");
                                 } else {
@@ -2020,15 +2214,31 @@ public class MediaCaptureService {
                                 Request request = requestBuilder.build();
                                 Log.d(TAG, "🚀 Executing HTTP request...");
 
-                                long uploadStartTime = System.currentTimeMillis();
+                                uploadStartTime = System.currentTimeMillis();
+                                tracePhotoUploadStart(
+                                        requestId,
+                                        webhookUrl,
+                                        photoFile,
+                                        hasAuthToken,
+                                        uploadStartTime);
                                 Response response = client.newCall(request).execute();
-                                long uploadTime = System.currentTimeMillis() - uploadStartTime;
+                                long uploadEndTime = System.currentTimeMillis();
+                                long uploadTime = uploadEndTime - uploadStartTime;
                                 recordTiming(requestId, "direct_upload_response");
 
                                 Log.d(TAG, "⏱️ Upload completed in: " + uploadTime + "ms");
                                 Log.d(TAG, "📈 Response code: " + response.code());
 
                                 if (response.isSuccessful()) {
+                                    tracePhotoUploadEnd(
+                                            requestId,
+                                            webhookUrl,
+                                            photoFile,
+                                            uploadStartTime,
+                                            uploadEndTime,
+                                            response.code(),
+                                            true,
+                                            "uploaded");
                                     recordTiming(requestId, "upload_success");
                                     dumpTimings(requestId);
                                     String responseBody =
@@ -2082,11 +2292,26 @@ public class MediaCaptureService {
                                     // Check if we can fallback to BLE
                                     recordTiming(requestId, "upload_failed_ble_fallback");
                                     String bleImgId = photoBleIds.get(requestId);
+                                    tracePhotoUploadEnd(
+                                            requestId,
+                                            webhookUrl,
+                                            photoFile,
+                                            uploadStartTime,
+                                            uploadEndTime,
+                                            response.code(),
+                                            false,
+                                            bleImgId != null ? "ble_fallback" : "http_failed");
                                     if (bleImgId != null) {
                                         Log.d(
                                                 TAG,
                                                 "📱 Webhook upload failed, attempting BLE fallback");
                                         Log.d(TAG, "🔄 BLE Image ID: " + bleImgId);
+                                        tracePhotoUploadFallback(
+                                                requestId,
+                                                webhookUrl,
+                                                photoFile,
+                                                "http_status_" + response.code(),
+                                                bleImgId);
 
                                         // Clean up tracking (will be re-added by BLE transfer)
                                         photoBleIds.remove(requestId);
@@ -2110,6 +2335,7 @@ public class MediaCaptureService {
                                                 TAG,
                                                 "🔄 Webhook failed, handing off to BLE transfer: "
                                                         + requestId);
+                                        response.close();
                                         reusePhotoForBleTransfer(
                                                 photoFilePath,
                                                 requestId,
@@ -2178,11 +2404,20 @@ public class MediaCaptureService {
                                 // Check if we can fallback to BLE on exception
                                 recordTiming(requestId, "upload_exception_ble_fallback");
                                 String bleImgId = photoBleIds.get(requestId);
+                                tracePhotoUploadError(
+                                        requestId,
+                                        webhookUrl,
+                                        photoFile,
+                                        uploadStartTime,
+                                        e,
+                                        bleImgId != null ? "ble_fallback" : "upload_exception");
                                 if (bleImgId != null) {
                                     Log.d(
                                             TAG,
                                             "📱 Webhook upload exception, attempting BLE fallback");
                                     Log.d(TAG, "🔄 BLE Image ID: " + bleImgId);
+                                    tracePhotoUploadFallback(
+                                            requestId, webhookUrl, photoFile, "exception", bleImgId);
 
                                     // Clean up tracking (will be re-added by BLE transfer)
                                     photoBleIds.remove(requestId);
@@ -2225,7 +2460,6 @@ public class MediaCaptureService {
                                 if (save == null || !save) {
                                     // Delete the photo file on exception
                                     try {
-                                        File photoFile = new File(photoFilePath);
                                         if (photoFile.exists() && photoFile.delete()) {
                                             Log.d(
                                                     TAG,
@@ -2587,6 +2821,8 @@ public class MediaCaptureService {
             photoBleIds.put(requestId, bleImgId);
             photoOriginalPaths.put(requestId, photoFilePath);
             photoRequestedSizes.put(requestId, size);
+            tracePhotoWifiRoute(
+                    requestId, "direct_webhook", "wifi_connected", webhookUrl, null);
 
             Log.d(TAG, "📶 WiFi connected - attempting direct upload for " + requestId);
             takePhotoAndUpload(
@@ -2602,6 +2838,7 @@ public class MediaCaptureService {
                     exposureTimeNs);
         } else {
             // No WiFi - skip webhook entirely, go straight to BLE (saves 2-5s timeout wait)
+            tracePhotoWifiRoute(requestId, "ble", "wifi_unavailable", webhookUrl, null);
             Log.d(TAG, "📵 No WiFi - skipping webhook, using BLE transfer for " + requestId);
             takePhotoForBleTransfer(
                     photoFilePath,
@@ -3346,6 +3583,7 @@ public class MediaCaptureService {
                 videoIntegrityExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
+            videoCaptureIdsInFlight.clear();
             videoCaptureIdsPendingIntegrityCheck.clear();
 
             Log.d(TAG, "✅ MediaCaptureService cleanup complete");
@@ -3369,9 +3607,20 @@ public class MediaCaptureService {
                 return;
             }
 
-            // Build gallery status using shared utility
+            // Snapshot sync-block state so the broadcast hides the same captures that the
+            // HTTP server hides (in-flight recordings, pending integrity checks, zero-byte primaries).
+            final String activeCaptureId = getActiveRecordingCaptureId();
+            final java.util.Set<String> blockedCaptureIds = getPendingVideoIntegrityCaptureIds();
+
+            // Build gallery status using shared utility with sync-safe filters
             JSONObject response =
-                    com.mentra.asg_client.utils.GalleryStatusHelper.buildGalleryStatus(fileManager);
+                    com.mentra.asg_client.utils.GalleryStatusHelper.buildGalleryStatus(
+                            fileManager,
+                            metadata ->
+                                    !com.mentra.asg_client.utils.GallerySyncFilter.isCaptureBlockedFromSync(
+                                            metadata.getFileName(), activeCaptureId, blockedCaptureIds)
+                                            && !com.mentra.asg_client.utils.GallerySyncFilter.isZeroBytePrimaryVideo(
+                                                    metadata.getFileName(), metadata.getFileSize()));
 
             // Send through bluetooth if available
             if (mServiceCallback != null) {

@@ -50,6 +50,7 @@ public final class ServiceConstants {
     public static final String COMMAND_REQUEST_WIFI_STATUS = "request_wifi_status";
     public static final String COMMAND_REQUEST_WIFI_SCAN = "request_wifi_scan";
     public static final String COMMAND_SET_HOTSPOT_STATE = "set_hotspot_state";
+    public static final String COMMAND_SET_SYSTEM_TIME = "set_system_time";
     public static final String COMMAND_PING = "ping";
     public static final String COMMAND_BATTERY_STATUS = "battery_status";
     public static final String COMMAND_REQUEST_VERSION = "request_version";

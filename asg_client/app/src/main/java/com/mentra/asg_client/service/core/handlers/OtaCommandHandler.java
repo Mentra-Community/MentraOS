@@ -62,7 +62,7 @@ public class OtaCommandHandler implements ICommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("ota_start", "ota_update_response", "ota_query_status");
+        return Set.of("ota_start", "ota_update_response", "ota_query_status", "ota_retry_version_check");
     }
 
     @Override
@@ -75,6 +75,8 @@ public class OtaCommandHandler implements ICommandHandler {
                     return handleOtaUpdateResponse(data);
                 case "ota_query_status":
                     return handleOtaQueryStatus();
+                case "ota_retry_version_check":
+                    return handleOtaRetryVersionCheck();
                 default:
                     Log.e(TAG, "Unsupported OTA command: " + commandType);
                     return false;
@@ -160,6 +162,16 @@ public class OtaCommandHandler implements ICommandHandler {
             String statusStr = data != null ? data.optString("status", "?") : "?";
             Log.i(TAG, "📱 Sent ota_status response: " + statusStr);
         }
+        return true;
+    }
+
+    private boolean handleOtaRetryVersionCheck() {
+        Log.i(TAG, "📱 Received ota_retry_version_check from phone");
+        if (otaHelperInstance == null) {
+            Log.w(TAG, "OtaHelper not initialized — cannot retry version check");
+            return false;
+        }
+        otaHelperInstance.retryBackgroundVersionCheck();
         return true;
     }
 
