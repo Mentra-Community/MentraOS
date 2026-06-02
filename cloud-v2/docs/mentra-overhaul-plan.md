@@ -159,7 +159,7 @@ Spec not written. No implementation started.
 ### OEM APIs and Portal
 
 **What it is**
-Everything OEM-facing, served under `/api/oem/`. Two parts: the OEM Portal, a web app where OEMs manage their integration (`/api/oem/portal/`), and the OEM backend APIs that an OEM's own servers call directly (`/api/oem/`). New for v2. Portal spike at `cloud-v2/docs/issues/002-oem-portal/`.
+Everything OEM-facing, served under `/api/oem/`. Two parts: the OEM Portal, a web app where OEMs manage their integration (`/api/oem/portal/`), and the OEM backend APIs that an OEM's own servers call directly (`/api/oem/`). New for v2. Portal spike at `cloud-v2/docs/issues/005-websites/oem-portal/`.
 
 **Status**
 Portal spiked only. OEM backend APIs not yet started.
@@ -236,7 +236,7 @@ Issues and verifies Mentra access and refresh tokens for the Mobile App and the 
 OEMs ship Mentra glasses to their own users. Those users sign in through the OEM's identity system, not Mentra's. OEM Auth is how an OEM-attested identity becomes a Mentra-scoped session, without the user ever creating a Mentra account.
 
 **What it does**
-Accepts OEM-attested installation JWTs (per the OEM Auth spec) and issues Mentra access and refresh tokens in exchange. Uses RFC 8693 token exchange as the wire format. Full spec at `cloud-v2/docs/issues/001-oem-auth/`.
+Accepts OEM-attested installation JWTs (per the OEM Auth spec) and issues Mentra access and refresh tokens in exchange. Uses RFC 8693 token exchange as the wire format. Full spec at `cloud-v2/docs/issues/001-cloud-core/auth/oem-auth/`.
 
 **Status**
 Implemented in v2 Cloud Core. End-to-end verified with a `test-oem` test issuer.
@@ -446,10 +446,10 @@ Port remaining low-priority mini apps. Skip if timeline pressure is real.
 
 **Design docs**
 
-- `cloud-v2/docs/issues/001-oem-auth/`
-- `cloud-v2/docs/issues/002-oem-portal/`
-- `cloud-v2/docs/issues/003-audio/`
-- `cloud-v2/docs/issues/004-local-sdk/`
+- `cloud-v2/docs/issues/001-cloud-core/auth/oem-auth/`
+- `cloud-v2/docs/issues/005-websites/oem-portal/`
+- `cloud-v2/docs/issues/002-cloud-runtime/audio/`
+- `cloud-v2/docs/issues/006-dev-toolkit/local-sdk/`
 
 **Runbooks**
 

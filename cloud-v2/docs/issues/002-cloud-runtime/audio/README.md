@@ -56,7 +56,7 @@ Full reasoning, alternatives considered, fault model, and protocol in
 
 ## Cross-references
 
-- OEM auth runtime: [`../001-oem-auth/`](../001-oem-auth/). The audio
+- OEM auth runtime: [`../../001-cloud-core/auth/oem-auth/`](../../001-cloud-core/auth/oem-auth/). The audio
   path assumes users have already obtained a Mentra access token
   through the OEM auth flow. The test client uses the TEST OEM
   (specified in 001) to authenticate before exercising audio.

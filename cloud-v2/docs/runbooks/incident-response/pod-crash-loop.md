@@ -158,7 +158,7 @@ If it's an emergency and you need to stop the bleeding:
   ingress's `proxy-send-timeout: 60s` would fire on client silence
   (audio moved to UDP, WS had no traffic). Fix: bump nginx WS timeout to
   3600s, app-level pings from CLIENT to detect dead connections.
-  See `docs/issues/003-audio/design.md` — we carry this forward in
+  See `docs/issues/002-cloud-runtime/audio/design.md` — we carry this forward in
   cloud-v2.
 - **VAD silence is not a death signal.** v1 issue 044: Soniox stream
   closed on 2s of silence. Fix: pause-on-gap (Soniox SDK feature),

@@ -11,7 +11,7 @@ specifies the concrete API endpoints, MongoDB schema, token formats,
 and lifecycles needed to build it.
 
 The OEM admin portal (login, team management, JWK registration UI) is
-out of scope here and lives in `cloud-v2/issues/002-oem-portal/`. The
+out of scope here and lives in `cloud-v2/issues/005-websites/oem-portal/`. The
 runtime endpoints in this doc are what the portal will eventually
 call.
 
@@ -73,7 +73,7 @@ Mentra holds the corresponding public key for verification.
 ### Steps
 
 1. **OEM signs up via the portal.** Portal flow specified separately in
-   `002-oem-portal/`. Output of signup is a record in the `oems`
+   `005-websites/oem-portal/`. Output of signup is a record in the `oems`
    collection with a stable `oemId`.
 2. **OEM generates a keypair locally.** Example (works in any language
    with `openssl`):
@@ -253,7 +253,7 @@ JWK Set URL), and counts (active sessions, etc.).
 **Plain English:** "Tell me about my own OEM account."
 
 Authentication: requires an OEM admin session from the portal (out of
-scope here; specified in `002-oem-portal/`).
+scope here; specified in `005-websites/oem-portal/`).
 
 **Response, success (200 OK).**
 
@@ -770,7 +770,7 @@ env var, so spinning up two instances with different IDs is enough.
 
 ## Out of scope
 
-- **OEM portal UX.** Lives in `cloud-v2/issues/002-oem-portal/`.
+- **OEM portal UX.** Lives in `cloud-v2/issues/005-websites/oem-portal/`.
 - **Migration of existing email-based Mentra users.** Separate spec.
   Likely treats Mentra-as-OEM-#0 but the migration story (existing
   Supabase users) is its own thing.
