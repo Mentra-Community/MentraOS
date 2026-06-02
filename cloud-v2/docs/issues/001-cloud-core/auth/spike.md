@@ -8,7 +8,8 @@ genuinely new piece: developer "auto auth" into local mini apps.
 
 User identity and auth across three audiences:
 
-1. **Mentra's own users** (the Mentra consumer app).
+1. **Mentra's own users** (the Mentra consumer app, plus the Dev Console and the
+   App/MiniApp Store websites, which all use the same sign-in).
 2. **OEM users** (an OEM's app, identity owned by the OEM).
 3. **Developers** who want Mentra to inject auth into their mini app so the mini
    app can call the developer's own backend, without the user logging in.
@@ -45,6 +46,14 @@ decisions rather than re-opening them:
   (`c.get("email")` is used as the user id).
 - The mobile app holds the core token and sends it as `Authorization: Bearer`
   to cloud; `validateCoreTokenMiddleware` verifies it with the shared secret.
+- **The same flow backs every Mentra-direct surface, not just the consumer app.**
+  The Dev Console website and the App/MiniApp Store website authenticate
+  identically: Supabase sign-in, then a core token. The Store exchanges at
+  `POST /api/store/auth/exchange-token` (`api/hono/store/store.auth.api.ts`); the
+  Dev Console verifies the same core token in `console.middleware.ts`, keyed on
+  `email` and carrying `organizations` / `defaultOrg` for the dev org model. So
+  "Mentra's own users" is one identity system spanning the consumer app, the Dev
+  Console, and the Store.
 
 Properties worth noting: symmetric secret (only cloud can verify), identity ==
 email, no asymmetric/JWKS story.
@@ -105,8 +114,12 @@ a public key, retiring the `frontendToken` API-key hash.
 
 ### Audience 1: Mentra's own users
 
-Mentra's consumer app is, architecturally, just the first consumer of the OEM
-Toolkit (Mentra is "OEM zero"). Two ways to issue it a Mentra access token:
+"Mentra's own users" spans three surfaces that share one identity today: the
+consumer app, the Dev Console website, and the App/MiniApp Store website, all via
+Supabase sign-in plus a core token (see Part 1). v2 should keep them on a single
+identity system and unify them on the Mentra access token. Architecturally
+Mentra's app is just the first consumer of the OEM Toolkit (Mentra is "OEM
+zero"). Two ways to issue the access token:
 
 - **(a) Mentra as its own OEM.** Supabase is Mentra's identity provider; a small
   Mentra-side issuer mints an OEM-style subject JWT that goes through the same
@@ -117,6 +130,11 @@ Toolkit (Mentra is "OEM zero"). Two ways to issue it a Mentra access token:
 
 Either way the output is the same access token format. Lean: (a), so there is a
 single issuance and revocation path. Open question below.
+
+The Dev Console surface carries one extra dimension: developer **organization**
+membership (today the core token's `organizations` / `defaultOrg`). In v2 that
+should be an org/profile lookup owned by `dev-console-service`, not a token
+claim, so the access token stays the same shape for every surface.
 
 ### Audience 2: OEM users
 
