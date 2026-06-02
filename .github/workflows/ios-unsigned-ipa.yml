@@ -132,4 +132,3 @@ steps:
       name: xcodebuild-log
       path: /tmp/xcodebuild.log
       retention-days: 5
-```
