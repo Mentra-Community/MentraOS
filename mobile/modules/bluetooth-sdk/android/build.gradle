@@ -157,16 +157,8 @@ def shouldUseGpgCmd = {
   (credentialValue(['signing.useGpgCmd'], ['SIGNING_USE_GPG_CMD']) ?: 'false').toBoolean()
 }
 
-def isPublishTask = {
-  gradle.taskGraph.allTasks.any { it.name.toLowerCase().contains('publish') }
-}
-
 def isCentralPublishTask = {
   gradle.taskGraph.allTasks.any { it.name.toLowerCase().contains('sonatypecentral') }
-}
-
-def hasSigningCredentials = {
-  findProperty('signing.keyId') || signingKey() || shouldUseGpgCmd()
 }
 
 def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
@@ -345,10 +337,14 @@ afterEvaluate {
       useGpgCmd()
     }
     required {
-      isCentralPublishTask() || (isPublishTask() && hasSigningCredentials())
+      isCentralPublishTask()
     }
     sign publishing.publications.release
   }
+}
+
+tasks.withType(Sign).configureEach {
+  onlyIf { isCentralPublishTask() }
 }
 
 tasks.register('uploadSonatypeCentralDeployment') {
