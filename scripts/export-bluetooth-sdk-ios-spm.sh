@@ -51,6 +51,17 @@ if [[ ! -d "$sdk_root/ios/Source" ]]; then
   exit 1
 fi
 
+sdk_version="$(
+  node -e '
+    const fs = require("fs")
+    const packageJson = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+    if (!packageJson.version) {
+      throw new Error("Missing version in Bluetooth SDK package.json")
+    }
+    process.stdout.write(packageJson.version)
+  ' "$sdk_root/package.json"
+)"
+
 mkdir -p "$target_root"
 find "$target_root" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
 
@@ -123,7 +134,7 @@ For `Package.swift` consumers:
 ```swift
 .package(
   url: "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git",
-  from: "0.1.7"
+  from: "__SDK_VERSION__"
 )
 ```
 
@@ -198,6 +209,7 @@ To keep the BLE link alive while the app is backgrounded, enable Core Bluetooth 
 
 This Swift package contains the core iOS Bluetooth SDK. It intentionally excludes optional MentraOS-internal code paths for local STT, offline TTS, Nex/SwiftProtobuf, Vuzix/Ultralite, and tar.bz2 extraction.
 EOF
+perl -0pi -e "s/__SDK_VERSION__/${sdk_version}/g" "$target_root/README.md"
 
 cp "$repo_root/LICENSE" "$target_root/LICENSE"
 

@@ -38,12 +38,14 @@ From the MentraOS repo root:
 ```bash
 git status --short
 source_sha=$(git rev-parse --short HEAD)
+version=$(node -p "require('./mobile/modules/bluetooth-sdk/package.json').version")
 scripts/export-bluetooth-sdk-ios-spm.sh --target ../mentra-bluetooth-sdk-ios --verify
 ```
 
 The script rewrites the target checkout except for `.git`. The `--verify` flag
 runs SwiftPM package description and a generic iOS Xcode build in the exported
-package.
+package. It reads `mobile/modules/bluetooth-sdk/package.json` and inserts that
+version into the generated README examples.
 
 ## Inspect the Target Diff
 
@@ -61,10 +63,8 @@ license, Swift sources, privacy manifest, and CoreObjC headers/sources. Do not
 commit build products, DerivedData, `.build`, `.swiftpm`, or local Xcode user
 state.
 
-If the release version changed, make sure the generated README examples point at
-the version being tagged. Until the export script accepts a version argument,
-update the version text in the export script before exporting, or update the
-generated target README before committing.
+If the release version changed, make sure `mobile/modules/bluetooth-sdk/package.json`
+already contains the version being tagged before exporting.
 
 ## Commit and Tag
 
@@ -72,8 +72,6 @@ Use the same version format as existing SwiftPM tags, for example `0.1.8`
 without a leading `v`.
 
 ```bash
-version=0.1.8
-
 git add Package.swift README.md LICENSE ios .gitignore
 git commit -m "Release MentraBluetoothSDK ${version}" \
   -m "Exported from MentraOS ${source_sha}."
@@ -83,8 +81,8 @@ git push origin "${version}"
 ```
 
 If you started a new shell after exporting, rerun `git rev-parse --short HEAD`
-in the MentraOS source checkout and paste that source commit hash manually in
-the commit body.
+and the package version command above in the MentraOS source checkout, then
+paste that source commit hash manually in the commit body.
 
 ## Final Checks
 
