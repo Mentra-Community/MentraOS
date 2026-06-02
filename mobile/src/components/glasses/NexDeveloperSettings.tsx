@@ -269,10 +269,6 @@ export default function NexDeveloperSettings() {
   const [commandSender, setCommandSender] = useState<BleCommand | null>(null)
   const [commandReceiver, setCommandReceiver] = useState<BleCommand | null>(null)
 
-  // Heartbeat Console state variables
-  const [lastHeartbeatSent, setLastHeartbeatSent] = useState<number | null>(null)
-  const [lastHeartbeatReceived, setLastHeartbeatReceived] = useState<number | null>(null)
-
   // LC3 Audio Control — persisted feature flag synced to core (off by default).
   const [lc3AudioEnabled, setLc3AudioEnabled] = useSetting(SETTINGS.nex_audio_playback.key)
 
@@ -303,29 +299,15 @@ export default function NexDeveloperSettings() {
       setCommandReceiver(receiver)
     }
 
-    const handleHeartbeatSent = (data: {timestamp: number}) => {
-      console.log("handleHeartbeatSent:", data)
-      setLastHeartbeatSent(data.timestamp)
-    }
-
-    const handleHeartbeatReceived = (data: {timestamp: number}) => {
-      console.log("handleHeartbeatReceived:", data)
-      setLastHeartbeatReceived(data.timestamp)
-    }
-
     if (!MOCK_CONNECTION) {
       GlobalEventEmitter.on("send_command_to_ble", handleCommandFromSender)
       GlobalEventEmitter.on("receive_command_from_ble", handleCommandFromReceiver)
-      GlobalEventEmitter.on("heartbeat_sent", handleHeartbeatSent)
-      GlobalEventEmitter.on("heartbeat_received", handleHeartbeatReceived)
     }
 
     return () => {
       if (!MOCK_CONNECTION) {
         GlobalEventEmitter.removeListener("send_command_to_ble", handleCommandFromSender)
         GlobalEventEmitter.removeListener("receive_command_from_ble", handleCommandFromReceiver)
-        GlobalEventEmitter.removeListener("heartbeat_sent", handleHeartbeatSent)
-        GlobalEventEmitter.removeListener("heartbeat_received", handleHeartbeatReceived)
       }
     }
   }, [])
@@ -404,13 +386,6 @@ export default function NexDeveloperSettings() {
     if (glassesConnected) {
       await BluetoothSdk.setVoiceActivityDetectionEnabled(enabled)
     }
-  }
-
-  // Helper function to format timestamps
-  const formatTimestamp = (timestamp: number | null): string => {
-    if (!timestamp) return "Never"
-    const date = new Date(timestamp)
-    return date.toLocaleTimeString()
   }
 
   return (
@@ -712,41 +687,6 @@ export default function NexDeveloperSettings() {
                 value={vadEnabled}
                 onValueChange={onVadToggle}
               />
-            </View>
-
-            {/* Ping-Pong Console */}
-            <View style={themed($settingsGroup)}>
-              <Text style={themed($sectionTitle)}>💓 Ping-Pong Console</Text>
-              <Text style={themed($description)}>Monitor ping-pong communication with Mentra Display glasses</Text>
-
-              <Text style={themed($label)}>🏓 Last Pong Sent:</Text>
-              <Text style={themed($timestampText)}>Time: {formatTimestamp(lastHeartbeatSent)}</Text>
-
-              <Text style={[themed($label), $topMargin]}>🏓 Last Ping Received:</Text>
-              <Text style={themed($timestampText)}>Time: {formatTimestamp(lastHeartbeatReceived)}</Text>
-
-              <Text style={[themed($label), $topMargin]}>Ping-Pong Health:</Text>
-              <Text
-                style={[
-                  themed($timestampText),
-                  {
-                    color:
-                      lastHeartbeatReceived && Date.now() - lastHeartbeatReceived < 45000
-                        ? theme.colors.palette.primary500
-                        : theme.colors.error,
-                  },
-                ]}>
-                {lastHeartbeatReceived
-                  ? Date.now() - lastHeartbeatReceived < 45000
-                    ? "🟢 Active (Receiving Pings)"
-                    : "🔴 Ping Timeout"
-                  : "⚪ No Pings Received"}
-              </Text>
-              {lastHeartbeatSent && lastHeartbeatReceived && (
-                <Text style={themed($timestampText)}>
-                  Response Time: {Math.abs(lastHeartbeatSent - lastHeartbeatReceived)}ms
-                </Text>
-              )}
             </View>
           </>
         ) : (

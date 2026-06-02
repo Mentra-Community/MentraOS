@@ -1421,12 +1421,6 @@ class MentraNex : SGCManager() {
                     val headUpAngleResponse: HeadUpAngleResponse = glassesToPhone.headUpAngleSet
                     Bridge.log("headUpAngleResponse: $headUpAngleResponse")
                 }
-                GlassesToPhone.PayloadCase.PONG -> {
-                    // New schema: glasses-initiated heartbeat is named `pong`; phone replies with `ping`.
-                    lastHeartbeatReceivedTime = System.currentTimeMillis()
-                    Bridge.log("=== RECEIVED PING FROM GLASSES === (Time: $lastHeartbeatReceivedTime)")
-                    sendPongResponse()
-                }
                 GlassesToPhone.PayloadCase.VAD_EVENT -> {
                     // val vadEvent = glassesToPhone.vadEvent
                     // EventBus.getDefault().post(VadEvent(vadEvent.vad))
@@ -1506,38 +1500,6 @@ class MentraNex : SGCManager() {
         }
         
         sendDataSequentially(missingChunks)
-    }
-
-    private fun sendPongResponse() {
-        // Respond to ping from glasses with pong
-        lastHeartbeatReceivedTime = System.currentTimeMillis()
-        Bridge.log("=== SENDING PONG RESPONSE TO GLASSES === (Time: $lastHeartbeatReceivedTime)")
-        
-        val pongPacket = NexProtobufUtils.constructPongResponse()
-
-        // Send the pong response
-        if (pongPacket != null) {
-            sendDataSequentially(pongPacket, 100)
-            Bridge.log("Pong response sent successfully")
-            
-            // Notify mobile app about pong sent
-            lastHeartbeatSentTime = System.currentTimeMillis()
-            NexEventUtils.sendHeartbeatSentEvent(lastHeartbeatSentTime)
-            // EventBus.getDefault().post(HeartbeatSentEvent(timestamp))
-        } else {
-            Log.e(TAG,"Failed to construct pong response packet")
-        }
-
-        // Still query battery periodically (every 10 pings received)
-        if (batteryLevel == -1 || heartbeatCount % 10 == 0) {
-            mainTaskHandler.sendEmptyMessageDelayed(MAIN_TASK_HANDLER_CODE_BATTERY_QUERY, 500)
-        }
-
-        heartbeatCount++
-        
-        // Notify mobile app about heartbeat received
-        NexEventUtils.sendHeartbeatReceivedEvent(lastHeartbeatReceivedTime)
-        // EventBus.getDefault().post(HeartbeatReceivedEvent(lastHeartbeatReceivedTime))
     }
 
     private fun createTextWallChunksForNex(text: String): ByteArray {
