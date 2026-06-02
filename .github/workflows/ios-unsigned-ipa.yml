@@ -13,12 +13,10 @@ runs-on: macos-15
 steps:
   - name: Checkout
     uses: actions/checkout@v4
-  - name: Select Xcode 16.2
+  - name: Select Xcode
     run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
   - name: Setup Bun
     uses: oven-sh/setup-bun@v2
-    with:
-      bun-version: latest
   - name: Setup Node
     uses: actions/setup-node@v4
     with:
@@ -32,93 +30,63 @@ steps:
   - name: Expo prebuild
     working-directory: ./mobile
     run: bun expo prebuild --platform ios
-  - name: Setup Sherpa Onnx (optional)
-    working-directory: ./mobile
-    run: |
-      chmod +x scripts/setup-sherpa-onnx-optional.sh
-      ./scripts/setup-sherpa-onnx-optional.sh || true
   - name: Install pods
     working-directory: ./mobile/ios
     run: pod install
-  - name: Download iOS platform support
-    working-directory: ./mobile/ios
-    run: xcodebuild -downloadPlatform iOS
-  - name: Archive app (unsigned, SideStore-friendly)
+  - name: Build .app (Release)
     working-directory: ./mobile/ios
     env:
       SENTRY_DISABLE_AUTO_UPLOAD: "true"
     run: |
       set -o pipefail
-      xcodebuild archive \
+      xcodebuild \
         -workspace Mentra.xcworkspace \
         -scheme Mentra \
         -configuration Release \
         -destination 'generic/platform=iOS' \
-        -archivePath build-device/Mentra.xcarchive \
+        -derivedDataPath build \
         CODE_SIGNING_ALLOWED=NO \
-        CODE_SIGNING_REQUIRED=NO \
         COPY_PHASE_STRIP=NO \
         STRIP_INSTALLED_PRODUCT=NO \
         ONLY_ACTIVE_ARCH=NO \
         2>&1 | tee /tmp/xcodebuild.log | xcpretty --color || \
       (echo "=== ERRORS ===" && grep "error:" /tmp/xcodebuild.log | tail -80 && exit 1)
-  - name: Locate .app inside archive
+  - name: Locate .app
     run: |
-      echo "=== Searching archive for .app ==="
-      APP_PATH=$(find mobile/ios/build-device/Mentra.xcarchive -name "*.app" -type d | head -1)
+      APP_PATH=$(find mobile/ios/build/Build/Products -name "*.app" -type d | head -1)
       if [ -z "$APP_PATH" ]; then
-        echo "❌ ERROR: .app not found"
-        find mobile/ios/build-device/Mentra.xcarchive -maxdepth 5
+        echo "❌ .app not found"
         exit 1
       fi
-      echo "✅ Found app at: $APP_PATH"
       echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
-  - name: Verify app bundle
+      echo "✅ Found: $APP_PATH"
+  - name: Strip simulator architectures (recommended)
     run: |
-      echo "=== App contents ==="
-      ls -la "$APP_PATH"
-      if [ ! -f "$APP_PATH/Info.plist" ]; then
-        echo "❌ Missing Info.plist"
-        exit 1
-      fi
-      echo "✅ Info.plist present"
-      echo ""
-      echo "=== Frameworks ==="
-      ls "$APP_PATH/Frameworks" || echo "No Frameworks folder"
-  - name: Strip simulator architectures (optional but recommended)
-    run: |
-      echo "=== Stripping simulator architectures ==="
       find "$APP_PATH" -name "*.framework" -type d | while read framework; do
         binary=$(find "$framework" -type f -perm +111 | head -1)
         if [ -f "$binary" ]; then
           lipo -remove x86_64 -remove arm64e "$binary" -o "$binary" 2>/dev/null || true
         fi
       done
-  - name: Package IPA (SideStore compatible)
+  - name: Package IPA
     run: |
-      echo "=== Packaging IPA ==="
       rm -rf Payload
       mkdir Payload
       APP_NAME=$(basename "$APP_PATH")
       cp -r "$APP_PATH" "Payload/$APP_NAME"
-      # Optional placeholder (helps some sideload tools)
       touch "Payload/$APP_NAME/embedded.mobileprovision"
-      echo "=== Payload contents ==="
-      ls -la Payload
       zip -r Mentra.ipa Payload
       mv Mentra.ipa mobile/ios/
-      echo "✅ IPA created:"
+      echo "✅ IPA created"
       ls -lh mobile/ios/Mentra.ipa
   - name: Upload IPA
     uses: actions/upload-artifact@v4
     with:
       name: Mentra-SideStore-IPA
       path: mobile/ios/Mentra.ipa
-      retention-days: 14
   - name: Upload logs on failure
     if: failure()
     uses: actions/upload-artifact@v4
     with:
       name: xcodebuild-log
       path: /tmp/xcodebuild.log
-      retention-days: 5
