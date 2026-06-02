@@ -28,7 +28,7 @@ public class AsgSettings {
     private static final String KEY_CAMERA_ROI_POSITION = "camera_roi_position";
 
     /** Supported FOV range for K900 camera, inclusive (118 = No ROI) */
-    private static final int MIN_CAMERA_FOV = 82;
+    private static final int MIN_CAMERA_FOV = 62;
     private static final int MAX_CAMERA_FOV = 118;
     private static final int DEFAULT_CAMERA_FOV = 118; // No ROI
     private static final int DEFAULT_CAMERA_ROI_POSITION = 0; // ROI_POSITION_CENTER
@@ -159,7 +159,7 @@ public class AsgSettings {
     }
 
     /**
-     * Get the camera FOV setting (K900). Supported range: 82-118 inclusive (118 = No ROI).
+     * Get the camera FOV setting (K900). Supported range: 62-118 inclusive (118 = No ROI).
      * @return FOV in degrees (default 118 = No ROI)
      */
     public int getCameraFov() {
@@ -180,7 +180,7 @@ public class AsgSettings {
 
     /**
      * Set the camera FOV and ROI position (K900). Caller should apply to hardware and restart camera HAL.
-     * @param fov FOV value from 82-118 inclusive (118 = No ROI; otherwise default 118 is used)
+     * @param fov FOV value from 62-118 inclusive (118 = No ROI; otherwise default 118 is used)
      * @param roiPosition 0=center, 1=bottom, 2=top (clamped to [0,2]; ignored by HAL when fov is 118)
      */
     public void setCameraFov(int fov, int roiPosition) {

@@ -30,6 +30,7 @@ import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
+import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
@@ -216,6 +217,7 @@ public class AsgClientService extends Service
         super.onCreate();
         Log.i(TAG, "🚀 AsgClientServiceV2 onCreate() started");
         Log.d(TAG, "📊 Android API Level: " + Build.VERSION.SDK_INT);
+        BleTraceLogger.logLifecycle(this, "AsgClientService", "service_create");
 
         instance = this;
 
@@ -287,6 +289,12 @@ public class AsgClientService extends Service
         super.onStartCommand(intent, flags, startId);
 
         try {
+            JSONObject lifecycleDetails = new JSONObject();
+            lifecycleDetails.put("action", intent != null ? intent.getAction() : JSONObject.NULL);
+            lifecycleDetails.put("flags", flags);
+            lifecycleDetails.put("startId", startId);
+            BleTraceLogger.logLifecycle(this, "AsgClientService", "service_start_command", lifecycleDetails);
+
             ensureForegroundStarted();
 
             if (intent == null || intent.getAction() == null) {
@@ -323,6 +331,7 @@ public class AsgClientService extends Service
     @Override
     public void onDestroy() {
         Log.i(TAG, "🛑 AsgClientServiceV2 onDestroy() started");
+        BleTraceLogger.logLifecycle(this, "AsgClientService", "service_destroy_start");
 
         try {
             // Unregister from EventBus
@@ -384,6 +393,7 @@ public class AsgClientService extends Service
             handleSwipeVolumeControl(true);
 
             Log.i(TAG, "✅ AsgClientServiceV2 onDestroy() completed successfully");
+            BleTraceLogger.logLifecycle(this, "AsgClientService", "service_destroy_complete");
         } catch (Exception e) {
             Log.e(TAG, "💥 Error in onDestroy()", e);
         }
