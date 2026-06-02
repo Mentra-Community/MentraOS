@@ -3369,8 +3369,12 @@ class MentraLive: NSObject, SGCManager {
 
                     // Create chunks
                     let chunks = MessageChunker.createChunks(
-                        originalJson: jsonString, messageId: messageId
+                        originalJson: jsonString, messageId: messageId, wakeUp: wakeUp
                     )
+                    guard !chunks.isEmpty else {
+                        Bridge.log("LIVE: Failed to create BLE chunks within K900 packet limit")
+                        return
+                    }
                     Bridge.log("LIVE: Sending \(chunks.count) chunks")
 
                     // Send each chunk

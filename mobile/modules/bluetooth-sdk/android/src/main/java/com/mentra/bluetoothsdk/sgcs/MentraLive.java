@@ -5747,7 +5747,7 @@ public class MentraLive extends SGCManager {
                 }
 
                 // Create chunks
-                List<JSONObject> chunks = MessageChunker.createChunks(data, messageId);
+                List<JSONObject> chunks = MessageChunker.createChunks(data, messageId, wakeup);
                 Bridge.log("LIVE: Sending " + chunks.size() + " chunks");
                 if (isPhotoRequest) {
                     Bridge.log("LIVE: PHOTO PIPELINE BLE handoff — created " + chunks.size() + " chunks for transmission");
