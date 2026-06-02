@@ -342,19 +342,16 @@ class MiniappCatalog {
     }
     if (app.offline) return // offline app without a route — nothing to navigate to
     if (app.isMiniappDev && app.devUrl) {
-      // Dev miniapps push the same /applet/local route as installed local
-      // miniapps. Reachability check still routes to the offline screen
-      // if the dev server isn't responding.
+      // Dev miniapps foreground through the Compositor overlay, same as
+      // released local miniapps (and the same as the app switcher's
+      // setForeground path) — so the launch is identical no matter where
+      // the user tapped. We still pre-flight reachability first so an
+      // unreachable dev server lands on the dedicated offline screen
+      // rather than the inline error card LocalMiniappView falls back to.
       const {packageName, devUrl, name: appName, logoUrl} = app
       decideDevLaunchRoute(packageName, devUrl).then((result) => {
         if (result.decision === "live") {
-          nav.push("/applet/local", {
-            packageName,
-            appName,
-            devUrl,
-            iconUrl: logoUrl,
-            transition: appOpenTransition,
-          })
+          useAppStatusStore.getState().setForeground(packageName)
         } else {
           nav.push("/applet/dev-offline", {packageName, name: appName, iconUrl: logoUrl})
         }
