@@ -25,28 +25,26 @@ public class MessageChunkReassembler {
             return null;
         }
 
-        ChunkSession existingSession = activeSessions.get(chunkId);
-        if (existingSession != null && existingSession.totalChunks != totalChunks) {
-            Log.w(TAG, "totalChunks mismatch for " + chunkId + " (expected "
-                    + existingSession.totalChunks + ", got " + totalChunks + "), dropping session");
-            activeSessions.remove(chunkId);
-            return null;
-        }
-
         if (activeSessions.size() >= MAX_CONCURRENT_SESSIONS && !activeSessions.containsKey(chunkId)) {
             Log.w(TAG, "Maximum concurrent chunk sessions reached, dropping oldest");
             removeOldestSession();
         }
 
-        boolean isNewSession = existingSession == null;
-        ChunkSession session = isNewSession ? new ChunkSession(chunkId, totalChunks) : existingSession;
+        ChunkSession session = activeSessions.compute(chunkId, (ignored, existingSession) -> {
+            if (existingSession == null) {
+                return new ChunkSession(chunkId, totalChunks);
+            }
+            if (existingSession.totalChunks != totalChunks) {
+                Log.w(TAG, "totalChunks mismatch for " + chunkId + " (expected "
+                        + existingSession.totalChunks + ", got " + totalChunks + "), resetting session");
+                return new ChunkSession(chunkId, totalChunks);
+            }
+            return existingSession;
+        });
         boolean added = session.addChunk(chunkIndex, data);
         if (!added) {
             Log.w(TAG, "Failed to add chunk " + chunkIndex + " to session " + chunkId);
             return null;
-        }
-        if (isNewSession) {
-            activeSessions.put(chunkId, session);
         }
 
         Log.d(TAG, "Added chunk " + chunkIndex + "/" + (totalChunks - 1) + " for session " + chunkId);

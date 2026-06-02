@@ -20,10 +20,9 @@ final class MessageChunkReassembler {
 
         if let existing = activeSessions[info.chunkId], existing.totalChunks != info.totalChunks {
             print(
-                "MessageChunkReassembler: totalChunks mismatch for \(info.chunkId) (expected \(existing.totalChunks), got \(info.totalChunks))"
+                "MessageChunkReassembler: totalChunks mismatch for \(info.chunkId) (expected \(existing.totalChunks), got \(info.totalChunks)); resetting session"
             )
             activeSessions.removeValue(forKey: info.chunkId)
-            return nil
         }
 
         if activeSessions.count >= Self.maxConcurrentSessions,

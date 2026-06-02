@@ -2,7 +2,6 @@ package com.mentra.asg_client.service.core.processors;
 
 import android.util.Log;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -41,14 +40,6 @@ public class ChunkReassembler {
             return null;
         }
 
-        ChunkSession existingSession = activeSessions.get(chunkId);
-        if (existingSession != null && existingSession.totalChunks != totalChunks) {
-            Log.w(TAG, "totalChunks mismatch for " + chunkId + " (expected "
-                    + existingSession.totalChunks + ", got " + totalChunks + "), dropping session");
-            activeSessions.remove(chunkId);
-            return null;
-        }
-        
         // Check if we're at capacity
         if (activeSessions.size() >= MAX_CONCURRENT_SESSIONS && !activeSessions.containsKey(chunkId)) {
             Log.w(TAG, "Maximum concurrent chunk sessions reached, dropping oldest");
@@ -56,17 +47,23 @@ public class ChunkReassembler {
         }
         
         // Get or create session
-        boolean isNewSession = existingSession == null;
-        ChunkSession session = isNewSession ? new ChunkSession(chunkId, totalChunks) : existingSession;
+        ChunkSession session = activeSessions.compute(chunkId, (ignored, existingSession) -> {
+            if (existingSession == null) {
+                return new ChunkSession(chunkId, totalChunks);
+            }
+            if (existingSession.totalChunks != totalChunks) {
+                Log.w(TAG, "totalChunks mismatch for " + chunkId + " (expected "
+                        + existingSession.totalChunks + ", got " + totalChunks + "), resetting session");
+                return new ChunkSession(chunkId, totalChunks);
+            }
+            return existingSession;
+        });
         
         // Add the chunk
         boolean added = session.addChunk(chunkIndex, data);
         if (!added) {
             Log.w(TAG, "Failed to add chunk " + chunkIndex + " to session " + chunkId);
             return null;
-        }
-        if (isNewSession) {
-            activeSessions.put(chunkId, session);
         }
         
         Log.d(TAG, "Added chunk " + chunkIndex + "/" + (totalChunks - 1) + " for session " + chunkId);
@@ -188,7 +185,7 @@ public class ChunkReassembler {
             this.chunkId = chunkId;
             this.totalChunks = totalChunks;
             this.createdTime = System.currentTimeMillis();
-            this.chunks = new HashMap<>();
+            this.chunks = new ConcurrentHashMap<>();
         }
         
         boolean addChunk(int index, String data) {
