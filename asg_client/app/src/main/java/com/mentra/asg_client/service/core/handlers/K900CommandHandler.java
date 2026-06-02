@@ -15,6 +15,7 @@ import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.hardware.managers.K900HardwareManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
+import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.settings.VideoSettings;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
@@ -26,6 +27,8 @@ import com.mentra.asg_client.SysControl;
 
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import java.util.function.Consumer;
 
 /**
  * Handles K900 protocol commands.
@@ -453,7 +456,21 @@ public class K900CommandHandler {
             return;
         }
 
+        JSONObject tracePayload = new JSONObject();
+        try {
+            tracePayload.put("cur", cur);
+            tracePayload.put("chars", body != null ? body.length() : 0);
+            tracePayload.put("terminator", cur == 255 && "end".equals(body));
+        } catch (JSONException ignored) {
+            // Keep trace logging non-fatal.
+        }
+        BleTraceLogger.logEvent("bes_to_asg", "bes_log_stream", "sr_log", tracePayload);
+
         mBesLogSession.onLogPacketReceived(cur, body);
+    }
+
+    public boolean hasActiveBesLogSession() {
+        return mBesLogSession != null && !mBesLogSession.isFinished();
     }
 
     /**
@@ -554,6 +571,52 @@ public class K900CommandHandler {
             if (relayFirmwareJson != null) {
                 relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
             }
+        }
+    }
+
+    public boolean requestBesLogsForTrace(Context context,
+                                          IConfigurationManager configManager,
+                                          Consumer<String> rawLogCallback) {
+        if (hasActiveBesLogSession()) {
+            Log.d(TAG, "Skipping BES trace poll because a BES log session is already active");
+            return false;
+        }
+
+        if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
+            Log.w(TAG, "⚠️ BluetoothManager unavailable — cannot request BES trace logs");
+            return false;
+        }
+
+        if (!serviceManager.getBluetoothManager().isConnected()) {
+            Log.w(TAG, "⚠️ UART not connected — cannot request BES trace logs");
+            return false;
+        }
+
+        mBesLogSession = BesLogManager.forRawLogCallback(context, configManager, rawLogCallback);
+        try {
+            JSONObject k900Command = new JSONObject();
+            k900Command.put("C", "mh_logs");
+            k900Command.put("V", 1);
+            k900Command.put("B", "");
+
+            String commandStr = k900Command.toString();
+            Log.d(TAG, "📤 Sending trace mh_logs: " + commandStr);
+
+            boolean sent = serviceManager.getBluetoothManager().sendData(
+                commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            if (sent) {
+                mBesLogSession.startTimeouts();
+                return true;
+            }
+
+            Log.e(TAG, "❌ Failed to send trace mh_logs");
+            mBesLogSession = null;
+            return false;
+        } catch (JSONException e) {
+            Log.e(TAG, "💥 Error building trace mh_logs command", e);
+            mBesLogSession = null;
+            return false;
         }
     }
 
