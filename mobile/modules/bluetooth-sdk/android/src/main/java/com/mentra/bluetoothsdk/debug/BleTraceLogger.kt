@@ -42,20 +42,24 @@ object BleTraceLogger {
         event: String,
         extra: Map<String, Any?> = emptyMap(),
     ) {
-        val payload = JSONObject()
-        payload.put("event", event)
-        payload.put("component", component)
-        payload.put("pid", Process.myPid())
-        payload.put("model", Build.MODEL)
-        payload.put("sdkInt", Build.VERSION.SDK_INT)
+        try {
+            val payload = JSONObject()
+            payload.put("event", event)
+            payload.put("component", component)
+            payload.put("pid", Process.myPid())
+            payload.put("model", Build.MODEL)
+            payload.put("sdkInt", Build.VERSION.SDK_INT)
 
-        context?.let {
-            payload.put("package", it.packageName)
-            packageVersion(it)?.let { version -> payload.put("version", version) }
+            context?.let {
+                payload.put("package", it.packageName)
+                packageVersion(it)?.let { version -> payload.put("version", version) }
+            }
+
+            extra.forEach { (key, value) -> payload.put(key, value ?: JSONObject.NULL) }
+            Log.i(TAG, format("phone_app", "app_lifecycle", caller(), event, null, sanitize(payload).toString()))
+        } catch (e: Exception) {
+            Log.d(TAG, "BLE trace lifecycle logging failed", e)
         }
-
-        extra.forEach { (key, value) -> payload.put(key, value ?: JSONObject.NULL) }
-        Log.i(TAG, format("phone_app", "app_lifecycle", caller(), event, null, sanitize(payload).toString()))
     }
 
     private fun format(
