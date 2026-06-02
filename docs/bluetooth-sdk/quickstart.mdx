@@ -94,9 +94,11 @@ android {
 }
 
 dependencies {
-    implementation("com.mentra:bluetooth-sdk:0.1.6")
+    implementation("com.mentraglass:bluetooth-sdk:0.1.7")
 }
 ```
+
+The Android artifact is published on Maven Central. Keep `google()` and JitPack in `repositories` for transitive runtime dependency resolution; the SDK's public Android API does not expose Google Play Services or JitPack-only types. The companion LC3 codec artifact resolves transitively as `com.mentraglass:lc3Lib`.
 
   </Tab>
   <Tab title="iOS">

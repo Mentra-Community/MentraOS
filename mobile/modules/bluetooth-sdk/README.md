@@ -354,6 +354,15 @@ The core Swift package intentionally excludes optional local STT, Nex/SwiftProto
 Maintainers publishing the public SwiftPM mirror should follow
 [RELEASING_IOS_SPM.md](./RELEASING_IOS_SPM.md).
 
+## Android Maven Publishing
+
+Maintainers publishing the native Android artifacts to Maven Central should
+follow [RELEASING_ANDROID_MAVEN.md](./RELEASING_ANDROID_MAVEN.md).
+
+Use `android/gradle.properties.example` as the template for Sonatype Central and
+GPG signing properties. Put real values in `~/.gradle/gradle.properties` or CI
+secrets, not in the repository.
+
 ## Starter Example App
 
 The [Mentra Bluetooth SDK Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit) includes starter example apps for Android, iOS, and React Native / Expo. The React Native starter demonstrates scan/connect, display, camera photo upload, RTMP/SRT/WebRTC streaming, Wi-Fi/hotspot, microphone PCM, RGB LED, gallery mode, and console event inspection.
