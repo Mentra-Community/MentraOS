@@ -38,6 +38,10 @@ public class ImuRecorder implements SensorEventListener {
     // Latest values (updated independently by each sensor)
     private final float[] mLatestAccel = new float[3];
     private final float[] mLatestGyro = new float[3];
+
+    /** When false (no gyro hardware), record on every accelerometer event. */
+    private boolean mWaitForGyroSample;
+
     private boolean mHasGyroSample;
 
     private static class ImuSample {
@@ -77,6 +81,7 @@ public class ImuRecorder implements SensorEventListener {
         }
         mLatestAccel[0] = mLatestAccel[1] = mLatestAccel[2] = 0f;
         mLatestGyro[0] = mLatestGyro[1] = mLatestGyro[2] = 0f;
+        mWaitForGyroSample = mGyroscope != null;
         mHasGyroSample = false;
         mStartTimeNs = System.nanoTime();
         mRecording = true;
@@ -220,7 +225,7 @@ public class ImuRecorder implements SensorEventListener {
                 System.arraycopy(event.values, 0, mLatestAccel, 0, 3);
                 // Use System.nanoTime() so sample times match mStartTimeNs (event.timestamp can
                 // differ by minutes on some devices).
-                if (mHasGyroSample) {
+                if (!mWaitForGyroSample || mHasGyroSample) {
                     synchronized (mSamples) {
                         mSamples.add(new ImuSample(System.nanoTime(), mLatestAccel, mLatestGyro));
                     }
