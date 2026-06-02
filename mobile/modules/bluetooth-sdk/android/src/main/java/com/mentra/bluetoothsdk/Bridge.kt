@@ -9,6 +9,7 @@ package com.mentra.bluetoothsdk
 
 import android.util.Base64
 import android.util.Log
+import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import java.util.HashMap
 import java.util.UUID
 import kotlin.jvm.JvmStatic
@@ -660,6 +661,19 @@ public class Bridge private constructor() {
                     return
                 }
 
+                if (shouldTraceTypedMessage(type)) {
+                    try {
+                        BleTraceLogger.logMap(
+                            "phone_to_app",
+                            "sdk_event_dispatch",
+                            type,
+                            mutableBody as Map<String, Any>,
+                        )
+                    } catch (e: Exception) {
+                        Log.d(TAG, "BLE trace logging failed for typed message '$type'", e)
+                    }
+                }
+
                 // Send directly using type as event name - no JSON serialization
                 sinks.forEach { sink ->
                     try {
@@ -677,6 +691,9 @@ public class Bridge private constructor() {
                 Log.e(TAG, "Error sending typed message of type '$type'", e)
             }
         }
+
+        private fun shouldTraceTypedMessage(type: String): Boolean =
+                type != "log" && type != "mic_pcm" && type != "mic_lc3"
     }
 
     init {

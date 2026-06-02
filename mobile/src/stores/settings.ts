@@ -79,6 +79,24 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  // Mentra Nex feature flags (off by default; toggled from Nex Developer Settings).
+  // When on, the Nex display skips ASCII-only text sanitization so CJK/Chinese
+  // captions render on glasses. Synced to core via CORE_SETTINGS_KEYS.
+  nex_chinese_captions: {
+    key: "nex_chinese_captions",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  // When on, LC3 audio received from Nex glasses is played back (Android only).
+  nex_audio_playback: {
+    key: "nex_audio_playback",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   china_deployment: {
     key: "china_deployment",
     defaultValue: () => (process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? true : false),
@@ -631,6 +649,9 @@ const CORE_SETTINGS_KEYS: string[] = [
   // mic on while local STT is the active engine.
   SETTINGS.local_stt_fallback_active.key,
   SETTINGS.gallery_mode.key,
+  // Mentra Nex feature flags:
+  SETTINGS.nex_chinese_captions.key,
+  SETTINGS.nex_audio_playback.key,
 ]
 
 // const PER_GLASSES_SETTINGS_KEYS: string[] = [SETTINGS.preferred_mic.key]
