@@ -1,16 +1,23 @@
 package com.mentra.recovery.work;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.os.Build;
 import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
+import androidx.core.app.NotificationCompat;
+import androidx.work.ForegroundInfo;
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
+import com.mentra.recovery.R;
 import com.mentra.recovery.reset.RecoveryStateStore;
 import com.mentra.recovery.reset.ReinstallStrategy;
 import com.mentra.recovery.reset.RestartStrategy;
@@ -20,6 +27,21 @@ import com.mentra.recovery.util.RecoveryConstants;
 public class RecoveryWorker extends Worker {
   public RecoveryWorker(@NonNull Context context, @NonNull WorkerParameters params) {
     super(context, params);
+  }
+
+  @NonNull
+  @Override
+  public ForegroundInfo getForegroundInfo() {
+    Context context = getApplicationContext();
+    createNotificationChannelIfNeeded(context);
+    Notification notification =
+        new NotificationCompat.Builder(context, RecoveryConstants.CHANNEL_ID)
+            .setContentTitle(context.getString(R.string.notification_title))
+            .setContentText("Running recovery workflow")
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setOngoing(true)
+            .build();
+    return new ForegroundInfo(RecoveryConstants.NOTIFICATION_ID, notification);
   }
 
   @NonNull
@@ -116,5 +138,22 @@ public class RecoveryWorker extends Worker {
       }
     }
     return gotAck[0];
+  }
+
+  private void createNotificationChannelIfNeeded(Context context) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+      return;
+    }
+    NotificationManager manager = context.getSystemService(NotificationManager.class);
+    if (manager == null || manager.getNotificationChannel(RecoveryConstants.CHANNEL_ID) != null) {
+      return;
+    }
+    NotificationChannel channel =
+        new NotificationChannel(
+            RecoveryConstants.CHANNEL_ID,
+            context.getString(R.string.notification_channel_name),
+            NotificationManager.IMPORTANCE_LOW);
+    channel.setDescription(context.getString(R.string.notification_channel_description));
+    manager.createNotificationChannel(channel);
   }
 }

@@ -11,6 +11,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Build;
 import android.os.IBinder;
+import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -29,6 +30,7 @@ public class RecoveryService extends Service {
   @Override
   public void onCreate() {
     super.onCreate();
+    Log.i(RecoveryConstants.TAG, "RecoveryService onCreate");
     createNotificationChannel();
     startForeground(RecoveryConstants.NOTIFICATION_ID, createNotification());
 
@@ -51,12 +53,14 @@ public class RecoveryService extends Service {
 
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
+    Log.i(RecoveryConstants.TAG, "RecoveryService onStartCommand");
     return START_STICKY;
   }
 
   @Override
   public void onDestroy() {
     super.onDestroy();
+    Log.i(RecoveryConstants.TAG, "RecoveryService onDestroy");
     if (healthMonitor != null) {
       healthMonitor.stop();
     }

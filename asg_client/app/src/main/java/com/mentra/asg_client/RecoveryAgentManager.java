@@ -18,7 +18,7 @@ public class RecoveryAgentManager {
     private static final String TAG = "RecoveryAgentManager";
     private static final String RECOVERY_PACKAGE = "com.mentra.recovery";
     private static final String LEGACY_UPDATER_PACKAGE = "com.augmentos.otaupdater";
-    private static final String RECOVERY_SERVICE = "com.mentra.recovery.service.RecoveryService";
+    private static final String RECOVERY_LAUNCHER_ACTIVITY = "com.mentra.recovery.ui.LauncherActivity";
     private static final String RECOVERY_APK_ASSET_NAME = "recovery_agent.apk";
     private static final String RECOVERY_APK_FILE_PATH =
             "/storage/emulated/0/asg/recovery_agent.apk";
@@ -120,14 +120,11 @@ public class RecoveryAgentManager {
 
     private void launchRecoveryAgent() {
         try {
-            Intent serviceIntent = new Intent();
-            serviceIntent.setClassName(RECOVERY_PACKAGE, RECOVERY_SERVICE);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(serviceIntent);
-            } else {
-                context.startService(serviceIntent);
-            }
-            Log.d(TAG, "Started recovery agent service");
+            Intent launchIntent = new Intent();
+            launchIntent.setClassName(RECOVERY_PACKAGE, RECOVERY_LAUNCHER_ACTIVITY);
+            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(launchIntent);
+            Log.d(TAG, "Triggered recovery agent launcher activity");
         } catch (Exception e) {
             Log.e(TAG, "Failed to launch recovery agent", e);
         }

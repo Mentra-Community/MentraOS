@@ -111,6 +111,16 @@
         </receiver>
 
         <receiver
+            android:name="com.mentra.asg_client.receiver.ServiceHeartbeatReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.mentra.recovery.ACTION_PING" />
+                <action android:name="com.mentra.asg_client.ACTION_HEARTBEAT" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
             android:name="com.mentra.asg_client.audio.I2SAudioBroadcastReceiver"
             android:enabled="true"
             android:exported="true">

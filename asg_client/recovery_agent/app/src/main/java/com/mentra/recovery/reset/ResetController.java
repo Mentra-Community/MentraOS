@@ -57,8 +57,22 @@ public class ResetController {
   }
 
   public void onAsgHealthy() {
-    if (!RecoveryConstants.STATE_HEALTHY.equals(stateStore.getState())) {
-      stateStore.setState(RecoveryConstants.STATE_HEALTHY, "HEARTBEAT_OK");
+    String currentState = stateStore.getState();
+    if (RecoveryConstants.STATE_HEALTHY.equals(currentState)) {
+      return;
     }
+
+    int attempts = stateStore.getAttempts();
+    String reason =
+        RecoveryConstants.STATE_FAILED_NEEDS_MANUAL.equals(currentState)
+            ? "LATE_HEARTBEAT_AFTER_RECOVERY_TIMEOUT"
+            : "HEARTBEAT_OK";
+
+    // Heartbeat is authoritative: if ASG is alive, clear degraded state and reset retry window.
+    stateStore.setState(RecoveryConstants.STATE_HEALTHY, reason);
+    stateStore.setAttempts(0);
+    stateStore.setWindowStartMs(0L);
+    telemetry.emit(
+        "mentra_recovery_recovered", RecoveryConstants.STATE_HEALTHY, reason, attempts, true);
   }
 }
