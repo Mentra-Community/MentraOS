@@ -17,8 +17,8 @@ import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowBuild;
 
 /**
- * Tests factory device selection without calling {@link IHardwareManager#initialize()}, which
- * loads K900 native {@code xydev} libraries unavailable on the JVM test host.
+ * Tests factory device selection without calling {@link IHardwareManager#initialize()}, which loads
+ * K900 native {@code xydev} libraries unavailable on the JVM test host.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
@@ -52,10 +52,7 @@ public class HardwareManagerFactoryTest {
 
         assertThat(manager).isInstanceOf(K900HardwareManager.class);
         assertThat(manager.getCapabilities())
-                .contains(
-                        Capability.RECORDING_LED,
-                        Capability.RGB_LED,
-                        Capability.MCU_BATTERY);
+                .contains(Capability.RECORDING_LED, Capability.RGB_LED, Capability.MCU_BATTERY);
     }
 
     @Test

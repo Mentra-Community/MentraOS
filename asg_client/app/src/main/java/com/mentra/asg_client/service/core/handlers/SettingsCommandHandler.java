@@ -2,34 +2,33 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
 import android.util.Log;
-
 import com.dev.api.DevApi;
-import com.mentra.asg_client.service.system.core.SystemControllerFactory;
-import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
+import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.settings.VideoSettings;
+import java.util.Set;
 import org.json.JSONObject;
 
-import java.util.Set;
-
 /**
- * Handler for settings-related commands.
- * Follows Single Responsibility Principle by handling only settings commands.
+ * Handler for settings-related commands. Follows Single Responsibility Principle by handling only
+ * settings commands.
  */
 public class SettingsCommandHandler implements ICommandHandler {
     private static final String TAG = "SettingsCommandHandler";
-    
+
     private final AsgClientServiceManager serviceManager;
     private final ICommunicationManager communicationManager;
     private final IResponseBuilder responseBuilder;
 
-    public SettingsCommandHandler(AsgClientServiceManager serviceManager,
-                                ICommunicationManager communicationManager,
-                                IResponseBuilder responseBuilder) {
+    public SettingsCommandHandler(
+            AsgClientServiceManager serviceManager,
+            ICommunicationManager communicationManager,
+            IResponseBuilder responseBuilder) {
         this.serviceManager = serviceManager;
         this.communicationManager = communicationManager;
         this.responseBuilder = responseBuilder;
@@ -37,9 +36,14 @@ public class SettingsCommandHandler implements ICommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("set_photo_mode", "button_video_recording_setting",
-                      "button_max_recording_time", "button_photo_setting", "button_camera_led", "button_mode_setting",
-                      "camera_fov_setting");
+        return Set.of(
+                "set_photo_mode",
+                "button_video_recording_setting",
+                "button_max_recording_time",
+                "button_photo_setting",
+                "button_camera_led",
+                "button_mode_setting",
+                "camera_fov_setting");
     }
 
     @Override
@@ -70,9 +74,7 @@ public class SettingsCommandHandler implements ICommandHandler {
         }
     }
 
-    /**
-     * Handle set photo mode command
-     */
+    /** Handle set photo mode command */
     private boolean handleSetPhotoMode(JSONObject data) {
         try {
             String mode = data.optString("mode", "save_locally");
@@ -85,9 +87,7 @@ public class SettingsCommandHandler implements ICommandHandler {
         }
     }
 
-    /**
-     * Handle button video recording setting command
-     */
+    /** Handle button video recording setting command */
     public boolean handleButtonVideoRecordingSetting(JSONObject data) {
         try {
             JSONObject params = data.optJSONObject("params");
@@ -95,19 +95,35 @@ public class SettingsCommandHandler implements ICommandHandler {
                 Log.e(TAG, "Missing settings object in button_video_recording_setting");
                 return false;
             }
-            
+
             int width = params.optInt("width", 1280);
             int height = params.optInt("height", 720);
             int fps = params.optInt("fps", 30);
-            
-            Log.d(TAG, "[VIDEO_SYNC] 📱 Received button video recording settings from phone: " + width + "x" + height + "@" + fps + "fps");
-            
+
+            Log.d(
+                    TAG,
+                    "[VIDEO_SYNC] 📱 Received button video recording settings from phone: "
+                            + width
+                            + "x"
+                            + height
+                            + "@"
+                            + fps
+                            + "fps");
+
             AsgSettings asgSettings = serviceManager.getAsgSettings();
             if (asgSettings != null) {
                 VideoSettings videoSettings = new VideoSettings(width, height, fps);
                 if (videoSettings.isValid()) {
                     asgSettings.setButtonVideoSettings(videoSettings);
-                    Log.d(TAG, "[VIDEO_SYNC] ✅ Video settings saved to SharedPreferences: " + width + "x" + height + "@" + fps + "fps");
+                    Log.d(
+                            TAG,
+                            "[VIDEO_SYNC] ✅ Video settings saved to SharedPreferences: "
+                                    + width
+                                    + "x"
+                                    + height
+                                    + "@"
+                                    + fps
+                                    + "fps");
                     return true;
                 } else {
                     Log.e(TAG, "[VIDEO_SYNC] Invalid video settings: " + videoSettings);
@@ -122,10 +138,8 @@ public class SettingsCommandHandler implements ICommandHandler {
             return false;
         }
     }
-    
-    /**
-     * Handle button max recording time setting command
-     */
+
+    /** Handle button max recording time setting command */
     public boolean handleButtonMaxRecordingTime(JSONObject data) {
         try {
             int minutes = data.optInt("minutes", 10);
@@ -147,15 +161,13 @@ public class SettingsCommandHandler implements ICommandHandler {
         }
     }
 
-    /**
-     * Handle button photo setting command
-     */
+    /** Handle button photo setting command */
     public boolean handleButtonPhotoSetting(JSONObject data) {
         try {
             String size = data.optString("size", "medium");
-            
+
             Log.d(TAG, "📱 Received button photo setting: " + size);
-            
+
             AsgSettings asgSettings = serviceManager.getAsgSettings();
             if (asgSettings != null) {
                 asgSettings.setButtonPhotoSize(size);
@@ -170,16 +182,14 @@ public class SettingsCommandHandler implements ICommandHandler {
             return false;
         }
     }
-    
-    /**
-     * Handle button camera LED setting command
-     */
+
+    /** Handle button camera LED setting command */
     public boolean handleButtonCameraLedSetting(JSONObject data) {
         try {
             boolean enabled = data.optBoolean("enabled", true);
-            
+
             Log.d(TAG, "📱 Received button camera LED setting: " + enabled);
-            
+
             AsgSettings asgSettings = serviceManager.getAsgSettings();
             if (asgSettings != null) {
                 asgSettings.setButtonCameraLedEnabled(enabled);
@@ -194,9 +204,10 @@ public class SettingsCommandHandler implements ICommandHandler {
             return false;
         }
     }
-    
+
     /**
-     * Handle camera FOV setting command (K900). Persists FOV and ROI, applies to hardware, restarts camera HAL.
+     * Handle camera FOV setting command (K900). Persists FOV and ROI, applies to hardware, restarts
+     * camera HAL.
      */
     private boolean handleCameraFovSetting(JSONObject data) {
         try {
@@ -241,23 +252,23 @@ public class SettingsCommandHandler implements ICommandHandler {
     }
 
     /**
-     * Handle button mode setting command
-     * This command allows configuring general button behavior settings
+     * Handle button mode setting command This command allows configuring general button behavior
+     * settings
      */
     public boolean handleButtonModeSetting(JSONObject data) {
         try {
             String mode = data.optString("mode", "normal");
-            
+
             Log.d(TAG, "📱 Received button mode setting: " + mode);
-            
+
             // Deprecated/reserved command. Button capture behavior is controlled by
             // save_in_gallery_mode plus the photo/video capture settings.
             Log.d(TAG, "✅ Button mode setting received: " + mode);
-            
+
             // Send acknowledgment response
             JSONObject ack = responseBuilder.buildPhotoModeAckResponse(mode);
             communicationManager.sendBluetoothResponse(ack);
-            
+
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Error handling button mode setting", e);

@@ -3,25 +3,22 @@ package com.mentra.asg_client.di;
 import android.content.Context;
 import android.os.Build;
 import android.os.UserManager;
-import com.mentra.asg_client.BuildConfig;
 import android.util.Log;
-
+import com.mentra.asg_client.BuildConfig;
 import com.mentra.asg_client.reporting.CrashHandler;
 import com.mentra.asg_client.reporting.core.ReportManager;
-import com.mentra.asg_client.reporting.providers.SentryReportProvider;
-import com.mentra.asg_client.reporting.providers.FileReportProvider;
 import com.mentra.asg_client.reporting.providers.ConsoleReportProvider;
+import com.mentra.asg_client.reporting.providers.FileReportProvider;
+import com.mentra.asg_client.reporting.providers.SentryReportProvider;
 import com.mentra.asg_client.service.system.managers.ConfigurationManager;
 
 /**
- * Dependency Injection module for reporting providers
- * Follows Dependency Inversion Principle - depends on abstractions
- * Follows Open/Closed Principle - easy to add new providers
+ * Dependency Injection module for reporting providers Follows Dependency Inversion Principle -
+ * depends on abstractions Follows Open/Closed Principle - easy to add new providers
  */
 public class ReportingModule {
 
     private static final String TAG = "ReportingModule";
-
 
     public static void initialize(Context context) {
         Log.i(TAG, "Initializing reporting system...");
@@ -49,14 +46,16 @@ public class ReportingModule {
     }
 
     /**
-     * Restore user context from saved email if available.
-     * This ensures crash reports include user info even after app restarts.
+     * Restore user context from saved email if available. This ensures crash reports include user
+     * info even after app restarts.
      */
     private static void restoreUserContext(Context context, ReportManager manager) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             UserManager um = context.getSystemService(UserManager.class);
             if (um != null && !um.isUserUnlocked()) {
-                Log.d(TAG, "Skipping user context restore — device locked (CE storage unavailable)");
+                Log.d(
+                        TAG,
+                        "Skipping user context restore — device locked (CE storage unavailable)");
                 return;
             }
         }
@@ -74,10 +73,7 @@ public class ReportingModule {
         }
     }
 
-    
-    /**
-     * Check if this is a debug build
-     */
+    /** Check if this is a debug build */
     private static boolean isDebugBuild() {
         try {
             // This will be true for debug builds, false for release
@@ -87,4 +83,4 @@ public class ReportingModule {
             return false;
         }
     }
-} 
+}

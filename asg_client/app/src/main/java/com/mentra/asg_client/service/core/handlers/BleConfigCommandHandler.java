@@ -1,16 +1,14 @@
 package com.mentra.asg_client.service.core.handlers;
 
 import android.util.Log;
-import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
-
+import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
+import java.util.Set;
 import org.json.JSONObject;
 
-import java.util.Set;
-
 /**
- * Handler for BLE configuration commands from the phone.
- * Handles MTU configuration to adjust file packet sizes.
+ * Handler for BLE configuration commands from the phone. Handles MTU configuration to adjust file
+ * packet sizes.
  */
 public class BleConfigCommandHandler implements ICommandHandler {
     private static final String TAG = "BleConfigCommandHandler";
@@ -41,11 +39,14 @@ public class BleConfigCommandHandler implements ICommandHandler {
     }
 
     /**
-     * Handle set BLE MTU command from phone.
-     * Adjusts file packet size to fit within the negotiated MTU.
+     * Handle set BLE MTU command from phone. Adjusts file packet size to fit within the negotiated
+     * MTU.
      */
     private boolean handleSetBleMtu(JSONObject data) {
-        Log.i(TAG, "📦 handleSetBleMtu() called with data: " + (data != null ? data.toString() : "null"));
+        Log.i(
+                TAG,
+                "📦 handleSetBleMtu() called with data: "
+                        + (data != null ? data.toString() : "null"));
 
         int mtu = data.optInt("mtu", 0);
         Log.i(TAG, "📦 Extracted MTU value: " + mtu);

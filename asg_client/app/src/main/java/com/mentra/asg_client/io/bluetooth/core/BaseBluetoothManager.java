@@ -2,54 +2,56 @@ package com.mentra.asg_client.io.bluetooth.core;
 
 import android.content.Context;
 import android.util.Log;
-
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.interfaces.TransportListener;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.receiver.IntentResponseBroadcaster;
-
-import org.json.JSONObject;
-
 import java.util.ArrayList;
 import java.util.List;
+import org.json.JSONObject;
 
 /**
- * Base implementation of the IBluetoothManager interface.
- * Provides common functionality for all bluetooth manager implementations.
+ * Base implementation of the IBluetoothManager interface. Provides common functionality for all
+ * bluetooth manager implementations.
  */
 public abstract class BaseBluetoothManager implements ICompanionTransport {
     private static final String TAG = "BaseBluetoothManager";
-    
+
     protected final Context context;
     protected final List<TransportListener> listeners = new ArrayList<>();
     protected boolean isConnected = false;
-    
+
     /**
      * Create a new BaseBluetoothManager
+     *
      * @param context The application context
      */
     public BaseBluetoothManager(Context context) {
         this.context = context.getApplicationContext();
     }
-    
+
     @Override
     public void addBluetoothListener(TransportListener listener) {
         if (!listeners.contains(listener)) {
             listeners.add(listener);
         }
     }
-    
+
     @Override
     public void removeBluetoothListener(TransportListener listener) {
         listeners.remove(listener);
     }
-    
+
     /**
      * Notify all listeners that the bluetooth connection state has changed
+     *
      * @param connected true if connected, false otherwise
      */
     protected void notifyConnectionStateChanged(boolean connected) {
-        Log.d(TAG, "Bluetooth connection state changed: " + (connected ? "CONNECTED" : "DISCONNECTED"));
+        Log.d(
+                TAG,
+                "Bluetooth connection state changed: "
+                        + (connected ? "CONNECTED" : "DISCONNECTED"));
         this.isConnected = connected;
         for (TransportListener listener : listeners) {
             try {
@@ -59,9 +61,10 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
             }
         }
     }
-    
+
     /**
      * Notify all listeners that data has been received
+     *
      * @param data The received data
      */
     protected void notifyDataReceived(byte[] data) {
@@ -69,7 +72,7 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
             Log.w(TAG, "Attempted to notify data received with null or empty data");
             return;
         }
-        
+
         Log.d(TAG, "Bluetooth data received: " + data.length + " bytes");
         BleTraceLogger.logBytes("phone_to_glasses", "asg_ble_input", data);
         for (TransportListener listener : listeners) {
@@ -80,10 +83,10 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
             }
         }
     }
-    
+
     /**
-     * Template method: broadcasts JSON responses to registered intent listeners,
-     * then delegates to the subclass-specific send implementation.
+     * Template method: broadcasts JSON responses to registered intent listeners, then delegates to
+     * the subclass-specific send implementation.
      */
     @Override
     public final boolean sendMessage(byte[] data) {
@@ -119,30 +122,24 @@ public abstract class BaseBluetoothManager implements ICompanionTransport {
     public boolean isConnected() {
         return isConnected;
     }
-    
-    /**
-     * Initialize the bluetooth manager
-     * Default implementation just logs the initialization
-     */
+
+    /** Initialize the bluetooth manager Default implementation just logs the initialization */
     @Override
     public void initialize() {
         Log.d(TAG, "Initializing bluetooth manager");
     }
-    
-    /**
-     * Clean up resources
-     * Default implementation clears listeners
-     */
+
+    /** Clean up resources Default implementation clears listeners */
     @Override
     public void shutdown() {
         Log.d(TAG, "Shutting down bluetooth manager");
         listeners.clear();
     }
-    
+
     /**
-     * Send a test image from assets folder (for testing purposes)
-     * Default implementation returns false. Override in subclasses that support file transfer.
-     * 
+     * Send a test image from assets folder (for testing purposes) Default implementation returns
+     * false. Override in subclasses that support file transfer.
+     *
      * @param assetFileName Name of the image file in assets folder
      * @return true if transfer started, false otherwise
      */

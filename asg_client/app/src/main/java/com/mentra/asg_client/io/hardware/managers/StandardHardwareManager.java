@@ -9,11 +9,9 @@ import android.hardware.camera2.CameraManager;
 import android.media.MediaPlayer;
 import android.os.BatteryManager;
 import android.util.Log;
-
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.hardware.core.BaseHardwareManager;
 import com.mentra.asg_client.io.hardware.interfaces.Capability;
-
 import java.io.IOException;
 import java.util.EnumSet;
 import java.util.Set;
@@ -105,18 +103,29 @@ public class StandardHardwareManager extends BaseHardwareManager {
         mediaPlayer = new MediaPlayer();
         try {
             var afd = context.getAssets().openFd(assetName);
-            mediaPlayer.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+            mediaPlayer.setDataSource(
+                    afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
             afd.close();
-            mediaPlayer.setOnCompletionListener(mp -> {
-                mp.release();
-                mediaPlayer = null;
-            });
-            mediaPlayer.setOnErrorListener((mp, what, extra) -> {
-                Log.e(TAG, "Error playing asset " + assetName + " (" + what + "/" + extra + ")");
-                mp.release();
-                mediaPlayer = null;
-                return true;
-            });
+            mediaPlayer.setOnCompletionListener(
+                    mp -> {
+                        mp.release();
+                        mediaPlayer = null;
+                    });
+            mediaPlayer.setOnErrorListener(
+                    (mp, what, extra) -> {
+                        Log.e(
+                                TAG,
+                                "Error playing asset "
+                                        + assetName
+                                        + " ("
+                                        + what
+                                        + "/"
+                                        + extra
+                                        + ")");
+                        mp.release();
+                        mediaPlayer = null;
+                        return true;
+                    });
             mediaPlayer.prepare();
             mediaPlayer.start();
         } catch (IOException e) {
@@ -220,7 +229,8 @@ public class StandardHardwareManager extends BaseHardwareManager {
 
     @Override
     public int getBatteryLevel() {
-        BatteryManager batteryManager = (BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
+        BatteryManager batteryManager =
+                (BatteryManager) context.getSystemService(Context.BATTERY_SERVICE);
         if (batteryManager != null) {
             int level = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY);
             Log.d(TAG, "🔋 Battery level: " + level + "%");
@@ -236,8 +246,9 @@ public class StandardHardwareManager extends BaseHardwareManager {
         Intent batteryStatus = context.registerReceiver(null, filter);
         if (batteryStatus != null) {
             int status = batteryStatus.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
-            boolean isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
-                                 status == BatteryManager.BATTERY_STATUS_FULL;
+            boolean isCharging =
+                    status == BatteryManager.BATTERY_STATUS_CHARGING
+                            || status == BatteryManager.BATTERY_STATUS_FULL;
             Log.d(TAG, "🔋 Charging status: " + isCharging);
             return isCharging;
         }
@@ -264,10 +275,12 @@ public class StandardHardwareManager extends BaseHardwareManager {
         try {
             for (String id : cameraManager.getCameraIdList()) {
                 CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(id);
-                Boolean flashAvailable = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
+                Boolean flashAvailable =
+                        characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
                 Integer lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING);
-                if (Boolean.TRUE.equals(flashAvailable) && lensFacing != null &&
-                        lensFacing == CameraCharacteristics.LENS_FACING_BACK) {
+                if (Boolean.TRUE.equals(flashAvailable)
+                        && lensFacing != null
+                        && lensFacing == CameraCharacteristics.LENS_FACING_BACK) {
                     cameraWithFlash = id;
                     Log.d(TAG, "Detected back camera with flash: " + id);
                     return;

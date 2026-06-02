@@ -2,24 +2,23 @@ package com.mentra.asg_client.io.hardware.core;
 
 import android.content.Context;
 import android.util.Log;
-
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.hardware.managers.K900HardwareManager;
 import com.mentra.asg_client.io.hardware.managers.StandardHardwareManager;
 import com.mentra.asg_client.service.utils.DeviceProfile;
 
 /**
- * Factory class for creating the appropriate IHardwareManager implementation
- * based on the detected device type.
+ * Factory class for creating the appropriate IHardwareManager implementation based on the detected
+ * device type.
  */
 public class HardwareManagerFactory {
     private static final String TAG = "HardwareManagerFactory";
-    
+
     private static IHardwareManager instance;
 
     /**
      * Get the singleton instance of the hardware manager appropriate for this device.
-     * 
+     *
      * @param context The application context
      * @return An IHardwareManager implementation suitable for the current device
      */
@@ -30,7 +29,7 @@ public class HardwareManagerFactory {
         }
         return instance;
     }
-    
+
     /**
      * Create a new hardware manager based on device detection.
      *
@@ -46,21 +45,18 @@ public class HardwareManagerFactory {
         }
         return new StandardHardwareManager(context);
     }
-    
-    /**
-     * Reset the singleton instance.
-     * Useful for testing or when switching contexts.
-     */
+
+    /** Reset the singleton instance. Useful for testing or when switching contexts. */
     public static synchronized void reset() {
         if (instance != null) {
             instance.shutdown();
             instance = null;
         }
     }
-    
+
     /**
      * Check if a hardware manager has been initialized.
-     * 
+     *
      * @return true if an instance exists, false otherwise
      */
     public static synchronized boolean hasInstance() {

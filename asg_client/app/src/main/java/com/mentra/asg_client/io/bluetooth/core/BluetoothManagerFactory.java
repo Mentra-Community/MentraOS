@@ -3,7 +3,6 @@ package com.mentra.asg_client.io.bluetooth.core;
 import android.content.Context;
 import android.util.Log;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
-import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.StandardBluetoothManager;
 import com.mentra.asg_client.service.utils.DeviceProfile;

@@ -55,8 +55,7 @@ public class OtaCommandHandlerTest {
 
     @Test
     public void handleOtaQueryStatus_returnsFalseWhenHelperMissing() throws Exception {
-        OtaCommandHandler handler =
-                new OtaCommandHandler(null, mock(ICommunicationManager.class));
+        OtaCommandHandler handler = new OtaCommandHandler(null, mock(ICommunicationManager.class));
 
         boolean handled = handler.handleCommand("ota_query_status", new JSONObject());
 

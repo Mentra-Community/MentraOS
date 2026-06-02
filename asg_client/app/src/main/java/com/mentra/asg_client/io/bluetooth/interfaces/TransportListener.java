@@ -1,8 +1,6 @@
 package com.mentra.asg_client.io.bluetooth.interfaces;
 
-/**
- * Listener for companion transport connection state and inbound data.
- */
+/** Listener for companion transport connection state and inbound data. */
 public interface TransportListener {
     /**
      * Called when the transport connection state changes.

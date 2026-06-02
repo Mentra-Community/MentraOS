@@ -1,12 +1,10 @@
 package com.mentra.asg_client.service.core;
 
 import android.util.Log;
-
 import androidx.annotation.NonNull;
-
+import com.mentra.asg_client.io.bes.BesOtaRegistry;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
-import com.mentra.asg_client.io.bes.BesOtaRegistry;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
@@ -26,9 +24,7 @@ import com.mentra.asg_client.service.system.managers.ConfigurationManager;
 import com.mentra.asg_client.service.system.managers.ServiceLifecycleManager;
 import com.mentra.asg_client.service.system.managers.StateManager;
 
-/**
- * Wires core service components (replaces the former {@link ServiceContainer}).
- */
+/** Wires core service components (replaces the former {@link ServiceContainer}). */
 public final class ServiceInitializer {
 
     private static final String TAG = "ServiceInitializer";
@@ -65,7 +61,8 @@ public final class ServiceInitializer {
 
         this.streamingManager = new MediaManager(context, serviceManager);
 
-        RgbLedCommandHandler rgbLedHandler = new RgbLedCommandHandler(serviceManager, hardwareManager);
+        RgbLedCommandHandler rgbLedHandler =
+                new RgbLedCommandHandler(serviceManager, hardwareManager);
         serviceManager.setRgbLedCommandHandler(rgbLedHandler);
 
         this.responseBuilder = new ResponseBuilder();

@@ -14,10 +14,10 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.io.bes.BesOtaRegistry;
-import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
 import com.mentra.asg_client.io.ota.events.InstallationProgressEvent;
 import com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent;
@@ -42,7 +42,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 import org.greenrobot.eventbus.EventBus;
@@ -650,8 +649,9 @@ public class OtaHelper {
                 return true;
             }
             String msg = t.getMessage();
-            if (msg != null && (msg.contains("Certificate not yet valid")
-                    || msg.contains("timestamp check failed"))) {
+            if (msg != null
+                    && (msg.contains("Certificate not yet valid")
+                            || msg.contains("timestamp check failed"))) {
                 return true;
             }
             t = t.getCause();
@@ -672,8 +672,10 @@ public class OtaHelper {
             return "no_internet";
         } else if (e instanceof javax.net.ssl.SSLException || isClockSkewSslError(e)) {
             if (isClockSkewSslError(e)) {
-                Log.w(TAG, "⏰ OTA failure likely due to glasses clock skew (TLS cert validity): "
-                        + e.getMessage());
+                Log.w(
+                        TAG,
+                        "⏰ OTA failure likely due to glasses clock skew (TLS cert validity): "
+                                + e.getMessage());
                 return "clock_skew";
             }
             return "ssl_error";
@@ -953,9 +955,7 @@ public class OtaHelper {
         return false;
     }
 
-    /**
-     * Re-run background OTA version check (e.g. after phone fixes glasses clock via BLE).
-     */
+    /** Re-run background OTA version check (e.g. after phone fixes glasses clock via BLE). */
     public void retryBackgroundVersionCheck() {
         if (context == null) {
             Log.w(TAG, "⏰ Cannot retry OTA version check — no context");

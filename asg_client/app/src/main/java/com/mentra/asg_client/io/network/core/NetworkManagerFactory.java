@@ -4,7 +4,6 @@ import android.content.Context;
 import android.util.Log;
 import com.mentra.asg_client.BuildConfig;
 import com.mentra.asg_client.io.network.interfaces.INetworkController;
-import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.managers.FallbackNetworkManager;
 import com.mentra.asg_client.io.network.managers.K900NetworkManager;
 import com.mentra.asg_client.io.network.managers.SystemNetworkManager;
@@ -54,8 +53,8 @@ public class NetworkManagerFactory {
     }
 
     /**
-     * Check if the app has system permissions (system/priv-app install path).
-     * Gated by {@link BuildConfig#ENABLE_SYSTEM_NETWORK_MANAGER} for rollback.
+     * Check if the app has system permissions (system/priv-app install path). Gated by {@link
+     * BuildConfig#ENABLE_SYSTEM_NETWORK_MANAGER} for rollback.
      */
     private static boolean hasSystemPermissions(Context context) {
         if (!BuildConfig.ENABLE_SYSTEM_NETWORK_MANAGER) {

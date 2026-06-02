@@ -25,6 +25,7 @@ public class LoggerFactoryTest {
         assertThat(logger).isInstanceOf(AndroidLogger.class);
         AndroidLogger androidLogger = (AndroidLogger) logger;
         androidLogger.debug(null, "test message");
-        // Null tag falls back to custom default — no assertion on Log output; type + construction is the contract.
+        // Null tag falls back to custom default — no assertion on Log output; type + construction
+        // is the contract.
     }
 }

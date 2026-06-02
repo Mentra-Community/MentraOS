@@ -1,15 +1,13 @@
 package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import android.util.Log;
-
 import com.mentra.asg_client.service.core.processors.CommandProtocolDetector;
-
 import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
- * Mentra Live MCU wire-format detection (invalid JSON in {@code C} field). Used by
- * {@link CommandProtocolDetector} for phone traffic; generic JSON stays in core.
+ * Mentra Live MCU wire-format detection (invalid JSON in {@code C} field). Used by {@link
+ * CommandProtocolDetector} for phone traffic; generic JSON stays in core.
  */
 public class K900ProtocolStrategy implements CommandProtocolDetector.ProtocolDetectionStrategy {
 
@@ -55,11 +53,7 @@ public class K900ProtocolStrategy implements CommandProtocolDetector.ProtocolDet
         } catch (JSONException e) {
             Log.e(TAG, "Error parsing K900 protocol", e);
             return new CommandProtocolDetector.ProtocolDetectionResult(
-                    CommandProtocolDetector.ProtocolType.K900_PROTOCOL,
-                    json,
-                    "",
-                    -1,
-                    false);
+                    CommandProtocolDetector.ProtocolType.K900_PROTOCOL, json, "", -1, false);
         }
     }
 

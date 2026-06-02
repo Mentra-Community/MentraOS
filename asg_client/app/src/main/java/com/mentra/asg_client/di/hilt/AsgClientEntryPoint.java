@@ -3,7 +3,6 @@ package com.mentra.asg_client.di.hilt;
 import com.mentra.asg_client.io.bes.BesOtaRegistry;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
-
 import dagger.hilt.EntryPoint;
 import dagger.hilt.InstallIn;
 import dagger.hilt.components.SingletonComponent;

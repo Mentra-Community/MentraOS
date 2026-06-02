@@ -1,9 +1,9 @@
 package com.mentra.asg_client.io.bluetooth.interfaces;
 
 /**
- * Interface for bluetooth management operations across different device types.
- * This interface abstracts BLE operations to support different
- * implementations for different device types (K900, standard Android).
+ * Interface for bluetooth management operations across different device types. This interface
+ * abstracts BLE operations to support different implementations for different device types (K900,
+ * standard Android).
  */
 public interface IBluetoothManager {
     /** Initialize the bluetooth manager and check current connectivity */

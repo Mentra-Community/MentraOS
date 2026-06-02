@@ -20,7 +20,9 @@ public class BesWireFormatTest {
 
     @Test
     public void isK900ProtocolFormat_detectsStartMarkers() {
-        byte[] packed = BesWireFormat.packDataCommand("hi".getBytes(StandardCharsets.UTF_8), BesWireFormat.CMD_TYPE_STRING);
+        byte[] packed =
+                BesWireFormat.packDataCommand(
+                        "hi".getBytes(StandardCharsets.UTF_8), BesWireFormat.CMD_TYPE_STRING);
 
         assertThat(BesWireFormat.isK900ProtocolFormat(packed)).isTrue();
         assertThat(BesWireFormat.isK900ProtocolFormat(new byte[] {0x00, 0x23, 0x23})).isFalse();

@@ -20,15 +20,14 @@ import android.util.Size;
 import com.dev.api.DevApi;
 import com.mentra.asg_client.camera.UvcStreamingState;
 import com.mentra.asg_client.hardware.K900RgbLedController;
+import com.mentra.asg_client.io.bes.BesOtaRegistry;
 import com.mentra.asg_client.io.bluetooth.interfaces.TransportListener;
+import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
-import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
-import com.mentra.asg_client.io.bes.BesOtaRegistry;
-import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
@@ -36,8 +35,6 @@ import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
-// Note: AugmentosService removed - legacy dependency no longer needed
-// import com.augmentos.augmentos_core.AugmentosService;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.service.system.interfaces.IServiceLifecycle;
@@ -45,17 +42,15 @@ import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.system.managers.AsgNotificationManager;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 import com.mentra.asg_client.service.utils.SysProp;
+import dagger.hilt.android.AndroidEntryPoint;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
+import javax.inject.Inject;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 import org.json.JSONException;
 import org.json.JSONObject;
-
-import javax.inject.Inject;
-
-import dagger.hilt.android.AndroidEntryPoint;
 
 /**
  * Fully refactored AsgClientService that follows SOLID principles.
@@ -66,8 +61,7 @@ import dagger.hilt.android.AndroidEntryPoint;
  * concern - Dependency Inversion Principle: Depends on abstractions, not concretions
  */
 @AndroidEntryPoint
-public class AsgClientService extends Service
-        implements NetworkStateListener, TransportListener {
+public class AsgClientService extends Service implements NetworkStateListener, TransportListener {
 
     @Inject FileManager fileManager;
     @Inject OtaHelper otaHelper;
@@ -136,7 +130,9 @@ public class AsgClientService extends Service
     private boolean lastUvcStreaming = false;
     private boolean isConnected = false; // Track connection state based on heartbeat
 
-    /** Used before {@link ServiceInitializer} exists so FGS promotion is not delayed by heavy init. */
+    /**
+     * Used before {@link ServiceInitializer} exists so FGS promotion is not delayed by heavy init.
+     */
     private AsgNotificationManager mEarlyNotificationManager;
 
     private boolean mForegroundStarted;
@@ -573,7 +569,8 @@ public class AsgClientService extends Service
                 return;
             }
 
-            boolean sent = bluetoothManager.sendMessage(commandStr.getBytes(StandardCharsets.UTF_8));
+            boolean sent =
+                    bluetoothManager.sendMessage(commandStr.getBytes(StandardCharsets.UTF_8));
             if (sent) {
                 Log.i(
                         TAG,

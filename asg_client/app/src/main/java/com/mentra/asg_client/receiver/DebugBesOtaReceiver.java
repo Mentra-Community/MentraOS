@@ -4,24 +4,20 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
-
 import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
 import com.mentra.asg_client.io.bes.BesOtaManager;
-
-import dagger.hilt.android.EntryPointAccessors;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
-
+import dagger.hilt.android.EntryPointAccessors;
 import java.io.File;
 
 /**
  * Debug receiver for testing BES firmware updates directly via adb.
  *
- * Usage:
- *   1. Push firmware file: adb push firmware.bin /storage/emulated/0/asg/bes_firmware.bin
- *   2. Trigger update: adb shell am broadcast -a com.mentra.DEBUG_BES_OTA
+ * <p>Usage: 1. Push firmware file: adb push firmware.bin /storage/emulated/0/asg/bes_firmware.bin
+ * 2. Trigger update: adb shell am broadcast -a com.mentra.DEBUG_BES_OTA
  *
- * This bypasses all cloud/phone logic and directly triggers BesOtaManager.
- * FOR DEVELOPMENT/TESTING ONLY.
+ * <p>This bypasses all cloud/phone logic and directly triggers BesOtaManager. FOR
+ * DEVELOPMENT/TESTING ONLY.
  */
 public class DebugBesOtaReceiver extends BroadcastReceiver {
     private static final String TAG = "DebugBesOtaReceiver";
@@ -41,7 +37,9 @@ public class DebugBesOtaReceiver extends BroadcastReceiver {
         File firmwareFile = new File(OtaConstants.BES_FIRMWARE_PATH);
         if (!firmwareFile.exists()) {
             Log.e(TAG, "❌ Firmware file not found at: " + OtaConstants.BES_FIRMWARE_PATH);
-            Log.e(TAG, "Push file first: adb push firmware.bin /storage/emulated/0/asg/bes_firmware.bin");
+            Log.e(
+                    TAG,
+                    "Push file first: adb push firmware.bin /storage/emulated/0/asg/bes_firmware.bin");
             return;
         }
 

@@ -2,15 +2,13 @@ package com.mentra.asg_client.service.legacy.managers;
 
 import android.content.Context;
 import android.util.Log;
-
 import androidx.annotation.NonNull;
-
 import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.io.bes.BesOtaRegistry;
 import com.mentra.asg_client.io.bluetooth.core.BluetoothManagerFactory;
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
-import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
@@ -25,24 +23,21 @@ import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
-import com.mentra.asg_client.service.utils.DeviceProfile;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
+import com.mentra.asg_client.service.utils.DeviceProfile;
 import com.mentra.asg_client.settings.AsgSettings;
-
 import java.util.Objects;
 import java.util.Set;
 
 /**
- * Manages the initialization and lifecycle of AsgClientService components.
- * This class follows the Single Responsibility Principle by handling only
- * component initialization and management.
+ * Manages the initialization and lifecycle of AsgClientService components. This class follows the
+ * Single Responsibility Principle by handling only component initialization and management.
  */
 public class AsgClientServiceManager {
     private static final String TAG = "AsgClientServiceManager";
 
     private final Context context;
-    @NonNull
-    private final AsgClientService service;
+    @NonNull private final AsgClientService service;
     private final ICommunicationManager communicationManager;
 
     // Core components
@@ -59,7 +54,7 @@ public class AsgClientServiceManager {
     private boolean isInitialized = false;
     private boolean isWebServerEnabled = true;
     private boolean isK900Device = false;
-    
+
     // RGB LED command handler reference
     private RgbLedCommandHandler rgbLedCommandHandler;
 
@@ -81,10 +76,15 @@ public class AsgClientServiceManager {
         AsgClientService requiredService = Objects.requireNonNull(service, "service");
 
         Log.d(TAG, "🔧 AsgClientServiceManager constructor called");
-        Log.d(TAG, "📋 Parameters - Context: " + (context != null ? "valid" : "null") +
-                ", Service: valid" +
-                ", CommunicationManager: " + (communicationManager != null ? "valid" : "null") +
-                ", FileManager: " + (fileManager != null ? "valid" : "null"));
+        Log.d(
+                TAG,
+                "📋 Parameters - Context: "
+                        + (context != null ? "valid" : "null")
+                        + ", Service: valid"
+                        + ", CommunicationManager: "
+                        + (communicationManager != null ? "valid" : "null")
+                        + ", FileManager: "
+                        + (fileManager != null ? "valid" : "null"));
 
         this.context = context;
         this.service = requiredService;
@@ -98,11 +98,15 @@ public class AsgClientServiceManager {
     /**
      * Initialize all service components.
      *
-     * @param k900CommandHandler Required on K900 for {@link BesOtaManager}; may be null on generic devices
+     * @param k900CommandHandler Required on K900 for {@link BesOtaManager}; may be null on generic
+     *     devices
      */
     public void initialize(K900CommandHandler k900CommandHandler) {
         this.besOtaK900CommandHandler = k900CommandHandler;
-        Log.d(TAG, "🚀 initialize() called - Current state: " + (isInitialized ? "already initialized" : "not initialized"));
+        Log.d(
+                TAG,
+                "🚀 initialize() called - Current state: "
+                        + (isInitialized ? "already initialized" : "not initialized"));
 
         if (isInitialized) {
             Log.d(TAG, "⏭️ Service manager already initialized - skipping");
@@ -134,9 +138,14 @@ public class AsgClientServiceManager {
 
             isInitialized = true;
             Log.i(TAG, "✅ All service components initialized successfully");
-            Log.d(TAG, "📊 Final state - Initialized: " + isInitialized +
-                    ", WebServerEnabled: " + isWebServerEnabled +
-                    ", K900Device: " + isK900Device);
+            Log.d(
+                    TAG,
+                    "📊 Final state - Initialized: "
+                            + isInitialized
+                            + ", WebServerEnabled: "
+                            + isWebServerEnabled
+                            + ", K900Device: "
+                            + isK900Device);
 
         } catch (Exception e) {
             Log.e(TAG, "💥 Error initializing service components", e);
@@ -147,11 +156,12 @@ public class AsgClientServiceManager {
         Log.d(TAG, "🏁 initialize() completed");
     }
 
-    /**
-     * Clean up all service components
-     */
+    /** Clean up all service components */
     public void cleanup() {
-        Log.d(TAG, "🧹 cleanup() called - Current state: " + (isInitialized ? "initialized" : "not initialized"));
+        Log.d(
+                TAG,
+                "🧹 cleanup() called - Current state: "
+                        + (isInitialized ? "initialized" : "not initialized"));
         Log.i(TAG, "🔄 Starting service components cleanup");
 
         // Stop camera web server
@@ -265,7 +275,9 @@ public class AsgClientServiceManager {
 
         try {
             bluetoothManager = BluetoothManagerFactory.getBluetoothManager(context);
-            Log.d(TAG, "📦 Bluetooth manager created: " + bluetoothManager.getClass().getSimpleName());
+            Log.d(
+                    TAG,
+                    "📦 Bluetooth manager created: " + bluetoothManager.getClass().getSimpleName());
 
             isK900Device = DeviceProfile.detect(context).isK900();
             Log.d(TAG, "🔍 Device type detection - K900: " + isK900Device);
@@ -277,7 +289,7 @@ public class AsgClientServiceManager {
             if (bluetoothManager instanceof K900BluetoothManager) {
                 K900BluetoothManager k900Manager = (K900BluetoothManager) bluetoothManager;
                 Log.d(TAG, "📋 K900 Bluetooth manager configured");
-                
+
                 // Initialize BES OTA Manager for K900 devices
                 Log.d(TAG, "🔧 Initializing BES OTA Manager for firmware updates");
                 try {
@@ -299,42 +311,64 @@ public class AsgClientServiceManager {
             bluetoothManager.initialize();
             Log.d(TAG, "✅ Bluetooth manager initialized successfully");
 
-            Log.i(TAG, "📊 Bluetooth initialization complete - Device type: " +
-                    (isK900Device ? "K900" : "Standard Android"));
+            Log.i(
+                    TAG,
+                    "📊 Bluetooth initialization complete - Device type: "
+                            + (isK900Device ? "K900" : "Standard Android"));
 
             // Initialize RGB LED handler with Bluetooth Manager (deferred initialization)
             if (rgbLedCommandHandler != null) {
                 Log.d(TAG, "🚨 Initializing RGB LED Command Handler with Bluetooth Manager");
                 rgbLedCommandHandler.initializeBluetoothManager();
             } else {
-                Log.w(TAG, "⚠️ RGB LED Command Handler not set - cannot initialize Bluetooth Manager");
+                Log.w(
+                        TAG,
+                        "⚠️ RGB LED Command Handler not set - cannot initialize Bluetooth Manager");
             }
 
             // Request BES system version now that BluetoothManager is ready
             // This queries sh_syvr to get firmware version and MAC addresses
-            Log.d(TAG, "🔍 Checking conditions for BES system version request - isK900Device: " + isK900Device + 
-                      ", service: " + service.getClass().getSimpleName());
-            
+            Log.d(
+                    TAG,
+                    "🔍 Checking conditions for BES system version request - isK900Device: "
+                            + isK900Device
+                            + ", service: "
+                            + service.getClass().getSimpleName());
+
             if (isK900Device) {
                 Log.d(TAG, "✅ Conditions met - scheduling BES system version request");
                 // Delay slightly to ensure CommandProcessor is initialized
-                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-                    try {
-                        Log.d(TAG, "🔧 Attempting to get CommandProcessor for BES system version request");
-                        CommandProcessor commandProcessor = service.getCommandProcessor();
-                        if (commandProcessor != null) {
-                            Log.d(TAG, "🔧 Requesting BES system version via CommandProcessor");
-                            commandProcessor.requestSystemVersion();
-                        } else {
-                            Log.w(TAG, "⚠️ CommandProcessor not available yet - BES version will be requested when available");
-                        }
-                    } catch (Exception e) {
-                        Log.w(TAG, "⚠️ Could not request BES system version", e);
-                    }
-                }, 1000); // 1 second delay to ensure CommandProcessor is initialized
+                new android.os.Handler(android.os.Looper.getMainLooper())
+                        .postDelayed(
+                                () -> {
+                                    try {
+                                        Log.d(
+                                                TAG,
+                                                "🔧 Attempting to get CommandProcessor for BES system version request");
+                                        CommandProcessor commandProcessor =
+                                                service.getCommandProcessor();
+                                        if (commandProcessor != null) {
+                                            Log.d(
+                                                    TAG,
+                                                    "🔧 Requesting BES system version via CommandProcessor");
+                                            commandProcessor.requestSystemVersion();
+                                        } else {
+                                            Log.w(
+                                                    TAG,
+                                                    "⚠️ CommandProcessor not available yet - BES version will be requested when available");
+                                        }
+                                    } catch (Exception e) {
+                                        Log.w(TAG, "⚠️ Could not request BES system version", e);
+                                    }
+                                },
+                                1000); // 1 second delay to ensure CommandProcessor is initialized
             } else {
-                Log.d(TAG, "⚠️ Conditions not met for BES system version request - isK900Device: " + isK900Device + 
-                          ", service: " + service.getClass().getSimpleName());
+                Log.d(
+                        TAG,
+                        "⚠️ Conditions not met for BES system version request - isK900Device: "
+                                + isK900Device
+                                + ", service: "
+                                + service.getClass().getSimpleName());
             }
         } catch (Exception e) {
             Log.e(TAG, "💥 Error initializing bluetooth manager", e);
@@ -352,30 +386,61 @@ public class AsgClientServiceManager {
                 mediaQueueManager = new MediaUploadQueueManager(context);
                 Log.d(TAG, "✅ MediaUploadQueueManager created successfully");
 
-                mediaQueueManager.setMediaQueueCallback(new MediaUploadQueueManager.MediaQueueCallback() {
-                    @Override
-                    public void onMediaQueued(String requestId, String filePath, int mediaType) {
-                        String mediaTypeName = mediaType == MediaUploadQueueManager.MEDIA_TYPE_PHOTO ? "photo" : "video";
-                        Log.d(TAG, "📤 Media queued - ID: " + requestId +
-                                ", Path: " + filePath +
-                                ", Type: " + mediaTypeName);
-                    }
+                mediaQueueManager.setMediaQueueCallback(
+                        new MediaUploadQueueManager.MediaQueueCallback() {
+                            @Override
+                            public void onMediaQueued(
+                                    String requestId, String filePath, int mediaType) {
+                                String mediaTypeName =
+                                        mediaType == MediaUploadQueueManager.MEDIA_TYPE_PHOTO
+                                                ? "photo"
+                                                : "video";
+                                Log.d(
+                                        TAG,
+                                        "📤 Media queued - ID: "
+                                                + requestId
+                                                + ", Path: "
+                                                + filePath
+                                                + ", Type: "
+                                                + mediaTypeName);
+                            }
 
-                    @Override
-                    public void onMediaUploaded(String requestId, String url, int mediaType) {
-                        String mediaTypeName = mediaType == MediaUploadQueueManager.MEDIA_TYPE_PHOTO ? "Photo" : "Video";
-                        Log.i(TAG, "✅ " + mediaTypeName + " uploaded from queue - ID: " + requestId +
-                                ", URL: " + url);
-                        communicationManager.sendMediaSuccessResponse(requestId, url, mediaType);
-                    }
+                            @Override
+                            public void onMediaUploaded(
+                                    String requestId, String url, int mediaType) {
+                                String mediaTypeName =
+                                        mediaType == MediaUploadQueueManager.MEDIA_TYPE_PHOTO
+                                                ? "Photo"
+                                                : "Video";
+                                Log.i(
+                                        TAG,
+                                        "✅ "
+                                                + mediaTypeName
+                                                + " uploaded from queue - ID: "
+                                                + requestId
+                                                + ", URL: "
+                                                + url);
+                                communicationManager.sendMediaSuccessResponse(
+                                        requestId, url, mediaType);
+                            }
 
-                    @Override
-                    public void onMediaUploadFailed(String requestId, String error, int mediaType) {
-                        String mediaTypeName = mediaType == MediaUploadQueueManager.MEDIA_TYPE_PHOTO ? "Photo" : "Video";
-                        Log.w(TAG, "❌ " + mediaTypeName + " upload failed from queue - ID: " + requestId +
-                                ", Error: " + error);
-                    }
-                });
+                            @Override
+                            public void onMediaUploadFailed(
+                                    String requestId, String error, int mediaType) {
+                                String mediaTypeName =
+                                        mediaType == MediaUploadQueueManager.MEDIA_TYPE_PHOTO
+                                                ? "Photo"
+                                                : "Video";
+                                Log.w(
+                                        TAG,
+                                        "❌ "
+                                                + mediaTypeName
+                                                + " upload failed from queue - ID: "
+                                                + requestId
+                                                + ", Error: "
+                                                + error);
+                            }
+                        });
                 Log.d(TAG, "📡 Media queue callback set successfully");
 
                 mediaQueueManager.processQueue();
@@ -404,23 +469,39 @@ public class AsgClientServiceManager {
             }
 
             try {
-                mediaCaptureService = new MediaCaptureService(context, mediaQueueManager, fileManager, stateManager) {
-                    @Override
-                    protected void sendMediaSuccessResponse(String requestId, String mediaUrl, int mediaType) {
-                        Log.d(TAG, "📤 Sending media success response - ID: " + requestId +
-                                ", URL: " + mediaUrl +
-                                ", Type: " + mediaType);
-                        communicationManager.sendMediaSuccessResponse(requestId, mediaUrl, mediaType);
-                    }
+                mediaCaptureService =
+                        new MediaCaptureService(
+                                context, mediaQueueManager, fileManager, stateManager) {
+                            @Override
+                            protected void sendMediaSuccessResponse(
+                                    String requestId, String mediaUrl, int mediaType) {
+                                Log.d(
+                                        TAG,
+                                        "📤 Sending media success response - ID: "
+                                                + requestId
+                                                + ", URL: "
+                                                + mediaUrl
+                                                + ", Type: "
+                                                + mediaType);
+                                communicationManager.sendMediaSuccessResponse(
+                                        requestId, mediaUrl, mediaType);
+                            }
 
-                    @Override
-                    protected void sendMediaErrorResponse(String requestId, String errorMessage, int mediaType) {
-                        Log.d(TAG, "📤 Sending media error response - ID: " + requestId +
-                                ", Error: " + errorMessage +
-                                ", Type: " + mediaType);
-                        communicationManager.sendMediaErrorResponse(requestId, errorMessage, mediaType);
-                    }
-                };
+                            @Override
+                            protected void sendMediaErrorResponse(
+                                    String requestId, String errorMessage, int mediaType) {
+                                Log.d(
+                                        TAG,
+                                        "📤 Sending media error response - ID: "
+                                                + requestId
+                                                + ", Error: "
+                                                + errorMessage
+                                                + ", Type: "
+                                                + mediaType);
+                                communicationManager.sendMediaErrorResponse(
+                                        requestId, errorMessage, mediaType);
+                            }
+                        };
                 Log.d(TAG, "✅ MediaCaptureService created successfully");
 
                 mediaCaptureService.setMediaCaptureListener(service.getMediaCaptureListener());
@@ -468,40 +549,41 @@ public class AsgClientServiceManager {
                 Logger logger = DefaultServerFactory.createLogger();
                 Log.d(TAG, "📝 Logger created: " + logger.getClass().getSimpleName());
 
-                cameraServer = DefaultServerFactory.createCameraWebServer(
-                        8089,
-                        "CameraWebServer",
-                        context,
-                        logger,
-                        fileManager
-                );
-                Log.d(TAG, "✅ Camera web server created: " + cameraServer.getClass().getSimpleName());
+                cameraServer =
+                        DefaultServerFactory.createCameraWebServer(
+                                8089, "CameraWebServer", context, logger, fileManager);
+                Log.d(
+                        TAG,
+                        "✅ Camera web server created: " + cameraServer.getClass().getSimpleName());
 
-                cameraServer.setOnPictureRequestListener(() -> {
-                    Log.i(TAG, "📸 Camera web server requested photo capture");
-                    if (mediaCaptureService != null) {
-                        String requestId = "web_" + System.currentTimeMillis();
-                        Log.d(TAG, "📸 Taking photo locally with request ID: " + requestId);
-                        mediaCaptureService.takePhotoLocally();
-                    } else {
-                        Log.w(TAG, "⚠️ Media capture service is null - cannot take photo");
-                    }
-                });
+                cameraServer.setOnPictureRequestListener(
+                        () -> {
+                            Log.i(TAG, "📸 Camera web server requested photo capture");
+                            if (mediaCaptureService != null) {
+                                String requestId = "web_" + System.currentTimeMillis();
+                                Log.d(TAG, "📸 Taking photo locally with request ID: " + requestId);
+                                mediaCaptureService.takePhotoLocally();
+                            } else {
+                                Log.w(TAG, "⚠️ Media capture service is null - cannot take photo");
+                            }
+                        });
                 Log.d(TAG, "📡 Picture request listener set");
 
-                // Wire active recording provider so sync/download skip in-progress and not-yet-validated videos
+                // Wire active recording provider so sync/download skip in-progress and
+                // not-yet-validated videos
                 if (mediaCaptureService != null) {
-                    cameraServer.setActiveRecordingProvider(new AsgCameraServer.ActiveRecordingProvider() {
-                        @Override
-                        public String getActiveRecordingCaptureId() {
-                            return mediaCaptureService.getActiveRecordingCaptureId();
-                        }
+                    cameraServer.setActiveRecordingProvider(
+                            new AsgCameraServer.ActiveRecordingProvider() {
+                                @Override
+                                public String getActiveRecordingCaptureId() {
+                                    return mediaCaptureService.getActiveRecordingCaptureId();
+                                }
 
-                        @Override
-                        public Set<String> getPendingVideoIntegrityCaptureIds() {
-                            return mediaCaptureService.getPendingVideoIntegrityCaptureIds();
-                        }
-                    });
+                                @Override
+                                public Set<String> getPendingVideoIntegrityCaptureIds() {
+                                    return mediaCaptureService.getPendingVideoIntegrityCaptureIds();
+                                }
+                            });
                     Log.d(TAG, "📡 Active recording provider set on camera server");
                 }
 
@@ -535,37 +617,56 @@ public class AsgClientServiceManager {
     }
 
     public AsgSettings getAsgSettings() {
-        Log.d(TAG, "📋 getAsgSettings() called - returning: " + (asgSettings != null ? "valid" : "null"));
+        Log.d(
+                TAG,
+                "📋 getAsgSettings() called - returning: "
+                        + (asgSettings != null ? "valid" : "null"));
         return asgSettings;
     }
 
     public INetworkManager getNetworkManager() {
-        Log.d(TAG, "🌐 getNetworkManager() called - returning: " + (networkManager != null ? "valid" : "null"));
+        Log.d(
+                TAG,
+                "🌐 getNetworkManager() called - returning: "
+                        + (networkManager != null ? "valid" : "null"));
         return networkManager;
     }
 
     public ICompanionTransport getBluetoothManager() {
-        // Log.d(TAG, "📶 getBluetoothManager() called - returning: " + (bluetoothManager != null ? "valid" : "null"));
+        // Log.d(TAG, "📶 getBluetoothManager() called - returning: " + (bluetoothManager != null ?
+        // "valid" : "null"));
         return bluetoothManager;
     }
 
     public MediaUploadQueueManager getMediaQueueManager() {
-        Log.d(TAG, "📁 getMediaQueueManager() called - returning: " + (mediaQueueManager != null ? "valid" : "null"));
+        Log.d(
+                TAG,
+                "📁 getMediaQueueManager() called - returning: "
+                        + (mediaQueueManager != null ? "valid" : "null"));
         return mediaQueueManager;
     }
 
     public MediaCaptureService getMediaCaptureService() {
-        Log.d(TAG, "📸 getMediaCaptureService() called - returning: " + (mediaCaptureService != null ? "valid" : "null"));
+        Log.d(
+                TAG,
+                "📸 getMediaCaptureService() called - returning: "
+                        + (mediaCaptureService != null ? "valid" : "null"));
         return mediaCaptureService;
     }
 
     public AsgCameraServer getCameraServer() {
-        Log.d(TAG, "🌐 getCameraServer() called - returning: " + (cameraServer != null ? "valid" : "null"));
+        Log.d(
+                TAG,
+                "🌐 getCameraServer() called - returning: "
+                        + (cameraServer != null ? "valid" : "null"));
         return cameraServer;
     }
 
     public AsgServerManager getServerManager() {
-        Log.d(TAG, "📡 getServerManager() called - returning: " + (serverManager != null ? "valid" : "null"));
+        Log.d(
+                TAG,
+                "📡 getServerManager() called - returning: "
+                        + (serverManager != null ? "valid" : "null"));
         return serverManager;
     }
 
@@ -574,25 +675,24 @@ public class AsgClientServiceManager {
     }
 
     /**
-     * Set the RGB LED command handler reference.
-     * This should be called by the service container after command handlers are initialized.
+     * Set the RGB LED command handler reference. This should be called by the service container
+     * after command handlers are initialized.
      */
     public void setRgbLedCommandHandler(RgbLedCommandHandler handler) {
         this.rgbLedCommandHandler = handler;
         Log.d(TAG, "RGB LED command handler set: " + (handler != null ? "valid" : "null"));
     }
-    
-    /**
-     * Get the RGB LED command handler reference.
-     */
+
+    /** Get the RGB LED command handler reference. */
     public RgbLedCommandHandler getRgbLedCommandHandler() {
-        Log.d(TAG, "getRgbLedCommandHandler() called - returning: " + (rgbLedCommandHandler != null ? "valid" : "null"));
+        Log.d(
+                TAG,
+                "getRgbLedCommandHandler() called - returning: "
+                        + (rgbLedCommandHandler != null ? "valid" : "null"));
         return rgbLedCommandHandler;
     }
 
-    /**
-     * Set the StateManager reference (called after ServiceContainer initialization)
-     */
+    /** Set the StateManager reference (called after ServiceContainer initialization) */
     public void setStateManager(IStateManager stateManager) {
         this.stateManager = stateManager;
         Log.d(TAG, "✅ StateManager set for battery monitoring");
@@ -605,9 +705,7 @@ public class AsgClientServiceManager {
         }
     }
 
-    /**
-     * Get the StateManager reference.
-     */
+    /** Get the StateManager reference. */
     public IStateManager getStateManager() {
         return stateManager;
     }
@@ -628,10 +726,20 @@ public class AsgClientServiceManager {
     }
 
     public void setWebServerEnabled(boolean enabled) {
-        Log.d(TAG, "⚙️ setWebServerEnabled() called - Current: " + isWebServerEnabled + ", New: " + enabled);
+        Log.d(
+                TAG,
+                "⚙️ setWebServerEnabled() called - Current: "
+                        + isWebServerEnabled
+                        + ", New: "
+                        + enabled);
 
         if (isWebServerEnabled != enabled) {
-            Log.i(TAG, "🔄 Web server enabled state changing from " + isWebServerEnabled + " to " + enabled);
+            Log.i(
+                    TAG,
+                    "🔄 Web server enabled state changing from "
+                            + isWebServerEnabled
+                            + " to "
+                            + enabled);
             isWebServerEnabled = enabled;
 
             if (enabled && cameraServer == null) {
@@ -658,6 +766,7 @@ public class AsgClientServiceManager {
 
     /**
      * Get the current connection status from AsgClientService
+     *
      * @return true if connected to phone, false if disconnected
      */
     public boolean isConnected() {
@@ -666,17 +775,13 @@ public class AsgClientServiceManager {
         return connected;
     }
 
-    /**
-     * Mark the phone connection active after the phone_ready/glasses_ready handshake completes.
-     */
+    /** Mark the phone connection active after the phone_ready/glasses_ready handshake completes. */
     public void onPhoneReadyHandshakeComplete() {
         Log.d(TAG, "📱 Phone ready handshake complete");
         service.onPhoneReadyHandshakeComplete();
     }
 
-    /**
-     * Handle service heartbeat received from MentraLiveSGC
-     */
+    /** Handle service heartbeat received from MentraLiveSGC */
     public void onServiceHeartbeatReceived() {
         Log.d(TAG, "💓 Service heartbeat received from MentraLiveSGC");
         service.onServiceHeartbeatReceived();

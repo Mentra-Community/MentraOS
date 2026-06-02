@@ -2,12 +2,10 @@ package com.mentra.asg_client;
 
 import android.app.Application;
 import android.util.Log;
-
+import com.mentra.asg_client.di.ReportingModule;
 import com.mentra.asg_client.reporting.CrashHandler;
 import com.mentra.asg_client.reporting.core.ReportManager;
-import com.mentra.asg_client.di.ReportingModule;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
-
 import dagger.hilt.android.HiltAndroidApp;
 
 /** Application class for ASG Client. */

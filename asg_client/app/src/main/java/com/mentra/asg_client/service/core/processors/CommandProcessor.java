@@ -2,60 +2,56 @@ package com.mentra.asg_client.service.core.processors;
 
 import android.content.Context;
 import android.util.Log;
-
-import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.bes.log.BesTracePoller;
+import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.logging.BleTraceLogger;
-import com.mentra.asg_client.service.core.handlers.GalleryModeCommandHandler;
-import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
-import com.mentra.asg_client.service.core.handlers.PowerCommandHandler;
-import com.mentra.asg_client.service.core.handlers.ServiceHeartbeatCommandHandler;
-import com.mentra.asg_client.service.core.handlers.TransferCompleteCommandHandler;
-import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
-import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
-import com.mentra.asg_client.service.core.handlers.SettingsCommandHandler;
-import com.mentra.asg_client.service.core.handlers.VersionCommandHandler;
-import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
-import com.mentra.asg_client.service.system.interfaces.IStateManager;
-import com.mentra.asg_client.service.media.interfaces.IMediaManager;
-import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
-import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
-import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
-import com.mentra.asg_client.service.core.handlers.PhotoCommandHandler;
-import com.mentra.asg_client.service.core.handlers.VideoCommandHandler;
-import com.mentra.asg_client.service.core.handlers.PhoneReadyCommandHandler;
-import com.mentra.asg_client.service.core.handlers.AuthTokenCommandHandler;
-import com.mentra.asg_client.service.core.handlers.PingCommandHandler;
-import com.mentra.asg_client.service.core.handlers.StreamCommandHandler;
-import com.mentra.asg_client.service.core.handlers.WifiCommandHandler;
-import com.mentra.asg_client.service.core.handlers.BatteryCommandHandler;
-import com.mentra.asg_client.service.core.handlers.ImuCommandHandler;
-import com.mentra.asg_client.service.core.handlers.KeepAwakeCommandHandler;
-import com.mentra.asg_client.service.core.handlers.GalleryCommandHandler;
-import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
-import com.mentra.asg_client.service.core.handlers.BleConfigCommandHandler;
-import com.mentra.asg_client.service.core.handlers.I2SAudioCommandHandler;
-import com.mentra.asg_client.service.core.handlers.UserEmailCommandHandler;
-import com.mentra.asg_client.service.core.handlers.UploadIncidentLogsCommandHandler;
 import com.mentra.asg_client.reporting.core.ReportManager;
-
-import org.json.JSONObject;
-
+import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
+import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
+import com.mentra.asg_client.service.core.handlers.AuthTokenCommandHandler;
+import com.mentra.asg_client.service.core.handlers.BatteryCommandHandler;
+import com.mentra.asg_client.service.core.handlers.BleConfigCommandHandler;
+import com.mentra.asg_client.service.core.handlers.GalleryCommandHandler;
+import com.mentra.asg_client.service.core.handlers.GalleryModeCommandHandler;
+import com.mentra.asg_client.service.core.handlers.I2SAudioCommandHandler;
+import com.mentra.asg_client.service.core.handlers.ImuCommandHandler;
+import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
+import com.mentra.asg_client.service.core.handlers.KeepAwakeCommandHandler;
+import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
+import com.mentra.asg_client.service.core.handlers.PhoneReadyCommandHandler;
+import com.mentra.asg_client.service.core.handlers.PhotoCommandHandler;
+import com.mentra.asg_client.service.core.handlers.PingCommandHandler;
+import com.mentra.asg_client.service.core.handlers.PowerCommandHandler;
+import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
+import com.mentra.asg_client.service.core.handlers.ServiceHeartbeatCommandHandler;
+import com.mentra.asg_client.service.core.handlers.SettingsCommandHandler;
+import com.mentra.asg_client.service.core.handlers.StreamCommandHandler;
+import com.mentra.asg_client.service.core.handlers.TransferCompleteCommandHandler;
+import com.mentra.asg_client.service.core.handlers.UploadIncidentLogsCommandHandler;
+import com.mentra.asg_client.service.core.handlers.UserEmailCommandHandler;
+import com.mentra.asg_client.service.core.handlers.VersionCommandHandler;
+import com.mentra.asg_client.service.core.handlers.VideoCommandHandler;
+import com.mentra.asg_client.service.core.handlers.WifiCommandHandler;
+import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
+import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
+import com.mentra.asg_client.service.media.interfaces.IMediaManager;
+import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
+import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import org.json.JSONObject;
 
 /**
  * CommandProcessor - Orchestrates command processing following SOLID principles.
- * <p>
- * Single Responsibility: Coordinates command routing and delegation
- * Open/Closed: Extensible through handler registration and protocol parsers
- * Liskov Substitution: Uses interface-based handlers and parsers
- * Interface Segregation: Focused interfaces for each concern
- * Dependency Inversion: Depends on abstractions, not concretions
+ *
+ * <p>Single Responsibility: Coordinates command routing and delegation Open/Closed: Extensible
+ * through handler registration and protocol parsers Liskov Substitution: Uses interface-based
+ * handlers and parsers Interface Segregation: Focused interfaces for each concern Dependency
+ * Inversion: Depends on abstractions, not concretions
  */
 public class CommandProcessor {
     private static final String TAG = "CommandProcessor";
-    
+
     // Duplicate detection
     private static final long DUPLICATE_WINDOW_MS = TimeUnit.SECONDS.toMillis(10);
     private final ConcurrentHashMap<Long, Long> processedMessageIds = new ConcurrentHashMap<>();
@@ -110,15 +106,16 @@ public class CommandProcessor {
         this.commandHandlerRegistry = new CommandHandlerRegistry();
         this.commandParser = new CommandParser();
         this.protocolDetector = new CommandProtocolDetector();
-        this.k900CommandHandler = new K900CommandHandler(serviceManager, stateManager, communicationManager);
+        this.k900CommandHandler =
+                new K900CommandHandler(serviceManager, stateManager, communicationManager);
         this.besTracePoller = new BesTracePoller();
         this.responseSender = new ResponseSender(serviceManager);
         this.chunkReassembler = new ChunkReassembler();
-        
+
         // Add chunked message support to protocol detector
         this.protocolDetector.addChunkedMessageSupport(chunkReassembler);
         Log.d(TAG, "✅ Chunked message support initialized");
-        
+
         // Register command handlers
         initializeCommandHandlers();
         Log.i(TAG, "✅ CommandProcessor initialization completed successfully");
@@ -129,8 +126,8 @@ public class CommandProcessor {
     }
 
     /**
-     * Main entry point for processing commands from byte data.
-     * Follows Single Responsibility Principle by delegating to specialized components.
+     * Main entry point for processing commands from byte data. Follows Single Responsibility
+     * Principle by delegating to specialized components.
      */
     public void processCommand(byte[] data) {
         // Suppress verbose logging to prevent logcat overflow
@@ -160,8 +157,8 @@ public class CommandProcessor {
     }
 
     /**
-     * Process JSON command by delegating to appropriate handlers.
-     * Follows Open/Closed Principle by using registry pattern.
+     * Process JSON command by delegating to appropriate handlers. Follows Open/Closed Principle by
+     * using registry pattern.
      */
     public void processJsonCommand(JSONObject json) {
         // processJsonCommand() started
@@ -188,11 +185,22 @@ public class CommandProcessor {
                 return;
             }
 
-            Log.d(TAG, "📊 Command data extracted - Type: " + commandData.type() + ", MessageID: " + commandData.messageId() + ", Data: " + commandData.data());
+            Log.d(
+                    TAG,
+                    "📊 Command data extracted - Type: "
+                            + commandData.type()
+                            + ", MessageID: "
+                            + commandData.messageId()
+                            + ", Data: "
+                            + commandData.data());
 
             // Check for duplicate message ID
             if (isDuplicateMessage(commandData.messageId())) {
-                Log.i(TAG, "🔄 Duplicate message detected (ID: " + commandData.messageId() + "), sending ACK but skipping processing");
+                Log.i(
+                        TAG,
+                        "🔄 Duplicate message detected (ID: "
+                                + commandData.messageId()
+                                + "), sending ACK but skipping processing");
                 // Still send ACK so phone stops retrying
                 sendAcknowledgment(commandData);
                 return;
@@ -210,16 +218,15 @@ public class CommandProcessor {
         // processJsonCommand() completed
     }
 
-    /**
-     * Extract and validate command data from JSON using improved protocol detector.
-     */
+    /** Extract and validate command data from JSON using improved protocol detector. */
     private CommandData extractCommandData(JSONObject json) {
         // extractCommandData() started
 
         try {
             // Use protocol detector to identify and extract command data
             // Detecting protocol type
-            CommandProtocolDetector.ProtocolDetectionResult result = protocolDetector.detectProtocol(json);
+            CommandProtocolDetector.ProtocolDetectionResult result =
+                    protocolDetector.detectProtocol(json);
 
             // Protocol detection result
 
@@ -227,7 +234,9 @@ public class CommandProcessor {
                 if ("chunk_in_progress".equals(result.commandType())) {
                     return null;
                 }
-                Log.w(TAG, "❌ Invalid protocol detected: " + result.protocolType().getDisplayName());
+                Log.w(
+                        TAG,
+                        "❌ Invalid protocol detected: " + result.protocolType().getDisplayName());
                 return null;
             }
 
@@ -242,13 +251,19 @@ public class CommandProcessor {
                 case JSON_COMMAND:
                     Log.i(TAG, "📋 Processing standard JSON command");
                     // Standard JSON command processing
-                    CommandData commandData = new CommandData(result.commandType(), result.extractedData(), result.messageId());
+                    CommandData commandData =
+                            new CommandData(
+                                    result.commandType(),
+                                    result.extractedData(),
+                                    result.messageId());
                     // Command data created successfully
                     return commandData;
 
                 case UNKNOWN:
                 default:
-                    Log.w(TAG, "❓ Unknown protocol type: " + result.protocolType().getDisplayName());
+                    Log.w(
+                            TAG,
+                            "❓ Unknown protocol type: " + result.protocolType().getDisplayName());
                     return null;
             }
         } catch (Exception e) {
@@ -257,9 +272,7 @@ public class CommandProcessor {
         }
     }
 
-    /**
-     * Send acknowledgment for commands with message IDs.
-     */
+    /** Send acknowledgment for commands with message IDs. */
     private void sendAcknowledgment(CommandData commandData) {
         Log.d(TAG, "📤 sendAcknowledgment() called");
 
@@ -273,8 +286,8 @@ public class CommandProcessor {
     }
 
     /**
-     * Route command to appropriate handler using registry pattern.
-     * Follows Open/Closed Principle - new handlers can be added without modifying this method.
+     * Route command to appropriate handler using registry pattern. Follows Open/Closed Principle -
+     * new handlers can be added without modifying this method.
      */
     private void routeCommand(CommandData commandData) {
         Log.d(TAG, "🛣️ routeCommand() started");
@@ -288,8 +301,10 @@ public class CommandProcessor {
         Log.i(TAG, "🎯 Routing command type: " + type);
         BleTraceLogger.logJson("phone_to_glasses", "asg_command_router", commandData.data());
         if ("take_photo".equals(type)) {
-            Log.i(TAG, "PHOTO PIPELINE [ASG 1/3] Received take_photo on glasses: "
-                    + commandData.data());
+            Log.i(
+                    TAG,
+                    "PHOTO PIPELINE [ASG 1/3] Received take_photo on glasses: "
+                            + commandData.data());
         }
 
         // Try modern command handler first
@@ -307,15 +322,17 @@ public class CommandProcessor {
         }
 
         // Fall back to legacy processor
-        String error = "❌ No handler found for command" + type + ", Implement the handler, or register command type for specific handler";
+        String error =
+                "❌ No handler found for command"
+                        + type
+                        + ", Implement the handler, or register command type for specific handler";
         Log.e(TAG, error);
         throw new IllegalStateException(error);
-
     }
 
     /**
-     * Initialize command handlers following Open/Closed Principle.
-     * New handlers can be added here without modifying existing code.
+     * Initialize command handlers following Open/Closed Principle. New handlers can be added here
+     * without modifying existing code.
      */
     private void initializeCommandHandlers() {
         Log.d(TAG, "🔧 initializeCommandHandlers() started");
@@ -323,31 +340,42 @@ public class CommandProcessor {
         try {
             Log.d(TAG, "📝 Registering command handlers...");
 
-            commandHandlerRegistry.registerHandler(new PhoneReadyCommandHandler(communicationManager, stateManager, responseBuilder, serviceManager));
+            commandHandlerRegistry.registerHandler(
+                    new PhoneReadyCommandHandler(
+                            communicationManager, stateManager, responseBuilder, serviceManager));
             Log.d(TAG, "✅ Registered PhoneReadyCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new AuthTokenCommandHandler(communicationManager, configurationManager));
+            commandHandlerRegistry.registerHandler(
+                    new AuthTokenCommandHandler(communicationManager, configurationManager));
             Log.d(TAG, "✅ Registered AuthTokenCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new UserEmailCommandHandler(configurationManager, ReportManager.getInstance(context)));
+            commandHandlerRegistry.registerHandler(
+                    new UserEmailCommandHandler(
+                            configurationManager, ReportManager.getInstance(context)));
             Log.d(TAG, "✅ Registered UserEmailCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new PhotoCommandHandler(context, serviceManager, fileManager, stateManager));
+            commandHandlerRegistry.registerHandler(
+                    new PhotoCommandHandler(context, serviceManager, fileManager, stateManager));
             Log.d(TAG, "✅ Registered PhotoCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new VideoCommandHandler(context, serviceManager, streamingManager, fileManager, stateManager));
+            commandHandlerRegistry.registerHandler(
+                    new VideoCommandHandler(
+                            context, serviceManager, streamingManager, fileManager, stateManager));
             Log.d(TAG, "✅ Registered VideoCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new PingCommandHandler(communicationManager, responseBuilder, serviceManager));
+            commandHandlerRegistry.registerHandler(
+                    new PingCommandHandler(communicationManager, responseBuilder, serviceManager));
             Log.d(TAG, "✅ Registered PingCommandHandler");
 
             commandHandlerRegistry.registerHandler(new KeepAwakeCommandHandler());
             Log.d(TAG, "✅ Registered KeepAwakeCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new StreamCommandHandler(context, stateManager, streamingManager));
+            commandHandlerRegistry.registerHandler(
+                    new StreamCommandHandler(context, stateManager, streamingManager));
             Log.d(TAG, "✅ Registered StreamCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new WifiCommandHandler(serviceManager, communicationManager, stateManager));
+            commandHandlerRegistry.registerHandler(
+                    new WifiCommandHandler(serviceManager, communicationManager, stateManager));
             Log.d(TAG, "✅ Registered WifiCommandHandler");
 
             commandHandlerRegistry.registerHandler(new BatteryCommandHandler(stateManager));
@@ -356,7 +384,9 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new VersionCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered VersionCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new SettingsCommandHandler(serviceManager, communicationManager, responseBuilder));
+            commandHandlerRegistry.registerHandler(
+                    new SettingsCommandHandler(
+                            serviceManager, communicationManager, responseBuilder));
             Log.d(TAG, "✅ Registered SettingsCommandHandler");
 
             commandHandlerRegistry.registerHandler(otaCommandHandler);
@@ -364,11 +394,13 @@ public class CommandProcessor {
 
             commandHandlerRegistry.registerHandler(new ImuCommandHandler(context, responseSender));
             Log.d(TAG, "✅ Registered ImuCommandHandler");
-            
-            commandHandlerRegistry.registerHandler(new GalleryCommandHandler(serviceManager, communicationManager));
+
+            commandHandlerRegistry.registerHandler(
+                    new GalleryCommandHandler(serviceManager, communicationManager));
             Log.d(TAG, "✅ Registered GalleryCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new TransferCompleteCommandHandler(serviceManager));
+            commandHandlerRegistry.registerHandler(
+                    new TransferCompleteCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered TransferCompleteCommandHandler");
 
             commandHandlerRegistry.registerHandler(rgbLedCommandHandler);
@@ -377,53 +409,84 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new GalleryModeCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered GalleryModeCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new ServiceHeartbeatCommandHandler(serviceManager));
+            commandHandlerRegistry.registerHandler(
+                    new ServiceHeartbeatCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered ServiceHeartbeatCommandHandler");
 
             commandHandlerRegistry.registerHandler(new BleConfigCommandHandler());
             Log.d(TAG, "✅ Registered BleConfigCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new PowerCommandHandler(context, serviceManager));
+            commandHandlerRegistry.registerHandler(
+                    new PowerCommandHandler(context, serviceManager));
             Log.d(TAG, "✅ Registered PowerCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new UploadIncidentLogsCommandHandler(context,
-                    configurationManager, k900CommandHandler, stateManager, serviceManager));
+            commandHandlerRegistry.registerHandler(
+                    new UploadIncidentLogsCommandHandler(
+                            context,
+                            configurationManager,
+                            k900CommandHandler,
+                            stateManager,
+                            serviceManager));
             Log.d(TAG, "✅ Registered UploadIncidentLogsCommandHandler");
 
             commandHandlerRegistry.registerHandler(new I2SAudioCommandHandler());
             Log.d(TAG, "✅ Registered I2SAudioCommandHandler");
 
-            Log.i(TAG, "✅ Successfully registered " + commandHandlerRegistry.getHandlerCount() + " command handlers");
+            Log.i(
+                    TAG,
+                    "✅ Successfully registered "
+                            + commandHandlerRegistry.getHandlerCount()
+                            + " command handlers");
 
         } catch (Exception e) {
             Log.e(TAG, "💥 Error during command handler initialization", e);
         }
     }
 
-
     // ========================================
     // Public API Methods (Interface Segregation)
     // ========================================
 
-    /**
-     * Send download progress notification.
-     */
-    public void sendDownloadProgressOverBle(String status, int progress, long bytesDownloaded, long totalBytes, String errorMessage, long timestamp) {
-        Log.d(TAG, "📤 sendDownloadProgressOverBle() called - Status: " + status + ", Progress: " + progress + "%, Downloaded: " + bytesDownloaded + "/" + totalBytes + " bytes");
+    /** Send download progress notification. */
+    public void sendDownloadProgressOverBle(
+            String status,
+            int progress,
+            long bytesDownloaded,
+            long totalBytes,
+            String errorMessage,
+            long timestamp) {
+        Log.d(
+                TAG,
+                "📤 sendDownloadProgressOverBle() called - Status: "
+                        + status
+                        + ", Progress: "
+                        + progress
+                        + "%, Downloaded: "
+                        + bytesDownloaded
+                        + "/"
+                        + totalBytes
+                        + " bytes");
 
         try {
-            responseSender.sendDownloadProgress(status, progress, bytesDownloaded, totalBytes, errorMessage, timestamp);
+            responseSender.sendDownloadProgress(
+                    status, progress, bytesDownloaded, totalBytes, errorMessage, timestamp);
             Log.d(TAG, "✅ Download progress sent successfully");
         } catch (Exception e) {
             Log.e(TAG, "💥 Error sending download progress", e);
         }
     }
 
-    /**
-     * Send installation progress notification.
-     */
-    public void sendInstallationProgressOverBle(String status, String apkPath, String errorMessage, long timestamp) {
-        Log.d(TAG, "📤 sendInstallationProgressOverBle() called - Status: " + status + ", APK Path: " + apkPath + ", Error: " + errorMessage);
+    /** Send installation progress notification. */
+    public void sendInstallationProgressOverBle(
+            String status, String apkPath, String errorMessage, long timestamp) {
+        Log.d(
+                TAG,
+                "📤 sendInstallationProgressOverBle() called - Status: "
+                        + status
+                        + ", APK Path: "
+                        + apkPath
+                        + ", Error: "
+                        + errorMessage);
 
         try {
             responseSender.sendInstallationProgress(status, apkPath, errorMessage, timestamp);
@@ -433,9 +496,7 @@ public class CommandProcessor {
         }
     }
 
-    /**
-     * Send MTK firmware update complete notification over BLE
-     */
+    /** Send MTK firmware update complete notification over BLE */
     public void sendMtkUpdateComplete() {
         Log.d(TAG, "📤 sendMtkUpdateComplete() called");
 
@@ -447,9 +508,7 @@ public class CommandProcessor {
         }
     }
 
-    /**
-     * Send report swipe status.
-     */
+    /** Send report swipe status. */
     public void sendReportSwipe(boolean report) {
         Log.d(TAG, "📤 sendReportSwipe() called - Report: " + report);
 
@@ -462,8 +521,8 @@ public class CommandProcessor {
     }
 
     /**
-     * Request BES system version from BES chip.
-     * This should be called when BluetoothManager is ready to query firmware version.
+     * Request BES system version from BES chip. This should be called when BluetoothManager is
+     * ready to query firmware version.
      */
     public void requestSystemVersion() {
         Log.d(TAG, "📤 requestSystemVersion() called");
@@ -476,11 +535,13 @@ public class CommandProcessor {
     }
 
     /**
-     * Request BES chip trace buffer logs and print them to logcat.
-     * Pass a non-null incidentId to also upload to the incident backend as "glasses_firmware".
+     * Request BES chip trace buffer logs and print them to logcat. Pass a non-null incidentId to
+     * also upload to the incident backend as "glasses_firmware".
      */
-    public void requestBesLogs(String incidentId, android.content.Context context,
-                               IConfigurationManager configManager) {
+    public void requestBesLogs(
+            String incidentId,
+            android.content.Context context,
+            IConfigurationManager configManager) {
         if (k900CommandHandler != null) {
             k900CommandHandler.requestBesLogs(incidentId, context, configManager);
         } else {
@@ -501,8 +562,8 @@ public class CommandProcessor {
     }
 
     /**
-     * Request BT MAC address from BES chip.
-     * This should be called after UART connection is established to retrieve the unique device identifier.
+     * Request BT MAC address from BES chip. This should be called after UART connection is
+     * established to retrieve the unique device identifier.
      */
     public void requestBtMacAddress() {
         Log.d(TAG, "📤 requestBtMacAddress() called");
@@ -515,8 +576,8 @@ public class CommandProcessor {
     }
 
     /**
-     * Check if a message ID has been recently processed (duplicate detection).
-     * Also cleans up old entries to prevent memory growth.
+     * Check if a message ID has been recently processed (duplicate detection). Also cleans up old
+     * entries to prevent memory growth.
      */
     private boolean isDuplicateMessage(long messageId) {
         if (messageId == -1) {
@@ -525,20 +586,20 @@ public class CommandProcessor {
         }
 
         long now = System.currentTimeMillis();
-        
+
         // Clean up old entries periodically (entries older than duplicate window)
-        processedMessageIds.entrySet().removeIf(entry -> 
-            now - entry.getValue() > DUPLICATE_WINDOW_MS
-        );
+        processedMessageIds
+                .entrySet()
+                .removeIf(entry -> now - entry.getValue() > DUPLICATE_WINDOW_MS);
 
         // Check if we've seen this message ID recently
         Long previousTime = processedMessageIds.put(messageId, now);
-        
+
         if (previousTime != null && (now - previousTime) < DUPLICATE_WINDOW_MS) {
             // We've seen this message ID within the duplicate window
             return true;
         }
-        
+
         return false;
     }
 }

@@ -1,29 +1,25 @@
 package com.mentra.asg_client.service.core.handlers;
 
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
-
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
-import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
-
+import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
+import java.util.Set;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.util.Set;
-import android.os.Handler;
-import android.os.Looper;
-
 /**
- * Handler for OTA-related commands from the phone.
- * Follows Single Responsibility Principle by handling only OTA commands.
+ * Handler for OTA-related commands from the phone. Follows Single Responsibility Principle by
+ * handling only OTA commands.
  *
- * Supported commands:
- * - ota_start: Phone approved update, start download+install
- * - ota_update_response: Legacy command (deprecated, kept for backwards compatibility)
+ * <p>Supported commands: - ota_start: Phone approved update, start download+install -
+ * ota_update_response: Legacy command (deprecated, kept for backwards compatibility)
  */
 public class OtaCommandHandler implements ICommandHandler {
     private static final String TAG = "OtaCommandHandler";
-    
+
     // Retry configuration for ota_start when OtaHelper not yet initialized
     private static final int OTA_START_MAX_RETRIES = 4;
     private static final long OTA_START_RETRY_DELAY_MS = 2000; // 2 seconds between retries
@@ -41,7 +37,8 @@ public class OtaCommandHandler implements ICommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("ota_start", "ota_update_response", "ota_query_status", "ota_retry_version_check");
+        return Set.of(
+                "ota_start", "ota_update_response", "ota_query_status", "ota_retry_version_check");
     }
 
     @Override
@@ -67,12 +64,11 @@ public class OtaCommandHandler implements ICommandHandler {
     }
 
     /**
-     * Handle ota_start command from phone.
-     * User approved the update (onboarding or background mode).
-     * Triggers OtaHelper.startOtaFromPhone() to begin download+install.
-     * 
-     * If OtaHelper isn't initialized yet (can happen right after APK install),
-     * retries with a delay until OtaHelper is ready.
+     * Handle ota_start command from phone. User approved the update (onboarding or background
+     * mode). Triggers OtaHelper.startOtaFromPhone() to begin download+install.
+     *
+     * <p>If OtaHelper isn't initialized yet (can happen right after APK install), retries with a
+     * delay until OtaHelper is ready.
      */
     private boolean handleOtaStart(JSONObject data) {
         Log.i(TAG, "📱 Received ota_start command from phone");
@@ -82,23 +78,35 @@ public class OtaCommandHandler implements ICommandHandler {
             // Schedule a retry instead of failing immediately
             if (otaStartRetryCount < OTA_START_MAX_RETRIES) {
                 otaStartRetryCount++;
-                Log.w(TAG, "📱 OtaHelper not ready - scheduling retry " + otaStartRetryCount + "/" + OTA_START_MAX_RETRIES);
-                retryHandler.postDelayed(() -> {
-                    handleOtaStart(data);
-                }, OTA_START_RETRY_DELAY_MS);
+                Log.w(
+                        TAG,
+                        "📱 OtaHelper not ready - scheduling retry "
+                                + otaStartRetryCount
+                                + "/"
+                                + OTA_START_MAX_RETRIES);
+                retryHandler.postDelayed(
+                        () -> {
+                            handleOtaStart(data);
+                        },
+                        OTA_START_RETRY_DELAY_MS);
                 return true; // Return true to indicate we're handling it (async)
             } else {
-                Log.e(TAG, "OtaHelper not initialized after " + OTA_START_MAX_RETRIES + " retries - cannot start phone-controlled OTA");
+                Log.e(
+                        TAG,
+                        "OtaHelper not initialized after "
+                                + OTA_START_MAX_RETRIES
+                                + " retries - cannot start phone-controlled OTA");
                 otaStartRetryCount = 0; // Reset for next attempt
                 // Send error to phone so user sees proper error message
-                sendOtaError("OTA service failed to initialize. Please restart glasses and try again.");
+                sendOtaError(
+                        "OTA service failed to initialize. Please restart glasses and try again.");
                 return false;
             }
         }
 
         // Reset retry counter on success
         otaStartRetryCount = 0;
-        
+
         // Start OTA from phone request
         otaHelper.startOtaFromPhone();
         Log.i(TAG, "📱 OTA started from phone command");
@@ -106,8 +114,8 @@ public class OtaCommandHandler implements ICommandHandler {
     }
 
     /**
-     * Handle OTA update response command (legacy, deprecated)
-     * Kept for backwards compatibility with older phone app versions.
+     * Handle OTA update response command (legacy, deprecated) Kept for backwards compatibility with
+     * older phone app versions.
      */
     private boolean handleOtaUpdateResponse(JSONObject data) {
         try {
@@ -125,7 +133,7 @@ public class OtaCommandHandler implements ICommandHandler {
             return false;
         }
     }
-    
+
     private boolean handleOtaQueryStatus() {
         Log.i(TAG, "📱 Received ota_query_status from phone");
 
@@ -154,15 +162,13 @@ public class OtaCommandHandler implements ICommandHandler {
         return true;
     }
 
-    /**
-     * Send OTA error to the phone as {@code ota_status} with {@code failed}.
-     */
+    /** Send OTA error to the phone as {@code ota_status} with {@code failed}. */
     private void sendOtaError(String errorMessage) {
         if (communicationManager == null) {
             Log.e(TAG, "Cannot send OTA error - CommunicationManager not set");
             return;
         }
-        
+
         try {
             JSONObject st = new JSONObject();
             st.put("type", "ota_status");
@@ -175,11 +181,11 @@ public class OtaCommandHandler implements ICommandHandler {
             st.put("overall_percent", 0);
             st.put("status", "failed");
             st.put("error_message", errorMessage);
-            
+
             communicationManager.sendOtaStatus(st);
             Log.i(TAG, "📱 Sent OTA error to phone: " + errorMessage);
         } catch (JSONException e) {
             Log.e(TAG, "Error creating OTA error message", e);
         }
     }
-} 
+}
