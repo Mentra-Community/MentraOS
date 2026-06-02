@@ -236,6 +236,11 @@ public final class PhotoExifMetadataWriter {
             Log.d(TAG, "Encoded AVIF with EXIF: " + data.length + " bytes");
             return data;
         } finally {
+            try {
+                writer.close();
+            } catch (Exception e) {
+                Log.w(TAG, "AvifWriter close failed: " + e.getMessage());
+            }
             if (!tempFile.delete()) {
                 tempFile.deleteOnExit();
             }

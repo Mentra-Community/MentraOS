@@ -64,7 +64,8 @@ final class AvifBmffExifInjector {
         byte[] newMdatPayload = concat(mdat.payload, exifTiffBlock);
 
         byte[] newIinf = appendIinfEntry(tables.iinfPayload, exifItemId);
-        byte[] newIref = appendCdscRef(tables.irefPayload, exifItemId, tables.primaryItemId);
+        byte[] irefBase = tables.irefPayload != null ? tables.irefPayload : emptyIrefPayload();
+        byte[] newIref = appendCdscRef(irefBase, exifItemId, tables.primaryItemId);
         // Meta grows before mdat; iloc v0 extent offsets are absolute file positions.
         byte[] tempIloc = appendIlocEntry(tables.ilocPayload, exifItemId, 0, exifTiffBlock.length);
         byte[] tempMetaPayload = rebuildMeta(metaPayload, tempIloc, newIinf, newIref);
@@ -163,7 +164,16 @@ final class AvifBmffExifInjector {
         ByteArrayOutputStream result = new ByteArrayOutputStream(metaPayload.length + 128);
         // Preserve original version+flags (4 bytes at start of meta payload)
         result.write(metaPayload, 0, Math.min(4, metaPayload.length));
-        for (BmffBox child : parseMetaChildren(metaPayload)) {
+        List<BmffBox> children = parseMetaChildren(metaPayload);
+        boolean hadIref = false;
+        for (BmffBox child : children) {
+            if ("iref".equals(child.type)) {
+                hadIref = true;
+                break;
+            }
+        }
+        boolean insertedIref = false;
+        for (BmffBox child : children) {
             byte[] payload;
             switch (child.type) {
                 case "iloc":
@@ -180,8 +190,20 @@ final class AvifBmffExifInjector {
                     break;
             }
             new BmffBox(child.type, payload).writeTo(result);
+            if ("iinf".equals(child.type) && !hadIref && iref != null) {
+                new BmffBox("iref", iref).writeTo(result);
+                insertedIref = true;
+            }
+        }
+        if (!hadIref && !insertedIref && iref != null) {
+            new BmffBox("iref", iref).writeTo(result);
         }
         return result.toByteArray();
+    }
+
+    /** Empty iref box payload (version 0 + flags) for AVIF files that omit optional iref. */
+    private static byte[] emptyIrefPayload() {
+        return new byte[] {0, 0, 0, 0};
     }
 
     private static byte[] appendIlocEntry(byte[] ilocPayload, int itemId, int offset, int length)
@@ -415,10 +437,8 @@ final class AvifBmffExifInjector {
         if (tables.maxItemId <= 0) {
             tables.maxItemId = tables.primaryItemId;
         }
-        if (tables.ilocPayload == null
-                || tables.iinfPayload == null
-                || tables.irefPayload == null) {
-            throw new IOException("meta missing iloc/iinf/iref");
+        if (tables.ilocPayload == null || tables.iinfPayload == null) {
+            throw new IOException("meta missing iloc/iinf");
         }
         return tables;
     }
