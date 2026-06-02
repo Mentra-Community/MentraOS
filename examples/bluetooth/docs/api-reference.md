@@ -233,7 +233,7 @@ These are the supported React Native app developer entrypoints:
 | Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setButtonPhotoSettings`, `setButtonVideoRecordingSettings`, `setButtonCameraLed`, `setButtonMaxRecordingTime`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
 | Streaming | `startStream`, `keepStreamAlive`, `stopStream` |
 | Audio | `setMicState`, `setPreferredMic`, `setVoiceActivityDetectionEnabled`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
-| LED and version | `rgbLedControl`, `requestVersionInfo` |
+| LED, version, and OTA | `rgbLedControl`, `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate`, `retryOtaVersionCheck` |
 
 React Native helper exports include `DeviceModels`, `isConnectedGlassesConnectionStatus`, `isReadyGlassesConnectionStatus`, `isBusyGlassesConnectionStatus`, `isConnectedWifiStatus`, and `isEnabledHotspotStatus`. The React subpath exports `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent`.
 
@@ -254,6 +254,20 @@ Call `requestVersionInfo()` after connection when your app wants the glasses to 
 | `androidVersion` | Android OS version on Android-based glasses. This is not firmware. |
 
 Different glasses models expose different version fields, so apps should prefer the generic firmware field when present, then fall back to model-specific firmware fields. Keep app and OS versions visibly labeled as app/OS versions.
+
+## OTA Updates
+
+Mentra Live OTA is owned by the glasses firmware. The SDK exposes the same command and event semantics used by the MentraOS app, so host apps can check availability, ask the user before starting an update, and render progress without inventing a separate protocol.
+
+| Method | Glasses command | Use |
+| --- | --- | --- |
+| `checkForOtaUpdate()` | `ota_query_status` | Ask connected Mentra Live glasses to report update availability or current progress. |
+| `startOtaUpdate()` | `ota_start` | Start OTA after your app presents the available update and the user accepts it. |
+| `retryOtaVersionCheck()` | `ota_retry_version_check` | Re-run the glasses-side version check after fixing a known clock-skew or TLS failure. |
+
+React Native receives `ota_update_available`, `ota_start_ack`, and `ota_status` events. Android listeners receive `onOtaUpdateAvailable`, `onOtaStartAck`, and `onOtaStatus`. iOS delegates receive `.otaUpdateAvailable`, `.otaStartAck`, and `.otaStatus` through `BluetoothEvent`.
+
+OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until the OTA status is `complete` or `failed`.
 
 ## Display
 

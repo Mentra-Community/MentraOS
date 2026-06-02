@@ -12,6 +12,8 @@ import BluetoothSdk, {
   type DeviceModel,
   type MicLc3Event,
   type MicPcmEvent,
+  type OtaStatusEvent,
+  type OtaUpdateAvailableEvent,
   type PhotoResponseEvent,
   type PhotoStatusEvent,
   type RgbLedControlResponseEvent,
@@ -233,6 +235,8 @@ export type BluetoothSdkExampleState = {
   micPlaybackHint: string | null;
   micPlaying: boolean;
   micRecording: boolean;
+  otaStatus: OtaStatusEvent | null;
+  otaUpdateAvailable: OtaUpdateAvailableEvent | null;
   pcmBytes: number;
   pcmFrames: number;
   speaking: boolean | null;
@@ -286,6 +290,7 @@ export type BluetoothSdkExampleActions = {
   openGalleryServer: () => Promise<void>;
   openPhotoPreview: () => Promise<void>;
   openWifiSettings: () => Promise<void>;
+  checkForOtaUpdate: () => Promise<void>;
   requestWifiScan: () => Promise<void>;
   playMicRecording: () => Promise<void>;
   selectDiscoveredDevice: (device: Device) => void;
@@ -311,6 +316,7 @@ export type BluetoothSdkExampleActions = {
   setWebhookUrl: (url: string) => void;
   setVoiceActivityDetectionEnabled: (enabled: boolean) => Promise<void>;
   startScan: () => Promise<void>;
+  startOtaUpdate: () => Promise<void>;
   testWebhook: () => Promise<void>;
   toggleHotspot: () => Promise<void>;
   toggleMic: () => Promise<void>;
@@ -408,6 +414,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [lastMicBytes, setLastMicBytes] = useState(0);
   const [lastMicDurationSeconds, setLastMicDurationSeconds] = useState<number | null>(null);
   const [micPlaybackHint, setMicPlaybackHint] = useState<string | null>(null);
+  const [otaStatus, setOtaStatus] = useState<OtaStatusEvent | null>(null);
+  const [otaUpdateAvailable, setOtaUpdateAvailable] =
+    useState<OtaUpdateAvailableEvent | null>(null);
   const [micAudioRouteStatus, setMicAudioRouteStatus] = useState(
     Platform.OS === 'ios'
       ? IOS_AUDIO_ROUTE_HINT
@@ -537,6 +546,20 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         }
         addEvent('LIVE', `stream status ${summarizeMap(payload)}`);
       }),
+      BluetoothSdk.addListener('ota_update_available', (payload: OtaUpdateAvailableEvent) => {
+        setOtaUpdateAvailable(payload);
+        addEvent('LIVE', `OTA available ${payload.version_name ?? 'unknown'} (${(payload.updates ?? []).join(', ') || 'update'})`);
+      }),
+      BluetoothSdk.addListener('ota_start_ack', () => {
+        addEvent('LIVE', 'OTA start acknowledged');
+      }),
+      BluetoothSdk.addListener('ota_status', (payload: OtaStatusEvent) => {
+        setOtaStatus(payload);
+        if (payload.status === 'complete' || payload.status === 'failed') {
+          setOtaUpdateAvailable(null);
+        }
+        addEvent('LIVE', `OTA ${payload.status} ${payload.overall_percent ?? 0}%`);
+      }),
       BluetoothSdk.addListener('mic_pcm', (payload: MicPcmEvent) => {
         if (!micRecordingRef.current) {
           return;
@@ -622,6 +645,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   useEffect(() => {
     if (glassesConnected) {
+      if (!wasConnectedRef.current) {
+        void BluetoothSdk.checkForOtaUpdate().catch((error) => {
+          addEvent('TX', `OTA check failed: ${formatError(error)}`);
+        });
+      }
       wasConnectedRef.current = true;
       return;
     }
@@ -752,6 +780,24 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         throw new Error('Bluetooth permissions are required to connect.');
       }
       await bluetooth.connect(device);
+    });
+  }
+
+  async function checkForOtaUpdate() {
+    await runAction('Check OTA', async () => {
+      if (!glassesConnected) {
+        throw new Error('Connect glasses first.');
+      }
+      await BluetoothSdk.checkForOtaUpdate();
+    });
+  }
+
+  async function startOtaUpdate() {
+    await runAction('Start OTA', async () => {
+      if (!glassesConnected) {
+        throw new Error('Connect glasses first.');
+      }
+      await BluetoothSdk.startOtaUpdate();
     });
   }
 
@@ -2168,6 +2214,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     cameraRoiPosition,
     cameraSettingsStatus,
     captureAndUpload,
+    checkForOtaUpdate,
     clearDefaultDevice,
     clearDisplay,
     connect,
@@ -2197,6 +2244,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     micPlaybackHint,
     micPlaying,
     micRecording,
+    otaStatus,
+    otaUpdateAvailable,
     openBluetoothSettings,
     openGalleryServer,
     openPhotoPreview,
@@ -2245,6 +2294,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setVoiceActivityDetectionEnabled: setVoiceActivityDetectionEnabledAction,
     selectedDiscoveredDevice,
     startScan,
+    startOtaUpdate,
     streamCloudServerEnabled,
     streamFps,
     streamProtocol,

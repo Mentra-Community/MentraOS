@@ -211,6 +211,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var lastMicDurationSeconds: Int?
     @Published private(set) var lastMicBytes = 0
     @Published private(set) var micPlaybackHint: String?
+    @Published private(set) var otaStatus: OtaStatusEvent?
+    @Published private(set) var otaUpdateAvailable: OtaUpdateAvailableEvent?
     @Published private(set) var ledColor = "green"
     @Published private(set) var ledMode = "Off"
     @Published var rawJsonExpanded = false
@@ -405,6 +407,20 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAction("Clear Display") {
             try requireDisplaySupport("clear the display")
             Task { try? await mentraBluetoothSdk.clearDisplay() }
+        }
+    }
+
+    func checkForOtaUpdate() {
+        runAction("Check OTA") {
+            try requireConnected("check OTA")
+            mentraBluetoothSdk.checkForOtaUpdate()
+        }
+    }
+
+    func startOtaUpdate() {
+        runAction("Start OTA") {
+            try requireConnected("start OTA")
+            mentraBluetoothSdk.startOtaUpdate()
         }
     }
 
@@ -1201,10 +1217,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlasses glasses: GlassesRuntimeState) {
+        let wasConnected = glassesConnected
         glassesValues = glasses
         hotspotEnabled = enabledHotspotStatus(glasses) != nil
         if !glasses.connected {
             applyDisconnectedState(status: "Disconnected")
+        } else if !wasConnected {
+            mentraBluetoothSdk.checkForOtaUpdate()
         }
         refreshGalleryServerStatusForCurrentHotspot(defaultStatus: hotspotEnabled ? galleryServerStatus : "Gallery server: hotspot off")
         append(tag: "STORE", text: summarize(glasses))
@@ -1252,6 +1271,17 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             handlePhotoResponse(response.response)
         case let .streamStatus(status):
             handleStreamStatus(status.status)
+        case let .otaUpdateAvailable(event):
+            otaUpdateAvailable = event
+            append(tag: "LIVE", text: "OTA available \(event.versionName ?? "unknown") (\(event.updates.joined(separator: ", ")))")
+        case .otaStartAck:
+            append(tag: "LIVE", text: "OTA start acknowledged")
+        case let .otaStatus(event):
+            otaStatus = event
+            if event.status == "complete" || event.status == "failed" {
+                otaUpdateAvailable = nil
+            }
+            append(tag: "LIVE", text: "OTA \(event.status) \(event.overallPercent)%")
         case let .raw(name, values):
             handleRawEvent(name: name, values: values)
         default:

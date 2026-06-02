@@ -30,6 +30,8 @@ import com.mentra.bluetoothsdk.MentraBluetoothSdk
 import com.mentra.bluetoothsdk.MentraBluetoothSdkCallback
 import com.mentra.bluetoothsdk.MicLc3Event
 import com.mentra.bluetoothsdk.MicPcmEvent
+import com.mentra.bluetoothsdk.OtaStatusEvent
+import com.mentra.bluetoothsdk.OtaUpdateAvailableEvent
 import com.mentra.bluetoothsdk.ButtonPressEvent
 import com.mentra.bluetoothsdk.CameraFov
 import com.mentra.bluetoothsdk.GlassesBatteryState
@@ -180,6 +182,8 @@ data class MentraExampleState(
     val micPlaybackHint: String? = null,
     val micPlaying: Boolean = false,
     val micRecording: Boolean = false,
+    val otaStatus: OtaStatusEvent? = null,
+    val otaUpdateAvailable: OtaUpdateAvailableEvent? = null,
     val pcmBytes: Int = 0,
     val pcmFrames: Int = 0,
     val speaking: Boolean? = null,
@@ -1245,6 +1249,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             applyDisconnectedState("Disconnected")
         } else if (!wasConnected && isGlassesConnected()) {
             refreshGlassesMediaVolume()
+            mentraBluetoothSdk.checkForOtaUpdate()
         }
         addEvent("STORE", summarize(glasses))
     }
@@ -1399,6 +1404,25 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("LIVE", "stream ${summarize(event.values)}")
     }
 
+    override fun onOtaUpdateAvailable(event: OtaUpdateAvailableEvent) {
+        state = state.copy(otaUpdateAvailable = event)
+        addEvent("LIVE", "OTA available ${event.versionName ?: "unknown"} (${event.updates.joinToString().ifBlank { "update" }})")
+    }
+
+    override fun onOtaStartAck(event: com.mentra.bluetoothsdk.OtaStartAckEvent) {
+        addEvent("LIVE", "OTA start acknowledged")
+    }
+
+    override fun onOtaStatus(event: OtaStatusEvent) {
+        state = state.copy(
+            otaStatus = event,
+            otaUpdateAvailable = state.otaUpdateAvailable.takeUnless {
+                event.status == "complete" || event.status == "failed"
+            },
+        )
+        addEvent("LIVE", "OTA ${event.status} ${event.overallPercent}%")
+    }
+
     override fun onMicPcm(event: MicPcmEvent) {
         if (!state.micRecording) return
         val frame = event.pcm
@@ -1441,6 +1465,16 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     fun refreshAudioRoute() {
         refreshAudioSystemState()
         addEvent("LIVE", "audio output ${state.phoneAudioRoute}; ${state.audioMediaStatus}")
+    }
+
+    fun checkForOtaUpdate() = runAction("Check OTA") {
+        requireConnected("check OTA")
+        mentraBluetoothSdk.checkForOtaUpdate()
+    }
+
+    fun startOtaUpdate() = runAction("Start OTA") {
+        requireConnected("start OTA")
+        mentraBluetoothSdk.startOtaUpdate()
     }
 
     fun openBluetoothSettings() = runAction("Open Bluetooth settings") {
