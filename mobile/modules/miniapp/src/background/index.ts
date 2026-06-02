@@ -29,6 +29,7 @@ export type {
   BatteryData,
   ConnectionData,
   HeadPositionData,
+  AccelData,
   LocationData,
   PhoneNotificationData,
   NotificationDismissedData,

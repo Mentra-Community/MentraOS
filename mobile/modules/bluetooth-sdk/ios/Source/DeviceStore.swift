@@ -84,6 +84,7 @@ class DeviceStore {
         store.set("bluetooth", "dashboard_height", 4)
         store.set("bluetooth", "dashboard_depth", 2)
         store.set("bluetooth", "head_up_angle", 30)
+        store.set("bluetooth", "imu_enabled", false)
         store.set("bluetooth", "contextual_dashboard", true)
         store.set("bluetooth", "gallery_mode", true)
         store.set("bluetooth", "voice_activity_detection_enabled", true)
@@ -213,6 +214,11 @@ class DeviceStore {
         case ("bluetooth", "head_up_angle"):
             if let angle = value as? Int {
                 DeviceManager.shared.sgc?.setHeadUpAngle(angle)
+            }
+
+        case ("bluetooth", "imu_enabled"):
+            if let enabled = value as? Bool {
+                DeviceManager.shared.sgc?.setImuEnabled(enabled)
             }
 
         case ("bluetooth", "menu_apps"):

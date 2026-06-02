@@ -1716,15 +1716,15 @@ class G2: NSObject, SGCManager {
             self.sendGestureCtrlCommand(gestureInitW.data)
 
             // 2. ui_setting_app (0x0C) — query (cmd=2, field4={settingInfoType=1, autoBrightnessLevel=0})
-            // var uiSettW = ProtobufWriter()
-            // uiSettW.writeInt32Field(1, 2) // cmd = DeviceReceiveRequest
-            // uiSettW.writeInt32Field(2, self.sendManager.nextMagicRandom())
-            // uiSettW.writeMessageField(4, Data([0x08, 0x01, 0x10, 0x00])) // {1:1, 2:0}
-            // self.sendToGlasses(
-            //     self.sendManager.buildPackets(
-            //         serviceId: 0x0C, payload: uiSettW.data, reserveFlag: true
-            //     )
-            // )
+            var uiSettW = ProtobufWriter()
+            uiSettW.writeInt32Field(1, 2) // cmd = DeviceReceiveRequest
+            uiSettW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+            uiSettW.writeMessageField(4, Data([0x08, 0x01, 0x10, 0x00])) // {1:1, 2:0}
+            self.sendToGlasses(
+                self.sendManager.buildPackets(
+                    serviceId: 0x0C, payload: uiSettW.data, reserveFlag: true
+                )
+            )
 
             // 6. Dashboard init (0x01) — display settings
             // halfDayFormat: 1 = 12h, 0 = 24h
@@ -2919,7 +2919,8 @@ class G2: NSObject, SGCManager {
     /// When enabled, the glasses continuously push `IMU_Report_Data { x, y, z }` (32-bit
     /// floats, gravity-normalized) via the EvenHub notify path; these surface in
     /// `handleTouchEvent` as a Sys_ItemEvent with `eventType == IMU_DATA_REPORT (8)` and
-    /// are emitted through `Bridge.sendImuData`.
+    /// are emitted through `Bridge.sendAccelEvent` (a single accelerometer reading;
+    /// a richer combined IMU event covering gyro + magnetometer is future work).
     ///
     /// - Parameters:
     ///   - enabled: `true` to start streaming, `false` to stop.
@@ -3500,7 +3501,7 @@ class G2: NSObject, SGCManager {
                let imu = parseImuReportData(imuData)
             {
                 Bridge.log("G2: IMU data report: \(imu.x), \(imu.y), \(imu.z)")
-                Bridge.sendImuEvent(x: imu.x, y: imu.y, z: imu.z, timestamp: timestamp)
+                Bridge.sendAccelEvent(x: imu.x, y: imu.y, z: imu.z, timestamp: timestamp)
                 return
             }
 

@@ -695,6 +695,20 @@ class MantleManager {
         }),
       )
 
+      // Raw accelerometer readings from the glasses IMU (G2). The native
+      // payload {x, y, z, timestamp} already matches the miniapp AccelData
+      // shape, so forward it as-is (runtime maps accel_event → accel_data).
+      this.subs.push(
+        BluetoothSdk.addListener("accel_event", (event) => {
+          localMiniappRuntime.forwardEvent("accel_event", {
+            x: event.x,
+            y: event.y,
+            z: event.z,
+            timestamp: typeof event.timestamp === "number" ? event.timestamp : Date.now(),
+          })
+        }),
+      )
+
       this.subs.push(
         BluetoothSdk.addListener("swipe_volume_status", (event) => {
           const enabled = !!event.enabled

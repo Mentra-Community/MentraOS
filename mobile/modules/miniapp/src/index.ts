@@ -63,6 +63,7 @@ export type {
   ViewType,
 } from "./modules/display"
 export type {
+  AccelData,
   AudioChunkData,
   BatteryData,
   ButtonPressData,
