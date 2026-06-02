@@ -928,7 +928,7 @@ struct ViewState {
         )
 #else
         let rawDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 1
-        let d = min(max(rawDepth, 1), 3)
+        let d = min(max(rawDepth, 1), 4)
 #endif
         sgc.setDashboardPosition(h, d)
     }

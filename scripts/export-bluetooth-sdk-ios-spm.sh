@@ -51,6 +51,29 @@ if [[ ! -d "$sdk_root/ios/Source" ]]; then
   exit 1
 fi
 
+target_parent="$(dirname "$target_root")"
+target_name="$(basename "$target_root")"
+mkdir -p "$target_parent"
+target_parent="$(cd "$target_parent" && pwd -P)"
+target_root="$target_parent/$target_name"
+
+if [[ -z "$target_name" || "$target_name" == "." || "$target_name" == ".." || "$target_root" == "/" ]]; then
+  echo "Refusing unsafe SwiftPM export target: $target_root" >&2
+  exit 1
+fi
+
+case "$target_root" in
+  "$repo_root"|"$repo_root"/*)
+    echo "Refusing to export inside the MentraOS source checkout: $target_root" >&2
+    exit 1
+    ;;
+esac
+
+if [[ -d "$target_root" && ! -d "$target_root/.git" ]] && find "$target_root" -mindepth 1 -maxdepth 1 | read -r _; then
+  echo "Refusing to overwrite non-empty non-git directory: $target_root" >&2
+  exit 1
+fi
+
 sdk_version="$(
   node -e '
     const fs = require("fs")
@@ -63,7 +86,7 @@ sdk_version="$(
 )"
 
 mkdir -p "$target_root"
-find "$target_root" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+find "$target_root" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf -- {} +
 
 mkdir -p "$target_root/ios/Source" "$target_root/ios/Packages/CoreObjC"
 
