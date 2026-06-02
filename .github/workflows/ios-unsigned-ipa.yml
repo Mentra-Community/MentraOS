@@ -37,9 +37,23 @@ jobs:
         working-directory: ./mobile
         run: bun expo prebuild --platform ios
 
+      - name: Setup Sherpa Onnx (optional)
+        working-directory: ./mobile
+        run: |
+          chmod +x scripts/setup-sherpa-onnx-optional.sh
+          ./scripts/setup-sherpa-onnx-optional.sh || true
+
       - name: Install pods
         working-directory: ./mobile/ios
         run: pod install
+
+      - name: Download iOS platform support files
+        working-directory: ./mobile/ios
+        run: |
+          echo "Downloading iOS platform support (required for device builds on hosted runners)..."
+          xcodebuild -downloadPlatform iOS
+          echo "Available destinations:"
+          xcodebuild -workspace Mentra.xcworkspace -scheme Mentra -showdestinations 2>&1 | head -40 || true
 
       - name: Build .app (Release, unsigned)
         working-directory: ./mobile/ios
@@ -51,33 +65,25 @@ jobs:
             -scheme Mentra \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -derivedDataPath build \
+            -derivedDataPath build-device \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            COPY_PHASE_STRIP=NO \
-            STRIP_INSTALLED_PRODUCT=NO \
-            ONLY_ACTIVE_ARCH=NO \
             2>&1 | tee /tmp/xcodebuild.log | xcpretty --color || \
           (echo "=== ERRORS ===" && grep "error:" /tmp/xcodebuild.log | tail -80 && exit 1)
 
-      - name: Locate .app
-        id: find_app
+      - name: Verify .app bundle
         run: |
-          APP_PATH=$(find mobile/ios/build/Build/Products -name "*.app" -type d | head -1)
-          if [ -z "$APP_PATH" ]; then
-            echo "❌ .app not found"
-            find mobile/ios/build -maxdepth 5 -type d
+          APP_PATH="mobile/ios/build-device/Build/Products/Release-iphoneos/Mentra.app"
+          echo "=== App contents ==="
+          ls -la "$APP_PATH"
+          if [ ! -f "$APP_PATH/Info.plist" ]; then
+            echo "❌ Info.plist missing — full directory tree:"
+            find mobile/ios/build-device/Build/Products -maxdepth 5
             exit 1
           fi
+          echo "✅ Info.plist found — bundle looks good"
           echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
-          echo "✅ Found app at $APP_PATH"
-
-      - name: Verify bundle structure
-        run: |
-          echo "=== App contents ==="
-          ls -la "${{ env.APP_PATH }}"
-          echo ""
-          echo "=== Frameworks ==="
-          ls "${{ env.APP_PATH }}/Frameworks" || echo "No Frameworks folder"
 
       - name: Package IPA (SideStore friendly)
         run: |
