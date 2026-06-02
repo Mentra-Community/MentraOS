@@ -42,7 +42,6 @@ import com.mentra.bluetoothsdk.utils.BitmapJavaUtils;
 import com.mentra.bluetoothsdk.utils.SmartGlassesConnectionState;
 import com.mentra.bluetoothsdk.utils.K900ProtocolUtils;
 import com.mentra.bluetoothsdk.utils.MessageChunker;
-import com.mentra.bluetoothsdk.utils.MessageChunkReassembler;
 import com.mentra.bluetoothsdk.utils.audio.Lc3Player;
 import com.mentra.bluetoothsdk.utils.BlePhotoUploadService;
 import com.mentra.bluetoothsdk.utils.IncidentLogBleRelayNaming;
@@ -241,7 +240,6 @@ public class MentraLive extends SGCManager {
     /** Expected incident log relay files from glasses (B… firmware, L… logcat). */
     private final ConcurrentHashMap<String, BleIncidentLogRelay> bleIncidentLogRelays =
             new ConcurrentHashMap<>();
-    private final MessageChunkReassembler incomingChunkReassembler = new MessageChunkReassembler();
 
     // File packet reassembly buffer for handling fragmented BLE notifications
     // Android BLE stack delivers notifications in MTU-sized chunks (253 bytes with default MTU)
@@ -2264,11 +2262,6 @@ public class MentraLive extends SGCManager {
         }
         BleTraceLogger.logJson("glasses_to_phone", "sdk_ble_event", json, null);
 
-        if (MessageChunker.isChunkedMessage(json)) {
-            processChunkedJsonMessage(json);
-            return;
-        }
-
         // Check if this is an ACK response
         String type = json.optString("type", "");
         if ("msg_ack".equals(type)) {
@@ -3032,31 +3025,6 @@ public class MentraLive extends SGCManager {
         return value;
     }
 
-    private void processChunkedJsonMessage(JSONObject json) {
-        try {
-            MessageChunker.ChunkInfo chunkInfo = MessageChunker.getChunkInfo(json);
-            if (chunkInfo == null) {
-                Log.w(TAG, "LIVE: Received malformed chunked message: " + json);
-                return;
-            }
-
-            String reassembled =
-                    incomingChunkReassembler.addChunk(
-                            chunkInfo.chunkId,
-                            chunkInfo.chunkIndex,
-                            chunkInfo.totalChunks,
-                            chunkInfo.data);
-            if (reassembled == null) {
-                return;
-            }
-
-            JSONObject reassembledJson = new JSONObject(reassembled);
-            processJsonMessage(reassembledJson);
-        } catch (Exception e) {
-            Log.e(TAG, "Error processing chunked JSON message", e);
-        }
-    }
-
     /**
      * Process K900 command format JSON messages (messages with "C" field)
      */
@@ -3415,8 +3383,8 @@ public class MentraLive extends SGCManager {
                     // Try to parse the "C" field as JSON
                     JSONObject innerJson = new JSONObject(command);
 
-                    // If it has a "type" field or is a compact chunk, it is a standard message that got C-wrapped.
-                    if (innerJson.has("type") || MessageChunker.isChunkedMessage(innerJson)) {
+                    // If it has a "type" field, it's a standard message that got C-wrapped
+                    if (innerJson.has("type")) {
                         String messageType = innerJson.optString("type", "");
                         Log.d(TAG, "📦 Detected C-wrapped standard JSON message with type: " + messageType);
                         Log.d(TAG, "🔓 Unwrapping and processing through standard message handler");
