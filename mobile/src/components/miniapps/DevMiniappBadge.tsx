@@ -1,3 +1,5 @@
+import {Icon} from "@/components/ignite"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {View, ViewStyle} from "react-native"
 
 /**
@@ -9,16 +11,13 @@ import {View, ViewStyle} from "react-native"
  * container that wraps the icon. The dot is absolutely-positioned within
  * that container.
  */
-export function DevMiniappBadge({size = 16}: {size?: number}) {
+export function DevMiniappBadge({size = 24}: {size?: number}) {
+  const {theme} = useAppTheme()
   return (
     <View
-      className="absolute -top-0.5 -right-0.5 bg-orange-500 border border-white"
-      style={{
-        width: size,
-        height: size,
-        borderRadius: size / 2,
-      }}
-      pointerEvents="none"
-    />
+      className="absolute -top-1 -right-1 bg-chart-5 border border-black rounded-full items-center justify-center"
+      style={{width: size, height: size}}>
+      <Icon name="user-code" size={20} color={theme.colors.primary_foreground} />
+    </View>
   )
 }
