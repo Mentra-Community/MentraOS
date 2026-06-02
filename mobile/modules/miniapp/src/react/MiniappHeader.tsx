@@ -7,7 +7,7 @@
  * top-right. Typical usage:
  *
  *   <MiniappHeader
- *     title="Live Captions"
+ *     title="My Miniapp"
  *     left={<BackButton onClick={goBack} />}
  *     right={<Badge>Connected</Badge>}
  *   />

@@ -1,17 +1,15 @@
 /**
  * @fileoverview LocationModule — phone location events.
  *
- * V1 exposes a continuous location-update subscription. The imperative
- * `session.location.getOnce()` poll has wire-protocol support today via
- * MiniappRequestType.LOCATION_POLL but is exercised through the phone's
- * legacy path; promoting it here is future work.
+ * Exposes both a continuous `onUpdate` subscription and a one-shot
+ * `getOnce()` poll over `MiniappRequestType.LOCATION_POLL`.
  *
- * LOCATION permission must be declared in miniapp.json for the subscription
- * to succeed; the phone runtime rejects with PERMISSION_NOT_DECLARED
+ * LOCATION permission must be declared in miniapp.json for either path to
+ * succeed; the phone runtime rejects with PERMISSION_NOT_DECLARED
  * otherwise.
  */
 
-import {MiniappStreamType} from "../protocol"
+import {MiniappRequestType, MiniappStreamType} from "../protocol"
 import {MiniappSession} from "../session"
 import type {LocationData, UnsubscribeFn} from "./events"
 
@@ -26,5 +24,16 @@ export class LocationModule {
   /** Subscribe to continuous location updates. */
   onUpdate(handler: (data: LocationData) => void): UnsubscribeFn {
     return this.session._subscribe(MiniappStreamType.LOCATION_UPDATE, handler as (data: unknown) => void)
+  }
+
+  /**
+   * Request a single location fix. Resolves with the next available
+   * reading from the phone. Useful at app load to seed UI before a
+   * continuous stream of updates begins.
+   */
+  getOnce(): Promise<LocationData> {
+    return this.session.sendRequest<LocationData>({
+      type: MiniappRequestType.LOCATION_POLL,
+    })
   }
 }

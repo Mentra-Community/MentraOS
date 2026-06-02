@@ -1530,7 +1530,7 @@ public class G1 extends SGCManager {
     }
 
     @Override
-    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean sound, Long exposureTimeNs) {
+    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean save, boolean sound, Long exposureTimeNs) {
 
     }
 
@@ -1608,7 +1608,7 @@ public class G1 extends SGCManager {
     }
 
     @Override
-    public boolean displayBitmap(String base64ImageData) {
+    public boolean displayBitmap(String base64ImageData, Integer x, Integer y, Integer width, Integer height) {
         try {
             // Decode base64 to byte array
             byte[] bmpData = android.util.Base64.decode(base64ImageData, android.util.Base64.DEFAULT);

@@ -1,0 +1,898 @@
+name: Staging Builds
+
+# Builds the mobile app (Android + iOS) and ASG client from the staging branch
+# and publishes to TWO places:
+#
+#   1. The versioned release tag (`v2.10` etc.) with `_Beta_N` numbering.
+#      This is what `bun run release:android` / `release:ios` produce.
+#      Full history per version, accumulates over time.
+#
+#   2. The rolling-latest tag (`staging-builds`) with stable filenames:
+#        - mobile-latest.apk / mobile-latest.ipa / asg-latest.apk
+#        - Dated copies kept for 7 days.
+#
+# Mobile also uploads to TestFlight (iOS) and Play Store internal track
+# (Android), as the release scripts already do, IF the runner has the creds
+# at ~/.mentra/credentials/. Otherwise those steps skip silently.
+
+on:
+  push:
+    branches:
+      - staging
+    paths:
+      - "mobile/**"
+      - "asg_client/**"
+      - ".github/workflows/staging-builds.yml"
+  workflow_dispatch:
+    inputs:
+      skip_cleanup:
+        description: "Skip cleanup of old builds"
+        required: false
+        default: "false"
+        type: boolean
+
+permissions:
+  contents: write
+
+# All jobs check out `ref: ${{ github.sha }}` so each run builds the exact
+# commit that triggered it. If we used `ref: staging` instead, concurrent
+# pushes could race — the workflow run for commit A would build whatever
+# staging's tip happens to be when checkout actually runs, which may be
+# commit B that landed in the meantime.
+
+jobs:
+  build-mobile-android:
+    name: Build Mobile App (Android)
+    # macOS-only: release-android.mjs assumes a Mac mini runner setup
+    # (per-runner git config, Mentra credentials at ~/.mentra/credentials).
+    # ASG client below stays unconstrained because it's a clean gradle build.
+    runs-on: [self-hosted, macOS, ARM64]
+
+    # Surface release-status.json fields as job outputs so slack-notify can
+    # build a per-platform status section. See mobile/scripts/release-android.mjs.
+    outputs:
+      apk_name: ${{ steps.release-status.outputs.apk_name }}
+      apk_url: ${{ steps.release-status.outputs.apk_url }}
+      beta_number: ${{ steps.release-status.outputs.beta_number }}
+      tag: ${{ steps.release-status.outputs.tag }}
+      version: ${{ steps.release-status.outputs.version }}
+      version_code: ${{ steps.release-status.outputs.version_code }}
+      google_play: ${{ steps.release-status.outputs.google_play }}
+      google_play_detail: ${{ steps.release-status.outputs.google_play_detail }}
+
+    steps:
+      - name: Get cache week number
+        id: cache-week
+        run: echo "week=$(date +%Y-%U)" >> $GITHUB_OUTPUT
+
+      - name: Clean build artifacts (preserve caches)
+        run: |
+          rm -rf mobile/android/build mobile/android/app/build mobile/android/.gradle
+          rm -rf mobile/node_modules
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Bun + rbenv are pre-installed on the self-hosted runners by
+      # setup-runner.sh but the runner's launchd service inherits PATH from
+      # the OS, not from .env. Push the runner-managed binary dirs into
+      # GITHUB_PATH so every subsequent step in this job sees them.
+      - name: Add runner-managed tools to PATH
+        run: |
+          echo "$HOME/.rbenv/shims" >> $GITHUB_PATH
+          echo "$HOME/.rbenv/bin" >> $GITHUB_PATH
+          echo "$HOME/.bun/bin" >> $GITHUB_PATH
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/android/**/*.gradle*', 'mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            gradle-${{ runner.os }}-
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('mobile/bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Install dependencies
+        working-directory: ./mobile
+        run: bun install
+
+      - name: Setup environment
+        working-directory: ./mobile
+        run: cp .env.example .env
+
+      - name: Fix React Native symlinks
+        working-directory: ./mobile
+        run: |
+          if [ -f "./fix-react-native-symlinks.sh" ]; then
+            chmod +x ./fix-react-native-symlinks.sh
+            ./fix-react-native-symlinks.sh
+          fi
+
+      - name: Run release-android (signed APK + Beta_N upload + Play internal)
+        working-directory: ./mobile
+        env:
+          SENTRY_ALLOW_FAILURE: "false"
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          # gh CLI inside release-android.mjs uploads the APK to a GH release.
+          # GH_TOKEN is auto-provided per-run by Actions; gh picks it up.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # release-android.mjs handles: prebuild → gradle assemble/bundle →
+        # GH release upload (v{X.Y}/_Beta_N.apk) → Play internal track upload
+        # (if google-play-key.json is at ~/.mentra/credentials/).
+        run: |
+          # Force rbenv-managed Ruby ahead of system Ruby so the bundle install
+          # invoked inside release-android.mjs (for the android/fastlane Play
+          # upload) uses bundler 2+. See the iOS step for context.
+          export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
+          bun run release:android
+
+      - name: Locate built APK
+        id: find-apk
+        working-directory: ./mobile
+        run: |
+          # release-android.mjs renames the APK to Mentra_*_Beta_N.apk in
+          # android/app/build/outputs/apk/release/. Grab whichever one is
+          # the newest (there should only be one per run).
+          APK=$(ls -t android/app/build/outputs/apk/release/Mentra_*_Beta_*.apk 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then
+            echo "No Mentra_*_Beta_*.apk found in android/app/build/outputs/apk/release/" >&2
+            ls -la android/app/build/outputs/apk/release/ >&2
+            exit 1
+          fi
+          # Stable name for the upload-releases job.
+          cp "$APK" android/app/build/outputs/apk/release/app-release.apk
+          echo "Found APK: $APK"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-staging
+          path: mobile/android/app/build/outputs/apk/release/app-release.apk
+
+      # Read release-status.json (written by release-android.mjs) and expose
+      # its fields as step outputs the workflow's `outputs:` block references.
+      - name: Read release status
+        id: release-status
+        if: always() && hashFiles('mobile/build/release-status.json') != ''
+        run: |
+          STATUS=mobile/build/release-status.json
+          echo "apk_name=$(jq -r '.apk_name // ""' "$STATUS")"           >> $GITHUB_OUTPUT
+          echo "apk_url=$(jq -r '.apk_url // ""' "$STATUS")"             >> $GITHUB_OUTPUT
+          echo "beta_number=$(jq -r '.beta_number // ""' "$STATUS")"     >> $GITHUB_OUTPUT
+          echo "tag=$(jq -r '.tag // ""' "$STATUS")"                     >> $GITHUB_OUTPUT
+          echo "version=$(jq -r '.version // ""' "$STATUS")"             >> $GITHUB_OUTPUT
+          echo "version_code=$(jq -r '.versionCode // ""' "$STATUS")"    >> $GITHUB_OUTPUT
+          echo "google_play=$(jq -r '.google_play // ""' "$STATUS")"     >> $GITHUB_OUTPUT
+          # Detail strings can contain special chars; base64-encode to be
+          # safe across the GITHUB_OUTPUT round-trip, then slack-notify
+          # decodes.
+          DETAIL=$(jq -r '.google_play_detail // ""' "$STATUS" | base64)
+          echo "google_play_detail=$DETAIL"                              >> $GITHUB_OUTPUT
+
+  build-mobile-ios:
+    name: Build Mobile App (iOS)
+    runs-on: [self-hosted, macOS, ARM64]
+
+    outputs:
+      ipa_name: ${{ steps.release-status.outputs.ipa_name }}
+      ipa_url: ${{ steps.release-status.outputs.ipa_url }}
+      beta_number: ${{ steps.release-status.outputs.beta_number }}
+      tag: ${{ steps.release-status.outputs.tag }}
+      version: ${{ steps.release-status.outputs.version }}
+      build_number: ${{ steps.release-status.outputs.build_number }}
+      testflight: ${{ steps.release-status.outputs.testflight }}
+      testflight_detail: ${{ steps.release-status.outputs.testflight_detail }}
+
+    steps:
+      - name: Kill stale build processes
+        run: |
+          killall xcodebuild 2>/dev/null || true
+          killall Simulator 2>/dev/null || true
+          xcrun simctl shutdown all 2>/dev/null || true
+
+      - name: Clean previous build outputs only
+        run: |
+          rm -rf mobile/ios/build mobile/build mobile/node_modules
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      # Bun + rbenv are pre-installed on the self-hosted runners by
+      # setup-runner.sh. The runner's launchd service inherits PATH from
+      # the OS, not from .env. Push the runner-managed binary dirs into
+      # GITHUB_PATH so every subsequent step in this job sees them.
+      - name: Add runner-managed tools to PATH
+        run: |
+          echo "$HOME/.rbenv/shims" >> $GITHUB_PATH
+          echo "$HOME/.rbenv/bin" >> $GITHUB_PATH
+          echo "$HOME/.bun/bin" >> $GITHUB_PATH
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Get cache week number
+        id: cache-week
+        run: echo "week=$(date +%Y-%U)" >> $GITHUB_OUTPUT
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            mobile/ios/Pods
+            ~/Library/Caches/CocoaPods
+            ~/.cocoapods
+          key: pods-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/ios/Podfile.lock', 'mobile/package.json') }}
+          restore-keys: |
+            pods-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            pods-${{ runner.os }}-
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('mobile/bun.lockb') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Install dependencies
+        id: bun-install
+        working-directory: ./mobile
+        run: bun install --no-frozen-lockfile
+        continue-on-error: true
+
+      - name: Retry bun install with clean node_modules (if first attempt failed)
+        if: steps.bun-install.outcome == 'failure'
+        working-directory: ./mobile
+        run: |
+          echo "First bun install failed, wiping node_modules and retrying..."
+          rm -rf node_modules
+          bun install --no-frozen-lockfile
+
+      - name: Setup environment
+        working-directory: ./mobile
+        run: cp .env.example .env
+
+      - name: Ensure iOS platform is installed
+        run: xcodebuild -downloadPlatform iOS || true
+
+      - name: Install signing assets (fastlane match, readonly)
+        working-directory: ./mobile
+        env:
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          RAW_MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+        # Pulls the encrypted distribution cert + provisioning profile from
+        # Mentra-Community/match-certs, decrypts with MATCH_PASSWORD, installs
+        # into an ephemeral keychain we create just for this build. The
+        # ephemeral keychain avoids needing the runner's login keychain
+        # password (which differs between machines + can't be reliably
+        # rotated by CI) and gets discarded automatically with the runner.
+        run: |
+          set -e
+          # Force rbenv-managed Ruby ahead of macOS's system Ruby 2.6.
+          export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
+          echo "Using ruby: $(which ruby) $(ruby -v)"
+
+          # Strip any trailing whitespace / newlines from the secret value so
+          # the Authorization header isn't malformed.
+          export MATCH_GIT_BASIC_AUTHORIZATION="$(printf '%s' "$RAW_MATCH_GIT_BASIC_AUTHORIZATION" | tr -d '\r\n')"
+
+          bundle install
+
+          # Create a per-build keychain so we don't depend on knowing the
+          # runner login keychain password. Make it the FIRST keychain in
+          # the user search list (so xcodebuild finds the cert) plus keep
+          # the original keychains around so other tools work normally.
+          KEYCHAIN_NAME="mentra-ci-build.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+
+          # Wipe any leftover keychain from a previous run.
+          security delete-keychain "$KEYCHAIN_NAME" 2>/dev/null || true
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_NAME"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+
+          # Install Apple's WWDR intermediate certs into the same keychain
+          # so the imported distribution cert validates as "trusted for
+          # codesigning". Without these, security find-identity reports
+          # "0 valid identities found" even though the cert is imported.
+          for wwdr in G2 G4 G5 G6; do
+            url="https://www.apple.com/certificateauthority/AppleWWDRCA${wwdr}.cer"
+            tmp="$(mktemp -t wwdr-XXXXXX).cer"
+            if curl -fsSL -o "$tmp" "$url"; then
+              security import "$tmp" -k "$KEYCHAIN_NAME" -T /usr/bin/codesign 2>&1 | grep -v "already exists" || true
+              rm -f "$tmp"
+            fi
+          done
+
+          # Put our keychain first in the search list while keeping the
+          # rest (system keychain provides Apple roots).
+          security list-keychains -d user -s "$KEYCHAIN_NAME" $(security list-keychains -d user | tr -d '" ' | tr '\n' ' ')
+          security default-keychain -s "$KEYCHAIN_NAME"
+
+          bundle exec fastlane match appstore --readonly \
+            --keychain_name "$KEYCHAIN_NAME" \
+            --keychain_password "$KEYCHAIN_PASSWORD"
+
+          # Persist the keychain name+password to GITHUB_ENV so subsequent
+          # steps (release-ios) can re-unlock and confirm setup is intact.
+          echo "MENTRA_CI_KEYCHAIN=$KEYCHAIN_NAME" >> "$GITHUB_ENV"
+          echo "MENTRA_CI_KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+
+          # Sanity check
+          echo "---signing identities in $KEYCHAIN_NAME---"
+          security find-identity -v -p codesigning "$KEYCHAIN_NAME" || true
+          echo "---all keychains in search list---"
+          security list-keychains -d user
+          echo "---all signing identities visible to xcodebuild---"
+          security find-identity -v -p codesigning
+
+      - name: Run release-ios (signed IPA + Beta_N upload + TestFlight)
+        working-directory: ./mobile
+        env:
+          SENTRY_ALLOW_FAILURE: "false"
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          # gh CLI inside release-ios.mjs uploads the IPA to a GH release.
+          # GH_TOKEN is auto-provided per-run by Actions; gh picks it up.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # release-ios.mjs handles: prebuild → pod install → xcodebuild archive
+        # → xcodebuild exportArchive → GH release upload (v{X.Y}/_Beta_N.ipa)
+        # → TestFlight upload (if appstore-connect.env is at ~/.mentra/credentials/).
+        run: |
+          export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
+
+          # Re-unlock the per-build keychain (each step is a fresh shell,
+          # so any unlock the match step did has expired). MENTRA_CI_KEYCHAIN
+          # and MENTRA_CI_KEYCHAIN_PASSWORD were exported to GITHUB_ENV by
+          # the previous match step.
+          if [ -n "${MENTRA_CI_KEYCHAIN:-}" ]; then
+            security unlock-keychain -p "$MENTRA_CI_KEYCHAIN_PASSWORD" "$MENTRA_CI_KEYCHAIN" || true
+            # `security set-keychain-settings` with no -t means never re-lock
+            # while this process runs. Xcode forks long-lived subprocesses so
+            # the keychain must stay unlocked for the entire archive.
+            security set-keychain-settings "$MENTRA_CI_KEYCHAIN" || true
+          fi
+
+          echo "---available signing identities---"
+          security find-identity -v -p codesigning || true
+          echo "---available provisioning profiles---"
+          ls -la ~/Library/Developer/Xcode/UserData/Provisioning\ Profiles/ 2>/dev/null | head -10 || true
+          echo "---"
+          bun run release:ios
+
+      - name: Locate built IPA
+        id: find-ipa
+        working-directory: ./mobile
+        run: |
+          # release-ios.mjs renames the IPA to Mentra_iOS_*_Beta_N.ipa under
+          # build/ios-export/. Grab the newest (there should only be one).
+          IPA=$(ls -t build/ios-export/Mentra_iOS_*_Beta_*.ipa 2>/dev/null | head -1)
+          if [ -z "$IPA" ]; then
+            echo "No Mentra_iOS_*_Beta_*.ipa found in build/ios-export/" >&2
+            ls -la build/ios-export/ >&2
+            exit 1
+          fi
+          cp "$IPA" build/ios-export/app-release.ipa
+          echo "Found IPA: $IPA"
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-staging-ios
+          path: mobile/build/ios-export/app-release.ipa
+
+      - name: Read release status
+        id: release-status
+        if: always() && hashFiles('mobile/build/release-status.json') != ''
+        run: |
+          STATUS=mobile/build/release-status.json
+          echo "ipa_name=$(jq -r '.ipa_name // ""' "$STATUS")"           >> $GITHUB_OUTPUT
+          echo "ipa_url=$(jq -r '.ipa_url // ""' "$STATUS")"             >> $GITHUB_OUTPUT
+          echo "beta_number=$(jq -r '.beta_number // ""' "$STATUS")"     >> $GITHUB_OUTPUT
+          echo "tag=$(jq -r '.tag // ""' "$STATUS")"                     >> $GITHUB_OUTPUT
+          echo "version=$(jq -r '.version // ""' "$STATUS")"             >> $GITHUB_OUTPUT
+          echo "build_number=$(jq -r '.buildNumber // ""' "$STATUS")"    >> $GITHUB_OUTPUT
+          echo "testflight=$(jq -r '.testflight // ""' "$STATUS")"       >> $GITHUB_OUTPUT
+          DETAIL=$(jq -r '.testflight_detail // ""' "$STATUS" | base64)
+          echo "testflight_detail=$DETAIL"                               >> $GITHUB_OUTPUT
+
+  build-asg:
+    name: Build ASG Client
+    runs-on: self-hosted
+
+    steps:
+      - name: Get cache week number
+        id: cache-week
+        run: echo "week=$(date +%Y-%U)" >> $GITHUB_OUTPUT
+
+      - name: Clean build artifacts (preserve caches)
+        run: |
+          rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v2
+
+      - name: Setup environment
+        working-directory: ./asg_client
+        run: cp .env.example .env
+
+      - name: Clone StreamPackLite dependency
+        working-directory: ./asg_client
+        run: |
+          git clone https://github.com/Mentra-Community/StreamPackLite.git
+          cd StreamPackLite
+          git checkout working
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('asg_client/**/*.gradle*', 'asg_client/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            asg-gradle-${{ runner.os }}-
+
+      - name: Build Release APK
+        id: gradle-build
+        working-directory: ./asg_client
+        run: ./gradlew assembleRelease --build-cache --parallel
+        continue-on-error: true
+
+      - name: Retry build with clean cache (if first attempt failed)
+        if: steps.gradle-build.outcome == 'failure'
+        working-directory: ./asg_client
+        run: |
+          echo "First build failed, cleaning Gradle cache and retrying..."
+          ./gradlew --stop || true
+          rm -rf ~/.gradle/caches ~/.gradle/wrapper || true
+          ./gradlew assembleRelease --build-cache --parallel
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: asg-staging
+          path: asg_client/app/build/outputs/apk/release/app-release.apk
+
+  upload-releases:
+    name: Upload to staging-builds release
+    needs: [build-mobile-android, build-mobile-ios, build-asg]
+    # Run even if some build jobs failed — publish whichever artifacts did
+    # make it. Skip only if ALL three failed (no artifacts to upload).
+    if: always() && (needs.build-mobile-android.result == 'success' || needs.build-mobile-ios.result == 'success' || needs.build-asg.result == 'success')
+    runs-on: ubuntu-latest
+
+    # Surface the date + short SHA that the dated-artifact filenames use,
+    # so slack-notify can link at e.g. asg-staging-<date>-<sha>.apk
+    # instead of asg-latest.apk.
+    outputs:
+      build_date: ${{ steps.build-info.outputs.date }}
+      short_sha: ${{ steps.build-info.outputs.sha }}
+
+    steps:
+      - name: Checkout to get staging SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Download mobile Android artifact
+        if: needs.build-mobile-android.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-staging
+          path: ./mobile-apk
+
+      - name: Download mobile iOS artifact
+        if: needs.build-mobile-ios.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: mobile-staging-ios
+          path: ./mobile-ipa
+
+      - name: Download ASG artifact
+        if: needs.build-asg.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: asg-staging
+          path: ./asg-apk
+
+      - name: Get build info
+        id: build-info
+        run: |
+          echo "date=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+          echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Upload artifacts to staging-builds release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const date = '${{ steps.build-info.outputs.date }}';
+            const sha = '${{ steps.build-info.outputs.sha }}';
+
+            const releaseBody = `Automated builds from the \`staging\` branch.\n\n**Latest builds:** ${date} (${sha})\n\n## Download Links\n\n- [Mobile App Android (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.apk)\n- [Mobile App iOS (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.ipa)\n- [ASG Client (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/asg-latest.apk)\n\nVersioned builds with \`_Beta_N\` numbering are also published under the per-version release tag (e.g. \`v2.10\`).\n\n---\n\n*Builds older than 7 days in this rolling-latest channel are automatically cleaned up.*`;
+
+            let release;
+            try {
+              release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: 'staging-builds'
+              });
+            } catch (error) {
+              if (error.status === 404) {
+                release = await github.rest.repos.createRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: 'staging-builds',
+                  name: 'Staging Builds',
+                  body: releaseBody,
+                  prerelease: true,
+                  draft: false
+                });
+              } else {
+                throw error;
+              }
+            }
+
+            const releaseId = release.data.id;
+
+            const uploads = [
+              { path: './mobile-apk/app-release.apk', latestName: 'mobile-latest.apk', datedName: `mobile-staging-${date}-${sha}.apk` },
+              { path: './mobile-ipa/app-release.ipa', latestName: 'mobile-latest.ipa', datedName: `mobile-staging-${date}-${sha}.ipa` },
+              { path: './asg-apk/app-release.apk', latestName: 'asg-latest.apk', datedName: `asg-staging-${date}-${sha}.apk` }
+            ];
+
+            for (const upload of uploads) {
+              // Skip artifacts that weren't downloaded (because the build
+              // job for that platform failed). Partial publish is fine —
+              // it's better to ship the platforms that did build than to
+              // skip the whole upload step.
+              if (!fs.existsSync(upload.path)) {
+                console.log(`Skipping ${upload.latestName}: ${upload.path} not present (upstream job didn't produce it)`);
+                continue;
+              }
+              const data = fs.readFileSync(upload.path);
+
+              // Delete existing -latest asset if present.
+              for (const asset of release.data.assets) {
+                if (asset.name === upload.latestName) {
+                  console.log(`Deleting existing ${upload.latestName}`);
+                  await github.rest.repos.deleteReleaseAsset({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    asset_id: asset.id
+                  });
+                  break;
+                }
+              }
+
+              console.log(`Uploading ${upload.latestName} (${data.length} bytes)...`);
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: releaseId,
+                name: upload.latestName,
+                data
+              });
+
+              console.log(`Uploading ${upload.datedName} (${data.length} bytes)...`);
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: releaseId,
+                name: upload.datedName,
+                data
+              });
+            }
+
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId,
+              body: releaseBody
+            });
+
+            console.log('Successfully uploaded all artifacts');
+
+      - name: Cleanup old staging builds
+        if: ${{ github.event.inputs.skip_cleanup != 'true' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+            try {
+              const release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: 'staging-builds'
+              });
+
+              for (const asset of release.data.assets) {
+                // Keep -latest files forever.
+                if (asset.name.endsWith('-latest.apk') || asset.name.endsWith('-latest.ipa')) continue;
+
+                const createdAt = new Date(asset.created_at);
+                if (createdAt < sevenDaysAgo) {
+                  console.log(`Deleting old asset: ${asset.name} (created ${asset.created_at})`);
+                  await github.rest.repos.deleteReleaseAsset({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    asset_id: asset.id
+                  });
+                }
+              }
+            } catch (error) {
+              console.log('Cleanup skipped:', error.message);
+            }
+
+  slack-notify:
+    name: Notify Slack
+    needs: [build-mobile-android, build-mobile-ios, build-asg, upload-releases]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout for commit metadata
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Send Slack notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_NIGHTLY_BUILDS }}
+          ANDROID_RESULT: ${{ needs.build-mobile-android.result }}
+          IOS_RESULT: ${{ needs.build-mobile-ios.result }}
+          ASG_RESULT: ${{ needs.build-asg.result }}
+          UPLOAD_RESULT: ${{ needs.upload-releases.result }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          SHA: ${{ github.sha }}
+          # Per-platform release metadata from the build jobs' release-status.json.
+          # These come from steps.release-status.outputs.* surfaced as job outputs.
+          ANDROID_APK_NAME: ${{ needs.build-mobile-android.outputs.apk_name }}
+          ANDROID_APK_URL: ${{ needs.build-mobile-android.outputs.apk_url }}
+          ANDROID_BETA: ${{ needs.build-mobile-android.outputs.beta_number }}
+          ANDROID_VERSION: ${{ needs.build-mobile-android.outputs.version }}
+          ANDROID_VERSION_CODE: ${{ needs.build-mobile-android.outputs.version_code }}
+          ANDROID_PLAY: ${{ needs.build-mobile-android.outputs.google_play }}
+          ANDROID_PLAY_DETAIL_B64: ${{ needs.build-mobile-android.outputs.google_play_detail }}
+          IOS_IPA_NAME: ${{ needs.build-mobile-ios.outputs.ipa_name }}
+          IOS_IPA_URL: ${{ needs.build-mobile-ios.outputs.ipa_url }}
+          IOS_BETA: ${{ needs.build-mobile-ios.outputs.beta_number }}
+          IOS_VERSION: ${{ needs.build-mobile-ios.outputs.version }}
+          IOS_BUILD_NUMBER: ${{ needs.build-mobile-ios.outputs.build_number }}
+          IOS_TESTFLIGHT: ${{ needs.build-mobile-ios.outputs.testflight }}
+          IOS_TESTFLIGHT_DETAIL_B64: ${{ needs.build-mobile-ios.outputs.testflight_detail }}
+          # From upload-releases job — the exact date+sha used in the
+          # dated artifact filenames. Avoids a UTC-midnight boundary case
+          # where slack-notify would compute a different date than the
+          # upload step.
+          BUILD_DATE: ${{ needs.upload-releases.outputs.build_date }}
+          BUILD_SHORT_SHA: ${{ needs.upload-releases.outputs.short_sha }}
+        # All shell here is pure ASCII. Status symbols use Slack mrkdwn
+        # emoji codes (e.g. :white_check_mark:) instead of literal Unicode
+        # so the shell parser never has to deal with non-ASCII bytes.
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_NIGHTLY_BUILDS secret not set - skipping Slack notification."
+            exit 0
+          fi
+
+          # Commit metadata for the message footer.
+          COMMIT_SHORT="${SHA:0:7}"
+          COMMIT_SUBJECT=$(git log -1 --pretty=%s "$SHA")
+          COMMIT_AUTHOR=$(git log -1 --pretty=%an "$SHA")
+
+          # Map GH Actions job conclusions to Slack emoji shortcode + label.
+          icon() {
+            case "$1" in
+              success) echo ":white_check_mark:" ;;
+              failure) echo ":x:" ;;
+              skipped) echo ":fast_forward:" ;;
+              cancelled) echo ":no_entry:" ;;
+              *) echo ":warning:" ;;
+            esac
+          }
+          label() {
+            case "$1" in
+              success) echo "built and published" ;;
+              failure) echo "failed" ;;
+              skipped) echo "skipped" ;;
+              cancelled) echo "cancelled" ;;
+              *) echo "$1" ;;
+            esac
+          }
+
+          ANDROID_ICON=$(icon "$ANDROID_RESULT")
+          IOS_ICON=$(icon "$IOS_RESULT")
+          ASG_ICON=$(icon "$ASG_RESULT")
+          UPLOAD_ICON=$(icon "$UPLOAD_RESULT")
+
+          # Overall header.
+          if [ "$UPLOAD_RESULT" = "success" ] && \
+             [ "$ANDROID_RESULT" = "success" ] && \
+             [ "$IOS_RESULT" = "success" ] && \
+             [ "$ASG_RESULT" = "success" ]; then
+            HEADER_ICON=":white_check_mark:"
+            HEADER_TEXT="Staging build complete"
+          elif [ "$UPLOAD_RESULT" = "success" ]; then
+            HEADER_ICON=":warning:"
+            HEADER_TEXT="Staging build partial (some platforms failed)"
+          else
+            HEADER_ICON=":x:"
+            HEADER_TEXT="Staging build failed"
+          fi
+
+          RUN_URL="https://github.com/${REPO}/actions/runs/${RUN_ID}"
+          COMMIT_URL="https://github.com/${REPO}/commit/${SHA}"
+
+          # Helper: emoji shortcode for a sub-status (TestFlight, Play).
+          substatus_icon() {
+            case "$1" in
+              success) echo ":white_check_mark:" ;;
+              failure) echo ":x:" ;;
+              skipped) echo ":fast_forward:" ;;
+              *) echo ":grey_question:" ;;
+            esac
+          }
+
+          # Helper: decode base64 detail, return empty if input is empty.
+          decode_b64() {
+            if [ -z "$1" ]; then
+              echo ""
+            else
+              echo "$1" | base64 --decode 2>/dev/null || echo ""
+            fi
+          }
+
+          # Per-platform detail lines built from the build jobs' outputs.
+          # Use the Beta_N versioned URL (not mobile-latest) so the link
+          # makes it clear which build this notification is about.
+          ANDROID_PLAY_DETAIL=$(decode_b64 "$ANDROID_PLAY_DETAIL_B64")
+          IOS_TESTFLIGHT_DETAIL=$(decode_b64 "$IOS_TESTFLIGHT_DETAIL_B64")
+          # ASG doesn't have a per-version release tag like the mobile app,
+          # but the upload-releases job publishes a per-commit dated copy at
+          # `asg-staging-<date>-<sha>.apk` alongside the rolling
+          # `asg-latest.apk`. Use the dated URL so the Slack message points
+          # at this specific commit's build (gets pruned after 7 days per
+          # the staging-builds release cleanup — same window where stale
+          # Slack messages stop being interesting anyway). Reuse date+sha
+          # from upload-releases so the link stays in sync if the run
+          # crosses a UTC midnight boundary.
+          if [ -n "$BUILD_DATE" ] && [ -n "$BUILD_SHORT_SHA" ]; then
+            ASG_NAME="asg-staging-${BUILD_DATE}-${BUILD_SHORT_SHA}.apk"
+            ASG_URL="https://github.com/${REPO}/releases/download/staging-builds/${ASG_NAME}"
+          else
+            # Fallback: upload-releases didn't run (all builds failed), so
+            # link to rolling-latest in case it's still around.
+            ASG_NAME="asg-latest.apk"
+            ASG_URL="https://github.com/${REPO}/releases/download/staging-builds/asg-latest.apk"
+          fi
+
+          android_detail() {
+            local lines=""
+            if [ "$ANDROID_RESULT" = "success" ] && [ -n "$ANDROID_APK_URL" ]; then
+              # Show version + Beta_N + APK link.
+              lines="*v${ANDROID_VERSION} (versionCode ${ANDROID_VERSION_CODE}) Beta ${ANDROID_BETA}* - <${ANDROID_APK_URL}|${ANDROID_APK_NAME}>"
+              # Add Play upload sub-line.
+              local play_icon
+              play_icon=$(substatus_icon "$ANDROID_PLAY")
+              case "$ANDROID_PLAY" in
+                success) lines="${lines}\nGoogle Play internal: ${play_icon} uploaded" ;;
+                failure) lines="${lines}\nGoogle Play internal: ${play_icon} ${ANDROID_PLAY_DETAIL:-failed}" ;;
+                skipped) lines="${lines}\nGoogle Play internal: ${play_icon} skipped (${ANDROID_PLAY_DETAIL:-no creds})" ;;
+                *)       lines="${lines}\nGoogle Play internal: ${play_icon} ${ANDROID_PLAY:-unknown}" ;;
+              esac
+            else
+              lines="<${RUN_URL}|See run logs>"
+            fi
+            printf '%b' "$lines"
+          }
+          ios_detail() {
+            local lines=""
+            if [ "$IOS_RESULT" = "success" ] && [ -n "$IOS_IPA_URL" ]; then
+              lines="*v${IOS_VERSION} (build ${IOS_BUILD_NUMBER}) Beta ${IOS_BETA}* - <${IOS_IPA_URL}|${IOS_IPA_NAME}>"
+              local tf_icon
+              tf_icon=$(substatus_icon "$IOS_TESTFLIGHT")
+              case "$IOS_TESTFLIGHT" in
+                success) lines="${lines}\nTestFlight: ${tf_icon} uploaded" ;;
+                failure) lines="${lines}\nTestFlight: ${tf_icon} ${IOS_TESTFLIGHT_DETAIL:-failed}" ;;
+                skipped) lines="${lines}\nTestFlight: ${tf_icon} skipped (${IOS_TESTFLIGHT_DETAIL:-no creds})" ;;
+                *)       lines="${lines}\nTestFlight: ${tf_icon} ${IOS_TESTFLIGHT:-unknown}" ;;
+              esac
+            else
+              lines="<${RUN_URL}|See run logs>"
+            fi
+            printf '%b' "$lines"
+          }
+          asg_detail() {
+            if [ "$ASG_RESULT" = "success" ]; then
+              echo "<${ASG_URL}|${ASG_NAME}>"
+            else
+              echo "<${RUN_URL}|See run logs>"
+            fi
+          }
+
+          ANDROID_DETAIL=$(android_detail)
+          IOS_DETAIL=$(ios_detail)
+          ASG_DETAIL=$(asg_detail)
+          ANDROID_LABEL=$(label "$ANDROID_RESULT")
+          IOS_LABEL=$(label "$IOS_RESULT")
+          ASG_LABEL=$(label "$ASG_RESULT")
+
+          # Build the JSON payload with jq. NL is a real newline; Slack
+          # mrkdwn renders backslash-n as the literal 2 chars, not a break.
+          NL=$'\n'
+          PAYLOAD=$(jq -n \
+            --arg header "${HEADER_ICON} ${HEADER_TEXT}" \
+            --arg context "Commit <${COMMIT_URL}|\`${COMMIT_SHORT}\`> by ${COMMIT_AUTHOR} - <${RUN_URL}|View run>" \
+            --arg commit_msg "${COMMIT_SUBJECT}" \
+            --arg android "*${ANDROID_ICON} Android (mobile)* - ${ANDROID_LABEL}${NL}${ANDROID_DETAIL}" \
+            --arg ios "*${IOS_ICON} iOS (mobile)* - ${IOS_LABEL}${NL}${IOS_DETAIL}" \
+            --arg asg "*${ASG_ICON} ASG client* - ${ASG_LABEL}${NL}${ASG_DETAIL}" \
+            --arg upload "_Publishing step:_ ${UPLOAD_ICON} ${UPLOAD_RESULT}" \
+            '{
+              blocks: [
+                { type: "header", text: { type: "plain_text", text: $header, emoji: true } },
+                { type: "section", text: { type: "mrkdwn", text: $commit_msg } },
+                { type: "divider" },
+                { type: "section", text: { type: "mrkdwn", text: $android } },
+                { type: "section", text: { type: "mrkdwn", text: $ios } },
+                { type: "section", text: { type: "mrkdwn", text: $asg } },
+                { type: "divider" },
+                { type: "context", elements: [
+                  { type: "mrkdwn", text: $upload },
+                  { type: "mrkdwn", text: $context }
+                ] }
+              ]
+            }')
+
+          echo "Posting to Slack..."
+          curl -fsS -X POST -H "Content-Type: application/json" \
+            --data "$PAYLOAD" "$SLACK_WEBHOOK_URL"
+          echo

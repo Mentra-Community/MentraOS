@@ -55,7 +55,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
-            "captions_tester_incident"
+            "captions_tester_incident",
+            "extraction_progress"
         )
 
         OnCreate {
@@ -240,7 +241,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             JSCExperiment.spawn(count: count)
         }
 
-        Function("jscKillAll") { () -> Void in
+        Function("jscKillAll") { () in
             JSCExperiment.killAll()
         }
 
@@ -252,7 +253,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             JSCExperiment.spawnAndMeasure(count: count, baselineMB: baselineMB)
         }
 
-        Function("jscRunBenchmark") { () -> Void in
+        Function("jscRunBenchmark") { () in
             JSCExperiment.runBenchmark()
         }
 
@@ -290,6 +291,23 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
+        AsyncFunction("setSystemTime") { (timestampMs: Double) in
+            let maxTimestamp = Double(Int64.max).nextDown
+            guard timestampMs.isFinite,
+                  timestampMs >= Double(Int64.min),
+                  timestampMs <= maxTimestamp
+            else {
+                throw BluetoothError(
+                    code: "invalid_timestamp",
+                    message: "setSystemTime timestampMs must be a finite Int64 millisecond timestamp."
+                )
+            }
+            let timestamp = Int64(timestampMs)
+            await MainActor.run {
+                self.bluetoothSdk().setSystemTime(timestampMs: timestamp)
+            }
+        }
+
         // MARK: - Gallery Commands
 
         AsyncFunction("setGalleryModeEnabled") { (enabled: Bool) in
@@ -319,6 +337,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             let authToken = params["authToken"] as? String ?? ""
             let compress = params["compress"] as? String ?? "none"
             let flash = params["flash"] as? Bool ?? true
+            let save = params["save"] as? Bool ?? params["saveToGallery"] as? Bool ?? false
             let sound = params["sound"] as? Bool ?? true
             let exposureTimeNs: Double?
             switch params["exposureTimeNs"] {
@@ -342,6 +361,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                         authToken: authToken,
                         compress: PhotoCompression(rawValue: compress),
                         flash: flash,
+                        save: save,
                         sound: sound,
                         exposureTimeNs: exposureTimeNs
                     )
@@ -360,6 +380,12 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("sendOtaQueryStatus") {
             await MainActor.run {
                 self.bluetoothSdk().sendOtaQueryStatus()
+            }
+        }
+
+        AsyncFunction("retryOtaVersionCheck") {
+            await MainActor.run {
+                self.bluetoothSdk().retryOtaVersionCheck()
             }
         }
 
@@ -510,6 +536,39 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("extractTarBz2") { (sourcePath: String, destinationPath: String) -> Bool in
             return STTTools.extractTarBz2(sourcePath: sourcePath, destinationPath: destinationPath)
+        }
+
+        // MARK: - TTS Model Management
+
+        AsyncFunction("setTtsModelDetails") { (path: String, languageCode: String) in
+            TTSTools.setTtsModelDetails(path, languageCode)
+        }
+
+        AsyncFunction("getTtsModelPath") { () -> String in
+            return TTSTools.getTtsModelPath()
+        }
+
+        AsyncFunction("getTtsModelLanguage") { () -> String in
+            return TTSTools.getTtsModelLanguage()
+        }
+
+        AsyncFunction("checkTtsModelAvailable") { () -> Bool in
+            return TTSTools.checkTTSModelAvailable()
+        }
+
+        AsyncFunction("validateTtsModel") { (path: String) -> Bool in
+            return TTSTools.validateTTSModel(path)
+        }
+
+        AsyncFunction("generateTtsAudio") {
+            (text: String, modelPath: String, outputPath: String, speakerId: Int, speed: Double) -> Bool in
+            return TTSTools.generateTtsAudio(
+                text: text,
+                modelPath: modelPath,
+                outputPath: outputPath,
+                speakerId: speakerId,
+                speed: speed
+            )
         }
     }
 

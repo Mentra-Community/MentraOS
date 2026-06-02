@@ -127,6 +127,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- MTK USB UVC (webcam) streaming state -->
+        <receiver
+            android:name="com.mentra.asg_client.receiver.UvcStreamingBroadcastReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.uvc.action.UVC_STREAMING_CHANGED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Debug receiver for testing BES OTA via adb -->
         <receiver
             android:name="com.mentra.asg_client.receiver.DebugBesOtaReceiver"
@@ -134,6 +144,17 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.mentra.DEBUG_BES_OTA" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Debug receiver for polling BES trace logs into MentraBleTrace via adb -->
+        <receiver
+            android:name="com.mentra.asg_client.receiver.DebugBesTraceReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="com.mentra.DEBUG_BES_TRACE" />
             </intent-filter>
         </receiver>
 

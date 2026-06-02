@@ -21,7 +21,6 @@ import android.util.Size;
 import android.view.Surface;
 import androidx.annotation.NonNull;
 import androidx.lifecycle.LifecycleService;
-import com.mentra.asg_client.SysControl;
 import com.mentra.asg_client.camera.lifecycle.CameraCoordinator;
 import com.mentra.asg_client.camera.lifecycle.CameraOpener;
 import com.mentra.asg_client.camera.lifecycle.CameraRecoveryHelper;
@@ -39,6 +38,8 @@ import com.mentra.asg_client.camera.policy.JpegOrientationResolver;
 import com.mentra.asg_client.camera.request.PreviewRequestConfigurator;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.sensors.ImuRecorder;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.settings.VideoSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
 import java.io.File;
@@ -88,7 +89,7 @@ public class CameraNeoService extends LifecycleService {
     private PhotoSession photoSession;
 
     // IMU recorder for bundling sensor data with captured media
-    private com.mentra.asg_client.sensors.ImuRecorder mImuRecorder;
+    private ImuRecorder mImuRecorder;
 
     // Camera characteristics for dynamic auto-exposure and autofocus
     private int[] availableAeModes;
@@ -240,16 +241,14 @@ public class CameraNeoService extends LifecycleService {
                 }
 
                 @Override
-                public com.mentra.asg_client.sensors.ImuRecorder imuRecorderOrNull() {
+                public ImuRecorder imuRecorderOrNull() {
                     return mImuRecorder;
                 }
 
                 @Override
-                public com.mentra.asg_client.sensors.ImuRecorder ensureImuRecorder() {
+                public ImuRecorder ensureImuRecorder() {
                     if (mImuRecorder == null) {
-                        mImuRecorder =
-                                new com.mentra.asg_client.sensors.ImuRecorder(
-                                        CameraNeoService.this);
+                        mImuRecorder = new ImuRecorder(CameraNeoService.this);
                     }
                     return mImuRecorder;
                 }
@@ -359,17 +358,15 @@ public class CameraNeoService extends LifecycleService {
     private final VideoRecordingSession.Hooks videoHooks =
             new VideoRecordingSession.Hooks() {
                 @Override
-                public com.mentra.asg_client.sensors.ImuRecorder ensureImuRecorder() {
+                public ImuRecorder ensureImuRecorder() {
                     if (mImuRecorder == null) {
-                        mImuRecorder =
-                                new com.mentra.asg_client.sensors.ImuRecorder(
-                                        CameraNeoService.this);
+                        mImuRecorder = new ImuRecorder(CameraNeoService.this);
                     }
                     return mImuRecorder;
                 }
 
                 @Override
-                public com.mentra.asg_client.sensors.ImuRecorder currentImuRecorder() {
+                public ImuRecorder currentImuRecorder() {
                     return mImuRecorder;
                 }
 
@@ -597,14 +594,14 @@ public class CameraNeoService extends LifecycleService {
                         if (settings != null) {
                             Log.d(TAG, "Using custom video settings: " + settings);
                         }
-                        SysControl.setEisEnable(this, true);
+                        SystemControllerFactory.get(this).setEisEnabled(true);
                         setupCameraAndStartRecording(videoId, videoPath, settings);
                         break;
                     }
                 case ACTION_STOP_VIDEO_RECORDING:
                     String videoIdToStop = intent.getStringExtra(EXTRA_VIDEO_ID);
                     videoSession.stopRecording(videoIdToStop);
-                    SysControl.setEisEnable(this, false);
+                    SystemControllerFactory.get(this).setEisEnabled(false);
                     break;
             }
         }

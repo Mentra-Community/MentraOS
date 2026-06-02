@@ -9,6 +9,7 @@ package com.mentra.bluetoothsdk
 
 import android.util.Base64
 import android.util.Log
+import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import java.util.HashMap
 import java.util.UUID
 import kotlin.jvm.JvmStatic
@@ -104,6 +105,16 @@ public class Bridge private constructor() {
             val data = HashMap<String, Any>()
             data["message"] = message
             sendTypedMessage("log", data as Map<String, Any>)
+        }
+
+        /** Report tar.bz2 extraction progress to JavaScript. */
+        @JvmStatic
+        fun sendExtractionProgress(percentage: Int, bytesRead: Long, totalBytes: Long) {
+            val data = HashMap<String, Any>()
+            data["percentage"] = percentage
+            data["bytesRead"] = bytesRead
+            data["totalBytes"] = totalBytes
+            sendTypedMessage("extraction_progress", data as Map<String, Any>)
         }
 
         /** Send head position event */
@@ -534,6 +545,7 @@ public class Bridge private constructor() {
         }
 
         @JvmStatic
+        @JvmOverloads
         fun sendOtaStatus(
                 sessionId: String,
                 totalSteps: Int,
@@ -543,7 +555,8 @@ public class Bridge private constructor() {
                 stepPercent: Int,
                 overallPercent: Int,
                 status: String,
-                errorMessage: String?
+                errorMessage: String? = null,
+                glassesTimeMs: Long? = null,
         ) {
             val eventBody = HashMap<String, Any>()
             eventBody["session_id"] = sessionId
@@ -555,6 +568,9 @@ public class Bridge private constructor() {
             eventBody["overall_percent"] = overallPercent
             eventBody["status"] = status
             errorMessage?.let { eventBody["error_message"] = it }
+            if (glassesTimeMs != null && glassesTimeMs > 0) {
+                eventBody["glasses_time_ms"] = glassesTimeMs
+            }
 
             Log.d(TAG, "Bridge: sendOtaStatus: $eventBody")
 
@@ -645,6 +661,19 @@ public class Bridge private constructor() {
                     return
                 }
 
+                if (shouldTraceTypedMessage(type)) {
+                    try {
+                        BleTraceLogger.logMap(
+                            "phone_to_app",
+                            "sdk_event_dispatch",
+                            type,
+                            mutableBody as Map<String, Any>,
+                        )
+                    } catch (e: Exception) {
+                        Log.d(TAG, "BLE trace logging failed for typed message '$type'", e)
+                    }
+                }
+
                 // Send directly using type as event name - no JSON serialization
                 sinks.forEach { sink ->
                     try {
@@ -662,6 +691,9 @@ public class Bridge private constructor() {
                 Log.e(TAG, "Error sending typed message of type '$type'", e)
             }
         }
+
+        private fun shouldTraceTypedMessage(type: String): Boolean =
+                type != "log" && type != "mic_pcm" && type != "mic_lc3"
     }
 
     init {

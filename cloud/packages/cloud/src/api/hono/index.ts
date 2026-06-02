@@ -12,11 +12,12 @@ export {
   feedbackApi,
   incidentLogsApi,
   locationApi,
-  miniappSdkPhotoApi,
   minVersionApi,
   notificationsApi,
   photoApi,
   userSettingsApi,
+  v2StreamsApi,
+  v2PhotoApi,
 } from "./client";
 
 // SDK APIs (third-party apps)

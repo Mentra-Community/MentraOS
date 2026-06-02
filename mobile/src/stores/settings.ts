@@ -79,6 +79,24 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  // Mentra Nex feature flags (off by default; toggled from Nex Developer Settings).
+  // When on, the Nex display skips ASCII-only text sanitization so CJK/Chinese
+  // captions render on glasses. Synced to core via CORE_SETTINGS_KEYS.
+  nex_chinese_captions: {
+    key: "nex_chinese_captions",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  // When on, LC3 audio received from Nex glasses is played back (Android only).
+  nex_audio_playback: {
+    key: "nex_audio_playback",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   china_deployment: {
     key: "china_deployment",
     defaultValue: () => (process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? true : false),
@@ -307,6 +325,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  twelve_hour_time: {
+    key: "twelve_hour_time",
+    defaultValue: () => true,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   enforce_local_transcription: {
     key: "enforce_local_transcription",
     defaultValue: () => false,
@@ -389,6 +414,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  calendar_events: {
+    key: "calendar_events",
+    defaultValue: () => [],
+    writable: true,
+    saveOnServer: false,
+    persist: false,
+  },
   // button settings
   // Legacy persisted/cloud key; hardware behavior is now controlled by gallery_mode plus capture settings.
   button_mode: {key: "button_mode", defaultValue: () => "photo", writable: true, saveOnServer: true, persist: true},
@@ -462,13 +494,6 @@ export const SETTINGS: Record<string, Setting> = {
   offline_captions_running: {
     key: "offline_captions_running",
     defaultValue: () => false,
-    writable: true,
-    saveOnServer: true,
-    persist: true,
-  },
-  local_stt_fallback_enabled: {
-    key: "local_stt_fallback_enabled",
-    defaultValue: () => true,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -596,7 +621,10 @@ const CORE_SETTINGS_KEYS: string[] = [
   SETTINGS.dashboard_height.key,
   SETTINGS.dashboard_depth.key,
   SETTINGS.menu_apps.key,
+  SETTINGS.calendar_events.key,
   SETTINGS.use_native_dashboard.key,
+  SETTINGS.twelve_hour_time.key,
+  SETTINGS.metric_system.key,
   // button:
   SETTINGS.button_photo_size.key,
   // Legacy MentraLive native code reads the object form when syncing video settings.
@@ -616,7 +644,14 @@ const CORE_SETTINGS_KEYS: string[] = [
   // offline applets:
   SETTINGS.offline_mode.key,
   SETTINGS.offline_captions_running.key,
+  // Runtime flag flipped by LocalSttFallbackCoordinator. Native reads it from
+  // GlassesStore to gate PCM → Sherpa feeding in handlePcm and to keep the
+  // mic on while local STT is the active engine.
+  SETTINGS.local_stt_fallback_active.key,
   SETTINGS.gallery_mode.key,
+  // Mentra Nex feature flags:
+  SETTINGS.nex_chinese_captions.key,
+  SETTINGS.nex_audio_playback.key,
 ]
 
 // const PER_GLASSES_SETTINGS_KEYS: string[] = [SETTINGS.preferred_mic.key]
@@ -800,6 +835,40 @@ export const useSettingsStore = create<SettingsState>()(
           isInitialized: true,
           settings: {...state.settings, ...loadedSettings},
         }))
+
+        // One-time migration: force android_blur=false for existing users.
+        // The setting's default is already false; this migration covers users
+        // who explicitly opted into Android blur effects before we discovered
+        // they're a major source of frame drops on cheap Android phones.
+        // The dimezisBlurViewSdk31Plus blur each costs ~5-10ms/frame; with
+        // multiple blurs on home (top fade + AppSwitcherButton x2) a low-end
+        // device misses the 16ms budget consistently. Users can turn it back
+        // on under Settings → Appearance once we've optimized further.
+        //
+        // The setSetting call also pushes to the server (saveOnServer: true)
+        // so the server-stored value flips too — otherwise the next sync
+        // from the user's server-stored prefs would re-enable blur.
+        // Best-effort: a server failure (offline, 5xx) shouldn't block boot;
+        // we still mark the migration done locally so we don't loop.
+        const MIGRATION_KEY = "migration:android_blur_default_false_v1"
+        const migrationDone = storage.load<boolean>(MIGRATION_KEY)
+        if (migrationDone.is_error() || !migrationDone.value) {
+          const current = get().getSetting(SETTINGS.android_blur.key)
+          if (current === true) {
+            const result = await get().setSetting(SETTINGS.android_blur.key, false, true)
+            if (result.is_error()) {
+              // Server push failed (offline / 5xx). Local storage was still
+              // updated, so the user immediately gets the new behavior. The
+              // server-side stale `true` will be overwritten the next time
+              // the user opens Appearance settings and the auto-sync runs.
+              console.log("SETTINGS: android_blur migration server-push failed:", result.error)
+            }
+          }
+          // Mark done unconditionally — even on server-push failure we don't
+          // want to retry the migration on every boot. The local value is
+          // already correct.
+          storage.save(MIGRATION_KEY, true)
+        }
       })
     },
     getRestUrl: () => {
@@ -823,7 +892,6 @@ export const useSettingsStore = create<SettingsState>()(
           coreSettings[setting.key] = state.getSetting(setting.key)
         }
       })
-      coreSettings.voice_activity_detection_enabled = !state.getSetting(SETTINGS.bypass_vad_for_debugging.key)
       return coreSettings
     },
     resetAllSettingsLocally: () => {

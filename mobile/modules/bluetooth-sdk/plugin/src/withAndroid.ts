@@ -1,7 +1,12 @@
 import {execSync} from "child_process"
 import path from "path"
 
-import {type ConfigPlugin, withSettingsGradle, withGradleProperties} from "expo/config-plugins"
+import {
+  type ConfigPlugin,
+  withGradleProperties,
+  withProjectBuildGradle,
+  withSettingsGradle,
+} from "expo/config-plugins"
 
 function getBluetoothSdkRoot(): string {
   return path.dirname(require.resolve("../../package.json"))
@@ -12,18 +17,55 @@ function toGroovyString(value: string): string {
 }
 
 /**
- * Modify settings.gradle to include lc3Lib module
+ * Modify settings.gradle to include lc3Lib and silero modules
  */
 function withSettingsGradleModifications(config: any) {
   return withSettingsGradle(config, (config) => {
     let settingsGradle = config.modResults.contents
+    const bluetoothSdkRoot = getBluetoothSdkRoot()
 
-    // Add lc3Lib module if not present
+    if (!settingsGradle.includes("def mentraBluetoothSdkRoot =")) {
+      settingsGradle = `
+def mentraBluetoothSdkRoot = System.getenv("MENTRA_BLUETOOTH_SDK_PACKAGE_PATH")
+if (!mentraBluetoothSdkRoot) {
+  mentraBluetoothSdkRoot = ${toGroovyString(bluetoothSdkRoot)}
+}
+${settingsGradle}`
+    }
+
+    if (!settingsGradle.includes("project(':mentra-bluetooth-sdk').projectDir")) {
+      const bluetoothSdkProjectBlock = `
+  if (findProject(':mentra-bluetooth-sdk') != null) {
+    project(':mentra-bluetooth-sdk').projectDir = new File(mentraBluetoothSdkRoot, 'android')
+  }
+`
+      const lc3Include = "  include ':lc3Lib'"
+      settingsGradle = settingsGradle.includes(lc3Include)
+        ? settingsGradle.replace(lc3Include, `${bluetoothSdkProjectBlock}\n${lc3Include}`)
+        : `${settingsGradle}${bluetoothSdkProjectBlock}`
+    }
+
     if (!settingsGradle.includes("include ':lc3Lib'")) {
-      const bluetoothSdkRoot = getBluetoothSdkRoot()
       settingsGradle += `
   include ':lc3Lib'
-  project(':lc3Lib').projectDir = new File(${toGroovyString(bluetoothSdkRoot)}, 'android/lc3Lib')
+  `
+    }
+
+    if (!settingsGradle.includes("project(':lc3Lib').projectDir")) {
+      settingsGradle += `
+  project(':lc3Lib').projectDir = new File(mentraBluetoothSdkRoot, 'android/lc3Lib')
+  `
+    }
+
+    if (!settingsGradle.includes("include ':silero'")) {
+      settingsGradle += `
+  include ':silero'
+  `
+    }
+
+    if (!settingsGradle.includes("project(':silero').projectDir")) {
+      settingsGradle += `
+  project(':silero').projectDir = new File(mentraBluetoothSdkRoot, 'android/silero')
   `
     }
 
@@ -74,8 +116,52 @@ function withGradlePropertiesModifications(config: any) {
   })
 }
 
+/**
+ * Inject a local Maven repository into the root project's allprojects block so
+ * that `:app` (and any other module that transitively pulls our deps) can
+ * resolve `com.k2fsa.sherpa.onnx:sherpa-onnx`. The AAR is downloaded at
+ * configure-time by bluetooth-sdk's own build.gradle into
+ * `android/libs/maven/`; we just need that directory exposed as a maven repo
+ * to consumers as well. AGP rejects raw local-.aar deps from library modules,
+ * so the Maven layout is the supported workaround.
+ */
+function withSherpaOnnxLocalMavenRepo(config: any) {
+  return withProjectBuildGradle(config, (config) => {
+    if (config.modResults.language !== "groovy") {
+      return config
+    }
+
+    let contents = config.modResults.contents
+    const fallbackRoot = toGroovyString(getBluetoothSdkRoot())
+    const repoDirExpression = `new File(System.getenv("MENTRA_BLUETOOTH_SDK_PACKAGE_PATH") ?: ${fallbackRoot}, "android/libs/maven")`
+    const marker = "// bluetooth-sdk: sherpa-onnx local maven repo"
+
+    if (contents.includes(marker)) {
+      return config
+    }
+
+    const repoBlock = `    maven {\n      ${marker}\n      url = uri(${repoDirExpression})\n    }`
+
+    const allprojectsMatch = contents.match(/allprojects\s*\{[\s\S]*?repositories\s*\{/)
+    if (allprojectsMatch) {
+      const insertIdx = allprojectsMatch.index! + allprojectsMatch[0].length
+      contents = contents.slice(0, insertIdx) + "\n" + repoBlock + contents.slice(insertIdx)
+    } else {
+      // Fallback: append an allprojects block. Older Expo templates that don't
+      // emit allprojects {} put repositories in settings.gradle instead — but
+      // this codebase's prebuild has historically emitted allprojects, so this
+      // branch is just a safety net.
+      contents += `\nallprojects {\n  repositories {\n${repoBlock}\n  }\n}\n`
+    }
+
+    config.modResults.contents = contents
+    return config
+  })
+}
+
 export const withAndroidConfiguration: ConfigPlugin<{node?: boolean}> = (config, props) => {
   config = withSettingsGradleModifications(config)
+  config = withSherpaOnnxLocalMavenRepo(config)
 
   if (props?.node) {
     config = withGradlePropertiesModifications(config)

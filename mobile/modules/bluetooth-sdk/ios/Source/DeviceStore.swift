@@ -87,6 +87,8 @@ class DeviceStore {
         store.set("bluetooth", "contextual_dashboard", true)
         store.set("bluetooth", "gallery_mode", true)
         store.set("bluetooth", "voice_activity_detection_enabled", true)
+        // Mentra Nex feature flag (off by default; toggled from Nex Developer Settings):
+        store.set("bluetooth", "nex_chinese_captions", false)
         store.set("bluetooth", "screen_disabled", false)
         store.set("bluetooth", "button_photo_size", "medium")
         store.set("bluetooth", "button_camera_led", true)
@@ -134,16 +136,16 @@ class DeviceStore {
     /// Apply changes with side effects
     func apply(_ category: String, _ key: String, _ value: Any) {
         let oldValue = store.get(category, key)
+        let storeWouldSkipSet = store.wouldSkipSet(category, key, value)
         store.set(category, key, value)
+        if storeWouldSkipSet {
+            return
+        }
 
         // Trigger hardware updates based on setting changes
         switch (category, key) {
         case ("glasses", "fullyBooted"):
             Bridge.log("STORE: Glasses fullyBooted changed to \(value)")
-            // skip if the value is the same as the old value:
-            if let ready = value as? Bool, ready == oldValue as? Bool {
-                return
-            }
             if let ready = value as? Bool {
                 if ready {
                     DeviceManager.shared.handleDeviceReady()
@@ -219,6 +221,14 @@ class DeviceStore {
             if let items = value as? [[String: Any]] {
                 DeviceManager.shared.sgc?.setDashboardMenu(items)
             }
+
+        case ("bluetooth", "calendar_events"), ("core", "calendar_events"):
+            if let items = value as? [[String: Any]] {
+                DeviceManager.shared.sgc?.sendCalendarEvents(items)
+            }
+
+        case ("bluetooth", "metric_system"), ("bluetooth", "twelve_hour_time"):
+            DeviceManager.shared.sgc?.sendDashboardDisplaySettings()
 
         case ("bluetooth", "gallery_mode"):
             DeviceManager.shared.sgc?.sendGalleryMode()

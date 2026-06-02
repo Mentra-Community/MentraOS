@@ -10,7 +10,7 @@ WORKDIR /app
 COPY . .
 
 # Install dependencies and ensure correct bun-types version
-RUN bun install && \
+RUN bun install --frozen-lockfile && \
     rm -rf node_modules/@types/bun && \
     bun add -d bun-types@1.0.17
 

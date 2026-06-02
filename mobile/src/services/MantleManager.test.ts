@@ -204,7 +204,6 @@ describe("MantleManager", () => {
         core_token: "server-token",
         auth_email: "from-server@example.com",
         power_saving_mode: false,
-        voice_activity_detection_enabled: true,
       }),
     )
     expect(coreModuleMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
@@ -212,13 +211,19 @@ describe("MantleManager", () => {
         notifications_enabled: expect.anything(),
       }),
     )
-    for (const nonSdkKey of ["always_on_status_bar", "metric_system"]) {
+    for (const nonSdkKey of ["always_on_status_bar"]) {
       expect(coreModuleMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
         expect.objectContaining({
           [nonSdkKey]: expect.anything(),
         }),
       )
     }
+    expect(coreModuleMock.updateBluetoothSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metric_system: false,
+        twelve_hour_time: true,
+      }),
+    )
     expect(crustModuleMock.setNotificationConfig).toHaveBeenCalledWith(true, [])
 
     emitCoreModuleEvent("bluetooth_status", {searching: true, otherBtConnected: true})
@@ -261,18 +266,17 @@ describe("MantleManager", () => {
       timestamp: 999,
     })
 
+    // Local transcripts no longer roundtrip through the cloud. With no
+    // local-miniapp subscription and the offline-captions flag off, the
+    // transcript is dropped — `sendLocalTranscription` must not fire.
+    ;(socketComms.sendLocalTranscription as jest.Mock).mockClear()
     emitCoreModuleEvent("local_transcription", {
       text: "hello world",
       isFinal: true,
       transcribeLanguage: "en-US",
     })
     await waitFor(() => {
-      expect(socketComms.sendLocalTranscription).toHaveBeenCalledWith(
-        expect.objectContaining({
-          text: "hello world",
-          isFinal: true,
-        }),
-      )
+      expect(socketComms.sendLocalTranscription).not.toHaveBeenCalled()
     })
 
     emitCoreModuleEvent("head_up", {up: true})
@@ -326,7 +330,6 @@ describe("MantleManager", () => {
     const nonSdkSettings = {
       always_on_status_bar: true,
       bypass_audio_encoding_for_debugging: true,
-      metric_system: true,
       enforce_local_transcription: true,
       offline_translation_running: true,
       offline_translation_source: "fr",
@@ -347,6 +350,8 @@ describe("MantleManager", () => {
     expect(coreModuleMock.updateBluetoothSettings).not.toHaveBeenCalled()
 
     expect(useSettingsStore.getState().getCoreSettings()).toHaveProperty("power_saving_mode")
+    expect(useSettingsStore.getState().getCoreSettings()).toHaveProperty("metric_system")
+    expect(useSettingsStore.getState().getCoreSettings()).toHaveProperty("twelve_hour_time")
     await useSettingsStore.getState().setSetting(SETTINGS.power_saving_mode.key, true, false)
     expect(coreModuleMock.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
