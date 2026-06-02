@@ -112,9 +112,16 @@ function snapToPolyline(points: LatLng[], target: LatLng): LatLng {
   return bestDist <= MAX_SNAP_M ? best : target
 }
 
-function bendAngleAt(points: LatLng[], junction: LatLng): number | null {
+// Signed polyline bend at a junction: positive = right turn, negative =
+// left turn, value is the [-180, 180] angle between incoming and outgoing
+// bearings. Used to pick "Turn left"/"Turn right" from geometry instead
+// of from the Routes API's first-step maneuver, which lies at junctions
+// the API decomposes into micro-step jogs (e.g. a sidewalk-aligned
+// "TURN_LEFT" jog right before the real right turn off Hayes onto
+// Gough). Geometry doesn't lie. Callers needing the absolute bend (for
+// the MIN_TURN_ANGLE_DEG filter) can `Math.abs(...)` the result.
+function signedBendAt(points: LatLng[], junction: LatLng): number | null {
   if (points.length < 3) return null
-  // Nearest point to the junction.
   let mid = 0
   let bestDist = Infinity
   for (let i = 0; i < points.length; i++) {
@@ -124,16 +131,14 @@ function bendAngleAt(points: LatLng[], junction: LatLng): number | null {
       mid = i
     }
   }
-  // Walk back until ~PROBE_METERS before the junction.
   let before = mid
   while (before > 0 && haversineMeters(points[before], points[mid]) < PROBE_METERS) before--
-  // Walk forward until ~PROBE_METERS after.
   let after = mid
   while (after < points.length - 1 && haversineMeters(points[after], points[mid]) < PROBE_METERS) after++
   if (before === mid || after === mid) return null
   const incoming = bearingDeg(points[before], points[mid])
   const outgoing = bearingDeg(points[mid], points[after])
-  return Math.abs(signedAngleDiff(outgoing, incoming))
+  return signedAngleDiff(outgoing, incoming)
 }
 
 // Minimum bend (degrees) for a junction to count as a real turn worth a
@@ -401,20 +406,20 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           if (sameRoad(here.name, next.name)) continue
           const junction = steps[here.stepIdx]
           if (!Number.isFinite(junction.endLat) || !Number.isFinite(junction.endLng)) continue
-          // Geometry sanity check: if the polyline doesn't actually bend
-          // at this junction the API's "turn" is a phantom (slip lane
-          // / interchange artefact).
-          const bend = bendAngleAt(polyline, {lat: junction.endLat, lng: junction.endLng})
-          if (bend != null && bend < MIN_TURN_ANGLE_DEG) continue
+          const signedBend = signedBendAt(polyline, {lat: junction.endLat, lng: junction.endLng})
+          if (signedBend != null && Math.abs(signedBend) < MIN_TURN_ANGLE_DEG) continue
           // Snap to the raw polyline so dots land on actual route
           // vertices; falls back to the raw endpoint when no vertex is
           // within MAX_SNAP_M.
           const snapped = snapToPolyline(polyline, {lat: junction.endLat, lng: junction.endLng})
+          // Direction precedence: geometry first, maneuver fallback.
+          // See the live builder for context.
+          const geomDir = signedBend == null ? null : signedBend > 0 ? "Turn right" : "Turn left"
           dots.push({
             lat: snapped.lat,
             lng: snapped.lng,
             label: joinRoads(here.name, next.name),
-            direction: turnDirection(steps[next.stepIdx].maneuver),
+            direction: (geomDir ?? turnDirection(steps[next.stepIdx].maneuver)) as PreviewTurn["direction"],
           })
         }
         // Coalesce dots that snapped to the same junction (roadless
@@ -508,14 +513,21 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
       // of step[i] by definition).
       const junction = steps[next.stepIdx]
       if (!Number.isFinite(junction.lat) || !Number.isFinite(junction.lng)) continue
-      const bend = bendAngleAt(polyline, {lat: junction.lat, lng: junction.lng})
-      if (bend != null && bend < MIN_TURN_ANGLE_DEG) continue
+      const signedBend = signedBendAt(polyline, {lat: junction.lat, lng: junction.lng})
+      if (signedBend != null && Math.abs(signedBend) < MIN_TURN_ANGLE_DEG) continue
       const snapped = snapToPolyline(polyline, {lat: junction.lat, lng: junction.lng})
+      // Direction precedence: trust polyline geometry first (Routes API
+      // sometimes labels the first micro-step on the new road with the
+      // OPPOSITE direction of the human-perceived turn — see the Hayes →
+      // Gough case where step[1].maneuver was TURN_LEFT for a right
+      // turn). Fall back to the step maneuver only when geometry isn't
+      // measurable (very short polylines).
+      const geomDir = signedBend == null ? null : signedBend > 0 ? "Turn right" : "Turn left"
       dots.push({
         lat: snapped.lat,
         lng: snapped.lng,
         label: joinRoads(here.name, next.name),
-        direction: turnDirection(steps[next.stepIdx].maneuver),
+        direction: (geomDir ?? turnDirection(steps[next.stepIdx].maneuver)) as PreviewTurn["direction"],
       })
     }
     const MERGE_RADIUS_M = 6

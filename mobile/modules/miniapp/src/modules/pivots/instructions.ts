@@ -129,8 +129,19 @@ export function turnDirection(maneuver?: string | null): "left" | "right" | null
  */
 const PROBE_METERS = 22
 export function bendAngleAt(points: LatLng[], junction: LatLng): number | null {
+  const signed = signedBendAt(points, junction)
+  return signed == null ? null : Math.abs(signed)
+}
+
+/**
+ * Signed polyline bend at a junction. Positive = right turn, negative
+ * = left turn, in [-180, 180]. Used to pick a pivot's left/right
+ * direction from geometry when the Routes API's first-step maneuver
+ * is misleading (e.g. a curb-alignment micro-jog labeled TURN_LEFT
+ * right before the real right turn off Hayes onto Gough).
+ */
+export function signedBendAt(points: LatLng[], junction: LatLng): number | null {
   if (points.length < 3) return null
-  // Nearest polyline vertex to the junction.
   let mid = 0
   let bestDist = Infinity
   for (let i = 0; i < points.length; i++) {
@@ -140,16 +151,14 @@ export function bendAngleAt(points: LatLng[], junction: LatLng): number | null {
       mid = i
     }
   }
-  // Walk back until ~PROBE_METERS before the junction.
   let before = mid
   while (before > 0 && haversineMeters(points[before], points[mid]) < PROBE_METERS) before--
-  // Walk forward until ~PROBE_METERS after.
   let after = mid
   while (after < points.length - 1 && haversineMeters(points[after], points[mid]) < PROBE_METERS) after++
   if (before === mid || after === mid) return null
   const incoming = bearingDeg(points[before], points[mid])
   const outgoing = bearingDeg(points[mid], points[after])
-  return Math.abs(signedAngleDiff(outgoing, incoming))
+  return signedAngleDiff(outgoing, incoming)
 }
 
 /**
@@ -257,18 +266,28 @@ export function extractPivotsFromComputedSteps(
     if (!Number.isFinite(s.endLat) || !Number.isFinite(s.endLng)) continue
 
     const junction = {lat: s.endLat, lng: s.endLng}
-    const bend = bendAngleAt(polyline, junction)
+    const signedBend = signedBendAt(polyline, junction)
     // No polyline to measure → keep (don't drop a labeled turn just
     // because geometry was unavailable).
-    if (bend != null && bend < MIN_TURN_ANGLE_DEG) continue
+    if (signedBend != null && Math.abs(signedBend) < MIN_TURN_ANGLE_DEG) continue
+
+    // Direction precedence: trust polyline geometry first. The Routes
+    // API decomposes some junctions into micro-step jogs whose first
+    // step's maneuver lies (e.g. a "TURN_LEFT" curb-alignment jog
+    // right before the actual right turn off Hayes onto Gough).
+    // Geometry doesn't lie. Falls back to the maneuver string when
+    // the polyline is too short to measure a bend.
+    const geomDir: "left" | "right" | null =
+      signedBend == null ? null : signedBend > 0 ? "right" : "left"
+    const direction = geomDir ?? turnDirection(next.maneuver)
 
     out.push({
       lat: s.endLat,
       lng: s.endLng,
       fromRoad,
       toRoad,
-      direction: turnDirection(next.maneuver),
-      maneuver: next.maneuver ?? (turnDirection(next.maneuver) === "left" ? "TURN_LEFT" : "TURN_RIGHT"),
+      direction,
+      maneuver: next.maneuver ?? (direction === "left" ? "TURN_LEFT" : "TURN_RIGHT"),
     })
   }
   return out

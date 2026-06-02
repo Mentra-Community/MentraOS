@@ -154,6 +154,14 @@ export class NavigationController {
         this.appendLog(this.formatUpdate(u))
         switch (u.kind) {
           case "maneuver":
+            // The Nav SDK keeps emitting maneuver events for a beat
+            // after `arrived` fires (final-leg distance ticking to 0,
+            // etc). Ignoring them here keeps the "You have arrived"
+            // card on screen instead of letting it flicker back to
+            // the live maneuver display. A fresh start() resets
+            // status away from "arrived" via the synthetic onRoute
+            // emit path, so this gate doesn't trap a real new trip.
+            if (this.trip.status === "arrived") break
             this.trip = {
               ...this.trip,
               status: "navigating",
