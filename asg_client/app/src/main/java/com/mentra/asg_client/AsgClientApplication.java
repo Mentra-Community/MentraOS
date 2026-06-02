@@ -7,6 +7,7 @@ import com.mentra.asg_client.di.ReportingModule;
 import com.mentra.asg_client.reporting.CrashHandler;
 import com.mentra.asg_client.reporting.core.ReportManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+import com.mentra.asg_client.service.system.interfaces.ISystemController;
 
 /** Application class for ASG Client Handles app-wide initialization following SOLID principles */
 public class AsgClientApplication extends Application {
@@ -25,10 +26,11 @@ public class AsgClientApplication extends Application {
         AppModule.initialize(this);
         ReportingModule.initialize(this);
 
-        SystemControllerFactory.get(this).setI2SAudioPlayReceiverPackage(getPackageName());
+        ISystemController sysCtl = SystemControllerFactory.get(this);
+        sysCtl.setI2SAudioPlayReceiverPackage(getPackageName());
 
         // Get and log system OTA version (MTK firmware version)
-        String systemOtaVersion = SystemControllerFactory.get(this).getSystemOtaVersion();
+        String systemOtaVersion = sysCtl.getSystemOtaVersion();
         Log.i(TAG, "System OTA Version (MTK): " + systemOtaVersion);
 
         Log.i(TAG, "ASG Client Application initialized");

@@ -34,8 +34,17 @@ public interface ISystemController {
 
     void setI2SAudioPlayReceiverPackage(String packageName);
 
+    /**
+     * Uninstall a package via the SystemUI broadcast mechanism (primary path). Use this when the
+     * broadcast receiver is available and the app process is alive.
+     */
     void uninstallPackage(String packageName);
 
+    /**
+     * Uninstall a package by injecting an {@code adb pm uninstall} command via {@link
+     * #injectAdbCommand}. Use as a fallback when the SystemUI broadcast path cannot complete the
+     * removal (e.g., system apps or packages that survive a broadcast-only uninstall).
+     */
     void uninstallPackageViaAdb(String packageName);
 
     void injectAdbCommand(String shellCommand);

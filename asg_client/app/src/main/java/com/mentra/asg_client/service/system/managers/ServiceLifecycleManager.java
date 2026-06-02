@@ -11,6 +11,7 @@ import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IServiceLifecycle;
+import com.mentra.asg_client.service.system.interfaces.ISystemController;
 
 /**
  * Manages service lifecycle operations. Follows Single Responsibility Principle by handling only
@@ -129,8 +130,9 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
     }
 
     private void cleanupSystemPackages() {
-        SystemControllerFactory.get(context).uninstallPackage("com.lhs.btserver");
-        SystemControllerFactory.get(context).uninstallPackageViaAdb("com.lhs.btserver");
+        ISystemController sysCtl = SystemControllerFactory.get(context);
+        sysCtl.uninstallPackage("com.lhs.btserver");
+        sysCtl.uninstallPackageViaAdb("com.lhs.btserver");
     }
 
     private void handleStartService() {
@@ -151,11 +153,11 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
     private void handleRestartCamera() {
         Log.d(TAG, "Handling restart camera action");
         try {
-            SystemControllerFactory.get(context)
-                    .injectAdbCommand(
-                            "pm grant " + context.getPackageName() + " android.permission.CAMERA");
-            SystemControllerFactory.get(context).injectAdbCommand("kill $(pidof cameraserver)");
-            SystemControllerFactory.get(context).injectAdbCommand("kill $(pidof mediaserver)");
+            ISystemController sysCtl = SystemControllerFactory.get(context);
+            sysCtl.injectAdbCommand(
+                    "pm grant " + context.getPackageName() + " android.permission.CAMERA");
+            sysCtl.injectAdbCommand("kill $(pidof cameraserver)");
+            sysCtl.injectAdbCommand("kill $(pidof mediaserver)");
         } catch (Exception e) {
             Log.e(TAG, "Error resetting camera service", e);
         }
