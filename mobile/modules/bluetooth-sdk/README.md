@@ -7,8 +7,8 @@ The package includes:
 - A React Native / Expo module API exposed as `BluetoothSdk`.
 - React hooks under `@mentra/bluetooth-sdk/react` for common scan,
   connection, status, and event lifecycles.
-- Native Android code published as `com.mentra:bluetooth-sdk`.
-- Native iOS code published as the `MentraBluetoothSDK` CocoaPod.
+- Native Android code published as `com.mentraglass:bluetooth-sdk`.
+- Native iOS code available as the `MentraBluetoothSDK` Swift package.
 - An Expo config plugin that wires the native dependencies into generated Android and iOS projects.
 
 Use a development build or production native build. Expo Go cannot load this package because the SDK contains native code.
@@ -334,6 +334,25 @@ MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk
 ```
 
 Use `bunx expo run:android` for Android. Keep local paths in your shell or CI environment, not in committed app config.
+
+For bare native iOS apps, use the public SwiftPM repository:
+
+```text
+https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
+```
+
+Add the `MentraBluetoothSDK` product to your app target at version `0.1.7` or newer.
+
+For local SDK development, add this package folder directly in Xcode:
+
+```text
+/path/to/MentraOS/mobile/modules/bluetooth-sdk
+```
+
+The core Swift package intentionally excludes optional local STT, Nex/SwiftProtobuf, Vuzix/Ultralite, and tar.bz2 extraction code paths.
+
+Maintainers publishing the public SwiftPM mirror should follow
+[RELEASING_IOS_SPM.md](./RELEASING_IOS_SPM.md).
 
 ## Starter Example App
 

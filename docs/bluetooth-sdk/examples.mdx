@@ -33,11 +33,10 @@ The Android example is a Kotlin / Jetpack Compose app. It installs the SDK as `c
 
 ```bash
 cd examples/ios
-pod install
-open MentraExample.xcworkspace
+open MentraExample.xcodeproj
 ```
 
-The iOS example is a SwiftUI app. It installs the SDK as the `MentraBluetoothSDK` CocoaPod.
+The iOS example is a SwiftUI app. It installs the SDK as the `MentraBluetoothSDK` Swift package.
 
 ## React Native / Expo
 
@@ -74,8 +73,8 @@ Do not use `localhost` in the app. The glasses, phone, and computer must be on a
 
 Package-manager installs are the normal SDK path. Use local overrides only when testing SDK source changes:
 
-- Android: publish `com.mentra:bluetooth-sdk` and its companion artifacts to Maven local, then build the example with `mavenLocal()` enabled.
-- iOS: set `MENTRA_BLUETOOTH_SDK_LOCAL_PATH` to a local SDK checkout before `pod install`.
+- Android: publish `com.mentraglass:bluetooth-sdk` and its companion artifacts to Maven local, then build the example with `mavenLocal()` enabled.
+- iOS: point Xcode at a local Swift package checkout when testing unpublished Swift SDK source changes.
 - React Native: install a local `@mentra/bluetooth-sdk` package path and set `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` so Metro and native builds resolve the same package.
 
 Do not bake machine-specific paths into committed app config.
