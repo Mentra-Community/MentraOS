@@ -31,7 +31,7 @@ class MentraPhotoReceiverModule : Module() {
     }
 
     OnDestroy {
-      stopPhotoReceiverInternal()
+      closePhotoReceiverInternal()
     }
   }
 
@@ -75,6 +75,11 @@ class MentraPhotoReceiverModule : Module() {
     emitStatus("Photo receiver stopped")
   }
 
+  private fun closePhotoReceiverInternal() {
+    photoUploadServer?.close()
+    photoUploadServer = null
+  }
+
   private fun handlePhotoUpload(upload: PhotoUpload) {
     val fileUri = Uri.fromFile(upload.photoFile).toString()
     try {
@@ -116,8 +121,10 @@ class MentraPhotoReceiverModule : Module() {
   }
 
   private fun bestLocalIpv4Address(): String? {
+    val wifiPrivateCandidates = mutableListOf<Inet4Address>()
     val wifiCandidates = mutableListOf<Inet4Address>()
     val privateCandidates = mutableListOf<Inet4Address>()
+    val otherCandidates = mutableListOf<Inet4Address>()
     val interfaces = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
     for (networkInterface in interfaces) {
       if (!networkInterface.isUp || networkInterface.isLoopback) {
@@ -127,17 +134,23 @@ class MentraPhotoReceiverModule : Module() {
         .filterIsInstance<Inet4Address>()
         .filter { address ->
           !address.isLoopbackAddress &&
-            !address.isLinkLocalAddress &&
-            isPrivateIpv4(address.hostAddress.orEmpty())
+            !address.isLinkLocalAddress
         }
       if (isWifiInterface(networkInterface.name)) {
+        wifiPrivateCandidates += addresses.filter { isPrivateIpv4(it.hostAddress.orEmpty()) }
         wifiCandidates += addresses
       } else {
-        privateCandidates += addresses
+        privateCandidates += addresses.filter { isPrivateIpv4(it.hostAddress.orEmpty()) }
+        otherCandidates += addresses
       }
     }
 
-    return (wifiCandidates.firstOrNull() ?: privateCandidates.firstOrNull())?.hostAddress
+    return (
+      wifiPrivateCandidates.firstOrNull() ?:
+        wifiCandidates.firstOrNull() ?:
+        privateCandidates.firstOrNull() ?:
+        otherCandidates.firstOrNull()
+      )?.hostAddress
   }
 
   private fun receiverResult(uploadUrl: String, host: String, port: Int): Map<String, Any> {

@@ -94,7 +94,9 @@ public class MentraPhotoReceiverModule: Module {
     }
     defer { freeifaddrs(interfaces) }
 
+    var preferredPrivate: String?
     var preferred: String?
+    var privateFallback: String?
     var fallback: String?
     var cursor: UnsafeMutablePointer<ifaddrs>? = first
     while let current = cursor {
@@ -122,17 +124,21 @@ public class MentraPhotoReceiverModule: Module {
       }
 
       let ip = String(cString: hostname)
-      guard ip != "127.0.0.1", isPrivateIPv4(ip) else {
+      guard ip != "127.0.0.1" else {
         continue
       }
-      if isPreferredLocalInterface(name) {
+      if isPreferredLocalInterface(name), isPrivateIPv4(ip) {
+        preferredPrivate = preferredPrivate ?? ip
+      } else if isPreferredLocalInterface(name) {
         preferred = preferred ?? ip
+      } else if isPrivateIPv4(ip) {
+        privateFallback = privateFallback ?? ip
       } else {
         fallback = fallback ?? ip
       }
     }
 
-    return preferred ?? fallback
+    return preferredPrivate ?? preferred ?? privateFallback ?? fallback
   }
 
   private func receiverResult(uploadUrl: String, host: String, port: UInt16) -> [String: Any] {

@@ -13,6 +13,7 @@ import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.EOFException
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
@@ -21,6 +22,7 @@ import java.net.Socket
 import java.net.SocketException
 import java.nio.charset.StandardCharsets
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.Semaphore
 import org.json.JSONObject
 
@@ -54,7 +56,7 @@ class LocalPhotoUploadServer(
 
     fun start(port: Int): Int {
         val activeSocket = serverSocket
-        if (running && activeSocket != null && !activeSocket.isClosed) {
+        if (running && activeSocket != null && !activeSocket.isClosed && activeSocket.localPort == port) {
             onLog("Already listening on 0.0.0.0:${activeSocket.localPort}")
             return activeSocket.localPort
         }
@@ -193,27 +195,28 @@ class LocalPhotoUploadServer(
                 }
 
                 onLog("headers contentType=$contentType contentLength=$contentLength userAgent=${request.headers["user-agent"].orEmpty()}")
-                val body = readExact(input, contentLength.toInt())
                 val boundary = multipartBoundary(contentType)
                 if (boundary == null) {
                     respond(400, """{"ok":false,"error":"multipart_boundary_required"}""")
                     return
                 }
-                val parsed = parseMultipart(body, boundary)
-                val photoBytes = parsed.files["photo"] ?: parsed.files.values.firstOrNull()
-                if (photoBytes == null) {
+                val parsed = parseMultipart(input, boundary)
+                val photoPart = parsed.files["photo"] ?: parsed.files.values.firstOrNull()
+                if (photoPart == null) {
+                    parsed.deleteFiles()
                     respond(400, """{"ok":false,"error":"photo_field_required"}""")
                     return
                 }
 
                 requestId = parsed.fields["requestId"] ?: parsed.fields["request_id"]
                 val file = File(uploadDir, "${safeFilePart(requestId ?: "photo-${System.currentTimeMillis()}")}.jpg")
-                file.writeBytes(photoBytes)
-                onLog("upload fields=${parsed.fields.keys.joinToString(",")} requestId=${requestId.orEmpty()} bytes=${photoBytes.size} saved=${file.absolutePath}")
+                moveFile(photoPart.file, file)
+                parsed.deleteFilesExcept(file)
+                onLog("upload fields=${parsed.fields.keys.joinToString(",")} requestId=${requestId.orEmpty()} bytes=${photoPart.byteCount} saved=${file.absolutePath}")
                 val upload = PhotoUpload(
                     requestId = requestId,
                     photoFile = file,
-                    byteCount = photoBytes.size,
+                    byteCount = photoPart.byteCount,
                     fields = parsed.fields,
                 )
                 traceWifiInput(
@@ -226,13 +229,17 @@ class LocalPhotoUploadServer(
                         "requestId" to requestId,
                         "source" to parsed.fields["source"],
                         "contentLength" to contentLength,
-                        "photoBytes" to photoBytes.size,
+                        "photoBytes" to photoPart.byteCount,
                         "savedFileName" to file.name,
                         "durationMs" to (System.currentTimeMillis() - requestStartMs),
                     ),
                 )
-                onUpload(upload)
-                respond(200, """{"ok":true,"requestId":${jsonString(requestId.orEmpty())},"bytes":${photoBytes.size}}""")
+                respond(200, """{"ok":true,"requestId":${jsonString(requestId.orEmpty())},"bytes":${photoPart.byteCount}}""")
+                try {
+                    onUpload(upload)
+                } catch (callbackError: Throwable) {
+                    onLog("upload callback failed: ${callbackError.message ?: callbackError::class.java.simpleName}")
+                }
             } catch (error: Throwable) {
                 onLog("request failed: ${error.message ?: error::class.java.simpleName}")
                 traceWifiInput(
@@ -283,17 +290,6 @@ class LocalPhotoUploadServer(
         }
     }
 
-    private fun readExact(input: InputStream, length: Int): ByteArray {
-        val body = ByteArray(length)
-        var offset = 0
-        while (offset < length) {
-            val read = input.read(body, offset, length - offset)
-            if (read == -1) throw EOFException("Socket closed after $offset of $length body bytes")
-            offset += read
-        }
-        return body
-    }
-
     private fun writeJson(output: OutputStream, status: Int, body: String) {
         val reason = when (status) {
             200 -> "OK"
@@ -301,6 +297,7 @@ class LocalPhotoUploadServer(
             404 -> "Not Found"
             411 -> "Length Required"
             413 -> "Payload Too Large"
+            503 -> "Service Unavailable"
             else -> "Internal Server Error"
         }
         val bytes = body.toByteArray(StandardCharsets.UTF_8)
@@ -335,47 +332,154 @@ class LocalPhotoUploadServer(
 
     private data class ParsedMultipart(
         val fields: Map<String, String>,
-        val files: Map<String, ByteArray>,
-    )
-
-    private fun parseMultipart(body: ByteArray, boundary: String): ParsedMultipart {
-        val text = body.toString(StandardCharsets.ISO_8859_1)
-        val marker = "--$boundary"
-        val fields = mutableMapOf<String, String>()
-        val files = mutableMapOf<String, ByteArray>()
-        var cursor = 0
-
-        while (true) {
-            val markerStart = text.indexOf(marker, cursor)
-            if (markerStart < 0) break
-            var partStart = markerStart + marker.length
-            if (text.startsWith("--", partStart)) break
-            if (text.startsWith("\r\n", partStart)) partStart += 2
-
-            val headerEnd = text.indexOf("\r\n\r\n", partStart)
-            if (headerEnd < 0) break
-            val dataStart = headerEnd + 4
-            val nextMarker = text.indexOf("\r\n$marker", dataStart)
-            if (nextMarker < 0) break
-
-            val headerBlock = text.substring(partStart, headerEnd)
-            val disposition = headerBlock.lineSequence()
-                .firstOrNull { it.startsWith("Content-Disposition:", ignoreCase = true) }
-                .orEmpty()
-            val name = Regex("""name="([^"]+)"""").find(disposition)?.groupValues?.get(1)
-            val filename = Regex("""filename="([^"]*)"""").find(disposition)?.groupValues?.get(1)
-            if (name != null) {
-                val bytes = body.copyOfRange(dataStart, nextMarker)
-                if (filename != null) {
-                    files[name] = bytes
-                } else {
-                    fields[name] = bytes.toString(StandardCharsets.UTF_8).trim()
-                }
-            }
-            cursor = nextMarker + 2
+        val files: Map<String, StreamedFile>,
+    ) {
+        fun deleteFiles() {
+            files.values.forEach { it.file.delete() }
         }
 
-        return ParsedMultipart(fields = fields, files = files)
+        fun deleteFilesExcept(keptFile: File) {
+            files.values.forEach { part ->
+                if (part.file.absolutePath != keptFile.absolutePath) {
+                    part.file.delete()
+                }
+            }
+        }
+    }
+
+    private data class StreamedFile(
+        val file: File,
+        val byteCount: Int,
+    )
+
+    private fun parseMultipart(input: InputStream, boundary: String): ParsedMultipart {
+        val marker = "--$boundary"
+        val delimiter = "\r\n$marker".toByteArray(StandardCharsets.ISO_8859_1)
+        val fields = mutableMapOf<String, String>()
+        val files = mutableMapOf<String, StreamedFile>()
+        val tempFiles = mutableListOf<File>()
+
+        try {
+            val firstLine = readAsciiLine(input)
+            if (firstLine == "$marker--") {
+                return ParsedMultipart(fields = fields, files = files)
+            }
+            if (firstLine != marker) {
+                throw IllegalArgumentException("multipart_boundary_missing")
+            }
+
+            var done = false
+            while (!done) {
+                val headerBlock = readPartHeaders(input)
+                val disposition = headerBlock.lineSequence()
+                    .firstOrNull { it.startsWith("Content-Disposition:", ignoreCase = true) }
+                    .orEmpty()
+                val name = Regex("""name="([^"]+)"""").find(disposition)?.groupValues?.get(1)
+                val filename = Regex("""filename="([^"]*)"""").find(disposition)?.groupValues?.get(1)
+                if (name == null) {
+                    streamPartTo(input, delimiter, DiscardOutputStream)
+                } else if (filename != null) {
+                    val tempFile = File(uploadDir, "upload-${System.currentTimeMillis()}-${UUID.randomUUID()}.tmp")
+                    tempFiles += tempFile
+                    val byteCount = FileOutputStream(tempFile).use { fileOutput ->
+                        streamPartTo(input, delimiter, fileOutput)
+                    }
+                    files[name] = StreamedFile(tempFile, byteCount.toInt())
+                } else {
+                    val fieldOutput = LimitedByteArrayOutputStream(MAX_FIELD_BYTES)
+                    streamPartTo(input, delimiter, fieldOutput)
+                    fields[name] = fieldOutput.toByteArray().toString(StandardCharsets.UTF_8).trim()
+                }
+                done = readBoundarySuffix(input)
+            }
+
+            return ParsedMultipart(fields = fields, files = files)
+        } catch (error: Throwable) {
+            tempFiles.forEach { it.delete() }
+            throw error
+        }
+    }
+
+    private fun readAsciiLine(input: InputStream): String {
+        val out = ByteArrayOutputStream()
+        while (true) {
+            val byte = input.read()
+            if (byte == -1) throw EOFException("Socket closed before multipart line completed")
+            if (byte == '\n'.code) {
+                val bytes = out.toByteArray()
+                val length = if (bytes.isNotEmpty() && bytes.last() == '\r'.code.toByte()) bytes.size - 1 else bytes.size
+                return String(bytes, 0, length, StandardCharsets.ISO_8859_1)
+            }
+            out.write(byte)
+            if (out.size() > MAX_PART_HEADER_BYTES) throw IllegalArgumentException("multipart line too large")
+        }
+    }
+
+    private fun readPartHeaders(input: InputStream): String {
+        val out = ByteArrayOutputStream()
+        val delimiter = byteArrayOf(13, 10, 13, 10)
+        var matched = 0
+        while (true) {
+            val byte = input.read()
+            if (byte == -1) throw EOFException("Socket closed before multipart headers completed")
+            out.write(byte)
+            matched = if (byte.toByte() == delimiter[matched]) {
+                matched + 1
+            } else if (byte.toByte() == delimiter[0]) {
+                1
+            } else {
+                0
+            }
+            if (matched == delimiter.size) {
+                val bytes = out.toByteArray()
+                return String(bytes, 0, bytes.size - delimiter.size, StandardCharsets.ISO_8859_1)
+            }
+            if (out.size() > MAX_PART_HEADER_BYTES) throw IllegalArgumentException("multipart headers too large")
+        }
+    }
+
+    private fun streamPartTo(input: InputStream, delimiter: ByteArray, output: OutputStream): Long {
+        val tail = ArrayDeque<Byte>()
+        var byteCount = 0L
+        while (true) {
+            val next = input.read()
+            if (next == -1) throw EOFException("Socket closed before multipart boundary completed")
+            tail.addLast(next.toByte())
+            if (tail.size > delimiter.size) {
+                output.write(tail.removeFirst().toInt() and 0xff)
+                byteCount += 1
+            }
+            if (tail.size == delimiter.size && tailMatches(tail, delimiter)) {
+                output.flush()
+                return byteCount
+            }
+        }
+    }
+
+    private fun tailMatches(tail: ArrayDeque<Byte>, delimiter: ByteArray): Boolean {
+        if (tail.size != delimiter.size) return false
+        tail.forEachIndexed { index, byte ->
+            if (byte != delimiter[index]) return false
+        }
+        return true
+    }
+
+    private fun readBoundarySuffix(input: InputStream): Boolean {
+        val first = input.read()
+        if (first == -1) throw EOFException("Socket closed after multipart boundary")
+        return when (first) {
+            '-'.code -> {
+                val second = input.read()
+                if (second != '-'.code) throw IllegalArgumentException("invalid multipart closing boundary")
+                true
+            }
+            '\r'.code -> {
+                val second = input.read()
+                if (second != '\n'.code) throw IllegalArgumentException("invalid multipart boundary separator")
+                false
+            }
+            else -> throw IllegalArgumentException("invalid multipart boundary suffix")
+        }
     }
 
     private fun multipartBoundary(contentType: String): String? {
@@ -394,6 +498,16 @@ class LocalPhotoUploadServer(
 
     private fun jsonString(value: String): String {
         return JSONObject.quote(value)
+    }
+
+    private fun moveFile(source: File, destination: File) {
+        if (destination.exists()) {
+            destination.delete()
+        }
+        if (!source.renameTo(destination)) {
+            source.copyTo(destination, overwrite = true)
+            source.delete()
+        }
     }
 
     private fun traceWifiInput(
@@ -446,7 +560,28 @@ class LocalPhotoUploadServer(
 
     companion object {
         private const val MAX_HEADER_BYTES = 64 * 1024
+        private const val MAX_PART_HEADER_BYTES = 64 * 1024
+        private const val MAX_FIELD_BYTES = 64 * 1024
         private const val MAX_UPLOAD_BYTES = 25L * 1024L * 1024L
         private const val MAX_ACTIVE_CLIENTS = 2
+    }
+}
+
+private object DiscardOutputStream : OutputStream() {
+    override fun write(b: Int) {
+    }
+}
+
+private class LimitedByteArrayOutputStream(
+    private val maxBytes: Int,
+) : ByteArrayOutputStream() {
+    override fun write(b: Int) {
+        if (size() + 1 > maxBytes) throw IllegalArgumentException("multipart field too large")
+        super.write(b)
+    }
+
+    override fun write(b: ByteArray, off: Int, len: Int) {
+        if (size() + len > maxBytes) throw IllegalArgumentException("multipart field too large")
+        super.write(b, off, len)
     }
 }
