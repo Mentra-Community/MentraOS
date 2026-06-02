@@ -85,6 +85,12 @@ curl -fsS -X POST \
   "https://ossrh-staging-api.central.sonatype.com/manual/upload/defaultRepository/com.mentraglass?publishing_type=user_managed"
 ```
 
+Because the documented configuration uses
+`sonatypePublishingType=user_managed`, Sonatype Central will not release the
+deployment automatically after upload. Open
+`https://central.sonatype.com/publishing/deployments`, inspect the deployment,
+and manually confirm/publish it.
+
 ## Check Deployment Status
 
 Load the Sonatype token if it is not already in your shell:
