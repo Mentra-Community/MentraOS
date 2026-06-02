@@ -18,11 +18,11 @@ extension Data {
     }
 }
 
-/// Nex firmware expects tier 1–3 in protobuf `DisplayDistanceConfig.distance_cm` (name is legacy, not cm).
+/// Nex firmware expects tier 1–4 in protobuf `DisplayDistanceConfig.distance_cm` (name is legacy, not cm).
 /// Keep in sync with `NexProtobufUtils.dashboardDepthToDistanceCm` (Android `NexSGCUtils.kt`).
 enum NexDashboardDisplayWire {
     static let depthMin = 1
-    static let depthMax = 3
+    static let depthMax = 4
 
     static func depthToWireTier(_ depth: Int) -> UInt32 {
         UInt32(min(max(depth, depthMin), depthMax))
@@ -894,7 +894,10 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             return
         }
 
-        let sanitizedText = sanitizeDisplayText(text)
+        // When Chinese captions are disabled (default), strip characters the Nex font
+        // can't render (CJK etc.). When enabled, pass the text through unmodified.
+        let chineseCaptionsEnabled = DeviceStore.shared.get("bluetooth", "nex_chinese_captions") as? Bool ?? false
+        let sanitizedText = chineseCaptionsEnabled ? text : sanitizeDisplayText(text)
         Bridge.log("NEX: Displaying text wall: '\(sanitizedText)'")
 
         let displayText = Mentraos_Ble_DisplayText.with {
@@ -1346,28 +1349,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     // MARK: - Utility Methods
 
-    @objc func sendPongResponse() {
-        guard nexReady else {
-            Bridge.log("NEX: Not ready to send pong. Device not initialized.")
-            return
-        }
-
-        let timestamp = Date().timeIntervalSince1970 * 1000
-        Bridge.log("NEX: Sending pong response (Time: \(timestamp))")
-
-        let pingRequest = Mentraos_Ble_PingRequest()
-
-        let phoneToGlasses = Mentraos_Ble_PhoneToGlasses.with {
-            $0.ping = pingRequest
-        }
-
-        let protobufData = try! phoneToGlasses.serializedData()
-        queueDataWithOptimalChunking(protobufData, packetType: PACKET_TYPE_PROTOBUF)
-
-        // Notify about heartbeat sent (pong response)
-        notifyHeartbeatSent(timestamp)
-    }
-
     @objc func isDeviceReady() -> Bool {
         nexReady && connectionState == ConnTypes.CONNECTED
     }
@@ -1456,8 +1437,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
                 handleDeviceInfoJson(json)
             case "button_event":
                 handleButtonEventJson(json)
-            case "ping":
-                handlePingJson(json)
             case "vad_event":
                 handleVadEventJson(json)
             case "imu_data":
@@ -1495,9 +1474,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
             case let .headUpAngleSet(headUpAngleResponse):
                 handleHeadUpAngleResponseProtobuf(headUpAngleResponse)
-
-            case let .pong(pongResponse):
-                handlePongProtobuf(pongResponse)
 
             case let .vadEvent(vadEvent):
                 handleVadEventProtobuf(vadEvent)
@@ -1605,25 +1581,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         ]
 
         emitEvent("HeadUpAngleResponseEvent", body: eventBody)
-    }
-
-    private func handlePongProtobuf(_: Mentraos_Ble_PongResponse) {
-        let timestamp = Date().timeIntervalSince1970 * 1000
-
-        Bridge.log("NEX: 💓 Received PONG from glasses (Time: \(timestamp))")
-        notifyHeartbeatReceived(timestamp)
-
-        // Automatically send pong response
-        sendPongResponse()
-
-        // Query battery status periodically (every 10 pings like Java implementation)
-        heartbeatCount += 1
-        let batteryLevel = DeviceStore.shared.get("glasses", "batteryLevel") as? Int ?? -1
-        if batteryLevel == -1 || heartbeatCount % 10 == 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.queryBatteryStatus()
-            }
-        }
     }
 
     private func handleVadEventProtobuf(_ vadEvent: Mentraos_Ble_VadEvent) {
@@ -1765,25 +1722,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         ]
 
         emitEvent("ButtonPressEvent", body: eventBody)
-    }
-
-    private func handlePingJson(_: [String: Any]) {
-        let timestamp = Date().timeIntervalSince1970 * 1000
-
-        Bridge.log("NEX: 💓 JSON PING received (Time: \(timestamp))")
-
-        // Send pong response
-        sendPongResponse()
-
-        // Emit heartbeat received event
-        let eventBody: [String: Any] = [
-            "heartbeat_received": [
-                "timestamp": timestamp,
-                "device_model": "Mentra Display",
-            ],
-        ]
-
-        emitEvent("HeartbeatReceivedEvent", body: eventBody)
     }
 
     private func handleVadEventJson(_ json: [String: Any]) {

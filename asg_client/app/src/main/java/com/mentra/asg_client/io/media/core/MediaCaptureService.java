@@ -20,6 +20,7 @@ import com.mentra.asg_client.io.storage.StorageManager;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
 import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
+import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
@@ -29,6 +30,7 @@ import com.radzivon.bartoshyk.avif.coder.PreciseMode;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.net.URI;
 import java.text.SimpleDateFormat;
 import java.util.Collections;
 import java.util.Date;
@@ -1781,6 +1783,178 @@ public class MediaCaptureService {
         Log.i(TAG, sb.toString());
     }
 
+    private void tracePhotoWifiRoute(
+            String requestId, String route, String reason, String webhookUrl, File photoFile) {
+        JSONObject payload = createPhotoWifiPayload(requestId, webhookUrl, photoFile);
+        putJson(payload, "route", route);
+        putJson(payload, "reason", reason);
+        putJson(payload, "timestampMs", System.currentTimeMillis());
+        logPhotoWifiTrace("glasses_network", "wifi_route", "photo_upload_route", payload);
+    }
+
+    private void tracePhotoUploadStart(
+            String requestId,
+            String webhookUrl,
+            File photoFile,
+            boolean hasAuthToken,
+            long startMs) {
+        JSONObject payload = createPhotoWifiPayload(requestId, webhookUrl, photoFile);
+        putJson(payload, "bearerHeaderPresent", hasAuthToken);
+        putJson(payload, "startMs", startMs);
+        logPhotoWifiTrace("glasses_to_wifi", "wifi_http_output", "photo_upload_start", payload);
+    }
+
+    private void tracePhotoUploadEnd(
+            String requestId,
+            String webhookUrl,
+            File photoFile,
+            long startMs,
+            long endMs,
+            int statusCode,
+            boolean success,
+            String outcome) {
+        JSONObject payload = createPhotoWifiPayload(requestId, webhookUrl, photoFile);
+        putJson(payload, "startMs", startMs);
+        putJson(payload, "endMs", endMs);
+        putJson(payload, "durationMs", endMs - startMs);
+        putJson(payload, "statusCode", statusCode);
+        putJson(payload, "success", success);
+        putJson(payload, "outcome", outcome);
+        logPhotoWifiTrace("wifi_to_glasses", "wifi_http_input", "photo_upload_end", payload);
+    }
+
+    private void tracePhotoUploadError(
+            String requestId,
+            String webhookUrl,
+            File photoFile,
+            long startMs,
+            Exception error,
+            String outcome) {
+        long endMs = System.currentTimeMillis();
+        JSONObject payload = createPhotoWifiPayload(requestId, webhookUrl, photoFile);
+        if (startMs > 0) {
+            putJson(payload, "startMs", startMs);
+            putJson(payload, "durationMs", endMs - startMs);
+        }
+        putJson(payload, "endMs", endMs);
+        putJson(payload, "success", false);
+        putJson(payload, "outcome", outcome);
+        if (error != null) {
+            putJson(payload, "errorClass", error.getClass().getSimpleName());
+            putJson(payload, "errorMessage", error.getMessage());
+        }
+        logPhotoWifiTrace("wifi_to_glasses", "wifi_http_input", "photo_upload_error", payload);
+    }
+
+    private void tracePhotoUploadFallback(
+            String requestId, String webhookUrl, File photoFile, String reason, String bleImgId) {
+        JSONObject payload = createPhotoWifiPayload(requestId, webhookUrl, photoFile);
+        putJson(payload, "fallback", "ble");
+        putJson(payload, "reason", reason);
+        putJson(payload, "hasBleImageId", bleImgId != null && !bleImgId.isEmpty());
+        putJson(payload, "timestampMs", System.currentTimeMillis());
+        logPhotoWifiTrace("glasses_network", "wifi_route", "photo_upload_fallback", payload);
+    }
+
+    private JSONObject createPhotoWifiPayload(String requestId, String webhookUrl, File photoFile) {
+        JSONObject payload = new JSONObject();
+        putJson(payload, "requestId", requestId);
+        if (photoFile != null) {
+            putJson(payload, "fileName", photoFile.getName());
+            putJson(payload, "fileExists", photoFile.exists());
+            putJson(payload, "fileBytes", photoFile.exists() ? photoFile.length() : 0);
+        }
+        putWebhookSummary(payload, webhookUrl);
+        putActiveNetworkSummary(payload);
+        return payload;
+    }
+
+    private void putWebhookSummary(JSONObject payload, String webhookUrl) {
+        if (webhookUrl == null || webhookUrl.isEmpty()) {
+            return;
+        }
+
+        try {
+            URI uri = URI.create(webhookUrl);
+            putJson(payload, "urlScheme", uri.getScheme());
+            putJson(payload, "urlHost", uri.getHost());
+            if (uri.getPort() != -1) {
+                putJson(payload, "urlPort", uri.getPort());
+            }
+            String path = uri.getRawPath();
+            putJson(payload, "urlPath", path == null || path.isEmpty() ? "/" : path);
+            putJson(
+                    payload,
+                    "urlHasQuery",
+                    uri.getRawQuery() != null && !uri.getRawQuery().isEmpty());
+        } catch (Exception e) {
+            putJson(payload, "urlParseError", e.getClass().getSimpleName());
+        }
+    }
+
+    private void putActiveNetworkSummary(JSONObject payload) {
+        try {
+            ConnectivityManager cm =
+                    (ConnectivityManager) mContext.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) {
+                putJson(payload, "networkAvailable", false);
+                return;
+            }
+
+            android.net.Network activeNetwork = cm.getActiveNetwork();
+            if (activeNetwork == null) {
+                putJson(payload, "networkAvailable", false);
+                return;
+            }
+
+            NetworkCapabilities caps = cm.getNetworkCapabilities(activeNetwork);
+            if (caps == null) {
+                putJson(payload, "networkAvailable", true);
+                putJson(payload, "networkCapabilitiesAvailable", false);
+                return;
+            }
+
+            putJson(payload, "networkAvailable", true);
+            putJson(
+                    payload,
+                    "wifiConnected",
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI));
+            putJson(
+                    payload,
+                    "cellularConnected",
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR));
+            putJson(
+                    payload,
+                    "internetCapable",
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+            putJson(
+                    payload,
+                    "internetValidated",
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED));
+        } catch (Exception e) {
+            putJson(payload, "networkSummaryError", e.getClass().getSimpleName());
+        }
+    }
+
+    private void putJson(JSONObject payload, String key, Object value) {
+        if (payload == null || key == null || value == null) {
+            return;
+        }
+        try {
+            payload.put(key, value);
+        } catch (JSONException ignored) {
+            // Keep trace logging non-fatal.
+        }
+    }
+
+    private void logPhotoWifiTrace(String direction, String layer, String type, JSONObject payload) {
+        try {
+            BleTraceLogger.logEvent(direction, layer, type, payload);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to write WiFi trace log", e);
+        }
+    }
+
     /** Upload photo directly to app webhook */
     private void uploadPhotoToWebhook(
             String photoFilePath,
@@ -2082,10 +2256,18 @@ public class MediaCaptureService {
         new Thread(
                         () -> {
                             recordTiming(requestId, "direct_upload_thread_start");
+                            File photoFile = new File(photoFilePath);
+                            long uploadStartTime = 0;
                             try {
-                                File photoFile = new File(photoFilePath);
                                 if (!photoFile.exists()) {
                                     Log.e(TAG, "❌ Photo file does not exist: " + photoFilePath);
+                                    tracePhotoUploadError(
+                                            requestId,
+                                            webhookUrl,
+                                            photoFile,
+                                            uploadStartTime,
+                                            new IllegalStateException("Photo file not found"),
+                                            "file_missing");
                                     if (mMediaCaptureListener != null) {
                                         mMediaCaptureListener.onMediaError(
                                                 requestId,
@@ -2138,7 +2320,8 @@ public class MediaCaptureService {
                                         new Request.Builder().url(webhookUrl).post(requestBody);
 
                                 // Add Authorization header if auth token is available
-                                if (authToken != null && !authToken.isEmpty()) {
+                                boolean hasAuthToken = authToken != null && !authToken.isEmpty();
+                                if (hasAuthToken) {
                                     requestBuilder.header("Authorization", "Bearer " + authToken);
                                     Log.d(TAG, "🔐 Adding Authorization header to webhook request");
                                 } else {
@@ -2148,15 +2331,31 @@ public class MediaCaptureService {
                                 Request request = requestBuilder.build();
                                 Log.d(TAG, "🚀 Executing HTTP request...");
 
-                                long uploadStartTime = System.currentTimeMillis();
+                                uploadStartTime = System.currentTimeMillis();
+                                tracePhotoUploadStart(
+                                        requestId,
+                                        webhookUrl,
+                                        photoFile,
+                                        hasAuthToken,
+                                        uploadStartTime);
                                 Response response = client.newCall(request).execute();
-                                long uploadTime = System.currentTimeMillis() - uploadStartTime;
+                                long uploadEndTime = System.currentTimeMillis();
+                                long uploadTime = uploadEndTime - uploadStartTime;
                                 recordTiming(requestId, "direct_upload_response");
 
                                 Log.d(TAG, "⏱️ Upload completed in: " + uploadTime + "ms");
                                 Log.d(TAG, "📈 Response code: " + response.code());
 
                                 if (response.isSuccessful()) {
+                                    tracePhotoUploadEnd(
+                                            requestId,
+                                            webhookUrl,
+                                            photoFile,
+                                            uploadStartTime,
+                                            uploadEndTime,
+                                            response.code(),
+                                            true,
+                                            "uploaded");
                                     recordTiming(requestId, "upload_success");
                                     dumpTimings(requestId);
                                     sendPhotoStatus(requestId, "uploaded");
@@ -2211,11 +2410,26 @@ public class MediaCaptureService {
                                     // Check if we can fallback to BLE
                                     recordTiming(requestId, "upload_failed_ble_fallback");
                                     String bleImgId = photoBleIds.get(requestId);
+                                    tracePhotoUploadEnd(
+                                            requestId,
+                                            webhookUrl,
+                                            photoFile,
+                                            uploadStartTime,
+                                            uploadEndTime,
+                                            response.code(),
+                                            false,
+                                            bleImgId != null ? "ble_fallback" : "http_failed");
                                     if (bleImgId != null) {
                                         Log.d(
                                                 TAG,
                                                 "📱 Webhook upload failed, attempting BLE fallback");
                                         Log.d(TAG, "🔄 BLE Image ID: " + bleImgId);
+                                        tracePhotoUploadFallback(
+                                                requestId,
+                                                webhookUrl,
+                                                photoFile,
+                                                "http_status_" + response.code(),
+                                                bleImgId);
 
                                         // Clean up tracking (will be re-added by BLE transfer)
                                         photoBleIds.remove(requestId);
@@ -2239,6 +2453,7 @@ public class MediaCaptureService {
                                                 TAG,
                                                 "🔄 Webhook failed, handing off to BLE transfer: "
                                                         + requestId);
+                                        response.close();
                                         reusePhotoForBleTransfer(
                                                 photoFilePath,
                                                 requestId,
@@ -2313,11 +2528,20 @@ public class MediaCaptureService {
                                 // Check if we can fallback to BLE on exception
                                 recordTiming(requestId, "upload_exception_ble_fallback");
                                 String bleImgId = photoBleIds.get(requestId);
+                                tracePhotoUploadError(
+                                        requestId,
+                                        webhookUrl,
+                                        photoFile,
+                                        uploadStartTime,
+                                        e,
+                                        bleImgId != null ? "ble_fallback" : "upload_exception");
                                 if (bleImgId != null) {
                                     Log.d(
                                             TAG,
                                             "📱 Webhook upload exception, attempting BLE fallback");
                                     Log.d(TAG, "🔄 BLE Image ID: " + bleImgId);
+                                    tracePhotoUploadFallback(
+                                            requestId, webhookUrl, photoFile, "exception", bleImgId);
 
                                     // Clean up tracking (will be re-added by BLE transfer)
                                     photoBleIds.remove(requestId);
@@ -2366,7 +2590,6 @@ public class MediaCaptureService {
                                 if (save == null || !save) {
                                     // Delete the photo file on exception
                                     try {
-                                        File photoFile = new File(photoFilePath);
                                         if (photoFile.exists() && photoFile.delete()) {
                                             Log.d(
                                                     TAG,
@@ -2731,6 +2954,8 @@ public class MediaCaptureService {
             photoBleIds.put(requestId, bleImgId);
             photoOriginalPaths.put(requestId, photoFilePath);
             photoRequestedSizes.put(requestId, size);
+            tracePhotoWifiRoute(
+                    requestId, "direct_webhook", "wifi_connected", webhookUrl, null);
 
             Log.d(TAG, "📶 WiFi connected - attempting direct upload for " + requestId);
             takePhotoAndUpload(
@@ -2747,6 +2972,7 @@ public class MediaCaptureService {
                     iso);
         } else {
             // No WiFi - skip webhook entirely, go straight to BLE (saves 2-5s timeout wait)
+            tracePhotoWifiRoute(requestId, "ble", "wifi_unavailable", webhookUrl, null);
             Log.d(TAG, "📵 No WiFi - skipping webhook, using BLE transfer for " + requestId);
             takePhotoForBleTransfer(
                     photoFilePath,

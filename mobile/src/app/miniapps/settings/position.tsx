@@ -17,9 +17,13 @@ export default function ScreenSettingsScreen() {
   const deviceModel = useGlassesStore((state) => state.deviceModel)
   const {setEnabled} = useKonamiCode()
 
-  const depthClamped = Math.min(3, Math.max(1, Number(dashboardDepth ?? 2)))
-
   const isG1 = deviceModel === "Even Realities G1" || deviceModel === "evenrealities_g1" || deviceModel === "g1"
+  const isNex = deviceModel === "Mentra Display" || deviceModel === "Mentra Nex" || deviceModel === "mentra_display"
+
+  // Only Mentra Display supports a 4th depth tier; every other device keeps the original 1-3 range.
+  const depthMax = isNex ? 4 : 3
+
+  const depthClamped = Math.min(depthMax, Math.max(1, Number(dashboardDepth ?? 2)))
 
   useFocusEffect(
     useCallback(() => {
@@ -46,7 +50,7 @@ export default function ScreenSettingsScreen() {
           subtitle="Adjust how far the content appears from you."
           value={depthClamped}
           min={1}
-          max={3}
+          max={depthMax}
           onValueChange={(_value) => {}}
           onValueSet={setDashboardDepth}
         />

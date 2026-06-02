@@ -2,16 +2,14 @@ package com.mentra.asg_client;
 
 import android.app.Application;
 import android.util.Log;
-
 import com.mentra.asg_client.di.AppModule;
+import com.mentra.asg_client.di.ReportingModule;
 import com.mentra.asg_client.reporting.CrashHandler;
 import com.mentra.asg_client.reporting.core.ReportManager;
-import com.mentra.asg_client.di.ReportingModule;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+import com.mentra.asg_client.service.system.interfaces.ISystemController;
 
-/**
- * Application class for ASG Client
- * Handles app-wide initialization following SOLID principles
- */
+/** Application class for ASG Client Handles app-wide initialization following SOLID principles */
 public class AsgClientApplication extends Application {
 
     private static final String TAG = "AsgClientApplication";
@@ -28,27 +26,23 @@ public class AsgClientApplication extends Application {
         AppModule.initialize(this);
         ReportingModule.initialize(this);
 
-        SysControl.setI2SAudioPlayReceiverPackage(this, getPackageName());
+        ISystemController sysCtl = SystemControllerFactory.get(this);
+        sysCtl.setI2SAudioPlayReceiverPackage(getPackageName());
 
         // Get and log system OTA version (MTK firmware version)
-        String systemOtaVersion = SysControl.getSystemCurrentVersion(this);
+        String systemOtaVersion = sysCtl.getSystemOtaVersion();
         Log.i(TAG, "System OTA Version (MTK): " + systemOtaVersion);
 
         Log.i(TAG, "ASG Client Application initialized");
     }
 
-
-    /**
-     * Get application instance
-     */
+    /** Get application instance */
     public static AsgClientApplication getInstance() {
         return instance;
     }
 
-    /**
-     * Get ReportManager instance
-     */
+    /** Get ReportManager instance */
     public ReportManager getReportManager() {
         return ReportManager.getInstance(this);
     }
-} 
+}
