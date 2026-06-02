@@ -303,6 +303,7 @@ export function HardwareEventLogger() {
   useBluetoothEvent('button_press', (event) => console.log(event));
   useBluetoothEvent('touch_event', (event) => console.log(event));
   useBluetoothEvent('photo_response', (event) => console.log(event));
+  useBluetoothEvent('photo_status', (event) => console.log(event.status, event.resolvedConfig));
   useBluetoothEvent('stream_status', (event) => console.log(event));
   useBluetoothEvent('speaking_status', (event) => console.log(event.speaking));
   useBluetoothEvent('mic_pcm', (event) => {
