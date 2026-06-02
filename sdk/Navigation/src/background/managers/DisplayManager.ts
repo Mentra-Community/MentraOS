@@ -37,7 +37,7 @@ export class DisplayManager {
    * container on the glasses canvas.
    */
   showBitmap(base64Bmp: string): void {
-    this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x: 200, y: 100, width: 50, height: 50}))
+    this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x: 576-75, y: 288-75, width: 75, height: 75}))
   }
 
   /** Wipe whatever's on the glasses. */

@@ -40,18 +40,20 @@ function base64(bytes: Uint8Array): string {
 }
 
 /**
- * Encode an 8-bit RGB pixel buffer (row-major, top-down, R,G,B per pixel)
- * as a base64 1-bit BMP string. A pixel is white (bit 1) when any channel
- * exceeds 128, else black (bit 0) — matching the cloud SDK's threshold.
+ * Encode an 8-bit grayscale pixel buffer (row-major, top-down, 1 byte/px)
+ * as a base64 8-bit BMP string. Uses a 256-entry grayscale palette so each
+ * pixel byte indexes its own gray level (0 = black, 255 = white).
  */
-export function encodeBmpBase64(rgb: Uint8Array, width: number, height: number): string {
-  if (rgb.length !== width * height * 3) {
-    throw new Error(`encodeBmpBase64: expected ${width * height * 3} bytes, got ${rgb.length}`)
+export function encodeBmpBase64(gray: Uint8Array, width: number, height: number): string {
+  if (gray.length !== width * height) {
+    throw new Error(`encodeBmpBase64: expected ${width * height} bytes, got ${gray.length}`)
   }
 
-  const rowSize = Math.ceil(width / 32) * 4 // 1 bit/px, 4-byte aligned
+  const GRAY_COLOR_TABLE = 256 * 4 // 256 colors * 4 bytes
+  const grayPixelOffset = FILE_HEADER + DIB_HEADER + GRAY_COLOR_TABLE // 1078
+  const rowSize = Math.ceil(width / 4) * 4 // 1 byte/px, 4-byte aligned
   const pixelDataSize = rowSize * height
-  const fileSize = PIXEL_OFFSET + pixelDataSize
+  const fileSize = grayPixelOffset + pixelDataSize
 
   const buf = new Uint8Array(fileSize)
 
@@ -60,40 +62,54 @@ export function encodeBmpBase64(rgb: Uint8Array, width: number, height: number):
   buf[1] = 0x4d // 'M'
   setU32LE(buf, 2, fileSize)
   setU32LE(buf, 6, 0) // reserved
-  setU32LE(buf, 10, PIXEL_OFFSET)
+  setU32LE(buf, 10, grayPixelOffset)
 
   // DIB header (BITMAPINFOHEADER, 40 bytes)
   setU32LE(buf, 14, DIB_HEADER)
   setU32LE(buf, 18, width)
   setU32LE(buf, 22, height) // positive = bottom-up
   setU16LE(buf, 26, 1) // planes
-  setU16LE(buf, 28, 1) // bits per pixel
+  setU16LE(buf, 28, 8) // bits per pixel
   setU32LE(buf, 30, 0) // compression: BI_RGB (none)
   setU32LE(buf, 34, pixelDataSize)
   setU32LE(buf, 38, 2835) // X px/meter (~72 DPI)
   setU32LE(buf, 42, 2835) // Y px/meter
-  setU32LE(buf, 46, 2) // colors used
-  setU32LE(buf, 50, 2) // important colors
+  setU32LE(buf, 46, 256) // colors used
+  setU32LE(buf, 50, 256) // important colors
 
-  // Color table (8 bytes): index 0 = black, index 1 = white (BGRA).
-  // black = 00 00 00 00 (already zeroed)
-  buf[58] = 0xff // B
-  buf[59] = 0xff // G
-  buf[60] = 0xff // R
-  buf[61] = 0x00 // reserved
-
-  // Pixel data — bottom-up rows, 1 bit/px MSB-first.
-  for (let y = 0; y < height; y++) {
-    const srcRow = y * width * 3 // source is top-down
-    const destRow = PIXEL_OFFSET + (height - 1 - y) * rowSize // write bottom-up
-    for (let x = 0; x < width; x++) {
-      const s = srcRow + x * 3
-      const isWhite = rgb[s] > 128 || rgb[s + 1] > 128 || rgb[s + 2] > 128
-      if (isWhite) {
-        buf[destRow + (x >> 3)] |= 1 << (7 - (x & 7))
-      }
-    }
+  // Grayscale palette (1024 bytes): entry i = gray level i (BGRA).
+  for (let i = 0; i < 256; i++) {
+    const off = FILE_HEADER + DIB_HEADER + i * 4
+    buf[off] = i // B
+    buf[off + 1] = i // G
+    buf[off + 2] = i // R
+    buf[off + 3] = 0x00 // reserved
   }
 
+  // Pixel data — bottom-up rows, 1 byte/px.
+  for (let y = 0; y < height; y++) {
+    const srcRow = y * width // source is top-down
+    const destRow = grayPixelOffset + (height - 1 - y) * rowSize // write bottom-up
+    for (let x = 0; x < width; x++) {
+      buf[destRow + x] = gray[srcRow + x]!
+    }
+  }
   return base64(buf)
+}
+
+/**
+ * Build an 8-bit grayscale gradient test image as a base64 BMP. The width is
+ * split into 17 equal vertical bars whose gray level steps 0 → 16 left to
+ * right — handy for verifying the glasses' grayscale rendering.
+ */
+export function gradientTestImageBase64(width: number, height: number): string {
+  const BARS = 255 // levels 0..16
+  const gray = new Uint8Array(width * height)
+  for (let x = 0; x < width; x++) {
+    const level = Math.min(BARS - 1, Math.floor((x / width) * BARS))
+    for (let y = 0; y < height; y++) {
+      gray[y * width + x] = level
+    }
+  }
+  return encodeBmpBase64(gray, width, height)
 }

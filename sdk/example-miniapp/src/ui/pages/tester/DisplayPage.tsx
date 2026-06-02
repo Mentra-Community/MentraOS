@@ -12,15 +12,16 @@ import {Input} from "../../components/input"
 import {Label} from "../../components/label"
 import {ErrorRow} from "./_TesterRow"
 
-// Encode an ImageData's pixels as a base64 1-bit BMP (no data: prefix).
-// The glasses render 1-bit monochrome, and the phone decodes via iOS
-// UIImage / Android BitmapFactory — an uncompressed 1-bit BMP is decoded
+// Encode an ImageData's pixels as a base64 4-bit grayscale BMP (no data:
+// prefix). The glasses render grayscale, and the phone decodes via iOS
+// UIImage / Android BitmapFactory — an uncompressed 4-bit BMP is decoded
 // reliably by both, whereas some PNG variants are rejected by ImageIO.
-// A pixel is white when any RGB channel > 128, else black.
-function imageDataToBmp1Bit(img: ImageData): string {
+// Each pixel's RGB is reduced to luminance and quantized to one of 16 gray
+// levels via a 16-entry grayscale palette; pixels are packed 2 px/byte.
+function imageDataToBmp4Bit(img: ImageData): string {
   const {width, height, data} = img
-  const rowSize = Math.ceil(width / 32) * 4 // 1 bit/px, 4-byte aligned rows
-  const pixelOffset = 62 // 14 (file) + 40 (DIB) + 8 (2-color table)
+  const rowSize = Math.ceil(width / 8) * 4 // 4 bits/px, 4-byte aligned rows
+  const pixelOffset = 118 // 14 (file) + 40 (DIB) + 64 (16-color table)
   const fileSize = pixelOffset + rowSize * height
   const buf = new Uint8Array(fileSize)
 
@@ -45,25 +46,33 @@ function imageDataToBmp1Bit(img: ImageData): string {
   u32(18, width)
   u32(22, height) // positive = bottom-up
   u16(26, 1) // planes
-  u16(28, 1) // bits per pixel
+  u16(28, 4) // bits per pixel
   u32(30, 0) // BI_RGB (no compression)
   u32(34, rowSize * height)
   u32(38, 2835) // X px/meter
   u32(42, 2835) // Y px/meter
-  u32(46, 2) // colors used
-  u32(50, 2) // important colors
-  // Color table: index 0 = black (zeroed), index 1 = white (BGRA)
-  buf[58] = 0xff
-  buf[59] = 0xff
-  buf[60] = 0xff
+  u32(46, 16) // colors used
+  u32(50, 16) // important colors
+  // Color table: 16 grayscale entries (BGRA), level i scaled across 0..255.
+  for (let i = 0; i < 16; i++) {
+    const off = 54 + i * 4
+    const gray = Math.round((i / 15) * 255)
+    buf[off] = gray // B
+    buf[off + 1] = gray // G
+    buf[off + 2] = gray // R
+  }
 
   for (let y = 0; y < height; y++) {
     const srcRow = y * width * 4 // RGBA, top-down
     const destRow = pixelOffset + (height - 1 - y) * rowSize // write bottom-up
     for (let x = 0; x < width; x++) {
       const s = srcRow + x * 4
-      const isWhite = data[s] > 128 || data[s + 1] > 128 || data[s + 2] > 128
-      if (isWhite) buf[destRow + (x >> 3)] |= 1 << (7 - (x & 7))
+      // Rec. 601 luma, quantized to 4 bits (0..15).
+      const lum = 0.299 * data[s] + 0.587 * data[s + 1] + 0.114 * data[s + 2]
+      const level = Math.min(15, lum / 16) | 0
+      // Two pixels per byte: even x → high nibble, odd x → low nibble.
+      if ((x & 1) === 0) buf[destRow + (x >> 1)] |= level << 4
+      else buf[destRow + (x >> 1)] |= level
     }
   }
 
@@ -73,7 +82,7 @@ function imageDataToBmp1Bit(img: ImageData): string {
 }
 
 // Draw a labeled rectangle to an offscreen canvas and return it as a
-// base64 1-bit BMP (no data: prefix), the glasses-native bitmap format.
+// base64 4-bit grayscale BMP (no data: prefix), the glasses-native bitmap format.
 function makeBitmap(width: number, height: number, label: string): string {
   const canvas = document.createElement("canvas")
   canvas.width = width
@@ -89,7 +98,7 @@ function makeBitmap(width: number, height: number, label: string): string {
   ctx.textAlign = "center"
   ctx.textBaseline = "middle"
   ctx.fillText(label, width / 2, height / 2)
-  return imageDataToBmp1Bit(ctx.getImageData(0, 0, width, height))
+  return imageDataToBmp4Bit(ctx.getImageData(0, 0, width, height))
 }
 
 // The four 100×100 corner containers on the 576×288 display, keyed by rect.

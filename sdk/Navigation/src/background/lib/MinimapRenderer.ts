@@ -42,16 +42,13 @@ function toLocalMeters(p: LatLng, origin: LatLng): {x: number; y: number} {
 class Raster {
   readonly buf: Uint8Array
   constructor(readonly size: number) {
-    this.buf = new Uint8Array(size * size * 3)
+    this.buf = new Uint8Array(size * size) // 8-bit grayscale, 1 byte/px
     this.buf.fill(WHITE)
   }
 
   set(x: number, y: number, v: number): void {
     if (x < 0 || y < 0 || x >= this.size || y >= this.size) return
-    const i = (y * this.size + x) * 3
-    this.buf[i] = v
-    this.buf[i + 1] = v
-    this.buf[i + 2] = v
+    this.buf[y * this.size + x] = v
   }
 
   /** Filled disc — used as a brush so lines/markers have thickness. */
@@ -155,13 +152,24 @@ export function renderMinimap(input: MinimapInput, size = 100): string | null {
     }
   }
 
-  // Border rectangle around the minimap edge (drawn first; route and
-  // arrow render on top). Inset by 1px so the 2px stroke stays in-bounds.
-  const max = size - 2
-  r.line(1, 1, max, 1, BLACK, 2) // top
-  r.line(1, max, max, max, BLACK, 2) // bottom
-  r.line(1, 1, 1, max, BLACK, 2) // left
-  r.line(max, 1, max, max, BLACK, 2) // right
+  // Corner brackets instead of a full border — just short dashes meeting at
+  // each corner (drawn first; route and arrow render on top). Inset by 1px so
+  // the 2px stroke stays in-bounds.
+  const lo = 1
+  const hi = size - 2
+  const len = Math.max(4, Math.round(size * 0.18)) // dash length per arm
+  // top-left
+  r.line(lo, lo, lo + len, lo, BLACK, 2)
+  r.line(lo, lo, lo, lo + len, BLACK, 2)
+  // top-right
+  r.line(hi, lo, hi - len, lo, BLACK, 2)
+  r.line(hi, lo, hi, lo + len, BLACK, 2)
+  // bottom-left
+  r.line(lo, hi, lo + len, hi, BLACK, 2)
+  r.line(lo, hi, lo, hi - len, BLACK, 2)
+  // bottom-right
+  r.line(hi, hi, hi - len, hi, BLACK, 2)
+  r.line(hi, hi, hi, hi - len, BLACK, 2)
 
   // Route polyline.
   if (routePoints && routePoints.length >= 2) {
