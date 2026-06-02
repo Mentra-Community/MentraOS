@@ -38,6 +38,7 @@ public class ImuRecorder implements SensorEventListener {
     // Latest values (updated independently by each sensor)
     private final float[] mLatestAccel = new float[3];
     private final float[] mLatestGyro = new float[3];
+    private boolean mHasGyroSample;
 
     private static class ImuSample {
         final long timestampNs;
@@ -67,8 +68,8 @@ public class ImuRecorder implements SensorEventListener {
     /** Start recording IMU data. Call this when photo/video capture begins. */
     public void startRecording() {
         if (mRecording) {
-            Log.w(TAG, "Already recording");
-            return;
+            Log.w(TAG, "IMU recording already active; restarting for new capture");
+            mSensorManager.unregisterListener(this);
         }
 
         synchronized (mSamples) {
@@ -76,6 +77,7 @@ public class ImuRecorder implements SensorEventListener {
         }
         mLatestAccel[0] = mLatestAccel[1] = mLatestAccel[2] = 0f;
         mLatestGyro[0] = mLatestGyro[1] = mLatestGyro[2] = 0f;
+        mHasGyroSample = false;
         mStartTimeNs = System.nanoTime();
         mRecording = true;
 
@@ -177,15 +179,15 @@ public class ImuRecorder implements SensorEventListener {
         root.put("version", 1);
         root.put("sampleCount", captured.size());
         root.put("samplingRateHz", 100);
+        long firstTimestampNs = captured.get(0).timestampNs;
+        long lastTimestampNs = captured.get(captured.size() - 1).timestampNs;
         root.put("startTimeNs", mStartTimeNs);
-        root.put(
-                "durationMs",
-                (captured.get(captured.size() - 1).timestampNs - mStartTimeNs) / 1_000_000);
+        root.put("durationMs", Math.max(0, (lastTimestampNs - firstTimestampNs) / 1_000_000));
 
         JSONArray samples = new JSONArray();
         for (ImuSample s : captured) {
             JSONArray sample = new JSONArray();
-            sample.put(Math.round((s.timestampNs - mStartTimeNs) / 1_000_000.0));
+            sample.put(Math.round((s.timestampNs - firstTimestampNs) / 1_000_000.0));
             sample.put(round4(s.accel[0]));
             sample.put(round4(s.accel[1]));
             sample.put(round4(s.accel[2]));
@@ -205,6 +207,8 @@ public class ImuRecorder implements SensorEventListener {
         synchronized (mSamples) {
             mSamples.clear();
         }
+        mStartTimeNs = 0;
+        mHasGyroSample = false;
     }
 
     @Override
@@ -214,13 +218,17 @@ public class ImuRecorder implements SensorEventListener {
         switch (event.sensor.getType()) {
             case Sensor.TYPE_ACCELEROMETER:
                 System.arraycopy(event.values, 0, mLatestAccel, 0, 3);
-                // Record a combined sample on each accel event (accel drives the sampling rate)
-                synchronized (mSamples) {
-                    mSamples.add(new ImuSample(event.timestamp, mLatestAccel, mLatestGyro));
+                // Use System.nanoTime() so sample times match mStartTimeNs (event.timestamp can
+                // differ by minutes on some devices).
+                if (mHasGyroSample) {
+                    synchronized (mSamples) {
+                        mSamples.add(new ImuSample(System.nanoTime(), mLatestAccel, mLatestGyro));
+                    }
                 }
                 break;
             case Sensor.TYPE_GYROSCOPE:
                 System.arraycopy(event.values, 0, mLatestGyro, 0, 3);
+                mHasGyroSample = true;
                 break;
         }
     }
