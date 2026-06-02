@@ -1,131 +1,105 @@
 name: iOS IPA (SideStore Build)
 
 on:
-workflow_dispatch:
-push:
-branches:
-- dev
+  workflow_dispatch:
+  push:
+    branches:
+      - dev
 
 jobs:
-build:
-runs-on: macos-15
+  build:
+    runs-on: macos-15
 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-steps:
-  - name: Checkout repository
-    uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
 
-  - name: Select Xcode 16.2
-    run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
 
-  - name: Setup Bun
-    uses: oven-sh/setup-bun@v2
-    with:
-      bun-version: latest
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
-  - name: Setup Node.js
-    uses: actions/setup-node@v4
-    with:
-      node-version: "20"
+      - name: Install deps
+        working-directory: ./mobile
+        run: bun install --no-frozen-lockfile
 
-  - name: Install dependencies
-    working-directory: ./mobile
-    run: bun install --no-frozen-lockfile
+      - name: Setup env
+        working-directory: ./mobile
+        run: cp .env.example .env
 
-  - name: Setup environment
-    working-directory: ./mobile
-    run: cp .env.example .env
+      - name: Expo prebuild
+        working-directory: ./mobile
+        run: bun expo prebuild --platform ios
 
-  - name: Expo prebuild (generate iOS project)
-    working-directory: ./mobile
-    run: bun expo prebuild --platform ios
+      - name: Install pods
+        working-directory: ./mobile/ios
+        run: pod install
 
-  - name: Setup Sherpa Onnx (optional)
-    working-directory: ./mobile
-    run: |
-      chmod +x scripts/setup-sherpa-onnx-optional.sh
-      ./scripts/setup-sherpa-onnx-optional.sh || true
+      - name: Build .app (Release, unsigned)
+        working-directory: ./mobile/ios
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: "true"
+        run: |
+          xcodebuild \
+            -workspace Mentra.xcworkspace \
+            -scheme Mentra \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            COPY_PHASE_STRIP=NO \
+            STRIP_INSTALLED_PRODUCT=NO \
+            ONLY_ACTIVE_ARCH=NO \
+            2>&1 | tee /tmp/xcodebuild.log | xcpretty --color || \
+          (echo "=== ERRORS ===" && grep "error:" /tmp/xcodebuild.log | tail -80 && exit 1)
 
-  - name: Install CocoaPods dependencies
-    working-directory: ./mobile/ios
-    run: pod install
+      - name: Locate .app
+        id: find_app
+        run: |
+          APP_PATH=$(find mobile/ios/build/Build/Products -name "*.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ .app not found"
+            find mobile/ios/build -maxdepth 5 -type d
+            exit 1
+          fi
+          echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
+          echo "✅ Found app at $APP_PATH"
 
-  - name: Show available schemes (debugging)
-    working-directory: ./mobile/ios
-    run: |
-      echo "=== SCHEMES ==="
-      xcodebuild -workspace Mentra.xcworkspace -list
+      - name: Verify bundle structure
+        run: |
+          echo "=== App contents ==="
+          ls -la "${{ env.APP_PATH }}"
+          echo ""
+          echo "=== Frameworks ==="
+          ls "${{ env.APP_PATH }}/Frameworks" || echo "No Frameworks folder"
 
-  - name: Build unsigned .app (Release for device)
-    working-directory: ./mobile/ios
-    env:
-      SENTRY_DISABLE_AUTO_UPLOAD: "true"
-    run: |
-      set -o pipefail
+      - name: Package IPA (SideStore friendly)
+        run: |
+          mkdir -p Payload
+          cp -r "${{ env.APP_PATH }}" Payload/App.app
+          touch Payload/App.app/embedded.mobileprovision
+          zip -r Mentra.ipa Payload
+          mv Mentra.ipa mobile/ios/
+          echo "✅ IPA packaged"
+          ls -lh mobile/ios/Mentra.ipa
 
-      xcodebuild \
-        -workspace Mentra.xcworkspace \
-        -scheme Mentra \
-        -configuration Release \
-        -destination 'generic/platform=iOS' \
-        -derivedDataPath build \
-        CODE_SIGNING_ALLOWED=NO \
-        COPY_PHASE_STRIP=NO \
-        STRIP_INSTALLED_PRODUCT=NO \
-        ONLY_ACTIVE_ARCH=NO \
-        2>&1 | tee /tmp/xcodebuild.log | xcpretty --color
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mentra-SideStore-IPA
+          path: mobile/ios/Mentra.ipa
+          retention-days: 14
 
-  - name: Locate built .app
-    run: |
-      echo "=== Searching for .app ==="
-      APP_PATH=$(find mobile/ios/build/Build/Products -name "*.app" -type d | head -1)
-
-      if [ -z "$APP_PATH" ]; then
-        echo "❌ ERROR: .app not found"
-        exit 1
-      fi
-
-      echo "✅ Found app at: $APP_PATH"
-      echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
-
-  - name: Verify app bundle (important for SideStore)
-    run: |
-      echo "=== App contents ==="
-      ls -la "$APP_PATH"
-
-      echo ""
-      echo "=== Frameworks ==="
-      ls "$APP_PATH/Frameworks" || echo "No Frameworks folder"
-
-  - name: Create IPA (SideStore-compatible)
-    run: |
-      echo "=== Packaging IPA ==="
-
-      rm -rf Payload
-      mkdir Payload
-
-      cp -r "$APP_PATH" Payload/App.app
-
-      touch Payload/App.app/embedded.mobileprovision
-
-      zip -r Mentra.ipa Payload
-
-      mv Mentra.ipa mobile/ios/
-
-      echo "✅ IPA created:"
-      ls -lh mobile/ios/Mentra.ipa
-
-  - name: Upload IPA artifact
-    uses: actions/upload-artifact@v4
-    with:
-      name: Mentra-SideStore-IPA
-      path: mobile/ios/Mentra.ipa
-      retention-days: 14
-
-  - name: Upload build log (on failure)
-    if: failure()
-    uses: actions/upload-artifact@v4
-    with:
-      name: xcodebuild-log
-      path: /tmp/xcodebuild.log
-      retention-days: 5
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: /tmp/xcodebuild.log
+          retention-days: 5
