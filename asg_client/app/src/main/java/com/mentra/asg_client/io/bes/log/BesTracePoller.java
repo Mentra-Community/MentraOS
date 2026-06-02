@@ -135,13 +135,27 @@ public class BesTracePoller {
 
   private int suffixPrefixOverlap(String previous, String current) {
     int max = Math.min(Math.min(previous.length(), current.length()), MAX_OVERLAP_SCAN_CHARS);
-    for (int length = max; length > 0; length--) {
-      int previousStart = previous.length() - length;
-      if (previous.regionMatches(previousStart, current, 0, length)) {
-        return length;
-      }
+    if (max == 0) {
+      return 0;
     }
-    return 0;
+
+    String currentHead = current.substring(0, max);
+    String previousTail = previous.substring(previous.length() - max);
+    String combined = currentHead + '\0' + previousTail;
+    int[] prefixLengths = new int[combined.length()];
+
+    for (int index = 1; index < combined.length(); index++) {
+      int length = prefixLengths[index - 1];
+      while (length > 0 && combined.charAt(index) != combined.charAt(length)) {
+        length = prefixLengths[length - 1];
+      }
+      if (combined.charAt(index) == combined.charAt(length)) {
+        length++;
+      }
+      prefixLengths[index] = length;
+    }
+
+    return Math.min(prefixLengths[combined.length() - 1], max);
   }
 
   private String tailLines(String text, int maxLines) {

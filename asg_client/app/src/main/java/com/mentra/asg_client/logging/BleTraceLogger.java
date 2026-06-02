@@ -16,6 +16,7 @@ import java.util.Locale;
 public final class BleTraceLogger {
     private static final String TAG = "MentraBleTrace";
     private static final int MAX_PAYLOAD_CHARS = 3000;
+    private static final String SOURCE = "asg_client";
     private static final String K900_TYPE = "k900";
     private static final String[] SENSITIVE_KEY_PARTS = {
         "password", "pass", "token", "secret", "authorization", "auth", "email"
@@ -289,23 +290,7 @@ public final class BleTraceLogger {
     }
 
     private static String caller() {
-        StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
-        for (StackTraceElement frame : stackTrace) {
-            String className = frame.getClassName();
-            if (className.equals(BleTraceLogger.class.getName())
-                || className.equals(Thread.class.getName())
-                || className.equals("dalvik.system.VMStack")) {
-                continue;
-            }
-            return simpleClassName(className) + "." + frame.getMethodName()
-                + "(" + frame.getFileName() + ":" + frame.getLineNumber() + ")";
-        }
-        return "unknown";
-    }
-
-    private static String simpleClassName(String className) {
-        int lastDot = className.lastIndexOf('.');
-        return lastDot >= 0 ? className.substring(lastDot + 1) : className;
+        return SOURCE;
     }
 
     private static String packageVersion(Context context) {
