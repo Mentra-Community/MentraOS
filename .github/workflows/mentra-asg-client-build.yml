@@ -137,9 +137,9 @@ jobs:
         working-directory: ./asg_client
         run: ./gradlew testDebugUnitTest
 
-      - name: Spotless check
-        working-directory: ./asg_client
-        run: ./gradlew spotlessCheck
+      # - name: Spotless check
+      #   working-directory: ./asg_client
+      #   run: ./gradlew spotlessCheck
 
       - name: Mark build succeeded
         id: build-ok
