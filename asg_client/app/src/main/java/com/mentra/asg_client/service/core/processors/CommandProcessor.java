@@ -2,7 +2,9 @@ package com.mentra.asg_client.service.core.processors;
 
 import android.content.Context;
 import android.util.Log;
+import com.mentra.asg_client.io.bes.log.BesTracePoller;
 import com.mentra.asg_client.io.file.core.FileManager;
+import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.reporting.core.ReportManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
@@ -65,6 +67,7 @@ public class CommandProcessor {
     private final CommandParser commandParser;
     private final CommandProtocolDetector protocolDetector;
     private final K900CommandHandler k900CommandHandler;
+    private final BesTracePoller besTracePoller;
     private final ResponseSender responseSender;
     private final ChunkReassembler chunkReassembler;
     private final RgbLedCommandHandler rgbLedCommandHandler;
@@ -97,6 +100,7 @@ public class CommandProcessor {
         this.protocolDetector = new CommandProtocolDetector();
         this.k900CommandHandler =
                 new K900CommandHandler(serviceManager, stateManager, communicationManager);
+        this.besTracePoller = new BesTracePoller();
         this.responseSender = new ResponseSender(serviceManager);
         this.chunkReassembler = new ChunkReassembler();
 
@@ -287,6 +291,7 @@ public class CommandProcessor {
 
         String type = commandData.type();
         Log.i(TAG, "🎯 Routing command type: " + type);
+        BleTraceLogger.logJson("phone_to_glasses", "asg_command_router", commandData.data());
         if ("take_photo".equals(type)) {
             Log.i(
                     TAG,
@@ -540,6 +545,18 @@ public class CommandProcessor {
         } else {
             Log.w(TAG, "⚠️ K900CommandHandler not available — cannot request BES logs");
         }
+    }
+
+    public void setBesTracePollingEnabled(boolean enabled, long intervalMs) {
+        if (enabled) {
+            besTracePoller.start(k900CommandHandler, context, configurationManager, intervalMs);
+        } else {
+            besTracePoller.stop();
+        }
+    }
+
+    public void cleanup() {
+        besTracePoller.stop();
     }
 
     /**

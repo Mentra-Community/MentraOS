@@ -1545,9 +1545,9 @@ class LocalMiniappRuntime {
       const horizontal = payload.horizontal as number | undefined
       const fov =
         typeof horizontal === "number"
-          ? Math.min(118, Math.max(82, horizontal))
+          ? Math.min(118, Math.max(62, horizontal))
           : typeof payload.fov === "number"
-            ? Math.min(118, Math.max(82, payload.fov))
+            ? Math.min(118, Math.max(62, payload.fov))
             : 118
       const roiStr = (payload.roiPosition as string) ?? "center"
       const numericRoi = ROI_MAP[roiStr] ?? 0
