@@ -373,6 +373,9 @@ export class NavigationController {
     let next: string | null = null
     let durationMs: number | undefined
 
+    // Mirrors the phone-side OrientationCard's pickDisplay() — same
+    // two-line layout, same pivot fields, same precedence. If you tweak
+    // one, tweak the other or they'll diverge.
     if (status === "arrived") {
       const at = activeDestinationName ? ` at ${activeDestinationName}` : ""
       next = `You have arrived${at}`
@@ -382,38 +385,26 @@ export class NavigationController {
       durationMs = 5_000
     } else if (status === "rerouting") {
       next = "Rebuilding route…"
-    } else if (this.activePivot) {
-      if (this.activePivot.maneuver === "CROSS_STREET") {
-        // Crossing pivots use the across-the-street road as their
-        // `toRoad`. "Cross to Fell St" reads naturally as the user
-        // steps off the curb.
-        const namedRoad = isRealRoadName(this.activePivot.toRoad)
-        next = namedRoad ? `Cross to ${namedRoad}` : "Cross the street"
-      } else {
-        const verb = this.activePivot.direction === "right" ? "Turn right" : "Turn left"
-        const namedRoad = isRealRoadName(this.activePivot.toRoad)
-        const onto = namedRoad ? `onto ${namedRoad}` : null
-        next = [verb, onto].filter(Boolean).join("\n")
-      }
-    } else if (this.upcomingPivot && this.coords) {
+    } else if (this.activePivot?.direction) {
+      // At the turn. Layout:
+      //   Onto <toRoad>
+      //   Turn left|right
+      const verb = this.activePivot.direction === "right" ? "Turn right" : "Turn left"
+      const onto = isRealRoadName(this.activePivot.toRoad)
+      const topLine = onto ? `Onto ${onto}` : null
+      next = [topLine, verb].filter(Boolean).join("\n")
+    } else if (this.upcomingPivot?.direction && this.coords) {
+      // Approaching the next turn. Layout:
+      //   Onto <toRoad>
+      //   Turn left|right in <distance>
       const dist = haversineMeters(
         {lat: this.coords.lat, lng: this.coords.lng},
         {lat: this.upcomingPivot.lat, lng: this.upcomingPivot.lng},
       )
-      const isCross = this.upcomingPivot.maneuver === "CROSS_STREET"
-      const distStr = formatDistance(dist)
-      if (isCross) {
-        // Use the across-street road name when geocode populated it.
-        // Falls back to a neutral "Cross the street" prompt otherwise.
-        const namedRoad = isRealRoadName(this.upcomingPivot.toRoad)
-        const verb = namedRoad ? `Cross to ${namedRoad}` : "Cross the street"
-        next = `${verb} in ${distStr}`
-      } else {
-        const verb = this.upcomingPivot.direction === "right" ? "Turn right" : "Turn left"
-        const nextRoad = isRealRoadName(this.upcomingPivot.fromRoad)
-        const topLine = nextRoad ? `Onto ${nextRoad}` : null
-        next = [topLine, `${verb} in ${distStr}`].filter(Boolean).join("\n")
-      }
+      const verb = this.upcomingPivot.direction === "right" ? "Turn right" : "Turn left"
+      const onto = isRealRoadName(this.upcomingPivot.toRoad)
+      const topLine = onto ? `Onto ${onto}` : null
+      next = [topLine, `${verb} in ${formatDistance(dist)}`].filter(Boolean).join("\n")
     } else if (maneuver?.distanceToDestinationMeters != null && maneuver.distanceToDestinationMeters >= 0) {
       next = `Arriving in ${formatDistance(maneuver.distanceToDestinationMeters)}`
     } else if (running) {
