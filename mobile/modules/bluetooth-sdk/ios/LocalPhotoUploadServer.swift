@@ -14,7 +14,7 @@ final class LocalPhotoUploadServer {
   private let onLog: (String) -> Void
   private let onUpload: (PhotoUpload) -> Void
   private var listener: NWListener?
-  private var activePort: UInt16?
+  private(set) var activePort: UInt16?
 
   init(onLog: @escaping (String) -> Void, onUpload: @escaping (PhotoUpload) -> Void) {
     self.onLog = onLog
@@ -24,9 +24,9 @@ final class LocalPhotoUploadServer {
   }
 
   func start(port: UInt16) throws -> UInt16 {
-    if listener != nil, activePort == port {
-      onLog("Already listening on 0.0.0.0:\(port)")
-      return port
+    if listener != nil, let activePort {
+      onLog("Already listening on 0.0.0.0:\(activePort)")
+      return activePort
     }
     stop()
     try FileManager.default.createDirectory(
@@ -74,6 +74,8 @@ final class LocalPhotoUploadServer {
     listener.start(queue: queue)
 
     if started.wait(timeout: .now() + 2) == .timedOut {
+      self.listener = nil
+      listener.cancel()
       throw PhotoUploadServerError("Timed out starting listener")
     }
     if let startError {
@@ -202,19 +204,20 @@ final class LocalPhotoUploadServer {
     let filename = safeFilePart(requestId ?? "photo-\(Int(Date().timeIntervalSince1970 * 1000))")
     let photoFile = uploadDirectory.appendingPathComponent("\(filename).jpg")
     try photoBytes.write(to: photoFile, options: .atomic)
-
-    onLog("upload fields=\(parsed.fields.keys.joined(separator: ",")) requestId=\(requestId ?? "") bytes=\(photoBytes.count) saved=\(photoFile.path)")
-    writeJson(
-      connection,
-      status: 200,
-      body: #"{"ok":true,"requestId":"\#(jsonEscape(requestId ?? ""))","bytes":\#(photoBytes.count)}"#
-    )
-    onUpload(PhotoUpload(
+    let upload = PhotoUpload(
       requestId: requestId,
       photoFile: photoFile,
       byteCount: photoBytes.count,
       fields: parsed.fields
-    ))
+    )
+
+    onLog("upload fields=\(parsed.fields.keys.joined(separator: ",")) requestId=\(requestId ?? "") bytes=\(photoBytes.count) saved=\(photoFile.path)")
+    onUpload(upload)
+    writeJson(
+      connection,
+      status: 200,
+      body: #"{"ok":true,"requestId":\#(jsonString(requestId ?? "")),"bytes":\#(photoBytes.count)}"#
+    )
     return true
   }
 
@@ -236,13 +239,12 @@ final class LocalPhotoUploadServer {
     }
 
     let bodyData = Data(body.utf8)
-    let header = """
-      HTTP/1.1 \(status) \(reason)\r
-      Content-Type: application/json\r
-      Content-Length: \(bodyData.count)\r
-      Connection: close\r
-      \r
-      """
+    let header =
+      "HTTP/1.1 \(status) \(reason)\r\n" +
+      "Content-Type: application/json\r\n" +
+      "Content-Length: \(bodyData.count)\r\n" +
+      "Connection: close\r\n" +
+      "\r\n"
     var response = Data(header.utf8)
     response.append(bodyData)
     connection.send(content: response, completion: .contentProcessed { _ in
@@ -346,10 +348,14 @@ final class LocalPhotoUploadServer {
     return sanitized.isEmpty ? "photo" : sanitized
   }
 
-  private func jsonEscape(_ value: String) -> String {
-    value
-      .replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
+  private func jsonString(_ value: String) -> String {
+    guard
+      let data = try? JSONSerialization.data(withJSONObject: [value]),
+      let json = String(data: data, encoding: .utf8)
+    else {
+      return #""""#
+    }
+    return String(json.dropFirst().dropLast())
   }
 
   private struct HttpRequest {
@@ -362,14 +368,15 @@ final class LocalPhotoUploadServer {
       let requestParts = lines.first?.split(separator: " ").map(String.init) ?? []
       let method = requestParts.first?.uppercased() ?? ""
       let path = requestParts.dropFirst().first?.split(separator: "?").first.map(String.init) ?? ""
-      let headers: [String: String] = Dictionary(uniqueKeysWithValues: lines.dropFirst().compactMap { line in
+      var headers: [String: String] = [:]
+      for line in lines.dropFirst() {
         guard let separator = line.firstIndex(of: ":") else {
-          return nil
+          continue
         }
-        let key = line[..<separator].lowercased()
+        let key = String(line[..<separator].lowercased())
         let value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespaces)
-        return (String(key), value)
-      })
+        headers[key] = value
+      }
       return HttpRequest(method: method, path: path, headers: headers)
     }
   }

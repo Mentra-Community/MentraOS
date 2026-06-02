@@ -42,17 +42,19 @@ public class MentraPhotoReceiverModule: Module {
     )
     photoUploadServer = server
 
+    if let activePort = server.activePort {
+      let uploadUrl = "http://\(host):\(activePort)/upload"
+      emitStatus(message: "Photo receiver ready at \(uploadUrl)")
+      return receiverResult(uploadUrl: uploadUrl, host: host, port: activePort)
+    }
+
     var lastError: Error?
     for port in photoPorts {
       do {
         let actualPort = try server.start(port: UInt16(port))
         let uploadUrl = "http://\(host):\(actualPort)/upload"
         emitStatus(message: "Photo receiver ready at \(uploadUrl)")
-        return [
-          "uploadUrl": uploadUrl,
-          "host": host,
-          "port": actualPort,
-        ]
+        return receiverResult(uploadUrl: uploadUrl, host: host, port: actualPort)
       } catch {
         lastError = error
         emitStatus(message: "Port \(port) unavailable: \(error.localizedDescription)")
@@ -92,6 +94,7 @@ public class MentraPhotoReceiverModule: Module {
     }
     defer { freeifaddrs(interfaces) }
 
+    var preferred: String?
     var fallback: String?
     var cursor: UnsafeMutablePointer<ifaddrs>? = first
     while let current = cursor {
@@ -119,16 +122,41 @@ public class MentraPhotoReceiverModule: Module {
       }
 
       let ip = String(cString: hostname)
-      guard ip != "127.0.0.1" else {
+      guard ip != "127.0.0.1", isPrivateIPv4(ip) else {
         continue
       }
-      if name == "en0" {
-        return ip
+      if isPreferredLocalInterface(name) {
+        preferred = preferred ?? ip
+      } else {
+        fallback = fallback ?? ip
       }
-      fallback = fallback ?? ip
     }
 
-    return fallback
+    return preferred ?? fallback
+  }
+
+  private func receiverResult(uploadUrl: String, host: String, port: UInt16) -> [String: Any] {
+    [
+      "uploadUrl": uploadUrl,
+      "host": host,
+      "port": port,
+    ]
+  }
+
+  private func isPreferredLocalInterface(_ name: String) -> Bool {
+    name == "en0" ||
+      name.hasPrefix("bridge") ||
+      name.hasPrefix("ap") ||
+      name.hasPrefix("awdl") ||
+      name.hasPrefix("llw")
+  }
+
+  private func isPrivateIPv4(_ ip: String) -> Bool {
+    if ip.hasPrefix("192.168.") || ip.hasPrefix("10.") {
+      return true
+    }
+    let parts = ip.split(separator: ".").compactMap { Int($0) }
+    return parts.count == 4 && parts[0] == 172 && (16...31).contains(parts[1])
   }
 
   private let photoPorts = [8787, 8788, 8789, 8790]

@@ -46,17 +46,19 @@ class MentraPhotoReceiverModule : Module() {
       photoUploadServer = it
     }
 
+    server.activePort?.let { activePort ->
+      val uploadUrl = "http://$host:$activePort/upload"
+      emitStatus("Photo receiver ready at $uploadUrl")
+      return receiverResult(uploadUrl, host, activePort)
+    }
+
     var lastError: Throwable? = null
     for (port in PHOTO_PORTS) {
       try {
         val actualPort = server.start(port)
         val uploadUrl = "http://$host:$actualPort/upload"
         emitStatus("Photo receiver ready at $uploadUrl")
-        return mapOf(
-          "uploadUrl" to uploadUrl,
-          "host" to host,
-          "port" to actualPort,
-        )
+        return receiverResult(uploadUrl, host, actualPort)
       } catch (error: Throwable) {
         lastError = error
         emitStatus("Port $port unavailable: ${error.message ?: error::class.java.simpleName}")
@@ -75,16 +77,19 @@ class MentraPhotoReceiverModule : Module() {
 
   private fun handlePhotoUpload(upload: PhotoUpload) {
     val fileUri = Uri.fromFile(upload.photoFile).toString()
-    BleTraceLogger.logMap(
-      "phone_to_app",
-      "photo_receiver_event",
-      "photo_upload",
-      mapOf(
-        "requestId" to upload.requestId.orEmpty(),
-        "fileName" to upload.photoFile.name,
-        "byteCount" to upload.byteCount,
-      ),
-    )
+    try {
+      BleTraceLogger.logMap(
+        "phone_to_app",
+        "photo_receiver_event",
+        "photo_upload",
+        mapOf(
+          "requestId" to upload.requestId.orEmpty(),
+          "fileName" to upload.photoFile.name,
+          "byteCount" to upload.byteCount,
+        ),
+      )
+    } catch (_: Throwable) {
+    }
     sendEvent(
       "photoUpload",
       mapOf(
@@ -111,20 +116,49 @@ class MentraPhotoReceiverModule : Module() {
   }
 
   private fun bestLocalIpv4Address(): String? {
-    val candidates = mutableListOf<Inet4Address>()
+    val wifiCandidates = mutableListOf<Inet4Address>()
+    val privateCandidates = mutableListOf<Inet4Address>()
     val interfaces = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
     for (networkInterface in interfaces) {
       if (!networkInterface.isUp || networkInterface.isLoopback) {
         continue
       }
-      val addresses = networkInterface.inetAddresses.toList().filterIsInstance<Inet4Address>()
-      candidates += addresses.filterNot { it.isLoopbackAddress || it.isLinkLocalAddress }
+      val addresses = networkInterface.inetAddresses.toList()
+        .filterIsInstance<Inet4Address>()
+        .filter { address ->
+          !address.isLoopbackAddress &&
+            !address.isLinkLocalAddress &&
+            isPrivateIpv4(address.hostAddress.orEmpty())
+        }
+      if (isWifiInterface(networkInterface.name)) {
+        wifiCandidates += addresses
+      } else {
+        privateCandidates += addresses
+      }
     }
 
-    return candidates.firstOrNull { address ->
-      val host = address.hostAddress.orEmpty()
-      host.startsWith("192.168.") || host.startsWith("10.") || host.matches(Regex("^172\\.(1[6-9]|2[0-9]|3[0-1])\\..*"))
-    }?.hostAddress ?: candidates.firstOrNull()?.hostAddress
+    return (wifiCandidates.firstOrNull() ?: privateCandidates.firstOrNull())?.hostAddress
+  }
+
+  private fun receiverResult(uploadUrl: String, host: String, port: Int): Map<String, Any> {
+    return mapOf(
+      "uploadUrl" to uploadUrl,
+      "host" to host,
+      "port" to port,
+    )
+  }
+
+  private fun isWifiInterface(name: String): Boolean {
+    return name.startsWith("wlan") ||
+      name.startsWith("p2p") ||
+      name.startsWith("ap") ||
+      name.startsWith("swlan")
+  }
+
+  private fun isPrivateIpv4(host: String): Boolean {
+    return host.startsWith("192.168.") ||
+      host.startsWith("10.") ||
+      host.matches(Regex("^172\\.(1[6-9]|2[0-9]|3[0-1])\\..*"))
   }
 
   private companion object {

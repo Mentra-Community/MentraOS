@@ -213,7 +213,7 @@ public class BlePhotoUploadService {
             jpegBytes,
             startMs);
         putJson(payload, "bearerHeaderPresent", authToken != null && !authToken.isEmpty());
-        BleTraceLogger.logJson("phone_to_wifi", "wifi_http_output", payload, null);
+        safeTraceJson("phone_to_wifi", "wifi_http_output", payload);
     }
 
     private static void traceRelayUploadEnd(String requestId, String webhookUrl,
@@ -232,7 +232,7 @@ public class BlePhotoUploadService {
         putJson(payload, "statusCode", statusCode);
         putJson(payload, "success", success);
         putJson(payload, "outcome", outcome);
-        BleTraceLogger.logJson("wifi_to_phone", "wifi_http_input", payload, null);
+        safeTraceJson("wifi_to_phone", "wifi_http_input", payload);
     }
 
     private static void traceRelayUploadError(String requestId, String webhookUrl,
@@ -252,7 +252,7 @@ public class BlePhotoUploadService {
         putJson(payload, "outcome", outcome);
         putJson(payload, "errorClass", error.getClass().getSimpleName());
         putJson(payload, "errorMessage", error.getMessage());
-        BleTraceLogger.logJson("wifi_to_phone", "wifi_http_input", payload, null);
+        safeTraceJson("wifi_to_phone", "wifi_http_input", payload);
     }
 
     private static JSONObject createRelayUploadPayload(String type, String requestId,
@@ -284,7 +284,7 @@ public class BlePhotoUploadService {
                 putJson(payload, "urlPort", uri.getPort());
             }
             String path = uri.getRawPath();
-            putJson(payload, "urlPath", path == null || path.isEmpty() ? "/" : path);
+            putJson(payload, "urlHasPath", path != null && !path.isEmpty() && !"/".equals(path));
             putJson(payload, "urlHasQuery", uri.getRawQuery() != null && !uri.getRawQuery().isEmpty());
         } catch (Exception e) {
             putJson(payload, "urlParseError", e.getClass().getSimpleName());
@@ -298,6 +298,13 @@ public class BlePhotoUploadService {
         try {
             payload.put(key, value);
         } catch (Exception ignored) {
+        }
+    }
+
+    private static void safeTraceJson(String direction, String layer, JSONObject payload) {
+        try {
+            BleTraceLogger.logJson(direction, layer, payload, null);
+        } catch (Throwable ignored) {
         }
     }
 

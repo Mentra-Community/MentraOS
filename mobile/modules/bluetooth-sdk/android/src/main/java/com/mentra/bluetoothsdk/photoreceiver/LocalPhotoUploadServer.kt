@@ -21,6 +21,7 @@ import java.net.Socket
 import java.net.SocketException
 import java.nio.charset.StandardCharsets
 import java.util.Locale
+import java.util.concurrent.Semaphore
 import org.json.JSONObject
 
 data class PhotoUpload(
@@ -40,14 +41,20 @@ class LocalPhotoUploadServer(
     private var serverSocket: ServerSocket? = null
     private var serverJob: Job? = null
     private val uploadDir = File(appContext.cacheDir, "mentra-photo-uploads")
+    private val clientSlots = Semaphore(MAX_ACTIVE_CLIENTS)
 
     @Volatile
     var running: Boolean = false
         private set
 
+    val activePort: Int?
+        get() = serverSocket
+            ?.takeIf { running && !it.isClosed }
+            ?.localPort
+
     fun start(port: Int): Int {
         val activeSocket = serverSocket
-        if (running && activeSocket != null && !activeSocket.isClosed && activeSocket.localPort == port) {
+        if (running && activeSocket != null && !activeSocket.isClosed) {
             onLog("Already listening on 0.0.0.0:${activeSocket.localPort}")
             return activeSocket.localPort
         }
@@ -85,7 +92,17 @@ class LocalPhotoUploadServer(
         while (scope.isActive && !socket.isClosed) {
             try {
                 val client = socket.accept()
-                scope.launch { handleClient(client) }
+                if (!clientSlots.tryAcquire()) {
+                    rejectClient(client)
+                    continue
+                }
+                scope.launch {
+                    try {
+                        handleClient(client)
+                    } finally {
+                        clientSlots.release()
+                    }
+                }
             } catch (error: SocketException) {
                 if (running) onLog("Accept failed: ${error.message}")
             } catch (error: Throwable) {
@@ -193,6 +210,12 @@ class LocalPhotoUploadServer(
                 val file = File(uploadDir, "${safeFilePart(requestId ?: "photo-${System.currentTimeMillis()}")}.jpg")
                 file.writeBytes(photoBytes)
                 onLog("upload fields=${parsed.fields.keys.joinToString(",")} requestId=${requestId.orEmpty()} bytes=${photoBytes.size} saved=${file.absolutePath}")
+                val upload = PhotoUpload(
+                    requestId = requestId,
+                    photoFile = file,
+                    byteCount = photoBytes.size,
+                    fields = parsed.fields,
+                )
                 traceWifiInput(
                     "photo_receiver_upload_received",
                     client,
@@ -208,15 +231,8 @@ class LocalPhotoUploadServer(
                         "durationMs" to (System.currentTimeMillis() - requestStartMs),
                     ),
                 )
-                respond(200, """{"ok":true,"requestId":"${jsonEscape(requestId.orEmpty())}","bytes":${photoBytes.size}}""")
-                onUpload(
-                    PhotoUpload(
-                        requestId = requestId,
-                        photoFile = file,
-                        byteCount = photoBytes.size,
-                        fields = parsed.fields,
-                    ),
-                )
+                onUpload(upload)
+                respond(200, """{"ok":true,"requestId":${jsonString(requestId.orEmpty())},"bytes":${photoBytes.size}}""")
             } catch (error: Throwable) {
                 onLog("request failed: ${error.message ?: error::class.java.simpleName}")
                 traceWifiInput(
@@ -233,7 +249,16 @@ class LocalPhotoUploadServer(
                         "errorMessage" to (error.message ?: error::class.java.simpleName),
                     ),
                 )
-                respond(500, """{"ok":false,"error":"${jsonEscape(error.message ?: "server_error")}"}""")
+                respond(500, """{"ok":false,"error":${jsonString(error.message ?: "server_error")}}""")
+            }
+        }
+    }
+
+    private fun rejectClient(socket: Socket) {
+        socket.use { client ->
+            try {
+                writeJson(client.getOutputStream(), 503, """{"ok":false,"error":"too_many_connections"}""")
+            } catch (_: Throwable) {
             }
         }
     }
@@ -367,8 +392,8 @@ class LocalPhotoUploadServer(
         return value.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "photo" }
     }
 
-    private fun jsonEscape(value: String): String {
-        return value.replace("\\", "\\\\").replace("\"", "\\\"")
+    private fun jsonString(value: String): String {
+        return JSONObject.quote(value)
     }
 
     private fun traceWifiInput(
@@ -422,5 +447,6 @@ class LocalPhotoUploadServer(
     companion object {
         private const val MAX_HEADER_BYTES = 64 * 1024
         private const val MAX_UPLOAD_BYTES = 25L * 1024L * 1024L
+        private const val MAX_ACTIVE_CLIENTS = 2
     }
 }
