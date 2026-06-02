@@ -354,8 +354,11 @@ afterEvaluate {
 tasks.register('uploadSonatypeCentralDeployment') {
   group = 'publishing'
   description = "Uploads the ${mavenGroupId} OSSRH compatibility repository to the Central Portal."
+  def releasePublishTaskPath = project.path == ':'
+    ? ':publishReleasePublicationToSonatypeCentralRepository'
+    : "${project.path}:publishReleasePublicationToSonatypeCentralRepository"
   dependsOn ':lc3Lib:publishReleasePublicationToSonatypeCentralRepository',
-    ':publishReleasePublicationToSonatypeCentralRepository'
+    releasePublishTaskPath
 
   doLast {
     def username = centralUsername()

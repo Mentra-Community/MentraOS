@@ -356,7 +356,12 @@ Maintainers publishing the public SwiftPM mirror should follow
 
 ## Android Maven Publishing
 
-For maintainer releases of the native Android artifacts, use `android/gradle.properties.example` as the template for Sonatype Central and GPG signing properties. Put real values in `~/.gradle/gradle.properties` or CI secrets, not in the repository.
+Maintainers publishing the native Android artifacts to Maven Central should
+follow [RELEASING_ANDROID_MAVEN.md](./RELEASING_ANDROID_MAVEN.md).
+
+Use `android/gradle.properties.example` as the template for Sonatype Central and
+GPG signing properties. Put real values in `~/.gradle/gradle.properties` or CI
+secrets, not in the repository.
 
 ## Starter Example App
 
