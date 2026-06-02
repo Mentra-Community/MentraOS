@@ -1,110 +1,81 @@
-/**
- * @fileoverview INMO Go2 Hardware Capabilities
- *
- * Capability profile for the INMO Go2 smart glasses.
- *
- * Hardware summary (from ro.product getprop):
- *   SoC        : Unisoc UMS312 (Cortex-A55, armeabi-v7a)
- *   Camera     : IMX471v1 rear-facing, 4 MP  (confirmed via vendor.cam.sensor.info)
- *   Display    : Waveguide monocular AR display (no bitmap rendering via ASG client)
- *   Microphone : Single built-in mic
- *   Speaker    : Single built-in speaker
- *   IMU        : Accelerometer + Gyroscope (6-axis)
- *   Button     : One physical button + capacitive touchpad
- *   WiFi       : 2.4 GHz + 5 GHz (ro.wifi.sup_sprd = true)
- */
+name: iOS Unsigned IPA (Sideload Build)
 
-import type { Capabilities } from "../hardware";
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev
 
-/**
- * INMO Go2 capability profile
- */
-export const inmoGo2: Capabilities = {
-  modelName: "INMO Go2",
+jobs:
+  build:
+    runs-on: macos-15
 
-  // Camera — single rear-facing IMX471v1 (4 MP), supports video recording and streaming
-  hasCamera: true,
-  camera: {
-    resolution: { width: 2688, height: 1520 }, // IMX471v1 native (4 MP)
-    hasHDR: false,
-    hasFocus: true,
-    video: {
-      canRecord: true,
-      canStream: true,
-      supportedStreamTypes: ["rtmp"],
-      supportedResolutions: [
-        { width: 1920, height: 1080 },
-        { width: 1280, height: 720 },
-        { width: 640,  height: 480  },
-      ],
-    },
-  },
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-  // Display — monocular waveguide AR overlay; no bitmap rendering from phone side
-  hasDisplay: false,
-  display: null,
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
 
-  // Microphone — single built-in mic; LC3 audio not supported (no BES chip)
-  hasMicrophone: true,
-  microphone: {
-    count: 1,
-    hasVAD: false,
-  },
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
-  // Speaker — single speaker
-  hasSpeaker: true,
-  speaker: {
-    count: 1,
-    isPrivate: false,
-  },
+      - name: Install dependencies
+        working-directory: ./mobile
+        run: bun install --no-frozen-lockfile
 
-  // IMU — standard Android 6-axis (accelerometer + gyroscope)
-  hasIMU: true,
-  imu: {
-    axisCount: 6,
-    hasAccelerometer: true,
-    hasCompass: false,
-    hasGyroscope: true,
-  },
+      - name: Setup environment
+        working-directory: ./mobile
+        run: cp .env.example .env
 
-  // Buttons — one physical button and one capacitive touchpad (side-mounted)
-  hasButton: true,
-  button: {
-    count: 2,
-    buttons: [
-      {
-        type: "press",
-        events: ["press", "double_press", "long_press"],
-        isCapacitive: false,
-      },
-      {
-        type: "swipe1d",
-        events: ["swipe_forward", "swipe_back", "press"],
-        isCapacitive: true,
-      },
-    ],
-  },
+      - name: Run Expo prebuild
+        working-directory: ./mobile
+        run: bun expo prebuild --platform ios
 
-  // Light — single torch/privacy LED (camera flash used as recording indicator)
-  hasLight: true,
-  light: {
-    count: 1,
-    lights: [
-      {
-        id: "privacy",
-        purpose: "privacy",
-        isFullColor: false,
-        color: "white",
-        position: "front_facing",
-      },
-    ],
-  },
+      - name: Setup Sherpa Onnx (optional, non-blocking)
+        working-directory: ./mobile
+        run: |
+          chmod +x scripts/setup-sherpa-onnx-optional.sh
+          ./scripts/setup-sherpa-onnx-optional.sh || true
 
-  // Power — no external battery case
-  power: {
-    hasExternalBattery: false,
-  },
+      - name: Install CocoaPods dependencies
+        working-directory: ./mobile/ios
+        run: pod install
 
-  // WiFi — dual-band supported (ro.wifi.sup_sprd.support5G = true)
-  hasWifi: true,
-};
+      - name: Build unsigned .app for device
+        id: xcode-build
+        working-directory: ./mobile/ios
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: "true"
+        run: |
+          xcodebuild \
+            -workspace Mentra.xcworkspace \
+            -scheme Mentra \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-device \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package .app into unsigned IPA
+        run: |
+          APP_PATH="mobile/ios/build-device/Build/Products/Release-iphoneos/Mentra.app"
+          IPA_PATH="mobile/ios/Mentra-unsigned.ipa"
+          mkdir -p /tmp/Payload
+          cp -r "$APP_PATH" /tmp/Payload/Mentra.app
+          cd /tmp
+          zip -r "$GITHUB_WORKSPACE/$IPA_PATH" Payload
+          echo "IPA created at $IPA_PATH"
+          ls -lh "$GITHUB_WORKSPACE/$IPA_PATH"
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mentra-unsigned-ipa
+          path: mobile/ios/Mentra-unsigned.ipa
+          retention-days: 14
