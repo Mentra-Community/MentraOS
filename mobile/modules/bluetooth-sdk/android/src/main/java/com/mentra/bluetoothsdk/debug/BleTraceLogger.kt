@@ -77,12 +77,15 @@ object BleTraceLogger {
                 val inner = JSONObject(cValue)
                 inner.optString("type").takeIf { it.isNotBlank() }?.let { return it }
             } catch (_: Exception) {
-                return K900_TYPE
+                return extractK900Type(cValue)
             }
-            return K900_TYPE
+            return extractK900Type(cValue)
         }
         return "unknown"
     }
+
+    private fun extractK900Type(cValue: String): String =
+        if (cValue == "sr_log") "$K900_TYPE:sr_log" else K900_TYPE
 
     private fun sanitize(value: JSONObject): JSONObject {
         val output = JSONObject()
@@ -108,7 +111,7 @@ object BleTraceLogger {
             try {
                 return sanitize(JSONObject(value)).toString()
             } catch (_: Exception) {
-                return "<non-json C payload>"
+                return sanitizeK900Command(value)
             }
         }
         return when (value) {
@@ -118,6 +121,9 @@ object BleTraceLogger {
             else -> value
         }
     }
+
+    private fun sanitizeK900Command(value: String): String =
+        if (value == "sr_log") value else "<non-json C payload>"
 
     private fun caller(): String {
         val frame =

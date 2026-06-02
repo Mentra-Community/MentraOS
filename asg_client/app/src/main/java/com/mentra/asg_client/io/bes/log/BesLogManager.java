@@ -14,6 +14,7 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import okhttp3.Call;
@@ -61,7 +62,7 @@ public class BesLogManager {
 
   private final StringBuilder mLogBuffer = new StringBuilder();
   private boolean mIsReceiving = false;
-  private volatile boolean mFinished = false;
+  private final AtomicBoolean mFinished = new AtomicBoolean(false);
 
   private final Runnable mFirstPacketTimeout;
   private final Runnable mOverallTimeout;
@@ -128,14 +129,14 @@ public class BesLogManager {
     mHandler = new Handler(Looper.getMainLooper());
 
     mFirstPacketTimeout = () -> {
-      if (!mIsReceiving && !mFinished) {
+      if (!mIsReceiving && !mFinished.get()) {
         Log.w(TAG, "⏰ No sr_log packet within 2 s — BES may not support mh_logs in this build");
         finish("first_packet_timeout");
       }
     };
 
     mOverallTimeout = () -> {
-      if (!mFinished) {
+      if (!mFinished.get()) {
         Log.w(TAG, "⏰ Overall safety timeout (terminator not received) — uploading partial ("
             + mLogBuffer.length() + " chars)");
         finish("overall_timeout");
@@ -152,7 +153,7 @@ public class BesLogManager {
   }
 
   public boolean isFinished() {
-    return mFinished;
+    return mFinished.get();
   }
 
   /**
@@ -162,7 +163,7 @@ public class BesLogManager {
    * @param body log text chunk, or {@code "end"} for the terminator packet
    */
   public void onLogPacketReceived(int cur, String body) {
-    if (mFinished) return;
+    if (mFinished.get()) return;
 
     if (!mIsReceiving) {
       mIsReceiving = true;
@@ -191,8 +192,7 @@ public class BesLogManager {
    * @param timeoutReason null on normal completion, otherwise a reason string
    */
   private void finish(String timeoutReason) {
-    if (mFinished) return;
-    mFinished = true;
+    if (!mFinished.compareAndSet(false, true)) return;
     mHandler.removeCallbacks(mFirstPacketTimeout);
     mHandler.removeCallbacks(mOverallTimeout);
 

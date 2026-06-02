@@ -479,10 +479,6 @@ public class CommandProcessor {
         }
     }
 
-    public boolean isBesTracePollingEnabled() {
-        return besTracePoller.isRunning();
-    }
-
     public void cleanup() {
         besTracePoller.stop();
     }

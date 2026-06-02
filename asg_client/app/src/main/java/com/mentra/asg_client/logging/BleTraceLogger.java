@@ -152,10 +152,17 @@ public final class BleTraceLogger {
                     return innerType;
                 }
             }
-            return K900_TYPE;
+            return extractK900Type(cValue);
         }
 
         return "unknown";
+    }
+
+    private static String extractK900Type(String cValue) {
+        if ("sr_log".equals(cValue)) {
+            return K900_TYPE + ":sr_log";
+        }
+        return K900_TYPE;
     }
 
     private static JSONObject parseJson(String payload) {
@@ -239,7 +246,7 @@ public final class BleTraceLogger {
             if (inner != null) {
                 return sanitize(inner).toString();
             }
-            return "<non-json C payload>";
+            return sanitizeK900Command((String) value);
         }
         if (value instanceof JSONObject) {
             return sanitize((JSONObject) value);
@@ -248,6 +255,13 @@ public final class BleTraceLogger {
             return sanitize((JSONArray) value);
         }
         return value;
+    }
+
+    private static String sanitizeK900Command(String value) {
+        if ("sr_log".equals(value)) {
+            return value;
+        }
+        return "<non-json C payload>";
     }
 
     private static boolean isSensitiveKey(String key) {
