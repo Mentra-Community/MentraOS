@@ -960,6 +960,7 @@ class MentraLive: NSObject, SGCManager {
         // a previous pairing into the next one (would otherwise surface as wrong overall_percent
         // or stale lastBesOtaProgress on the next OTA).
         if state == ConnTypes.DISCONNECTED {
+            incomingChunkReassembler.clear()
             stopSignalStrengthPolling()
             DeviceStore.shared.apply("glasses", "signalStrength", -1)
             DeviceStore.shared.apply("glasses", "signalStrengthUpdatedAt", 0)
@@ -4031,6 +4032,7 @@ class MentraLive: NSObject, SGCManager {
 
         // Stop all timers
         stopAllTimers()
+        incomingChunkReassembler.clear()
 
         // Disconnect BLE
         if let peripheral = connectedPeripheral {
