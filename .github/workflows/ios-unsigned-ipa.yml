@@ -10,6 +10,7 @@ jobs:
 build:
 runs-on: macos-15
 
+```
 steps:
   - name: Checkout repository
     uses: actions/checkout@v4
@@ -103,16 +104,12 @@ steps:
       rm -rf Payload
       mkdir Payload
 
-      # Copy app into Payload
       cp -r "$APP_PATH" Payload/App.app
 
-      # Optional: placeholder provisioning file (helps some sideload tools)
       touch Payload/App.app/embedded.mobileprovision
 
-      # Zip into IPA
       zip -r Mentra.ipa Payload
 
-      # Move to project directory
       mv Mentra.ipa mobile/ios/
 
       echo "✅ IPA created:"
@@ -132,3 +129,4 @@ steps:
       name: xcodebuild-log
       path: /tmp/xcodebuild.log
       retention-days: 5
+```
