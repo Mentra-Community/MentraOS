@@ -141,6 +141,9 @@ object DeviceStore {
         store.set("bluetooth", "should_send_lc3", false)
         store.set("bluetooth", "should_send_transcript", false)
         store.set("bluetooth", "use_native_dashboard", false)
+        // Mentra Nex feature flags (off by default; toggled from Nex Developer Settings):
+        store.set("bluetooth", "nex_chinese_captions", false)
+        store.set("bluetooth", "nex_audio_playback", false)
     }
 
     fun get(category: String, key: String): Any? {
@@ -263,6 +266,12 @@ object DeviceStore {
             }
             "bluetooth" to "voice_activity_detection_enabled" -> {
                 DeviceManager.getInstance().sgc?.sendVoiceActivityDetectionSetting()
+            }
+            "bluetooth" to "nex_audio_playback" -> {
+                (value as? Boolean)?.let { enabled ->
+                    Bridge.log("DeviceStore: nex_audio_playback changed to $enabled")
+                    DeviceManager.getInstance().sgc?.applyNexAudioPlaybackSetting()
+                }
             }
             "bluetooth" to "screen_disabled" -> {
                 (value as? Boolean)?.let { disabled ->

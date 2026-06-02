@@ -251,6 +251,9 @@ public class ServiceContainer {
         // Clean up streaming manager first (unregisters callbacks)
         streamingManager.cleanup();
 
+        // Stop debug helpers owned by command processing.
+        commandProcessor.cleanup();
+
         // Clean up lifecycle manager
         lifecycleManager.cleanup();
 

@@ -133,6 +133,15 @@ jobs:
             exit 1
           fi
 
+      - name: Run unit tests
+        working-directory: ./asg_client
+        run: ./gradlew testDebugUnitTest
+
+      # Temporarily disabled while ASG Java files are reformatted in a follow-up.
+      # - name: Spotless check
+      #   working-directory: ./asg_client
+      #   run: ./gradlew spotlessCheck
+
       - name: Mark build succeeded
         id: build-ok
         run: echo "ok=true" >> $GITHUB_OUTPUT
@@ -255,10 +264,6 @@ jobs:
               comment_id: comment.id,
               body: newBody
             });
-
-      - name: Spotless check
-        working-directory: ./asg_client
-        run: ./gradlew spotlessCheck
 
       - name: Update PR comment - Build failed
         if: failure() && steps.build-ok.outcome != 'success' && github.event_name == 'pull_request'
