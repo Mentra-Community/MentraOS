@@ -22,6 +22,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven("https://www.jitpack.io")
     }
 }
 ```
@@ -47,7 +48,7 @@ dependencies {
 }
 ```
 
-The SDK is published to Maven Central. The SDK POM pulls in the companion `com.mentraglass:lc3Lib` codec artifact automatically; do not add it manually unless you have a specific override reason.
+The SDK is published to Maven Central. Keep `google()` and `maven("https://www.jitpack.io")` configured so Gradle can resolve the SDK's transitive runtime dependencies. These repositories are for dependency resolution; the SDK's public Android API does not expose Google Play Services or JitPack-only types. The SDK POM pulls in the companion `com.mentraglass:lc3Lib` codec artifact automatically; do not add it manually unless you have a specific override reason.
 
 The packaging rules avoid duplicate native library conflicts from the SDK audio and transcription stack.
 
