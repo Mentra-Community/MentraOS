@@ -62,7 +62,7 @@ jobs:
           xcodebuild \
             -workspace Mentra.xcworkspace \
             -scheme Mentra \
-            -configuration Release \
+            -configuration Debug \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build-device \
             SWIFT_VERSION=5 \
@@ -70,18 +70,33 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
+            COPY_PHASE_STRIP=NO \
+            STRIP_INSTALLED_PRODUCT=NO \
             2>&1 | tee /tmp/xcodebuild.log | xcpretty --color || \
-          (echo "=== FULL ERROR LOG ===" && grep -E "error:|warning:|Build FAILED" /tmp/xcodebuild.log | tail -50 && exit 1)
+          (echo "=== ERRORS ===" && grep "error:" /tmp/xcodebuild.log | tail -50 && exit 1)
+
+      - name: Verify Info.plist exists
+        run: |
+          APP_PATH="mobile/ios/build-device/Build/Products/Debug-iphoneos/Mentra.app"
+          if [ ! -f "$APP_PATH/Info.plist" ]; then
+            echo "ERROR: Info.plist missing from bundle"
+            echo "Bundle contents:"
+            ls -la "$APP_PATH"
+            exit 1
+          fi
+          echo "✅ Info.plist found"
+          echo "Bundle contents:"
+          ls -la "$APP_PATH"
 
       - name: Package .app into unsigned IPA
         run: |
-          APP_PATH="mobile/ios/build-device/Build/Products/Release-iphoneos/Mentra.app"
+          APP_PATH="mobile/ios/build-device/Build/Products/Debug-iphoneos/Mentra.app"
           IPA_PATH="mobile/ios/Mentra-unsigned.ipa"
           mkdir -p /tmp/Payload
           cp -r "$APP_PATH" /tmp/Payload/Mentra.app
           cd /tmp
           zip -r "$GITHUB_WORKSPACE/$IPA_PATH" Payload
-          echo "IPA created at $IPA_PATH"
+          echo "✅ IPA created"
           ls -lh "$GITHUB_WORKSPACE/$IPA_PATH"
 
       - name: Upload unsigned IPA artifact
