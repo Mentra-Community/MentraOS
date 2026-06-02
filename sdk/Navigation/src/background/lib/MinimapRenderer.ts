@@ -1,19 +1,25 @@
 /**
- * MinimapRenderer — rasterizes a small heading-up minimap into a 1-bit
- * BMP for the glasses HUD. Pure JS (no DOM/canvas): we draw into a raw
- * RGB pixel buffer and hand it to the BMP encoder.
+ * MinimapRenderer — rasterizes a small heading-up minimap into an 8-bit
+ * grayscale BMP for the glasses HUD. Pure JS (no DOM/canvas): we draw into a
+ * raw 1-byte-per-pixel buffer and hand it to the BMP encoder.
  *
- * Heading-up: the user sits at the center as an upward-pointing arrow,
- * and the world is rotated by -heading so whatever direction the user
- * faces is "up". The route polyline is drawn relative to the user.
+ * We have no street/tile data in the background JSContext, so the minimap is
+ * built entirely from what the trip already gives us — the user's position +
+ * heading, the route polyline, and the upcoming turn. To make that read like
+ * a map rather than a bare squiggle we add:
+ *   - heading-up orientation (the device-forward axis always points up),
+ *   - concentric distance rings (25 m / 50 m) for a sense of scale,
+ *   - a rotating "N" tick so north is still findable,
+ *   - the route split into traveled (dim) vs. remaining (bold),
+ *   - crosswalk ticks where the route briefly leaves the sidewalk,
+ *   - the upcoming-turn marker and the centered user arrow.
  *
- * Pure black & white only — the phone converts the bitmap to the
- * glasses' 1-bit format by thresholding, so anti-aliased grays would
- * quantize unpredictably.
+ * Grays: the encoder is 8-bit, so we use a few levels — BOLD for the live
+ * route/arrow, DIM for the traveled trail, FAINT for rings/north furniture.
  */
 
 import {encodeBmpBase64} from "./bmp"
-import type {LatLng} from "./geometry"
+import {detectCrossings, haversineMeters, perpDistanceMeters, type LatLng} from "./geometry"
 
 export type MinimapInput = {
   coords: LatLng | null
@@ -24,10 +30,16 @@ export type MinimapInput = {
 
 // How many meters from the user the minimap edge represents. The user
 // is centered, so the visible square is ~2 * VIEW_RADIUS_M on a side.
-const VIEW_RADIUS_M = 80
+export const VIEW_RADIUS_M = 80
 
-const BLACK = 255
-const WHITE = 0
+// Grayscale levels (0 = black background ... 255 = white-hot).
+const WHITE = 0 // background
+const FAINT = 90 // rings, north furniture
+const DIM = 150 // already-traveled route
+const BOLD = 255 // live route, arrow, markers
+
+// Distance rings drawn for scale (meters from the user).
+const RING_RADII_M = [25, 50]
 
 /** Equirectangular projection to local meters, user at origin. */
 function toLocalMeters(p: LatLng, origin: LatLng): {x: number; y: number} {
@@ -88,6 +100,34 @@ class Raster {
     }
   }
 
+  /** 1px circle outline (midpoint algorithm) — used for the distance rings. */
+  circle(cx: number, cy: number, r: number, v: number): void {
+    if (r < 1) return
+    let x = r
+    let y = 0
+    let err = 1 - r
+    const plot8 = (px: number, py: number) => {
+      this.set(cx + px, cy + py, v)
+      this.set(cx - px, cy + py, v)
+      this.set(cx + px, cy - py, v)
+      this.set(cx - px, cy - py, v)
+      this.set(cx + py, cy + px, v)
+      this.set(cx - py, cy + px, v)
+      this.set(cx + py, cy - px, v)
+      this.set(cx - py, cy - px, v)
+    }
+    while (x >= y) {
+      plot8(x, y)
+      y++
+      if (err < 0) {
+        err += 2 * y + 1
+      } else {
+        x--
+        err += 2 * (y - x) + 1
+      }
+    }
+  }
+
   /** Filled triangle (scanline fill) — the user arrow. */
   triangle(
     ax: number,
@@ -116,8 +156,22 @@ class Raster {
   }
 }
 
+/** Index of the route segment whose perpendicular distance to `me` is least. */
+function nearestSegmentIndex(me: LatLng, route: LatLng[]): number {
+  let bestIdx = 0
+  let bestDist = Infinity
+  for (let i = 0; i < route.length - 1; i++) {
+    const d = perpDistanceMeters(me, route[i], route[i + 1])
+    if (d < bestDist) {
+      bestDist = d
+      bestIdx = i
+    }
+  }
+  return bestIdx
+}
+
 /**
- * Render the minimap. Returns a base64 PNG, or null when there's no
+ * Render the minimap. Returns a base64 BMP, or null when there's no
  * position fix yet (nothing meaningful to draw).
  */
 export function renderMinimap(input: MinimapInput, size = 100): string | null {
@@ -128,19 +182,14 @@ export function renderMinimap(input: MinimapInput, size = 100): string | null {
   const center = (size - 1) / 2
   const metersPerPx = VIEW_RADIUS_M / center
 
-  // Heading-up: rotate local (east, north) by -heading so the facing
-  // direction maps to screen-up. Screen y grows downward, so north maps
-  // to -y. With heading h (clockwise from north):
-  //   screenX =  east*cos(h) - north*sin(h)
-  //   screenY = -(east*sin(h) + north*cos(h))   ... but for heading-up we
-  // rotate the world by -h. Combined, the device-forward axis points up.
+  // Heading-up: rotate local (east, north) by -heading so the device-forward
+  // axis maps to screen-up. Screen y grows downward, so forward maps to -y.
   const h = ((heading ?? 0) * Math.PI) / 180
   const sinH = Math.sin(h)
   const cosH = Math.cos(h)
 
   const project = (p: LatLng): {x: number; y: number} => {
     const m = toLocalMeters(p, coords)
-    // Rotate so heading points up. Forward (along heading) -> screen up.
     const east = m.x
     const north = m.y
     const rx = east * cosH - north * sinH
@@ -152,39 +201,59 @@ export function renderMinimap(input: MinimapInput, size = 100): string | null {
     }
   }
 
-  // Corner brackets instead of a full border — just short dashes meeting at
-  // each corner (drawn first; route and arrow render on top). Inset by 1px so
-  // the 2px stroke stays in-bounds.
+  // Distance rings (faint) for scale.
+  for (const radiusM of RING_RADII_M) {
+    const rp = radiusM / metersPerPx
+    if (rp < center) r.circle(Math.round(center), Math.round(center), Math.round(rp), FAINT)
+  }
+
+  // North tick (faint): a short spoke from center toward true north. In the
+  // heading-up frame north sits at screen-angle -heading from straight up.
+  {
+    const reach = center - 3
+    const nx = center + reach * sinH // north dir rotated by -heading
+    const ny = center - reach * cosH
+    r.disc(Math.round(nx), Math.round(ny), 2, FAINT)
+  }
+
+  // Corner brackets instead of a full border — short dashes meeting at each
+  // corner (drawn before the route so the route renders on top). Inset by 1px.
   const lo = 1
   const hi = size - 2
   const len = Math.max(4, Math.round(size * 0.18)) // dash length per arm
-  // top-left
-  r.line(lo, lo, lo + len, lo, BLACK, 2)
-  r.line(lo, lo, lo, lo + len, BLACK, 2)
-  // top-right
-  r.line(hi, lo, hi - len, lo, BLACK, 2)
-  r.line(hi, lo, hi, lo + len, BLACK, 2)
-  // bottom-left
-  r.line(lo, hi, lo + len, hi, BLACK, 2)
-  r.line(lo, hi, lo, hi - len, BLACK, 2)
-  // bottom-right
-  r.line(hi, hi, hi - len, hi, BLACK, 2)
-  r.line(hi, hi, hi, hi - len, BLACK, 2)
+  r.line(lo, lo, lo + len, lo, FAINT, 2)
+  r.line(lo, lo, lo, lo + len, FAINT, 2)
+  r.line(hi, lo, hi - len, lo, FAINT, 2)
+  r.line(hi, lo, hi, lo + len, FAINT, 2)
+  r.line(lo, hi, lo + len, hi, FAINT, 2)
+  r.line(lo, hi, lo, hi - len, FAINT, 2)
+  r.line(hi, hi, hi - len, hi, FAINT, 2)
+  r.line(hi, hi, hi, hi - len, FAINT, 2)
 
-  // Route polyline.
+  // Route polyline, split into traveled (dim) and remaining (bold) at the
+  // segment closest to the user, so the path ahead stands out.
   if (routePoints && routePoints.length >= 2) {
-    let prev = project(routePoints[0])
+    const splitIdx = nearestSegmentIndex(coords, routePoints)
+    let prev = project(routePoints[0]!)
     for (let i = 1; i < routePoints.length; i++) {
-      const cur = project(routePoints[i])
-      r.line(prev.x, prev.y, cur.x, cur.y, BLACK, 3)
+      const cur = project(routePoints[i]!)
+      const traveled = i - 1 < splitIdx
+      r.line(prev.x, prev.y, cur.x, cur.y, traveled ? DIM : BOLD, traveled ? 2 : 3)
       prev = cur
+    }
+
+    // Crosswalk ticks: small bold dots where the route crosses a road.
+    for (const c of detectCrossings(routePoints)) {
+      const mid = {lat: (c.start.lat + c.end.lat) / 2, lng: (c.start.lng + c.end.lng) / 2}
+      const p = project(mid)
+      r.disc(Math.round(p.x), Math.round(p.y), 1, BOLD)
     }
   }
 
-  // Upcoming-turn marker (filled square).
-  if (upcomingPivot) {
+  // Upcoming-turn marker (filled disc), only when it's within view.
+  if (upcomingPivot && haversineMeters(coords, upcomingPivot) <= VIEW_RADIUS_M) {
     const p = project(upcomingPivot)
-    r.disc(Math.round(p.x), Math.round(p.y), 3, BLACK)
+    r.disc(Math.round(p.x), Math.round(p.y), 3, BOLD)
   }
 
   // User arrow at center, pointing up (heading-up frame).
@@ -194,7 +263,7 @@ export function renderMinimap(input: MinimapInput, size = 100): string | null {
   const by = center + 7 // bottom-left
   const cx = center + 6
   const cy = center + 7 // bottom-right
-  r.triangle(ax, ay, bx, by, cx, cy, BLACK)
+  r.triangle(ax, ay, bx, by, cx, cy, BOLD)
 
   return encodeBmpBase64(r.buf, size, size)
 }

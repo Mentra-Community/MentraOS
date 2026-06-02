@@ -9,26 +9,16 @@ import {View, ViewStyle} from "react-native"
  * container that wraps the icon. The dot is absolutely-positioned within
  * that container.
  */
-export function DevMiniappBadge({size = 10}: {size?: number}) {
+export function DevMiniappBadge({size = 16}: {size?: number}) {
   return (
     <View
+      className="absolute -top-0.5 -right-0.5 bg-orange-500 border border-white"
       style={{
-        position: "absolute",
-        top: -2,
-        right: -2,
         width: size,
         height: size,
         borderRadius: size / 2,
-        backgroundColor: "#F97316", // tailwind orange-500
-        borderWidth: 1.5,
-        borderColor: "#fff",
       }}
       pointerEvents="none"
     />
   )
-}
-
-/** Convenience style for an icon container that hosts the badge. */
-export const $devMiniappIconContainer: ViewStyle = {
-  position: "relative",
 }

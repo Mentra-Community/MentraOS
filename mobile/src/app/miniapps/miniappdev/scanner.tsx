@@ -8,7 +8,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {appRegistry, decideDevLaunchRoute} from "@mentra/island"
+import {appRegistry, decideDevLaunchRoute, registerDevApp, type DevAppRecord} from "@mentra/island"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
@@ -29,7 +29,7 @@ export default function MiniappDeveloperScannerScreen() {
     if (scanned) return
     setScanned(true)
 
-    if (data.startsWith("mentra-miniapp://release")) {
+    if (data.startsWith("miniapp://release")) {
       try {
         const url = new URL(data)
         const baseUrl = decodeURIComponent(url.searchParams.get("url") || "")
@@ -58,7 +58,7 @@ export default function MiniappDeveloperScannerScreen() {
       let name: string | undefined
       let devPort: string | undefined
 
-      if (data.startsWith("mentra-miniapp://dev")) {
+      if (data.startsWith("miniapp://dev")) {
         const url = new URL(data)
         devUrl = decodeURIComponent(url.searchParams.get("url") || "")
         name = url.searchParams.get("name") || undefined
@@ -108,6 +108,19 @@ export default function MiniappDeveloperScannerScreen() {
           if (Number.isFinite(portNum)) {
             storage.save(`${packageName}_dev_port`, portNum)
           }
+        }
+        // Persist a home-tile record so the dev miniapp is re-launchable
+        // without re-scanning. Dev apps load over HTTP and aren't installed
+        // to disk, so the lmas/ scan can't surface them.
+        if (manifest) {
+          registerDevApp({
+            packageName,
+            name: name ?? packageName,
+            iconUrl: iconUrl ?? `${devUrl.replace(/\/$/, "")}/icon.png`,
+            devUrl,
+            permissions: manifest.permissions as DevAppRecord["permissions"],
+            hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+          })
         }
       }
 

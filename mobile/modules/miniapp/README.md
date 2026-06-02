@@ -193,7 +193,7 @@ The author-facing CLI lives in a sibling package: **[`@mentra/miniapp-cli`](../.
 | `mentra-miniapp hardware list \| add \| remove [TYPE] [LEVEL]` | Object-verb manifest edits for hardware requirements         |
 | `mentra-miniapp schema print`                                  | Print the canonical `miniapp.json` JSON Schema               |
 
-See [the CLI README](../../../sdk/miniapp-cli/README.md) for flags, semantics, and the `mentra-miniapp://` URL schemes the QR codes encode.
+See [the CLI README](../../../sdk/miniapp-cli/README.md) for flags, semantics, and the `miniapp://` URL schemes the QR codes encode.
 
 ## Host-injected globals — `window.MentraOS`
 
