@@ -43,15 +43,14 @@ public class MessageChunker {
         byte[] messageBytes = originalJson.getBytes(StandardCharsets.UTF_8);
         int totalBytes = messageBytes.length;
         String chunkId = messageId + "_" + System.currentTimeMillis();
-        int totalChunks = (int) Math.ceil((double) totalBytes / CHUNK_DATA_SIZE);
+
+        List<String> chunkDataList = splitUtf8(messageBytes);
+        int totalChunks = chunkDataList.size();
 
         Log.d(TAG, "Creating " + totalChunks + " chunks for message of size " + totalBytes + " bytes");
 
         for (int i = 0; i < totalChunks; i++) {
-            int startIndex = i * CHUNK_DATA_SIZE;
-            int endIndex = Math.min(startIndex + CHUNK_DATA_SIZE, totalBytes);
-            int chunkLength = endIndex - startIndex;
-            String chunkData = new String(messageBytes, startIndex, chunkLength, StandardCharsets.UTF_8);
+            String chunkData = chunkDataList.get(i);
 
             JSONObject chunk = new JSONObject();
             chunk.put("t", "ck");
@@ -65,9 +64,32 @@ public class MessageChunker {
             }
 
             chunks.add(chunk);
-            Log.d(TAG, "Created chunk " + i + "/" + (totalChunks - 1) + " with " + chunkLength + " bytes");
+            Log.d(TAG, "Created chunk " + i + "/" + (totalChunks - 1) + " with " + chunkData.getBytes(StandardCharsets.UTF_8).length + " bytes");
         }
 
         return chunks;
+    }
+
+    private static List<String> splitUtf8(byte[] messageBytes) {
+        List<String> chunkDataList = new ArrayList<>();
+        int offset = 0;
+        while (offset < messageBytes.length) {
+            int endIndex = findUtf8ChunkEnd(messageBytes, offset);
+            chunkDataList.add(new String(messageBytes, offset, endIndex - offset, StandardCharsets.UTF_8));
+            offset = endIndex;
+        }
+        return chunkDataList;
+    }
+
+    private static int findUtf8ChunkEnd(byte[] messageBytes, int startIndex) {
+        int endIndex = Math.min(startIndex + CHUNK_DATA_SIZE, messageBytes.length);
+        while (endIndex > startIndex && endIndex < messageBytes.length && isUtf8ContinuationByte(messageBytes[endIndex])) {
+            endIndex--;
+        }
+        return endIndex > startIndex ? endIndex : Math.min(startIndex + CHUNK_DATA_SIZE, messageBytes.length);
+    }
+
+    private static boolean isUtf8ContinuationByte(byte value) {
+        return (value & 0xC0) == 0x80;
     }
 }

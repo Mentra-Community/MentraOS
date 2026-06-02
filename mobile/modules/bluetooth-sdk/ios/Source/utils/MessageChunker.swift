@@ -63,22 +63,13 @@ class MessageChunker {
         // Compact chunk session ID: messageId_timestamp (no "chunk_" prefix)
         let chunkId = "\(messageId)_\(Int(Date().timeIntervalSince1970 * 1000))"
 
-        // Calculate total chunks needed
-        let totalChunks = Int(ceil(Double(totalBytes) / Double(CHUNK_DATA_SIZE)))
+        let chunkStrings = splitUtf8(messageData)
+        let totalChunks = chunkStrings.count
 
         print("MessageChunker: Creating \(totalChunks) chunks for message of size \(totalBytes) bytes")
 
         for i in 0 ..< totalChunks {
-            let startIndex = i * CHUNK_DATA_SIZE
-            let endIndex = min(startIndex + CHUNK_DATA_SIZE, totalBytes)
-            let chunkRange = startIndex ..< endIndex
-
-            // Extract chunk data as string
-            let chunkData = messageData.subdata(in: chunkRange)
-            guard let chunkString = String(data: chunkData, encoding: .utf8) else {
-                print("MessageChunker: Failed to convert chunk \(i) to string")
-                continue
-            }
+            let chunkString = chunkStrings[i]
 
             // Create chunk dictionary with compact keys
             var chunk: [String: Any] = [
@@ -96,10 +87,34 @@ class MessageChunker {
 
             chunks.append(chunk)
 
-            print("MessageChunker: Created chunk \(i)/\(totalChunks - 1) with \(chunkData.count) bytes")
+            print("MessageChunker: Created chunk \(i)/\(totalChunks - 1) with \(chunkString.data(using: .utf8)?.count ?? 0) bytes")
         }
 
         return chunks
+    }
+
+    private static func splitUtf8(_ messageData: Data) -> [String] {
+        var chunkStrings: [String] = []
+        var offset = 0
+        while offset < messageData.count {
+            let endIndex = findUtf8ChunkEnd(messageData, startIndex: offset)
+            let chunkData = messageData.subdata(in: offset ..< endIndex)
+            chunkStrings.append(String(data: chunkData, encoding: .utf8)!)
+            offset = endIndex
+        }
+        return chunkStrings
+    }
+
+    private static func findUtf8ChunkEnd(_ messageData: Data, startIndex: Int) -> Int {
+        var endIndex = min(startIndex + CHUNK_DATA_SIZE, messageData.count)
+        while endIndex > startIndex, endIndex < messageData.count, isUtf8ContinuationByte(messageData[endIndex]) {
+            endIndex -= 1
+        }
+        return endIndex > startIndex ? endIndex : min(startIndex + CHUNK_DATA_SIZE, messageData.count)
+    }
+
+    private static func isUtf8ContinuationByte(_ value: UInt8) -> Bool {
+        (value & 0xC0) == 0x80
     }
 
     /**

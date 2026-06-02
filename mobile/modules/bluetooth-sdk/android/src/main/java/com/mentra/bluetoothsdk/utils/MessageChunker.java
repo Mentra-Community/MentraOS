@@ -5,6 +5,7 @@ import android.util.Log;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -44,7 +45,7 @@ public class MessageChunker {
             return false;
         }
 
-        int messageBytes = message.getBytes().length;
+        int messageBytes = message.getBytes(StandardCharsets.UTF_8).length;
         boolean needsChunking = messageBytes > MESSAGE_SIZE_THRESHOLD;
 
         if (needsChunking) {
@@ -67,24 +68,19 @@ public class MessageChunker {
         }
 
         List<JSONObject> chunks = new ArrayList<>();
-        byte[] messageBytes = originalJson.getBytes();
+        byte[] messageBytes = originalJson.getBytes(StandardCharsets.UTF_8);
         int totalBytes = messageBytes.length;
 
         // Compact chunk session ID: messageId_timestamp (no "chunk_" prefix)
         String chunkId = messageId + "_" + System.currentTimeMillis();
 
-        // Calculate total chunks needed
-        int totalChunks = (int) Math.ceil((double) totalBytes / CHUNK_DATA_SIZE);
+        List<String> chunkDataList = splitUtf8(messageBytes);
+        int totalChunks = chunkDataList.size();
 
         Log.d(TAG, "Creating " + totalChunks + " chunks for message of size " + totalBytes + " bytes");
 
         for (int i = 0; i < totalChunks; i++) {
-            int startIndex = i * CHUNK_DATA_SIZE;
-            int endIndex = Math.min(startIndex + CHUNK_DATA_SIZE, totalBytes);
-            int chunkLength = endIndex - startIndex;
-
-            // Extract chunk data as string
-            String chunkData = new String(messageBytes, startIndex, chunkLength);
+            String chunkData = chunkDataList.get(i);
 
             // Create chunk JSON with compact keys
             JSONObject chunk = new JSONObject();
@@ -101,10 +97,33 @@ public class MessageChunker {
 
             chunks.add(chunk);
 
-            Log.d(TAG, "Created chunk " + i + "/" + (totalChunks - 1) + " with " + chunkLength + " bytes");
+            Log.d(TAG, "Created chunk " + i + "/" + (totalChunks - 1) + " with " + chunkData.getBytes(StandardCharsets.UTF_8).length + " bytes");
         }
 
         return chunks;
+    }
+
+    private static List<String> splitUtf8(byte[] messageBytes) {
+        List<String> chunkDataList = new ArrayList<>();
+        int offset = 0;
+        while (offset < messageBytes.length) {
+            int endIndex = findUtf8ChunkEnd(messageBytes, offset);
+            chunkDataList.add(new String(messageBytes, offset, endIndex - offset, StandardCharsets.UTF_8));
+            offset = endIndex;
+        }
+        return chunkDataList;
+    }
+
+    private static int findUtf8ChunkEnd(byte[] messageBytes, int startIndex) {
+        int endIndex = Math.min(startIndex + CHUNK_DATA_SIZE, messageBytes.length);
+        while (endIndex > startIndex && endIndex < messageBytes.length && isUtf8ContinuationByte(messageBytes[endIndex])) {
+            endIndex--;
+        }
+        return endIndex > startIndex ? endIndex : Math.min(startIndex + CHUNK_DATA_SIZE, messageBytes.length);
+    }
+
+    private static boolean isUtf8ContinuationByte(byte value) {
+        return (value & 0xC0) == 0x80;
     }
 
     /**
