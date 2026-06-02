@@ -293,7 +293,8 @@ public class AsgClientService extends Service
             lifecycleDetails.put("action", intent != null ? intent.getAction() : JSONObject.NULL);
             lifecycleDetails.put("flags", flags);
             lifecycleDetails.put("startId", startId);
-            BleTraceLogger.logLifecycle(this, "AsgClientService", "service_start_command", lifecycleDetails);
+            BleTraceLogger.logLifecycle(
+                    this, "AsgClientService", "service_start_command", lifecycleDetails);
 
             ensureForegroundStarted();
 

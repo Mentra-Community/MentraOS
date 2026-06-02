@@ -23,10 +23,9 @@ import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.utils.SysProp;
 import com.mentra.asg_client.settings.VideoSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
+import java.util.function.Consumer;
 import org.json.JSONException;
 import org.json.JSONObject;
-
-import java.util.function.Consumer;
 
 /**
  * Handles K900 protocol commands. Follows Single Responsibility Principle by handling only K900
@@ -592,9 +591,8 @@ public class K900CommandHandler {
         }
     }
 
-    public boolean requestBesLogsForTrace(Context context,
-                                          IConfigurationManager configManager,
-                                          Consumer<String> rawLogCallback) {
+    public boolean requestBesLogsForTrace(
+            Context context, IConfigurationManager configManager, Consumer<String> rawLogCallback) {
         if (hasActiveBesLogSession()) {
             Log.d(TAG, "Skipping BES trace poll because a BES log session is already active");
             return false;
@@ -620,8 +618,10 @@ public class K900CommandHandler {
             String commandStr = k900Command.toString();
             Log.d(TAG, "📤 Sending trace mh_logs: " + commandStr);
 
-            boolean sent = serviceManager.getBluetoothManager().sendData(
-                commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            boolean sent =
+                    serviceManager
+                            .getBluetoothManager()
+                            .sendData(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
             if (sent) {
                 mBesLogSession.startTimeouts();
