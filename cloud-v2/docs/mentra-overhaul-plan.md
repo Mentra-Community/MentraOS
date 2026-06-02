@@ -45,13 +45,13 @@ Cloud V1's mini-app server protocol goes away. The cloud gets smaller and more s
 
 **Linear projects**
 
-- Cloud V2 (link TBD)
-- Local SDK (link TBD)
-- Mentra OEM Integration Toolkit (link TBD)
+- [Cloud V2](https://linear.app/mentralabs/project/cloud-v2-3bd87f2acfdc)
+- [Local SDK](https://linear.app/mentralabs/project/local-sdk-b55345e6ccda)
+- [Mentra OEM Integration Toolkit](https://linear.app/mentralabs/project/mentra-runtime-364331bdf761) (Linear project: "Mentra Runtime")
 
 **External docs**
 
-- Local MiniApp SDK Execution Plan (Google Doc, Matt) (link TBD)
+- [Local MiniApp SDK Execution Plan](https://docs.google.com/document/d/1pifPxcEclebMx579m6I7tqo9jKGXUqW3nRv3zUX1n7o/edit) (Google Doc, Matt)
 
 ## Glossary
 
@@ -393,7 +393,7 @@ A React Native library containing all of MentraOS's mobile logic. The Mentra app
 Runs in the Mentra app today; the Mentra Runtime works on the phone (bundle install, request dispatch, mic coordination, online and offline STT fallback) on `mentra-miniapp-sdk-2`. Packaging it as a standalone embeddable library for OEMs is the remaining work.
 
 **Reference**
-Linear: Mentra Runtime project.
+Linear: [Mentra Runtime project](https://linear.app/mentralabs/project/mentra-runtime-364331bdf761).
 
 ### Mentra Local SDK
 
@@ -404,7 +404,7 @@ The developer-facing API (`@mentra/miniapp`) mini-app developers write against: 
 All hardware modules implemented. Photo, transcription, translation, and streams bridged through the cloud (the phone session channel for runtime events, plus REST routes for photo and managed streams).
 
 **Reference**
-Google Doc: Local MiniApp SDK Execution Plan.
+Google Doc: [Local MiniApp SDK Execution Plan](https://docs.google.com/document/d/1pifPxcEclebMx579m6I7tqo9jKGXUqW3nRv3zUX1n7o/edit).
 
 ### Mentra CLI
 
