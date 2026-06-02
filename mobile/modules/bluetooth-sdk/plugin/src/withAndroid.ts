@@ -48,6 +48,11 @@ ${settingsGradle}`
     if (!settingsGradle.includes("include ':lc3Lib'")) {
       settingsGradle += `
   include ':lc3Lib'
+  `
+    }
+
+    if (!settingsGradle.includes("project(':lc3Lib').projectDir")) {
+      settingsGradle += `
   project(':lc3Lib').projectDir = new File(mentraBluetoothSdkRoot, 'android/lc3Lib')
   `
     }
@@ -55,6 +60,11 @@ ${settingsGradle}`
     if (!settingsGradle.includes("include ':silero'")) {
       settingsGradle += `
   include ':silero'
+  `
+    }
+
+    if (!settingsGradle.includes("project(':silero').projectDir")) {
+      settingsGradle += `
   project(':silero').projectDir = new File(mentraBluetoothSdkRoot, 'android/silero')
   `
     }
@@ -122,14 +132,15 @@ function withSherpaOnnxLocalMavenRepo(config: any) {
     }
 
     let contents = config.modResults.contents
-    const repoDir = path.join(getBluetoothSdkRoot(), "android", "libs", "maven")
+    const fallbackRoot = toGroovyString(getBluetoothSdkRoot())
+    const repoDirExpression = `new File(System.getenv("MENTRA_BLUETOOTH_SDK_PACKAGE_PATH") ?: ${fallbackRoot}, "android/libs/maven")`
     const marker = "// bluetooth-sdk: sherpa-onnx local maven repo"
 
     if (contents.includes(marker)) {
       return config
     }
 
-    const repoBlock = `    maven {\n      ${marker}\n      url = uri(${toGroovyString(repoDir)})\n    }`
+    const repoBlock = `    maven {\n      ${marker}\n      url = uri(${repoDirExpression})\n    }`
 
     const allprojectsMatch = contents.match(/allprojects\s*\{[\s\S]*?repositories\s*\{/)
     if (allprojectsMatch) {
