@@ -58,6 +58,7 @@ final class AvifExifStripper {
                     }
                     byte[] newMdatPayload = Arrays.copyOf(box.payload, newPayloadLen);
                     byte[] metaPayload = normalizeMetaPayload(meta.payload);
+                    int oldMetaBoxSize = meta.encodedSize();
                     // Best-effort: clean up Exif item refs from meta tables.
                     try {
                         MetaTables tables = parseMetaTables(metaPayload);
@@ -66,6 +67,12 @@ final class AvifExifStripper {
                             byte[] newIloc = removeIlocEntry(tables.ilocPayload, exifItemId);
                             byte[] newIinf = removeIinfEntry(tables.iinfPayload, exifItemId);
                             byte[] newIref = removeCdscRefs(tables.irefPayload, exifItemId);
+                            byte[] tempMetaPayload =
+                                    rebuildMeta(metaPayload, newIloc, newIinf, newIref);
+                            int metaDelta =
+                                    new BmffBox("meta", tempMetaPayload).encodedSize()
+                                            - oldMetaBoxSize;
+                            newIloc = shiftIlocExtentOffsets(newIloc, metaDelta);
                             metaPayload = rebuildMeta(metaPayload, newIloc, newIinf, newIref);
                         }
                     } catch (IOException ignored) {
@@ -108,11 +115,25 @@ final class AvifExifStripper {
             return avif;
         }
 
-        byte[] newMdatPayload =
-                Arrays.copyOf(mdat.payload, mdat.payload.length - exifLength);
+        int mdatPayloadStart = locateMdatPayloadStart(avif);
+        int exifFileOffset = ilocItemOffset(tables.ilocPayload, exifItemId);
+        int exifOffsetInMdat = exifFileOffset - mdatPayloadStart;
+        int newMdatPayloadLength;
+        if (exifOffsetInMdat >= 0 && exifOffsetInMdat + exifLength == mdat.payload.length) {
+            newMdatPayloadLength = exifOffsetInMdat;
+        } else if (mdat.payload.length >= exifLength) {
+            newMdatPayloadLength = mdat.payload.length - exifLength;
+        } else {
+            return avif;
+        }
+        byte[] newMdatPayload = Arrays.copyOf(mdat.payload, newMdatPayloadLength);
+
         byte[] newIloc = removeIlocEntry(tables.ilocPayload, exifItemId);
         byte[] newIinf = removeIinfEntry(tables.iinfPayload, exifItemId);
         byte[] newIref = removeCdscRefs(tables.irefPayload, exifItemId);
+        byte[] tempMetaPayload = rebuildMeta(metaPayload, newIloc, newIinf, newIref);
+        int metaDelta = new BmffBox("meta", tempMetaPayload).encodedSize() - meta.encodedSize();
+        newIloc = shiftIlocExtentOffsets(newIloc, metaDelta);
         byte[] newMetaPayload = rebuildMeta(metaPayload, newIloc, newIinf, newIref);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream(avif.length);
@@ -183,6 +204,80 @@ final class AvifExifStripper {
             offset += size;
         }
         return -1;
+    }
+
+    private static int locateMdatPayloadStart(byte[] file) throws IOException {
+        int offset = 0;
+        for (BmffBox box : parseTopLevel(file)) {
+            if ("mdat".equals(box.type)) {
+                return offset + 8;
+            }
+            offset += 8 + box.payload.length;
+        }
+        throw new IOException("mdat missing");
+    }
+
+    private static int ilocItemOffset(byte[] ilocPayload, int itemId) throws IOException {
+        IlocLayout layout = parseIlocLayout(ilocPayload);
+        int itemCount = u16(ilocPayload, 6);
+        ByteBuffer buf = ByteBuffer.wrap(ilocPayload).order(ByteOrder.BIG_ENDIAN);
+        buf.position(8);
+        for (int i = 0; i < itemCount; i++) {
+            int id = buf.getShort() & 0xFFFF;
+            buf.getShort();
+            skipSized(buf, layout.baseOffsetSize);
+            int extentCount = buf.getShort() & 0xFFFF;
+            if (extentCount < 1) {
+                continue;
+            }
+            int offset = readSized(buf, layout.offsetSize);
+            skipSized(buf, layout.lengthSize);
+            for (int e = 1; e < extentCount; e++) {
+                skipSized(buf, layout.offsetSize);
+                skipSized(buf, layout.lengthSize);
+            }
+            if (id == itemId) {
+                return offset;
+            }
+        }
+        return -1;
+    }
+
+    private static byte[] shiftIlocExtentOffsets(byte[] ilocPayload, int delta) throws IOException {
+        if (delta == 0) {
+            return ilocPayload;
+        }
+        byte[] copy = Arrays.copyOf(ilocPayload, ilocPayload.length);
+        IlocLayout layout = parseIlocLayout(copy);
+        ByteBuffer buf = ByteBuffer.wrap(copy).order(ByteOrder.BIG_ENDIAN);
+        int itemCount = u16(copy, 6);
+        buf.position(8);
+        for (int i = 0; i < itemCount; i++) {
+            buf.getShort();
+            buf.getShort();
+            skipSized(buf, layout.baseOffsetSize);
+            int extentCount = buf.getShort() & 0xFFFF;
+            for (int e = 0; e < extentCount; e++) {
+                int offset = readSized(buf, layout.offsetSize);
+                int length = readSized(buf, layout.lengthSize);
+                buf.position(buf.position() - layout.offsetSize - layout.lengthSize);
+                writeSized(buf, offset + delta, layout.offsetSize);
+                writeSized(buf, length, layout.lengthSize);
+            }
+        }
+        return copy;
+    }
+
+    private static void writeSized(ByteBuffer buf, int value, int bytes) throws IOException {
+        switch (bytes) {
+            case 0:
+                break;
+            case 4:
+                buf.putInt(value);
+                break;
+            default:
+                throw new IOException("unsupported iloc field size " + bytes);
+        }
     }
 
     private static int ilocItemLength(byte[] ilocPayload, int itemId) throws IOException {
@@ -458,6 +553,10 @@ final class AvifExifStripper {
         BmffBox(String type, byte[] payload) {
             this.type = type;
             this.payload = payload;
+        }
+
+        int encodedSize() {
+            return 8 + payload.length;
         }
 
         void writeTo(ByteArrayOutputStream out) throws IOException {

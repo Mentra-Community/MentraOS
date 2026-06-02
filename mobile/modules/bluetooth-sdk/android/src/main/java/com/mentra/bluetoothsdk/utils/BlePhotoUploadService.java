@@ -266,34 +266,28 @@ public class BlePhotoUploadService {
 
             if (isAvif) {
                 Log.d(TAG, "Detected AVIF image format");
-                byte[] decodeBytes = imageData;
+                byte[] strippedBytes = imageData;
                 if (containsExifMarkerInBytes(imageData)) {
                     try {
-                        decodeBytes = AvifExifStripper.stripForDecode(imageData);
+                        strippedBytes = AvifExifStripper.stripForDecode(imageData);
                         Log.d(
                                 TAG,
                                 "Stripped Exif metadata item for decode: "
                                         + imageData.length
                                         + " -> "
-                                        + decodeBytes.length
+                                        + strippedBytes.length
                                         + " bytes");
                     } catch (IOException e) {
                         Log.w(TAG, "stripForDecode failed, using raw AVIF: " + e.getMessage());
+                        strippedBytes = imageData;
                     }
                 }
-                try {
-                    Bitmap bmp = new HeifCoder().decode(decodeBytes, PreferredColorConfig.RGBA_8888);
-                    if (bmp != null) {
-                        return bmp;
-                    }
-                } catch (Exception e) {
-                    Log.w(TAG, "HeifCoder AVIF decode failed, trying BitmapFactory: " + e.getMessage());
+                Bitmap bmp = decodeAvifBytes(strippedBytes);
+                if (bmp == null && strippedBytes != imageData) {
+                    Log.w(TAG, "Stripped AVIF decode failed; retrying original BLE bytes");
+                    bmp = decodeAvifBytes(imageData);
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    return BitmapFactory.decodeByteArray(decodeBytes, 0, decodeBytes.length);
-                }
-                Log.e(TAG, "AVIF decoding requires Android 12+ (API 31+). Current API: " + Build.VERSION.SDK_INT);
-                throw new UnsupportedOperationException("AVIF not supported on Android " + Build.VERSION.SDK_INT);
+                return bmp;
             }
             Log.d(TAG, "Detected JPEG image format");
             return BitmapFactory.decodeByteArray(imageData, 0, imageData.length);
@@ -301,6 +295,23 @@ public class BlePhotoUploadService {
             Log.e(TAG, "Failed to decode image", e);
             return null;
         }
+    }
+
+    @Nullable
+    private static Bitmap decodeAvifBytes(byte[] avifBytes) {
+        try {
+            Bitmap bmp = new HeifCoder().decode(avifBytes, PreferredColorConfig.RGBA_8888);
+            if (bmp != null) {
+                return bmp;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "HeifCoder AVIF decode failed, trying BitmapFactory: " + e.getMessage());
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            return BitmapFactory.decodeByteArray(avifBytes, 0, avifBytes.length);
+        }
+        Log.e(TAG, "AVIF decoding requires Android 12+ (API 31+). Current API: " + Build.VERSION.SDK_INT);
+        return null;
     }
 
     /**
