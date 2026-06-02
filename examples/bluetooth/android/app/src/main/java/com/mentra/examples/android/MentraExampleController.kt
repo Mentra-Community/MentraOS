@@ -183,7 +183,7 @@ data class MentraExampleState(
     val pcmBytes: Int = 0,
     val pcmFrames: Int = 0,
     val speaking: Boolean? = null,
-    val voiceActivityDetectionEnabled: Boolean = true,
+    val voiceActivityDetectionEnabled: Boolean = false,
     val photoDestination: PhotoDestination = PhotoDestination.THIS_PHONE,
     val photoPreviewDetails: PhotoPreviewDetails? = null,
     val photoPreviewUrl: String? = null,

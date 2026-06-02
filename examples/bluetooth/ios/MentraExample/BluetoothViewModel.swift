@@ -207,7 +207,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var pcmFrames = 0
     @Published private(set) var pcmBytes = 0
     @Published private(set) var speaking: Bool?
-    @Published private(set) var voiceActivityDetectionEnabled = true
+    @Published private(set) var voiceActivityDetectionEnabled = false
     @Published private(set) var lastMicDurationSeconds: Int?
     @Published private(set) var lastMicBytes = 0
     @Published private(set) var micPlaybackHint: String?

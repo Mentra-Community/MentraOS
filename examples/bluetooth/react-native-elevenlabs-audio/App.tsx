@@ -373,7 +373,6 @@ export default function App() {
     stopPcmSubscription();
     await BluetoothSdk.setMicState(false).catch(() => undefined);
     if (voiceActivityDetectionDisabledByAppRef.current) {
-      await BluetoothSdk.setVoiceActivityDetectionEnabled(true).catch(() => undefined);
       voiceActivityDetectionDisabledByAppRef.current = false;
     }
   }
