@@ -1,10 +1,11 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
+import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.utils.ConnTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
-import com.mentra.bluetoothsdk.DeviceStore
 
 class Simulated : SGCManager() {
 
@@ -14,7 +15,11 @@ class Simulated : SGCManager() {
         DeviceStore.apply("glasses", "connected", true)
         DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTED)
         DeviceStore.apply("glasses", "micEnabled", false)
-        DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", true)
+        DeviceStore.apply(
+            "glasses",
+            "voiceActivityDetectionEnabled",
+            BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
+        )
     }
 
     // Audio Control

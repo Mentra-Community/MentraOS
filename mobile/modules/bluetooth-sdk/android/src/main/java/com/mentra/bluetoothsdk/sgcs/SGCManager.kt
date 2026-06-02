@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.utils.ConnTypes
@@ -186,7 +187,9 @@ abstract class SGCManager {
         get() = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
 
     val voiceActivityDetectionEnabled: Boolean
-        get() = DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean ?: true
+        get() =
+            DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
+                ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
 
     val batteryLevel: Int
         get() = DeviceStore.get("glasses", "batteryLevel") as? Int ?: -1

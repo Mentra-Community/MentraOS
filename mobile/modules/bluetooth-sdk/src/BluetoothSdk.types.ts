@@ -27,6 +27,8 @@ export type VoiceActivityDetectionStatusEvent = {
   voiceActivityDetectionEnabled: boolean
 }
 
+export const DEFAULT_VOICE_ACTIVITY_DETECTION_ENABLED = false
+
 export type SpeakingStatusEvent = {
   type: "speaking_status"
   speaking: boolean
@@ -67,7 +69,7 @@ export function createDisconnectedGlassesStatus(): Partial<GlassesStatus> {
   return {
     connection: {state: 'disconnected'},
     hotspot: {state: 'disabled'},
-    voiceActivityDetectionEnabled: true,
+    voiceActivityDetectionEnabled: DEFAULT_VOICE_ACTIVITY_DETECTION_ENABLED,
     wifi: {state: 'disconnected'},
   }
 }

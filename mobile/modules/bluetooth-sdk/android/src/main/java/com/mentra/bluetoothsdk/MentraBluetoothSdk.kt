@@ -632,7 +632,8 @@ class MentraBluetoothSdk private constructor(
                     it.onVoiceActivityDetectionStatus(
                         VoiceActivityDetectionStatusEvent(
                             voiceActivityDetectionEnabled =
-                                data["voiceActivityDetectionEnabled"] as? Boolean ?: true,
+                                data["voiceActivityDetectionEnabled"] as? Boolean
+                                    ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED,
                             values = data,
                         )
                     )

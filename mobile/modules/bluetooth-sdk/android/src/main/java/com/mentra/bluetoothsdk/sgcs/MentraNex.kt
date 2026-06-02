@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.DeviceStore
 
@@ -286,7 +287,9 @@ class MentraNex : SGCManager() {
     override fun sendGalleryMode() { Bridge.log("Nex: sendGalleryMode operation not supported") }
 
     override fun sendVoiceActivityDetectionSetting() {
-        val enabled = DeviceStore.get("bluetooth", "voice_activity_detection_enabled") as? Boolean ?: true
+        val enabled =
+            DeviceStore.get("bluetooth", "voice_activity_detection_enabled") as? Boolean
+                ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
         Bridge.log("Nex: 🎤 Sending Voice Activity Detection setting to glasses: $enabled")
 
         if (connectionState != ConnTypes.CONNECTED) {
