@@ -16,12 +16,5 @@ dependencyResolutionManagement {
 rootProject.name = "AugmentOS ASG Client"
 include ':app'
 
-// StreamPackLite modules
-include ':core'
-project(':core').projectDir = new File(rootProject.projectDir, 'StreamPackLite/core')
-
-include ':extension-rtmp'
-project(':extension-rtmp').projectDir = new File(rootProject.projectDir, 'StreamPackLite/extensions/rtmp')
-
-include ':extension-srt'
-project(':extension-srt').projectDir = new File(rootProject.projectDir, 'StreamPackLite/extensions/srt')
+// StreamPackLite local subproject references removed — using public Maven artifacts instead.
+// See app/build.gradle: io.github.thibaultbee:streampack:2.6.1 and extensions.

@@ -5,6 +5,7 @@ import android.os.Build;
 import android.util.Log;
 
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.io.hardware.managers.InmoGo2HardwareManager;
 import com.mentra.asg_client.io.hardware.managers.K900HardwareManager;
 import com.mentra.asg_client.io.hardware.managers.StandardHardwareManager;
 import com.mentra.asg_client.service.utils.ServiceUtils;
@@ -43,6 +44,8 @@ public class HardwareManagerFactory {
         Log.d(TAG, "🔧 Hardware manager selection: " + deviceType);
 
         switch (deviceType) {
+            case INMO_GO2:
+                return new InmoGo2HardwareManager(context);
             case K900:
                 return new K900HardwareManager(context);
             case STANDARD_ANDROID:
@@ -68,6 +71,12 @@ public class HardwareManagerFactory {
         final String model = Build.MODEL != null ? Build.MODEL.toLowerCase() : "";
         final String device = Build.DEVICE != null ? Build.DEVICE.toLowerCase() : "";
         final String brand = Build.BRAND != null ? Build.BRAND.toLowerCase() : "";
+
+        // Check INMO Go2 first (before generic Google/standard check)
+        if (ServiceUtils.isInmoGo2Device(context)) {
+            Log.i(TAG, "INMO Go2 device detected via ServiceUtils");
+            return DeviceType.INMO_GO2;
+        }
 
         // Use centralized K900 detection from ServiceUtils
         if (ServiceUtils.isK900Device(context)) {
@@ -103,6 +112,7 @@ public class HardwareManagerFactory {
     }
 
     private enum DeviceType {
+        INMO_GO2,
         K900,
         STANDARD_ANDROID,
         UNKNOWN

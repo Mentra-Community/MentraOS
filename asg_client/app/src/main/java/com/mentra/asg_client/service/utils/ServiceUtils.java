@@ -33,6 +33,64 @@ public class ServiceUtils {
         return data.length > 0 && data[0] == '{';
     }
     
+    // =========================================================================
+    // INMO Go2 Device Detection
+    // =========================================================================
+
+    /**
+     * Check whether the device is an INMO Go2.
+     *
+     * Relevant build properties (from adb getprop on firmware Go2_B_V1.8.021):
+     *   ro.product.manufacturer = INMO
+     *   ro.product.model        = Go2
+     *   ro.product.device       = ima02_go2
+     *   ro.product.name         = ima02_go2fu
+     *   ro.boot.hardware        = ima02_go2
+     *   ro.build.fingerprint    = INMO/ima02_go2fu/ima02_go2:9/PPR1.180610.011/...
+     *
+     * @param context Application context (may be null)
+     * @return true if the running device is an INMO Go2
+     */
+    public static boolean isInmoGo2Device(Context context) {
+        try {
+            final String manufacturer = android.os.Build.MANUFACTURER;
+            final String model        = android.os.Build.MODEL;
+            final String device       = android.os.Build.DEVICE;
+            final String product      = android.os.Build.PRODUCT;
+            final String hardware     = android.os.Build.HARDWARE;
+            final String fingerprint  = android.os.Build.FINGERPRINT;
+
+            Log.d(TAG, "INMO Go2 detection — MANUFACTURER:" + manufacturer
+                    + " MODEL:" + model + " DEVICE:" + device
+                    + " PRODUCT:" + product + " HARDWARE:" + hardware);
+
+            // Primary check: manufacturer is INMO and model is Go2 (exact, case-insensitive)
+            if (manufacturer != null && manufacturer.equalsIgnoreCase("INMO")
+                    && model != null && model.equalsIgnoreCase("Go2")) {
+                Log.i(TAG, "INMO Go2 detected via MANUFACTURER+MODEL");
+                return true;
+            }
+
+            // Fallback: any build property contains the ima02_go2 device identifier
+            String[] propsToCheck = {device, product, hardware, fingerprint};
+            for (String prop : propsToCheck) {
+                if (prop != null && prop.toLowerCase().contains("ima02_go2")) {
+                    Log.i(TAG, "INMO Go2 detected via property: " + prop);
+                    return true;
+                }
+            }
+
+            Log.d(TAG, "Not an INMO Go2 device");
+            return false;
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error detecting INMO Go2 device", e);
+            return false;
+        }
+    }
+
+    // =========================================================================
+
     /**
      * Check if data is a K900 protocol message
      * @param data Data to check
@@ -311,6 +369,13 @@ public class ServiceUtils {
                 if (prop != null) {
                     String propLower = prop.toLowerCase();
 
+                    // INMO Go2: camera sensor is mounted with a 90° offset relative to the
+                    // display, matching the same physical layout as MentraLive.
+                    if (propLower.contains("ima02_go2") || propLower.contains("inmo go2")) {
+                        Log.i(TAG, "INMO Go2 detected - using 90° rotation");
+                        return 90;
+                    }
+
                     // MentraLive devices need 90° device rotation (maps to 0° JPEG orientation)
                     if (propLower.contains("mentralive")) {
                         Log.i(TAG, "MentraLive detected - using 90° rotation");
@@ -357,7 +422,11 @@ public class ServiceUtils {
         try {
             String model = android.os.Build.MODEL;
             String product = android.os.Build.PRODUCT;
-            
+
+            if (isInmoGo2Device(context)) {
+                return "INMO Go2";
+            }
+
             if (isK900Device(context)) {
                 // Try to determine specific K900 variant
                 String[] propsToCheck = {model, product, android.os.Build.DISPLAY};

@@ -690,6 +690,8 @@ struct ViewState {
             sgc?.type = DeviceTypes.Z100 // Override type to Z100
         } else if wearable.contains(DeviceTypes.FRAME) {
             // sgc = FrameManager()
+        } else if wearable.contains(DeviceTypes.INMO_GO2) {
+            sgc = InmoGo2()
         }
         // update device model:
         GlassesStore.shared.apply("glasses", "deviceModel", sgc?.type ?? "")
@@ -951,6 +953,10 @@ struct ViewState {
             handleMach1Ready()
         } else if defaultWearable.contains(DeviceTypes.Z100) {
             handleMach1Ready() // Z100 uses same initialization as Mach1
+        } else if defaultWearable.contains(DeviceTypes.INMO_GO2) {
+            // INMO Go2: no device-specific post-ready hardware init needed.
+            // glasses_ready triggers all required setup via InmoGo2.handleGlassesReady().
+            Bridge.log("MAN: INMO Go2 ready — standard ASG client setup complete")
         }
 
         // check current audio device:

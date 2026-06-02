@@ -15,6 +15,10 @@ export const getGlassesImage = (glasses: string | null) => {
       return require("../../assets/glasses/mentra_live/mentra_live.png")
     case "inmo_air":
       return require("../../assets/glasses/inmo_air.png")
+    case "INMO Go2":
+    case "inmo_go2":
+      // TODO: Replace with dedicated inmo_go2.png asset when available
+      return require("../../assets/glasses/inmo_air.png")
     case "tcl_rayneo_x_two":
       return require("../../assets/glasses/tcl_rayneo_x_two.png")
     case "Vuzix_shield":

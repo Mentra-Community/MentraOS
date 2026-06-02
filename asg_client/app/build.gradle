@@ -92,7 +92,7 @@ gradle.taskGraph.whenReady { taskGraph ->
         // Check Sentry configuration status (from .env file)
         def sentryDsn = envProperties['SENTRY_DSN'] ?: ""
         def sentryAuthToken = System.getenv("SENTRY_AUTH_TOKEN") ?:
-                             (project.hasProperty("sentryAuthToken") ? project.property("sentryAuthToken") : null)
+                (project.hasProperty("sentryAuthToken") ? project.property("sentryAuthToken") : null)
 
         def isSentryConfigured = sentryDsn && !sentryDsn.isEmpty() && sentryDsn.contains("sentry.io")
 
@@ -318,17 +318,19 @@ dependencies {
     implementation "androidx.camera:camera-view:1.3.0"
     implementation "androidx.camera:camera-extensions:1.3.0"
 
-    // StreamPackLite dependencies
-    implementation project(':core')
-    implementation project(':extension-rtmp')
-    implementation project(':extension-srt')
+    // StreamPack streaming library (replaces local StreamPackLite subproject)
+    // v2.6.1 matches the package structure used throughout this codebase:
+    //   io.github.thibaultbee.streampack.ext.rtmp / .ext.srt / .data / .listeners / .views
+    implementation 'io.github.thibaultbee:streampack:2.6.1'
+    implementation 'io.github.thibaultbee:streampack-extension-rtmp:2.6.1'
+    implementation 'io.github.thibaultbee:streampack-extension-srt:2.6.1'
 
     // OkHttp for network requests
     implementation 'com.squareup.okhttp3:okhttp:4.9.3'
-    
+
     // JSON handling
     implementation 'org.json:json:20210307'
-    
+
     // AVIF encoding/decoding support
     implementation 'com.github.awxkee:avif-coder:1.7.3'
 
@@ -348,8 +350,8 @@ dependencies {
 }
 
 // Check if Sentry auth token is available
-def sentryAuthToken = System.getenv("SENTRY_AUTH_TOKEN") ?: 
-                     project.hasProperty("sentryAuthToken") ? project.property("sentryAuthToken") : null
+def sentryAuthToken = System.getenv("SENTRY_AUTH_TOKEN") ?:
+        project.hasProperty("sentryAuthToken") ? project.property("sentryAuthToken") : null
 
 sentry {
     org = "mentra-labs"
@@ -368,7 +370,7 @@ sentry {
         uploadNativeSymbols = false
         autoUploadNativeSymbols = false
         autoUploadSourceContext = false
-        
+
         // Don't fail the build if Sentry operations fail
         ignoredBuildTypes = ["release", "debug"]
     }

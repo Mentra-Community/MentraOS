@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
+import com.mentra.asg_client.io.bluetooth.managers.InmoGo2BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.StandardBluetoothManager;
 import com.mentra.asg_client.service.utils.ServiceUtils;
@@ -22,12 +23,15 @@ public class BluetoothManagerFactory {
      */
     public static IBluetoothManager getBluetoothManager(Context context) {
         Context appContext = context.getApplicationContext();
-        
-        // Switched back to StandardBluetoothManager due to issues with NordicBluetoothManager
-        //Log.i(TAG, "Using StandardBluetoothManager instead of NordicBluetoothManager");
-        //Log.i(TAG, "Implementation class: " + StandardBluetoothManager.class.getName());
-        //return new StandardBluetoothManager(appContext);
-        
+
+        // INMO Go2: standard Android BLE peripheral, custom device name "INMO GO2",
+        // UUIDs 00004860/4861/4862 confirmed via nRF Connect scan.
+        if (ServiceUtils.isInmoGo2Device(appContext)) {
+            Log.i(TAG, "Creating InmoGo2BluetoothManager");
+            Log.d(TAG, "Device type: " + ServiceUtils.getDeviceTypeString(appContext));
+            return new InmoGo2BluetoothManager(appContext);
+        }
+
         Log.d(TAG, "[FORCING K900 IMPLEMENTATION OF BLUETOOTH MANAGER]");
         if (true || ServiceUtils.isK900Device(appContext)) {
             Log.i(TAG, "Creating K900BluetoothManager - K900 device detected");

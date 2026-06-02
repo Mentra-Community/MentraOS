@@ -410,7 +410,7 @@ public class RtmpStreamingService extends Service {
                     // Report StreamPack error
                     boolean isRetryable = isRetryableError(error);
                     StreamingReporting.reportPackError(RtmpStreamingService.this,
-                        "stream_error", error.getMessage(), isRetryable);
+                            "stream_error", error.getMessage(), isRetryable);
 
                     // Classify the error to determine if we should retry or fail immediately
                     if (isRetryable) {
@@ -504,7 +504,7 @@ public class RtmpStreamingService extends Service {
 
                     // Report connection failure
                     StreamingReporting.reportRtmpConnectionFailure(RtmpStreamingService.this,
-                        mRtmpUrl, message, null);
+                            mRtmpUrl, message, null);
 
                     // Only notify server immediately for fatal errors that won't be retried
                     if (!isRetryableErrorString(message)) {
@@ -565,7 +565,7 @@ public class RtmpStreamingService extends Service {
 
                     // Report connection lost
                     StreamingReporting.reportRtmpConnectionLost(RtmpStreamingService.this,
-                        mRtmpUrl, streamDuration, message);
+                            mRtmpUrl, streamDuration, message);
 
                     // Give the StreamPack library time to recover internally before we take over
                     Log.d(TAG, "Waiting 1 second for library internal recovery before external reconnection");
@@ -638,11 +638,8 @@ public class RtmpStreamingService extends Service {
             int profile = VideoConfig.Companion.getBestProfile(mimeType);
             int level = VideoConfig.Companion.getBestLevel(mimeType, profile);
 
-            // Encode at output size; camera buffer at native capture size when it differs
-            Size captureSize =
-                (captureW != videoWidth || captureH != videoHeight)
-                    ? new Size(captureW, captureH)
-                    : null;
+            // captureSize (StreamPackLite-only field) removed — public StreamPack 2.6.1
+            // uses the encode resolution for capture as well.
             VideoConfig videoConfig = new VideoConfig(
                     MediaFormat.MIMETYPE_VIDEO_AVC,
                     videoBitrate,
@@ -650,8 +647,7 @@ public class RtmpStreamingService extends Service {
                     videoFps,
                     profile,
                     level,
-                    2.0f, // Force keyframe every 2 seconds
-                    captureSize
+                    2.0f
             );
 
             // Apply configurations and start preview
@@ -678,7 +674,7 @@ public class RtmpStreamingService extends Service {
 
             // Report streaming initialization failure
             StreamingReporting.reportInitializationFailure(RtmpStreamingService.this,
-                mRtmpUrl, e.getMessage(), e);
+                    mRtmpUrl, e.getMessage(), e);
         }
     }
 
@@ -781,7 +777,7 @@ public class RtmpStreamingService extends Service {
 
                 // Report URL validation failure
                 StreamingReporting.reportUrlValidationFailure(RtmpStreamingService.this,
-                    mRtmpUrl != null ? mRtmpUrl : "null", "URL is null or empty");
+                        mRtmpUrl != null ? mRtmpUrl : "null", "URL is null or empty");
                 return;
             }
 
@@ -852,7 +848,7 @@ public class RtmpStreamingService extends Service {
             } else {
                 String error = "Failed to create valid surface for streaming";
                 StreamingReporting.reportSurfaceCreationFailure(RtmpStreamingService.this,
-                    "create_surface", error, null);
+                        "create_surface", error, null);
                 throw new Exception(error);
             }
 
@@ -878,7 +874,7 @@ public class RtmpStreamingService extends Service {
 
                             // Report stream start failure
                             StreamingReporting.reportStreamStartFailure(RtmpStreamingService.this,
-                                mRtmpUrl, ((Throwable) o).getMessage(), (Throwable) o);
+                                    mRtmpUrl, ((Throwable) o).getMessage(), (Throwable) o);
 
                             // Schedule reconnect if we couldn't start the stream
                             scheduleReconnect("start_error");
@@ -924,7 +920,7 @@ public class RtmpStreamingService extends Service {
 
             // Check if this is a camera access issue due to power policy
             if (e.getMessage() != null && e.getMessage().contains("CAMERA_DISABLED") &&
-                e.getMessage().contains("disabled by policy")) {
+                    e.getMessage().contains("disabled by policy")) {
                 Log.w(TAG, "Camera disabled by power policy - likely screen is off during reconnection");
                 errorMsg = "Camera disabled by power policy (screen off) - " + e.getMessage();
             }
@@ -940,7 +936,7 @@ public class RtmpStreamingService extends Service {
 
             // Report stream start failure
             StreamingReporting.reportStreamStartFailure(RtmpStreamingService.this,
-                mRtmpUrl, e.getMessage(), e);
+                    mRtmpUrl, e.getMessage(), e);
 
             // Schedule reconnect on exception
             scheduleReconnect("start_exception");
@@ -1014,7 +1010,7 @@ public class RtmpStreamingService extends Service {
 
                     // Report stream stop failure
                     StreamingReporting.reportStreamStopFailure(RtmpStreamingService.this,
-                        "stream_stop_error", (Throwable) o);
+                            "stream_stop_error", (Throwable) o);
 
                     // Notify TPA developer of cleanup failure
                     if (sStatusCallback != null) {
@@ -1046,7 +1042,7 @@ public class RtmpStreamingService extends Service {
 
                 // Report preview stop failure
                 StreamingReporting.reportPreviewStartFailure(RtmpStreamingService.this,
-                    "stop_preview_error", e);
+                        "stop_preview_error", e);
 
                 // Notify TPA developer of cleanup failure
                 if (sStatusCallback != null) {
@@ -1063,7 +1059,7 @@ public class RtmpStreamingService extends Service {
 
                 // Report resource cleanup failure
                 StreamingReporting.reportResourceCleanupFailure(RtmpStreamingService.this,
-                    "streamer", "release_error", e);
+                        "streamer", "release_error", e);
 
                 // Notify TPA developer of cleanup failure
                 if (sStatusCallback != null) {
@@ -1144,7 +1140,7 @@ public class RtmpStreamingService extends Service {
             // Report reconnection exhaustion
             long totalDuration = System.currentTimeMillis() - mLastReconnectionTime;
             StreamingReporting.reportReconnectionExhaustion(RtmpStreamingService.this,
-                mRtmpUrl, MAX_RECONNECT_ATTEMPTS, totalDuration);
+                    mRtmpUrl, MAX_RECONNECT_ATTEMPTS, totalDuration);
 
             // Stop streaming completely when max attempts reached
             stopStreaming();
@@ -1261,7 +1257,7 @@ public class RtmpStreamingService extends Service {
 
                 // Report stream timeout error
                 StreamingReporting.reportTimeoutError(RtmpStreamingService.this,
-                    streamId, STREAM_TIMEOUT_MS);
+                        streamId, STREAM_TIMEOUT_MS);
 
                 // Notify about timeout
                 EventBus.getDefault().post(new StreamingEvent.Error("Stream timed out - no keep-alive from cloud"));
@@ -1273,7 +1269,7 @@ public class RtmpStreamingService extends Service {
                 forceStopStreamingInternal(false);
             } else {
                 Log.d(TAG, "Ignoring timeout for old stream: " + streamId +
-                      " (current: " + mCurrentStreamId + ", active: " + mIsStreamingActive + ")");
+                        " (current: " + mCurrentStreamId + ", active: " + mIsStreamingActive + ")");
             }
         }
     }
@@ -1343,7 +1339,7 @@ public class RtmpStreamingService extends Service {
 
                             if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
                                 Log.w(TAG, "🔋⚠️ Battery dropped to " + batteryLevel +
-                                    "% during streaming - stopping");
+                                        "% during streaming - stopping");
                                 shouldStop = true;
 
                                 // Play battery low sound inside lock (quick operation)
@@ -1367,7 +1363,7 @@ public class RtmpStreamingService extends Service {
                 // Reschedule outside lock
                 if (shouldReschedule && mBatteryMonitorHandler != null) {
                     mBatteryMonitorHandler.postDelayed(this,
-                        BatteryConstants.BATTERY_CHECK_INTERVAL_MS);
+                            BatteryConstants.BATTERY_CHECK_INTERVAL_MS);
                 }
 
                 // Stop streaming OUTSIDE the lock to avoid holding lock during complex operation
@@ -1378,7 +1374,7 @@ public class RtmpStreamingService extends Service {
         };
 
         mBatteryMonitorHandler.postDelayed(mBatteryCheckRunnable,
-            BatteryConstants.BATTERY_CHECK_INTERVAL_MS);
+                BatteryConstants.BATTERY_CHECK_INTERVAL_MS);
 
         Log.d(TAG, "🔋 Started battery monitoring for RTMP streaming");
     }
@@ -1517,7 +1513,7 @@ public class RtmpStreamingService extends Service {
         if (sInstance != null) {
             synchronized (sInstance.mStateLock) {
                 return sInstance.mStreamState == StreamState.STREAMING ||
-                       sInstance.mStreamState == StreamState.STARTING;
+                        sInstance.mStreamState == StreamState.STARTING;
             }
         }
         return false;
@@ -1569,8 +1565,8 @@ public class RtmpStreamingService extends Service {
                 return true;
             } else {
                 Log.w(TAG, "Received keep-alive for unknown or inactive stream: " + streamId +
-                      " (current: " + sInstance.mCurrentStreamId + ", active: " + sInstance.mIsStreamingActive +
-                      ", state: " + sInstance.mStreamState + ")");
+                        " (current: " + sInstance.mCurrentStreamId + ", active: " + sInstance.mIsStreamingActive +
+                        ", state: " + sInstance.mStreamState + ")");
                 return false;
             }
         }
@@ -1594,39 +1590,39 @@ public class RtmpStreamingService extends Service {
 
         // Network/connection errors that should trigger reconnection
         if (message.contains("SocketException") ||
-            message.contains("Connection") ||
-            message.contains("Timeout") ||
-            message.contains("Network") ||
-            message.contains("UnknownHostException") ||
-            message.contains("IOException") ||
-            message.contains("ECONNREFUSED") ||
-            message.contains("ETIMEDOUT")) {
+                message.contains("Connection") ||
+                message.contains("Timeout") ||
+                message.contains("Network") ||
+                message.contains("UnknownHostException") ||
+                message.contains("IOException") ||
+                message.contains("ECONNREFUSED") ||
+                message.contains("ETIMEDOUT")) {
             Log.d(TAG, "Error classified as RETRYABLE (network issue)");
             return true;
         }
 
         // Fatal errors that shouldn't retry
         if (message.contains("Permission") ||
-            message.contains("permission") ||
-            message.contains("Invalid URL") ||
-            message.contains("invalid url") ||
-            message.contains("Authentication") ||
-            message.contains("authentication") ||
-            message.contains("Unauthorized") ||
-            message.contains("Codec") ||
-            message.contains("codec") ||
-            message.contains("Not supported") ||
-            message.contains("Illegal") ||
-            message.contains("Invalid parameter")) {
+                message.contains("permission") ||
+                message.contains("Invalid URL") ||
+                message.contains("invalid url") ||
+                message.contains("Authentication") ||
+                message.contains("authentication") ||
+                message.contains("Unauthorized") ||
+                message.contains("Codec") ||
+                message.contains("codec") ||
+                message.contains("Not supported") ||
+                message.contains("Illegal") ||
+                message.contains("Invalid parameter")) {
             Log.d(TAG, "Error classified as FATAL (configuration/permission issue)");
             return false;
         }
 
         // Camera-specific errors that are usually fatal
         if (message.contains("Camera") &&
-            (message.contains("busy") ||
-             message.contains("in use") ||
-             message.contains("failed to connect"))) {
+                (message.contains("busy") ||
+                        message.contains("in use") ||
+                        message.contains("failed to connect"))) {
             Log.d(TAG, "Error classified as FATAL (camera unavailable)");
             return false;
         }
@@ -1655,43 +1651,43 @@ public class RtmpStreamingService extends Service {
 
         // Network/connection errors that should trigger reconnection
         if (lowerMessage.contains("socket") ||
-            lowerMessage.contains("connection") ||
-            lowerMessage.contains("timeout") ||
-            lowerMessage.contains("network") ||
-            lowerMessage.contains("unknownhost") ||
-            lowerMessage.contains("ioexception") ||
-            lowerMessage.contains("unreachable") ||
-            lowerMessage.contains("disconnected") ||
-            lowerMessage.contains("pipe") ||        // "Broken pipe"
-            lowerMessage.contains("closed") ||      // "Socket closed"
-            lowerMessage.contains("refused") ||
-            lowerMessage.contains("reset") ||
-            lowerMessage.contains("host") ||        // "Host is unreachable"
-            lowerMessage.contains("econnrefused") ||
-            lowerMessage.contains("etimedout") ||
-            lowerMessage.contains("peer")) {        // "Peer disconnected"
+                lowerMessage.contains("connection") ||
+                lowerMessage.contains("timeout") ||
+                lowerMessage.contains("network") ||
+                lowerMessage.contains("unknownhost") ||
+                lowerMessage.contains("ioexception") ||
+                lowerMessage.contains("unreachable") ||
+                lowerMessage.contains("disconnected") ||
+                lowerMessage.contains("pipe") ||        // "Broken pipe"
+                lowerMessage.contains("closed") ||      // "Socket closed"
+                lowerMessage.contains("refused") ||
+                lowerMessage.contains("reset") ||
+                lowerMessage.contains("host") ||        // "Host is unreachable"
+                lowerMessage.contains("econnrefused") ||
+                lowerMessage.contains("etimedout") ||
+                lowerMessage.contains("peer")) {        // "Peer disconnected"
             Log.d(TAG, "Error classified as RETRYABLE (network issue)");
             return true;
         }
 
         // Fatal errors that shouldn't retry
         if (lowerMessage.contains("permission") ||
-            lowerMessage.contains("invalid url") ||
-            lowerMessage.contains("authentication") ||
-            lowerMessage.contains("unauthorized") ||
-            lowerMessage.contains("codec") ||
-            lowerMessage.contains("not supported") ||
-            lowerMessage.contains("illegal") ||
-            lowerMessage.contains("invalid parameter")) {
+                lowerMessage.contains("invalid url") ||
+                lowerMessage.contains("authentication") ||
+                lowerMessage.contains("unauthorized") ||
+                lowerMessage.contains("codec") ||
+                lowerMessage.contains("not supported") ||
+                lowerMessage.contains("illegal") ||
+                lowerMessage.contains("invalid parameter")) {
             Log.d(TAG, "Error classified as FATAL (configuration/permission issue)");
             return false;
         }
 
         // Camera-specific errors that are usually fatal
         if (lowerMessage.contains("camera") &&
-            (lowerMessage.contains("busy") ||
-             lowerMessage.contains("in use") ||
-             lowerMessage.contains("failed to connect"))) {
+                (lowerMessage.contains("busy") ||
+                        lowerMessage.contains("in use") ||
+                        lowerMessage.contains("failed to connect"))) {
             Log.d(TAG, "Error classified as FATAL (camera unavailable)");
             return false;
         }

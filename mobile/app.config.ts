@@ -290,5 +290,10 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       tsconfigPaths: true,
       typedRoutes: true,
     },
+    extra: {
+      eas: {
+        projectId: "33572e40-ab2b-454f-b191-b106a66f0ea8",
+      },
+    },
   }
 }
