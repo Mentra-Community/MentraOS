@@ -23,7 +23,8 @@ lands.
 | **[001-cloud-core](./001-cloud-core/)** | | proprietary cloud product |
 | [auth](./001-cloud-core/auth/) | Mixed | the auth system. oem-auth Implemented; identity + mini-app auto-auth Spiked; console/store auth not started |
 | [auth / oem-auth](./001-cloud-core/auth/oem-auth/) | Implemented | spec + design (under review), built in v2, e2e verified with `test-oem`. Left: finalize doc review |
-| [auth / identity + auto-auth](./001-cloud-core/auth/spike.md) | Spiked | spike done (v1 vs v2, the 3 audiences, dev auto-auth mechanism). Left: resolve open questions, then spec |
+| [auth / identity](./001-cloud-core/auth/identity/) | Spiked | Mentra-direct identity (app + console + store) unifies on the access token. Left: resolve open questions, then spec |
+| [auth / auto-auth](./001-cloud-core/auth/auto-auth/) | Spiked | the Phase 2 dev-backend mechanism (app-scoped JWT, JWKS). Left: resolve open questions, then spec |
 | [oem-service](./001-cloud-core/oem-service/) | Stub | needs spec |
 | [miniapp-service](./001-cloud-core/miniapp-service/) | Stub | needs spec (stores bundles via storage-service) |
 | [dev-console-service](./001-cloud-core/dev-console-service/) | Stub | needs spec |

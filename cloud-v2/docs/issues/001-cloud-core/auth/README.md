@@ -9,15 +9,15 @@ Mentra, and how Mentra hands identity to the parties that need it.
   Mentra (RFC 8693 exchange of an OEM-signed JWT for a Mentra access token), and
   how Mentra hands user identity to mini-app backends (the `mentraUserId` +
   `oemId` handoff and trust policy). Specced and implemented.
-- **Mentra-direct user identity** ([`spike.md`](./spike.md)): the identity for
-  "Mentra's own users," which today spans the consumer app, the Dev Console
-  website, and the App/MiniApp Store website, all via the **same** Supabase
-  sign-in plus core-token exchange (not three separate systems). v2 unifies them
-  on the Mentra access token, with Mentra as "OEM zero" (reserved
-  `oemId = "mentra"`). OEM users reach the same token via oem-auth. Spike.
-- **Mini-app auto-auth** ([`spike.md`](./spike.md)): injecting Mentra auth into a
-  local mini app so it can call the developer's own backend with no login (the
-  Phase 2 that oem-auth deferred). Spike.
+- **User identity** ([`identity/`](./identity/)): the identity for "Mentra's own
+  users," which today spans the consumer app, the Dev Console website, and the
+  App/MiniApp Store website, all via the **same** Supabase sign-in plus core-token
+  exchange (not three separate systems). v2 unifies them on the Mentra access
+  token, with Mentra as "OEM zero" (reserved `oemId = "mentra"`). OEM users reach
+  the same token via oem-auth. Spike.
+- **Mini-app auto-auth** ([`auto-auth/`](./auto-auth/)): injecting Mentra auth
+  into a local mini app so it can call the developer's own backend with no login
+  (the Phase 2 that oem-auth deferred). Spike.
 
 ## How the pieces relate
 
@@ -31,8 +31,10 @@ verifies it. Mini-app auto-auth derives a short-lived app-scoped token from it.
 ## Status
 
 - `oem-auth/`: Implemented (docs under review).
-- Mentra-direct identity (consumer app + Dev Console + Store) and mini-app
-  auto-auth (`spike.md`): Spiked; open questions to resolve, then spec.
+- `identity/`: Spiked (consumer app + Dev Console + Store unify on the access
+  token). Open questions to resolve, then spec.
+- `auto-auth/`: Spiked (the Phase 2 dev-backend mechanism). Open questions to
+  resolve, then spec.
 
 ## Related
 
