@@ -47,9 +47,6 @@ jobs:
         working-directory: ./mobile/ios
         run: pod install
 
-      - name: Download iOS platform support
-        run: xcodebuild -downloadPlatform iOS
-
       - name: List schemes
         working-directory: ./mobile/ios
         run: xcodebuild -workspace Mentra.xcworkspace -list
@@ -72,22 +69,20 @@ jobs:
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             DEVELOPMENT_TEAM="" \
             2>&1 | tee /tmp/xcodebuild.log
-          echo "Exit code: $?"
+          echo "xcodebuild exit: $?"
 
       - name: Show last 100 lines of build log
         if: always()
-        run: tail -100 /tmp/xcodebuild.log
+        run: tail -100 /tmp/xcodebuild.log || echo "No log file found"
 
-      - name: Verify archive
+      - name: Verify archive and find .app
         run: |
-          echo "=== Looking for xcarchive ==="
-          find "$GITHUB_WORKSPACE" -name "Mentra.xcarchive" -maxdepth 3 2>/dev/null || echo "xcarchive not found"
-          echo "=== Looking for any .app ==="
-          find "$GITHUB_WORKSPACE" -name "*.app" -type d -maxdepth 10 2>/dev/null | head -10
+          echo "=== Looking for Mentra.app ==="
+          find "$GITHUB_WORKSPACE" -name "Mentra.app" -type d 2>/dev/null | head -5
 
           APP_PATH=$(find "$GITHUB_WORKSPACE" -name "Mentra.app" -type d | head -1)
           if [ -z "$APP_PATH" ]; then
-            echo "❌ Mentra.app not found anywhere"
+            echo "❌ Mentra.app not found"
             exit 1
           fi
           echo "✅ Found: $APP_PATH"
@@ -115,7 +110,7 @@ jobs:
           path: Mentra.ipa
           retention-days: 14
 
-      - name: Upload full build log
+      - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
