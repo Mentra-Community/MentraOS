@@ -14,10 +14,10 @@ set for the release. Do not run the export from a partial split PR branch unless
 that branch intentionally contains every Swift source file expected in the
 public package.
 
-For example, some runtime changes add Swift files that the export allow-list
-expects. If the export fails with a missing source file, either run from the
-release/integration branch that includes that feature or deliberately update the
-allow-list.
+The export copies `ios/Source` by default and excludes only known
+MentraOS-internal or non-SPM-compatible paths. If the export verification fails
+after a new Swift file is added, either feature-gate that code for SwiftPM or
+add an explicit exclusion with a short explanation in the export script.
 
 ## Prerequisites
 

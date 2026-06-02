@@ -619,11 +619,14 @@ struct ViewState {
             sgc = G2()
         } else if wearable.contains(DeviceTypes.LIVE) {
             sgc = MentraLive()
-        } else if wearable.contains(DeviceTypes.NEX) {
-            sgc = MentraNexSGC.getInstance()
         } else if wearable.contains(DeviceTypes.FRAME) {
             // sgc = FrameManager()
         }
+#if !SWIFT_PACKAGE || MENTRA_FEATURE_NEX
+        if sgc == nil && wearable.contains(DeviceTypes.NEX) {
+            sgc = MentraNexSGC.getInstance()
+        }
+#endif
 #if !SWIFT_PACKAGE || MENTRA_FEATURE_VUZIX
         if sgc == nil {
             if wearable.contains(DeviceTypes.MACH1) {

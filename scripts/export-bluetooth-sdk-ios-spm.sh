@@ -196,56 +196,31 @@ To keep the BLE link alive while the app is backgrounded, enable Core Bluetooth 
 
 ## Scope
 
-This Swift package contains the core iOS Bluetooth SDK. It intentionally excludes optional MentraOS-internal code paths for local STT, Nex/SwiftProtobuf, Vuzix/Ultralite, and tar.bz2 extraction.
+This Swift package contains the core iOS Bluetooth SDK. It intentionally excludes optional MentraOS-internal code paths for local STT, offline TTS, Nex/SwiftProtobuf, Vuzix/Ultralite, and tar.bz2 extraction.
 EOF
 
 cp "$repo_root/LICENSE" "$target_root/LICENSE"
 
-swift_sources=(
-  "ios/Source/Audio/AudioModels.swift"
-  "ios/Source/Bridge.swift"
-  "ios/Source/Camera/CameraModels.swift"
-  "ios/Source/Connection/ScanSession.swift"
-  "ios/Source/DeviceManager.swift"
-  "ios/Source/DeviceStore.swift"
-  "ios/Source/Errors/BluetoothError.swift"
-  "ios/Source/Events/BluetoothEvents.swift"
-  "ios/Source/Internal/BluetoothAvailability.swift"
-  "ios/Source/Internal/ValueParsing.swift"
-  "ios/Source/MentraBluetoothSDK.swift"
-  "ios/Source/ObservableStore.swift"
-  "ios/Source/PrivacyInfo.xcprivacy"
-  "ios/Source/Requests/DisplayRequests.swift"
-  "ios/Source/Status/DeviceStatus.swift"
-  "ios/Source/Status/RuntimeState.swift"
-  "ios/Source/Status/WifiHotspotStatus.swift"
-  "ios/Source/Streaming/StreamModels.swift"
-  "ios/Source/Types/DeviceModels.swift"
-  "ios/Source/controllers/ControllerManager.swift"
-  "ios/Source/controllers/R1.swift"
-  "ios/Source/services/PhoneMic.swift"
-  "ios/Source/sgcs/Frame.swift"
-  "ios/Source/sgcs/G1.swift"
-  "ios/Source/sgcs/G2.swift"
-  "ios/Source/sgcs/MentraLive.swift"
-  "ios/Source/sgcs/SGCManager.swift"
-  "ios/Source/sgcs/Simulated.swift"
-  "ios/Source/utils/AudioSessionMonitor.swift"
-  "ios/Source/utils/Constants.swift"
-  "ios/Source/utils/Enums.swift"
-  "ios/Source/utils/G1Text.swift"
-  "ios/Source/utils/JSCExperiment.swift"
-  "ios/Source/utils/MemoryMonitor.swift"
-  "ios/Source/utils/MessageChunkReassembler.swift"
-  "ios/Source/utils/MessageChunker.swift"
-  "ios/Source/utils/Models.swift"
-  "ios/Source/utils/PhoneAudioMonitor.swift"
+# Keep this list limited to optional/internal code paths that need dependencies
+# not exported in the public SwiftPM package.
+source_excludes=(
+  "/Bridging-Header.h"
+  "/sgcs/Mach1.swift"
+  "/sgcs/MentraNex.swift"
+  "/sgcs/mentraos_ble.pb.swift"
+  "/stt/***"
+  "/tts/***"
+  "/utils/TarBz2Extractor.swift"
 )
 
-for rel_path in "${swift_sources[@]}"; do
-  mkdir -p "$target_root/$(dirname "$rel_path")"
-  cp "$sdk_root/$rel_path" "$target_root/$rel_path"
+source_rsync_args=(-a)
+for exclude_path in "${source_excludes[@]}"; do
+  source_rsync_args+=(--exclude="$exclude_path")
 done
+
+rsync "${source_rsync_args[@]}" \
+  "$sdk_root/ios/Source/" \
+  "$target_root/ios/Source/"
 
 rsync -a \
   --exclude='CoreObjC.xcodeproj' \

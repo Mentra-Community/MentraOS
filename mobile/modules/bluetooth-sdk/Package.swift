@@ -25,6 +25,7 @@ let package = Package(
         "sgcs/MentraNex.swift",
         "sgcs/mentraos_ble.pb.swift",
         "stt",
+        "tts",
         "utils/TarBz2Extractor.swift",
       ],
       resources: [
