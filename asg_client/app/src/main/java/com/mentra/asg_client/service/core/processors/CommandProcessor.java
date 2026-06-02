@@ -209,6 +209,7 @@ public class CommandProcessor {
 
             if (!result.isValid()) {
                 if ("chunk_in_progress".equals(result.commandType())) {
+                    serviceManager.onPhoneCommandReceived();
                     return null;
                 }
                 Log.w(TAG, "❌ Invalid protocol detected: " + result.protocolType().getDisplayName());

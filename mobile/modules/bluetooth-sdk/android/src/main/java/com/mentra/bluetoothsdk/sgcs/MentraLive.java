@@ -684,6 +684,9 @@ public class MentraLive extends SGCManager {
     private void updateConnectionState(String state) {
         boolean isEqual = state.equals(getConnectionState());
         if (isEqual) {
+            if (state.equals(ConnTypes.DISCONNECTED)) {
+                incomingChunkReassembler.clear();
+            }
             return;
         }
 
@@ -710,6 +713,7 @@ public class MentraLive extends SGCManager {
             DeviceStore.INSTANCE.apply("glasses", "connected", false);
             DeviceStore.INSTANCE.apply("glasses", "signalStrength", -1);
             DeviceStore.INSTANCE.apply("glasses", "signalStrengthUpdatedAt", 0L);
+            incomingChunkReassembler.clear();
             // Drop OTA caches when fully disconnected — avoids leaking session/step state
             // from a previous pairing into the next one.
             resetOtaCache();
@@ -3019,6 +3023,14 @@ public class MentraLive extends SGCManager {
                 Log.w(TAG, "LIVE: Received malformed chunked message: " + json);
                 return;
             }
+            if (chunkInfo.chunkId == null || chunkInfo.chunkId.isEmpty()
+                    || chunkInfo.totalChunks <= 0
+                    || chunkInfo.chunkIndex < 0
+                    || chunkInfo.chunkIndex >= chunkInfo.totalChunks
+                    || chunkInfo.data == null) {
+                Log.w(TAG, "LIVE: Received invalid chunk metadata: " + json);
+                return;
+            }
 
             String reassembled = incomingChunkReassembler.addChunk(
                     chunkInfo.chunkId,
@@ -4819,6 +4831,7 @@ public class MentraLive extends SGCManager {
 
         // Clean up message tracking
         pendingMessages.clear();
+        incomingChunkReassembler.clear();
         Bridge.log("LIVE: Cleared pending message tracking");
 
         // Release RGB LED control authority before disconnecting

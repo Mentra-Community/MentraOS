@@ -235,7 +235,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
                 if (i < chunks.size() - 1) {
                     try {
-                        Thread.sleep(50);
+                        Thread.sleep(PACING_DELAY_MS);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         Log.w(TAG, "Interrupted while pacing chunked JSON send");
@@ -1025,32 +1025,36 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * Handle phone confirmation timeout
      */
     private void handlePhoneConfirmationTimeout() {
-        if (currentFileTransfer != null && currentFileTransfer.waitingForPhoneConfirmation) {
-            Log.e(TAG, "⏰ Phone confirmation timeout for: " + currentFileTransfer.fileName);
+        FileTransferSession transfer = currentFileTransfer;
+        if (transfer != null && transfer.waitingForPhoneConfirmation) {
+            String fileName = transfer.fileName;
+            Log.e(TAG, "⏰ Phone confirmation timeout for: " + fileName);
             Log.e(TAG, "⏰ Phone did not respond within " + PHONE_CONFIRMATION_TIMEOUT_MS + "ms");
 
             notificationManager.showDebugNotification("Phone Timeout",
                 "No confirmation received - retrying");
 
             // Treat timeout as failure (phone might have crashed or disconnected)
-            handlePhoneConfirmation(currentFileTransfer.fileName, false);
+            handlePhoneConfirmation(fileName, false);
         }
     }
 
     private void notifyTransferFailedToPhone(String reason) {
-        if (currentFileTransfer == null) {
+        FileTransferSession transfer = currentFileTransfer;
+        if (transfer == null) {
             return;
         }
+        String fileName = transfer.fileName;
 
         try {
             JSONObject json = new JSONObject();
             json.put("type", "transfer_failed");
-            json.put("fileName", currentFileTransfer.fileName);
+            json.put("fileName", fileName);
             json.put("reason", reason);
             json.put("timestamp", System.currentTimeMillis());
 
             boolean sent = sendData(json.toString().getBytes(StandardCharsets.UTF_8));
-            Log.i(TAG, "📤 transfer_failed sent to phone for " + currentFileTransfer.fileName
+            Log.i(TAG, "📤 transfer_failed sent to phone for " + fileName
                     + " (reason=" + reason + ", sent=" + sent + ")");
         } catch (Exception e) {
             Log.e(TAG, "Failed to notify phone about transfer failure", e);

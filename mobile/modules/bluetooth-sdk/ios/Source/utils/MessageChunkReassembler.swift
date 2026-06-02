@@ -9,21 +9,41 @@ final class MessageChunkReassembler {
     func addChunk(_ info: MessageChunker.ChunkInfo) -> String? {
         cleanupTimedOutSessions()
 
+        guard !info.chunkId.isEmpty,
+              info.totalChunks > 0,
+              info.chunkIndex >= 0,
+              info.chunkIndex < info.totalChunks
+        else {
+            print("MessageChunkReassembler: Dropping invalid chunk metadata for \(info.chunkId)")
+            return nil
+        }
+
+        if let existing = activeSessions[info.chunkId], existing.totalChunks != info.totalChunks {
+            print(
+                "MessageChunkReassembler: totalChunks mismatch for \(info.chunkId) (expected \(existing.totalChunks), got \(info.totalChunks))"
+            )
+            activeSessions.removeValue(forKey: info.chunkId)
+            return nil
+        }
+
         if activeSessions.count >= Self.maxConcurrentSessions,
            activeSessions[info.chunkId] == nil
         {
             removeOldestSession()
         }
 
+        let isNewSession = activeSessions[info.chunkId] == nil
         let session = activeSessions[info.chunkId] ?? ChunkSession(
             chunkId: info.chunkId,
             totalChunks: info.totalChunks
         )
-        activeSessions[info.chunkId] = session
 
         guard session.addChunk(index: info.chunkIndex, data: info.data) else {
             print("MessageChunkReassembler: Failed to add chunk \(info.chunkIndex) for \(info.chunkId)")
             return nil
+        }
+        if isNewSession {
+            activeSessions[info.chunkId] = session
         }
 
         guard session.isComplete else {

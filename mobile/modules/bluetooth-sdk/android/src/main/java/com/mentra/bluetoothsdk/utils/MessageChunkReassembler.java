@@ -18,16 +18,35 @@ public class MessageChunkReassembler {
     public String addChunk(String chunkId, int chunkIndex, int totalChunks, String data) {
         cleanupTimedOutSessions();
 
+        if (chunkId == null || chunkId.isEmpty() || totalChunks <= 0 || chunkIndex < 0
+                || chunkIndex >= totalChunks || data == null) {
+            Log.w(TAG, "Dropping invalid chunk metadata: id=" + chunkId + ", index=" + chunkIndex
+                    + ", total=" + totalChunks);
+            return null;
+        }
+
+        ChunkSession existingSession = activeSessions.get(chunkId);
+        if (existingSession != null && existingSession.totalChunks != totalChunks) {
+            Log.w(TAG, "totalChunks mismatch for " + chunkId + " (expected "
+                    + existingSession.totalChunks + ", got " + totalChunks + "), dropping session");
+            activeSessions.remove(chunkId);
+            return null;
+        }
+
         if (activeSessions.size() >= MAX_CONCURRENT_SESSIONS && !activeSessions.containsKey(chunkId)) {
             Log.w(TAG, "Maximum concurrent chunk sessions reached, dropping oldest");
             removeOldestSession();
         }
 
-        ChunkSession session = activeSessions.computeIfAbsent(chunkId, ignored -> new ChunkSession(chunkId, totalChunks));
+        boolean isNewSession = existingSession == null;
+        ChunkSession session = isNewSession ? new ChunkSession(chunkId, totalChunks) : existingSession;
         boolean added = session.addChunk(chunkIndex, data);
         if (!added) {
             Log.w(TAG, "Failed to add chunk " + chunkIndex + " to session " + chunkId);
             return null;
+        }
+        if (isNewSession) {
+            activeSessions.put(chunkId, session);
         }
 
         Log.d(TAG, "Added chunk " + chunkIndex + "/" + (totalChunks - 1) + " for session " + chunkId);
