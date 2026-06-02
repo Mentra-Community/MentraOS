@@ -23,7 +23,11 @@ public class OtaCommandHandlerTest {
                 new OtaCommandHandler(mock(OtaHelper.class), mock(ICommunicationManager.class));
 
         assertThat(handler.getSupportedCommandTypes())
-                .containsExactlyInAnyOrder("ota_start", "ota_update_response", "ota_query_status");
+                .containsExactlyInAnyOrder(
+                        "ota_start",
+                        "ota_update_response",
+                        "ota_query_status",
+                        "ota_retry_version_check");
     }
 
     @Test

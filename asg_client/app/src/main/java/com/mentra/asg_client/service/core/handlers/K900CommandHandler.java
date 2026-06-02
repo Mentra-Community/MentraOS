@@ -476,6 +476,10 @@ public class K900CommandHandler {
         mBesLogSession.onLogPacketReceived(cur, body);
     }
 
+    public boolean hasActiveBesLogSession() {
+        return mBesLogSession != null && !mBesLogSession.isFinished();
+    }
+
     /**
      * Send mh_logs to BES and collect the streamed sr_log response, then upload the assembled BES
      * trace buffer to the incident backend as "glasses_firmware".
@@ -584,6 +588,56 @@ public class K900CommandHandler {
             if (relayFirmwareJson != null) {
                 relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
             }
+        }
+    }
+
+    public boolean requestBesLogsForTrace(
+            Context context,
+            IConfigurationManager configManager,
+            java.util.function.Consumer<String> rawLogCallback) {
+        if (hasActiveBesLogSession()) {
+            Log.d(TAG, "Skipping BES trace poll because a BES log session is already active");
+            return false;
+        }
+
+        if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
+            Log.w(TAG, "⚠️ BluetoothManager unavailable — cannot request BES trace logs");
+            return false;
+        }
+
+        if (!serviceManager.getBluetoothManager().isConnected()) {
+            Log.w(TAG, "⚠️ UART not connected — cannot request BES trace logs");
+            return false;
+        }
+
+        mBesLogSession = BesLogManager.forRawLogCallback(context, configManager, rawLogCallback);
+        try {
+            JSONObject k900Command = new JSONObject();
+            k900Command.put("C", "mh_logs");
+            k900Command.put("V", 1);
+            k900Command.put("B", "");
+
+            String commandStr = k900Command.toString();
+            Log.d(TAG, "📤 Sending trace mh_logs: " + commandStr);
+
+            boolean sent =
+                    serviceManager
+                            .getBluetoothManager()
+                            .sendMessage(
+                                    commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+            if (sent) {
+                mBesLogSession.startTimeouts();
+                return true;
+            }
+
+            Log.e(TAG, "❌ Failed to send trace mh_logs");
+            mBesLogSession = null;
+            return false;
+        } catch (JSONException e) {
+            Log.e(TAG, "💥 Error building trace mh_logs command", e);
+            mBesLogSession = null;
+            return false;
         }
     }
 

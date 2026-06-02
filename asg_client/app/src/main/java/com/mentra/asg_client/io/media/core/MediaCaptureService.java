@@ -26,6 +26,7 @@ import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.settings.VideoSettings;
 import com.mentra.asg_client.utils.GalleryStatusHelper;
+import com.mentra.asg_client.utils.GallerySyncFilter;
 import com.radzivon.bartoshyk.avif.coder.HeifCoder;
 import com.radzivon.bartoshyk.avif.coder.PreciseMode;
 import java.io.File;
@@ -3682,15 +3683,13 @@ public class MediaCaptureService {
                     GalleryStatusHelper.buildGalleryStatus(
                             fileManager,
                             metadata ->
-                                    !com.mentra.asg_client.utils.GallerySyncFilter
-                                                    .isCaptureBlockedFromSync(
-                                                            metadata.getFileName(),
-                                                            activeCaptureId,
-                                                            blockedCaptureIds)
-                                            && !com.mentra.asg_client.utils.GallerySyncFilter
-                                                    .isZeroBytePrimaryVideo(
-                                                            metadata.getFileName(),
-                                                            metadata.getFileSize()));
+                                    !GallerySyncFilter.isCaptureBlockedFromSync(
+                                                    metadata.getFileName(),
+                                                    activeCaptureId,
+                                                    blockedCaptureIds)
+                                            && !GallerySyncFilter.isZeroBytePrimaryVideo(
+                                                    metadata.getFileName(),
+                                                    metadata.getFileSize()));
 
             // Send through bluetooth if available
             if (mServiceCallback != null) {
