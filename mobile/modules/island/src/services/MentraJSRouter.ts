@@ -23,11 +23,10 @@
  * Host-side handler bodies (display fan-out, mic state, transcription,
  * navigation, etc.) live untouched in `LocalMiniappRuntime.ts`.
  *
- * Cloud-message routing (`phone_photo_ready`, `phone_stream_status`,
- * `phone_managed_stream_status`) goes straight through
- * `LocalMiniappRuntime.handleCloudMessage` — nothing for the router to
- * do; the responses arrive inside an envelope whose `sendMessage` was
- * already registered via the same path here.
+ * Cloud-message routing (`phone_stream_status`, `phone_managed_stream_status`)
+ * goes straight through `LocalMiniappRuntime.handleCloudMessage` — nothing
+ * for the router to do; the responses arrive inside an envelope whose
+ * `sendMessage` was already registered via the same path here.
  *
  * The router also bridges native error / log / unhandled-rejection
  * events (`iface: "__log"`, `iface: "__error"`) into the standard
@@ -524,7 +523,7 @@ export class MentraJSRouter {
    * Push a `kind="bridge"` envelope into the named JSContext's
    * `globalThis.__deliver`. Used both by the per-app `sendMessage`
    * registered via {@link registerApp} and by ad-hoc callers (e.g.
-   * cloud-relayed `phone_photo_ready` responses route through
+   * cloud-relayed stream-status responses route through
    * `LocalMiniappRuntime.handleCloudMessage`, which then calls the
    * `app.sendMessage(serialized)` registered above).
    */

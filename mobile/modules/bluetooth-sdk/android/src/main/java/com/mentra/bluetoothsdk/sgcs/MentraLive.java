@@ -2532,8 +2532,10 @@ public class MentraLive extends SGCManager {
                 Bridge.log("LIVE: 📱 OTA status - step " + osCurrentStep + "/" + osTotalSteps +
                       " " + osPhase + " " + osStatus + " " + osOverallPercent + "%");
 
+                long glassesTimeMs = json.optLong("glasses_time_ms", 0);
                 Bridge.sendOtaStatus(osSessionId, osTotalSteps, osCurrentStep, osStepType,
-                    osPhase, osStepPercent, osOverallPercent, osStatus, osErrorMessage);
+                    osPhase, osStepPercent, osOverallPercent, osStatus, osErrorMessage,
+                    glassesTimeMs > 0 ? glassesTimeMs : null);
                 break;
 
             case "ota_progress":
@@ -2984,7 +2986,12 @@ public class MentraLive extends SGCManager {
                     if (fields.containsKey("bt_mac_address")) {
                         DeviceStore.INSTANCE.apply("glasses", "bluetoothMacAddress", (String) fields.get("bt_mac_address"));
                     }
-
+                    if (fields.containsKey("system_time_ms")) {
+                        Object v = fields.get("system_time_ms");
+                        if (v instanceof Number) {
+                            DeviceStore.INSTANCE.apply("glasses", "systemTimeMs", ((Number) v).longValue());
+                        }
+                    }
 
                     Bridge.log("LIVE: Processed version_info fields and sent to RN");
                 } else {
@@ -3675,6 +3682,18 @@ public class MentraLive extends SGCManager {
         }
     }
 
+    public void sendOtaRetryVersionCheck() {
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "ota_retry_version_check");
+            json.put("timestamp", System.currentTimeMillis());
+            sendJson(json, true);
+            Bridge.log("LIVE: ⏰ Sending ota_retry_version_check command to glasses");
+        } catch (JSONException e) {
+            Log.e(TAG, "⏰ Error creating ota_retry_version_check command", e);
+        }
+    }
+
     /**
      * Request version info from glasses.
      * Glasses will respond with version_info message containing build number, firmware version, etc.
@@ -4037,7 +4056,8 @@ public class MentraLive extends SGCManager {
     public void dbg1() {}
     public void dbg2() {}
 
-    public boolean displayBitmap(String base64) {
+    @Override
+    public boolean displayBitmap(String base64, Integer x, Integer y, Integer width, Integer height) {
         return false;
     }
 
@@ -4160,9 +4180,9 @@ public class MentraLive extends SGCManager {
         }
     }
 
-    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean sound, Long exposureTimeNs) {
+    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean save, boolean sound, Long exposureTimeNs) {
         boolean hasAuthToken = authToken != null && !authToken.isEmpty();
-        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs);
+        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", save=" + save + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs);
         Bridge.log("LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry — requestId=" + requestId + ", appId=" + appId);
 
         try {
@@ -4185,6 +4205,7 @@ public class MentraLive extends SGCManager {
                 json.put("compress", "none");
             }
             json.put("flash", flash);
+            json.put("save", save);
             json.put("sound", sound);
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
                 Bridge.log("LIVE: Using manual exposure time for photo request " + requestId + ": " + exposureTimeNs + " ns");
@@ -5838,6 +5859,19 @@ public class MentraLive extends SGCManager {
             Bridge.log("LIVE: 🔥 ✅ Hotspot state command sent successfully");
         } catch (JSONException e) {
             Log.e(TAG, "🔥 💥 Error creating hotspot state JSON", e);
+        }
+    }
+
+    @Override
+    public void sendSetSystemTime(long timestampMs) {
+        Bridge.log("LIVE: ⏰ Sending set_system_time to glasses: " + timestampMs);
+        try {
+            JSONObject command = new JSONObject();
+            command.put("type", "set_system_time");
+            command.put("timestamp_ms", timestampMs);
+            sendJson(command, true);
+        } catch (JSONException e) {
+            Log.e(TAG, "⏰ Error creating set_system_time JSON", e);
         }
     }
 

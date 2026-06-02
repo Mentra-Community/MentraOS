@@ -27,7 +27,6 @@ import mentraos.ble.MentraosBle.GlassesToPhone
 import mentraos.ble.MentraosBle.PhoneToGlasses
 import mentraos.ble.MentraosBle.ChargingState
 import mentraos.ble.MentraosBle.BatteryStatus
-import mentraos.ble.MentraosBle.VersionResponse
 import mentraos.ble.MentraosBle.HeadGesture
 import mentraos.ble.MentraosBle.ButtonEvent
 import mentraos.ble.MentraosBle.ImuData
@@ -286,11 +285,25 @@ class MentraNex : SGCManager() {
     override fun queryGalleryStatus() { Bridge.log("Nex: queryGalleryStatus operation not supported") }
     override fun sendGalleryMode() { Bridge.log("Nex: sendGalleryMode operation not supported") }
 
+    override fun sendVoiceActivityDetectionSetting() {
+        val enabled = DeviceStore.get("bluetooth", "voice_activity_detection_enabled") as? Boolean ?: true
+        Bridge.log("Nex: 🎤 Sending Voice Activity Detection setting to glasses: $enabled")
+
+        if (connectionState != ConnTypes.CONNECTED) {
+            Bridge.log("Nex: Cannot send VAD setting - not connected")
+            return
+        }
+
+        val bytes = NexProtobufUtils.generateVadEnabledRequestCommandBytes(enabled)
+        sendDataSequentially(bytes)
+        Bridge.sendVoiceActivityDetectionStatus(enabled)
+    }
+
     // Version info: Not supported on Nex (uses protobuf for version info)
     override fun requestVersionInfo() { Bridge.log("Nex: requestVersionInfo operation not supported") }
 
     // Camera & Media: Not supported on Nex (No camera)
-    override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, flash: Boolean, sound: Boolean, exposureTimeNs: Long?) { Bridge.log("Nex: requestPhoto operation not supported") }
+    override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, flash: Boolean, save: Boolean, sound: Boolean, exposureTimeNs: Long?) { Bridge.log("Nex: requestPhoto operation not supported") }
     override fun startStream(message: MutableMap<String, Any>) { Bridge.log("Nex: startStream operation not supported") }
     override fun stopStream() { Bridge.log("Nex: stopStream operation not supported") }
     override fun sendStreamKeepAlive(message: MutableMap<String, Any>) { Bridge.log("Nex: sendStreamKeepAlive operation not supported") }
@@ -475,7 +488,13 @@ class MentraNex : SGCManager() {
         sendDataSequentially(textChunks)
     }
 
-    override fun displayBitmap(base64ImageData: String): Boolean {
+    override fun displayBitmap(
+            base64ImageData: String,
+            x: Int?,
+            y: Int?,
+            width: Int?,
+            height: Int?
+    ): Boolean {
         try {
             val bmpData: ByteArray? = android.util.Base64.decode(base64ImageData, android.util.Base64.DEFAULT)
             if (bmpData == null || bmpData.isEmpty()) {
@@ -888,8 +907,15 @@ class MentraNex : SGCManager() {
                 // Query glasses protobuf version from firmware
                 Bridge.log("=== SENDING GLASSES PROTOBUF VERSION REQUEST ===")
                 val versionQueryPacket = NexProtobufUtils.generateVersionRequestCommandBytes()
-                sendDataSequentially(versionQueryPacket, 100)
-                Bridge.log("Sent glasses protobuf version request")
+                if (versionQueryPacket.isNotEmpty()) {
+                    sendDataSequentially(versionQueryPacket, 100)
+                    Bridge.log("Sent glasses protobuf version request")
+                } else {
+                    Bridge.log("Skipping version request: schema removed VersionRequest")
+                }
+
+                // Push current glasses-side Voice Activity Detection setting
+                sendVoiceActivityDetectionSetting()
             }
         } else {
             Log.e(TAG, " glass UART service not found")
@@ -1382,7 +1408,8 @@ class MentraNex : SGCManager() {
                     val headUpAngleResponse: HeadUpAngleResponse = glassesToPhone.headUpAngleSet
                     Bridge.log("headUpAngleResponse: $headUpAngleResponse")
                 }
-                GlassesToPhone.PayloadCase.PING -> {
+                GlassesToPhone.PayloadCase.PONG -> {
+                    // New schema: glasses-initiated heartbeat is named `pong`; phone replies with `ping`.
                     lastHeartbeatReceivedTime = System.currentTimeMillis()
                     Bridge.log("=== RECEIVED PING FROM GLASSES === (Time: $lastHeartbeatReceivedTime)")
                     sendPongResponse()
@@ -1428,28 +1455,6 @@ class MentraNex : SGCManager() {
                     // EventBus.getDefault().post(GlassesHeadUpEvent())
                     // EventBus.getDefault().post(GlassesHeadDownEvent())
                     // EventBus.getDefault().post(GlassesTapOutputEvent(2, isRight, System.currentTimeMillis()))
-                }
-                GlassesToPhone.PayloadCase.VERSION_RESPONSE -> {
-                    val versionResponse: VersionResponse = glassesToPhone.versionResponse
-                    Bridge.log("=== RECEIVED GLASSES PROTOBUF VERSION RESPONSE ===")
-                    Bridge.log("Glasses Protobuf Version: ${versionResponse.version}")
-                    Bridge.log("Message ID: ${versionResponse.msgId}")
-                    DeviceStore.apply("glasses", "protobufVersion", versionResponse.version.toString())
-                    
-                    if (versionResponse.commit.isNotEmpty()) {
-                        Bridge.log("Commit: ${versionResponse.commit}")
-                    }
-                    if (versionResponse.buildDate.isNotEmpty()) {
-                        Bridge.log("Build Date: ${versionResponse.buildDate}")
-                    }
-                    
-                    // Post glasses protobuf version event to update UI
-                    // EventBus.getDefault().post(ProtocolVersionResponseEvent(
-                    //     versionResponse.version,
-                    //     versionResponse.commit,
-                    //     versionResponse.buildDate,
-                    //     versionResponse.msgId
-                    // ))
                 }
                 GlassesToPhone.PayloadCase.PAYLOAD_NOT_SET,
                 null -> {

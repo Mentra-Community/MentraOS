@@ -63,6 +63,8 @@ export {
   type SettingsAccessor,
   type StoreAccessor,
   type GlassesSnapshot,
+  type StreamingAdapter,
+  type PhotoAdapter,
 } from "./runtime/config"
 
 // Stores
@@ -79,6 +81,8 @@ export {
   useApps,
   useStart,
   useStop,
+  useSetForeground,
+  useClearForeground,
   useRefresh,
   useStopAll,
   useInstall,
@@ -87,6 +91,7 @@ export {
   useActiveBackgroundApps,
   useBackgroundApps,
   useActiveForegroundApp,
+  useForegroundApp,
   useActiveBackgroundAppsCount,
   useLocalMiniApps,
   type IslandHostHooks,

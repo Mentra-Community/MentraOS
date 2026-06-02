@@ -199,6 +199,7 @@ class DeviceManager {
     // Guard against duplicate ready callbacks firing back-to-back.
     private var lastReadyHandledAtMs: Long = 0L
     private var lastReadyHandledKey: String = ""
+    private var lastSystemTimeSyncConnectionKey: String = ""
 
     private var systemMicUnavailable: Boolean
         get() = DeviceStore.store.get("bluetooth", "systemMicUnavailable") as? Boolean ?: false
@@ -623,7 +624,12 @@ class DeviceManager {
             var layoutType: String,
             var text: String,
             var data: String?,
-            var animationData: Map<String, Any>?
+            var animationData: Map<String, Any>?,
+            // Optional bitmap_view container position/size (used by G2; ignored by others)
+            var bmpX: Int? = null,
+            var bmpY: Int? = null,
+            var bmpWidth: Int? = null,
+            var bmpHeight: Int? = null
     )
     // MARK: - End Unique
 
@@ -872,7 +878,15 @@ class DeviceManager {
                 sgc?.sendTextWall("${currentViewState.title}\n\n${currentViewState.text}")
             }
             "bitmap_view" -> {
-                currentViewState.data?.let { data -> sgc?.displayBitmap(data) }
+                currentViewState.data?.let { data ->
+                    sgc?.displayBitmap(
+                            data,
+                            currentViewState.bmpX,
+                            currentViewState.bmpY,
+                            currentViewState.bmpWidth,
+                            currentViewState.bmpHeight
+                    )
+                }
             }
             "clear_view" -> sgc?.clearDisplay()
             else -> Bridge.log("MAN: UNHANDLED LAYOUT_TYPE ${currentViewState.layoutType}")
@@ -1015,6 +1029,7 @@ class DeviceManager {
             Bridge.log("MAN: Cleaning up previous sgc type: ${sgc?.type}")
             sgc?.cleanup()
             sgc = null
+            lastSystemTimeSyncConnectionKey = ""
         }
 
         if (sgc != null) {
@@ -1089,6 +1104,8 @@ class DeviceManager {
         defaultWearable = sgc?.type ?: ""
         searching = false
 
+        syncSystemTimeOnceForConnection(readyKey)
+
         // Apply dashboard position before any boot text so content doesn't jump.
         sgc?.setDashboardPosition(dashboardHeight, dashboardDepth)
 
@@ -1125,6 +1142,21 @@ class DeviceManager {
         Bridge.saveSetting("device_address", deviceAddress)
     }
 
+    private fun syncSystemTimeOnceForConnection(connectionKey: String) {
+        val activeSgc = sgc ?: return
+        if (activeSgc.type.contains(DeviceTypes.SIMULATED)) {
+            return
+        }
+        if (connectionKey == lastSystemTimeSyncConnectionKey) {
+            return
+        }
+
+        lastSystemTimeSyncConnectionKey = connectionKey
+        val timestampMs = System.currentTimeMillis()
+        Bridge.log("MAN: Syncing glasses system time once for connection: $timestampMs")
+        activeSgc.sendSetSystemTime(timestampMs)
+    }
+
     private fun handleG1Ready() {
         // G1-specific setup (if any needed in the future)
         // Note: G1-specific settings like silent mode, battery status,
@@ -1137,6 +1169,7 @@ class DeviceManager {
 
     fun handleDeviceDisconnected() {
         Bridge.log("MAN: Device disconnected")
+        lastSystemTimeSyncConnectionKey = ""
         DeviceStore.apply("glasses", "headUp", false)
         DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", true)
     }
@@ -1195,7 +1228,26 @@ class DeviceManager {
         val title = parsePlaceholders(layout.getString("title", " "))
         val data = layout["data"] as? String
 
-        var newViewState = ViewState(topText, bottomText, title, layoutType ?: "", text, data, null)
+        // Optional bitmap_view container position/size (forwarded to the SGC; used by G2).
+        val bmpX = (layout["x"] as? Number)?.toInt()
+        val bmpY = (layout["y"] as? Number)?.toInt()
+        val bmpWidth = (layout["width"] as? Number)?.toInt()
+        val bmpHeight = (layout["height"] as? Number)?.toInt()
+
+        var newViewState =
+                ViewState(
+                        topText,
+                        bottomText,
+                        title,
+                        layoutType ?: "",
+                        text,
+                        data,
+                        null,
+                        bmpX,
+                        bmpY,
+                        bmpWidth,
+                        bmpHeight
+                )
 
         val currentState = viewStates[stateIndex]
 
@@ -1215,6 +1267,10 @@ class DeviceManager {
 
     fun showDashboard() {
         sgc?.showDashboard()
+    }
+
+    fun showNotificationsPanel() {
+        sgc?.showNotificationsPanel()
     }
 
     fun ping() {
@@ -1273,6 +1329,11 @@ class DeviceManager {
         sgc?.sendHotspotState(enabled)
     }
 
+    fun setSystemTime(timestampMs: Long) {
+        Bridge.log("MAN: Setting glasses system time: $timestampMs")
+        sgc?.sendSetSystemTime(timestampMs)
+    }
+
     fun queryGalleryStatus() {
         Bridge.log("MAN: Querying gallery status from glasses")
         sgc?.queryGalleryStatus()
@@ -1290,6 +1351,11 @@ class DeviceManager {
     fun sendOtaQueryStatus() {
         Bridge.log("MAN: 📱 Sending OTA query status command to glasses")
         (sgc as? MentraLive)?.sendOtaQueryStatus()
+    }
+
+    fun retryOtaVersionCheck() {
+        Bridge.log("MAN: ⏰ Retrying glasses OTA version check after clock sync")
+        (sgc as? MentraLive)?.sendOtaRetryVersionCheck()
     }
 
     /**
@@ -1400,6 +1466,7 @@ class DeviceManager {
             authToken: String?,
             compress: String,
             flash: Boolean,
+            save: Boolean,
             sound: Boolean,
             exposureTimeNs: Double? = null,
     ) {
@@ -1411,7 +1478,7 @@ class DeviceManager {
                     }
                 }
         Bridge.log(
-                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=$requestId appId=$appId size=$size compress=$compress flash=$flash sound=$sound exposureTimeNs=$exposureNs sgc=${sgc?.javaClass?.simpleName ?: "null"}"
+                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=$requestId appId=$appId size=$size compress=$compress flash=$flash save=$save sound=$sound exposureTimeNs=$exposureNs sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
         val activeSgc = sgc
         if (activeSgc == null) {
@@ -1420,7 +1487,7 @@ class DeviceManager {
             )
             return
         }
-        activeSgc.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, sound, exposureNs)
+        activeSgc.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, save, sound, exposureNs)
     }
 
     fun rgbLedControl(
@@ -1542,6 +1609,7 @@ class DeviceManager {
         sgc?.clearDisplay()
         sgc?.disconnect()
         sgc = null // Clear the SGC reference after disconnect
+        lastSystemTimeSyncConnectionKey = ""
         searching = false
         micEnabled = false
         updateMicState()

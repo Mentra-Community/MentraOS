@@ -21,6 +21,7 @@ import {PlacesManager} from "./managers/PlacesManager"
 import {SimpleStorageManager} from "./managers/SimpleStorageManager"
 import {formatDistance} from "./lib/formatDistance"
 import {haversineMeters} from "./lib/geometry"
+import {renderMinimap} from "./lib/MinimapRenderer"
 
 export class NavigationController {
   private readonly ui: UIModule<Channels>
@@ -35,6 +36,7 @@ export class NavigationController {
   private started = false
   private logSeq = 0
   private lastHudKey = ""
+  private lastMinimapPng: string | null = null
 
   // Canonical state (mirrored to UI).
   private coords: Coords | null = null
@@ -370,6 +372,10 @@ export class NavigationController {
   private refreshHUD(): void {
     const {status, running, activeDestinationName, maneuver} = this.trip
 
+    // Minimap runs first so heading-only updates still refresh the map
+    // even when the text line below is unchanged (and short-circuits).
+    this.refreshMinimap()
+
     let next: string | null = null
     let durationMs: number | undefined
 
@@ -417,6 +423,26 @@ export class NavigationController {
     if (key === this.lastHudKey) return
     this.lastHudKey = key
     this.display.showText(next, durationMs)
+  }
+
+  /**
+   * Render and push the 100×100 heading-up minimap. Drawn alongside the
+   * text HUD (non-overlapping regions of the main view). De-duped on the
+   * encoded PNG so we don't re-send identical frames while idle.
+   */
+  private refreshMinimap(): void {
+    if (!this.trip.running || !this.coords) return
+    const png = renderMinimap({
+      coords: {lat: this.coords.lat, lng: this.coords.lng},
+      heading: this.heading,
+      routePoints: this.trip.routePoints,
+      upcomingPivot: this.upcomingPivot
+        ? {lat: this.upcomingPivot.lat, lng: this.upcomingPivot.lng}
+        : null,
+    })
+    if (!png || png === this.lastMinimapPng) return
+    this.lastMinimapPng = png
+    this.display.showBitmap(png)
   }
 
   // ── Permission + initial fix priming ─────────────────────────────────

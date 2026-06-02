@@ -35,6 +35,12 @@ describe("getOtaErrorMessage", () => {
     expect(getOtaErrorMessage("no_internet")).toBe("Glasses WiFi has no internet connection")
   })
 
+  it("maps clock_skew to time-sync message", () => {
+    expect(getOtaErrorMessage("clock_skew")).toBe(
+      "Glasses clock is wrong — syncing time from your phone, then retrying update check",
+    )
+  })
+
   it("maps ssl_error to connection message", () => {
     expect(getOtaErrorMessage("ssl_error")).toBe("Secure connection failed — try a different WiFi network")
   })

@@ -189,7 +189,7 @@ describe("pairing scan screen", () => {
     const {getByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
-      expect(BluetoothSdk.startScan).toHaveBeenCalledWith({model: "Mentra Live"})
+      expect(BluetoothSdk.startScan).toHaveBeenCalledWith("Mentra Live")
     })
 
     fireEvent.press(getByText("001"))

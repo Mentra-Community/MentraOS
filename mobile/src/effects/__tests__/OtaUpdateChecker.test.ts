@@ -49,9 +49,9 @@ describe("checkBesUpdate", () => {
     expect(checkBesUpdate(undefined, "17.26.1.14")).toBe(false)
   })
 
-  it("returns false when current version is unknown", () => {
-    expect(checkBesUpdate(firmware, undefined)).toBe(false)
-    expect(checkBesUpdate(firmware, "")).toBe(false)
+  it("returns true when current version is unknown (assume update needed)", () => {
+    expect(checkBesUpdate(firmware, undefined)).toBe(true)
+    expect(checkBesUpdate(firmware, "")).toBe(true)
   })
 
   it("returns true when server version is newer", () => {

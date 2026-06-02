@@ -1,0 +1,34 @@
+# fastlane match config.
+#
+# Storage: private git repo at https://github.com/Mentra-Community/match-certs
+# Strategy: AES-encrypted certs + provisioning profiles in git, decrypted at
+# build time using MATCH_PASSWORD.
+#
+# To add a new runner to the rack:
+#   ssh user@new-runner '
+#     cd /tmp && git clone <some checkout of MentraOS> && cd MentraOS/mobile
+#     bundle install
+#     MATCH_PASSWORD=<from 1password> bundle exec fastlane match appstore --readonly
+#   '
+#
+# To rotate the signing cert (do this on your laptop, once a year):
+#   bundle exec fastlane match nuke distribution
+#   bundle exec fastlane match appstore
+# All runners will pick up the new cert on their next build.
+
+# HTTPS URL so the runners can clone via MATCH_GIT_BASIC_AUTHORIZATION
+# (base64-encoded user:PAT). Local invocations on machines with SSH keys
+# work too — git resolves https → ssh via insteadOf rewrites if configured.
+git_url("https://github.com/Mentra-Community/match-certs.git")
+
+storage_mode("git")
+
+# Which signing type to manage. We only need "appstore" (distribution +
+# provisioning profile for App Store + TestFlight uploads). Add "development"
+# or "adhoc" later if needed.
+type("appstore")
+
+# Bundle ids that match should manage. Keep this list in sync with
+# app.config.ts. Variant ids (com.mentra.mentra.<name>) are created on
+# demand via MENTRAOS_BUILD_NAME and don't need pre-provisioned profiles.
+app_identifier(["com.mentra.mentra"])

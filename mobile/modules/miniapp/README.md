@@ -2,10 +2,12 @@
 
 SDK for building MentraOS local miniapps — static web apps that run inside the MentraOS phone app's WebView and talk to smart glasses via a typed session API.
 
-> Companion package: **[`@mentra/miniapp-cli`](../miniapp-cli/README.md)** — `mentra-miniapp` CLI (`dev`, `release`, `pack`, `manifest`, `permission`, `hardware`, `schema`). Per-command docs live there.
+> Developing this SDK or running the in-repo example from a fresh clone? Start at the **[SDK developer guide](../../../sdk/README.md)** (setup, build loop, doc map).
+> Per-module deep dives (return shapes, events, error codes): **[`sdk/docs/`](../../../sdk/docs/README.md)**.
+> Companion package: **[`@mentra/miniapp-cli`](../../../sdk/miniapp-cli/README.md)** — `mentra-miniapp` CLI (`dev`, `release`, `pack`, `manifest`, `permission`, `hardware`, `schema`). Per-command docs live there.
 > Scaffolder: `bunx create-mentra-miniapp my-app`.
-> Reference miniapp: [`sdk/example-miniapp/`](../example-miniapp).
-> High-level walkthrough: [`agents/miniapp-sdk-overview.md`](../../agents/miniapp-sdk-overview.md).
+> Reference miniapp: [`sdk/example-miniapp/`](../../../sdk/example-miniapp).
+> High-level walkthrough: [`agents/miniapp-sdk-overview.md`](../../../agents/miniapp-sdk-overview.md).
 
 ## Install
 
@@ -179,7 +181,7 @@ The CLI validates the manifest on every `dev`, `release`, and `pack`. Run `mentr
 
 ## CLI
 
-The author-facing CLI lives in a sibling package: **[`@mentra/miniapp-cli`](../miniapp-cli/README.md)** (binary: `mentra-miniapp`). Full per-command docs there. Quick map:
+The author-facing CLI lives in a sibling package: **[`@mentra/miniapp-cli`](../../../sdk/miniapp-cli/README.md)** (binary: `mentra-miniapp`). Full per-command docs there. Quick map:
 
 | Command                                                        | Purpose                                                      |
 | -------------------------------------------------------------- | ------------------------------------------------------------ |
@@ -191,7 +193,7 @@ The author-facing CLI lives in a sibling package: **[`@mentra/miniapp-cli`](../m
 | `mentra-miniapp hardware list \| add \| remove [TYPE] [LEVEL]` | Object-verb manifest edits for hardware requirements         |
 | `mentra-miniapp schema print`                                  | Print the canonical `miniapp.json` JSON Schema               |
 
-See [the CLI README](../miniapp-cli/README.md) for flags, semantics, and the `mentra-miniapp://` URL schemes the QR codes encode.
+See [the CLI README](../../../sdk/miniapp-cli/README.md) for flags, semantics, and the `mentra-miniapp://` URL schemes the QR codes encode.
 
 ## Host-injected globals — `window.MentraOS`
 
@@ -235,13 +237,13 @@ Smart-glasses miniapps are **always-on services**. The webview is a UI on top of
 
 **Rule:** user-facing glasses logic lives in a session-scoped controller, instantiated once at module init. React pages read controller-driven state via a store (Zustand recommended) and call imperative methods on the controller for user-triggered actions. They do **not** subscribe to `session.*` directly.
 
-See [`sdk/example-miniapp/src/controller/GlassesController.ts`](../example-miniapp/src/controller/GlassesController.ts) for a worked reference.
+See [`sdk/example-miniapp/src/controller/GlassesController.ts`](../../../sdk/example-miniapp/src/background/controllers/GlassesController.ts) for a worked reference.
 
 **Tester pages exception:** `pages/tester/*` are diagnostic surfaces — by design they inline-subscribe to `session.*` and tear down on unmount. This is the only place where that pattern is acceptable.
 
 ## File map
 
 - Runtime: [`src/{session,protocol,envelope,globals}.ts`](./src/), [`src/modules/`](./src/modules/), [`src/transport/`](./src/transport/), [`src/react/`](./src/react/)
-- CLI: [`../miniapp-cli/src/`](../miniapp-cli/src/)
-- Scaffolder: [`../create-mentra-miniapp/`](../create-mentra-miniapp/)
-- Reference miniapp: [`../example-miniapp/`](../example-miniapp/)
+- CLI: [`../miniapp-cli/src/`](../../../sdk/miniapp-cli/src/)
+- Scaffolder: [`../create-mentra-miniapp/`](../../../sdk/create-mentra-miniapp/)
+- Reference miniapp: [`../example-miniapp/`](../../../sdk/example-miniapp/)

@@ -235,12 +235,9 @@ export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
     this.session._subscribe("_ui", (env: unknown) => this.handleInbound(env as UIInboundEnvelope))
   }
 
-  // All public methods are arrow-property bindings so destructuring
-  // (`const {send} = session.ui` or passing `ui.send` as a callback) is
-  // safe. Otherwise `this.bound` evaluates as undefined and crashes the
-  // JSContext on the first call, which the host turns into a crashloop
-  // incident report. The footgun isn't hypothetical — the SDK tester's
-  // controller hit it before this fix landed.
+  // Arrow-property bindings make every public method safe to destructure
+  // (`const {send} = session.ui`) or pass as a bare callback — a plain
+  // method loses `this` and crashes on `this.bound`.
   isOpen = (): boolean => {
     return this.bound
   }
@@ -250,11 +247,19 @@ export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
     if (this.bound) {
       // Late subscriber — fire once for the current binding so callers
       // that wire onOpen *after* the WebView mounted don't miss it.
-      try {
-        cb()
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.warn("session.ui.onOpen late-fire threw:", e)
+      // Gate on session readiness for the same reason handleInbound does:
+      // a late onOpen must still observe populated capabilities, not the
+      // pre-CONNECT_ACK null snapshot. If not yet ready, the "ready"
+      // listener registered in handleInbound's UI_OPEN branch will fan
+      // out to every openHandler (this one included), so we don't wire a
+      // second listener here.
+      if (this.session.ready) {
+        try {
+          cb()
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.warn("session.ui.onOpen late-fire threw:", e)
+        }
       }
     }
     return () => {
@@ -316,18 +321,42 @@ export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
     }
   }
 
+  /** Fire every registered open handler once. Guarded per-handler. */
+  private fireOpenHandlers(): void {
+    for (const h of this.openHandlers) {
+      try {
+        h()
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn("session.ui.onOpen handler threw", e)
+      }
+    }
+  }
+
   /** @internal — handle UI_OPEN / UI_CLOSE / UI_MESSAGE envelopes from the host. */
   private handleInbound(env: UIInboundEnvelope): void {
     if (env.type === "UI_OPEN") {
       this.bound = true
       this.nextSeq = 1
-      for (const h of this.openHandlers) {
-        try {
-          h()
-        } catch (e) {
-          // eslint-disable-next-line no-console
-        console.warn("session.ui.onOpen handler threw", e)
-        }
+      // onOpen handlers almost always read session.capabilities /
+      // session.ready to hydrate the fresh WebView. The WebView's
+      // `mentra.ready()` (which produces this UI_OPEN) races the
+      // background session's CONNECT_ACK — on a fast bridge UI_OPEN can
+      // arrive first, leaving capabilities null and the UI rendering a
+      // "no glasses" snapshot that never self-corrects. Gate the open
+      // fan-out on session readiness so handlers always observe a
+      // populated session. The WebView is marked bound immediately
+      // (send/isOpen work, inbound stays buffered) — only the open
+      // callbacks wait.
+      if (this.session.ready) {
+        this.fireOpenHandlers()
+      } else {
+        const off = this.session.on("ready", () => {
+          off()
+          // If the WebView closed during the connect window, don't fire
+          // stale open handlers — a later UI_OPEN will re-trigger them.
+          if (this.bound) this.fireOpenHandlers()
+        })
       }
       return
     }

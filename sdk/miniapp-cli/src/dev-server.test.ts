@@ -25,17 +25,24 @@ describe("listProjectFiles — dist/ inclusion", () => {
     writeFileSync(abs, contents)
   }
 
-  test("includes dist/background/index.js + dist/ui/index.html so the snapshot ships both bundles", () => {
+  // Convenience: the zip-internal entry names the function produces.
+  const entries = (root: string) => listProjectFiles(root).map((f) => f.entry)
+
+  test("ships both build bundles with the dist/ prefix stripped off the entry names", () => {
     touch('miniapp.json', '{"packageName":"com.test","version":"1.0.0","name":"Test"}')
     touch("dist/background/index.js")
     touch("dist/ui/index.html")
     touch("dist/ui/main.js")
     touch("src/background/index.ts")
     const listed = listProjectFiles(root)
-    expect(listed).toContain("dist/background/index.js")
-    expect(listed).toContain("dist/ui/index.html")
-    expect(listed).toContain("dist/ui/main.js")
-    expect(listed).toContain("miniapp.json")
+    // disk paths keep dist/ (that's where the files live)…
+    expect(listed.map((f) => f.disk)).toContain("dist/background/index.js")
+    // …but zip entry names drop it, matching miniapp.json's entry.* paths.
+    expect(entries(root)).toContain("background/index.js")
+    expect(entries(root)).toContain("ui/index.html")
+    expect(entries(root)).toContain("ui/main.js")
+    expect(entries(root)).toContain("miniapp.json")
+    expect(entries(root)).not.toContain("dist/background/index.js")
   })
 
   test("strict allowlist: source + build config + node_modules + public are NOT shipped", () => {
@@ -48,7 +55,7 @@ describe("listProjectFiles — dist/ inclusion", () => {
     touch("bunfig.toml")
     touch("node_modules/x/index.js")
     touch("public/fonts/big.ttf")
-    const listed = listProjectFiles(root)
+    const listed = entries(root)
     expect(listed.some((p) => p.startsWith("src/"))).toBe(false)
     expect(listed.some((p) => p.startsWith("public/"))).toBe(false)
     expect(listed.some((p) => p.startsWith("node_modules/"))).toBe(false)
@@ -57,7 +64,7 @@ describe("listProjectFiles — dist/ inclusion", () => {
     expect(listed).not.toContain("build.ts")
     expect(listed).not.toContain("bunfig.toml")
     expect(listed).toContain("miniapp.json")
-    expect(listed).toContain("dist/background/index.js")
+    expect(listed).toContain("background/index.js")
   })
 
   test("ships the manifest-declared icon and skips unrelated images", () => {
@@ -65,7 +72,7 @@ describe("listProjectFiles — dist/ inclusion", () => {
     touch("my-icon.png")
     touch("other-image.png")
     touch("dist/background/index.js")
-    const listed = listProjectFiles(root)
+    const listed = entries(root)
     expect(listed).toContain("my-icon.png")
     expect(listed).not.toContain("other-image.png")
   })
@@ -74,14 +81,14 @@ describe("listProjectFiles — dist/ inclusion", () => {
     touch('miniapp.json', '{"packageName":"com.test","version":"1.0.0","name":"Test"}')
     touch("icon.png")
     touch("dist/background/index.js")
-    const listed = listProjectFiles(root)
+    const listed = entries(root)
     expect(listed).toContain("icon.png")
   })
 
   test("skips icon if it is missing from disk (manifest may be stale)", () => {
     touch('miniapp.json', '{"packageName":"com.test","version":"1.0.0","name":"Test","icon":"icon.png"}')
     touch("dist/background/index.js")
-    const listed = listProjectFiles(root)
+    const listed = entries(root)
     expect(listed).not.toContain("icon.png")
   })
 })
@@ -103,7 +110,7 @@ describe("buildProjectZip — two-output bundle contract", () => {
     writeFileSync(abs, contents)
   }
 
-  test("zip contains BOTH dist/background/index.js AND dist/ui/index.html with their prefixes", async () => {
+  test("zip ships both bundles at the root (dist/ prefix stripped), manifest at root", async () => {
     touch("miniapp.json", '{"packageName":"com.test","version":"1.0.0","name":"Test","hardwareRequirements":[]}')
     touch("dist/background/index.js", "console.log('bg')")
     touch("dist/ui/index.html", "<!doctype html><html></html>")
@@ -111,9 +118,11 @@ describe("buildProjectZip — two-output bundle contract", () => {
     const buf = await buildProjectZip(root)
     const zip = await JSZip.loadAsync(buf)
     expect(zip.files["miniapp.json"]).toBeDefined()
-    expect(zip.files["dist/background/index.js"]).toBeDefined()
-    expect(zip.files["dist/ui/index.html"]).toBeDefined()
-    expect(zip.files["dist/ui/main.js"]).toBeDefined()
+    expect(zip.files["background/index.js"]).toBeDefined()
+    expect(zip.files["ui/index.html"]).toBeDefined()
+    expect(zip.files["ui/main.js"]).toBeDefined()
+    // The on-disk dist/ prefix must not leak into the zip layout.
+    expect(zip.files["dist/background/index.js"]).toBeUndefined()
   })
 
   test("zip preserves file contents byte-for-byte", async () => {
@@ -122,7 +131,7 @@ describe("buildProjectZip — two-output bundle contract", () => {
     const buf = await buildProjectZip(root)
     const zip = await JSZip.loadAsync(buf)
     const manifest = await zip.files["miniapp.json"]!.async("string")
-    const bg = await zip.files["dist/background/index.js"]!.async("string")
+    const bg = await zip.files["background/index.js"]!.async("string")
     expect(manifest).toBe('{"a":1}')
     expect(bg).toBe("/* bg-stub */")
   })

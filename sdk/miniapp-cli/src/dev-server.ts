@@ -304,8 +304,22 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
 }
 
 /**
- * Walk the dev project's directory tree and return a list of relative file
- * paths suitable for inclusion in the bundle zip.
+ * One file to include in the bundle zip.
+ *   - `disk`  : path on disk, relative to the project root (used to read it).
+ *   - `entry` : zip-internal name (used to store it in the zip).
+ *
+ * These diverge for build output: it lives under `dist/` on disk but ships at
+ * the bundle root (`dist/` stripped), so the zip layout matches `entry.*` in
+ * miniapp.json — which the host resolves relative to the bundle root.
+ */
+export interface ProjectFile {
+  disk: string
+  entry: string
+}
+
+/**
+ * Walk the dev project's directory tree and return the files to include in
+ * the bundle zip, as {disk, entry} pairs.
  *
  * STRICT runtime-artifact allowlist:
  *   - miniapp.json at the root (required — unpacker fails without it)
@@ -313,6 +327,8 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
  *     home tile and the QR-scan icon preview
  *   - dist/ — the entire two-layer build output: dist/background/*.js
  *     and dist/ui/* (HTML, JS chunks, CSS chunks). Recursively included.
+ *     The `dist/` prefix is stripped off the zip entry name (see ProjectFile),
+ *     so `dist/background/index.js` ships as `background/index.js`.
  *
  * Source files (src/), build config (package.json, tsconfig.json,
  * build.ts, bunfig.toml), node_modules/, public/, and stray pack
@@ -320,19 +336,19 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
  * the runtime and including them adds tens-to-hundreds of KB per
  * install — slow on flaky LAN, painful for a "hot reload" loop.
  *
- * Returns paths *without* a leading slash — they're zip-internal entry
- * names. The phone-side unpacker (Composer.installMiniApp) needs them
- * exactly that way to reconstruct the directory tree on disk.
+ * Entry names have no leading slash — the phone-side unpacker
+ * (Composer.installMiniApp) needs them exactly that way to reconstruct the
+ * directory tree on disk.
  */
-export function listProjectFiles(rootDir: string): string[] {
-  const out: string[] = []
+export function listProjectFiles(rootDir: string): ProjectFile[] {
+  const out: ProjectFile[] = []
 
   // miniapp.json (required at zip root).
   const manifestPath = join(rootDir, "miniapp.json")
   let manifest: Record<string, unknown> | null = null
   try {
     if (statSync(manifestPath).isFile()) {
-      out.push("miniapp.json")
+      out.push({disk: "miniapp.json", entry: "miniapp.json"})
       manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as Record<string, unknown>
     }
   } catch {
@@ -344,7 +360,8 @@ export function listProjectFiles(rootDir: string): string[] {
   const iconRel = typeof manifest?.icon === "string" ? manifest.icon : "icon.png"
   try {
     if (statSync(join(rootDir, iconRel)).isFile()) {
-      out.push(iconRel.replace(/^\//, ""))
+      const rel = iconRel.replace(/^\//, "")
+      out.push({disk: rel, entry: rel})
     }
   } catch {
     /* no icon — non-fatal, the home tile will just render the fallback. */
@@ -385,8 +402,10 @@ export function listProjectFiles(rootDir: string): string[] {
       if (stat.isDirectory()) {
         if (depth + 1 <= MAX_DEPTH) queue.push({dir: abs, depth: depth + 1})
       } else if (stat.isFile()) {
-        const rel = relative(rootDir, abs).split("\\").join("/")
-        out.push(rel)
+        const disk = relative(rootDir, abs).split("\\").join("/")
+        // Strip the leading `dist/` so build output ships at the bundle root.
+        const entryName = disk.replace(/^dist\//, "")
+        out.push({disk, entry: entryName})
         if (out.length >= MAX_FILES) {
           console.warn(
             `[__mentra_dev] dist file list truncated at ${MAX_FILES} entries — bundle may be incomplete`,
@@ -411,13 +430,13 @@ export function listProjectFiles(rootDir: string): string[] {
  */
 export async function buildProjectZip(rootDir: string): Promise<Uint8Array> {
   const zip = new JSZip()
-  for (const rel of listProjectFiles(rootDir)) {
-    const abs = join(rootDir, rel)
+  for (const {disk, entry} of listProjectFiles(rootDir)) {
+    const abs = join(rootDir, disk)
     try {
       const buf = readFileSync(abs)
-      zip.file(rel, buf)
+      zip.file(entry, buf)
     } catch (err) {
-      console.warn(`[__mentra_dev] failed to read ${rel}, skipping:`, err)
+      console.warn(`[__mentra_dev] failed to read ${disk}, skipping:`, err)
     }
   }
   // STORE (no compression) — small project trees, deterministic, fast.

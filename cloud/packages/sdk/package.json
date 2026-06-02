@@ -56,7 +56,6 @@
     "build:js": "rm -rf .dist-tmp && bun build src/index.ts src/session.ts src/display-utils.ts --outdir .dist-tmp --target node --format esm --sourcemap=external --external @logtail/pino --external axios --external chalk --external dotenv --external hono --external jimp --external jsonwebtoken --external jsrsasign --external lamejs --external pino --external pino-pretty --external strip-ansi --external ws && rm -rf dist && mv .dist-tmp dist",
     "build:types": "bun x tsc --build --force",
     "dev": "echo 'No build needed in dev mode - using source files directly'",
-    "prepare": "bun run build",
     "link-pkg": "bun link"
   },
   "dependencies": {

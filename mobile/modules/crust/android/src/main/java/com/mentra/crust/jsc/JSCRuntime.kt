@@ -213,7 +213,7 @@ class JSCRuntime private constructor(private val appContext: Context) {
     /**
      * Read the bundled MentraJS polyfill (`assets/startup.js`) shipped
      * inside the host APK. The file is sourced from the sibling
-     * @mentra/mentrajs-runtime module via `sourceSets.main.assets.srcDirs`
+     * @mentra/jspolyfill module via `sourceSets.main.assets.srcDirs`
      * in this module's build.gradle. Cached after first read.
      */
     fun loadPolyfillBundle(): String {

@@ -62,6 +62,10 @@ export interface DisplayEvent {
     topText?: string
     bottomText?: string
     data?: string // For bitmap_view
+    x?: number // bitmap_view container position/size (forwarded to native, used by G2)
+    y?: number
+    width?: number
+    height?: number
     [key: string]: unknown
   }
   text?: string | string[]
@@ -262,6 +266,9 @@ export class DisplayProcessor {
   private deviceModel: DeviceModel = "unknown"
   private options: DisplayProcessorOptions
 
+  private runtimeAttached = false
+  private unsubscribeGlassesStatus: (() => void) | null = null
+
   private constructor(options: DisplayProcessorOptions = {}) {
     this.options = {
       breakMode: "character-no-hyphen",
@@ -279,19 +286,41 @@ export class DisplayProcessor {
     this.composer = new ColumnComposer(toolkit.profile, this.options.breakMode)
     this.profile = toolkit.profile
 
-    // initialize with default wearable
-    const defaultWearable = getRuntimeHooks().settings?.getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as string | undefined
+    // Runtime hooks may not be populated yet at module-load time; attachToRuntime()
+    // is called by the host after configureRuntime() runs.
+    this.attachToRuntime()
+  }
+
+  /**
+   * Read the current default wearable and subscribe to host glasses-status changes.
+   * Idempotent — safe to call again after configureRuntime() once hooks are wired.
+   */
+  public attachToRuntime(): void {
+    if (this.runtimeAttached) {
+      return
+    }
+
+    const hooks = getRuntimeHooks()
+    if (!hooks.settings && !hooks.subscribeGlassesStatus) {
+      // Hooks not configured yet; bail and let the host call us back after configureRuntime().
+      return
+    }
+
+    const defaultWearable = hooks.settings?.getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as string | undefined
     if (defaultWearable) {
       this.setDeviceModel(defaultWearable)
       console.log(`DISPLAY_PROCESSOR: Initialized DisplayProcessor with default wearable: ${defaultWearable}`)
     }
 
-    // Subscribe to host glasses status changes when the host supports it.
-    getRuntimeHooks().subscribeGlassesStatus?.((changed) => {
-      if (changed.deviceModel) {
-        this.setDeviceModel(String(changed.deviceModel))
-      }
-    })
+    if (hooks.subscribeGlassesStatus) {
+      this.unsubscribeGlassesStatus = hooks.subscribeGlassesStatus((changed) => {
+        if (changed.deviceModel) {
+          this.setDeviceModel(String(changed.deviceModel))
+        }
+      })
+    }
+
+    this.runtimeAttached = true
   }
 
   /**
@@ -308,6 +337,9 @@ export class DisplayProcessor {
    * Reset the singleton (useful for testing)
    */
   public static resetInstance(): void {
+    if (DisplayProcessor.instance?.unsubscribeGlassesStatus) {
+      DisplayProcessor.instance.unsubscribeGlassesStatus()
+    }
     DisplayProcessor.instance = null
   }
 

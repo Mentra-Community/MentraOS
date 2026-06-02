@@ -443,9 +443,7 @@ class SocketComms {
     // bypass it from the cloud side. The cloud's bypassVad hint is ignored.
     const bypassVad = false
     const requiredDataStrings = msg.requiredData || []
-    console.log(
-      `SOCKET: mic_state_change: requiredData = [${requiredDataStrings}], bypass_vad = ${bypassVad}`,
-    )
+    console.log(`SOCKET: mic_state_change: requiredData = [${requiredDataStrings}]`)
     let shouldSendPcmData = false
     let shouldSendTranscript = false
     if (requiredDataStrings.includes("pcm")) {
@@ -475,7 +473,6 @@ class SocketComms {
       pcm: !!shouldSendPcmData,
       lc3: !!shouldSendPcmData, // online apps always want lc3
       transcript: !!shouldSendTranscript,
-      bypass_vad: bypassVad,
     })
   }
 
@@ -631,7 +628,7 @@ class SocketComms {
 
   private handle_camera_fov_set(msg: any) {
     const ROI_MAP: Record<string, number> = {center: 0, bottom: 1, top: 2}
-    const fov = typeof msg.fov === "number" ? Math.min(118, Math.max(82, msg.fov)) : 118
+    const fov = typeof msg.fov === "number" ? Math.min(118, Math.max(62, msg.fov)) : 118
     const roiStr: string = msg.roiPosition ?? "center"
     const numericRoi = ROI_MAP[roiStr] ?? 0
     console.log(`SOCKET: camera_fov_set fov=${fov} roi=${roiStr} (${numericRoi})`)
@@ -820,10 +817,11 @@ class SocketComms {
         break
       }
 
-      case "phone_photo_ready":
       case "phone_stream_status":
       case "phone_managed_stream_status":
-        // Forward photo / streaming messages to LocalMiniappRuntime
+        // Forward cloud-1 streaming messages to LocalMiniappRuntime for
+        // any local miniapp that still has a pending cloud request (legacy
+        // path; phone-orchestrated v2 streaming doesn't register one).
         localMiniappRuntime.handleCloudMessage(msg)
         break
 

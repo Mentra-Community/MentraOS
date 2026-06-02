@@ -544,6 +544,7 @@ public class Bridge private constructor() {
         }
 
         @JvmStatic
+        @JvmOverloads
         fun sendOtaStatus(
                 sessionId: String,
                 totalSteps: Int,
@@ -553,7 +554,8 @@ public class Bridge private constructor() {
                 stepPercent: Int,
                 overallPercent: Int,
                 status: String,
-                errorMessage: String?
+                errorMessage: String? = null,
+                glassesTimeMs: Long? = null,
         ) {
             val eventBody = HashMap<String, Any>()
             eventBody["session_id"] = sessionId
@@ -565,6 +567,9 @@ public class Bridge private constructor() {
             eventBody["overall_percent"] = overallPercent
             eventBody["status"] = status
             errorMessage?.let { eventBody["error_message"] = it }
+            if (glassesTimeMs != null && glassesTimeMs > 0) {
+                eventBody["glasses_time_ms"] = glassesTimeMs
+            }
 
             Log.d(TAG, "Bridge: sendOtaStatus: $eventBody")
 

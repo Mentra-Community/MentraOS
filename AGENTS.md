@@ -1,5 +1,3 @@
-<<<<<<< HEAD
-=======
 # AGENTS.md
 
 Repository implementation guidelines for coding agents working with MentraOS.
@@ -145,8 +143,8 @@ Automated ransomware scanners actively target exposed MongoDB instances. Use Mon
 When working on bug reports linked to `console.mentra.glass/admin/incidents/{id}`:
 
 1. Extract the incident ID from the URL
-2. Fetch logs: `./scripts/fetch-incident-logs.sh {incidentId}`
-3. Requires `MENTRA_AGENT_API_KEY` in your environment
+2. Fetch logs: `./scripts/fetch-incident-logs.sh {incidentId}` — or use the **mentra-console** MCP server (`cloud/packages/console-mcp`, tools `incident_get` / `incident_get_logs`) from Cursor
+3. Requires `MENTRA_AGENT_API_KEY` in your environment (or in MCP `env` / `~/.zshrc` when using `scripts/run-mcp.sh`)
 
 The logs JSON contains:
 
@@ -168,4 +166,3 @@ export MENTRA_AGENT_API_KEY=your-api-key
 
 - Architecture specs and design docs: `/docs/`
 - Module-specific implementation details: See module-specific `AGENTS.md` files
->>>>>>> dev

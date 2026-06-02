@@ -138,8 +138,8 @@ describe("buildMentraUiShim", () => {
     expect((g.mentra as unknown as {_packageName: string})._packageName).toBe("com.example.app")
   })
 
-  // Inbound buffering — fixes the race where background fires ui.onOpen and
-  // sends a snapshot before React's useEffect has attached the listener.
+  // Inbound buffering — payloads arriving before a listener attaches are
+  // queued and delivered to the first subscriber for that channel.
   test("recv before any subscriber buffers and delivers on first on()", () => {
     const g = evalShim()
     g.__mentra!.recv({type: "msg", channel: "snapshot", payload: {n: 1}, seq: 1})

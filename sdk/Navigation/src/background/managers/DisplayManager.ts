@@ -39,6 +39,15 @@ export class DisplayManager {
   //   this.showText(`${title} — ${body}`)
   // }
 
+  /**
+   * Show a bitmap on the glasses. `base64Bmp` is a base64-encoded 1-bit
+   * BMP (see MinimapRenderer/bmp.ts). `width`/`height` size the target
+   * container on the glasses canvas.
+   */
+  showBitmap(base64Bmp: string): void {
+    this.safeCall(() => this.session.display.showBitmapView(base64Bmp, {x: 200, y: 100, width: 50, height: 50}))
+  }
+
   /** Wipe whatever's on the glasses. */
   clear(): void {
     this.safeCall(() => this.session.display.clearView())

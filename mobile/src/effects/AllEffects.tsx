@@ -11,6 +11,7 @@ import {BtClassicPairing} from "@/effects/BtClassicPairing"
 import {ScreenshotFeedbackPrompt} from "@/effects/ScreenshotFeedbackPrompt"
 import NavigationHost from "@/effects/NavigationHost"
 import CapsuleMenu from "@/effects/CapsuleMenu"
+import Compositor from "@/effects/Compositor"
 // import TranscriptionsListener from "@/effects/TranscriptionsListener"
 // import SherpaTest from "@/effects/SherpaTest"
 // import WhisperTest from "@/effects/WhisperTest"
@@ -34,6 +35,7 @@ export const AllEffects = () => {
       <FirebaseAnalyticsSetup />
       <ScreenshotFeedbackPrompt />
       <CapsuleMenu forceShow={false} />
+      <Compositor />
       <MemoryWarningMonitor />
     </>
   )

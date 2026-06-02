@@ -60,11 +60,11 @@
       "properties": {
         "background": {
           "type": "string",
-          "description": "Path to the background bundle (e.g. dist/background/index.js). Required for V2+ two-layer bundles."
+          "description": "Path to the background bundle, relative to the bundle root (e.g. background/index.js). Required for V2+ two-layer bundles."
         },
         "ui": {
           "type": "string",
-          "description": "Path to the UI bundle entry HTML (e.g. dist/ui/index.html). Optional — pure-background miniapps don't need a WebView."
+          "description": "Path to the UI bundle entry HTML, relative to the bundle root (e.g. ui/index.html). Optional — pure-background miniapps don't need a WebView."
         }
       }
     },

@@ -9,8 +9,8 @@
   "sdkVersion": "0.2.0",
   "minHostVersion": "1.42.0",
   "entry": {
-    "background": "dist/background/index.js",
-    "ui": "dist/ui/index.html"
+    "background": "background/index.js",
+    "ui": "ui/index.html"
   },
   "permissions": [
     {"type": "MICROPHONE", "description": "Used for live transcription"},
