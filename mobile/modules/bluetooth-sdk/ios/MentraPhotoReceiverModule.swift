@@ -3,6 +3,7 @@ import ExpoModulesCore
 import Foundation
 
 public class MentraPhotoReceiverModule: Module {
+  private let receiverLock = NSLock()
   private var photoUploadServer: LocalPhotoUploadServer?
 
   public func definition() -> ModuleDefinition {
@@ -28,6 +29,9 @@ public class MentraPhotoReceiverModule: Module {
   }
 
   private func startPhotoReceiver() throws -> [String: Any] {
+    receiverLock.lock()
+    defer { receiverLock.unlock() }
+
     guard let host = bestLocalIPv4Address() else {
       throw PhotoReceiverError("No Wi-Fi/LAN IPv4 address found for this phone.")
     }
@@ -67,6 +71,9 @@ public class MentraPhotoReceiverModule: Module {
   }
 
   private func stopPhotoReceiverInternal() {
+    receiverLock.lock()
+    defer { receiverLock.unlock() }
+
     photoUploadServer?.stop()
     emitStatus(message: "Photo receiver stopped")
   }
@@ -108,6 +115,12 @@ public class MentraPhotoReceiverModule: Module {
       }
 
       let name = String(cString: interface.ifa_name)
+      let flags = interface.ifa_flags
+      guard (flags & UInt32(IFF_UP)) != 0,
+            (flags & UInt32(IFF_LOOPBACK)) == 0 else {
+        continue
+      }
+
       var address = addressPointer.pointee
       var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
       let result = getnameinfo(
@@ -124,7 +137,7 @@ public class MentraPhotoReceiverModule: Module {
       }
 
       let ip = String(cString: hostname)
-      guard ip != "127.0.0.1" else {
+      guard ip != "127.0.0.1", !isLinkLocalIPv4(ip) else {
         continue
       }
       if isPreferredLocalInterface(name), isPrivateIPv4(ip) {
@@ -163,6 +176,10 @@ public class MentraPhotoReceiverModule: Module {
     }
     let parts = ip.split(separator: ".").compactMap { Int($0) }
     return parts.count == 4 && parts[0] == 172 && (16...31).contains(parts[1])
+  }
+
+  private func isLinkLocalIPv4(_ ip: String) -> Bool {
+    ip.hasPrefix("169.254.")
   }
 
   private let photoPorts = [8787, 8788, 8789, 8790]

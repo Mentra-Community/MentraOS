@@ -35,6 +35,7 @@ class MentraPhotoReceiverModule : Module() {
     }
   }
 
+  @Synchronized
   private fun startPhotoReceiver(): Map<String, Any> {
     val host = bestLocalIpv4Address()
       ?: throw IllegalStateException("No Wi-Fi/LAN IPv4 address found for this phone.")
@@ -70,11 +71,13 @@ class MentraPhotoReceiverModule : Module() {
     )
   }
 
+  @Synchronized
   private fun stopPhotoReceiverInternal() {
     photoUploadServer?.stop()
     emitStatus("Photo receiver stopped")
   }
 
+  @Synchronized
   private fun closePhotoReceiverInternal() {
     photoUploadServer?.close()
     photoUploadServer = null

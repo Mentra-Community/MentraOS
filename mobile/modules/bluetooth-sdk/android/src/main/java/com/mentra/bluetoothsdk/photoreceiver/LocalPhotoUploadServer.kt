@@ -63,12 +63,20 @@ class LocalPhotoUploadServer(
         stop()
         uploadDir.mkdirs()
         val socket = ServerSocket()
-        socket.reuseAddress = true
-        socket.bind(InetSocketAddress("0.0.0.0", port))
-        serverSocket = socket
-        running = true
-        serverJob = scope.launch {
-            acceptLoop(socket)
+        try {
+            socket.reuseAddress = true
+            socket.bind(InetSocketAddress("0.0.0.0", port))
+            serverSocket = socket
+            running = true
+            serverJob = scope.launch {
+                acceptLoop(socket)
+            }
+        } catch (error: Throwable) {
+            try {
+                socket.close()
+            } catch (_: Throwable) {
+            }
+            throw error
         }
         onLog("Listening on 0.0.0.0:${socket.localPort}")
         return socket.localPort
@@ -200,7 +208,7 @@ class LocalPhotoUploadServer(
                     respond(400, """{"ok":false,"error":"multipart_boundary_required"}""")
                     return
                 }
-                val parsed = parseMultipart(input, boundary)
+                val parsed = parseMultipart(ContentLengthInputStream(input, contentLength), boundary)
                 val photoPart = parsed.files["photo"] ?: parsed.files.values.firstOrNull()
                 if (photoPart == null) {
                     parsed.deleteFiles()
@@ -210,8 +218,11 @@ class LocalPhotoUploadServer(
 
                 requestId = parsed.fields["requestId"] ?: parsed.fields["request_id"]
                 val file = File(uploadDir, "${safeFilePart(requestId ?: "photo-${System.currentTimeMillis()}")}.jpg")
-                moveFile(photoPart.file, file)
-                parsed.deleteFilesExcept(file)
+                try {
+                    moveFile(photoPart.file, file)
+                } finally {
+                    parsed.deleteFilesExcept(file)
+                }
                 onLog("upload fields=${parsed.fields.keys.joinToString(",")} requestId=${requestId.orEmpty()} bytes=${photoPart.byteCount} saved=${file.absolutePath}")
                 val upload = PhotoUpload(
                     requestId = requestId,
@@ -384,7 +395,7 @@ class LocalPhotoUploadServer(
                     val byteCount = FileOutputStream(tempFile).use { fileOutput ->
                         streamPartTo(input, delimiter, fileOutput)
                     }
-                    files[name] = StreamedFile(tempFile, byteCount.toInt())
+                    files.put(name, StreamedFile(tempFile, byteCount.toInt()))?.file?.delete()
                 } else {
                     val fieldOutput = LimitedByteArrayOutputStream(MAX_FIELD_BYTES)
                     streamPartTo(input, delimiter, fieldOutput)
@@ -583,5 +594,29 @@ private class LimitedByteArrayOutputStream(
     override fun write(b: ByteArray, off: Int, len: Int) {
         if (size() + len > maxBytes) throw IllegalArgumentException("multipart field too large")
         super.write(b, off, len)
+    }
+}
+
+private class ContentLengthInputStream(
+    private val input: InputStream,
+    private var remainingBytes: Long,
+) : InputStream() {
+    override fun read(): Int {
+        if (remainingBytes <= 0) return -1
+        val byte = input.read()
+        if (byte != -1) {
+            remainingBytes -= 1
+        }
+        return byte
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (remainingBytes <= 0) return -1
+        val readLength = minOf(length.toLong(), remainingBytes).toInt()
+        val byteCount = input.read(buffer, offset, readLength)
+        if (byteCount > 0) {
+            remainingBytes -= byteCount.toLong()
+        }
+        return byteCount
     }
 }

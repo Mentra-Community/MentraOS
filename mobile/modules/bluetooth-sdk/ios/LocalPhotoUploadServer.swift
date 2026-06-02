@@ -14,6 +14,7 @@ final class LocalPhotoUploadServer {
   private let onLog: (String) -> Void
   private let onUpload: (PhotoUpload) -> Void
   private var listener: NWListener?
+  private var listenerGeneration = 0
   private(set) var activePort: UInt16?
 
   init(onLog: @escaping (String) -> Void, onUpload: @escaping (PhotoUpload) -> Void) {
@@ -41,22 +42,30 @@ final class LocalPhotoUploadServer {
     }
 
     let listener = try NWListener(using: parameters, on: endpointPort)
+    listenerGeneration += 1
+    let generation = listenerGeneration
     let started = DispatchSemaphore(value: 0)
     var startError: Error?
     var isReady = false
 
     listener.stateUpdateHandler = { [weak self] state in
+      guard let self, self.listenerGeneration == generation else {
+        return
+      }
       switch state {
       case .ready:
         isReady = true
-        self?.activePort = port
-        self?.onLog("Listening on 0.0.0.0:\(port)")
+        self.activePort = port
+        self.onLog("Listening on 0.0.0.0:\(port)")
         started.signal()
       case .failed(let error):
         startError = error
-        self?.onLog("Photo receiver failed on \(port): \(error)")
+        self.activePort = nil
+        self.listener = nil
+        self.onLog("Photo receiver failed on \(port): \(error)")
         started.signal()
       case .cancelled:
+        self.activePort = nil
         if !isReady {
           startError = PhotoUploadServerError("Listener cancelled")
           started.signal()
@@ -88,6 +97,7 @@ final class LocalPhotoUploadServer {
   }
 
   func stop() {
+    listenerGeneration += 1
     listener?.cancel()
     listener = nil
     activePort = nil
@@ -106,6 +116,7 @@ final class LocalPhotoUploadServer {
         return
       }
       if let error {
+        state.multipartParser?.cleanup()
         self.onLog("request failed: \(error.localizedDescription)")
         connection.cancel()
         return
@@ -119,12 +130,22 @@ final class LocalPhotoUploadServer {
           return
         }
       } catch {
+        state.multipartParser?.cleanup()
         self.onLog("request failed: \(error.localizedDescription)")
-        self.writeJson(connection, status: 500, body: #"{"ok":false,"error":"server_error"}"#)
+        if let uploadError = error as? PhotoUploadServerError {
+          self.writeJson(
+            connection,
+            status: 400,
+            body: #"{"ok":false,"error":\#(self.jsonString(uploadError.localizedDescription))}"#
+          )
+        } else {
+          self.writeJson(connection, status: 500, body: #"{"ok":false,"error":"server_error"}"#)
+        }
         return
       }
 
       if isComplete {
+        state.multipartParser?.cleanup()
         self.writeJson(connection, status: 400, body: #"{"ok":false,"error":"incomplete_request"}"#)
         return
       }
@@ -210,6 +231,7 @@ final class LocalPhotoUploadServer {
     onLog("headers contentType=\(contentType) contentLength=\(state.contentLength)")
 
     guard let parsed = state.multipartParser?.parsedMultipart() else {
+      state.multipartParser?.cleanup()
       writeJson(connection, status: 400, body: #"{"ok":false,"error":"incomplete_request"}"#)
       return true
     }
@@ -222,8 +244,17 @@ final class LocalPhotoUploadServer {
     let requestId = parsed.fields["requestId"] ?? parsed.fields["request_id"]
     let filename = safeFilePart(requestId ?? "photo-\(Int(Date().timeIntervalSince1970 * 1000))")
     let photoFile = uploadDirectory.appendingPathComponent("\(filename).jpg")
+    var didMovePhoto = false
+    defer {
+      if didMovePhoto {
+        parsed.deleteFiles(except: photoFile)
+      } else {
+        parsed.deleteFiles()
+        try? FileManager.default.removeItem(at: photoFile)
+      }
+    }
     try moveFile(photoPart.file, to: photoFile)
-    parsed.deleteFiles(except: photoFile)
+    didMovePhoto = true
     let upload = PhotoUpload(
       requestId: requestId,
       photoFile: photoFile,
@@ -560,7 +591,9 @@ final class LocalPhotoUploadServer {
           return
         }
         if let file {
-          files[name] = StreamedFile(file: file, byteCount: byteCount)
+          if let previous = files.updateValue(StreamedFile(file: file, byteCount: byteCount), forKey: name) {
+            try? FileManager.default.removeItem(at: previous.file)
+          }
         } else {
           fields[name] = String(data: fieldData, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
