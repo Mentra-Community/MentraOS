@@ -268,7 +268,9 @@ final class LocalPhotoUploadServer {
       status: 200,
       body: #"{"ok":true,"requestId":\#(jsonString(requestId ?? "")),"bytes":\#(photoPart.byteCount)}"#
     )
-    onUpload(upload)
+    queue.async { [onUpload] in
+      onUpload(upload)
+    }
     return true
   }
 
