@@ -137,10 +137,9 @@ jobs:
         working-directory: ./asg_client
         run: ./gradlew testDebugUnitTest
 
-      # Temporarily disabled while ASG Java files are reformatted in a follow-up.
-      # - name: Spotless check
-      #   working-directory: ./asg_client
-      #   run: ./gradlew spotlessCheck
+      - name: Spotless check
+        working-directory: ./asg_client
+        run: ./gradlew spotlessCheck
 
       - name: Mark build succeeded
         id: build-ok
