@@ -7,6 +7,8 @@ import androidx.annotation.NonNull;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.K900ProtocolStrategy;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -234,69 +236,6 @@ public class CommandProtocolDetector {
         @Override
         public ProtocolType getProtocolType() {
             return ProtocolType.JSON_COMMAND;
-        }
-    }
-
-    /**
-     * Strategy for detecting K900 protocol
-     */
-    private static class K900ProtocolStrategy implements ProtocolDetectionStrategy {
-        @Override
-        public boolean canHandle(JSONObject json) {
-            // K900 protocol has C field with invalid JSON content
-            if (json.has("C")) {
-                String dataPayload = json.optString("C", "");
-                try {
-                    new JSONObject(dataPayload); // If this succeeds, it's not K900
-                    return false;
-                } catch (JSONException e) {
-                    return true; // Invalid JSON in C field indicates K900 protocol
-                }
-            }
-            return false;
-        }
-
-        @Override
-        public ProtocolDetectionResult detect(JSONObject json) {
-            try {
-                String command = json.optString("C", "");
-                JSONObject bData = json.optJSONObject("B");
-                int version = json.optInt("V", 1);
-
-                Log.d(TAG, "📦 Detected K900 protocol format: " + command);
-
-                // Create standardized data structure for K900 commands
-                JSONObject standardizedData = new JSONObject();
-                standardizedData.put("type", "k900_" + command);
-                standardizedData.put("command", command);
-                standardizedData.put("version", version);
-                if (bData != null) {
-                    standardizedData.put("data", bData);
-                }
-
-                return new ProtocolDetectionResult(
-                        ProtocolType.K900_PROTOCOL,
-                        standardizedData,
-                        "k900_" + command,
-                        -1, // K900 protocol doesn't use message IDs
-                        true
-                );
-
-            } catch (JSONException e) {
-                Log.e(TAG, "Error parsing K900 protocol", e);
-                return new ProtocolDetectionResult(
-                        ProtocolType.K900_PROTOCOL,
-                        json,
-                        "",
-                        -1,
-                        false
-                );
-            }
-        }
-
-        @Override
-        public ProtocolType getProtocolType() {
-            return ProtocolType.K900_PROTOCOL;
         }
     }
 

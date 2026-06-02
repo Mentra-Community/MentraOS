@@ -21,6 +21,7 @@ import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
 import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
 import com.mentra.asg_client.logging.BleTraceLogger;
+import com.mentra.asg_client.utils.GalleryStatusHelper;
 import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
@@ -3614,7 +3615,7 @@ public class MediaCaptureService {
 
             // Build gallery status using shared utility with sync-safe filters
             JSONObject response =
-                    com.mentra.asg_client.utils.GalleryStatusHelper.buildGalleryStatus(
+                    GalleryStatusHelper.buildGalleryStatus(
                             fileManager,
                             metadata ->
                                     !com.mentra.asg_client.utils.GallerySyncFilter.isCaptureBlockedFromSync(

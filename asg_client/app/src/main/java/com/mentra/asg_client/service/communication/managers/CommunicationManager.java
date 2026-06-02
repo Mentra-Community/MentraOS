@@ -36,7 +36,7 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
             data -> {
                 if (this.serviceManager != null &&
                     this.serviceManager.getBluetoothManager() != null) {
-                    return this.serviceManager.getBluetoothManager().sendData(data);
+                    return this.serviceManager.getBluetoothManager().sendMessage(data);
                 }
                 return false;
             }
@@ -178,7 +178,7 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
                     Log.d(TAG, "📡 📤 Sending WiFi scan results chunk: " + jsonString);
                     Log.d(TAG, "📡 📊 Message size: " + jsonString.getBytes(StandardCharsets.UTF_8).length + " bytes");
                     
-                    boolean sent = serviceManager.getBluetoothManager().sendData(jsonString.getBytes(StandardCharsets.UTF_8));
+                    boolean sent = serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                     Log.d(TAG, "📡 " + (sent ? "✅ WiFi scan chunk sent successfully" : "❌ Failed to send WiFi scan chunk"));
                     
                     // Small delay between chunks
@@ -241,7 +241,7 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
                     Log.d(TAG, "📡 📊 Message size: " + jsonString.getBytes(StandardCharsets.UTF_8).length + " bytes");
                     Log.d(TAG, "📡 🔒 Network: " + network.getSsid() + " (secured=" + network.requiresPassword() + ", signal=" + network.getSignalStrength() + "dBm)");
                     
-                    boolean sent = serviceManager.getBluetoothManager().sendData(jsonString.getBytes(StandardCharsets.UTF_8));
+                    boolean sent = serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                     Log.d(TAG, "📡 " + (sent ? "✅ Enhanced WiFi scan result sent successfully" : "❌ Failed to send enhanced WiFi scan result"));
                     
                     // Small delay between individual network messages
@@ -287,7 +287,7 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
                 String jsonString = ackResponse.toString();
                 Log.d(TAG, "✅ 📤 Sending ACK response: " + jsonString);
                 
-                boolean sent = serviceManager.getBluetoothManager().sendData(jsonString.getBytes(StandardCharsets.UTF_8));
+                boolean sent = serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "✅ " + (sent ? "✅ ACK response sent successfully" : "❌ Failed to send ACK response"));
 
             } catch (JSONException e) {
@@ -323,7 +323,7 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
                 String jsonString = response.toString();
                 Log.d(TAG, "🔑 📤 Sending token status response: " + jsonString);
 
-                boolean sent = serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
+                boolean sent = serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes());
                 Log.d(TAG, "🔑 " + (sent ? "✅ Token status response sent successfully" : "❌ Failed to send token status response"));
 
             } catch (JSONException e) {
@@ -363,7 +363,7 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
                 String jsonString = response.toString();
                 Log.d(TAG, "📸 📤 Sending media success response: " + jsonString);
                 
-                boolean sent = serviceManager.getBluetoothManager().sendData(jsonString.getBytes(StandardCharsets.UTF_8));
+                boolean sent = serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "📸 " + (sent ? "✅ Media success response sent successfully" : "❌ Failed to send media success response"));
 
             } catch (JSONException e) {
@@ -403,7 +403,7 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
                 String jsonString = response.toString();
                 Log.d(TAG, "❌ 📤 Sending media error response: " + jsonString);
                 
-                boolean sent = serviceManager.getBluetoothManager().sendData(jsonString.getBytes(StandardCharsets.UTF_8));
+                boolean sent = serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "❌ " + (sent ? "✅ Media error response sent successfully" : "❌ Failed to send media error response"));
 
             } catch (JSONException e) {
@@ -441,7 +441,7 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
                 String jsonString = keepAliveResponse.toString();
                 Log.d(TAG, "💓 📤 Sending keep-alive ACK: " + jsonString);
                 
-                boolean sent = serviceManager.getBluetoothManager().sendData(jsonString.getBytes(StandardCharsets.UTF_8));
+                boolean sent = serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "💓 " + (sent ? "✅ Keep-alive ACK sent successfully" : "❌ Failed to send keep-alive ACK"));
 
             } catch (JSONException e) {
@@ -468,7 +468,7 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
             serviceManager.getBluetoothManager().isConnected()) {
             Log.d(TAG, "📡 ✅ Service manager and Bluetooth manager available");
             
-            boolean sent = serviceManager.getBluetoothManager().sendData(data);
+            boolean sent = serviceManager.getBluetoothManager().sendMessage(data);
             Log.d(TAG, "📡 " + (sent ? "✅ Bluetooth data sent successfully" : "❌ Failed to send Bluetooth data"));
             return sent;
         } else {
@@ -497,7 +497,7 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
                 String jsonString = response.toString();
                 Log.d(TAG, "📤 📤 Sending JSON response: " + jsonString);
                 
-                boolean sent = serviceManager.getBluetoothManager().sendData(jsonString.getBytes(StandardCharsets.UTF_8));
+                boolean sent = serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "📤 " + (sent ? "✅ Bluetooth response sent successfully" : "❌ Failed to send Bluetooth response"));
                 return sent;
             } catch (Exception e) {
@@ -560,7 +560,7 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
         if (!isPhoneConnected()) return;
         try {
             String jsonString = message.toString();
-            serviceManager.getBluetoothManager().sendData(jsonString.getBytes(StandardCharsets.UTF_8));
+            serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
             Log.d(TAG, "📱 OTA message sent: " + message.optString("type", "?"));
         } catch (Exception e) {
             Log.e(TAG, "📱 Error sending OTA message", e);
@@ -584,7 +584,7 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
                 Log.i(TAG, "📱 OTA Status (reliable): " + statusValue + " sent=" + sent);
             } else {
                 String jsonString = status.toString();
-                serviceManager.getBluetoothManager().sendData(jsonString.getBytes(StandardCharsets.UTF_8));
+                serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "📱 OTA Status: " + statusValue);
             }
         } catch (Exception e) {

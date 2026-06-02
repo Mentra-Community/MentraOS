@@ -3,9 +3,9 @@ package com.mentra.asg_client.io.bluetooth.managers;
 import android.content.Context;
 import android.util.Log;
 
-import com.mentra.asg_client.io.bluetooth.core.ComManager;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
-import com.mentra.asg_client.io.bluetooth.utils.K900MessageParser;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesMessageParser;
 import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.utils.DebugNotificationManager;
 import com.mentra.asg_client.logging.BleTraceLogger;
@@ -16,7 +16,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Executors;
 
 import com.mentra.asg_client.service.core.AsgClientService;
-import com.mentra.asg_client.utils.smartglasses.K900ProtocolUtils;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
 import com.mentra.asg_client.reporting.domains.BluetoothReporting;
 
 import org.json.JSONObject;
@@ -34,10 +34,10 @@ import java.util.concurrent.TimeUnit;
 public class K900BluetoothManager extends BaseBluetoothManager implements SerialListener {
     private static final String TAG = "K900BluetoothManager";
 
-    private final ComManager comManager;
+    private final SerialPortBridge comManager;
     private boolean isSerialOpen = false;
     private final DebugNotificationManager notificationManager;
-    private K900MessageParser messageParser;
+    private BesMessageParser messageParser;
 
     // File transfer state management
     private FileTransferSession currentFileTransfer = null;
@@ -81,7 +81,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             this.fileName = fileName;
             this.fileData = fileData;
             this.fileSize = fileData.length;
-            this.totalPackets = (fileSize + K900ProtocolUtils.getFilePackSize() - 1) / K900ProtocolUtils.getFilePackSize();
+            this.totalPackets = (fileSize + BesWireFormat.getFilePackSize() - 1) / BesWireFormat.getFilePackSize();
             // Calculate fake file size so BES firmware calculates correct totalPack
             // BES does: totalPack = (fileSize + 400 - 1) / 400
             // We want BES to get our totalPackets, so: fakeFileSize = totalPackets * 400
@@ -93,7 +93,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             this.retryCount = 0;
 
             Log.i(TAG, "📦 BES Lie Strategy: realSize=" + fileSize + ", fakeSize=" + fakeFileSize +
-                       ", totalPackets=" + totalPackets + ", actualPackSize=" + K900ProtocolUtils.getFilePackSize());
+                       ", totalPackets=" + totalPackets + ", actualPackSize=" + BesWireFormat.getFilePackSize());
         }
     }
 
@@ -121,19 +121,19 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         notificationManager.showDeviceTypeNotification(true);
 
         // Create the communication manager
-        comManager = new ComManager(context);
+        comManager = new SerialPortBridge(context);
         comManager.registerListener(this);
         comManager.start();
 
         // Create the message parser to handle fragmented messages
-        messageParser = new K900MessageParser();
+        messageParser = new BesMessageParser();
 
         // Initialize file transfer executor
         fileTransferExecutor = Executors.newSingleThreadScheduledExecutor();
     }
 
     @Override
-    protected boolean sendDataInternal(byte[] data) {
+    protected boolean sendMessageInternal(byte[] data) {
         Log.d(TAG, "📡 =========================================");
         Log.d(TAG, "📡 K900 BLUETOOTH SEND DATA");
         Log.d(TAG, "📡 =========================================");
@@ -153,7 +153,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         Log.d(TAG, "📡 🔍 Checking if data is already in K900 protocol format...");
         //First check if it 's already in protocol format
-        if (!K900ProtocolUtils.isK900ProtocolFormat(data)) {
+        if (!BesWireFormat.isK900ProtocolFormat(data)) {
             Log.d(TAG, "📡 📝 Data not in protocol format, processing...");
             // Try to interpret as a JSON string that needs C-wrapping and protocol formatting
             try {
@@ -162,10 +162,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 Log.d(TAG, "📡 📄 Original data as string: " + originalData.substring(0, Math.min(originalData.length(), 100)) + "...");
 
                 // If looks like JSON but not C-wrapped, use the full formatting function
-                if (originalData.startsWith("{") && !K900ProtocolUtils.isCWrappedJson(originalData)) {
+                if (originalData.startsWith("{") && !BesWireFormat.isCWrappedJson(originalData)) {
                     Log.d(TAG, "📡 🔧 JSON data detected, applying C-wrapping and protocol formatting...");
                     Log.d(TAG, "📡 📦 JSON DATA BEFORE C-WRAPPING: " + originalData);
-                    data = K900ProtocolUtils.formatMessageForTransmission(originalData);
+                    data = BesWireFormat.formatMessageForTransmission(originalData);
 
                     // Log the first 50 bytes of the hex representation
                     StringBuilder hexDump = new StringBuilder();
@@ -178,12 +178,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     // Otherwise just apply protocol formatting
                     Log.d(TAG, "📡 📝 Data already C-wrapped or not JSON: " + originalData);
                     Log.d(TAG, "📡 🔧 Formatting data with K900 protocol (adding ##...)");
-                    data = K900ProtocolUtils.packDataCommand(data, K900ProtocolUtils.CMD_TYPE_STRING);
+                    data = BesWireFormat.packDataCommand(data, BesWireFormat.CMD_TYPE_STRING);
                 }
             } catch (Exception e) {
                 // If we can't interpret as string, just apply protocol formatting to raw bytes
                 Log.d(TAG, "📡 🔧 Applying protocol format to raw bytes");
-                data = K900ProtocolUtils.packDataCommand(data, K900ProtocolUtils.CMD_TYPE_STRING);
+                data = BesWireFormat.packDataCommand(data, BesWireFormat.CMD_TYPE_STRING);
             }
         } else {
             Log.d(TAG, "📡 ✅ Data already in K900 protocol format");
@@ -237,7 +237,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             fileTransferExecutor.shutdownNow();
         }
         
-        // Stop the ComManager
+        // Stop the SerialPortBridge
         if (comManager != null) {
             comManager.stop();
         }
@@ -249,10 +249,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     /**
-     * Get the ComManager instance for BES OTA integration
-     * @return ComManager instance, or null if not initialized
+     * Get the SerialPortBridge instance for BES OTA integration
+     * @return SerialPortBridge instance, or null if not initialized
      */
-    public ComManager getComManager() {
+    public SerialPortBridge getSerialPortBridge() {
         return comManager;
     }
 
@@ -279,8 +279,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             String commandStr = k900Command.toString();
             Log.d(TAG, "📤 Sending cs_syvr request: " + commandStr);
 
-            // Send via sendData() which handles protocol formatting and isSerialOpen check
-            boolean sent = sendData(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            // Send via sendMessage() which handles protocol formatting and isSerialOpen check
+            boolean sent = sendMessage(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
             if (sent) {
                 Log.i(TAG, "✅ BES system version request (cs_syvr) sent successfully via UART");
@@ -442,11 +442,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         processReceivedMessage(message);
                         
                         // Extract payload from K900 protocol message for listeners
-                        if (K900ProtocolUtils.isK900ProtocolFormat(message)) {
+                        if (BesWireFormat.isK900ProtocolFormat(message)) {
                             // Try to extract payload (big-endian first, then little-endian)
-                            byte[] payload = K900ProtocolUtils.extractPayload(message);
+                            byte[] payload = BesWireFormat.extractPayload(message);
                             if (payload == null) {
-                                payload = K900ProtocolUtils.extractPayloadFromK900(message);
+                                payload = BesWireFormat.extractPayloadFromK900(message);
                             }
                             
                             if (payload != null && payload.length > 0) {
@@ -544,7 +544,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * @return true if transfer started successfully
      */
     @Override
-    public boolean sendImageFile(String filePath) {
+    public boolean sendFile(String filePath) {
         if (!isSerialOpen) {
             Log.e(TAG, "Cannot send file - serial port not open");
             
@@ -655,8 +655,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         
         // Calculate packet data
         int packetIndex = currentFileTransfer.currentPacketIndex;
-        int offset = packetIndex * K900ProtocolUtils.getFilePackSize();
-        int packSize = Math.min(K900ProtocolUtils.getFilePackSize(),
+        int offset = packetIndex * BesWireFormat.getFilePackSize();
+        int packSize = Math.min(BesWireFormat.getFilePackSize(),
                                 currentFileTransfer.fileSize - offset);
         
         // Extract packet data
@@ -667,10 +667,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         // NOTE: We use fakeFileSize to lie to BES firmware about total file size.
         // BES hardcodes 400-byte pack size when calculating totalPack, so we inflate
         // fileSize to make BES expect the correct number of our smaller packets.
-        byte[] packet = K900ProtocolUtils.packFilePacket(
+        byte[] packet = BesWireFormat.packFilePacket(
             packetData, packetIndex, packSize, currentFileTransfer.fakeFileSize,
             currentFileTransfer.fileName, 0, // flags = 0
-            K900ProtocolUtils.CMD_TYPE_PHOTO
+            BesWireFormat.CMD_TYPE_PHOTO
         );
         
         if (packet == null) {
@@ -851,7 +851,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         // Check if this is a file transfer acknowledgment
         // Format: [CMD_TYPE][STATE][INDEX_HIGH][INDEX_LOW]...
-        if (message[0] == K900ProtocolUtils.CMD_TYPE_PHOTO && message.length >= 4) {
+        if (message[0] == BesWireFormat.CMD_TYPE_PHOTO && message.length >= 4) {
             int state = message[1] & 0xFF;
             int index = ((message[2] & 0xFF) << 8) | (message[3] & 0xFF);
             handleFileTransferAck(state, index);

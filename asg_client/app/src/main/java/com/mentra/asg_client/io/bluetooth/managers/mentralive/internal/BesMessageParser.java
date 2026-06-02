@@ -1,5 +1,7 @@
-package com.mentra.asg_client.io.bluetooth.utils;
+package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
+import com.mentra.asg_client.io.bluetooth.utils.ByteUtil;
+import com.mentra.asg_client.io.bluetooth.utils.CircleBuffer;
 import android.util.Log;
 
 import java.util.ArrayList;
@@ -9,8 +11,8 @@ import java.util.List;
  * Parser for K900 protocol messages.
  * Uses a CircleBuffer to handle fragmented messages across multiple UART reads.
  */
-public class K900MessageParser {
-    private static final String TAG = "K900MessageParser";
+public class BesMessageParser {
+    private static final String TAG = "BesMessageParser";
     
     // K900 Protocol markers
     private static final String PROTOCOL_START_MARKER = "##";
@@ -25,12 +27,12 @@ public class K900MessageParser {
     private final byte[] mTempBuffer;
     
     /**
-     * Create a new K900MessageParser
+     * Create a new BesMessageParser
      */
-    public K900MessageParser() {
+    public BesMessageParser() {
         mCircleBuffer = new CircleBuffer(BUFFER_SIZE);
         mTempBuffer = new byte[BUFFER_SIZE];
-        Log.d(TAG, "K900MessageParser initialized with " + BUFFER_SIZE + " byte buffer");
+        Log.d(TAG, "BesMessageParser initialized with " + BUFFER_SIZE + " byte buffer");
     }
     
     /**

@@ -1,18 +1,20 @@
 package com.mentra.asg_client.io.bluetooth.interfaces;
 
 /**
- * Listener interface for bluetooth state changes and data reception.
+ * Listener for companion transport connection state and inbound data.
  */
-public interface BluetoothStateListener {
+public interface TransportListener {
     /**
-     * Called when the bluetooth connection state changes
+     * Called when the transport connection state changes.
+     *
      * @param connected true if connected, false if disconnected
      */
     void onConnectionStateChanged(boolean connected);
-    
+
     /**
-     * Called when data is received from the connected device
+     * Called when data is received from the connected device.
+     *
      * @param data The received data
      */
     void onDataReceived(byte[] data);
-} 
+}

@@ -10,9 +10,13 @@ import android.media.MediaPlayer;
 import android.os.BatteryManager;
 import android.util.Log;
 
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.hardware.core.BaseHardwareManager;
+import com.mentra.asg_client.io.hardware.interfaces.Capability;
 
 import java.io.IOException;
+import java.util.EnumSet;
+import java.util.Set;
 
 /**
  * Hardware implementation for generic Android glasses that expose a standard torch and audio path.
@@ -36,6 +40,15 @@ public class StandardHardwareManager extends BaseHardwareManager {
     public void initialize() {
         super.initialize();
         detectFlashCamera();
+    }
+
+    @Override
+    public Set<Capability> getCapabilities() {
+        EnumSet<Capability> caps = EnumSet.of(Capability.MCU_BATTERY);
+        if (supportsRecordingLed()) {
+            caps.add(Capability.RECORDING_LED);
+        }
+        return caps;
     }
 
     @Override
@@ -129,9 +142,8 @@ public class StandardHardwareManager extends BaseHardwareManager {
     }
 
     @Override
-    public void setBluetoothManager(Object bluetoothManager) {
-        // Standard Android devices don't use Bluetooth for LED control
-        // This is a no-op for non-K900 devices
+    public void setTransport(ICompanionTransport transport) {
+        // Standard Android devices don't use UART RGB LED path
     }
 
     // ============================================

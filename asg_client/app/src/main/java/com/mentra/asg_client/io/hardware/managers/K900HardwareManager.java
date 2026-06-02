@@ -4,15 +4,19 @@ import android.content.Context;
 import android.util.Log;
 
 import com.mentra.asg_client.io.hardware.core.BaseHardwareManager;
+import com.mentra.asg_client.io.hardware.interfaces.Capability;
 import com.mentra.asg_client.hardware.K900LedController;
 import com.mentra.asg_client.hardware.K900RgbLedController;
 import com.mentra.asg_client.audio.I2SAudioController;
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -160,10 +164,15 @@ public class K900HardwareManager extends BaseHardwareManager {
     public String getDeviceModel() {
         return "K900";
     }
-    
+
     @Override
-    public boolean isK900Device() {
-        return true;
+    public Set<Capability> getCapabilities() {
+        return EnumSet.of(
+                Capability.RECORDING_LED,
+                Capability.LED_BRIGHTNESS,
+                Capability.RGB_LED,
+                Capability.MCU_AUDIO,
+                Capability.MCU_BATTERY);
     }
 
     @Override
@@ -188,21 +197,18 @@ public class K900HardwareManager extends BaseHardwareManager {
     }
 
     @Override
-    public void setBluetoothManager(Object bluetoothManager) {
-        if (bluetoothManager instanceof K900BluetoothManager) {
-            this.bluetoothManager = (K900BluetoothManager) bluetoothManager;
+    public void setTransport(ICompanionTransport transport) {
+        if (transport instanceof K900BluetoothManager) {
+            this.bluetoothManager = (K900BluetoothManager) transport;
             try {
                 rgbLedController = new K900RgbLedController(this.bluetoothManager);
-                Log.d(TAG, "🔧 ✅ K900 RGB LED controller initialized successfully");
+                Log.d(TAG, "K900 RGB LED controller initialized");
             } catch (Exception e) {
-                Log.e(TAG, "🔧 ❌ Failed to initialize K900 RGB LED controller", e);
+                Log.e(TAG, "Failed to initialize K900 RGB LED controller", e);
                 rgbLedController = null;
             }
-
-            // Note: BES system version query is handled by K900CommandHandler.requestSystemVersion()
-            // which will be called when K900CommandHandler is available and BluetoothManager is ready
         } else {
-            Log.w(TAG, "Invalid BluetoothManager provided (expected K900BluetoothManager)");
+            Log.w(TAG, "Invalid transport for K900 hardware (expected K900BluetoothManager)");
         }
     }
 
@@ -396,7 +402,7 @@ public class K900HardwareManager extends BaseHardwareManager {
             Log.d(TAG, "🔋 Querying battery from BES: " + commandStr);
 
             // Send command to BES
-            boolean sent = bluetoothManager.sendData(commandStr.getBytes(StandardCharsets.UTF_8));
+            boolean sent = bluetoothManager.sendMessage(commandStr.getBytes(StandardCharsets.UTF_8));
             if (!sent) {
                 Log.e(TAG, "🔋 Failed to send battery query command");
                 return false;
@@ -428,16 +434,20 @@ public class K900HardwareManager extends BaseHardwareManager {
      * @param batteryLevel Battery percentage (0-100)
      * @param batteryVoltage Battery voltage in mV
      */
+    @Override
+    public void notifyBatteryReading(int percent, int voltageMv) {
+        onBatteryResponse(percent, voltageMv);
+    }
+
+    /** @deprecated Use {@link #notifyBatteryReading(int, int)} via {@link IHardwareManager}. */
     public void onBatteryResponse(int batteryLevel, int batteryVoltage) {
         synchronized (batteryLock) {
             cachedBatteryLevel = batteryLevel;
-            // Infer charging status from voltage (same logic as K900CommandHandler)
             cachedChargingStatus = batteryVoltage > 3900;
             lastBatteryQueryTime = System.currentTimeMillis();
 
             Log.d(TAG, "🔋 Battery cache updated: " + cachedBatteryLevel + "%, charging=" + cachedChargingStatus);
 
-            // Signal any waiting query
             if (batteryResponseLatch != null) {
                 batteryResponseLatch.countDown();
             }

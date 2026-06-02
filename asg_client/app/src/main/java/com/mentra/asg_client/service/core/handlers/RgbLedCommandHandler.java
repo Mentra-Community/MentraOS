@@ -4,7 +4,6 @@ import android.util.Log;
 
 import com.mentra.asg_client.hardware.K900RgbLedController;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
-import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 
@@ -44,9 +43,9 @@ public class RgbLedCommandHandler implements ICommandHandler {
     private final AsgClientServiceManager serviceManager;
     private final IHardwareManager hardwareManager;
 
-    public RgbLedCommandHandler(AsgClientServiceManager serviceManager) {
+    public RgbLedCommandHandler(AsgClientServiceManager serviceManager, IHardwareManager hardwareManager) {
         this.serviceManager = serviceManager;
-        this.hardwareManager = HardwareManagerFactory.getInstance(serviceManager.getContext());
+        this.hardwareManager = hardwareManager;
 
         Log.d(TAG, "🚨 RGB LED Command Handler constructed (hardware manager ready)");
         Log.d(TAG, "🔧 Note: Bluetooth Manager will be initialized later via initializeBluetoothManager()");
@@ -62,7 +61,7 @@ public class RgbLedCommandHandler implements ICommandHandler {
 
         if (hardwareManager != null && serviceManager.getBluetoothManager() != null) {
             Log.d(TAG, "🚨 Setting Bluetooth Manager for RGB LED control");
-            hardwareManager.setBluetoothManager(serviceManager.getBluetoothManager());
+            hardwareManager.setTransport(serviceManager.getBluetoothManager());
             Log.i(TAG, "✅ Bluetooth Manager set for RGB LED control - READY FOR OPERATIONS");
         } else {
             Log.w(TAG, "⚠️ Cannot set Bluetooth Manager - hardwareManager: " + 
@@ -291,7 +290,7 @@ public class RgbLedCommandHandler implements ICommandHandler {
             
             if (serviceManager != null && serviceManager.getBluetoothManager() != null &&
                     serviceManager.getBluetoothManager().isConnected()) {
-                serviceManager.getBluetoothManager().sendData(
+                serviceManager.getBluetoothManager().sendMessage(
                     response.toString().getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "✅ Success response sent to phone");
             }
@@ -313,7 +312,7 @@ public class RgbLedCommandHandler implements ICommandHandler {
 
             if (serviceManager != null && serviceManager.getBluetoothManager() != null &&
                     serviceManager.getBluetoothManager().isConnected()) {
-                serviceManager.getBluetoothManager().sendData(
+                serviceManager.getBluetoothManager().sendMessage(
                     response.toString().getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "⚠️ Error response sent to phone");
             }

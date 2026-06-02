@@ -1,4 +1,4 @@
-package com.mentra.asg_client.io.bluetooth.core;
+package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import android.content.Context;
 import android.util.Log;
@@ -14,8 +14,8 @@ import java.io.OutputStream;
 /**
  * Manager for serial communication with the BES2700 Bluetooth module in K900 devices.
  */
-public class ComManager {
-    private static final String TAG = "ComManager";
+public class SerialPortBridge {
+    private static final String TAG = "SerialPortBridge";
 
     // Serial port configuration - matches the K900 SDK
     private static final String COM_PATH = "/dev/ttyS1";
@@ -33,11 +33,11 @@ public class ComManager {
     public boolean mbOtaUpdating = false;
 
     /**
-     * Create a new ComManager
+     * Create a new SerialPortBridge
      *
      * @param context The application context
      */
-    public ComManager(Context context) {
+    public SerialPortBridge(Context context) {
         mContext = context;
     }
 
@@ -99,7 +99,7 @@ public class ComManager {
      */
     public void stop() {
         if (mbStart) {
-            Log.d(TAG, "ComManager stopping");
+            Log.d(TAG, "SerialPortBridge stopping");
             if (mRecvThread != null) {
                 mRecvThread.setStop();
                 mRecvThread.interrupt();
@@ -111,7 +111,7 @@ public class ComManager {
             if (mListener != null)
                 mListener.onSerialClose(COM_PATH);
 
-            Log.d(TAG, "ComManager stopped");
+            Log.d(TAG, "SerialPortBridge stopped");
         }
     }
 

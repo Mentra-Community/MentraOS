@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
 
+import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
 import com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
@@ -75,7 +76,10 @@ public class MtkOtaReceiver extends BroadcastReceiver {
                 Log.e(TAG, "MTK OTA error: " + msg);
                 // Clear in-progress flag on error
                 OtaHelper.setMtkOtaInProgress(false);
-                OtaHelper helper = OtaHelper.getInstance();
+                OtaHelper helper =
+                        dagger.hilt.android.EntryPointAccessors.fromApplication(
+                                        context.getApplicationContext(), AsgClientEntryPoint.class)
+                                .otaHelper();
                 if (helper != null) {
                     helper.clearCachedArtifactsForType("mtk");
                 }

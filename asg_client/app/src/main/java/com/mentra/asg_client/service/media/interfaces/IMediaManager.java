@@ -1,5 +1,6 @@
 package com.mentra.asg_client.service.media.interfaces;
 
+import com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback;
 import org.json.JSONObject;
 
 /**
@@ -47,7 +48,7 @@ public interface IMediaManager {
     /**
      * Get the shared streaming status callback instance
      */
-    com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback getStreamingStatusCallback();
+    StreamingStatusCallback getStreamingStatusCallback();
 
     /**
      * Send keep-alive acknowledgment

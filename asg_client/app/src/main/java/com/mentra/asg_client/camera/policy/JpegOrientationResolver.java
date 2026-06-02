@@ -7,6 +7,7 @@ import android.view.Display;
 import android.view.Surface;
 import android.view.WindowManager;
 
+import com.mentra.asg_client.service.utils.DeviceProfile;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 
 /**
@@ -53,7 +54,7 @@ public final class JpegOrientationResolver {
 
         Log.d(TAG, "📱 Device type: " + deviceType + ", Default rotation: " + deviceDefaultRotation + "°");
 
-        if (ServiceUtils.isK900Device(context)) {
+        if (DeviceProfile.detect(context).isK900()) {
             Log.d(TAG, "🔄 Using K900-specific rotation: " + deviceDefaultRotation + "°");
             return deviceDefaultRotation;
         }

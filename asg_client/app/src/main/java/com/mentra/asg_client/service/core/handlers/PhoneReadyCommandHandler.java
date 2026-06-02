@@ -10,7 +10,7 @@ import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
-import com.mentra.asg_client.utils.smartglasses.K900ProtocolUtils;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
 
 import org.json.JSONObject;
 
@@ -71,7 +71,7 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
         try {
             // Reset file pack size to default on new connection.
             // Phone will send set_ble_mtu command after glasses_ready to set the correct size.
-            K900ProtocolUtils.resetFilePackSize();
+            BesWireFormat.resetFilePackSize();
 
             Log.d(TAG, "📱 📱 Received phone_ready message - sending glasses_ready response");
             
@@ -183,7 +183,7 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
                 return;
             }
 
-            boolean sent = serviceManager.getBluetoothManager().sendData(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            boolean sent = serviceManager.getBluetoothManager().sendMessage(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             if (sent) {
                 Log.i(TAG, "✅ RGB LED control authority " + (claimControl ? "CLAIMED" : "RELEASED") + " successfully");
             } else {
