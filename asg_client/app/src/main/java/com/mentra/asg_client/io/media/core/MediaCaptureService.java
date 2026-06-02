@@ -2986,7 +2986,7 @@ public class MediaCaptureService {
                                                 original, targetWidth, targetHeight, true);
                                 original.recycle();
 
-                                // 4. Encode as AVIF (with EXIF when source JPEG has IMU metadata)
+                                // 4. Encode as AVIF only (no JPEG fallback over BLE)
                                 Log.d(
                                         TAG,
                                         "BLE AVIF encode: originalPath="
@@ -2994,11 +2994,15 @@ public class MediaCaptureService {
                                                 + " hasImuMetadata="
                                                 + PhotoExifMetadataWriter.hasImuMetadata(
                                                         originalPath));
-                                byte[] compressedData =
-                                        PhotoExifMetadataWriter.encodeAvifForBle(
-                                                resized, bleParams.avifQuality, originalPath);
+                                byte[] compressedData;
+                                try {
+                                    compressedData =
+                                            PhotoExifMetadataWriter.encodeAvifForBle(
+                                                    resized, bleParams.avifQuality, originalPath);
+                                } finally {
+                                    resized.recycle();
+                                }
                                 Log.d(TAG, "Successfully encoded as AVIF for BLE");
-                                resized.recycle();
 
                                 long compressionTime = System.currentTimeMillis() - startTime;
                                 recordTiming(requestId, "ble_compress_done");

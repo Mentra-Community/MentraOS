@@ -65,20 +65,20 @@ final class AvifBmffExifInjector {
 
         byte[] newIinf = appendIinfEntry(tables.iinfPayload, exifItemId);
         byte[] newIref = appendCdscRef(tables.irefPayload, exifItemId, tables.primaryItemId);
-        // Placeholder iloc; offset is fixed after meta size is known.
-        byte[] newIloc = appendIlocEntry(tables.ilocPayload, exifItemId, 0, exifTiffBlock.length);
-        byte[] newMetaPayload = rebuildMeta(metaPayload, newIloc, newIinf, newIref);
-        BmffBox newMeta = new BmffBox("meta", newMetaPayload);
+        // Meta grows before mdat; iloc v0 extent offsets are absolute file positions.
+        byte[] tempIloc = appendIlocEntry(tables.ilocPayload, exifItemId, 0, exifTiffBlock.length);
+        byte[] tempMetaPayload = rebuildMeta(metaPayload, tempIloc, newIinf, newIref);
+        int metaDelta = new BmffBox("meta", tempMetaPayload).encodedSize() - meta.encodedSize();
+        byte[] shiftedIloc = shiftIlocExtentOffsets(tables.ilocPayload, metaDelta);
         int exifOffsetInFile =
                 ftyp.encodedSize()
-                        + newMeta.encodedSize()
+                        + new BmffBox("meta", tempMetaPayload).encodedSize()
                         + mdat.headerSize()
                         + mdat.payload.length;
-        newIloc =
-                appendIlocEntry(
-                        tables.ilocPayload, exifItemId, exifOffsetInFile, exifTiffBlock.length);
-        newMetaPayload = rebuildMeta(metaPayload, newIloc, newIinf, newIref);
-        newMeta = new BmffBox("meta", newMetaPayload);
+        byte[] newIloc =
+                appendIlocEntry(shiftedIloc, exifItemId, exifOffsetInFile, exifTiffBlock.length);
+        byte[] newMetaPayload = rebuildMeta(metaPayload, newIloc, newIinf, newIref);
+        BmffBox newMeta = new BmffBox("meta", newMetaPayload);
         BmffBox newMdat = new BmffBox("mdat", newMdatPayload);
 
         ByteArrayOutputStream out =
@@ -204,6 +204,45 @@ final class AvifBmffExifInjector {
         out.write(existing);
         writeIlocItem(out, layout, itemId, offset, length);
         return out.toByteArray();
+    }
+
+    /**
+     * Shifts absolute iloc extent offsets when boxes before {@code mdat} grow (e.g. larger meta).
+     */
+    private static byte[] shiftIlocExtentOffsets(byte[] ilocPayload, int delta) throws IOException {
+        if (delta == 0) {
+            return ilocPayload;
+        }
+        byte[] copy = Arrays.copyOf(ilocPayload, ilocPayload.length);
+        IlocLayout layout = parseIlocLayout(copy);
+        ByteBuffer buf = ByteBuffer.wrap(copy).order(ByteOrder.BIG_ENDIAN);
+        int itemCount = u16(copy, 6);
+        buf.position(8);
+        for (int i = 0; i < itemCount; i++) {
+            buf.getShort();
+            buf.getShort();
+            skipSized(buf, layout.baseOffsetSize);
+            int extentCount = buf.getShort() & 0xFFFF;
+            for (int e = 0; e < extentCount; e++) {
+                int offset = readSized(buf, layout.offsetSize);
+                int length = readSized(buf, layout.lengthSize);
+                buf.position(buf.position() - layout.offsetSize - layout.lengthSize);
+                writeSized(buf, offset + delta, layout.offsetSize);
+                writeSized(buf, length, layout.lengthSize);
+            }
+        }
+        return copy;
+    }
+
+    private static int readSized(ByteBuffer buf, int bytes) {
+        switch (bytes) {
+            case 0:
+                return 0;
+            case 4:
+                return buf.getInt();
+            default:
+                throw new IllegalArgumentException("unsupported size " + bytes);
+        }
     }
 
     private static byte[] patchIlocEntryOffset(
