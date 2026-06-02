@@ -17,7 +17,7 @@ export default function ScreenSettingsScreen() {
   const deviceModel = useGlassesStore((state) => state.deviceModel)
   const {setEnabled} = useKonamiCode()
 
-  const depthClamped = Math.min(3, Math.max(1, Number(dashboardDepth ?? 2)))
+  const depthClamped = Math.min(4, Math.max(1, Number(dashboardDepth ?? 2)))
 
   const isG1 = deviceModel === "Even Realities G1" || deviceModel === "evenrealities_g1" || deviceModel === "g1"
 
@@ -46,7 +46,7 @@ export default function ScreenSettingsScreen() {
           subtitle="Adjust how far the content appears from you."
           value={depthClamped}
           min={1}
-          max={3}
+          max={4}
           onValueChange={(_value) => {}}
           onValueSet={setDashboardDepth}
         />

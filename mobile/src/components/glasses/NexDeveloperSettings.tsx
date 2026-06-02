@@ -257,10 +257,7 @@ export default function NexDeveloperSettings() {
   const {push} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const glassesConnected = useGlassesStore(selectGlassesConnected)
-  const deviceModel = useGlassesStore((state) => state.deviceModel)
   const features: Capabilities = getModelCapabilities(defaultWearable)
-
-  console.log("Yash is the best!!!!!", deviceModel, "hello", defaultWearable)
 
   // Mentra Display BLE test state variables
   const [text, setText] = useState("Hello World")
@@ -276,8 +273,12 @@ export default function NexDeveloperSettings() {
   const [lastHeartbeatSent, setLastHeartbeatSent] = useState<number | null>(null)
   const [lastHeartbeatReceived, setLastHeartbeatReceived] = useState<number | null>(null)
 
-  // LC3 Audio Control state
-  const [lc3AudioEnabled, setLc3AudioEnabled] = useState(true)
+  // LC3 Audio Control — persisted feature flag synced to core (off by default).
+  const [lc3AudioEnabled, setLc3AudioEnabled] = useSetting(SETTINGS.nex_audio_playback.key)
+
+  // Chinese captions — persisted feature flag synced to core (off by default).
+  // When on, the Nex display skips ASCII-only sanitization so CJK text renders.
+  const [chineseCaptionsEnabled, setChineseCaptionsEnabled] = useSetting(SETTINGS.nex_chinese_captions.key)
 
   // VAD (Voice Activity Detection) — sourced from native DeviceStore via glasses status.
   const vadEnabled = useGlassesStore((state) => state.voiceActivityDetectionEnabled)
@@ -389,12 +390,14 @@ export default function NexDeveloperSettings() {
     }
   }
 
-  const onLc3AudioToggle = async (enabled: boolean) => {
+  // Both toggles persist to the settings store, which auto-syncs the flag to core
+  // (CORE_SETTINGS_KEYS) where native applies the behavior change.
+  const onLc3AudioToggle = (enabled: boolean) => {
     setLc3AudioEnabled(enabled)
-    if (glassesConnected) {
-      console.log("setLc3AudioEnabled", enabled)
-      console.warn("setLc3AudioEnabled not yet implemented in Bluetooth SDK API")
-    }
+  }
+
+  const onChineseCaptionsToggle = (enabled: boolean) => {
+    setChineseCaptionsEnabled(enabled)
   }
 
   const onVadToggle = async (enabled: boolean) => {
@@ -674,9 +677,25 @@ export default function NexDeveloperSettings() {
 
               <ToggleSetting
                 label="LC3 Audio Playback"
-                subtitle="Play audio received from glasses through LC3 codec"
+                subtitle="Play audio received from glasses through LC3 codec (off by default)"
                 value={lc3AudioEnabled}
                 onValueChange={onLc3AudioToggle}
+              />
+            </View>
+
+            {/* Chinese Captions */}
+            <View style={themed($settingsGroup)}>
+              <Text style={themed($sectionTitle)}>🈶 Chinese Captions</Text>
+              <Text style={themed($description)}>
+                Allow non-ASCII (Chinese/CJK) characters in display text. When off, text is sanitized to ASCII
+                before being sent to the glasses.
+              </Text>
+
+              <ToggleSetting
+                label="Chinese Captions"
+                subtitle="Render CJK text on glasses instead of stripping it (off by default)"
+                value={chineseCaptionsEnabled}
+                onValueChange={onChineseCaptionsToggle}
               />
             </View>
 
