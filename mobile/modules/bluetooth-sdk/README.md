@@ -351,6 +351,9 @@ For local SDK development, add this package folder directly in Xcode:
 
 The core Swift package intentionally excludes optional local STT, Nex/SwiftProtobuf, Vuzix/Ultralite, and tar.bz2 extraction code paths.
 
+Maintainers publishing the public SwiftPM mirror should follow
+[RELEASING_IOS_SPM.md](./RELEASING_IOS_SPM.md).
+
 ## Starter Example App
 
 The [Mentra Bluetooth SDK Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit) includes starter example apps for Android, iOS, and React Native / Expo. The React Native starter demonstrates scan/connect, display, camera photo upload, RTMP/SRT/WebRTC streaming, Wi-Fi/hotspot, microphone PCM, RGB LED, gallery mode, and console event inspection.
