@@ -329,6 +329,7 @@ const PHOTO_APP_ID = 'com.mentra.examples.reactnative';
 const PHOTO_POLL_ATTEMPTS = 45;
 const DIRECT_PHOTO_UPLOAD_TIMEOUT_MS = 75_000;
 const DIRECT_WEBRTC_RECEIVER_WARMUP_MS = 1000;
+const BARCODE_SCAN_VISIBLE_TIMEOUT_MS = 2_500;
 const ANDROID_12_API_LEVEL = 31;
 const MIC_SAMPLE_RATE = 16000;
 const MIC_CHANNEL_COUNT = 1;
@@ -1031,7 +1032,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   async function ensurePhonePhotoReceiver(reason: 'camera tab' | 'capture'): Promise<PhotoReceiverResult> {
-    if (phonePhotoReceiverRef.current) {
+    if (phonePhotoReceiverRef.current && reason !== 'capture') {
       return phonePhotoReceiverRef.current;
     }
     if (phonePhotoReceiverStartPromiseRef.current) {
@@ -1042,12 +1043,16 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     if (reason === 'capture') {
       setCameraStatus('Camera: preparing phone photo receiver');
     }
-    addEvent('LIVE', `starting phone photo receiver (${reason})`);
+    addEvent('LIVE', `${phonePhotoReceiverRef.current ? 'refreshing' : 'starting'} phone photo receiver (${reason})`);
     const promise = MentraPhotoReceiver.startPhotoReceiver()
       .then((receiver) => {
+        const previousUploadUrl = phonePhotoReceiverRef.current?.uploadUrl;
         phonePhotoReceiverRef.current = receiver;
         setPhonePhotoReceiverRunning(true);
         setPhonePhotoUploadUrl(receiver.uploadUrl);
+        if (previousUploadUrl && previousUploadUrl !== receiver.uploadUrl) {
+          addEvent('LIVE', `phone photo receiver URL changed ${previousUploadUrl} -> ${receiver.uploadUrl}`);
+        }
         addEvent('LIVE', `phone photo receiver ready ${receiver.uploadUrl} (${Date.now() - startedAt}ms)`);
         return receiver;
       })
@@ -1402,12 +1407,31 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       sourceUri,
       state: 'scanning',
     });
+    const visibleTimeout = setTimeout(() => {
+      if (barcodeScanTokenRef.current !== token) {
+        return;
+      }
+      const latestScan = barcodeScanRef.current;
+      if (latestScan.sourceUri !== sourceUri || latestScan.state !== 'scanning') {
+        return;
+      }
+      updateBarcodeScan({
+        barcodes: [],
+        expectedValue,
+        scannedAt: new Date().toISOString(),
+        sourceUri,
+        state: 'none',
+      });
+      addEvent('LIVE', 'barcode scan timed out');
+    }, BARCODE_SCAN_VISIBLE_TIMEOUT_MS);
     await waitForNextFrame();
     if (barcodeScanTokenRef.current !== token) {
+      clearTimeout(visibleTimeout);
       return;
     }
     try {
       const barcodes = dedupeBarcodeResults(await MentraBarcodeScanner.scanImage(sourceUri));
+      clearTimeout(visibleTimeout);
       if (barcodeScanTokenRef.current !== token) {
         return;
       }
@@ -1435,6 +1459,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         addEvent('LIVE', 'no barcode found in photo preview');
       }
     } catch (error) {
+      clearTimeout(visibleTimeout);
       if (barcodeScanTokenRef.current !== token) {
         return;
       }
