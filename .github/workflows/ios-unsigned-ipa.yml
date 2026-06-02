@@ -10,7 +10,7 @@ jobs:
 build:
 runs-on: macos-15
 
-```
+
 steps:
   - name: Checkout repository
     uses: actions/checkout@v4
@@ -129,4 +129,3 @@ steps:
       name: xcodebuild-log
       path: /tmp/xcodebuild.log
       retention-days: 5
-```
