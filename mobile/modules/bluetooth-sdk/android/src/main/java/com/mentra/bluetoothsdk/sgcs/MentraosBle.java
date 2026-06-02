@@ -142,21 +142,6 @@ public final class MentraosBle {
     mentraos.ble.MentraosBle.HeadUpAngleConfigOrBuilder getHeadUpAngleOrBuilder();
 
     /**
-     * <code>.mentraos.ble.PingRequest ping = 16;</code>
-     * @return Whether the ping field is set.
-     */
-    boolean hasPing();
-    /**
-     * <code>.mentraos.ble.PingRequest ping = 16;</code>
-     * @return The ping.
-     */
-    mentraos.ble.MentraosBle.PingRequest getPing();
-    /**
-     * <code>.mentraos.ble.PingRequest ping = 16;</code>
-     */
-    mentraos.ble.MentraosBle.PingRequestOrBuilder getPingOrBuilder();
-
-    /**
      * <pre>
      * Audio System
      * </pre>
@@ -648,7 +633,6 @@ public final class MentraosBle {
       PAIRING_MODE(13),
       HEAD_POSITION(14),
       HEAD_UP_ANGLE(15),
-      PING(16),
       MIC_STATE(20),
       VAD_ENABLED(21),
       VAD_CONFIG(22),
@@ -698,7 +682,6 @@ public final class MentraosBle {
           case 13: return PAIRING_MODE;
           case 14: return HEAD_POSITION;
           case 15: return HEAD_UP_ANGLE;
-          case 16: return PING;
           case 20: return MIC_STATE;
           case 21: return VAD_ENABLED;
           case 22: return VAD_CONFIG;
@@ -983,37 +966,6 @@ public final class MentraosBle {
          return (mentraos.ble.MentraosBle.HeadUpAngleConfig) payload_;
       }
       return mentraos.ble.MentraosBle.HeadUpAngleConfig.getDefaultInstance();
-    }
-
-    public static final int PING_FIELD_NUMBER = 16;
-    /**
-     * <code>.mentraos.ble.PingRequest ping = 16;</code>
-     * @return Whether the ping field is set.
-     */
-    @java.lang.Override
-    public boolean hasPing() {
-      return payloadCase_ == 16;
-    }
-    /**
-     * <code>.mentraos.ble.PingRequest ping = 16;</code>
-     * @return The ping.
-     */
-    @java.lang.Override
-    public mentraos.ble.MentraosBle.PingRequest getPing() {
-      if (payloadCase_ == 16) {
-         return (mentraos.ble.MentraosBle.PingRequest) payload_;
-      }
-      return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
-    }
-    /**
-     * <code>.mentraos.ble.PingRequest ping = 16;</code>
-     */
-    @java.lang.Override
-    public mentraos.ble.MentraosBle.PingRequestOrBuilder getPingOrBuilder() {
-      if (payloadCase_ == 16) {
-         return (mentraos.ble.MentraosBle.PingRequest) payload_;
-      }
-      return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
     }
 
     public static final int MIC_STATE_FIELD_NUMBER = 20;
@@ -1905,9 +1857,6 @@ public final class MentraosBle {
       if (payloadCase_ == 15) {
         output.writeMessage(15, (mentraos.ble.MentraosBle.HeadUpAngleConfig) payload_);
       }
-      if (payloadCase_ == 16) {
-        output.writeMessage(16, (mentraos.ble.MentraosBle.PingRequest) payload_);
-      }
       if (payloadCase_ == 20) {
         output.writeMessage(20, (mentraos.ble.MentraosBle.MicStateConfig) payload_);
       }
@@ -2021,10 +1970,6 @@ public final class MentraosBle {
       if (payloadCase_ == 15) {
         size += com.google.protobuf.CodedOutputStream
           .computeMessageSize(15, (mentraos.ble.MentraosBle.HeadUpAngleConfig) payload_);
-      }
-      if (payloadCase_ == 16) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeMessageSize(16, (mentraos.ble.MentraosBle.PingRequest) payload_);
       }
       if (payloadCase_ == 20) {
         size += com.google.protobuf.CodedOutputStream
@@ -2173,10 +2118,6 @@ public final class MentraosBle {
           if (!getHeadUpAngle()
               .equals(other.getHeadUpAngle())) return false;
           break;
-        case 16:
-          if (!getPing()
-              .equals(other.getPing())) return false;
-          break;
         case 20:
           if (!getMicState()
               .equals(other.getMicState())) return false;
@@ -2321,10 +2262,6 @@ public final class MentraosBle {
         case 15:
           hash = (37 * hash) + HEAD_UP_ANGLE_FIELD_NUMBER;
           hash = (53 * hash) + getHeadUpAngle().hashCode();
-          break;
-        case 16:
-          hash = (37 * hash) + PING_FIELD_NUMBER;
-          hash = (53 * hash) + getPing().hashCode();
           break;
         case 20:
           hash = (37 * hash) + MIC_STATE_FIELD_NUMBER;
@@ -2588,9 +2525,6 @@ public final class MentraosBle {
         if (headUpAngleBuilder_ != null) {
           headUpAngleBuilder_.clear();
         }
-        if (pingBuilder_ != null) {
-          pingBuilder_.clear();
-        }
         if (micStateBuilder_ != null) {
           micStateBuilder_.clear();
         }
@@ -2741,10 +2675,6 @@ public final class MentraosBle {
         if (payloadCase_ == 15 &&
             headUpAngleBuilder_ != null) {
           result.payload_ = headUpAngleBuilder_.build();
-        }
-        if (payloadCase_ == 16 &&
-            pingBuilder_ != null) {
-          result.payload_ = pingBuilder_.build();
         }
         if (payloadCase_ == 20 &&
             micStateBuilder_ != null) {
@@ -2924,10 +2854,6 @@ public final class MentraosBle {
           }
           case HEAD_UP_ANGLE: {
             mergeHeadUpAngle(other.getHeadUpAngle());
-            break;
-          }
-          case PING: {
-            mergePing(other.getPing());
             break;
           }
           case MIC_STATE: {
@@ -3111,13 +3037,6 @@ public final class MentraosBle {
                 payloadCase_ = 15;
                 break;
               } // case 122
-              case 130: {
-                input.readMessage(
-                    getPingFieldBuilder().getBuilder(),
-                    extensionRegistry);
-                payloadCase_ = 16;
-                break;
-              } // case 130
               case 162: {
                 input.readMessage(
                     getMicStateFieldBuilder().getBuilder(),
@@ -4311,148 +4230,6 @@ public final class MentraosBle {
         payloadCase_ = 15;
         onChanged();
         return headUpAngleBuilder_;
-      }
-
-      private com.google.protobuf.SingleFieldBuilderV3<
-          mentraos.ble.MentraosBle.PingRequest, mentraos.ble.MentraosBle.PingRequest.Builder, mentraos.ble.MentraosBle.PingRequestOrBuilder> pingBuilder_;
-      /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
-       * @return Whether the ping field is set.
-       */
-      @java.lang.Override
-      public boolean hasPing() {
-        return payloadCase_ == 16;
-      }
-      /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
-       * @return The ping.
-       */
-      @java.lang.Override
-      public mentraos.ble.MentraosBle.PingRequest getPing() {
-        if (pingBuilder_ == null) {
-          if (payloadCase_ == 16) {
-            return (mentraos.ble.MentraosBle.PingRequest) payload_;
-          }
-          return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
-        } else {
-          if (payloadCase_ == 16) {
-            return pingBuilder_.getMessage();
-          }
-          return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
-        }
-      }
-      /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
-       */
-      public Builder setPing(mentraos.ble.MentraosBle.PingRequest value) {
-        if (pingBuilder_ == null) {
-          if (value == null) {
-            throw new NullPointerException();
-          }
-          payload_ = value;
-          onChanged();
-        } else {
-          pingBuilder_.setMessage(value);
-        }
-        payloadCase_ = 16;
-        return this;
-      }
-      /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
-       */
-      public Builder setPing(
-          mentraos.ble.MentraosBle.PingRequest.Builder builderForValue) {
-        if (pingBuilder_ == null) {
-          payload_ = builderForValue.build();
-          onChanged();
-        } else {
-          pingBuilder_.setMessage(builderForValue.build());
-        }
-        payloadCase_ = 16;
-        return this;
-      }
-      /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
-       */
-      public Builder mergePing(mentraos.ble.MentraosBle.PingRequest value) {
-        if (pingBuilder_ == null) {
-          if (payloadCase_ == 16 &&
-              payload_ != mentraos.ble.MentraosBle.PingRequest.getDefaultInstance()) {
-            payload_ = mentraos.ble.MentraosBle.PingRequest.newBuilder((mentraos.ble.MentraosBle.PingRequest) payload_)
-                .mergeFrom(value).buildPartial();
-          } else {
-            payload_ = value;
-          }
-          onChanged();
-        } else {
-          if (payloadCase_ == 16) {
-            pingBuilder_.mergeFrom(value);
-          } else {
-            pingBuilder_.setMessage(value);
-          }
-        }
-        payloadCase_ = 16;
-        return this;
-      }
-      /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
-       */
-      public Builder clearPing() {
-        if (pingBuilder_ == null) {
-          if (payloadCase_ == 16) {
-            payloadCase_ = 0;
-            payload_ = null;
-            onChanged();
-          }
-        } else {
-          if (payloadCase_ == 16) {
-            payloadCase_ = 0;
-            payload_ = null;
-          }
-          pingBuilder_.clear();
-        }
-        return this;
-      }
-      /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
-       */
-      public mentraos.ble.MentraosBle.PingRequest.Builder getPingBuilder() {
-        return getPingFieldBuilder().getBuilder();
-      }
-      /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
-       */
-      @java.lang.Override
-      public mentraos.ble.MentraosBle.PingRequestOrBuilder getPingOrBuilder() {
-        if ((payloadCase_ == 16) && (pingBuilder_ != null)) {
-          return pingBuilder_.getMessageOrBuilder();
-        } else {
-          if (payloadCase_ == 16) {
-            return (mentraos.ble.MentraosBle.PingRequest) payload_;
-          }
-          return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
-        }
-      }
-      /**
-       * <code>.mentraos.ble.PingRequest ping = 16;</code>
-       */
-      private com.google.protobuf.SingleFieldBuilderV3<
-          mentraos.ble.MentraosBle.PingRequest, mentraos.ble.MentraosBle.PingRequest.Builder, mentraos.ble.MentraosBle.PingRequestOrBuilder> 
-          getPingFieldBuilder() {
-        if (pingBuilder_ == null) {
-          if (!(payloadCase_ == 16)) {
-            payload_ = mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
-          }
-          pingBuilder_ = new com.google.protobuf.SingleFieldBuilderV3<
-              mentraos.ble.MentraosBle.PingRequest, mentraos.ble.MentraosBle.PingRequest.Builder, mentraos.ble.MentraosBle.PingRequestOrBuilder>(
-                  (mentraos.ble.MentraosBle.PingRequest) payload_,
-                  getParentForChildren(),
-                  isClean());
-          payload_ = null;
-        }
-        payloadCase_ = 16;
-        onChanged();
-        return pingBuilder_;
       }
 
       private com.google.protobuf.SingleFieldBuilderV3<
@@ -8446,21 +8223,6 @@ public final class MentraosBle {
     mentraos.ble.MentraosBle.HeadUpAngleResponseOrBuilder getHeadUpAngleSetOrBuilder();
 
     /**
-     * <code>.mentraos.ble.PongResponse pong = 15;</code>
-     * @return Whether the pong field is set.
-     */
-    boolean hasPong();
-    /**
-     * <code>.mentraos.ble.PongResponse pong = 15;</code>
-     * @return The pong.
-     */
-    mentraos.ble.MentraosBle.PongResponse getPong();
-    /**
-     * <code>.mentraos.ble.PongResponse pong = 15;</code>
-     */
-    mentraos.ble.MentraosBle.PongResponseOrBuilder getPongOrBuilder();
-
-    /**
      * <pre>
      * Audio System
      * </pre>
@@ -8623,7 +8385,6 @@ public final class MentraosBle {
       DEVICE_INFO(12),
       HEAD_POSITION(13),
       HEAD_UP_ANGLE_SET(14),
-      PONG(15),
       VAD_EVENT(20),
       IMAGE_TRANSFER_COMPLETE(30),
       IMU_DATA(40),
@@ -8651,7 +8412,6 @@ public final class MentraosBle {
           case 12: return DEVICE_INFO;
           case 13: return HEAD_POSITION;
           case 14: return HEAD_UP_ANGLE_SET;
-          case 15: return PONG;
           case 20: return VAD_EVENT;
           case 30: return IMAGE_TRANSFER_COMPLETE;
           case 40: return IMU_DATA;
@@ -8837,37 +8597,6 @@ public final class MentraosBle {
          return (mentraos.ble.MentraosBle.HeadUpAngleResponse) payload_;
       }
       return mentraos.ble.MentraosBle.HeadUpAngleResponse.getDefaultInstance();
-    }
-
-    public static final int PONG_FIELD_NUMBER = 15;
-    /**
-     * <code>.mentraos.ble.PongResponse pong = 15;</code>
-     * @return Whether the pong field is set.
-     */
-    @java.lang.Override
-    public boolean hasPong() {
-      return payloadCase_ == 15;
-    }
-    /**
-     * <code>.mentraos.ble.PongResponse pong = 15;</code>
-     * @return The pong.
-     */
-    @java.lang.Override
-    public mentraos.ble.MentraosBle.PongResponse getPong() {
-      if (payloadCase_ == 15) {
-         return (mentraos.ble.MentraosBle.PongResponse) payload_;
-      }
-      return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
-    }
-    /**
-     * <code>.mentraos.ble.PongResponse pong = 15;</code>
-     */
-    @java.lang.Override
-    public mentraos.ble.MentraosBle.PongResponseOrBuilder getPongOrBuilder() {
-      if (payloadCase_ == 15) {
-         return (mentraos.ble.MentraosBle.PongResponse) payload_;
-      }
-      return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
     }
 
     public static final int VAD_EVENT_FIELD_NUMBER = 20;
@@ -9090,9 +8819,6 @@ public final class MentraosBle {
       if (payloadCase_ == 14) {
         output.writeMessage(14, (mentraos.ble.MentraosBle.HeadUpAngleResponse) payload_);
       }
-      if (payloadCase_ == 15) {
-        output.writeMessage(15, (mentraos.ble.MentraosBle.PongResponse) payload_);
-      }
       if (payloadCase_ == 20) {
         output.writeMessage(20, (mentraos.ble.MentraosBle.VadEvent) payload_);
       }
@@ -9136,10 +8862,6 @@ public final class MentraosBle {
       if (payloadCase_ == 14) {
         size += com.google.protobuf.CodedOutputStream
           .computeMessageSize(14, (mentraos.ble.MentraosBle.HeadUpAngleResponse) payload_);
-      }
-      if (payloadCase_ == 15) {
-        size += com.google.protobuf.CodedOutputStream
-          .computeMessageSize(15, (mentraos.ble.MentraosBle.PongResponse) payload_);
       }
       if (payloadCase_ == 20) {
         size += com.google.protobuf.CodedOutputStream
@@ -9198,10 +8920,6 @@ public final class MentraosBle {
           if (!getHeadUpAngleSet()
               .equals(other.getHeadUpAngleSet())) return false;
           break;
-        case 15:
-          if (!getPong()
-              .equals(other.getPong())) return false;
-          break;
         case 20:
           if (!getVadEvent()
               .equals(other.getVadEvent())) return false;
@@ -9256,10 +8974,6 @@ public final class MentraosBle {
         case 14:
           hash = (37 * hash) + HEAD_UP_ANGLE_SET_FIELD_NUMBER;
           hash = (53 * hash) + getHeadUpAngleSet().hashCode();
-          break;
-        case 15:
-          hash = (37 * hash) + PONG_FIELD_NUMBER;
-          hash = (53 * hash) + getPong().hashCode();
           break;
         case 20:
           hash = (37 * hash) + VAD_EVENT_FIELD_NUMBER;
@@ -9434,9 +9148,6 @@ public final class MentraosBle {
         if (headUpAngleSetBuilder_ != null) {
           headUpAngleSetBuilder_.clear();
         }
-        if (pongBuilder_ != null) {
-          pongBuilder_.clear();
-        }
         if (vadEventBuilder_ != null) {
           vadEventBuilder_.clear();
         }
@@ -9512,10 +9223,6 @@ public final class MentraosBle {
         if (payloadCase_ == 14 &&
             headUpAngleSetBuilder_ != null) {
           result.payload_ = headUpAngleSetBuilder_.build();
-        }
-        if (payloadCase_ == 15 &&
-            pongBuilder_ != null) {
-          result.payload_ = pongBuilder_.build();
         }
         if (payloadCase_ == 20 &&
             vadEventBuilder_ != null) {
@@ -9604,10 +9311,6 @@ public final class MentraosBle {
             mergeHeadUpAngleSet(other.getHeadUpAngleSet());
             break;
           }
-          case PONG: {
-            mergePong(other.getPong());
-            break;
-          }
           case VAD_EVENT: {
             mergeVadEvent(other.getVadEvent());
             break;
@@ -9693,13 +9396,6 @@ public final class MentraosBle {
                 payloadCase_ = 14;
                 break;
               } // case 114
-              case 122: {
-                input.readMessage(
-                    getPongFieldBuilder().getBuilder(),
-                    extensionRegistry);
-                payloadCase_ = 15;
-                break;
-              } // case 122
               case 162: {
                 input.readMessage(
                     getVadEventFieldBuilder().getBuilder(),
@@ -10511,148 +10207,6 @@ public final class MentraosBle {
         payloadCase_ = 14;
         onChanged();
         return headUpAngleSetBuilder_;
-      }
-
-      private com.google.protobuf.SingleFieldBuilderV3<
-          mentraos.ble.MentraosBle.PongResponse, mentraos.ble.MentraosBle.PongResponse.Builder, mentraos.ble.MentraosBle.PongResponseOrBuilder> pongBuilder_;
-      /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
-       * @return Whether the pong field is set.
-       */
-      @java.lang.Override
-      public boolean hasPong() {
-        return payloadCase_ == 15;
-      }
-      /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
-       * @return The pong.
-       */
-      @java.lang.Override
-      public mentraos.ble.MentraosBle.PongResponse getPong() {
-        if (pongBuilder_ == null) {
-          if (payloadCase_ == 15) {
-            return (mentraos.ble.MentraosBle.PongResponse) payload_;
-          }
-          return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
-        } else {
-          if (payloadCase_ == 15) {
-            return pongBuilder_.getMessage();
-          }
-          return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
-        }
-      }
-      /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
-       */
-      public Builder setPong(mentraos.ble.MentraosBle.PongResponse value) {
-        if (pongBuilder_ == null) {
-          if (value == null) {
-            throw new NullPointerException();
-          }
-          payload_ = value;
-          onChanged();
-        } else {
-          pongBuilder_.setMessage(value);
-        }
-        payloadCase_ = 15;
-        return this;
-      }
-      /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
-       */
-      public Builder setPong(
-          mentraos.ble.MentraosBle.PongResponse.Builder builderForValue) {
-        if (pongBuilder_ == null) {
-          payload_ = builderForValue.build();
-          onChanged();
-        } else {
-          pongBuilder_.setMessage(builderForValue.build());
-        }
-        payloadCase_ = 15;
-        return this;
-      }
-      /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
-       */
-      public Builder mergePong(mentraos.ble.MentraosBle.PongResponse value) {
-        if (pongBuilder_ == null) {
-          if (payloadCase_ == 15 &&
-              payload_ != mentraos.ble.MentraosBle.PongResponse.getDefaultInstance()) {
-            payload_ = mentraos.ble.MentraosBle.PongResponse.newBuilder((mentraos.ble.MentraosBle.PongResponse) payload_)
-                .mergeFrom(value).buildPartial();
-          } else {
-            payload_ = value;
-          }
-          onChanged();
-        } else {
-          if (payloadCase_ == 15) {
-            pongBuilder_.mergeFrom(value);
-          } else {
-            pongBuilder_.setMessage(value);
-          }
-        }
-        payloadCase_ = 15;
-        return this;
-      }
-      /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
-       */
-      public Builder clearPong() {
-        if (pongBuilder_ == null) {
-          if (payloadCase_ == 15) {
-            payloadCase_ = 0;
-            payload_ = null;
-            onChanged();
-          }
-        } else {
-          if (payloadCase_ == 15) {
-            payloadCase_ = 0;
-            payload_ = null;
-          }
-          pongBuilder_.clear();
-        }
-        return this;
-      }
-      /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
-       */
-      public mentraos.ble.MentraosBle.PongResponse.Builder getPongBuilder() {
-        return getPongFieldBuilder().getBuilder();
-      }
-      /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
-       */
-      @java.lang.Override
-      public mentraos.ble.MentraosBle.PongResponseOrBuilder getPongOrBuilder() {
-        if ((payloadCase_ == 15) && (pongBuilder_ != null)) {
-          return pongBuilder_.getMessageOrBuilder();
-        } else {
-          if (payloadCase_ == 15) {
-            return (mentraos.ble.MentraosBle.PongResponse) payload_;
-          }
-          return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
-        }
-      }
-      /**
-       * <code>.mentraos.ble.PongResponse pong = 15;</code>
-       */
-      private com.google.protobuf.SingleFieldBuilderV3<
-          mentraos.ble.MentraosBle.PongResponse, mentraos.ble.MentraosBle.PongResponse.Builder, mentraos.ble.MentraosBle.PongResponseOrBuilder> 
-          getPongFieldBuilder() {
-        if (pongBuilder_ == null) {
-          if (!(payloadCase_ == 15)) {
-            payload_ = mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
-          }
-          pongBuilder_ = new com.google.protobuf.SingleFieldBuilderV3<
-              mentraos.ble.MentraosBle.PongResponse, mentraos.ble.MentraosBle.PongResponse.Builder, mentraos.ble.MentraosBle.PongResponseOrBuilder>(
-                  (mentraos.ble.MentraosBle.PongResponse) payload_,
-                  getParentForChildren(),
-                  isClean());
-          payload_ = null;
-        }
-        payloadCase_ = 15;
-        onChanged();
-        return pongBuilder_;
       }
 
       private com.google.protobuf.SingleFieldBuilderV3<
@@ -18086,800 +17640,6 @@ public final class MentraosBle {
 
     @java.lang.Override
     public mentraos.ble.MentraosBle.HeadUpAngleResponse getDefaultInstanceForType() {
-      return DEFAULT_INSTANCE;
-    }
-
-  }
-
-  public interface PingRequestOrBuilder extends
-      // @@protoc_insertion_point(interface_extends:mentraos.ble.PingRequest)
-      com.google.protobuf.MessageOrBuilder {
-  }
-  /**
-   * Protobuf type {@code mentraos.ble.PingRequest}
-   */
-  public static final class PingRequest extends
-      com.google.protobuf.GeneratedMessageV3 implements
-      // @@protoc_insertion_point(message_implements:mentraos.ble.PingRequest)
-      PingRequestOrBuilder {
-  private static final long serialVersionUID = 0L;
-    // Use PingRequest.newBuilder() to construct.
-    private PingRequest(com.google.protobuf.GeneratedMessageV3.Builder<?> builder) {
-      super(builder);
-    }
-    private PingRequest() {
-    }
-
-    @java.lang.Override
-    @SuppressWarnings({"unused"})
-    protected java.lang.Object newInstance(
-        UnusedPrivateParameter unused) {
-      return new PingRequest();
-    }
-
-    public static final com.google.protobuf.Descriptors.Descriptor
-        getDescriptor() {
-      return mentraos.ble.MentraosBle.internal_static_mentraos_ble_PingRequest_descriptor;
-    }
-
-    @java.lang.Override
-    protected com.google.protobuf.GeneratedMessageV3.FieldAccessorTable
-        internalGetFieldAccessorTable() {
-      return mentraos.ble.MentraosBle.internal_static_mentraos_ble_PingRequest_fieldAccessorTable
-          .ensureFieldAccessorsInitialized(
-              mentraos.ble.MentraosBle.PingRequest.class, mentraos.ble.MentraosBle.PingRequest.Builder.class);
-    }
-
-    private byte memoizedIsInitialized = -1;
-    @java.lang.Override
-    public final boolean isInitialized() {
-      byte isInitialized = memoizedIsInitialized;
-      if (isInitialized == 1) return true;
-      if (isInitialized == 0) return false;
-
-      memoizedIsInitialized = 1;
-      return true;
-    }
-
-    @java.lang.Override
-    public void writeTo(com.google.protobuf.CodedOutputStream output)
-                        throws java.io.IOException {
-      getUnknownFields().writeTo(output);
-    }
-
-    @java.lang.Override
-    public int getSerializedSize() {
-      int size = memoizedSize;
-      if (size != -1) return size;
-
-      size = 0;
-      size += getUnknownFields().getSerializedSize();
-      memoizedSize = size;
-      return size;
-    }
-
-    @java.lang.Override
-    public boolean equals(final java.lang.Object obj) {
-      if (obj == this) {
-       return true;
-      }
-      if (!(obj instanceof mentraos.ble.MentraosBle.PingRequest)) {
-        return super.equals(obj);
-      }
-      mentraos.ble.MentraosBle.PingRequest other = (mentraos.ble.MentraosBle.PingRequest) obj;
-
-      if (!getUnknownFields().equals(other.getUnknownFields())) return false;
-      return true;
-    }
-
-    @java.lang.Override
-    public int hashCode() {
-      if (memoizedHashCode != 0) {
-        return memoizedHashCode;
-      }
-      int hash = 41;
-      hash = (19 * hash) + getDescriptor().hashCode();
-      hash = (29 * hash) + getUnknownFields().hashCode();
-      memoizedHashCode = hash;
-      return hash;
-    }
-
-    public static mentraos.ble.MentraosBle.PingRequest parseFrom(
-        java.nio.ByteBuffer data)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data);
-    }
-    public static mentraos.ble.MentraosBle.PingRequest parseFrom(
-        java.nio.ByteBuffer data,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data, extensionRegistry);
-    }
-    public static mentraos.ble.MentraosBle.PingRequest parseFrom(
-        com.google.protobuf.ByteString data)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data);
-    }
-    public static mentraos.ble.MentraosBle.PingRequest parseFrom(
-        com.google.protobuf.ByteString data,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data, extensionRegistry);
-    }
-    public static mentraos.ble.MentraosBle.PingRequest parseFrom(byte[] data)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data);
-    }
-    public static mentraos.ble.MentraosBle.PingRequest parseFrom(
-        byte[] data,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data, extensionRegistry);
-    }
-    public static mentraos.ble.MentraosBle.PingRequest parseFrom(java.io.InputStream input)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessageV3
-          .parseWithIOException(PARSER, input);
-    }
-    public static mentraos.ble.MentraosBle.PingRequest parseFrom(
-        java.io.InputStream input,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessageV3
-          .parseWithIOException(PARSER, input, extensionRegistry);
-    }
-
-    public static mentraos.ble.MentraosBle.PingRequest parseDelimitedFrom(java.io.InputStream input)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessageV3
-          .parseDelimitedWithIOException(PARSER, input);
-    }
-
-    public static mentraos.ble.MentraosBle.PingRequest parseDelimitedFrom(
-        java.io.InputStream input,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessageV3
-          .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
-    }
-    public static mentraos.ble.MentraosBle.PingRequest parseFrom(
-        com.google.protobuf.CodedInputStream input)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessageV3
-          .parseWithIOException(PARSER, input);
-    }
-    public static mentraos.ble.MentraosBle.PingRequest parseFrom(
-        com.google.protobuf.CodedInputStream input,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessageV3
-          .parseWithIOException(PARSER, input, extensionRegistry);
-    }
-
-    @java.lang.Override
-    public Builder newBuilderForType() { return newBuilder(); }
-    public static Builder newBuilder() {
-      return DEFAULT_INSTANCE.toBuilder();
-    }
-    public static Builder newBuilder(mentraos.ble.MentraosBle.PingRequest prototype) {
-      return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
-    }
-    @java.lang.Override
-    public Builder toBuilder() {
-      return this == DEFAULT_INSTANCE
-          ? new Builder() : new Builder().mergeFrom(this);
-    }
-
-    @java.lang.Override
-    protected Builder newBuilderForType(
-        com.google.protobuf.GeneratedMessageV3.BuilderParent parent) {
-      Builder builder = new Builder(parent);
-      return builder;
-    }
-    /**
-     * Protobuf type {@code mentraos.ble.PingRequest}
-     */
-    public static final class Builder extends
-        com.google.protobuf.GeneratedMessageV3.Builder<Builder> implements
-        // @@protoc_insertion_point(builder_implements:mentraos.ble.PingRequest)
-        mentraos.ble.MentraosBle.PingRequestOrBuilder {
-      public static final com.google.protobuf.Descriptors.Descriptor
-          getDescriptor() {
-        return mentraos.ble.MentraosBle.internal_static_mentraos_ble_PingRequest_descriptor;
-      }
-
-      @java.lang.Override
-      protected com.google.protobuf.GeneratedMessageV3.FieldAccessorTable
-          internalGetFieldAccessorTable() {
-        return mentraos.ble.MentraosBle.internal_static_mentraos_ble_PingRequest_fieldAccessorTable
-            .ensureFieldAccessorsInitialized(
-                mentraos.ble.MentraosBle.PingRequest.class, mentraos.ble.MentraosBle.PingRequest.Builder.class);
-      }
-
-      // Construct using mentraos.ble.MentraosBle.PingRequest.newBuilder()
-      private Builder() {
-
-      }
-
-      private Builder(
-          com.google.protobuf.GeneratedMessageV3.BuilderParent parent) {
-        super(parent);
-
-      }
-      @java.lang.Override
-      public Builder clear() {
-        super.clear();
-        return this;
-      }
-
-      @java.lang.Override
-      public com.google.protobuf.Descriptors.Descriptor
-          getDescriptorForType() {
-        return mentraos.ble.MentraosBle.internal_static_mentraos_ble_PingRequest_descriptor;
-      }
-
-      @java.lang.Override
-      public mentraos.ble.MentraosBle.PingRequest getDefaultInstanceForType() {
-        return mentraos.ble.MentraosBle.PingRequest.getDefaultInstance();
-      }
-
-      @java.lang.Override
-      public mentraos.ble.MentraosBle.PingRequest build() {
-        mentraos.ble.MentraosBle.PingRequest result = buildPartial();
-        if (!result.isInitialized()) {
-          throw newUninitializedMessageException(result);
-        }
-        return result;
-      }
-
-      @java.lang.Override
-      public mentraos.ble.MentraosBle.PingRequest buildPartial() {
-        mentraos.ble.MentraosBle.PingRequest result = new mentraos.ble.MentraosBle.PingRequest(this);
-        onBuilt();
-        return result;
-      }
-
-      @java.lang.Override
-      public Builder clone() {
-        return super.clone();
-      }
-      @java.lang.Override
-      public Builder setField(
-          com.google.protobuf.Descriptors.FieldDescriptor field,
-          java.lang.Object value) {
-        return super.setField(field, value);
-      }
-      @java.lang.Override
-      public Builder clearField(
-          com.google.protobuf.Descriptors.FieldDescriptor field) {
-        return super.clearField(field);
-      }
-      @java.lang.Override
-      public Builder clearOneof(
-          com.google.protobuf.Descriptors.OneofDescriptor oneof) {
-        return super.clearOneof(oneof);
-      }
-      @java.lang.Override
-      public Builder setRepeatedField(
-          com.google.protobuf.Descriptors.FieldDescriptor field,
-          int index, java.lang.Object value) {
-        return super.setRepeatedField(field, index, value);
-      }
-      @java.lang.Override
-      public Builder addRepeatedField(
-          com.google.protobuf.Descriptors.FieldDescriptor field,
-          java.lang.Object value) {
-        return super.addRepeatedField(field, value);
-      }
-      @java.lang.Override
-      public Builder mergeFrom(com.google.protobuf.Message other) {
-        if (other instanceof mentraos.ble.MentraosBle.PingRequest) {
-          return mergeFrom((mentraos.ble.MentraosBle.PingRequest)other);
-        } else {
-          super.mergeFrom(other);
-          return this;
-        }
-      }
-
-      public Builder mergeFrom(mentraos.ble.MentraosBle.PingRequest other) {
-        if (other == mentraos.ble.MentraosBle.PingRequest.getDefaultInstance()) return this;
-        this.mergeUnknownFields(other.getUnknownFields());
-        onChanged();
-        return this;
-      }
-
-      @java.lang.Override
-      public final boolean isInitialized() {
-        return true;
-      }
-
-      @java.lang.Override
-      public Builder mergeFrom(
-          com.google.protobuf.CodedInputStream input,
-          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-          throws java.io.IOException {
-        if (extensionRegistry == null) {
-          throw new java.lang.NullPointerException();
-        }
-        try {
-          boolean done = false;
-          while (!done) {
-            int tag = input.readTag();
-            switch (tag) {
-              case 0:
-                done = true;
-                break;
-              default: {
-                if (!super.parseUnknownField(input, extensionRegistry, tag)) {
-                  done = true; // was an endgroup tag
-                }
-                break;
-              } // default:
-            } // switch (tag)
-          } // while (!done)
-        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
-          throw e.unwrapIOException();
-        } finally {
-          onChanged();
-        } // finally
-        return this;
-      }
-      @java.lang.Override
-      public final Builder setUnknownFields(
-          final com.google.protobuf.UnknownFieldSet unknownFields) {
-        return super.setUnknownFields(unknownFields);
-      }
-
-      @java.lang.Override
-      public final Builder mergeUnknownFields(
-          final com.google.protobuf.UnknownFieldSet unknownFields) {
-        return super.mergeUnknownFields(unknownFields);
-      }
-
-
-      // @@protoc_insertion_point(builder_scope:mentraos.ble.PingRequest)
-    }
-
-    // @@protoc_insertion_point(class_scope:mentraos.ble.PingRequest)
-    private static final mentraos.ble.MentraosBle.PingRequest DEFAULT_INSTANCE;
-    static {
-      DEFAULT_INSTANCE = new mentraos.ble.MentraosBle.PingRequest();
-    }
-
-    public static mentraos.ble.MentraosBle.PingRequest getDefaultInstance() {
-      return DEFAULT_INSTANCE;
-    }
-
-    private static final com.google.protobuf.Parser<PingRequest>
-        PARSER = new com.google.protobuf.AbstractParser<PingRequest>() {
-      @java.lang.Override
-      public PingRequest parsePartialFrom(
-          com.google.protobuf.CodedInputStream input,
-          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-          throws com.google.protobuf.InvalidProtocolBufferException {
-        Builder builder = newBuilder();
-        try {
-          builder.mergeFrom(input, extensionRegistry);
-        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
-          throw e.setUnfinishedMessage(builder.buildPartial());
-        } catch (com.google.protobuf.UninitializedMessageException e) {
-          throw e.asInvalidProtocolBufferException().setUnfinishedMessage(builder.buildPartial());
-        } catch (java.io.IOException e) {
-          throw new com.google.protobuf.InvalidProtocolBufferException(e)
-              .setUnfinishedMessage(builder.buildPartial());
-        }
-        return builder.buildPartial();
-      }
-    };
-
-    public static com.google.protobuf.Parser<PingRequest> parser() {
-      return PARSER;
-    }
-
-    @java.lang.Override
-    public com.google.protobuf.Parser<PingRequest> getParserForType() {
-      return PARSER;
-    }
-
-    @java.lang.Override
-    public mentraos.ble.MentraosBle.PingRequest getDefaultInstanceForType() {
-      return DEFAULT_INSTANCE;
-    }
-
-  }
-
-  public interface PongResponseOrBuilder extends
-      // @@protoc_insertion_point(interface_extends:mentraos.ble.PongResponse)
-      com.google.protobuf.MessageOrBuilder {
-  }
-  /**
-   * Protobuf type {@code mentraos.ble.PongResponse}
-   */
-  public static final class PongResponse extends
-      com.google.protobuf.GeneratedMessageV3 implements
-      // @@protoc_insertion_point(message_implements:mentraos.ble.PongResponse)
-      PongResponseOrBuilder {
-  private static final long serialVersionUID = 0L;
-    // Use PongResponse.newBuilder() to construct.
-    private PongResponse(com.google.protobuf.GeneratedMessageV3.Builder<?> builder) {
-      super(builder);
-    }
-    private PongResponse() {
-    }
-
-    @java.lang.Override
-    @SuppressWarnings({"unused"})
-    protected java.lang.Object newInstance(
-        UnusedPrivateParameter unused) {
-      return new PongResponse();
-    }
-
-    public static final com.google.protobuf.Descriptors.Descriptor
-        getDescriptor() {
-      return mentraos.ble.MentraosBle.internal_static_mentraos_ble_PongResponse_descriptor;
-    }
-
-    @java.lang.Override
-    protected com.google.protobuf.GeneratedMessageV3.FieldAccessorTable
-        internalGetFieldAccessorTable() {
-      return mentraos.ble.MentraosBle.internal_static_mentraos_ble_PongResponse_fieldAccessorTable
-          .ensureFieldAccessorsInitialized(
-              mentraos.ble.MentraosBle.PongResponse.class, mentraos.ble.MentraosBle.PongResponse.Builder.class);
-    }
-
-    private byte memoizedIsInitialized = -1;
-    @java.lang.Override
-    public final boolean isInitialized() {
-      byte isInitialized = memoizedIsInitialized;
-      if (isInitialized == 1) return true;
-      if (isInitialized == 0) return false;
-
-      memoizedIsInitialized = 1;
-      return true;
-    }
-
-    @java.lang.Override
-    public void writeTo(com.google.protobuf.CodedOutputStream output)
-                        throws java.io.IOException {
-      getUnknownFields().writeTo(output);
-    }
-
-    @java.lang.Override
-    public int getSerializedSize() {
-      int size = memoizedSize;
-      if (size != -1) return size;
-
-      size = 0;
-      size += getUnknownFields().getSerializedSize();
-      memoizedSize = size;
-      return size;
-    }
-
-    @java.lang.Override
-    public boolean equals(final java.lang.Object obj) {
-      if (obj == this) {
-       return true;
-      }
-      if (!(obj instanceof mentraos.ble.MentraosBle.PongResponse)) {
-        return super.equals(obj);
-      }
-      mentraos.ble.MentraosBle.PongResponse other = (mentraos.ble.MentraosBle.PongResponse) obj;
-
-      if (!getUnknownFields().equals(other.getUnknownFields())) return false;
-      return true;
-    }
-
-    @java.lang.Override
-    public int hashCode() {
-      if (memoizedHashCode != 0) {
-        return memoizedHashCode;
-      }
-      int hash = 41;
-      hash = (19 * hash) + getDescriptor().hashCode();
-      hash = (29 * hash) + getUnknownFields().hashCode();
-      memoizedHashCode = hash;
-      return hash;
-    }
-
-    public static mentraos.ble.MentraosBle.PongResponse parseFrom(
-        java.nio.ByteBuffer data)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data);
-    }
-    public static mentraos.ble.MentraosBle.PongResponse parseFrom(
-        java.nio.ByteBuffer data,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data, extensionRegistry);
-    }
-    public static mentraos.ble.MentraosBle.PongResponse parseFrom(
-        com.google.protobuf.ByteString data)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data);
-    }
-    public static mentraos.ble.MentraosBle.PongResponse parseFrom(
-        com.google.protobuf.ByteString data,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data, extensionRegistry);
-    }
-    public static mentraos.ble.MentraosBle.PongResponse parseFrom(byte[] data)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data);
-    }
-    public static mentraos.ble.MentraosBle.PongResponse parseFrom(
-        byte[] data,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws com.google.protobuf.InvalidProtocolBufferException {
-      return PARSER.parseFrom(data, extensionRegistry);
-    }
-    public static mentraos.ble.MentraosBle.PongResponse parseFrom(java.io.InputStream input)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessageV3
-          .parseWithIOException(PARSER, input);
-    }
-    public static mentraos.ble.MentraosBle.PongResponse parseFrom(
-        java.io.InputStream input,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessageV3
-          .parseWithIOException(PARSER, input, extensionRegistry);
-    }
-
-    public static mentraos.ble.MentraosBle.PongResponse parseDelimitedFrom(java.io.InputStream input)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessageV3
-          .parseDelimitedWithIOException(PARSER, input);
-    }
-
-    public static mentraos.ble.MentraosBle.PongResponse parseDelimitedFrom(
-        java.io.InputStream input,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessageV3
-          .parseDelimitedWithIOException(PARSER, input, extensionRegistry);
-    }
-    public static mentraos.ble.MentraosBle.PongResponse parseFrom(
-        com.google.protobuf.CodedInputStream input)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessageV3
-          .parseWithIOException(PARSER, input);
-    }
-    public static mentraos.ble.MentraosBle.PongResponse parseFrom(
-        com.google.protobuf.CodedInputStream input,
-        com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-        throws java.io.IOException {
-      return com.google.protobuf.GeneratedMessageV3
-          .parseWithIOException(PARSER, input, extensionRegistry);
-    }
-
-    @java.lang.Override
-    public Builder newBuilderForType() { return newBuilder(); }
-    public static Builder newBuilder() {
-      return DEFAULT_INSTANCE.toBuilder();
-    }
-    public static Builder newBuilder(mentraos.ble.MentraosBle.PongResponse prototype) {
-      return DEFAULT_INSTANCE.toBuilder().mergeFrom(prototype);
-    }
-    @java.lang.Override
-    public Builder toBuilder() {
-      return this == DEFAULT_INSTANCE
-          ? new Builder() : new Builder().mergeFrom(this);
-    }
-
-    @java.lang.Override
-    protected Builder newBuilderForType(
-        com.google.protobuf.GeneratedMessageV3.BuilderParent parent) {
-      Builder builder = new Builder(parent);
-      return builder;
-    }
-    /**
-     * Protobuf type {@code mentraos.ble.PongResponse}
-     */
-    public static final class Builder extends
-        com.google.protobuf.GeneratedMessageV3.Builder<Builder> implements
-        // @@protoc_insertion_point(builder_implements:mentraos.ble.PongResponse)
-        mentraos.ble.MentraosBle.PongResponseOrBuilder {
-      public static final com.google.protobuf.Descriptors.Descriptor
-          getDescriptor() {
-        return mentraos.ble.MentraosBle.internal_static_mentraos_ble_PongResponse_descriptor;
-      }
-
-      @java.lang.Override
-      protected com.google.protobuf.GeneratedMessageV3.FieldAccessorTable
-          internalGetFieldAccessorTable() {
-        return mentraos.ble.MentraosBle.internal_static_mentraos_ble_PongResponse_fieldAccessorTable
-            .ensureFieldAccessorsInitialized(
-                mentraos.ble.MentraosBle.PongResponse.class, mentraos.ble.MentraosBle.PongResponse.Builder.class);
-      }
-
-      // Construct using mentraos.ble.MentraosBle.PongResponse.newBuilder()
-      private Builder() {
-
-      }
-
-      private Builder(
-          com.google.protobuf.GeneratedMessageV3.BuilderParent parent) {
-        super(parent);
-
-      }
-      @java.lang.Override
-      public Builder clear() {
-        super.clear();
-        return this;
-      }
-
-      @java.lang.Override
-      public com.google.protobuf.Descriptors.Descriptor
-          getDescriptorForType() {
-        return mentraos.ble.MentraosBle.internal_static_mentraos_ble_PongResponse_descriptor;
-      }
-
-      @java.lang.Override
-      public mentraos.ble.MentraosBle.PongResponse getDefaultInstanceForType() {
-        return mentraos.ble.MentraosBle.PongResponse.getDefaultInstance();
-      }
-
-      @java.lang.Override
-      public mentraos.ble.MentraosBle.PongResponse build() {
-        mentraos.ble.MentraosBle.PongResponse result = buildPartial();
-        if (!result.isInitialized()) {
-          throw newUninitializedMessageException(result);
-        }
-        return result;
-      }
-
-      @java.lang.Override
-      public mentraos.ble.MentraosBle.PongResponse buildPartial() {
-        mentraos.ble.MentraosBle.PongResponse result = new mentraos.ble.MentraosBle.PongResponse(this);
-        onBuilt();
-        return result;
-      }
-
-      @java.lang.Override
-      public Builder clone() {
-        return super.clone();
-      }
-      @java.lang.Override
-      public Builder setField(
-          com.google.protobuf.Descriptors.FieldDescriptor field,
-          java.lang.Object value) {
-        return super.setField(field, value);
-      }
-      @java.lang.Override
-      public Builder clearField(
-          com.google.protobuf.Descriptors.FieldDescriptor field) {
-        return super.clearField(field);
-      }
-      @java.lang.Override
-      public Builder clearOneof(
-          com.google.protobuf.Descriptors.OneofDescriptor oneof) {
-        return super.clearOneof(oneof);
-      }
-      @java.lang.Override
-      public Builder setRepeatedField(
-          com.google.protobuf.Descriptors.FieldDescriptor field,
-          int index, java.lang.Object value) {
-        return super.setRepeatedField(field, index, value);
-      }
-      @java.lang.Override
-      public Builder addRepeatedField(
-          com.google.protobuf.Descriptors.FieldDescriptor field,
-          java.lang.Object value) {
-        return super.addRepeatedField(field, value);
-      }
-      @java.lang.Override
-      public Builder mergeFrom(com.google.protobuf.Message other) {
-        if (other instanceof mentraos.ble.MentraosBle.PongResponse) {
-          return mergeFrom((mentraos.ble.MentraosBle.PongResponse)other);
-        } else {
-          super.mergeFrom(other);
-          return this;
-        }
-      }
-
-      public Builder mergeFrom(mentraos.ble.MentraosBle.PongResponse other) {
-        if (other == mentraos.ble.MentraosBle.PongResponse.getDefaultInstance()) return this;
-        this.mergeUnknownFields(other.getUnknownFields());
-        onChanged();
-        return this;
-      }
-
-      @java.lang.Override
-      public final boolean isInitialized() {
-        return true;
-      }
-
-      @java.lang.Override
-      public Builder mergeFrom(
-          com.google.protobuf.CodedInputStream input,
-          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-          throws java.io.IOException {
-        if (extensionRegistry == null) {
-          throw new java.lang.NullPointerException();
-        }
-        try {
-          boolean done = false;
-          while (!done) {
-            int tag = input.readTag();
-            switch (tag) {
-              case 0:
-                done = true;
-                break;
-              default: {
-                if (!super.parseUnknownField(input, extensionRegistry, tag)) {
-                  done = true; // was an endgroup tag
-                }
-                break;
-              } // default:
-            } // switch (tag)
-          } // while (!done)
-        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
-          throw e.unwrapIOException();
-        } finally {
-          onChanged();
-        } // finally
-        return this;
-      }
-      @java.lang.Override
-      public final Builder setUnknownFields(
-          final com.google.protobuf.UnknownFieldSet unknownFields) {
-        return super.setUnknownFields(unknownFields);
-      }
-
-      @java.lang.Override
-      public final Builder mergeUnknownFields(
-          final com.google.protobuf.UnknownFieldSet unknownFields) {
-        return super.mergeUnknownFields(unknownFields);
-      }
-
-
-      // @@protoc_insertion_point(builder_scope:mentraos.ble.PongResponse)
-    }
-
-    // @@protoc_insertion_point(class_scope:mentraos.ble.PongResponse)
-    private static final mentraos.ble.MentraosBle.PongResponse DEFAULT_INSTANCE;
-    static {
-      DEFAULT_INSTANCE = new mentraos.ble.MentraosBle.PongResponse();
-    }
-
-    public static mentraos.ble.MentraosBle.PongResponse getDefaultInstance() {
-      return DEFAULT_INSTANCE;
-    }
-
-    private static final com.google.protobuf.Parser<PongResponse>
-        PARSER = new com.google.protobuf.AbstractParser<PongResponse>() {
-      @java.lang.Override
-      public PongResponse parsePartialFrom(
-          com.google.protobuf.CodedInputStream input,
-          com.google.protobuf.ExtensionRegistryLite extensionRegistry)
-          throws com.google.protobuf.InvalidProtocolBufferException {
-        Builder builder = newBuilder();
-        try {
-          builder.mergeFrom(input, extensionRegistry);
-        } catch (com.google.protobuf.InvalidProtocolBufferException e) {
-          throw e.setUnfinishedMessage(builder.buildPartial());
-        } catch (com.google.protobuf.UninitializedMessageException e) {
-          throw e.asInvalidProtocolBufferException().setUnfinishedMessage(builder.buildPartial());
-        } catch (java.io.IOException e) {
-          throw new com.google.protobuf.InvalidProtocolBufferException(e)
-              .setUnfinishedMessage(builder.buildPartial());
-        }
-        return builder.buildPartial();
-      }
-    };
-
-    public static com.google.protobuf.Parser<PongResponse> parser() {
-      return PARSER;
-    }
-
-    @java.lang.Override
-    public com.google.protobuf.Parser<PongResponse> getParserForType() {
-      return PARSER;
-    }
-
-    @java.lang.Override
-    public mentraos.ble.MentraosBle.PongResponse getDefaultInstanceForType() {
       return DEFAULT_INSTANCE;
     }
 
@@ -40039,16 +38799,6 @@ public final class MentraosBle {
     com.google.protobuf.GeneratedMessageV3.FieldAccessorTable
       internal_static_mentraos_ble_HeadUpAngleResponse_fieldAccessorTable;
   private static final com.google.protobuf.Descriptors.Descriptor
-    internal_static_mentraos_ble_PingRequest_descriptor;
-  private static final 
-    com.google.protobuf.GeneratedMessageV3.FieldAccessorTable
-      internal_static_mentraos_ble_PingRequest_fieldAccessorTable;
-  private static final com.google.protobuf.Descriptors.Descriptor
-    internal_static_mentraos_ble_PongResponse_descriptor;
-  private static final 
-    com.google.protobuf.GeneratedMessageV3.FieldAccessorTable
-      internal_static_mentraos_ble_PongResponse_fieldAccessorTable;
-  private static final com.google.protobuf.Descriptors.Descriptor
     internal_static_mentraos_ble_MicStateConfig_descriptor;
   private static final 
     com.google.protobuf.GeneratedMessageV3.FieldAccessorTable
@@ -40217,7 +38967,7 @@ public final class MentraosBle {
       descriptor;
   static {
     java.lang.String[] descriptorData = {
-      "\n\022mentraos_ble.proto\022\014mentraos.ble\"\334\016\n\016P" +
+      "\n\022mentraos_ble.proto\022\014mentraos.ble\"\261\016\n\016P" +
       "honeToGlasses\022\016\n\006msg_id\030\001 \001(\t\0225\n\ndisconn" +
       "ect\030\n \001(\0132\037.mentraos.ble.DisconnectReque" +
       "stH\000\022:\n\rbattery_state\030\013 \001(\0132!.mentraos.b" +
@@ -40227,137 +38977,134 @@ public final class MentraosBle {
       "PairingModeRequestH\000\022:\n\rhead_position\030\016 " +
       "\001(\0132!.mentraos.ble.HeadPositionRequestH\000" +
       "\0228\n\rhead_up_angle\030\017 \001(\0132\037.mentraos.ble.H" +
-      "eadUpAngleConfigH\000\022)\n\004ping\030\020 \001(\0132\031.mentr" +
-      "aos.ble.PingRequestH\000\0221\n\tmic_state\030\024 \001(\013" +
-      "2\034.mentraos.ble.MicStateConfigH\000\0225\n\013vad_" +
-      "enabled\030\025 \001(\0132\036.mentraos.ble.VadEnabledC" +
-      "onfigH\000\022-\n\nvad_config\030\026 \001(\0132\027.mentraos.b" +
-      "le.VadConfigH\000\0221\n\014display_text\030\036 \001(\0132\031.m" +
-      "entraos.ble.DisplayTextH\000\0223\n\rdisplay_ima" +
-      "ge\030\037 \001(\0132\032.mentraos.ble.DisplayImageH\000\0223" +
-      "\n\rpreload_image\030  \001(\0132\032.mentraos.ble.Pre" +
-      "loadImageH\000\022@\n\024display_cached_image\030! \001(" +
-      "\0132 .mentraos.ble.DisplayCachedImageH\000\022<\n" +
-      "\022clear_cached_image\030\" \001(\0132\036.mentraos.ble" +
-      ".ClearCachedImageH\000\022D\n\026display_scrolling" +
-      "_text\030# \001(\0132\".mentraos.ble.DisplayScroll" +
-      "ingTextH\000\0229\n\rdisplay_power\030$ \001(\0132 .mentr" +
-      "aos.ble.DisplayPowerConfigH\000\0224\n\nbrightne" +
-      "ss\030% \001(\0132\036.mentraos.ble.BrightnessConfig" +
-      "H\000\022=\n\017auto_brightness\030& \001(\0132\".mentraos.b" +
-      "le.AutoBrightnessConfigH\000\022F\n\024auto_bright" +
-      "ness_mult\030\' \001(\0132&.mentraos.ble.AutoBrigh" +
-      "tnessMultiplierH\000\022+\n\tdraw_line\030( \001(\0132\026.m" +
-      "entraos.ble.DrawLineH\000\022+\n\tdraw_rect\030) \001(" +
-      "\0132\026.mentraos.ble.DrawRectH\000\022/\n\013draw_circ" +
-      "le\030* \001(\0132\030.mentraos.ble.DrawCircleH\000\022-\n\006" +
-      "commit\030+ \001(\0132\033.mentraos.ble.CommitDispla" +
-      "yH\000\022?\n\020display_distance\030, \001(\0132#.mentraos" +
-      ".ble.DisplayDistanceConfigH\000\022;\n\016display_" +
-      "height\030- \001(\0132!.mentraos.ble.DisplayHeigh" +
-      "tConfigH\000\0223\n\rclear_display\030. \001(\0132\032.mentr" +
-      "aos.ble.ClearDisplayH\000\0225\n\013imu_enabled\0302 " +
-      "\001(\0132\036.mentraos.ble.ImuEnabledConfigH\000\0224\n" +
-      "\nimu_single\0303 \001(\0132\036.mentraos.ble.ImuSing" +
-      "leRequestH\000\0223\n\nimu_stream\0304 \001(\0132\035.mentra" +
-      "os.ble.ImuStreamConfigH\000\0227\n\014head_gesture" +
-      "\0305 \001(\0132\037.mentraos.ble.HeadGestureConfigH" +
-      "\000\022/\n\007restart\030< \001(\0132\034.mentraos.ble.Restar" +
-      "tRequestH\000\022:\n\rfactory_reset\030= \001(\0132!.ment" +
-      "raos.ble.FactoryResetRequestH\000B\t\n\007payloa" +
-      "d\"\341\004\n\016GlassesToPhone\0225\n\016battery_status\030\n" +
-      " \001(\0132\033.mentraos.ble.BatteryStatusH\000\0225\n\016c" +
-      "harging_state\030\013 \001(\0132\033.mentraos.ble.Charg" +
-      "ingStateH\000\022/\n\013device_info\030\014 \001(\0132\030.mentra" +
-      "os.ble.DeviceInfoH\000\0223\n\rhead_position\030\r \001" +
-      "(\0132\032.mentraos.ble.HeadPositionH\000\022>\n\021head" +
-      "_up_angle_set\030\016 \001(\0132!.mentraos.ble.HeadU" +
-      "pAngleResponseH\000\022*\n\004pong\030\017 \001(\0132\032.mentrao" +
-      "s.ble.PongResponseH\000\022+\n\tvad_event\030\024 \001(\0132" +
-      "\026.mentraos.ble.VadEventH\000\022F\n\027image_trans" +
-      "fer_complete\030\036 \001(\0132#.mentraos.ble.ImageT" +
-      "ransferCompleteH\000\022)\n\010imu_data\030( \001(\0132\025.me" +
-      "ntraos.ble.ImuDataH\000\0221\n\014button_event\030) \001" +
-      "(\0132\031.mentraos.ble.ButtonEventH\000\0221\n\014head_" +
-      "gesture\030* \001(\0132\031.mentraos.ble.HeadGesture" +
-      "H\000B\t\n\007payload\"\023\n\021DisconnectRequest\"\025\n\023Ba" +
-      "tteryStateRequest\"0\n\rBatteryStatus\022\r\n\005le" +
-      "vel\030\001 \001(\r\022\020\n\010charging\030\002 \001(\010\"j\n\rChargingS" +
-      "tate\0220\n\005state\030\001 \001(\0162!.mentraos.ble.Charg" +
-      "ingState.State\"\'\n\005State\022\020\n\014NOT_CHARGING\020" +
-      "\000\022\014\n\010CHARGING\020\001\"\024\n\022GlassesInfoRequest\"b\n" +
-      "\nDeviceInfo\022\022\n\nfw_version\030\001 \001(\t\022\020\n\010hw_mo" +
-      "del\030\002 \001(\t\022.\n\010features\030\003 \001(\0132\034.mentraos.b" +
-      "le.DeviceFeatures\"\242\001\n\016DeviceFeatures\022\016\n\006" +
-      "camera\030\001 \001(\010\022\017\n\007display\030\002 \001(\010\022\020\n\010audio_t" +
-      "x\030\003 \001(\010\022\020\n\010audio_rx\030\004 \001(\010\022\013\n\003imu\030\005 \001(\010\022\013" +
-      "\n\003vad\030\006 \001(\010\022\025\n\rmic_switching\030\007 \001(\010\022\032\n\022im" +
-      "age_chunk_buffer\030\010 \001(\r\"\024\n\022PairingModeReq" +
-      "uest\"\025\n\023HeadPositionRequest\"\035\n\014HeadPosit" +
-      "ion\022\r\n\005angle\030\001 \001(\005\"\"\n\021HeadUpAngleConfig\022" +
-      "\r\n\005angle\030\001 \001(\r\"&\n\023HeadUpAngleResponse\022\017\n" +
-      "\007success\030\001 \001(\010\"\r\n\013PingRequest\"\016\n\014PongRes" +
-      "ponse\"!\n\016MicStateConfig\022\017\n\007enabled\030\001 \001(\010" +
-      "\"#\n\020VadEnabledConfig\022\017\n\007enabled\030\001 \001(\010\" \n" +
-      "\tVadConfig\022\023\n\013sensitivity\030\001 \001(\r\"Z\n\010VadEv" +
-      "ent\022+\n\005state\030\001 \001(\0162\034.mentraos.ble.VadEve" +
-      "nt.State\"!\n\005State\022\014\n\010INACTIVE\020\000\022\n\n\006ACTIV" +
-      "E\020\001\"a\n\013DisplayText\022\014\n\004text\030\001 \001(\t\022\r\n\005colo" +
-      "r\030\002 \001(\r\022\021\n\tfont_code\030\003 \001(\r\022\t\n\001x\030\004 \001(\r\022\t\n" +
-      "\001y\030\005 \001(\r\022\014\n\004size\030\006 \001(\r\"~\n\014DisplayImage\022\021" +
-      "\n\tstream_id\030\001 \001(\t\022\t\n\001x\030\002 \001(\r\022\t\n\001y\030\003 \001(\r\022" +
-      "\r\n\005width\030\004 \001(\r\022\016\n\006height\030\005 \001(\r\022\020\n\010encodi" +
-      "ng\030\006 \001(\t\022\024\n\014total_chunks\030\007 \001(\r\"z\n\014Preloa" +
-      "dImage\022\021\n\tstream_id\030\001 \001(\t\022\020\n\010image_id\030\002 " +
-      "\001(\r\022\r\n\005width\030\003 \001(\r\022\016\n\006height\030\004 \001(\r\022\020\n\010en" +
-      "coding\030\005 \001(\t\022\024\n\014total_chunks\030\006 \001(\r\"[\n\022Di" +
-      "splayCachedImage\022\020\n\010image_id\030\001 \001(\r\022\t\n\001x\030" +
-      "\002 \001(\r\022\t\n\001y\030\003 \001(\r\022\r\n\005width\030\004 \001(\r\022\016\n\006heigh" +
-      "t\030\005 \001(\r\"$\n\020ClearCachedImage\022\020\n\010image_id\030" +
-      "\001 \001(\r\"\271\002\n\024DisplayScrollingText\022\014\n\004text\030\001" +
-      " \001(\t\022\r\n\005color\030\002 \001(\r\022\021\n\tfont_code\030\003 \001(\r\022\t" +
-      "\n\001x\030\004 \001(\r\022\t\n\001y\030\005 \001(\r\022\r\n\005width\030\006 \001(\r\022\016\n\006h" +
-      "eight\030\007 \001(\r\022;\n\005align\030\010 \001(\0162,.mentraos.bl" +
-      "e.DisplayScrollingText.Alignment\022\024\n\014line" +
-      "_spacing\030\t \001(\r\022\r\n\005speed\030\n \001(\r\022\014\n\004size\030\013 " +
-      "\001(\r\022\014\n\004loop\030\014 \001(\010\022\020\n\010pause_ms\030\r \001(\r\",\n\tA" +
-      "lignment\022\010\n\004LEFT\020\000\022\n\n\006CENTER\020\001\022\t\n\005RIGHT\020" +
-      "\002\"\016\n\014ClearDisplay\" \n\022DisplayPowerConfig\022" +
-      "\n\n\002on\030\001 \001(\010\"!\n\020BrightnessConfig\022\r\n\005value" +
-      "\030\001 \001(\r\"\'\n\024AutoBrightnessConfig\022\017\n\007enable" +
-      "d\030\001 \001(\010\".\n\030AutoBrightnessMultiplier\022\022\n\nm" +
-      "ultiplier\030\001 \001(\002\"Y\n\010DrawLine\022\r\n\005color\030\001 \001" +
-      "(\r\022\016\n\006stroke\030\002 \001(\r\022\n\n\002x1\030\003 \001(\r\022\n\n\002y1\030\004 \001" +
-      "(\r\022\n\n\002x2\030\005 \001(\r\022\n\n\002y2\030\006 \001(\r\"^\n\010DrawRect\022\r" +
-      "\n\005color\030\001 \001(\r\022\016\n\006stroke\030\002 \001(\r\022\t\n\001x\030\003 \001(\r" +
-      "\022\t\n\001y\030\004 \001(\r\022\r\n\005width\030\005 \001(\r\022\016\n\006height\030\006 \001" +
-      "(\r\"Q\n\nDrawCircle\022\r\n\005color\030\001 \001(\r\022\016\n\006strok" +
-      "e\030\002 \001(\r\022\t\n\001x\030\003 \001(\r\022\t\n\001y\030\004 \001(\r\022\016\n\006radius\030" +
-      "\005 \001(\r\"\017\n\rCommitDisplay\",\n\025DisplayDistanc" +
-      "eConfig\022\023\n\013distance_cm\030\001 \001(\r\"%\n\023DisplayH" +
-      "eightConfig\022\016\n\006height\030\001 \001(\r\"\240\001\n\025ImageTra" +
-      "nsferComplete\022\021\n\tstream_id\030\001 \001(\t\022:\n\006stat" +
-      "us\030\002 \001(\0162*.mentraos.ble.ImageTransferCom" +
-      "plete.Status\022\026\n\016missing_chunks\030\003 \003(\r\" \n\006" +
-      "Status\022\006\n\002OK\020\000\022\016\n\nINCOMPLETE\020\001\"#\n\020ImuEna" +
-      "bledConfig\022\017\n\007enabled\030\001 \001(\010\"\022\n\020ImuSingle" +
-      "Request\"\"\n\017ImuStreamConfig\022\017\n\007enabled\030\001 " +
-      "\001(\010\"x\n\007ImuData\022$\n\005accel\030\001 \001(\0132\025.mentraos" +
-      ".ble.Vector3\022#\n\004gyro\030\002 \001(\0132\025.mentraos.bl" +
-      "e.Vector3\022\"\n\003mag\030\003 \001(\0132\025.mentraos.ble.Ve" +
-      "ctor3\"*\n\007Vector3\022\t\n\001x\030\001 \001(\002\022\t\n\001y\030\002 \001(\002\022\t" +
-      "\n\001z\030\003 \001(\002\"\265\001\n\013ButtonEvent\0220\n\006button\030\001 \001(" +
-      "\0162 .mentraos.ble.ButtonEvent.Button\022.\n\005s" +
-      "tate\030\002 \001(\0162\037.mentraos.ble.ButtonEvent.St" +
-      "ate\")\n\006Button\022\n\n\006CENTER\020\000\022\010\n\004LEFT\020\001\022\t\n\005R" +
-      "IGHT\020\002\"\031\n\005State\022\006\n\002UP\020\000\022\010\n\004DOWN\020\001\"m\n\013Hea" +
-      "dGesture\0222\n\007gesture\030\001 \001(\0162!.mentraos.ble" +
-      ".HeadGesture.Gesture\"*\n\007Gesture\022\007\n\003NOD\020\000" +
-      "\022\t\n\005SHAKE\020\001\022\013\n\007HEAD_UP\020\002\"X\n\021HeadGestureC" +
-      "onfig\0222\n\007gesture\030\001 \001(\0162!.mentraos.ble.He" +
-      "adGesture.Gesture\022\017\n\007enabled\030\002 \001(\010\"\020\n\016Re" +
-      "startRequest\"\025\n\023FactoryResetRequestb\006pro" +
-      "to3"
+      "eadUpAngleConfigH\000\0221\n\tmic_state\030\024 \001(\0132\034." +
+      "mentraos.ble.MicStateConfigH\000\0225\n\013vad_ena" +
+      "bled\030\025 \001(\0132\036.mentraos.ble.VadEnabledConf" +
+      "igH\000\022-\n\nvad_config\030\026 \001(\0132\027.mentraos.ble." +
+      "VadConfigH\000\0221\n\014display_text\030\036 \001(\0132\031.ment" +
+      "raos.ble.DisplayTextH\000\0223\n\rdisplay_image\030" +
+      "\037 \001(\0132\032.mentraos.ble.DisplayImageH\000\0223\n\rp" +
+      "reload_image\030  \001(\0132\032.mentraos.ble.Preloa" +
+      "dImageH\000\022@\n\024display_cached_image\030! \001(\0132 " +
+      ".mentraos.ble.DisplayCachedImageH\000\022<\n\022cl" +
+      "ear_cached_image\030\" \001(\0132\036.mentraos.ble.Cl" +
+      "earCachedImageH\000\022D\n\026display_scrolling_te" +
+      "xt\030# \001(\0132\".mentraos.ble.DisplayScrolling" +
+      "TextH\000\0229\n\rdisplay_power\030$ \001(\0132 .mentraos" +
+      ".ble.DisplayPowerConfigH\000\0224\n\nbrightness\030" +
+      "% \001(\0132\036.mentraos.ble.BrightnessConfigH\000\022" +
+      "=\n\017auto_brightness\030& \001(\0132\".mentraos.ble." +
+      "AutoBrightnessConfigH\000\022F\n\024auto_brightnes" +
+      "s_mult\030\' \001(\0132&.mentraos.ble.AutoBrightne" +
+      "ssMultiplierH\000\022+\n\tdraw_line\030( \001(\0132\026.ment" +
+      "raos.ble.DrawLineH\000\022+\n\tdraw_rect\030) \001(\0132\026" +
+      ".mentraos.ble.DrawRectH\000\022/\n\013draw_circle\030" +
+      "* \001(\0132\030.mentraos.ble.DrawCircleH\000\022-\n\006com" +
+      "mit\030+ \001(\0132\033.mentraos.ble.CommitDisplayH\000" +
+      "\022?\n\020display_distance\030, \001(\0132#.mentraos.bl" +
+      "e.DisplayDistanceConfigH\000\022;\n\016display_hei" +
+      "ght\030- \001(\0132!.mentraos.ble.DisplayHeightCo" +
+      "nfigH\000\0223\n\rclear_display\030. \001(\0132\032.mentraos" +
+      ".ble.ClearDisplayH\000\0225\n\013imu_enabled\0302 \001(\013" +
+      "2\036.mentraos.ble.ImuEnabledConfigH\000\0224\n\nim" +
+      "u_single\0303 \001(\0132\036.mentraos.ble.ImuSingleR" +
+      "equestH\000\0223\n\nimu_stream\0304 \001(\0132\035.mentraos." +
+      "ble.ImuStreamConfigH\000\0227\n\014head_gesture\0305 " +
+      "\001(\0132\037.mentraos.ble.HeadGestureConfigH\000\022/" +
+      "\n\007restart\030< \001(\0132\034.mentraos.ble.RestartRe" +
+      "questH\000\022:\n\rfactory_reset\030= \001(\0132!.mentrao" +
+      "s.ble.FactoryResetRequestH\000B\t\n\007payload\"\265" +
+      "\004\n\016GlassesToPhone\0225\n\016battery_status\030\n \001(" +
+      "\0132\033.mentraos.ble.BatteryStatusH\000\0225\n\016char" +
+      "ging_state\030\013 \001(\0132\033.mentraos.ble.Charging" +
+      "StateH\000\022/\n\013device_info\030\014 \001(\0132\030.mentraos." +
+      "ble.DeviceInfoH\000\0223\n\rhead_position\030\r \001(\0132" +
+      "\032.mentraos.ble.HeadPositionH\000\022>\n\021head_up" +
+      "_angle_set\030\016 \001(\0132!.mentraos.ble.HeadUpAn" +
+      "gleResponseH\000\022+\n\tvad_event\030\024 \001(\0132\026.mentr" +
+      "aos.ble.VadEventH\000\022F\n\027image_transfer_com" +
+      "plete\030\036 \001(\0132#.mentraos.ble.ImageTransfer" +
+      "CompleteH\000\022)\n\010imu_data\030( \001(\0132\025.mentraos." +
+      "ble.ImuDataH\000\0221\n\014button_event\030) \001(\0132\031.me" +
+      "ntraos.ble.ButtonEventH\000\0221\n\014head_gesture" +
+      "\030* \001(\0132\031.mentraos.ble.HeadGestureH\000B\t\n\007p" +
+      "ayload\"\023\n\021DisconnectRequest\"\025\n\023BatterySt" +
+      "ateRequest\"0\n\rBatteryStatus\022\r\n\005level\030\001 \001" +
+      "(\r\022\020\n\010charging\030\002 \001(\010\"j\n\rChargingState\0220\n" +
+      "\005state\030\001 \001(\0162!.mentraos.ble.ChargingStat" +
+      "e.State\"\'\n\005State\022\020\n\014NOT_CHARGING\020\000\022\014\n\010CH" +
+      "ARGING\020\001\"\024\n\022GlassesInfoRequest\"b\n\nDevice" +
+      "Info\022\022\n\nfw_version\030\001 \001(\t\022\020\n\010hw_model\030\002 \001" +
+      "(\t\022.\n\010features\030\003 \001(\0132\034.mentraos.ble.Devi" +
+      "ceFeatures\"\242\001\n\016DeviceFeatures\022\016\n\006camera\030" +
+      "\001 \001(\010\022\017\n\007display\030\002 \001(\010\022\020\n\010audio_tx\030\003 \001(\010" +
+      "\022\020\n\010audio_rx\030\004 \001(\010\022\013\n\003imu\030\005 \001(\010\022\013\n\003vad\030\006" +
+      " \001(\010\022\025\n\rmic_switching\030\007 \001(\010\022\032\n\022image_chu" +
+      "nk_buffer\030\010 \001(\r\"\024\n\022PairingModeRequest\"\025\n" +
+      "\023HeadPositionRequest\"\035\n\014HeadPosition\022\r\n\005" +
+      "angle\030\001 \001(\005\"\"\n\021HeadUpAngleConfig\022\r\n\005angl" +
+      "e\030\001 \001(\r\"&\n\023HeadUpAngleResponse\022\017\n\007succes" +
+      "s\030\001 \001(\010\"!\n\016MicStateConfig\022\017\n\007enabled\030\001 \001" +
+      "(\010\"#\n\020VadEnabledConfig\022\017\n\007enabled\030\001 \001(\010\"" +
+      " \n\tVadConfig\022\023\n\013sensitivity\030\001 \001(\r\"Z\n\010Vad" +
+      "Event\022+\n\005state\030\001 \001(\0162\034.mentraos.ble.VadE" +
+      "vent.State\"!\n\005State\022\014\n\010INACTIVE\020\000\022\n\n\006ACT" +
+      "IVE\020\001\"a\n\013DisplayText\022\014\n\004text\030\001 \001(\t\022\r\n\005co" +
+      "lor\030\002 \001(\r\022\021\n\tfont_code\030\003 \001(\r\022\t\n\001x\030\004 \001(\r\022" +
+      "\t\n\001y\030\005 \001(\r\022\014\n\004size\030\006 \001(\r\"~\n\014DisplayImage" +
+      "\022\021\n\tstream_id\030\001 \001(\t\022\t\n\001x\030\002 \001(\r\022\t\n\001y\030\003 \001(" +
+      "\r\022\r\n\005width\030\004 \001(\r\022\016\n\006height\030\005 \001(\r\022\020\n\010enco" +
+      "ding\030\006 \001(\t\022\024\n\014total_chunks\030\007 \001(\r\"z\n\014Prel" +
+      "oadImage\022\021\n\tstream_id\030\001 \001(\t\022\020\n\010image_id\030" +
+      "\002 \001(\r\022\r\n\005width\030\003 \001(\r\022\016\n\006height\030\004 \001(\r\022\020\n\010" +
+      "encoding\030\005 \001(\t\022\024\n\014total_chunks\030\006 \001(\r\"[\n\022" +
+      "DisplayCachedImage\022\020\n\010image_id\030\001 \001(\r\022\t\n\001" +
+      "x\030\002 \001(\r\022\t\n\001y\030\003 \001(\r\022\r\n\005width\030\004 \001(\r\022\016\n\006hei" +
+      "ght\030\005 \001(\r\"$\n\020ClearCachedImage\022\020\n\010image_i" +
+      "d\030\001 \001(\r\"\271\002\n\024DisplayScrollingText\022\014\n\004text" +
+      "\030\001 \001(\t\022\r\n\005color\030\002 \001(\r\022\021\n\tfont_code\030\003 \001(\r" +
+      "\022\t\n\001x\030\004 \001(\r\022\t\n\001y\030\005 \001(\r\022\r\n\005width\030\006 \001(\r\022\016\n" +
+      "\006height\030\007 \001(\r\022;\n\005align\030\010 \001(\0162,.mentraos." +
+      "ble.DisplayScrollingText.Alignment\022\024\n\014li" +
+      "ne_spacing\030\t \001(\r\022\r\n\005speed\030\n \001(\r\022\014\n\004size\030" +
+      "\013 \001(\r\022\014\n\004loop\030\014 \001(\010\022\020\n\010pause_ms\030\r \001(\r\",\n" +
+      "\tAlignment\022\010\n\004LEFT\020\000\022\n\n\006CENTER\020\001\022\t\n\005RIGH" +
+      "T\020\002\"\016\n\014ClearDisplay\" \n\022DisplayPowerConfi" +
+      "g\022\n\n\002on\030\001 \001(\010\"!\n\020BrightnessConfig\022\r\n\005val" +
+      "ue\030\001 \001(\r\"\'\n\024AutoBrightnessConfig\022\017\n\007enab" +
+      "led\030\001 \001(\010\".\n\030AutoBrightnessMultiplier\022\022\n" +
+      "\nmultiplier\030\001 \001(\002\"Y\n\010DrawLine\022\r\n\005color\030\001" +
+      " \001(\r\022\016\n\006stroke\030\002 \001(\r\022\n\n\002x1\030\003 \001(\r\022\n\n\002y1\030\004" +
+      " \001(\r\022\n\n\002x2\030\005 \001(\r\022\n\n\002y2\030\006 \001(\r\"^\n\010DrawRect" +
+      "\022\r\n\005color\030\001 \001(\r\022\016\n\006stroke\030\002 \001(\r\022\t\n\001x\030\003 \001" +
+      "(\r\022\t\n\001y\030\004 \001(\r\022\r\n\005width\030\005 \001(\r\022\016\n\006height\030\006" +
+      " \001(\r\"Q\n\nDrawCircle\022\r\n\005color\030\001 \001(\r\022\016\n\006str" +
+      "oke\030\002 \001(\r\022\t\n\001x\030\003 \001(\r\022\t\n\001y\030\004 \001(\r\022\016\n\006radiu" +
+      "s\030\005 \001(\r\"\017\n\rCommitDisplay\",\n\025DisplayDista" +
+      "nceConfig\022\023\n\013distance_cm\030\001 \001(\r\"%\n\023Displa" +
+      "yHeightConfig\022\016\n\006height\030\001 \001(\r\"\240\001\n\025ImageT" +
+      "ransferComplete\022\021\n\tstream_id\030\001 \001(\t\022:\n\006st" +
+      "atus\030\002 \001(\0162*.mentraos.ble.ImageTransferC" +
+      "omplete.Status\022\026\n\016missing_chunks\030\003 \003(\r\" " +
+      "\n\006Status\022\006\n\002OK\020\000\022\016\n\nINCOMPLETE\020\001\"#\n\020ImuE" +
+      "nabledConfig\022\017\n\007enabled\030\001 \001(\010\"\022\n\020ImuSing" +
+      "leRequest\"\"\n\017ImuStreamConfig\022\017\n\007enabled\030" +
+      "\001 \001(\010\"x\n\007ImuData\022$\n\005accel\030\001 \001(\0132\025.mentra" +
+      "os.ble.Vector3\022#\n\004gyro\030\002 \001(\0132\025.mentraos." +
+      "ble.Vector3\022\"\n\003mag\030\003 \001(\0132\025.mentraos.ble." +
+      "Vector3\"*\n\007Vector3\022\t\n\001x\030\001 \001(\002\022\t\n\001y\030\002 \001(\002" +
+      "\022\t\n\001z\030\003 \001(\002\"\265\001\n\013ButtonEvent\0220\n\006button\030\001 " +
+      "\001(\0162 .mentraos.ble.ButtonEvent.Button\022.\n" +
+      "\005state\030\002 \001(\0162\037.mentraos.ble.ButtonEvent." +
+      "State\")\n\006Button\022\n\n\006CENTER\020\000\022\010\n\004LEFT\020\001\022\t\n" +
+      "\005RIGHT\020\002\"\031\n\005State\022\006\n\002UP\020\000\022\010\n\004DOWN\020\001\"m\n\013H" +
+      "eadGesture\0222\n\007gesture\030\001 \001(\0162!.mentraos.b" +
+      "le.HeadGesture.Gesture\"*\n\007Gesture\022\007\n\003NOD" +
+      "\020\000\022\t\n\005SHAKE\020\001\022\013\n\007HEAD_UP\020\002\"X\n\021HeadGestur" +
+      "eConfig\0222\n\007gesture\030\001 \001(\0162!.mentraos.ble." +
+      "HeadGesture.Gesture\022\017\n\007enabled\030\002 \001(\010\"\020\n\016" +
+      "RestartRequest\"\025\n\023FactoryResetRequestb\006p" +
+      "roto3"
     };
     descriptor = com.google.protobuf.Descriptors.FileDescriptor
       .internalBuildGeneratedFileFrom(descriptorData,
@@ -40368,13 +39115,13 @@ public final class MentraosBle {
     internal_static_mentraos_ble_PhoneToGlasses_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_PhoneToGlasses_descriptor,
-        new java.lang.String[] { "MsgId", "Disconnect", "BatteryState", "GlassesInfo", "PairingMode", "HeadPosition", "HeadUpAngle", "Ping", "MicState", "VadEnabled", "VadConfig", "DisplayText", "DisplayImage", "PreloadImage", "DisplayCachedImage", "ClearCachedImage", "DisplayScrollingText", "DisplayPower", "Brightness", "AutoBrightness", "AutoBrightnessMult", "DrawLine", "DrawRect", "DrawCircle", "Commit", "DisplayDistance", "DisplayHeight", "ClearDisplay", "ImuEnabled", "ImuSingle", "ImuStream", "HeadGesture", "Restart", "FactoryReset", "Payload", });
+        new java.lang.String[] { "MsgId", "Disconnect", "BatteryState", "GlassesInfo", "PairingMode", "HeadPosition", "HeadUpAngle", "MicState", "VadEnabled", "VadConfig", "DisplayText", "DisplayImage", "PreloadImage", "DisplayCachedImage", "ClearCachedImage", "DisplayScrollingText", "DisplayPower", "Brightness", "AutoBrightness", "AutoBrightnessMult", "DrawLine", "DrawRect", "DrawCircle", "Commit", "DisplayDistance", "DisplayHeight", "ClearDisplay", "ImuEnabled", "ImuSingle", "ImuStream", "HeadGesture", "Restart", "FactoryReset", "Payload", });
     internal_static_mentraos_ble_GlassesToPhone_descriptor =
       getDescriptor().getMessageTypes().get(1);
     internal_static_mentraos_ble_GlassesToPhone_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_GlassesToPhone_descriptor,
-        new java.lang.String[] { "BatteryStatus", "ChargingState", "DeviceInfo", "HeadPosition", "HeadUpAngleSet", "Pong", "VadEvent", "ImageTransferComplete", "ImuData", "ButtonEvent", "HeadGesture", "Payload", });
+        new java.lang.String[] { "BatteryStatus", "ChargingState", "DeviceInfo", "HeadPosition", "HeadUpAngleSet", "VadEvent", "ImageTransferComplete", "ImuData", "ButtonEvent", "HeadGesture", "Payload", });
     internal_static_mentraos_ble_DisconnectRequest_descriptor =
       getDescriptor().getMessageTypes().get(2);
     internal_static_mentraos_ble_DisconnectRequest_fieldAccessorTable = new
@@ -40447,206 +39194,194 @@ public final class MentraosBle {
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_HeadUpAngleResponse_descriptor,
         new java.lang.String[] { "Success", });
-    internal_static_mentraos_ble_PingRequest_descriptor =
-      getDescriptor().getMessageTypes().get(14);
-    internal_static_mentraos_ble_PingRequest_fieldAccessorTable = new
-      com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
-        internal_static_mentraos_ble_PingRequest_descriptor,
-        new java.lang.String[] { });
-    internal_static_mentraos_ble_PongResponse_descriptor =
-      getDescriptor().getMessageTypes().get(15);
-    internal_static_mentraos_ble_PongResponse_fieldAccessorTable = new
-      com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
-        internal_static_mentraos_ble_PongResponse_descriptor,
-        new java.lang.String[] { });
     internal_static_mentraos_ble_MicStateConfig_descriptor =
-      getDescriptor().getMessageTypes().get(16);
+      getDescriptor().getMessageTypes().get(14);
     internal_static_mentraos_ble_MicStateConfig_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_MicStateConfig_descriptor,
         new java.lang.String[] { "Enabled", });
     internal_static_mentraos_ble_VadEnabledConfig_descriptor =
-      getDescriptor().getMessageTypes().get(17);
+      getDescriptor().getMessageTypes().get(15);
     internal_static_mentraos_ble_VadEnabledConfig_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_VadEnabledConfig_descriptor,
         new java.lang.String[] { "Enabled", });
     internal_static_mentraos_ble_VadConfig_descriptor =
-      getDescriptor().getMessageTypes().get(18);
+      getDescriptor().getMessageTypes().get(16);
     internal_static_mentraos_ble_VadConfig_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_VadConfig_descriptor,
         new java.lang.String[] { "Sensitivity", });
     internal_static_mentraos_ble_VadEvent_descriptor =
-      getDescriptor().getMessageTypes().get(19);
+      getDescriptor().getMessageTypes().get(17);
     internal_static_mentraos_ble_VadEvent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_VadEvent_descriptor,
         new java.lang.String[] { "State", });
     internal_static_mentraos_ble_DisplayText_descriptor =
-      getDescriptor().getMessageTypes().get(20);
+      getDescriptor().getMessageTypes().get(18);
     internal_static_mentraos_ble_DisplayText_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_DisplayText_descriptor,
         new java.lang.String[] { "Text", "Color", "FontCode", "X", "Y", "Size", });
     internal_static_mentraos_ble_DisplayImage_descriptor =
-      getDescriptor().getMessageTypes().get(21);
+      getDescriptor().getMessageTypes().get(19);
     internal_static_mentraos_ble_DisplayImage_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_DisplayImage_descriptor,
         new java.lang.String[] { "StreamId", "X", "Y", "Width", "Height", "Encoding", "TotalChunks", });
     internal_static_mentraos_ble_PreloadImage_descriptor =
-      getDescriptor().getMessageTypes().get(22);
+      getDescriptor().getMessageTypes().get(20);
     internal_static_mentraos_ble_PreloadImage_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_PreloadImage_descriptor,
         new java.lang.String[] { "StreamId", "ImageId", "Width", "Height", "Encoding", "TotalChunks", });
     internal_static_mentraos_ble_DisplayCachedImage_descriptor =
-      getDescriptor().getMessageTypes().get(23);
+      getDescriptor().getMessageTypes().get(21);
     internal_static_mentraos_ble_DisplayCachedImage_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_DisplayCachedImage_descriptor,
         new java.lang.String[] { "ImageId", "X", "Y", "Width", "Height", });
     internal_static_mentraos_ble_ClearCachedImage_descriptor =
-      getDescriptor().getMessageTypes().get(24);
+      getDescriptor().getMessageTypes().get(22);
     internal_static_mentraos_ble_ClearCachedImage_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_ClearCachedImage_descriptor,
         new java.lang.String[] { "ImageId", });
     internal_static_mentraos_ble_DisplayScrollingText_descriptor =
-      getDescriptor().getMessageTypes().get(25);
+      getDescriptor().getMessageTypes().get(23);
     internal_static_mentraos_ble_DisplayScrollingText_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_DisplayScrollingText_descriptor,
         new java.lang.String[] { "Text", "Color", "FontCode", "X", "Y", "Width", "Height", "Align", "LineSpacing", "Speed", "Size", "Loop", "PauseMs", });
     internal_static_mentraos_ble_ClearDisplay_descriptor =
-      getDescriptor().getMessageTypes().get(26);
+      getDescriptor().getMessageTypes().get(24);
     internal_static_mentraos_ble_ClearDisplay_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_ClearDisplay_descriptor,
         new java.lang.String[] { });
     internal_static_mentraos_ble_DisplayPowerConfig_descriptor =
-      getDescriptor().getMessageTypes().get(27);
+      getDescriptor().getMessageTypes().get(25);
     internal_static_mentraos_ble_DisplayPowerConfig_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_DisplayPowerConfig_descriptor,
         new java.lang.String[] { "On", });
     internal_static_mentraos_ble_BrightnessConfig_descriptor =
-      getDescriptor().getMessageTypes().get(28);
+      getDescriptor().getMessageTypes().get(26);
     internal_static_mentraos_ble_BrightnessConfig_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_BrightnessConfig_descriptor,
         new java.lang.String[] { "Value", });
     internal_static_mentraos_ble_AutoBrightnessConfig_descriptor =
-      getDescriptor().getMessageTypes().get(29);
+      getDescriptor().getMessageTypes().get(27);
     internal_static_mentraos_ble_AutoBrightnessConfig_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_AutoBrightnessConfig_descriptor,
         new java.lang.String[] { "Enabled", });
     internal_static_mentraos_ble_AutoBrightnessMultiplier_descriptor =
-      getDescriptor().getMessageTypes().get(30);
+      getDescriptor().getMessageTypes().get(28);
     internal_static_mentraos_ble_AutoBrightnessMultiplier_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_AutoBrightnessMultiplier_descriptor,
         new java.lang.String[] { "Multiplier", });
     internal_static_mentraos_ble_DrawLine_descriptor =
-      getDescriptor().getMessageTypes().get(31);
+      getDescriptor().getMessageTypes().get(29);
     internal_static_mentraos_ble_DrawLine_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_DrawLine_descriptor,
         new java.lang.String[] { "Color", "Stroke", "X1", "Y1", "X2", "Y2", });
     internal_static_mentraos_ble_DrawRect_descriptor =
-      getDescriptor().getMessageTypes().get(32);
+      getDescriptor().getMessageTypes().get(30);
     internal_static_mentraos_ble_DrawRect_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_DrawRect_descriptor,
         new java.lang.String[] { "Color", "Stroke", "X", "Y", "Width", "Height", });
     internal_static_mentraos_ble_DrawCircle_descriptor =
-      getDescriptor().getMessageTypes().get(33);
+      getDescriptor().getMessageTypes().get(31);
     internal_static_mentraos_ble_DrawCircle_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_DrawCircle_descriptor,
         new java.lang.String[] { "Color", "Stroke", "X", "Y", "Radius", });
     internal_static_mentraos_ble_CommitDisplay_descriptor =
-      getDescriptor().getMessageTypes().get(34);
+      getDescriptor().getMessageTypes().get(32);
     internal_static_mentraos_ble_CommitDisplay_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_CommitDisplay_descriptor,
         new java.lang.String[] { });
     internal_static_mentraos_ble_DisplayDistanceConfig_descriptor =
-      getDescriptor().getMessageTypes().get(35);
+      getDescriptor().getMessageTypes().get(33);
     internal_static_mentraos_ble_DisplayDistanceConfig_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_DisplayDistanceConfig_descriptor,
         new java.lang.String[] { "DistanceCm", });
     internal_static_mentraos_ble_DisplayHeightConfig_descriptor =
-      getDescriptor().getMessageTypes().get(36);
+      getDescriptor().getMessageTypes().get(34);
     internal_static_mentraos_ble_DisplayHeightConfig_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_DisplayHeightConfig_descriptor,
         new java.lang.String[] { "Height", });
     internal_static_mentraos_ble_ImageTransferComplete_descriptor =
-      getDescriptor().getMessageTypes().get(37);
+      getDescriptor().getMessageTypes().get(35);
     internal_static_mentraos_ble_ImageTransferComplete_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_ImageTransferComplete_descriptor,
         new java.lang.String[] { "StreamId", "Status", "MissingChunks", });
     internal_static_mentraos_ble_ImuEnabledConfig_descriptor =
-      getDescriptor().getMessageTypes().get(38);
+      getDescriptor().getMessageTypes().get(36);
     internal_static_mentraos_ble_ImuEnabledConfig_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_ImuEnabledConfig_descriptor,
         new java.lang.String[] { "Enabled", });
     internal_static_mentraos_ble_ImuSingleRequest_descriptor =
-      getDescriptor().getMessageTypes().get(39);
+      getDescriptor().getMessageTypes().get(37);
     internal_static_mentraos_ble_ImuSingleRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_ImuSingleRequest_descriptor,
         new java.lang.String[] { });
     internal_static_mentraos_ble_ImuStreamConfig_descriptor =
-      getDescriptor().getMessageTypes().get(40);
+      getDescriptor().getMessageTypes().get(38);
     internal_static_mentraos_ble_ImuStreamConfig_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_ImuStreamConfig_descriptor,
         new java.lang.String[] { "Enabled", });
     internal_static_mentraos_ble_ImuData_descriptor =
-      getDescriptor().getMessageTypes().get(41);
+      getDescriptor().getMessageTypes().get(39);
     internal_static_mentraos_ble_ImuData_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_ImuData_descriptor,
         new java.lang.String[] { "Accel", "Gyro", "Mag", });
     internal_static_mentraos_ble_Vector3_descriptor =
-      getDescriptor().getMessageTypes().get(42);
+      getDescriptor().getMessageTypes().get(40);
     internal_static_mentraos_ble_Vector3_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_Vector3_descriptor,
         new java.lang.String[] { "X", "Y", "Z", });
     internal_static_mentraos_ble_ButtonEvent_descriptor =
-      getDescriptor().getMessageTypes().get(43);
+      getDescriptor().getMessageTypes().get(41);
     internal_static_mentraos_ble_ButtonEvent_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_ButtonEvent_descriptor,
         new java.lang.String[] { "Button", "State", });
     internal_static_mentraos_ble_HeadGesture_descriptor =
-      getDescriptor().getMessageTypes().get(44);
+      getDescriptor().getMessageTypes().get(42);
     internal_static_mentraos_ble_HeadGesture_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_HeadGesture_descriptor,
         new java.lang.String[] { "Gesture", });
     internal_static_mentraos_ble_HeadGestureConfig_descriptor =
-      getDescriptor().getMessageTypes().get(45);
+      getDescriptor().getMessageTypes().get(43);
     internal_static_mentraos_ble_HeadGestureConfig_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_HeadGestureConfig_descriptor,
         new java.lang.String[] { "Gesture", "Enabled", });
     internal_static_mentraos_ble_RestartRequest_descriptor =
-      getDescriptor().getMessageTypes().get(46);
+      getDescriptor().getMessageTypes().get(44);
     internal_static_mentraos_ble_RestartRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_RestartRequest_descriptor,
         new java.lang.String[] { });
     internal_static_mentraos_ble_FactoryResetRequest_descriptor =
-      getDescriptor().getMessageTypes().get(47);
+      getDescriptor().getMessageTypes().get(45);
     internal_static_mentraos_ble_FactoryResetRequest_fieldAccessorTable = new
       com.google.protobuf.GeneratedMessageV3.FieldAccessorTable(
         internal_static_mentraos_ble_FactoryResetRequest_descriptor,
