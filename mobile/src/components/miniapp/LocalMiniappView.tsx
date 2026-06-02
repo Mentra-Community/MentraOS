@@ -473,6 +473,16 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
             scalesPageToFit={false}
             setBuiltInZoomControls={false}
             setDisplayZoomControls={false}
+            // Android-only: forces the WebView to call
+            // `requestDisallowInterceptTouchEvent(true)` on every touch,
+            // so the React Native parent ViewGroup can't steal multi-touch
+            // events mid-pinch. Without this, fast pinches on JS-driven
+            // maps (Google Maps) lose their second-finger touchend events
+            // and the recognizer stays stuck in zoom mode — surviving
+            // finger keeps zooming. Independently reported as Android
+            // System WebView behavior in flutter#182828,
+            // react-native-webview#1649, manuelstofer/pinchzoom#115.
+            nestedScrollEnabled={true}
             webviewDebuggingEnabled={__DEV__}
             style={{flex: 1, borderRadius: theme.spacing.s12}}
           />
@@ -513,6 +523,13 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
         scalesPageToFit={false}
         setBuiltInZoomControls={false}
         setDisplayZoomControls={false}
+        // Android: forces requestDisallowInterceptTouchEvent(true) on every
+        // touch so the RN parent ViewGroup can't steal multi-touch events
+        // mid-pinch. Fixes pinch-zoom freeze on JS-driven maps (Google
+        // Maps) where the second finger's touchend gets eaten and the
+        // recognizer stays stuck in zoom mode. See flutter#182828,
+        // react-native-webview#1649, manuelstofer/pinchzoom#115.
+        nestedScrollEnabled={true}
         webviewDebuggingEnabled={__DEV__}
         style={{flex: 1, borderRadius: theme.spacing.s12}}
       />

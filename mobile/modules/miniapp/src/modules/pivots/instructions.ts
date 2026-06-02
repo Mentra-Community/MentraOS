@@ -249,16 +249,65 @@ export function extractPivotsFromComputedSteps(
   polyline: LatLng[],
 ): InstructionPivot[] {
   if (!steps || steps.length < 2) return []
+
+  // Phantom A→B→A collapse. The Routes API sometimes decomposes a
+  // single perceived turn into 3-5 micro-steps that briefly bounce
+  // onto an intersecting road and back ("Market → Octavia → Market →
+  // Gough" for a single right turn off Market onto Gough). Walking
+  // the resolved road sequence and dropping any single-entry sandwich
+  // between two same-road entries collapses those jogs before we
+  // pair adjacent entries into pivots — otherwise the extractor emits
+  // a bogus "Market → Octavia" pivot AND a bogus "Octavia → Market"
+  // pivot at the same corner. Repeated up to 4 passes to catch
+  // A,B,A,B,A patterns where the same intersection contributes more
+  // than one jog.
+  //
+  // Mirrors the collapse pass the Navigation miniapp runs before
+  // building its preview/live turn dots — moving it here means every
+  // downstream consumer (the on-screen banner, the glasses display)
+  // gets the corrected pivots without each rebuilding the logic.
+  type Annotated = {stepIdx: number; name: string | null}
+  const initial: Annotated[] = steps.map((s, i) => ({
+    stepIdx: i,
+    name: s.road ?? roadNameFromInstruction(s.instruction),
+  }))
+  let annotated = initial
+  for (let pass = 0; pass < 4; pass++) {
+    const collapsed: Annotated[] = []
+    for (let i = 0; i < annotated.length; i++) {
+      const prev = collapsed[collapsed.length - 1]
+      const here = annotated[i]
+      const next = annotated[i + 1]
+      if (
+        prev?.name &&
+        next?.name &&
+        here.name &&
+        !sameRoad(prev.name, here.name) &&
+        sameRoad(prev.name, next.name)
+      ) {
+        // `here` is a sandwiched micro-jog — drop it. `next` will be
+        // collapsed against `prev` on the same-road check below.
+        continue
+      }
+      collapsed.push(here)
+    }
+    if (collapsed.length === annotated.length) break
+    annotated = collapsed
+  }
+
   const out: InstructionPivot[] = []
-  for (let i = 0; i < steps.length - 1; i++) {
-    const s = steps[i]
-    const next = steps[i + 1]
-    // Prefer the host-resolved `road` field (Phase 1) — it's the same
-    // parser plus geocoder fallback, run once on the host. Falls back
-    // to local instruction parse for old callers that don't supply
-    // `road`.
-    const fromRoad = s.road ?? roadNameFromInstruction(s.instruction)
-    const toRoad = next.road ?? roadNameFromInstruction(next.instruction)
+  // Pair each annotated entry with the next one. Note we no longer
+  // walk `steps` directly — `annotated` is the collapsed view, so
+  // adjacent annotated entries already represent the real road
+  // transitions. `stepIdx` is preserved so we can still look up the
+  // junction coordinates and maneuver from the original `steps` array.
+  for (let i = 0; i < annotated.length - 1; i++) {
+    const here = annotated[i]
+    const nextAnn = annotated[i + 1]
+    const s = steps[here.stepIdx]
+    const next = steps[nextAnn.stepIdx]
+    const fromRoad = here.name
+    const toRoad = nextAnn.name
     // fromRoad is required; toRoad is nullable (last-turn-before-arrival
     // has no road name in the arrival step's instruction).
     if (!fromRoad) continue

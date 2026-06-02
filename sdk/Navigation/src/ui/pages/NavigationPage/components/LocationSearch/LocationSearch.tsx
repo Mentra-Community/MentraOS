@@ -236,14 +236,14 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
         {/* Search pill */}
         <div className={`relative z-90 flex items-center h-[52px] rounded-[20px] px-3.5 gap-2.5 bg-[#FFFFFFA6] border border-[#FFFFFF99] [backdrop-filter:blur(30px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#0000001A_0px_6px_22px] ${safeHeadingSearchPill}`}>
           {/* Search icon */}
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
+          {/* <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
             <circle cx="11" cy="11" r="7" stroke="#0000008C" strokeWidth="2" />
             <path d="M20 20L16 16" stroke="#0000008C" strokeWidth="2" strokeLinecap="round" />
-          </svg>
+          </svg> */}
 
           <input
             ref={inputRef}
-            className="grow shrink basis-0 bg-transparent tracking-[-0.012em] text-[#0000008C] font-sans text-[15px] leading-[18px] placeholder-[#0000008C] focus:outline-none focus:ring-0 border-none"
+            className="grow shrink basis-0 min-w-0 bg-transparent font-sans text-[#000000E6] text-base/5 placeholder-[#0000008C] focus:outline-none border-none"
             value={query}
             onChange={(e) => handleChange(e.target.value)}
             onFocus={() => {

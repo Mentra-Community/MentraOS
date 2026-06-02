@@ -4,7 +4,7 @@ import {useRpc} from "@mentra/miniapp/ui"
 
 import "@/shared/channels"
 import type {Channels} from "@/shared/channels"
-import type {PlaceDetails, PlaceSuggestion} from "@/shared/types"
+import type {PlaceDetails, PlaceSuggestion, SavedPlace} from "@/shared/types"
 import {useNavStore} from "@/ui/store/navStore"
 import {registerBackInterceptor, suppressNextRouterPopOnce, clearSuppressNextRouterPop} from "@/ui/router"
 import {reverseGeocode} from "@/ui/lib/reverseGeocode"
@@ -39,6 +39,25 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
   const [focused, setFocused] = useState(false)
   const [loading, setLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const nameInputRef = useRef<HTMLInputElement | null>(null)
+
+  // Saved Home / Work entries — populated once on mount. The Name input's
+  // dropdown surfaces these so the user can re-pick a slot to *edit* it:
+  // selecting "Home" loads the saved Home's address into the location
+  // search above, then Save overwrites the existing Home (the storage
+  // layer dedupes by `type`). Only shown when `presetType` is unset —
+  // the slot-specific entry points (Set Home / Set Work from the
+  // IdleDrawer) already know which slot they're targeting, so the
+  // dropdown would be redundant noise there.
+  const [savedHome, setSavedHome] = useState<SavedPlace | null>(null)
+  const [savedWork, setSavedWork] = useState<SavedPlace | null>(null)
+  const [nameFocused, setNameFocused] = useState(false)
+  // Slot the current save is editing — when the user picks Home/Work
+  // from the dropdown, we tag the save with that type so the storage
+  // layer replaces the existing slot entry instead of creating a
+  // duplicate. Cleared when the user types a different name (they're
+  // no longer editing that slot).
+  const [editingType, setEditingType] = useState<"home" | "work" | null>(presetType ?? null)
 
   // ── Two-step back: dismiss search first, then close the page ────
   // While the input is focused OR the suggestions overlay is actually
@@ -193,6 +212,20 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
     }
   }, [])
 
+  // Hydrate the saved Home / Work slots once on mount so the Name input
+  // can offer them as edit shortcuts. Skipped when `presetType` is set —
+  // the slot is already chosen, dropdown wouldn't render anyway.
+  useEffect(() => {
+    if (presetType) return
+    mentra
+      .request("storage:list-saved", undefined as never)
+      .then((all: SavedPlace[]) => {
+        setSavedHome(all.find((p) => p.type === "home") ?? null)
+        setSavedWork(all.find((p) => p.type === "work") ?? null)
+      })
+      .catch(() => {})
+  }, [presetType])
+
   useEffect(() => {
     if (selectedPlace || !focused) return
     const trimmed = query.trim()
@@ -231,6 +264,26 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
     } finally {
       setLoading(false)
     }
+  }
+
+  // Dropdown pick: load the saved slot's address into the location
+  // search above and tag the save with that slot's type so Save
+  // overwrites the existing slot entry (storage layer dedupes by type).
+  function pickSlot(slot: "home" | "work") {
+    const saved = slot === "home" ? savedHome : savedWork
+    if (!saved) return
+    const label = slot === "home" ? "Home" : "Work"
+    setSelectedPlace(saved)
+    setQuery(saved.name || saved.address)
+    setCustomName(label)
+    setEditingType(slot)
+    // Close the dropdown + drop focus from the Name input so the
+    // keyboard doesn't linger over the now-filled location.
+    setNameFocused(false)
+    nameInputRef.current?.blur()
+    // Clear any in-flight location-search state from before the pick.
+    setSearchOpen(false)
+    setSuggestions([])
   }
 
   function useCurrentLocation() {
@@ -313,13 +366,73 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
           </div>
           <div className="flex items-center rounded-[18px] py-3.5 px-4 [backdrop-filter:blur(30px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#00000014_0px_4px_16px] bg-[#FFFFFFA6] border border-solid border-[#FFFFFF99]">
             <input
+              ref={nameInputRef}
               className="grow shrink basis-0 bg-transparent font-sans text-[#000000E6] text-base/5 placeholder-[#0000008C] focus:outline-none border-none"
               value={customName}
-              onChange={(e) => setCustomName(e.target.value)}
+              onChange={(e) => {
+                setCustomName(e.target.value)
+                // User is typing their own name — they're no longer
+                // editing the slot we may have loaded; drop the tag so
+                // Save creates a regular (untyped) entry instead of
+                // overwriting Home/Work.
+                if (editingType && !presetType) setEditingType(null)
+              }}
+              onFocus={() => setNameFocused(true)}
+              // 150ms blur delay mirrors LocationInput: lets a tap on a
+              // dropdown row register as a click before the dropdown
+              // unmounts on blur.
+              onBlur={() => setTimeout(() => setNameFocused(false), 150)}
               placeholder={presetName || "Place name"}
               autoComplete="off"
             />
           </div>
+          {/* Edit-slot dropdown. Only shown on the generic Add-Place
+              flow (no presetType) when the Name input is focused AND
+              at least one slot is saved — picking a slot loads its
+              address into the location search above so the user can
+              edit it. */}
+          {!presetType && nameFocused && (savedHome || savedWork) && (
+            <div className="mt-2 rounded-[18px] bg-white [box-shadow:#00000014_0px_6px_18px,#0000000A_0px_-3px_6px_-3px] overflow-hidden">
+              {savedHome && (
+                <button
+                  type="button"
+                  // onMouseDown fires before the input's blur, so we get
+                  // the click even though blur queues the dropdown to
+                  // close. Same trick the SuggestionsList uses.
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => pickSlot("home")}
+                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-[#0000000A]">
+                  <div className="size-7 rounded-full bg-[#0000000A] flex items-center justify-center shrink-0">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M3 11l9-8 9 8v10a2 2 0 0 1-2 2h-4v-7h-6v7H5a2 2 0 0 1-2-2V11z" stroke="#1A1A1A" strokeWidth="2" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                  <div className="grow min-w-0">
+                    <div className="font-sans font-semibold text-[#000000E6] text-[15px]/4">Home</div>
+                    <div className="font-sans text-[#0000008C] text-[13px]/4 truncate mt-0.5">{savedHome.address || savedHome.name}</div>
+                  </div>
+                </button>
+              )}
+              {savedHome && savedWork && <div className="h-px bg-[#00000014] mx-4" />}
+              {savedWork && (
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => pickSlot("work")}
+                  className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-[#0000000A]">
+                  <div className="size-7 rounded-full bg-[#0000000A] flex items-center justify-center shrink-0">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M4 7h16v13H4z M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" stroke="#1A1A1A" strokeWidth="2" strokeLinejoin="round" fill="none" />
+                    </svg>
+                  </div>
+                  <div className="grow min-w-0">
+                    <div className="font-sans font-semibold text-[#000000E6] text-[15px]/4">Work</div>
+                    <div className="font-sans text-[#0000008C] text-[13px]/4 truncate mt-0.5">{savedWork.address || savedWork.name}</div>
+                  </div>
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -329,7 +442,7 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
       <div className="absolute bottom-8 inset-x-4">
         <button
           type="button"
-          onClick={() => selectedPlace && onSave(selectedPlace, customName.trim(), presetType)}
+          onClick={() => selectedPlace && onSave(selectedPlace, customName.trim(), editingType ?? undefined)}
           disabled={!selectedPlace}
           className="h-14 w-full flex items-center justify-center rounded-[28px] px-4 [box-shadow:#00000033_0px_6px_22px] bg-[#1A1A1A] disabled:opacity-40 transition-opacity">
           <div className="tracking-[-0.005em] font-sans font-semibold text-white text-base/5">Save place</div>

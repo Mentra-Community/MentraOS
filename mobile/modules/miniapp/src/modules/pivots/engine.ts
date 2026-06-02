@@ -25,7 +25,6 @@ import type {LatLng, ManeuverKind, NavRoute, NavStep, Pivot, PivotEvent, PivotOp
 import {
   bearingDeg,
   cumulativeDistances,
-  extractCrossings,
   extractPivots,
   haversineMeters,
   signedAngleDiff,
@@ -79,15 +78,6 @@ type PivotState = {
   entered: boolean
   exited: boolean
 }
-
-/**
- * Distance (meters) within which a detected crossing's along-route
- * position must NOT collide with an existing turn pivot. If it does,
- * the crossing is dropped — a "Turn right" pivot at an intersection
- * already implies the user will cross the road as part of the turn,
- * and a separate "Cross the street" prompt right beside it is noise.
- */
-const CROSS_MERGE_M = 15
 
 type Subscriber = (event: PivotEvent) => void
 
@@ -279,39 +269,19 @@ export class PivotEngine {
       radiusMeters: this.opts.radiusMeters,
     }))
 
-    // Inject CROSS_STREET pivots for each detected crosswalk leg in
-    // the polyline geometry. The Routes API marks these as mere
-    // continuation steps with no maneuver, so the user perceives an
-    // intersection where the SDK has nothing to say. We surface them
-    // explicitly so a "Cross the street" prompt fires alongside the
-    // usual turn maneuvers. Pivot lat/lng sits at the START curb so
-    // the approaching event fires as the user nears the crosswalk on
-    // their current sidewalk. Drop crossings within CROSS_MERGE_M of
-    // an existing turn pivot — the turn already implies the cross.
-    //
-    // The road name comes from reverse-geocoding in
-    // _resolveMissingRoadNames (toRoad) — we leave both null here
-    // and let the resolver populate them. The "Cross to X" label is
-    // built in the consumer using toRoad.
-    const crossings = extractCrossings(points)
-    for (const c of crossings) {
-      const along = alongRouteAtCoord(points, cumulative, {lat: c.lat, lng: c.lng})
-      const nearTurn = pivots.some((p) => Math.abs(p.distanceAlongRouteMeters - along) < CROSS_MERGE_M)
-      if (nearTurn) continue
-      pivots.push({
-        index: -1,
-        lat: c.lat,
-        lng: c.lng,
-        // Crossings have no rotation direction; default to "right" so
-        // consumers expecting one of the two values don't see undefined.
-        direction: "right",
-        fromRoad: null,
-        toRoad: null,
-        maneuver: "CROSS_STREET",
-        distanceAlongRouteMeters: along,
-        radiusMeters: this.opts.radiusMeters,
-      })
-    }
+    // Crosswalk pivots intentionally NOT injected. Earlier the engine
+    // surfaced CROSS_STREET pivots from extractCrossings(points) so a
+    // "Cross the street" prompt would fire alongside turns — but in
+    // practice every block on a city walk has 1-4 crosswalks and the
+    // banner ended up flickering "Onto Gough St in 100m / 80m / 60m"
+    // across each one, even though Gough was still hundreds of meters
+    // away. The user perceives this as the destination jumping back
+    // each time they pass a crosswalk. Removing the injection means
+    // the only pivots in the list are real road→road turns from the
+    // Routes API, which gives a monotonic countdown to each turn —
+    // matching how Google Maps behaves. extractCrossings + CROSS_MERGE_M
+    // are kept in the codebase in case crossings get reintroduced as a
+    // separate (non-banner) signal later.
 
     pivots.sort((a, b) => a.distanceAlongRouteMeters - b.distanceAlongRouteMeters)
     for (let i = 0; i < pivots.length; i++) pivots[i].index = i
@@ -385,28 +355,11 @@ export class PivotEngine {
       })
     }
 
-    // Inject CROSS_STREET pivots for each detected crosswalk leg.
-    // Same shape as in setRouteFromComputedSteps but anchored to
-    // the geometry pivot's distanceAlongRouteMeters via the
-    // detected startIndex. Roads default to null and get filled by
-    // the reverse-geocode resolver below.
-    const crossings = extractCrossings(points)
-    for (const c of crossings) {
-      const along = distanceAtIndex(cumulative, c.startIndex)
-      const nearTurn = pivots.some((p) => Math.abs(p.distanceAlongRouteMeters - along) < CROSS_MERGE_M)
-      if (nearTurn) continue
-      pivots.push({
-        index: -1,
-        lat: c.lat,
-        lng: c.lng,
-        direction: "right",
-        fromRoad: null,
-        toRoad: null,
-        maneuver: "CROSS_STREET",
-        distanceAlongRouteMeters: along,
-        radiusMeters: this.opts.radiusMeters,
-      })
-    }
+    // Crosswalk pivots intentionally NOT injected — see the matching
+    // comment in setRouteFromComputedSteps. Crossings created banner
+    // flicker on city walks where every block has multiple crosswalks
+    // labeled "Onto <next turn road>", making the destination appear
+    // to jump back each time the user crossed a side street.
 
     // Sort by along-route distance so the cursor walks them in
     // geographic order, then re-assign indices.
@@ -530,13 +483,13 @@ export class PivotEngine {
       }
     }
     await Promise.all(tasks)
+    if (generation !== this.routeGeneration) return
 
     // After geocoding lands, run one more pass of neighbor
     // inheritance so a freshly-geocoded road can propagate to an
     // adjacent pivot that's still null. Cheap and resolves the case
     // where geocode succeeded on N.toRoad but failed on N+1.fromRoad
     // (or vice versa).
-    if (generation !== this.routeGeneration) return
     for (let i = 0; i < pivots.length - 1; i++) {
       const here = pivots[i]
       const next = pivots[i + 1]
