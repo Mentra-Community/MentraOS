@@ -55,7 +55,7 @@ function withSettingsGradleModifications(config: any) {
     if (!settingsGradle.includes("include ':silero'")) {
       settingsGradle += `
   include ':silero'
-  project(':silero').projectDir = new File(${toGroovyString(bluetoothSdkRoot)}, 'android/silero')
+  project(':silero').projectDir = new File(mentraBluetoothSdkRoot, 'android/silero')
   `
     }
 

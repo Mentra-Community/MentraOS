@@ -355,7 +355,7 @@ tasks.register('uploadSonatypeCentralDeployment') {
   group = 'publishing'
   description = "Uploads the ${mavenGroupId} OSSRH compatibility repository to the Central Portal."
   dependsOn ':lc3Lib:publishReleasePublicationToSonatypeCentralRepository',
-    ':mentra-bluetooth-sdk:publishReleasePublicationToSonatypeCentralRepository'
+    ':publishReleasePublicationToSonatypeCentralRepository'
 
   doLast {
     def username = centralUsername()
