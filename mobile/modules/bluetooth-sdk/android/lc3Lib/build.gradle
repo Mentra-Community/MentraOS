@@ -1,12 +1,9 @@
-import groovy.json.JsonSlurper
-
 plugins {
     id 'com.android.library'
     id 'maven-publish'
     id 'signing'
 }
 
-def packageJson = new JsonSlurper().parse(file("../../package.json"))
 def mavenGroupId = 'com.mentraglass'
 def mavenPublishVersion = (findProperty('mentraMavenVersion') ?: System.getenv('MENTRA_MAVEN_VERSION') ?: '0.1.7').toString()
 

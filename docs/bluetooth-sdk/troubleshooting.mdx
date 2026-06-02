@@ -8,7 +8,7 @@ icon: "circle-question"
 
 - Confirm your app has `google()`, `mavenCentral()`, and `maven("https://www.jitpack.io")` configured.
 - Confirm `com.mentraglass:bluetooth-sdk:<version>` matches the SDK version you are integrating.
-- Confirm JitPack is reachable if Gradle cannot resolve runtime dependencies such as Sherpa-ONNX or the Vuzix Ultralite SDK; these are transitive runtime dependencies and are not exposed by the SDK's public Android API.
+- Confirm JitPack is reachable if Gradle cannot resolve runtime dependencies such as the Vuzix Ultralite SDK; these are transitive runtime dependencies and are not exposed by the SDK's public Android API.
 - Confirm Gradle can resolve the companion `com.mentraglass:lc3Lib` artifact transitively.
 - If a version was just published, Maven Central mirror propagation can lag briefly. Retry after the artifact appears under `https://repo.maven.apache.org/maven2/com/mentraglass/bluetooth-sdk/`.
 - If you are testing an unreleased SDK, publish the SDK and companion artifacts to `mavenLocal()` and include `mavenLocal()` in the app repositories.

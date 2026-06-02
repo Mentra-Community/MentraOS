@@ -25,12 +25,12 @@ function withSettingsGradleModifications(config: any) {
     const bluetoothSdkRoot = getBluetoothSdkRoot()
 
     if (!settingsGradle.includes("def mentraBluetoothSdkRoot =")) {
-      settingsGradle += `
-  def mentraBluetoothSdkRoot = System.getenv("MENTRA_BLUETOOTH_SDK_PACKAGE_PATH")
-  if (!mentraBluetoothSdkRoot) {
-    mentraBluetoothSdkRoot = ${toGroovyString(bluetoothSdkRoot)}
-  }
-  `
+      settingsGradle = `
+def mentraBluetoothSdkRoot = System.getenv("MENTRA_BLUETOOTH_SDK_PACKAGE_PATH")
+if (!mentraBluetoothSdkRoot) {
+  mentraBluetoothSdkRoot = ${toGroovyString(bluetoothSdkRoot)}
+}
+${settingsGradle}`
     }
 
     if (!settingsGradle.includes("project(':mentra-bluetooth-sdk').projectDir")) {
