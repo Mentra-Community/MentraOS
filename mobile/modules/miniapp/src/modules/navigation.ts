@@ -541,6 +541,15 @@ export class NavigationModule {
     // first so a stop-less restart doesn't leak subscriptions.
     this._attachPivotTrackingForTrip(mode, opts.pivots)
 
+    // Every failure return below this point must release the
+    // pivot-tracking subscriptions attached just above — otherwise a
+    // failed start leaks the GPS/route listeners (and the captured trip
+    // params) for a trip that never actually began.
+    const failStart = (error: string): {ok: false; error: string} => {
+      this._detachPivotTracking()
+      return {ok: false, error}
+    }
+
     // Phase 2: source-of-truth route comes from the host's Routes REST
     // call, not the Android Nav SDK. Resolve the REST route first; if
     // it fails, abort the trip start (no native fallback — the goal of
@@ -550,7 +559,7 @@ export class NavigationModule {
     // as a synthetic `onRoute` event so subscribers (the pivot engine,
     // miniapp UI) render the REST polyline + steps.
     if (stops.length === 0) {
-      return {ok: false, error: "navigation.start: no stops"}
+      return failStart("navigation.start: no stops")
     }
     // Origin precedence: live-stream position if we have one (fast,
     // 0ms), else a one-shot location fetch from the host (~50-200ms on
@@ -565,7 +574,7 @@ export class NavigationModule {
         origin = {lat: fix.lat, lng: fix.lng}
         this._lastUserPosition = origin
       } catch (err) {
-        return {ok: false, error: `navigation.start: no GPS fix (${err instanceof Error ? err.message : String(err)})`}
+        return failStart(`navigation.start: no GPS fix (${err instanceof Error ? err.message : String(err)})`)
       }
     }
     const restResult = await this.computeRoute({
@@ -575,7 +584,7 @@ export class NavigationModule {
       avoid: opts.avoid,
     })
     if (!restResult.ok || !restResult.routes || restResult.routes.length === 0) {
-      return {ok: false, error: restResult.error ?? "computeRoute failed"}
+      return failStart(restResult.error ?? "computeRoute failed")
     }
     const restRoute = restResult.routes[0]
 
@@ -592,7 +601,10 @@ export class NavigationModule {
       speedMultiplier: opts.speedMultiplier ?? 5,
       missedTurnRerouteMeters: opts.missedTurnRerouteMeters,
     })
-    if (!nativeResult.ok) return nativeResult
+    if (!nativeResult.ok) {
+      this._detachPivotTracking()
+      return nativeResult
+    }
 
     // Synthesize a NavRoute from the REST ComputedRoute and dispatch it
     // through the same channel native route events use. Subscribers
@@ -945,12 +957,25 @@ export class NavigationModule {
       }),
     )
 
-    // Subscribe to NavUpdate — `arrived` resets the engine so the
-    // pivot list doesn't linger after a trip ends.
+    // Subscribe to NavUpdate:
+    //   - `arrived` resets the engine so the pivot list doesn't linger
+    //     after a trip ends.
+    //   - `rerouting` is the trip's only chance to refresh the route
+    //     once the user goes off course. Native route emits are
+    //     suppressed for the whole trip (REST owns the polyline), so a
+    //     reroute never arrives via `onRoute`. Re-run the Routes REST
+    //     call from the user's current position and dispatch a fresh
+    //     synthetic `onRoute` — the same path `start()` uses — so the
+    //     map polyline, steps, and pivots all rebuild. Without this the
+    //     UI sits on the stale pre-reroute route until arrival.
     this._tripUnsubs.push(
       this.onUpdate((update) => {
         if (update.kind === "arrived") {
           this._pivots.reset()
+          return
+        }
+        if (update.kind === "rerouting") {
+          this._reissueRouteForReroute()
         }
       }),
     )
@@ -976,10 +1001,10 @@ export class NavigationModule {
    * origin or trip context — caller treats that as "no enrichment
    * available, keep geometry pivots."
    */
-  private async _issueComputeRouteForTrip(route: NavRoute): Promise<ComputeRouteResult | null> {
+  private async _issueComputeRouteForTrip(route?: NavRoute): Promise<ComputeRouteResult | null> {
     if (!this._tripStops || this._tripStops.length === 0) return null
     const origin: LatLng | null =
-      this._lastUserPosition ?? (route.points && route.points[0] ? {lat: route.points[0].lat, lng: route.points[0].lng} : null)
+      this._lastUserPosition ?? (route?.points && route.points[0] ? {lat: route.points[0].lat, lng: route.points[0].lng} : null)
     if (!origin) return null
     return this.computeRoute({
       origin,
@@ -987,6 +1012,31 @@ export class NavigationModule {
       mode: this._tripMode,
       avoid: this._tripAvoid,
     })
+  }
+
+  /**
+   * Refresh the route after a native reroute. Bumps the compute-route
+   * sequence (so a reply from a reroute that was already superseded by a
+   * newer one is dropped), re-runs the Routes REST call from the user's
+   * current position, and dispatches the result as a synthetic
+   * `onRoute`. The existing onRoute path rebuilds the polyline, steps,
+   * and pivots; the next maneuver event flips the trip status back out
+   * of "rerouting". No-op when the trip context is gone (post-stop).
+   */
+  private _reissueRouteForReroute(): void {
+    if (!this._tripStops || this._tripStops.length === 0) return
+    const seq = ++this._computeRouteSeq
+    this._issueComputeRouteForTrip()
+      .then((result) => {
+        if (seq !== this._computeRouteSeq) return // a newer reroute superseded us
+        const computed = result?.routes?.[0]
+        if (!computed) return
+        const syntheticRoute = buildNavRouteFromComputed(computed)
+        this.session.events._forwardEvent(MiniappStreamType.NAVIGATION_ROUTE, syntheticRoute)
+      })
+      .catch((err) => {
+        console.warn("[NavigationModule] reroute computeRoute failed:", err)
+      })
   }
 
   private _detachPivotTracking(): void {
