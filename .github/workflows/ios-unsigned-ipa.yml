@@ -1,19 +1,13 @@
-name: iOS Build sidestore
+name: iOS IPA (SideStore Build)
 
 on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
-
-env:
-  WORKING_DIR: mobile
-  IOS_DIR: mobile/ios
+  push:
+    branches:
+      - dev
 
 jobs:
-  build-ios:
-    name: iOS Archive
+  build:
     runs-on: macos-15
 
     steps:
@@ -24,43 +18,40 @@ jobs:
         run: |
           sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
           xcodebuild -version
-          swift --version
+          xcodebuild -showsdks | grep iphoneos
 
-      - name: Setup Node 20
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: ${{ env.WORKING_DIR }}/package-lock.json
+          node-version: "20"
 
-      - name: Install Node dependencies
-        working-directory: ${{ env.WORKING_DIR }}
-        run: npm ci
+      - name: Install deps
+        working-directory: ./mobile
+        run: bun install --no-frozen-lockfile
 
-      - name: Setup Ruby 3.3
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: '3.3'
+      - name: Setup env
+        working-directory: ./mobile
+        run: cp .env.example .env
 
-      - name: Install CocoaPods gem
-        run: gem install cocoapods --no-document
+      - name: Expo prebuild
+        working-directory: ./mobile
+        run: bun expo prebuild --platform ios
 
-      - name: Cache CocoaPods
-        uses: actions/cache@v4
-        id: pods-cache
-        with:
-          path: ${{ env.IOS_DIR }}/Pods
-          key: ${{ runner.os }}-pods-${{ hashFiles(format('{0}/Podfile.lock', env.IOS_DIR)) }}
-          restore-keys: |
-            ${{ runner.os }}-pods-
+      - name: Setup Sherpa Onnx (optional)
+        working-directory: ./mobile
+        run: |
+          chmod +x scripts/setup-sherpa-onnx-optional.sh
+          ./scripts/setup-sherpa-onnx-optional.sh || true
 
-      - name: Pod install
-        if: steps.pods-cache.outputs.cache-hit != 'true'
-        working-directory: ${{ env.IOS_DIR }}
-        run: pod install --repo-update
+      - name: Install pods
+        working-directory: ./mobile/ios
+        run: pod install
 
       - name: Fix Pod deployment targets
-        working-directory: ${{ env.IOS_DIR }}
+        working-directory: ./mobile/ios
         run: |
           find Pods/Target\ Support\ Files -name "*.xcconfig" | while read f; do
             sed -i '' \
@@ -70,24 +61,32 @@ jobs:
               "$f"
           done
 
-      - name: Build archive
-        working-directory: ${{ env.IOS_DIR }}
+      - name: List schemes
+        working-directory: ./mobile/ios
+        run: xcodebuild -workspace Mentra.xcworkspace -list
+
+      - name: Archive app
+        working-directory: ./mobile/ios
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: "true"
         run: |
           set -o pipefail
 
           xcodebuild archive \
-            -workspace MentraOSGO2.xcworkspace \
-            -scheme MentraOSGO2 \
+            -workspace Mentra.xcworkspace \
+            -scheme Mentra \
             -configuration Release \
-            -archivePath "$RUNNER_TEMP/MentraOSGO2.xcarchive" \
-            -destination "generic/platform=iOS" \
+            -destination 'generic/platform=iOS' \
+            -sdk iphoneos \
+            -archivePath "$GITHUB_WORKSPACE/Mentra.xcarchive" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            DEVELOPMENT_TEAM="" \
             IPHONEOS_DEPLOYMENT_TARGET=13.0 \
             SWIFT_COMPILATION_MODE=singlefile \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
-            2>&1 | tee /tmp/xcodebuild.log | xcpretty --color --report html --output /tmp/build-report.html
+            2>&1 | tee /tmp/xcodebuild.log
 
           BUILD_RESULT=${PIPESTATUS[0]}
 
@@ -98,20 +97,49 @@ jobs:
             exit "$BUILD_RESULT"
           fi
 
-      - name: Upload full build log (always)
+          echo "✅ xcodebuild succeeded"
+
+      - name: Show last 100 lines of build log
+        if: always()
+        run: tail -100 /tmp/xcodebuild.log || echo "No log file"
+
+      - name: Verify archive and find .app
+        run: |
+          APP_PATH=$(find "$GITHUB_WORKSPACE" -name "Mentra.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ Mentra.app not found"
+            find "$GITHUB_WORKSPACE/Mentra.xcarchive" -maxdepth 5 2>/dev/null || echo "No xcarchive found"
+            exit 1
+          fi
+          echo "✅ Found: $APP_PATH"
+          ls -la "$APP_PATH"
+          if [ ! -f "$APP_PATH/Info.plist" ]; then
+            echo "❌ Info.plist missing"
+            exit 1
+          fi
+          echo "✅ Info.plist present"
+          echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -r "${{ env.APP_PATH }}" Payload/App.app
+          touch Payload/App.app/embedded.mobileprovision
+          zip -r Mentra.ipa Payload
+          echo "✅ IPA packaged"
+          ls -lh Mentra.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mentra-SideStore-IPA
+          path: Mentra.ipa
+          retention-days: 14
+
+      - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: xcodebuild-log
-          path: |
-            /tmp/xcodebuild.log
-            /tmp/build-report.html
-          retention-days: 14
-
-      - name: Upload archive
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: MentraOSGO2-archive
-          path: ${{ runner.temp }}/MentraOSGO2.xcarchive
-          retention-days: 30
+          path: /tmp/xcodebuild.log
+          retention-days: 5
