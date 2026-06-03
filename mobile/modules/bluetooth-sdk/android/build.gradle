@@ -213,6 +213,12 @@ android {
     versionCode 1
     versionName project.version
   }
+  // avif-coder 2.2.0 is published with Kotlin 2.3.0 metadata; this module compiles with Kotlin
+  // 2.1.0, which rejects newer metadata by default and fails compileReleaseKotlin. The library is
+  // binary-compatible, so relax the metadata check rather than force a project-wide Kotlin upgrade.
+  kotlinOptions {
+    freeCompilerArgs += ["-Xskip-metadata-version-check"]
+  }
   publishing {
     singleVariant("release") {
       withSourcesJar()
