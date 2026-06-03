@@ -546,31 +546,36 @@ private final class BleIncidentLogRelayEntry {
 // MARK: - CBCentralManagerDelegate
 
 extension MentraLive: CBCentralManagerDelegate {
-    func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        switch central.state {
-        case .poweredOn:
-            Bridge.log("LIVE: Bluetooth powered on")
-            // If we have a saved device, try to reconnect
-            if let savedDeviceName = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME),
-               !savedDeviceName.isEmpty
-            {
-                startScan()
+    // CoreBluetooth delivers these callbacks on `bluetoothQueue`; hop back before touching MainActor state.
+    nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        let state = central.state
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            switch state {
+            case .poweredOn:
+                Bridge.log("LIVE: Bluetooth powered on")
+                // If we have a saved device, try to reconnect
+                if let savedDeviceName = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME),
+                   !savedDeviceName.isEmpty
+                {
+                    self.startScan()
+                }
+
+            case .poweredOff:
+                Bridge.log("LIVE: Bluetooth is powered off")
+                self.updateConnectionState(ConnTypes.DISCONNECTED)
+
+            case .unauthorized:
+                Bridge.log("LIVE: Bluetooth is unauthorized")
+                self.updateConnectionState(ConnTypes.DISCONNECTED)
+
+            case .unsupported:
+                Bridge.log("LIVE: Bluetooth is unsupported")
+                self.updateConnectionState(ConnTypes.DISCONNECTED)
+
+            default:
+                Bridge.log("LIVE: Bluetooth state: \(state.rawValue)")
             }
-
-        case .poweredOff:
-            Bridge.log("LIVE: Bluetooth is powered off")
-            updateConnectionState(ConnTypes.DISCONNECTED)
-
-        case .unauthorized:
-            Bridge.log("LIVE: Bluetooth is unauthorized")
-            updateConnectionState(ConnTypes.DISCONNECTED)
-
-        case .unsupported:
-            Bridge.log("LIVE: Bluetooth is unsupported")
-            updateConnectionState(ConnTypes.DISCONNECTED)
-
-        default:
-            Bridge.log("LIVE: Bluetooth state: \(central.state.rawValue)")
         }
     }
 
@@ -602,79 +607,89 @@ extension MentraLive: CBCentralManagerDelegate {
         }
     }
 
-    func centralManager(
+    nonisolated func centralManager(
         _: CBCentralManager, didDiscover peripheral: CBPeripheral,
         advertisementData _: [String: Any], rssi: NSNumber
     ) {
-        handleDiscoveredPeripheral(peripheral, rssi: rssi)
+        DispatchQueue.main.async { [weak self] in
+            self?.handleDiscoveredPeripheral(peripheral, rssi: rssi)
+        }
     }
 
-    func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        Bridge.log("Connected to GATT server, discovering services...")
+    nonisolated func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            Bridge.log("Connected to GATT server, discovering services...")
 
-        stopConnectionTimeout()
-        isConnecting = false
-        connectedPeripheral = peripheral
+            self.stopConnectionTimeout()
+            self.isConnecting = false
+            self.connectedPeripheral = peripheral
 
-        // Save device name and address for future reconnection
-        if let name = peripheral.name {
-            UserDefaults.standard.set(name, forKey: PREFS_DEVICE_NAME)
-            Bridge.log("Saved device name for future reconnection: \(name)")
-            DeviceStore.shared.apply("glasses", "bluetoothName", name)
+            // Save device name and address for future reconnection
+            if let name = peripheral.name {
+                UserDefaults.standard.set(name, forKey: PREFS_DEVICE_NAME)
+                Bridge.log("Saved device name for future reconnection: \(name)")
+                DeviceStore.shared.apply("glasses", "bluetoothName", name)
+            }
+            // Persist peripheral UUID so DeviceManager can sync it to RN settings
+            DeviceStore.shared.apply("bluetooth", "device_address", peripheral.identifier.uuidString)
+
+            // Audio Pairing: Setup Bluetooth audio after BLE connection
+            if let deviceName = peripheral.name {
+                Bridge.log("BLE connection established, setting up audio...")
+                // setupAudioPairing(deviceName: deviceName)
+            }
+
+            // Discover services
+            peripheral.discoverServices([SERVICE_UUID])
+
+            // Reset reconnect attempts
+            self.reconnectAttempts = 0
         }
-        // Persist peripheral UUID so DeviceManager can sync it to RN settings
-        DeviceStore.shared.apply("bluetooth", "device_address", peripheral.identifier.uuidString)
-
-        // Audio Pairing: Setup Bluetooth audio after BLE connection
-        if let deviceName = peripheral.name {
-            Bridge.log("BLE connection established, setting up audio...")
-            // setupAudioPairing(deviceName: deviceName)
-        }
-
-        // Discover services
-        peripheral.discoverServices([SERVICE_UUID])
-
-        // Reset reconnect attempts
-        reconnectAttempts = 0
     }
 
-    func centralManager(
+    nonisolated func centralManager(
         _: CBCentralManager, didDisconnectPeripheral _: CBPeripheral, error _: Error?
     ) {
-        Bridge.log("LIVE: Disconnected from GATT server")
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            Bridge.log("LIVE: Disconnected from GATT server")
 
-        isConnecting = false
+            self.isConnecting = false
 
-        connectedPeripheral = nil
-        fullyBooted = false
-        connected = false
-        updateConnectionState(ConnTypes.DISCONNECTED)
-        rgbLedAuthorityClaimed = false
+            self.connectedPeripheral = nil
+            self.fullyBooted = false
+            self.connected = false
+            self.updateConnectionState(ConnTypes.DISCONNECTED)
+            self.rgbLedAuthorityClaimed = false
 
-        stopAllTimers()
+            self.stopAllTimers()
 
-        // Clean up characteristics
-        txCharacteristic = nil
-        rxCharacteristic = nil
+            // Clean up characteristics
+            self.txCharacteristic = nil
+            self.rxCharacteristic = nil
 
-        // Attempt reconnection if not killed
-        if !isKilled {
-            handleReconnection()
+            // Attempt reconnection if not killed
+            if !self.isKilled {
+                self.handleReconnection()
+            }
         }
     }
 
-    func centralManager(_: CBCentralManager, didFailToConnect _: CBPeripheral, error: Error?) {
-        Bridge.log(
-            "LIVE: Failed to connect to peripheral: \(error?.localizedDescription ?? "Unknown error")"
-        )
+    nonisolated func centralManager(_: CBCentralManager, didFailToConnect _: CBPeripheral, error: Error?) {
+        let errorDescription = error?.localizedDescription ?? "Unknown error"
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            Bridge.log("LIVE: Failed to connect to peripheral: \(errorDescription)")
 
-        stopConnectionTimeout()
-        isConnecting = false
-        connectedPeripheral = nil
-        updateConnectionState(ConnTypes.DISCONNECTED)
+            self.stopConnectionTimeout()
+            self.isConnecting = false
+            self.connectedPeripheral = nil
+            self.updateConnectionState(ConnTypes.DISCONNECTED)
 
-        if !isKilled {
-            handleReconnection()
+            if !self.isKilled {
+                self.handleReconnection()
+            }
         }
     }
 }
@@ -682,198 +697,228 @@ extension MentraLive: CBCentralManagerDelegate {
 // MARK: - CBPeripheralDelegate
 
 extension MentraLive: CBPeripheralDelegate {
-    func peripheral(_: CBPeripheral, didReadRSSI RSSI: NSNumber, error: Error?) {
-        signalStrengthReadInFlight = false
-        if let error {
-            Bridge.log("LIVE: Error reading RSSI: \(error.localizedDescription)")
-        } else {
-            updateSignalStrength(Int(truncating: RSSI))
+    nonisolated func peripheral(_: CBPeripheral, didReadRSSI RSSI: NSNumber, error: Error?) {
+        let errorDescription = error?.localizedDescription
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.signalStrengthReadInFlight = false
+            if let errorDescription {
+                Bridge.log("LIVE: Error reading RSSI: \(errorDescription)")
+            } else {
+                self.updateSignalStrength(Int(truncating: RSSI))
+            }
         }
     }
 
-    func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        if let error {
-            Bridge.log("LIVE: Error discovering services: \(error.localizedDescription)")
-            centralManager?.cancelPeripheralConnection(peripheral)
-            return
-        }
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        let errorDescription = error?.localizedDescription
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if let errorDescription {
+                Bridge.log("LIVE: Error discovering services: \(errorDescription)")
+                self.centralManager?.cancelPeripheralConnection(peripheral)
+                return
+            }
 
-        guard let services = peripheral.services else { return }
+            guard let services = peripheral.services else { return }
 
-        for service in services where service.uuid == SERVICE_UUID {
-            Bridge.log("LIVE: Found UART service, discovering characteristics...")
-            peripheral.discoverCharacteristics(
-                [
-                    TX_CHAR_UUID, RX_CHAR_UUID, FILE_READ_UUID, FILE_WRITE_UUID, LC3_READ_UUID,
-                    LC3_WRITE_UUID,
-                ], for: service
-            )
+            for service in services where service.uuid == SERVICE_UUID {
+                Bridge.log("LIVE: Found UART service, discovering characteristics...")
+                peripheral.discoverCharacteristics(
+                    [
+                        TX_CHAR_UUID, RX_CHAR_UUID, FILE_READ_UUID, FILE_WRITE_UUID, LC3_READ_UUID,
+                        LC3_WRITE_UUID,
+                    ], for: service
+                )
+            }
         }
     }
 
-    func peripheral(
+    nonisolated func peripheral(
         _ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?
     ) {
-        if let error {
-            Bridge.log("LIVE: Error discovering characteristics: \(error.localizedDescription)")
-            centralManager?.cancelPeripheralConnection(peripheral)
-            return
-        }
+        let errorDescription = error?.localizedDescription
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if let errorDescription {
+                Bridge.log("LIVE: Error discovering characteristics: \(errorDescription)")
+                self.centralManager?.cancelPeripheralConnection(peripheral)
+                return
+            }
 
-        guard let characteristics = service.characteristics else { return }
+            guard let characteristics = service.characteristics else { return }
 
-        for characteristic in characteristics {
-            // Log characteristic properties for debugging
-            let props = characteristic.properties
-            let propsStr = [
-                props.contains(.notify) ? "NOTIFY" : nil,
-                props.contains(.indicate) ? "INDICATE" : nil,
-                props.contains(.read) ? "READ" : nil,
-                props.contains(.write) ? "WRITE" : nil,
-                props.contains(.writeWithoutResponse) ? "WRITE_NO_RESPONSE" : nil,
-            ].compactMap { $0 }.joined(separator: " ")
-            Bridge.log("📋 Characteristic \(characteristic.uuid): properties=[\(propsStr)]")
+            for characteristic in characteristics {
+                // Log characteristic properties for debugging
+                let props = characteristic.properties
+                let propsStr = [
+                    props.contains(.notify) ? "NOTIFY" : nil,
+                    props.contains(.indicate) ? "INDICATE" : nil,
+                    props.contains(.read) ? "READ" : nil,
+                    props.contains(.write) ? "WRITE" : nil,
+                    props.contains(.writeWithoutResponse) ? "WRITE_NO_RESPONSE" : nil,
+                ].compactMap { $0 }.joined(separator: " ")
+                Bridge.log("📋 Characteristic \(characteristic.uuid): properties=[\(propsStr)]")
 
-            if characteristic.uuid == TX_CHAR_UUID {
-                txCharacteristic = characteristic
-                Bridge.log("LIVE: ✅ Found TX characteristic")
-            } else if characteristic.uuid == RX_CHAR_UUID {
-                rxCharacteristic = characteristic
+                if characteristic.uuid == TX_CHAR_UUID {
+                    self.txCharacteristic = characteristic
+                    Bridge.log("LIVE: ✅ Found TX characteristic")
+                } else if characteristic.uuid == RX_CHAR_UUID {
+                    self.rxCharacteristic = characteristic
+                    Bridge.log(
+                        "LIVE: ✅ Found RX characteristic - hasNotify=\(props.contains(.notify)), hasIndicate=\(props.contains(.indicate))"
+                    )
+                } else if characteristic.uuid == FILE_READ_UUID {
+                    self.fileReadCharacteristic = characteristic
+                    Bridge.log("LIVE: 📁 Found FILE_READ characteristic (72FF)!")
+                } else if characteristic.uuid == FILE_WRITE_UUID {
+                    self.fileWriteCharacteristic = characteristic
+                    Bridge.log("LIVE: 📁 Found FILE_WRITE characteristic (73FF)!")
+                } else if characteristic.uuid == LC3_READ_UUID {
+                    self.lc3ReadCharacteristic = characteristic
+                    Bridge.log("LIVE: 🎤 Found LC3_READ characteristic (audio input)!")
+                } else if characteristic.uuid == LC3_WRITE_UUID {
+                    self.lc3WriteCharacteristic = characteristic
+                    Bridge.log("LIVE: 🎤 Found LC3_WRITE characteristic (audio output)!")
+                }
+            }
+
+            // Check if we have both characteristics
+            if self.txCharacteristic != nil, let rx = self.rxCharacteristic {
+                Bridge.log("LIVE: ✅ Both TX and RX characteristics found - BLE connection ready")
+                Bridge.log("LIVE: 🔄 Waiting for glasses SOC to become ready...")
+
+                // Don't set connected=true here - wait for SOC to be ready (fullyBooted=true)
+                // DeviceStore handles connected state based on fullyBooted
+
+                // Keep state as connecting until glasses are ready
+                self.updateConnectionState(ConnTypes.CONNECTING)
+
+                let withResponseMtu = peripheral.maximumWriteValueLength(for: .withResponse) + 3
+                let withoutResponseMtu = peripheral.maximumWriteValueLength(for: .withoutResponse) + 3
+                self.currentMtu = max(23, min(withResponseMtu, withoutResponseMtu))
                 Bridge.log(
-                    "LIVE: ✅ Found RX characteristic - hasNotify=\(props.contains(.notify)), hasIndicate=\(props.contains(.indicate))"
+                    "LIVE: Current MTU estimate: withResponse=\(withResponseMtu), withoutResponse=\(withoutResponseMtu), selected=\(self.currentMtu)"
                 )
-            } else if characteristic.uuid == FILE_READ_UUID {
-                fileReadCharacteristic = characteristic
-                Bridge.log("LIVE: 📁 Found FILE_READ characteristic (72FF)!")
-            } else if characteristic.uuid == FILE_WRITE_UUID {
-                fileWriteCharacteristic = characteristic
-                Bridge.log("LIVE: 📁 Found FILE_WRITE characteristic (73FF)!")
-            } else if characteristic.uuid == LC3_READ_UUID {
-                lc3ReadCharacteristic = characteristic
-                Bridge.log("LIVE: 🎤 Found LC3_READ characteristic (audio input)!")
-            } else if characteristic.uuid == LC3_WRITE_UUID {
-                lc3WriteCharacteristic = characteristic
-                Bridge.log("LIVE: 🎤 Found LC3_WRITE characteristic (audio output)!")
+
+                // Enable notifications on RX characteristic
+                peripheral.setNotifyValue(true, for: rx)
+
+                // Enable notifications on file characteristics if available
+                if let fileRead = self.fileReadCharacteristic {
+                    peripheral.setNotifyValue(true, for: fileRead)
+                }
+
+                // Enable notifications on LC3 audio characteristic if device supports it
+                if self.supportsLC3Audio, let lc3Read = self.lc3ReadCharacteristic {
+                    peripheral.setNotifyValue(true, for: lc3Read)
+                    Bridge.log("LIVE: 🎤 Enabled LC3 audio notifications")
+                }
+
+                // Start readiness check loop
+                self.startSignalStrengthPolling()
+                self.startReadinessCheckLoop()
+            } else {
+                Bridge.log("LIVE: Required BLE characteristics not found")
+                if self.txCharacteristic == nil {
+                    Bridge.log("LIVE: TX characteristic not found")
+                }
+                if self.rxCharacteristic == nil {
+                    Bridge.log("LIVE: RX characteristic not found")
+                }
+                self.centralManager?.cancelPeripheralConnection(peripheral)
             }
-        }
-
-        // Check if we have both characteristics
-        if let tx = txCharacteristic, let rx = rxCharacteristic {
-            Bridge.log("LIVE: ✅ Both TX and RX characteristics found - BLE connection ready")
-            Bridge.log("LIVE: 🔄 Waiting for glasses SOC to become ready...")
-
-            // Don't set connected=true here - wait for SOC to be ready (fullyBooted=true)
-            // DeviceStore handles connected state based on fullyBooted
-
-            // Keep state as connecting until glasses are ready
-            updateConnectionState(ConnTypes.CONNECTING)
-
-            // Request MTU size
-            let mtuSize = peripheral.maximumWriteValueLength(for: .withResponse)
-            Bridge.log("LIVE: Current MTU size: \(mtuSize + 3) bytes")
-
-            // Enable notifications on RX characteristic
-            peripheral.setNotifyValue(true, for: rx)
-
-            // Enable notifications on file characteristics if available
-            if let fileRead = fileReadCharacteristic {
-                peripheral.setNotifyValue(true, for: fileRead)
-            }
-
-            // Enable notifications on LC3 audio characteristic if device supports it
-            if supportsLC3Audio, let lc3Read = lc3ReadCharacteristic {
-                peripheral.setNotifyValue(true, for: lc3Read)
-                Bridge.log("LIVE: 🎤 Enabled LC3 audio notifications")
-            }
-
-            // Start readiness check loop
-            startSignalStrengthPolling()
-            startReadinessCheckLoop()
-        } else {
-            Bridge.log("LIVE: Required BLE characteristics not found")
-            if txCharacteristic == nil {
-                Bridge.log("LIVE: TX characteristic not found")
-            }
-            if rxCharacteristic == nil {
-                Bridge.log("LIVE: RX characteristic not found")
-            }
-            centralManager?.cancelPeripheralConnection(peripheral)
         }
     }
 
-    func peripheral(
+    nonisolated func peripheral(
         _: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?
     ) {
-        // Bridge.log("LIVE: DEBUG: didUpdateValueFor CALLED - characteristic: \(characteristic.uuid), dataSize: \(characteristic.value?.count ?? 0)")
-        // Log raw hex for debugging glasses_ready issue
-        if let data = characteristic.value {
-            let hexString = data.prefix(50).map { String(format: "%02X ", $0) }.joined()
-            // Bridge.log("LIVE: DEBUG: RAW HEX (first 50): \(hexString)")
-        }
-        if let error {
-            Bridge.log(
-                "LIVE: Error updating value for characteristic: \(error.localizedDescription)"
-            )
-            return
-        }
-
-        guard let data = characteristic.value else {
-            Bridge.log("LIVE: Characteristic value is nil")
-            return
-        }
-
-        let threadId = Thread.current.hash
         let uuid = characteristic.uuid
+        let data = characteristic.value
+        let errorDescription = error?.localizedDescription
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            // Bridge.log("LIVE: DEBUG: didUpdateValueFor CALLED - characteristic: \(uuid), dataSize: \(data?.count ?? 0)")
+            // Log raw hex for debugging glasses_ready issue
+            if let data {
+                let hexString = data.prefix(50).map { String(format: "%02X ", $0) }.joined()
+                _ = hexString
+                // Bridge.log("LIVE: DEBUG: RAW HEX (first 50): \(hexString)")
+            }
+            if let errorDescription {
+                Bridge.log("LIVE: Error updating value for characteristic: \(errorDescription)")
+                return
+            }
 
-        // Bridge.log("Thread-\(threadId): 🎉 didUpdateValueFor CALLBACK TRIGGERED! Characteristic: \(uuid)")
-        // if uuid == RX_CHAR_UUID {
-        //   Bridge.log("Thread-\(threadId): 🎯 RECEIVED DATA ON RX CHARACTERISTIC (Peripheral's TX)")
-        // } else if uuid == TX_CHAR_UUID {
-        //   Bridge.log("Thread-\(threadId): 🎯 RECEIVED DATA ON TX CHARACTERISTIC (Peripheral's RX)")
-        // }
-        // Bridge.log("Thread-\(threadId): 🔍 Processing received data - \(data.count) bytes")
+            guard let data else {
+                Bridge.log("LIVE: Characteristic value is nil")
+                return
+            }
 
-        // Handle LC3 audio data separately (dedicated characteristic for LC3-capable devices)
-        if uuid == LC3_READ_UUID && supportsLC3Audio {
-            // Bridge.log("LIVE: Received data on LC3_READ characteristic (audio input)")
-            processLc3AudioPacket(data)
-            return
+            let threadId = Thread.current.hash
+            _ = threadId
+
+            // Bridge.log("Thread-\(threadId): 🎉 didUpdateValueFor CALLBACK TRIGGERED! Characteristic: \(uuid)")
+            // if uuid == RX_CHAR_UUID {
+            //   Bridge.log("Thread-\(threadId): 🎯 RECEIVED DATA ON RX CHARACTERISTIC (Peripheral's TX)")
+            // } else if uuid == TX_CHAR_UUID {
+            //   Bridge.log("Thread-\(threadId): 🎯 RECEIVED DATA ON TX CHARACTERISTIC (Peripheral's RX)")
+            // }
+            // Bridge.log("Thread-\(threadId): 🔍 Processing received data - \(data.count) bytes")
+
+            // Handle LC3 audio data separately (dedicated characteristic for LC3-capable devices)
+            if uuid == LC3_READ_UUID && self.supportsLC3Audio {
+                // Bridge.log("LIVE: Received data on LC3_READ characteristic (audio input)")
+                self.processLc3AudioPacket(data)
+                return
+            }
+
+            // Handle regular data (JSON messages, file transfers, etc.)
+            self.processReceivedData(data)
         }
-
-        // Handle regular data (JSON messages, file transfers, etc.)
-        processReceivedData(data)
     }
 
-    func peripheral(_: CBPeripheral, didWriteValueFor _: CBCharacteristic, error: Error?) {
-        if let error {
-            Bridge.log("LIVE: Error writing characteristic: \(error.localizedDescription)")
-        } else {
-            Bridge.log("LIVE: Characteristic write successful")
+    nonisolated func peripheral(_: CBPeripheral, didWriteValueFor _: CBCharacteristic, error: Error?) {
+        let errorDescription = error?.localizedDescription
+        DispatchQueue.main.async {
+            if let errorDescription {
+                Bridge.log("LIVE: Error writing characteristic: \(errorDescription)")
+            } else {
+                Bridge.log("LIVE: Characteristic write successful")
+            }
         }
     }
 
-    func peripheral(
+    nonisolated func peripheral(
         _: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic,
         error: Error?
     ) {
-        if let error {
-            Bridge.log("LIVE: Error updating notification state: \(error.localizedDescription)")
-        } else {
-            Bridge.log(
-                "Notification state updated for \(characteristic.uuid): \(characteristic.isNotifying ? "ON" : "OFF")"
-            )
+        let uuid = characteristic.uuid
+        let isNotifying = characteristic.isNotifying
+        let errorDescription = error?.localizedDescription
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if let errorDescription {
+                Bridge.log("LIVE: Error updating notification state: \(errorDescription)")
+            } else {
+                Bridge.log("Notification state updated for \(uuid): \(isNotifying ? "ON" : "OFF")")
 
-            if characteristic.uuid == RX_CHAR_UUID, characteristic.isNotifying {
-                Bridge.log("LIVE: 🔔 Ready to receive data via notifications")
+                if uuid == self.RX_CHAR_UUID, isNotifying {
+                    Bridge.log("LIVE: 🔔 Ready to receive data via notifications")
+                }
             }
         }
     }
 
-    func peripheralDidUpdateRSSI(_ peripheral: CBPeripheral, error: Error?) {
-        if let error {
-            Bridge.log("LIVE: Error reading RSSI: \(error.localizedDescription)")
-        } else {
-            Bridge.log("LIVE: RSSI: \(peripheral.readRSSI())")
+    nonisolated func peripheralDidUpdateRSSI(_ peripheral: CBPeripheral, error: Error?) {
+        let errorDescription = error?.localizedDescription
+        DispatchQueue.main.async {
+            if let errorDescription {
+                Bridge.log("LIVE: Error reading RSSI: \(errorDescription)")
+            } else {
+                Bridge.log("LIVE: RSSI: \(peripheral.readRSSI())")
+            }
         }
     }
 }
@@ -915,6 +960,7 @@ class MentraLive: NSObject, SGCManager {
         // a previous pairing into the next one (would otherwise surface as wrong overall_percent
         // or stale lastBesOtaProgress on the next OTA).
         if state == ConnTypes.DISCONNECTED {
+            incomingChunkReassembler.clear()
             stopSignalStrengthPolling()
             DeviceStore.shared.apply("glasses", "signalStrength", -1)
             DeviceStore.shared.apply("glasses", "signalStrengthUpdatedAt", 0)
@@ -1072,6 +1118,7 @@ class MentraLive: NSObject, SGCManager {
     private var connectedPeripheral: CBPeripheral?
     private var txCharacteristic: CBCharacteristic?
     private var rxCharacteristic: CBCharacteristic?
+    private let bes2700MtuLimit = 256
     private var currentMtu: Int = 23 // Default BLE MTU
 
     // State Tracking
@@ -1096,6 +1143,7 @@ class MentraLive: NSObject, SGCManager {
     // Queue Management
     private let commandQueue = CommandQueue()
     private let bluetoothQueue = DispatchQueue(label: "MentraLiveBluetooth", qos: .userInitiated)
+    private let incomingChunkReassembler = MessageChunkReassembler()
     private var lastSendTimeMs: TimeInterval = 0
 
     // Timers
@@ -1778,6 +1826,11 @@ class MentraLive: NSObject, SGCManager {
         // Log ALL incoming JSON objects for debugging
         // Bridge.log("LIVE: DEBUG: processJsonObject: \(json)")
 
+        if MessageChunker.isChunkedMessage(json) {
+            processChunkedJsonObject(json)
+            return
+        }
+
         // Check for K900 command format
         if let command = json["C"] as? String {
             processK900JsonMessage(json)
@@ -2124,6 +2177,26 @@ class MentraLive: NSObject, SGCManager {
                 Bridge.log("Unhandled message type: \(type)")
             }
         }
+    }
+
+    private func processChunkedJsonObject(_ json: [String: Any]) {
+        guard let info = MessageChunker.getChunkInfo(json) else {
+            Bridge.log("LIVE: Received malformed chunked message from glasses")
+            return
+        }
+
+        guard let reassembled = incomingChunkReassembler.addChunk(info) else {
+            return
+        }
+
+        guard let data = reassembled.data(using: .utf8),
+              let reassembledJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            Bridge.log("LIVE: Failed to parse reassembled chunked message")
+            return
+        }
+
+        processJsonObject(reassembledJson)
     }
 
     /// Maps K900 gesture type codes to gesture names
@@ -2580,6 +2653,7 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
 
         stopReadinessCheckLoop()
+        sendBleMtuConfig()
 
         // Invalidate any version fields from a prior link session so the next version_info
         // cannot leave a stale build number in RN (ASG is source of truth for PackageInfo).
@@ -2827,8 +2901,12 @@ class MentraLive: NSObject, SGCManager {
         activeFileTransfers.removeValue(forKey: fileName)
 
         let bleImgId = fileName.split(separator: ".").first.map(String.init) ?? ""
-        if blePhotoTransfers.removeValue(forKey: bleImgId) != nil {
+        if let transfer = blePhotoTransfers.removeValue(forKey: bleImgId) {
             Bridge.log("LIVE: 🧹 Cleaned up timed out BLE photo transfer for: \(bleImgId)")
+            Bridge.sendPhotoError(
+                requestId: transfer.requestId, errorCode: "TRANSFER_TIMEOUT",
+                errorMessage: "Transfer timed out for: \(fileName)"
+            )
         }
         if bleIncidentLogRelays.removeValue(forKey: bleImgId) != nil {
             Bridge.log("LIVE: 🧹 Cleaned up timed out BLE incident log relay for: \(bleImgId)")
@@ -2850,8 +2928,11 @@ class MentraLive: NSObject, SGCManager {
         }
 
         Bridge.log("LIVE: ❌ Transfer failed for: \(fileName) (reason: \(reason))")
+        let bleImgId = fileName.split(separator: ".").first.map(String.init) ?? ""
+        let transfer = blePhotoTransfers[bleImgId]
+        let effectiveRequestId = requestId.isEmpty ? transfer?.requestId ?? "" : requestId
         Bridge.sendPhotoError(
-            requestId: requestId, errorCode: "TRANSFER_FAILED",
+            requestId: effectiveRequestId, errorCode: "TRANSFER_FAILED",
             errorMessage: "Transfer failed for: \(fileName) (reason: \(reason))"
         )
 
@@ -2861,7 +2942,6 @@ class MentraLive: NSObject, SGCManager {
             )
         }
 
-        let bleImgId = fileName.split(separator: ".").first.map(String.init) ?? ""
         if let transfer = blePhotoTransfers.removeValue(forKey: bleImgId) {
             Bridge.log(
                 "LIVE: 🧹 Cleaned up failed BLE photo transfer for: \(bleImgId) (requestId: \(transfer.requestId))"
@@ -2998,11 +3078,13 @@ class MentraLive: NSObject, SGCManager {
                             )
                             Bridge.log("❌ Telling glasses to retry entire transfer")
 
-                            // Tell glasses transfer failed, they will retry
+                            // Tell glasses transfer failed, they will retry. Keep the photo
+                            // transfer entry so the retry maps back to the original requestId.
                             sendTransferCompleteConfirmation(
                                 fileName: packetInfo.fileName, success: false
                             )
-                            blePhotoTransfers.removeValue(forKey: bleImgId)
+                            photoTransfer.session = nil
+                            blePhotoTransfers[bleImgId] = photoTransfer
                         }
                     }
                 }
@@ -3235,6 +3317,20 @@ class MentraLive: NSObject, SGCManager {
         )
     }
 
+    private func sendBleMtuConfig() {
+        let effectiveMtu = min(currentMtu, bes2700MtuLimit)
+        let json: [String: Any] = [
+            "type": "set_ble_mtu",
+            "mtu": effectiveMtu,
+            "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+        ]
+
+        sendJson(json)
+        Bridge.log(
+            "LIVE: Sent BLE MTU config to glasses: negotiated=\(currentMtu), BES2700 limit=\(bes2700MtuLimit), effective=\(effectiveMtu)"
+        )
+    }
+
     // MARK: - Sending Data
 
     func queueSend(_ data: Data, id: String) {
@@ -3273,8 +3369,12 @@ class MentraLive: NSObject, SGCManager {
 
                     // Create chunks
                     let chunks = MessageChunker.createChunks(
-                        originalJson: jsonString, messageId: messageId
+                        originalJson: jsonString, messageId: messageId, wakeUp: wakeUp
                     )
+                    guard !chunks.isEmpty else {
+                        Bridge.log("LIVE: Failed to create BLE chunks within K900 packet limit")
+                        return
+                    }
                     Bridge.log("LIVE: Sending \(chunks.count) chunks")
 
                     // Send each chunk
@@ -3936,6 +4036,7 @@ class MentraLive: NSObject, SGCManager {
 
         // Stop all timers
         stopAllTimers()
+        incomingChunkReassembler.clear()
 
         // Disconnect BLE
         if let peripheral = connectedPeripheral {
