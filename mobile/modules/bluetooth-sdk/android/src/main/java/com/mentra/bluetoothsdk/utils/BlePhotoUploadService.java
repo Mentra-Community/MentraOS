@@ -286,7 +286,7 @@ public class BlePhotoUploadService {
                                         + " -> "
                                         + strippedBytes.length
                                         + " bytes");
-                    } catch (IOException e) {
+                    } catch (Exception e) {
                         Log.w(TAG, "stripForDecode failed, using raw AVIF: " + e.getMessage());
                         strippedBytes = imageData;
                     }

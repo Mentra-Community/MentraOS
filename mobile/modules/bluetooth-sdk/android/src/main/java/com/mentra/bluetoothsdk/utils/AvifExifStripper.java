@@ -27,7 +27,9 @@ final class AvifExifStripper {
             if (cleaned.length < avif.length) {
                 return cleaned;
             }
-        } catch (IOException ignored) {
+        } catch (IOException | RuntimeException ignored) {
+            // Malformed BMFF can throw runtime parse errors (buffer/index); fall through to the
+            // marker-based fallback rather than letting the decode crash.
         }
         // Fallback: truncate mdat at the Exif\0\0 marker AND purge Exif from meta tables.
         int exifMarker = lastExifMarkerOffset(avif);

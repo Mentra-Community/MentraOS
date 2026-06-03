@@ -184,15 +184,17 @@ public class ImuRecorder implements SensorEventListener {
         root.put("version", 1);
         root.put("sampleCount", captured.size());
         root.put("samplingRateHz", 100);
-        long firstTimestampNs = captured.get(0).timestampNs;
         long lastTimestampNs = captured.get(captured.size() - 1).timestampNs;
         root.put("startTimeNs", mStartTimeNs);
-        root.put("durationMs", Math.max(0, (lastTimestampNs - firstTimestampNs) / 1_000_000));
+        // Per-sample times and duration are relative to mStartTimeNs (recording start), which shares
+        // the System.nanoTime() clock with the samples, so a consumer can reconstruct each sample's
+        // absolute capture time as startTimeNs + relativeTimeMs.
+        root.put("durationMs", Math.max(0, (lastTimestampNs - mStartTimeNs) / 1_000_000));
 
         JSONArray samples = new JSONArray();
         for (ImuSample s : captured) {
             JSONArray sample = new JSONArray();
-            sample.put(Math.round((s.timestampNs - firstTimestampNs) / 1_000_000.0));
+            sample.put(Math.round((s.timestampNs - mStartTimeNs) / 1_000_000.0));
             sample.put(round4(s.accel[0]));
             sample.put(round4(s.accel[1]));
             sample.put(round4(s.accel[2]));
