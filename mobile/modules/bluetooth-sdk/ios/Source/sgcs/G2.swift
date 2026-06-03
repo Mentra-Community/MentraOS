@@ -3935,7 +3935,7 @@ class G2: NSObject, SGCManager {
                     // DeviceManager.shared.sendCurrentState()
                     // rebuild state:
                     Task {
-                        rebuildState()
+                        await rebuildState()
                         // set the mic back on if it should be on
                         let micEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
                         if micEnabled {
