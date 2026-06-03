@@ -349,6 +349,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     private var deviceMaxMTU = 23 // Device's maximum capability
     private var maxChunkSize = 176 // Calculated optimal chunk size
     private var bmpChunkSize = 176 // Image chunk size (iOS-optimized)
+    private var protobufSeq: UInt8 = 0 // Rolling sequence for fragmented control messages
 
     // MARK: - Command Queue (modeled after ERG1Manager)
 
@@ -500,16 +501,51 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         ])
     }
 
+    /// Splits a serialized protobuf message into BLE-sized fragments, each prefixed with a
+    /// 4-byte transport header [packetType][seq][totalChunks][chunkIndex] so the firmware can
+    /// reassemble messages larger than one MTU. Single-fragment messages set totalChunks = 1
+    /// and are decoded directly by the firmware's fast path.
     private func queueDataWithOptimalChunking(
         _ data: Data, packetType: UInt8 = 0x02, waitTimeMs: Int = 0
     ) {
+        // Telemetry: report the full logical command (type byte + protobuf) before fragmenting.
         var packetData = Data([packetType])
         packetData.append(data)
-        if packetData.count > maxChunkSize {
-            Bridge.log("NEX: protobuf packet (\(packetData.count) bytes) exceeds maxChunkSize (\(maxChunkSize)); sending single write for protocol compatibility")
-        }
         emitBleCommandSent(packetData)
-        queueChunks([Array(packetData)], waitTimeMs: waitTimeMs, chunkDelayMs: Int(DELAY_BETWEEN_CHUNKS_SEND_MS))
+
+        let headerSize = 4 // [packetType][seq][totalChunks][chunkIndex]
+        let effectiveChunkSize = max(1, maxChunkSize - headerSize)
+        let totalChunks = data.isEmpty
+            ? 1 : Int(ceil(Double(data.count) / Double(effectiveChunkSize)))
+
+        guard totalChunks <= 255 else {
+            Bridge.log(
+                "NEX: ❌ Protobuf message too large to fragment (\(totalChunks) chunks) - dropping"
+            )
+            return
+        }
+
+        let seq = protobufSeq
+        protobufSeq = protobufSeq &+ 1
+
+        var chunks: [[UInt8]] = []
+        var offset = 0
+        var index = 0
+        while offset < data.count || (index == 0 && data.isEmpty) {
+            let end = min(offset + effectiveChunkSize, data.count)
+            var frame: [UInt8] = [packetType, seq, UInt8(totalChunks), UInt8(index)]
+            if end > offset {
+                frame.append(contentsOf: data.subdata(in: offset ..< end))
+            }
+            chunks.append(frame)
+            offset = end
+            index += 1
+        }
+
+        Bridge.log(
+            "NEX: 📦 Fragmented protobuf into \(chunks.count) chunk(s) (seq=\(seq), max payload \(effectiveChunkSize) bytes)"
+        )
+        queueChunks(chunks, waitTimeMs: waitTimeMs)
     }
 
     private func processCommand(_ command: BufferedCommand) async {

@@ -425,18 +425,18 @@ object NexProtobufUtils {
         }
     }
 
+    /**
+     * Returns the raw serialized PhoneToGlasses protobuf bytes.
+     *
+     * Transport framing (the 0x02 packet type and the [seq][totalChunks][chunkIndex]
+     * fragmentation header) is applied at send time by MentraNexSGC.sendProtobuf(),
+     * which owns the negotiated MTU / chunk size. Keeping framing out of here lets a
+     * single chunker handle every control command uniformly.
+     */
     private fun generateProtobufCommandBytes(phoneToGlasses: PhoneToGlasses): ByteArray {
         val contentBytes = phoneToGlasses.toByteArray()
-        val chunk = ByteBuffer.allocate(contentBytes.size + 1)
-
-        chunk.put(NexBluetoothPacketTypes.PACKET_TYPE_PROTOBUF)
-        chunk.put(contentBytes)
-
-        // Enhanced logging for protobuf messages
-        val result = chunk.array()
-        logProtobufMessage(phoneToGlasses, result)
-
-        return result
+        logProtobufMessage(phoneToGlasses, contentBytes)
+        return contentBytes
     }
 
     private fun logProtobufMessage(phoneToGlasses: PhoneToGlasses, fullMessage: ByteArray) {

@@ -127,7 +127,7 @@ export const NEX_PROFILE: DisplayProfile = {
   displayWidthPx: 440,
   maxLines: 5,
 
-  maxPayloadBytes: 226,
+  maxPayloadBytes: 450, // Matches firmware MAX_TEXT_LEN / DisplayText.text cap; delivered via fragmented BLE transport
   bleChunkSize: 176,
 
   // Font metrics
