@@ -19,6 +19,11 @@ await $({ stdio: 'inherit', cwd: 'modules/miniapp' })`bun run prepare`;
 // install in parallel with its workspace deps.
 await $({ stdio: 'inherit', cwd: 'modules/island' })`bun run build:module`;
 
+// Apply patches/* via patch-package. Includes the Supabase fix that strips
+// a dynamic import('@opentelemetry/api') Hermes can't parse — without this
+// the release Android bundle fails at the hermes-compiler step.
+await $({ stdio: 'inherit' })`bunx patch-package`;
+
 // ignore scripts to avoid infinite loop:
 // await $({ stdio: 'inherit' })`bun install --ignore-scripts`;
 
