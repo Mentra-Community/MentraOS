@@ -663,17 +663,8 @@ class MentraBluetoothSdk private constructor(
             "gallery_status" -> dispatchToListeners { it.onGalleryStatus(GalleryStatusEvent(data)) }
             "photo_response" -> dispatchToListeners { it.onPhotoResponse(PhotoResponseEvent(data)) }
             "photo_status" -> dispatchToListeners { it.onPhotoStatus(PhotoStatusEvent(data)) }
-            "stream_status" -> {
-                val event = StreamStatusEvent(data)
-                handleStreamStatusForKeepAlive(event.status)
-                dispatchToListeners { it.onStreamStatus(event) }
-            }
-            "keep_alive_ack" -> {
-                val event = KeepAliveAckEvent(data)
-                if (!handleStreamKeepAliveAck(event)) {
-                    dispatchToListeners { it.onKeepAliveAck(event) }
-                }
-            }
+            "stream_status" -> dispatchToListeners { it.onStreamStatus(StreamStatusEvent(data)) }
+            "keep_alive_ack" -> dispatchToListeners { it.onKeepAliveAck(KeepAliveAckEvent(data)) }
             "mic_pcm" -> {
                 val event = MicPcmEvent(data)
                 if (event.pcm.isNotEmpty()) {
