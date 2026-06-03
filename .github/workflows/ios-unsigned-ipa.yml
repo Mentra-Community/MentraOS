@@ -1,161 +1,116 @@
 name: iOS IPA (Expo / React Native - Stable CI)
 
 on:
-workflow_dispatch:
-push:
-branches: [dev]
+  workflow_dispatch:
+  push:
+    branches:
+      - dev
 
 jobs:
-build:
-runs-on: macos-15
+  build:
+    runs-on: macos-15
 
-env:
-  DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
-  NODE_OPTIONS: --max-old-space-size=4096
-  CI: true
-steps:
-  # -------------------------
-  # Checkout
-  # -------------------------
-  - name: Checkout
-    uses: actions/checkout@v4
-  # -------------------------
-  # Ensure correct Xcode
-  # -------------------------
-  - name: Setup Xcode 16.2
-    run: |
-      sudo xcode-select -s $DEVELOPER_DIR
-      xcodebuild -version
-      xcode-select -p
-  - name: Accept Xcode license & init
-    run: |
-      sudo xcodebuild -runFirstLaunch
-      sudo xcodebuild -license accept || true
-  # -------------------------
-  # Node + Bun
-  # -------------------------
-  - name: Setup Node
-    uses: actions/setup-node@v4
-    with:
-      node-version: "20"
-      cache: "npm"
-  - name: Setup Bun
-    uses: oven-sh/setup-bun@v2
-  # -------------------------
-  # Cache dependencies
-  # -------------------------
-  - name: Cache node_modules
-    uses: actions/cache@v4
-    with:
-      path: mobile/node_modules
-      key: ${{ runner.os }}-node-${{ hashFiles('mobile/bun.lockb', 'mobile/package.json') }}
-  - name: Cache Pods
-    uses: actions/cache@v4
-    with:
-      path: |
-        mobile/ios/Pods
-        mobile/ios/Podfile.lock
-      key: ${{ runner.os }}-pods-${{ hashFiles('mobile/ios/Podfile.lock') }}
-  # -------------------------
-  # Install deps
-  # -------------------------
-  - name: Install dependencies
-    working-directory: ./mobile
-    run: bun install --no-frozen-lockfile
-  # -------------------------
-  # Env setup
-  # -------------------------
-  - name: Setup env
-    working-directory: ./mobile
-    run: cp .env.example .env
-  # -------------------------
-  # Expo prebuild (clean!)
-  # -------------------------
-  - name: Expo prebuild (clean)
-    working-directory: ./mobile
-    run: |
-      bunx expo prebuild --platform ios --clean
-  # -------------------------
-  # Fix common RN/Xcode issues
-  # -------------------------
-  - name: Patch iOS build settings
-    working-directory: ./mobile
-    run: |
-      # Disable new architecture if causing CI issues
-      sed -i '' 's/USE_NEW_ARCHITECTURE=1/USE_NEW_ARCHITECTURE=0/g' ios/Podfile || true
-  # -------------------------
-  # Install Pods (forced correct Xcode)
-  # -------------------------
-  - name: Install CocoaPods
-    working-directory: ./mobile/ios
-    run: |
-      pod deintegrate
-      pod install --repo-update
-  # -------------------------
-  # Verify schemes
-  # -------------------------
-  - name: List schemes
-    working-directory: ./mobile/ios
-    run: xcodebuild -workspace *.xcworkspace -list
-  # -------------------------
-  # Build archive
-  # -------------------------
-  - name: Archive app
-    working-directory: ./mobile/ios
     env:
-      SENTRY_DISABLE_AUTO_UPLOAD: "true"
-    run: |
-      set -o pipefail
-      xcodebuild archive \
-        -workspace *.xcworkspace \
-        -scheme $(xcodebuild -list -json | jq -r '.workspace.schemes[0]') \
-        -configuration Release \
-        -destination 'generic/platform=iOS' \
-        -sdk iphoneos \
-        -archivePath $GITHUB_WORKSPACE/app.xcarchive \
-        CODE_SIGN_IDENTITY="" \
-        CODE_SIGNING_REQUIRED=NO \
-        CODE_SIGNING_ALLOWED=NO \
-        DEVELOPMENT_TEAM="" \
-        2>&1 | tee /tmp/xcodebuild.log
-  # -------------------------
-  # Debug logs on failure
-  # -------------------------
-  - name: Show build log
-    if: always()
-    run: tail -200 /tmp/xcodebuild.log || true
-  # -------------------------
-  # Extract .app
-  # -------------------------
-  - name: Extract app
-    run: |
-      APP_PATH=$(find $GITHUB_WORKSPACE/app.xcarchive -name "*.app" -type d | head -1)
-      if [ -z "$APP_PATH" ]; then
-        echo "❌ .app not found"
-        exit 1
-      fi
-      echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
-      ls -la $APP_PATH
-  # -------------------------
-  # Package IPA
-  # -------------------------
-  - name: Create IPA
-    run: |
-      mkdir Payload
-      cp -r "$APP_PATH" Payload/App.app
-      touch Payload/App.app/embedded.mobileprovision
-      zip -r app.ipa Payload
-  # -------------------------
-  # Upload artifacts
-  # -------------------------
-  - name: Upload IPA
-    uses: actions/upload-artifact@v4
-    with:
-      name: ios-ipa
-      path: app.ipa
-  - name: Upload logs
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: build-logs
-      path: /tmp/xcodebuild.log
+      DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
+      NODE_OPTIONS: --max-old-space-size=4096
+      CI: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode 16.2
+        run: |
+          sudo xcode-select -s $DEVELOPER_DIR
+          xcodebuild -version
+          xcode-select -p
+
+      - name: Accept Xcode license
+        run: |
+          sudo xcodebuild -runFirstLaunch
+          sudo xcodebuild -license accept || true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        working-directory: ./mobile
+        run: bun install --no-frozen-lockfile
+
+      - name: Setup env
+        working-directory: ./mobile
+        run: cp .env.example .env
+
+      - name: Expo prebuild
+        working-directory: ./mobile
+        run: bunx expo prebuild --platform ios --clean
+
+      - name: Install CocoaPods
+        working-directory: ./mobile/ios
+        run: |
+          pod deintegrate
+          pod install --repo-update
+
+      - name: List schemes
+        working-directory: ./mobile/ios
+        run: xcodebuild -workspace *.xcworkspace -list
+
+      - name: Archive app
+        working-directory: ./mobile/ios
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: "true"
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -workspace *.xcworkspace \
+            -scheme $(xcodebuild -list -json | /usr/bin/python3 -c "import sys, json; print(json.load(sys.stdin)['workspace']['schemes'][0])") \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -sdk iphoneos \
+            -archivePath $GITHUB_WORKSPACE/app.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            2>&1 | tee /tmp/xcodebuild.log
+
+      - name: Show build log
+        if: always()
+        run: tail -200 /tmp/xcodebuild.log || true
+
+      - name: Extract app
+        run: |
+          APP_PATH=$(find $GITHUB_WORKSPACE/app.xcarchive -name "*.app" -type d | head -1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ .app not found"
+            exit 1
+          fi
+
+          echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
+          ls -la $APP_PATH
+
+      - name: Create IPA
+        run: |
+          mkdir Payload
+          cp -r "$APP_PATH" Payload/App.app
+          touch Payload/App.app/embedded.mobileprovision
+          zip -r app.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: app.ipa
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: /tmp/xcodebuild.log
