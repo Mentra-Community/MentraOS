@@ -5,10 +5,10 @@ import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
 // Mock module dependencies BEFORE importing the coordinator.
 const startStream = mock(async (_req: unknown) => {})
 const stopStream = mock(async () => {})
-const keepStreamAlive = mock(async (_req: unknown) => {})
+const sendCloudStreamKeepAlive = mock(async (_req: unknown) => {})
 
-mock.module("@mentra/bluetooth-sdk", () => ({
-  default: {startStream, stopStream, keepStreamAlive},
+mock.module("@mentra/bluetooth-sdk-internal", () => ({
+  default: {startStream, stopStream, sendCloudStreamKeepAlive},
 }))
 
 const provisionManagedStream = mock(async (_destinations?: unknown) => ({
@@ -39,7 +39,7 @@ const realFetch = globalThis.fetch
 beforeEach(() => {
   startStream.mockClear()
   stopStream.mockClear()
-  keepStreamAlive.mockClear()
+  sendCloudStreamKeepAlive.mockClear()
   provisionManagedStream.mockClear()
   getManagedStreamStatus.mockClear()
   teardownManagedStream.mockClear()

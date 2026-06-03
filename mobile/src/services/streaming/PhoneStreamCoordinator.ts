@@ -28,8 +28,8 @@
  * the legacy path.
  */
 
-import CoreModule from "@mentra/bluetooth-sdk"
-import type {StreamStatusEvent, KeepAliveAckEvent} from "@mentra/bluetooth-sdk"
+import CoreModule from "@mentra/bluetooth-sdk-internal"
+import type {KeepAliveAckEvent, StreamStatusEvent} from "@mentra/bluetooth-sdk-internal"
 
 import {StreamLifecycleController, type LifecycleLogger} from "./StreamLifecycleController"
 import {
@@ -422,7 +422,7 @@ export class PhoneStreamCoordinator {
       },
       {
         sendKeepAlive: async (ackId) => {
-          await CoreModule.keepStreamAlive({
+          await CoreModule.sendCloudStreamKeepAlive({
             type: "keep_stream_alive",
             streamId,
             ackId,
