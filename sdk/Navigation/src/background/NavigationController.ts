@@ -213,7 +213,14 @@ export class NavigationController {
                 distanceMeters: s.distanceMeters,
               }))
             : null
-        this.trip = {...this.trip, routePoints: route.points, routeSteps: steps}
+        // A fresh route landing means any in-flight reroute is resolved.
+        // Clear the "rerouting" status here so the maneuver card / HUD
+        // drop "Rebuilding route…" the moment the new polyline applies,
+        // rather than lingering until the next maneuver event. Only
+        // "rerouting" is rewritten — "navigating" (initial start) and
+        // "arrived" are left untouched.
+        const status = this.trip.status === "rerouting" ? "navigating" : this.trip.status
+        this.trip = {...this.trip, status, routePoints: route.points, routeSteps: steps}
         this.ui.send("nav:route", {points: route.points, steps})
         this.ui.send("nav:trip-state", this.trip)
         logLiveRoute(route)
