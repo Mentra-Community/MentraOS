@@ -83,21 +83,6 @@ export function bootstrapMentraJS() {
     const app = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
     const appName = app?.name ?? packageName
 
-    // Pop the /applet/local route if the user is currently looking at
-    // this miniapp's UI. The JSContext is already torn down — leaving
-    // the WebView mounted means it's talking to nothing.
-    try {
-      const navState = useNavigationStore.getState()
-      const top = navState.history.length - 1
-      const topPath = navState.history[top]
-      const topParams = navState.historyParams[top] as {packageName?: string} | undefined
-      if (topPath === "/applet/local" && topParams?.packageName === packageName) {
-        navState.goBack()
-      }
-    } catch {
-      /* navigation singleton may not be ready in early-boot crashes */
-    }
-
     // File an automatic incident. Dedupe so a flapping miniapp doesn't
     // generate one incident per crashloop transition.
     void submitAutomaticBugIncident({

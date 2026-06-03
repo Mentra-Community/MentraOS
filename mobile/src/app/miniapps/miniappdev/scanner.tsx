@@ -8,7 +8,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {appRegistry, decideDevLaunchRoute, registerDevApp, type DevAppRecord} from "@mentra/island"
+import {appRegistry, decideDevLaunchRoute, registerDevApp, useAppStatusStore, type DevAppRecord} from "@mentra/island"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
@@ -157,14 +157,8 @@ export default function MiniappDeveloperScannerScreen() {
       }
 
       clearHistoryAndGoHome()
-      push("/applet/local", {
-        packageName,
-        devUrl,
-        appName: name,
-        iconUrl,
-        ...(devPort ? {devPort} : {}),
-        ...(manifest ? {manifestJson: JSON.stringify(manifest)} : {}),
-      })
+      await useAppStatusStore.getState().refresh()
+      await useAppStatusStore.getState().setForeground(packageName)
     } catch (error) {
       showAlert("Error", String(error), [{text: "OK", onPress: () => setScanned(false)}])
     }
