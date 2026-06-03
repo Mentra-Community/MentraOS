@@ -192,7 +192,6 @@ public class StreamCommandHandler implements ICommandHandler {
                                 context, streamUrl, streamId, flash, sound, config);
                         streamStarted = true;
                         RtmpStreamingService.setStateManager(stateManager);
-                        sendInitialStreamStatus(streamId, config.toStatusJson("rtmp"));
                         break;
                     }
                 case SRT:
@@ -208,7 +207,6 @@ public class StreamCommandHandler implements ICommandHandler {
                                 context, streamUrl, streamId, flash, sound, config);
                         streamStarted = true;
                         SrtStreamingService.setStateManager(stateManager);
-                        sendInitialStreamStatus(streamId, config.toStatusJson("srt"));
                         break;
                     }
                 case WHIP:
@@ -224,7 +222,6 @@ public class StreamCommandHandler implements ICommandHandler {
                                 context, streamUrl, streamId, flash, sound, config);
                         streamStarted = true;
                         WhipStreamingService.setStateManager(stateManager);
-                        sendInitialStreamStatus(streamId, config.toStatusJson("whip"));
                         break;
                     }
             }
@@ -238,23 +235,6 @@ public class StreamCommandHandler implements ICommandHandler {
             streamingManager.sendStreamStatusResponse(
                     false, ServiceConstants.STATUS_ERROR, e.getMessage());
             return false;
-        }
-    }
-
-    private void sendInitialStreamStatus(String streamId, JSONObject resolvedConfig) {
-        try {
-            JSONObject status = new JSONObject();
-            status.put("type", "stream_status");
-            status.put("status", "initializing");
-            if (streamId != null && !streamId.isEmpty()) {
-                status.put("streamId", streamId);
-            }
-            if (resolvedConfig != null) {
-                status.put("resolvedConfig", resolvedConfig);
-            }
-            streamingManager.sendStreamStatusResponse(true, status);
-        } catch (JSONException e) {
-            Log.e(TAG, "Error creating initial stream status", e);
         }
     }
 
