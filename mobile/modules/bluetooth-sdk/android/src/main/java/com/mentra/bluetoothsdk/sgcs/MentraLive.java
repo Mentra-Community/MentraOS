@@ -42,6 +42,7 @@ import com.mentra.bluetoothsdk.utils.BitmapJavaUtils;
 import com.mentra.bluetoothsdk.utils.SmartGlassesConnectionState;
 import com.mentra.bluetoothsdk.utils.K900ProtocolUtils;
 import com.mentra.bluetoothsdk.utils.MessageChunker;
+import com.mentra.bluetoothsdk.utils.MessageChunkReassembler;
 import com.mentra.bluetoothsdk.utils.audio.Lc3Player;
 import com.mentra.bluetoothsdk.utils.BlePhotoUploadService;
 import com.mentra.bluetoothsdk.utils.IncidentLogBleRelayNaming;
@@ -249,6 +250,7 @@ public class MentraLive extends SGCManager {
     private int filePacketBufferSize = 0;
     private final Object filePacketBufferLock = new Object();
     private int fileReadNotificationCount = 0; // Debug counter for FILE_READ notifications
+    private final MessageChunkReassembler incomingChunkReassembler = new MessageChunkReassembler();
 
     private final Object connectionLock = new Object();
 
@@ -682,6 +684,9 @@ public class MentraLive extends SGCManager {
     private void updateConnectionState(String state) {
         boolean isEqual = state.equals(getConnectionState());
         if (isEqual) {
+            if (state.equals(ConnTypes.DISCONNECTED)) {
+                incomingChunkReassembler.clear();
+            }
             return;
         }
 
@@ -708,6 +713,7 @@ public class MentraLive extends SGCManager {
             DeviceStore.INSTANCE.apply("glasses", "connected", false);
             DeviceStore.INSTANCE.apply("glasses", "signalStrength", -1);
             DeviceStore.INSTANCE.apply("glasses", "signalStrengthUpdatedAt", 0L);
+            incomingChunkReassembler.clear();
             // Drop OTA caches when fully disconnected — avoids leaking session/step state
             // from a previous pairing into the next one.
             resetOtaCache();
@@ -2262,6 +2268,11 @@ public class MentraLive extends SGCManager {
         }
         BleTraceLogger.logJson("glasses_to_phone", "sdk_ble_event", json, null);
 
+        if (MessageChunker.isChunkedMessage(json)) {
+            processChunkedJsonMessage(json);
+            return;
+        }
+
         // Check if this is an ACK response
         String type = json.optString("type", "");
         if ("msg_ack".equals(type)) {
@@ -3045,6 +3056,14 @@ public class MentraLive extends SGCManager {
                 Log.w(TAG, "LIVE: Received malformed chunked message: " + json);
                 return;
             }
+            if (chunkInfo.chunkId == null || chunkInfo.chunkId.isEmpty()
+                    || chunkInfo.totalChunks <= 0
+                    || chunkInfo.chunkIndex < 0
+                    || chunkInfo.chunkIndex >= chunkInfo.totalChunks
+                    || chunkInfo.data == null) {
+                Log.w(TAG, "LIVE: Received invalid chunk metadata: " + json);
+                return;
+            }
 
             String reassembled = incomingChunkReassembler.addChunk(
                     chunkInfo.chunkId,
@@ -3115,6 +3134,7 @@ public class MentraLive extends SGCManager {
                 BlePhotoTransfer photoTransfer = blePhotoTransfers.remove(bleImgId);
                 if (photoTransfer != null) {
                     Bridge.log("LIVE: 🧹 Cleaned up timed out BLE photo transfer for: " + bleImgId);
+                    Bridge.sendPhotoError(photoTransfer.requestId, "TRANSFER_TIMEOUT", "Transfer timed out for: " + fileName);
                 }
 
                 // Reset stale session on incident log relay so a retry starts fresh.
@@ -3147,8 +3167,19 @@ public class MentraLive extends SGCManager {
                 return;
             }
 
+            String bleImgId = fileName;
+            int dotIndex = bleImgId.lastIndexOf('.');
+            if (dotIndex > 0) {
+                bleImgId = bleImgId.substring(0, dotIndex);
+            }
+            BlePhotoTransfer photoTransfer = blePhotoTransfers.get(bleImgId);
+            String effectiveRequestId = requestId;
+            if (effectiveRequestId.isEmpty() && photoTransfer != null) {
+                effectiveRequestId = photoTransfer.requestId;
+            }
+
             Log.e(TAG, "❌ Transfer failed for: " + fileName + " (reason: " + reason + ")");
-            Bridge.sendPhotoError(requestId, "TRANSFER_FAILED", "Transfer failed for: " + fileName + " (reason: " + reason + ")");
+            Bridge.sendPhotoError(effectiveRequestId, "TRANSFER_FAILED", "Transfer failed for: " + fileName + " (reason: " + reason + ")");
 
             // Clean up any active transfer for this file
             FileTransferSession session = activeFileTransfers.remove(fileName);
@@ -3157,12 +3188,7 @@ public class MentraLive extends SGCManager {
             }
 
             // Clean up any BLE photo transfer
-            String bleImgId = fileName;
-            int dotIndex = bleImgId.lastIndexOf('.');
-            if (dotIndex > 0) {
-                bleImgId = bleImgId.substring(0, dotIndex);
-            }
-            BlePhotoTransfer photoTransfer = blePhotoTransfers.remove(bleImgId);
+            photoTransfer = blePhotoTransfers.remove(bleImgId);
             if (photoTransfer != null) {
                 Bridge.log("LIVE: 🧹 Cleaned up failed BLE photo transfer for: " + bleImgId + " (requestId: " + photoTransfer.requestId + ")");
             }
@@ -3419,8 +3445,8 @@ public class MentraLive extends SGCManager {
                     // Try to parse the "C" field as JSON
                     JSONObject innerJson = new JSONObject(command);
 
-                    // If it has a "type" field, it's a standard message that got C-wrapped
-                    if (innerJson.has("type")) {
+                    // If it has a "type" field or chunk envelope, it's a standard message that got C-wrapped
+                    if (innerJson.has("type") || MessageChunker.isChunkedMessage(innerJson)) {
                         String messageType = innerJson.optString("type", "");
                         Log.d(TAG, "📦 Detected C-wrapped standard JSON message with type: " + messageType);
                         Log.d(TAG, "🔓 Unwrapping and processing through standard message handler");
@@ -4841,6 +4867,7 @@ public class MentraLive extends SGCManager {
 
         // Clean up message tracking
         pendingMessages.clear();
+        incomingChunkReassembler.clear();
         Bridge.log("LIVE: Cleared pending message tracking");
 
         // Release RGB LED control authority before disconnecting
@@ -5756,7 +5783,7 @@ public class MentraLive extends SGCManager {
                 }
 
                 // Create chunks
-                List<JSONObject> chunks = MessageChunker.createChunks(data, messageId);
+                List<JSONObject> chunks = MessageChunker.createChunks(data, messageId, wakeup);
                 Bridge.log("LIVE: Sending " + chunks.size() + " chunks");
                 if (isPhotoRequest) {
                     Bridge.log("LIVE: PHOTO PIPELINE BLE handoff — created " + chunks.size() + " chunks for transmission");
@@ -6252,9 +6279,10 @@ public class MentraLive extends SGCManager {
                     Log.e(TAG, "❌ BLE photo transfer incomplete after final packet. Missing " + missingPackets.size() + " packets: " + missingPackets);
                     Log.e(TAG, "❌ Telling glasses to retry entire transfer");
 
-                    // Tell glasses transfer failed, they will retry
+                    // Tell glasses transfer failed, they will retry. Keep the photo transfer
+                    // entry so the retry still maps back to the original requestId.
                     sendTransferCompleteConfirmation(packetInfo.fileName, false);
-                    blePhotoTransfers.remove(bleImgId);
+                    photoTransfer.session = null;
                 }
             }
 

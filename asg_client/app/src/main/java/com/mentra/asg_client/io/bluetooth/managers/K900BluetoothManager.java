@@ -17,6 +17,7 @@ import java.util.concurrent.Executors;
 
 import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.utils.smartglasses.K900ProtocolUtils;
+import com.mentra.asg_client.utils.smartglasses.MessageChunker;
 import com.mentra.asg_client.reporting.domains.BluetoothReporting;
 
 import org.json.JSONObject;
@@ -24,6 +25,7 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -165,6 +167,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 if (originalData.startsWith("{") && !K900ProtocolUtils.isCWrappedJson(originalData)) {
                     Log.d(TAG, "📡 🔧 JSON data detected, applying C-wrapping and protocol formatting...");
                     Log.d(TAG, "📡 📦 JSON DATA BEFORE C-WRAPPING: " + originalData);
+                    String wrappedJson = K900ProtocolUtils.createTransmissionWrapperJson(originalData);
+                    if (MessageChunker.needsChunking(wrappedJson)) {
+                        return sendChunkedJson(originalData);
+                    }
+
                     data = K900ProtocolUtils.formatMessageForTransmission(originalData);
 
                     // Log the first 50 bytes of the hex representation
@@ -203,6 +210,49 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
 
         return sent;
+    }
+
+    private boolean sendChunkedJson(String originalJson) {
+        try {
+            long messageId = -1;
+            try {
+                JSONObject original = new JSONObject(originalJson);
+                messageId = original.optLong("mId", -1);
+            } catch (Exception ignored) {
+                // Chunking also supports non-ACK messages.
+            }
+
+            List<JSONObject> chunks = MessageChunker.createChunks(originalJson, messageId);
+            Log.d(TAG, "📡 🧩 Sending chunked JSON as " + chunks.size() + " chunks");
+
+            boolean allSent = true;
+            for (int i = 0; i < chunks.size(); i++) {
+                byte[] chunkData = K900ProtocolUtils.formatMessageForTransmission(chunks.get(i).toString());
+                Log.d(TAG, "📡 🧩 Sending chunk " + (i + 1) + "/" + chunks.size()
+                        + " (" + chunkData.length + " bytes packed)");
+                boolean sent = comManager.send(chunkData);
+                allSent = allSent && sent;
+                if (!sent) {
+                    Log.w(TAG, "📡 ❌ Chunk " + (i + 1) + "/" + chunks.size()
+                            + " failed to send; phone will drop the incomplete message");
+                }
+
+                if (i < chunks.size() - 1) {
+                    try {
+                        Thread.sleep(PACING_DELAY_MS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        Log.w(TAG, "Interrupted while pacing chunked JSON send");
+                        return false;
+                    }
+                }
+            }
+
+            return allSent;
+        } catch (Exception e) {
+            Log.e(TAG, "Error chunking JSON for K900 transmission", e);
+            return false;
+        }
     }
 
     @Override
@@ -675,6 +725,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         
         if (packet == null) {
             Log.e(TAG, "Failed to pack file packet " + packetIndex);
+            notifyTransferFailedToPhone("packet_pack_failed");
             currentFileTransfer = null;
             return;
         }
@@ -730,7 +781,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 
                 notificationManager.showDebugNotification("File Transfer Failed", 
                     "Packet " + packetIndex + " timeout");
-                
+
+                notifyTransferFailedToPhone("packet_timeout");
+
                 // Cancel transfer
                 comManager.setFastMode(false);
                 currentFileTransfer = null;
@@ -812,6 +865,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
                 notificationManager.showDebugNotification("Transfer Failed",
                     "BLE TX stuck after " + consecutiveFailures + " failures at packet " + zeroBasedIndex);
+
+                notifyTransferFailedToPhone("ble_tx_stuck_consecutive_failures");
 
                 // Abort the transfer
                 comManager.setFastMode(false);
@@ -936,11 +991,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                     "Max retries exceeded for " + currentFileTransfer.fileName);
 
                 // Clean up but DON'T delete file (might be useful for debugging)
+                notifyTransferFailedToPhone("max_transfer_retries_exceeded");
                 comManager.setFastMode(false);
                 currentFileTransfer = null;
                 pendingPackets.clear();
-
-                // TODO: Notify phone we gave up (send transfer_failed message)
             }
         }
     }
@@ -975,15 +1029,39 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * Handle phone confirmation timeout
      */
     private void handlePhoneConfirmationTimeout() {
-        if (currentFileTransfer != null && currentFileTransfer.waitingForPhoneConfirmation) {
-            Log.e(TAG, "⏰ Phone confirmation timeout for: " + currentFileTransfer.fileName);
+        FileTransferSession transfer = currentFileTransfer;
+        if (transfer != null && transfer.waitingForPhoneConfirmation) {
+            String fileName = transfer.fileName;
+            Log.e(TAG, "⏰ Phone confirmation timeout for: " + fileName);
             Log.e(TAG, "⏰ Phone did not respond within " + PHONE_CONFIRMATION_TIMEOUT_MS + "ms");
 
             notificationManager.showDebugNotification("Phone Timeout",
                 "No confirmation received - retrying");
 
             // Treat timeout as failure (phone might have crashed or disconnected)
-            handlePhoneConfirmation(currentFileTransfer.fileName, false);
+            handlePhoneConfirmation(fileName, false);
+        }
+    }
+
+    private void notifyTransferFailedToPhone(String reason) {
+        FileTransferSession transfer = currentFileTransfer;
+        if (transfer == null) {
+            return;
+        }
+        String fileName = transfer.fileName;
+
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "transfer_failed");
+            json.put("fileName", fileName);
+            json.put("reason", reason);
+            json.put("timestamp", System.currentTimeMillis());
+
+            boolean sent = sendData(json.toString().getBytes(StandardCharsets.UTF_8));
+            Log.i(TAG, "📤 transfer_failed sent to phone for " + fileName
+                    + " (reason=" + reason + ", sent=" + sent + ")");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to notify phone about transfer failure", e);
         }
     }
 

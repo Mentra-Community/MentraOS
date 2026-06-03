@@ -960,6 +960,7 @@ class MentraLive: NSObject, SGCManager {
         // a previous pairing into the next one (would otherwise surface as wrong overall_percent
         // or stale lastBesOtaProgress on the next OTA).
         if state == ConnTypes.DISCONNECTED {
+            incomingChunkReassembler.clear()
             stopSignalStrengthPolling()
             DeviceStore.shared.apply("glasses", "signalStrength", -1)
             DeviceStore.shared.apply("glasses", "signalStrengthUpdatedAt", 0)
@@ -1117,6 +1118,7 @@ class MentraLive: NSObject, SGCManager {
     private var connectedPeripheral: CBPeripheral?
     private var txCharacteristic: CBCharacteristic?
     private var rxCharacteristic: CBCharacteristic?
+    private let bes2700MtuLimit = 256
     private var currentMtu: Int = 23 // Default BLE MTU
 
     // State Tracking
@@ -1141,6 +1143,7 @@ class MentraLive: NSObject, SGCManager {
     // Queue Management
     private let commandQueue = CommandQueue()
     private let bluetoothQueue = DispatchQueue(label: "MentraLiveBluetooth", qos: .userInitiated)
+    private let incomingChunkReassembler = MessageChunkReassembler()
     private var lastSendTimeMs: TimeInterval = 0
 
     // Timers
@@ -1827,6 +1830,11 @@ class MentraLive: NSObject, SGCManager {
         // Log ALL incoming JSON objects for debugging
         // Bridge.log("LIVE: DEBUG: processJsonObject: \(json)")
 
+        if MessageChunker.isChunkedMessage(json) {
+            processChunkedJsonObject(json)
+            return
+        }
+
         // Check for K900 command format
         if let command = json["C"] as? String {
             processK900JsonMessage(json)
@@ -2176,6 +2184,26 @@ class MentraLive: NSObject, SGCManager {
                 Bridge.log("Unhandled message type: \(type)")
             }
         }
+    }
+
+    private func processChunkedJsonObject(_ json: [String: Any]) {
+        guard let info = MessageChunker.getChunkInfo(json) else {
+            Bridge.log("LIVE: Received malformed chunked message from glasses")
+            return
+        }
+
+        guard let reassembled = incomingChunkReassembler.addChunk(info) else {
+            return
+        }
+
+        guard let data = reassembled.data(using: .utf8),
+              let reassembledJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            Bridge.log("LIVE: Failed to parse reassembled chunked message")
+            return
+        }
+
+        processJsonObject(reassembledJson)
     }
 
     /// Maps K900 gesture type codes to gesture names
@@ -2632,6 +2660,7 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
 
         stopReadinessCheckLoop()
+        sendBleMtuConfig()
 
         // Invalidate any version fields from a prior link session so the next version_info
         // cannot leave a stale build number in RN (ASG is source of truth for PackageInfo).
@@ -2879,8 +2908,12 @@ class MentraLive: NSObject, SGCManager {
         activeFileTransfers.removeValue(forKey: fileName)
 
         let bleImgId = fileName.split(separator: ".").first.map(String.init) ?? ""
-        if blePhotoTransfers.removeValue(forKey: bleImgId) != nil {
+        if let transfer = blePhotoTransfers.removeValue(forKey: bleImgId) {
             Bridge.log("LIVE: 🧹 Cleaned up timed out BLE photo transfer for: \(bleImgId)")
+            Bridge.sendPhotoError(
+                requestId: transfer.requestId, errorCode: "TRANSFER_TIMEOUT",
+                errorMessage: "Transfer timed out for: \(fileName)"
+            )
         }
         if bleIncidentLogRelays.removeValue(forKey: bleImgId) != nil {
             Bridge.log("LIVE: 🧹 Cleaned up timed out BLE incident log relay for: \(bleImgId)")
@@ -2902,8 +2935,11 @@ class MentraLive: NSObject, SGCManager {
         }
 
         Bridge.log("LIVE: ❌ Transfer failed for: \(fileName) (reason: \(reason))")
+        let bleImgId = fileName.split(separator: ".").first.map(String.init) ?? ""
+        let transfer = blePhotoTransfers[bleImgId]
+        let effectiveRequestId = requestId.isEmpty ? transfer?.requestId ?? "" : requestId
         Bridge.sendPhotoError(
-            requestId: requestId, errorCode: "TRANSFER_FAILED",
+            requestId: effectiveRequestId, errorCode: "TRANSFER_FAILED",
             errorMessage: "Transfer failed for: \(fileName) (reason: \(reason))"
         )
 
@@ -2913,7 +2949,6 @@ class MentraLive: NSObject, SGCManager {
             )
         }
 
-        let bleImgId = fileName.split(separator: ".").first.map(String.init) ?? ""
         if let transfer = blePhotoTransfers.removeValue(forKey: bleImgId) {
             Bridge.log(
                 "LIVE: 🧹 Cleaned up failed BLE photo transfer for: \(bleImgId) (requestId: \(transfer.requestId))"
@@ -3050,11 +3085,13 @@ class MentraLive: NSObject, SGCManager {
                             )
                             Bridge.log("❌ Telling glasses to retry entire transfer")
 
-                            // Tell glasses transfer failed, they will retry
+                            // Tell glasses transfer failed, they will retry. Keep the photo
+                            // transfer entry so the retry maps back to the original requestId.
                             sendTransferCompleteConfirmation(
                                 fileName: packetInfo.fileName, success: false
                             )
-                            blePhotoTransfers.removeValue(forKey: bleImgId)
+                            photoTransfer.session = nil
+                            blePhotoTransfers[bleImgId] = photoTransfer
                         }
                     }
                 }
@@ -3287,6 +3324,20 @@ class MentraLive: NSObject, SGCManager {
         )
     }
 
+    private func sendBleMtuConfig() {
+        let effectiveMtu = min(currentMtu, bes2700MtuLimit)
+        let json: [String: Any] = [
+            "type": "set_ble_mtu",
+            "mtu": effectiveMtu,
+            "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+        ]
+
+        sendJson(json)
+        Bridge.log(
+            "LIVE: Sent BLE MTU config to glasses: negotiated=\(currentMtu), BES2700 limit=\(bes2700MtuLimit), effective=\(effectiveMtu)"
+        )
+    }
+
     // MARK: - Sending Data
 
     func queueSend(_ data: Data, id: String) {
@@ -3325,8 +3376,12 @@ class MentraLive: NSObject, SGCManager {
 
                     // Create chunks
                     let chunks = MessageChunker.createChunks(
-                        originalJson: jsonString, messageId: messageId
+                        originalJson: jsonString, messageId: messageId, wakeUp: wakeUp
                     )
+                    guard !chunks.isEmpty else {
+                        Bridge.log("LIVE: Failed to create BLE chunks within K900 packet limit")
+                        return
+                    }
                     Bridge.log("LIVE: Sending \(chunks.count) chunks")
 
                     // Send each chunk
@@ -3992,6 +4047,7 @@ class MentraLive: NSObject, SGCManager {
 
         // Stop all timers
         stopAllTimers()
+        incomingChunkReassembler.clear()
 
         // Disconnect BLE
         if let peripheral = connectedPeripheral {

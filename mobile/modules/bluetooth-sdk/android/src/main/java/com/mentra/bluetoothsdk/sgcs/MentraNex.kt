@@ -71,6 +71,8 @@ class MentraNex : SGCManager() {
         private const val DELAY_BETWEEN_CHUNKS_SEND: Long = 10 // Adjust this value as needed
 
         private const val INITIAL_CONNECTION_DELAY_MS = 350L // Adjust this value as needed
+        // Window to let a queued DisconnectRequest flush to the glasses before we close GATT.
+        private const val DISCONNECT_FLUSH_DELAY_MS = 250L
         private const val MICBEAT_INTERVAL_MS: Long = (1000 * 60) * 30; // micbeat every 30 minutes
 
         private const val MAIN_TASK_HANDLER_CODE_GATT_STATUS_CHANGED: Int = 110
@@ -133,6 +135,7 @@ class MentraNex : SGCManager() {
 
     private var maxChunkSize: Int = MAX_CHUNK_SIZE_DEFAULT // Maximum chunk size for BLE packets
     private var bmpChunkSize: Int = 194 // BMP chunk size
+    private var protobufSeq: Int = 0 // Rolling sequence for fragmented control messages
 
     @Volatile private var isWorkerRunning = false
     // Queue to hold pending requests
@@ -149,8 +152,6 @@ class MentraNex : SGCManager() {
     private var isScanning: Boolean = false
 
     private var protobufVersionPosted: Boolean = false
-
-    private var hasConnectedThisSession: Boolean = false
 
     private var bleScanCallback: ScanCallback? = null
 
@@ -417,12 +418,12 @@ class MentraNex : SGCManager() {
 
     override fun disconnect() {
         DeviceStore.apply("glasses", "fullyBooted", false)
-        destroy();
+        destroy()
     }
 
     override fun forget() {
         DeviceStore.apply("glasses", "fullyBooted", false)
-        destroy();
+        destroy()
     }
 
     override fun cleanup() {
@@ -437,7 +438,7 @@ class MentraNex : SGCManager() {
         Bridge.log("Nex: === SENDING HEAD UP ANGLE COMMAND TO GLASSES ===")
         Bridge.log("Nex: Head Up Angle: $validatedAngle degrees (validated range: 0-60)")
         val cmdBytes = NexProtobufUtils.generateHeadUpAngleConfigCommandBytes(angle)
-        sendDataSequentially(cmdBytes, 10)
+        sendProtobuf(cmdBytes, 10)
     }
 
     override fun getBatteryStatus() {
@@ -470,16 +471,16 @@ class MentraNex : SGCManager() {
         // TODO: test this logic. Is it correct? Should we send both or just one?
         Bridge.log("Nex: setBrightness() - level: " + level + "%, autoMode: " + autoMode);
         val brightnessCmdBytes = NexProtobufUtils.generateBrightnessConfigCommandBytes(level)
-        sendDataSequentially(brightnessCmdBytes, 10)
+        sendProtobuf(brightnessCmdBytes, 10)
 
         val autoBrightnessCmdBytes = NexProtobufUtils.generateAutoBrightnessConfigCommandBytes(autoMode)
-        sendDataSequentially(autoBrightnessCmdBytes, 10)
+        sendProtobuf(autoBrightnessCmdBytes, 10)
     }
 
     override fun clearDisplay() { 
         Bridge.log("Nex: clearDisplay() - sending clear display request command bytes");
         val clearDisplayPackets = NexProtobufUtils.generateClearDisplayRequestCommandBytes()
-        sendDataSequentially(clearDisplayPackets, 10)
+        sendProtobuf(clearDisplayPackets, 10)
         // sendTextWall(" ")
         Bridge.log("Nex: clearDisplay() - sent clear display request command bytes");
     }
@@ -487,7 +488,7 @@ class MentraNex : SGCManager() {
     override fun sendTextWall(text: String) {
         Bridge.log("Nex: sendTextWall() - text: " + text);
         val textChunks: ByteArray = createTextWallChunksForNex(text)
-        sendDataSequentially(textChunks);
+        sendProtobuf(textChunks)
     }
 
     override fun sendDoubleTextWall(top: String, bottom: String) {
@@ -498,7 +499,7 @@ class MentraNex : SGCManager() {
             bottom?.let { append(it) }
         }
         val textChunks = createTextWallChunksForNex(finalText)
-        sendDataSequentially(textChunks)
+        sendProtobuf(textChunks)
     }
 
     override fun displayBitmap(
@@ -533,23 +534,23 @@ class MentraNex : SGCManager() {
         Bridge.log("Nex: setDashboardPosition() - height: " + height + ", depth: " + depth)
         // Send display_height then display_distance; adjust order if Nex firmware requires otherwise.
         val heightBytes = NexProtobufUtils.generateDisplayHeightCommandBytes(height)
-        sendDataSequentially(heightBytes, 10)
+        sendProtobuf(heightBytes, 10)
         val distanceCm = NexProtobufUtils.dashboardDepthToDistanceCm(depth)
         val distanceBytes = NexProtobufUtils.generateDisplayDistanceCommandBytes(distanceCm)
-        sendDataSequentially(distanceBytes, 10)
+        sendProtobuf(distanceBytes, 10)
     }
 
     override fun setDashboardHeightOnly(height: Int) {
         Bridge.log("Nex: setDashboardHeightOnly() - height: $height")
         val heightBytes = NexProtobufUtils.generateDisplayHeightCommandBytes(height)
-        sendDataSequentially(heightBytes, 10)
+        sendProtobuf(heightBytes, 10)
     }
 
     override fun setDashboardDepthOnly(depth: Int) {
         Bridge.log("Nex: setDashboardDepthOnly() - depth: $depth")
         val distanceCm = NexProtobufUtils.dashboardDepthToDistanceCm(depth)
         val distanceBytes = NexProtobufUtils.generateDisplayDistanceCommandBytes(distanceCm)
-        sendDataSequentially(distanceBytes, 10)
+        sendProtobuf(distanceBytes, 10)
     }
 
     override fun ping() {
@@ -736,12 +737,16 @@ class MentraNex : SGCManager() {
                     val packetHex = values.joinToString("") { "%02X".format(it) }
                     Bridge.log("onCharacteristicWrite Values - $packetHex")
 
-                    if (values.isNotEmpty()) {
-                        val packetType = values[0]
-                        val protobufData = values.copyOfRange(1, values.size)
-
-                        if (packetType == NexBluetoothPacketTypes.PACKET_TYPE_PROTOBUF) {
-                            // just for test
+                    if (values.size >= 4 && values[0] == NexBluetoothPacketTypes.PACKET_TYPE_PROTOBUF) {
+                        // Debug-only re-decode of our own outgoing write. Frames are now
+                        // [0x02][seq][total][index] + protobuf, so strip the full 4-byte
+                        // transport header. Only a single-fragment write (total==1) holds a
+                        // complete, independently decodable protobuf; fragments of a
+                        // multi-part message are partial and would fail to decode.
+                        val total = values[2].toInt() and 0xFF
+                        val index = values[3].toInt() and 0xFF
+                        if (total == 1 && index == 0) {
+                            val protobufData = values.copyOfRange(4, values.size)
                             decodeProtobufsByWrite(protobufData, packetHex)
                         }
                     }
@@ -903,14 +908,6 @@ class MentraNex : SGCManager() {
                 showHomeScreen() // Turn on the NexGlasses display
                 updateConnectionState()
 
-                if (hasConnectedThisSession) {
-                    Bridge.log("Nex: BLE reconnect detected — showing reconnected banner")
-                    sendTextWall("// MentraOS Reconnected")
-                    mainTaskHandler.postDelayed({ clearDisplay() }, 3000)
-                } else {
-                    hasConnectedThisSession = true
-                }
-
                 // Post protobuf schema version information (only once)
                 if (!protobufVersionPosted) {
                     postProtobufSchemaVersionInfo()
@@ -921,7 +918,7 @@ class MentraNex : SGCManager() {
                 Bridge.log("=== SENDING GLASSES PROTOBUF VERSION REQUEST ===")
                 val versionQueryPacket = NexProtobufUtils.generateVersionRequestCommandBytes()
                 if (versionQueryPacket.isNotEmpty()) {
-                    sendDataSequentially(versionQueryPacket, 100)
+                    sendProtobuf(versionQueryPacket, 100)
                     Bridge.log("Sent glasses protobuf version request")
                 } else {
                     Bridge.log("Skipping version request: schema removed VersionRequest")
@@ -1124,6 +1121,21 @@ class MentraNex : SGCManager() {
     }
 
     private fun destroy() {
+        // Tell the glasses this teardown is intentional so they return to the welcome
+        // screen immediately instead of holding the last frame through the firmware's
+        // unexpected-disconnect grace period. Best-effort: if the write can't be sent
+        // or doesn't flush in time, the firmware grace period is the safety net.
+        val canSend = mainGlassGatt != null && mainWriteChar != null && isMainConnected
+        if (!canSend) {
+            performDestroy()
+            return
+        }
+        Bridge.log("Nex: Sending DisconnectRequest before teardown")
+        sendProtobuf(NexProtobufUtils.generateDisconnectRequestCommandBytes(), 100)
+        mainTaskHandler.postDelayed({ performDestroy() }, DISCONNECT_FLUSH_DELAY_MS)
+    }
+
+    private fun performDestroy() {
         Bridge.log("Nex: MentraNexSGC ONDESTROY")
         showHomeScreen()
         isKilled = true
@@ -1175,7 +1187,6 @@ class MentraNex : SGCManager() {
         sendQueue.offer(emptyArray()) // is this needed?
         isWorkerRunning = false
         isMainConnected = false
-        hasConnectedThisSession = false
         Bridge.log("Nex: MentraNexSGC cleanup complete")
     }
 
@@ -1239,7 +1250,7 @@ class MentraNex : SGCManager() {
             val streamId = "%04X".format(random.nextInt(0x10000)) // 4-digit hex format
             
             val startImageSendingBytes = NexProtobufUtils.generateDisplayImageCommandBytes(streamId, totalChunks, width, height)
-            sendDataSequentially(startImageSendingBytes)
+            sendProtobuf(startImageSendingBytes)
 
             // Send all chunks with proper stream ID parsing
             val chunks = NexProtobufUtils.createBmpChunksForNexGlasses(streamId, bmpData, totalChunks, bmpChunkSize)
@@ -1520,14 +1531,14 @@ class MentraNex : SGCManager() {
             }
             Bridge.log("Nex: === SENDING MICROPHONE STATE COMMAND TO GLASSES ===")
             val micConfigBytes = NexProtobufUtils.generateMicStateConfigCommandBytes(enable)
-            sendDataSequentially(micConfigBytes, 10) // wait some time to setup the mic
+            sendProtobuf(micConfigBytes, 10) // wait some time to setup the mic
             Bridge.log("Nex: Sent MIC command: ${micConfigBytes.joinToString("") { "%02x".format(it) }}")
         }, delay)
     }
 
     private fun queryBatteryStatus() {
         val batteryQueryPacket = NexProtobufUtils.generateBatteryStateRequestCommandBytes()
-        sendDataSequentially(batteryQueryPacket, 250)
+        sendProtobuf(batteryQueryPacket, 250)
     }
 
     ///// PROCESSING THREAD /////////////////
@@ -1558,6 +1569,51 @@ class MentraNex : SGCManager() {
     private fun sendDataSequentially(data: List<ByteArray>) {
         val chunks = Array(data.size) { i -> SendRequest(data[i]) }
         sendQueue.offer(chunks)
+        startWorkerIfNeeded()
+    }
+
+    /**
+     * Frames a serialized protobuf message onto the 0x02 control channel and sends it.
+     *
+     * The message is split into fragments that each fit the negotiated MTU, prefixed with a
+     * 4-byte transport header: [0x02][seq][totalChunks][chunkIndex]. The firmware reassembles
+     * fragments by seq/index before decoding. Single-fragment messages (totalChunks == 1) are
+     * decoded directly by the firmware fast path.
+     *
+     * @param protobufBytes raw serialized PhoneToGlasses bytes (no framing)
+     * @param waitTime optional post-message delay in ms applied after the last fragment (-1 = none)
+     */
+    private fun sendProtobuf(protobufBytes: ByteArray, waitTime: Int = -1) {
+        val headerSize = 4 // [0x02][seq][totalChunks][chunkIndex]
+        val maxFragment = (maxChunkSize - headerSize).coerceAtLeast(1)
+        val totalChunks =
+            if (protobufBytes.isEmpty()) 1 else (protobufBytes.size + maxFragment - 1) / maxFragment
+
+        if (totalChunks > 255) {
+            Log.e(TAG, "Nex: Protobuf message too large to fragment ($totalChunks chunks) - dropping")
+            return
+        }
+
+        val seq = protobufSeq
+        protobufSeq = (protobufSeq + 1) and 0xFF
+
+        val frames = Array(totalChunks) { index ->
+            val start = index * maxFragment
+            val end = minOf(start + maxFragment, protobufBytes.size)
+            val fragLen = end - start
+            val frame = ByteArray(headerSize + fragLen)
+            frame[0] = NexBluetoothPacketTypes.PACKET_TYPE_PROTOBUF
+            frame[1] = seq.toByte()
+            frame[2] = totalChunks.toByte()
+            frame[3] = index.toByte()
+            if (fragLen > 0) {
+                System.arraycopy(protobufBytes, start, frame, headerSize, fragLen)
+            }
+            // Carry the post-message delay on the final fragment only.
+            SendRequest(frame, if (index == totalChunks - 1) waitTime else -1)
+        }
+
+        sendQueue.offer(frames)
         startWorkerIfNeeded()
     }
 
