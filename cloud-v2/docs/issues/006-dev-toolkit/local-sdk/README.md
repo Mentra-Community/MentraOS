@@ -10,21 +10,21 @@ and **onto the phone** via the Local JS SDK (`@mentra/miniapp`). Mini
 apps ship as static bundles, run in a JS context on the phone, and
 call into a phone-resident runtime instead of a cloud `AppServer`.
 
-That's a clean break from cloud v1's mini-app model. Cloud v1's
+That's a clean break from cloud v1's miniapp model. Cloud v1's
 `@mentra/sdk` server protocol — app sessions, heartbeat, webhooks,
 fan-out — is being **deleted**, not ported.
 
 Per [OS-1446](https://linear.app/mentralabs/issue/OS-1446):
 > Cloud 2 is the next major version of our cloud backend. The thing
 > that makes it Cloud 2 is that it does not include the
-> cloud-mini-app infrastructure — no app sessions, no heartbeat, no
+> cloud-miniapp infrastructure — no app sessions, no heartbeat, no
 > webhook routes, no `@mentra/sdk` server protocol. That stuff is
 > all in Cloud 1.
 
-But Local SDK mini apps still need **some** cloud surface:
+But Local SDK miniapps still need **some** cloud surface:
 
 - Speech-to-text and translation run in the cloud (audio is too
-  expensive to do on-device). Mini apps subscribe to those streams.
+  expensive to do on-device). Miniapps subscribe to those streams.
 - Photo capture flows through the cloud for upload + signed URLs.
 - Managed live streams (Cloudflare-provisioned) need a cloud proxy
   for provisioning + status.
@@ -60,7 +60,7 @@ Three commitments to validate with the team:
    - **`__phone__` synthetic session** on the phone WS — accepts
      `PHONE_SUBSCRIPTION_UPDATE`, demuxes transcription/translation
      from the audio service back to the phone. Phone fans out to
-     local mini apps in-process.
+     local miniapps in-process.
    - **Photo capture** — `POST /api/client/miniapp-sdk-photo/request`,
      stateless: returns a short-TTL JWT for direct R2 upload; sends
      `PHOTO_REQUEST` to glasses; emits `phone_photo_ready` back on
@@ -73,7 +73,7 @@ Three commitments to validate with the team:
    shapes, same observable semantics from the phone's point of view.
 
    They are *not* a port target. The v1 implementation was built
-   quickly as an in-place shim on top of cloud v1's mini-app stack
+   quickly as an in-place shim on top of cloud v1's miniapp stack
    and hasn't been independently reviewed for architecture quality.
    Cloud v2 implements these surfaces fresh, with native v2 patterns
    (stateless handlers, Redis pub/sub for cross-service events,
@@ -100,7 +100,7 @@ Three commitments to validate with the team:
    handler and a session-keyed subscription registry, wire the
    existing audio-service transcription stream through to it,
    point a dev phone's `backend_url` setting at the v2 host, and
-   verify a local captions mini app on the phone gets transcripts.
+   verify a local captions miniapp on the phone gets transcripts.
    That validates the routing seam — and the wire-shape parity
    contract — before we tackle photo and streams.
 

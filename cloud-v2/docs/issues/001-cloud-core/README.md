@@ -9,12 +9,12 @@ app/developer ecosystem plus auth and bundle storage.
 
 - [`auth/`](./auth/): the whole auth system. OEM auth (the RFC 8693 token
   exchange, [`auth/oem-auth/`](./auth/oem-auth/)), mobile-client-to-cloud identity
-  (Mentra-direct and OEM), mini-app auto-auth, and dev console / store sign-in.
+  (Mentra-direct and OEM), miniapp auto-auth, and dev console / store sign-in.
 - [`oem-service/`](./oem-service/): OEM APIs (org and integration management) that
   back the OEM Portal.
-- [`miniapp-service/`](./miniapp-service/): mini-app bundle and metadata for the
+- [`miniapp-service/`](./miniapp-service/): miniapp bundle and metadata for the
   App Store and Dev Console. Stores bundles via the storage-service.
-- [`dev-console-service/`](./dev-console-service/): organizations and mini-app
+- [`dev-console-service/`](./dev-console-service/): organizations and miniapp
   submission; backs the Dev Console site.
 - [`storage-service/`](./storage-service/): a thin wrapper around the swappable
   blob providers (Cloudflare R2, Alibaba OSS), used by other services

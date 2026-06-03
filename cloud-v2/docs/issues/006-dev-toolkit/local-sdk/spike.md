@@ -5,7 +5,7 @@ exists to brief the team before we lock a spec.
 
 ## Why this spike
 
-The client team has been moving developer code off cloud mini-app
+The client team has been moving developer code off cloud miniapp
 servers and onto the phone via the Local JS SDK (`@mentra/miniapp`).
 That effort predates cloud v2 and was built against cloud v1 with
 the stated intent of being "stateless and portable to cloud-2." The
@@ -16,7 +16,7 @@ as a port target.
 
 Cloud v2 inherits the new architecture cleanly:
 [OS-1446](https://linear.app/mentralabs/issue/OS-1446) defines v2 by
-the **absence** of the cloud-mini-app stack (no app sessions, no
+the **absence** of the cloud-miniapp stack (no app sessions, no
 heartbeat, no webhooks, no `@mentra/sdk` server protocol).
 [OS-1450](https://linear.app/mentralabs/issue/OS-1450) tracks the
 formal archival of cloud SDK code and `@mentra/sdk`.
@@ -30,34 +30,34 @@ without a fork in the mobile codebase?**
 
 Terms used throughout. Skim once, refer back as needed.
 
-- **Cloud mini-app (v1).** A third-party developer service running
+- **Cloud miniapp (v1).** A third-party developer service running
   outside MentraOS. It connects to cloud v1 over a WebSocket using
   `@mentra/sdk`, declares subscriptions (`transcription`,
   `translation`, …), receives stream events, and sends back display
   commands. This whole model is going away.
-- **Local mini-app (v2 model).** A third-party app shipped as a
+- **Local miniapp (v2 model).** A third-party app shipped as a
   static ZIP bundle. Runs in a JS context **on the phone**
   (`LocalMiniappRuntime`). Calls phone-resident APIs:
   `session.camera.takePhoto()`, `session.transcription.subscribe(...)`,
   etc. Does not have a server. Cannot hold long-lived state across
   installs.
 - **`__phone__` session.** A *synthetic* cloud-side session
-  representing the phone as if it were a cloud mini-app. The phone
-  subscribes to cloud streams on behalf of local mini apps using
+  representing the phone as if it were a cloud miniapp. The phone
+  subscribes to cloud streams on behalf of local miniapps using
   this identity. Lets cloud-v1's existing transcription/translation
   fan-out treat the phone like any other subscriber, with one
   bypass: skip the DB permissions check (the phone enforces
   per-miniapp permissions locally).
 - **`PHONE_SUBSCRIPTION_UPDATE`.** The wire message the phone sends
   the cloud to update `__phone__`'s subscription set. Distinct from
-  a cloud mini-app's subscribe message — different envelope type,
+  a cloud miniapp's subscribe message — different envelope type,
   different routing.
 - **Managed stream.** A live video stream where Cloudflare's Stream
   service provisions the ingest endpoint. v1 added a stateless
   cloud route the phone hits to provision a Cloudflare live input.
 - **`MantleManager`.** The phone-side dispatcher that routes
-  glasses BLE events to either the cloud (for cloud mini apps,
-  pre-Local SDK) or the local mini-app runtime. The seam between
+  glasses BLE events to either the cloud (for cloud miniapps,
+  pre-Local SDK) or the local miniapp runtime. The seam between
   "v1 path" and "v2 path" on the phone.
 
 ## v1 prior art — surfaces already built for Local SDK
@@ -68,7 +68,7 @@ Everything below is **already in code** on the v1 integration branch
 
 **Treat this as a behavioral spec, not a port target.** The v1
 implementation was built quickly to unblock the Local SDK effort
-on top of cloud v1's existing mini-app machinery. The cloud-side
+on top of cloud v1's existing miniapp machinery. The cloud-side
 files were written with intent to be portable (the author's own PR
 descriptions describe them as "stateless, copy-pasteable into
 cloud-2"), but they have not been independently reviewed for
@@ -128,7 +128,7 @@ entries in v2's config; that's plumbing, not design.
 | File | Role |
 |---|---|
 | `cloud/packages/cloud/src/api/hono/client/v2/streams.api.ts` | `POST /provision`, `GET /:liveInputId/status`, `DELETE /:liveInputId`. **Explicitly stateless** — source comment: *"Stateless Cloudflare-Stream proxy for phone-orchestrated managed live inputs. Each request is a one-shot pass to CloudflareStreamService — no registry, no lifecycle timers, no WebSocket emissions, no DB writes."* |
-| `mobile/src/services/streaming/PhoneStreamCoordinator.ts` | Phone-side coordinator. Owns the one-stream-at-a-time constraint, multi-mini-app sharing of managed streams, refcounted teardown. |
+| `mobile/src/services/streaming/PhoneStreamCoordinator.ts` | Phone-side coordinator. Owns the one-stream-at-a-time constraint, multi-miniapp sharing of managed streams, refcounted teardown. |
 | `mobile/src/services/streaming/StreamLifecycleController.ts` | Heartbeat/ACK/escalation state machine. *Parity copy* of the cloud-v1 version — comments warn behavior changes must mirror cloud. (Open question: does cloud v2 ship a copy too, or do we delete the cloud copy entirely now that streams are phone-owned?) |
 | `agents/stream-local-js-sdk-plan.md` | Design doc for PR #2841. Captures the poll-vs-WS decision for Cloudflare status, restream-destination immutability, the cloud route path. |
 
@@ -203,7 +203,7 @@ Cloud V2."*
   (`mobile/src/services/WebSocketManager.ts:156` reads
   `useSettingsStore.getSetting(SETTINGS.backend_url.key)` fresh on
   every connection attempt).
-- The mobile client does **not** know about mini apps directly —
+- The mobile client does **not** know about miniapps directly —
   it streams audio, receives display commands, forwards subscription
   updates from the local runtime, doesn't run any app code.
 - All the Local SDK ↔ cloud calls the phone makes go through three
@@ -314,7 +314,7 @@ deliberately; where v1's design is incidental, v2 picks its own.
    adapter layer — the audio service's internal shape stays clean,
    the v1-shape lives at the v2 boundary.
 4. **End-to-end test on a dev phone.** Setting `backend_url` = v2,
-   install a local captions mini app, verify transcripts appear.
+   install a local captions miniapp, verify transcripts appear.
    This is the milestone that proves the routing seam works.
 5. **Photo capture surface.** Implement `requestPhoto` HTTP route
    + glasses messaging + R2 upload completion handler. Reshape
@@ -324,7 +324,7 @@ deliberately; where v1's design is incidental, v2 picks its own.
    one piece worth lifting verbatim — it's a thin API wrapper.
 7. **Mic raw-chunk subscription.** (Spike. Lower priority —
    captions doesn't need it.)
-8. **Archive v1's cloud-mini-app code** ([OS-1450](https://linear.app/mentralabs/issue/OS-1450)).
+8. **Archive v1's cloud-miniapp code** ([OS-1450](https://linear.app/mentralabs/issue/OS-1450)).
    Independent of v2 cutover; can happen once cutover is complete.
 
 ## Open questions (for team review)
@@ -350,9 +350,9 @@ deliberately; where v1's design is incidental, v2 picks its own.
    a snapshot point we both agree on, or the parity test becomes a
    moving target. Coordinate with Matt on a "this is the contract"
    commit SHA.
-7. **OEM scope.** Are Local SDK mini apps OEM-scoped on cloud v2 the
+7. **OEM scope.** Are Local SDK miniapps OEM-scoped on cloud v2 the
    way OEM auth scopes users today? Or is OEM a user-level concept
-   and mini apps are global?
+   and miniapps are global?
 
 ## References
 

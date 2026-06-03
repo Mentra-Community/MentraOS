@@ -1,14 +1,14 @@
-# Mini-app auto-auth: spike
+# Miniapp auto-auth: spike
 
 **Status:** Findings and open questions. Not a proposal yet. This is the "Miniapp
 to developer-server auth (Phase 2)" that oem-auth explicitly deferred: how Mentra
-injects auth into a local mini app so it can call the developer's own backend
+injects auth into a local miniapp so it can call the developer's own backend
 with no login. The user identity it carries is the sibling spike,
 [`../identity/spike.md`](../identity/spike.md).
 
 ## Scope
 
-Goal: a mini app calls the developer's backend as the current user, with no
+Goal: a miniapp calls the developer's backend as the current user, with no
 login, and the backend can trust who the user is.
 
 This inherits oem-auth's Q2 decisions and does not re-open them:
@@ -21,16 +21,16 @@ This inherits oem-auth's Q2 decisions and does not re-open them:
   future privacy opt-in.
 
 What this spike specifies is the **mechanism** that delivers that payload to a
-dev backend now that mini apps are local.
+dev backend now that miniapps are local.
 
 ## Part 1: how v1 works today (webview token injection)
 
-The v1 handshake injects auth into a mini app webview so it is authenticated
+The v1 handshake injects auth into a miniapp webview so it is authenticated
 against the developer's backend with no login. Full writeup in
 [`cloud/.architecture/auth.md`](../../../../../../cloud/.architecture/auth.md);
 summary:
 
-The mini app is a **remote** web app (the developer's server). Two paths produce
+The miniapp is served **remotely** from the developer's server. Two paths produce
 the same `useMentraAuth() -> { userId, frontendToken }`:
 
 - **Path A (mobile, automatic).** The phone app (holding the core token) calls
@@ -53,11 +53,11 @@ cookie, both verifiable because it knows its own API key.
 Trust anchors in v1: a per-app **API key** (symmetric) and a hardcoded Mentra
 **public key**. `userId` is the email.
 
-## Part 2: v2 (local mini apps)
+## Part 2: v2 (local miniapps)
 
 Two shifts force a redesign:
 
-1. **Mini apps are local.** A mini app is a bundle running on-device in the
+1. **Miniapps are local.** A miniapp is a bundle running on-device in the
    Mentra Runtime (a webview plus the JS engine), not a remote server. There is
    no remote webview URL to inject tokens into; the runtime is next to the
    webview and can hand it auth directly.
@@ -67,12 +67,12 @@ Two shifts force a redesign:
 
 Sketch to pressure-test:
 
-1. The mini app declares it has a backend (in `miniapp.json`), with the
+1. The miniapp declares it has a backend (in `miniapp.json`), with the
    audience/key id it expects.
 2. At launch, the on-device runtime (which holds the user's Mentra access token)
-   obtains a short-lived **app-scoped user token**: an Ed25519 Mentra-signed JWT
+   obtains a short-lived **miniapp-scoped user token**: an Ed25519 Mentra-signed JWT
    with `sub = mentraUserId`, `oemId` (so the backend can apply its Q2 trust
-   policy), `aud = <packageName>` (scoped to this one app), short expiry. Likely
+   policy), `aud = <packageName>` (scoped to this one miniapp), short expiry. Likely
    minted by a cloud-core endpoint the runtime calls with the user's access token
    (the v2 analog of `generate-webview-signed-user-token`, but asymmetric,
    audience-scoped, keyed on `mentraUserId`). Minting stays server-side so it can
@@ -81,7 +81,7 @@ Sketch to pressure-test:
    the runtime bridge / SDK, not a URL param). `@mentra/react` `useMentraAuth()`
    reads it from the bridge.
 4. The webview calls the developer's backend with
-   `Authorization: Bearer <app-scoped-token>`.
+   `Authorization: Bearer <miniapp-scoped-token>`.
 5. The developer's backend verifies the token against **Mentra's published public
    keys (a JWKS endpoint)**, checks `aud == its packageName`, and applies its Q2
    trust policy on `oemId`. No per-request call to Mentra, no symmetric
@@ -93,19 +93,19 @@ What this buys over v1:
 
 - Standard asymmetric verification (JWKS) instead of the bespoke
   `userId:sha256(...)` scheme; key rotation without shipping a new SDK.
-- Audience pinning to one packageName, so a token for app A cannot be replayed
-  against app B's backend.
+- Audience pinning to one packageName, so a token for miniapp A cannot be replayed
+  against miniapp B's backend.
 - `mentraUserId` instead of email as the stable identifier.
 
 API keys do not vanish: a dev backend that calls Mentra server-to-server still
 needs a credential. The proposal narrows API keys to that role and takes them out
 of the per-user verification path.
 
-Mini apps with **no backend** need none of this: the local SDK already hands them
-`mentraUserId` on-device. Auto-auth only matters for apps that call a dev backend.
+Miniapps with **no backend** need none of this: the local SDK already hands them
+`mentraUserId` on-device. Auto-auth only matters for miniapps that call a dev backend.
 
 The browser path (a webview opened outside the app, or a companion web app) still
-needs a "Sign in with Mentra" OAuth flow that ends in the same app-scoped token.
+needs a "Sign in with Mentra" OAuth flow that ends in the same miniapp-scoped token.
 Carry v1's Path B forward, issuing the v2 token.
 
 ## Open questions
@@ -113,7 +113,7 @@ Carry v1's Path B forward, issuing the v2 token.
 1. **JWKS.** v1 hardcoded the public key in the SDK; v2 should publish a JWKS URL
    for rotation. Where is it hosted (cloud-core), and what is the cache/rotation
    policy for dev backends?
-2. **Who mints the app-scoped token:** a cloud-core endpoint (revocable, audited,
+2. **Who mints the miniapp-scoped token:** a cloud-core endpoint (revocable, audited,
    one round trip at launch) vs a delegated on-device key (no round trip, harder
    to revoke). Lean: cloud-core endpoint.
 3. **Token injection into the local webview.** Exact bridge mechanism the runtime
@@ -125,7 +125,7 @@ Carry v1's Path B forward, issuing the v2 token.
    "miniapp" audience. Lean: per-packageName.
 6. **Where this mechanism is specced.** oem-auth says the handoff "exact
    mechanism is part of the miniapp spec." Decide whether it lands here (auth) or
-   in the mini-app platform spec.
+   in the miniapp platform spec.
 
 ## References
 

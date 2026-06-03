@@ -88,7 +88,7 @@ v1 UDP audio encryption work.
 The current `@mentra/audio` package speaks the v1 phone contract
 (`phone-protocol.ts`, `phone_subscription_update` inbound, `data_stream`
 outbound, `?token=` query auth) so the unchanged legacy mobile could reach
-cloud-v2. With the new client module owning the v2 path, the legacy mini-app
+cloud-v2. With the new client module owning the v2 path, the legacy miniapp
 system stays on v1 cloud over its own connection, so that adapter is removed from
 the v2 path during the `audio` to `runtime` rename. The `?token=` query mechanism
 is the only piece carried forward, as the documented auth fallback in
