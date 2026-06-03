@@ -70,6 +70,21 @@ final class NavigationManager: NSObject {
   private var lastEmittedPoints: [[String: Double]]? = nil
   private var pendingRouteReEmit: Bool = false
 
+  // Phase 2 of route-source promotion (mirrors Android NavigationManager.kt):
+  // the JS layer derives the trip's source-of-truth polyline + steps from
+  // the Routes REST API and synthesizes its own onRoute event from
+  // `navigation.start()`. The Google Nav SDK still runs in the background
+  // for position fixes, reroute detection, and live announcements — but
+  // its polyline and step emissions are NOT the source of truth and must
+  // never reach the miniapp.
+  //
+  // Latching: set true on every `start()`, cleared on `stop()`. While
+  // true, `emitRoute()` and the deferred re-emit path (in NavInfoUpdated)
+  // skip the onRoute?(payload) call. This intentionally also drops
+  // native reroute emits — Phase 3 wires those back through a REST round
+  // trip + synthetic emit instead.
+  private var suppressNativeRouteEmits: Bool = false
+
   // MARK: - API Key registration
 
   // The Google Maps + Navigation SDKs throw an NSException → SIGABRT the
@@ -126,6 +141,13 @@ final class NavigationManager: NSObject {
     self.lastCurrentStepKey = nil
     self.missedTurnRerouteInFlight = false
     self.travelMode = mode
+    // Latch native-route suppression on for the lifetime of the trip.
+    // JS dispatches the source-of-truth polyline + steps from the Routes
+    // REST API itself; every Nav SDK route emission during this trip
+    // (the initial setDestinations → emitRoute, the deferred re-emit
+    // when NavInfo steps arrive, and any reroute emits later) must be
+    // ignored. Cleared in stop().
+    self.suppressNativeRouteEmits = true
     if let last = stops.last {
       self.finalDestination = CLLocationCoordinate2D(latitude: last.lat, longitude: last.lng)
     }
@@ -217,6 +239,11 @@ final class NavigationManager: NSObject {
       self.latestStepsPayload = nil
       self.lastEmittedPoints = nil
       self.pendingRouteReEmit = false
+      // Release the trip's route-emit suppression so a subsequent start
+      // arms it cleanly. Belt-and-suspenders — start() also sets it true
+      // — but clearing here means no stale latch survives if an external
+      // code path revives emitRoute() without going through start().
+      self.suppressNativeRouteEmits = false
       self.missedTurnRerouteMeters = nil
       self.lastPassedPivot = nil
       self.lastCurrentStepKey = nil
@@ -435,6 +462,14 @@ final class NavigationManager: NSObject {
   }
 
   private func emitRoute() {
+    if suppressNativeRouteEmits {
+      // Also clear any pending deferred re-emit from a prior trip so a
+      // late-arriving NavInfo from the previous start can't surface a
+      // stale native polyline now that REST owns the route. Mirrors
+      // the equivalent guard in Android NavigationManager.kt.
+      pendingRouteReEmit = false
+      return
+    }
     guard let path = navigator?.currentRouteLeg?.path else { return }
     let points = pathToPoints(path)
     // Reset cached state — this is a fresh route, any stale steps
@@ -564,7 +599,12 @@ final class NavigationManager: NSObject {
     // that the metadata is available. Pivot enrichment in the SDK
     // consumer rebuilds atomically per onRoute event, so a second
     // emission with the same polyline + fresh steps is correct.
-    if pendingRouteReEmit, let points = lastEmittedPoints {
+    //
+    // Gated on suppressNativeRouteEmits: when REST owns the route, we
+    // never want this deferred path to leak the Nav SDK's polyline,
+    // even though emitRoute() should have already prevented
+    // pendingRouteReEmit from being true here.
+    if pendingRouteReEmit, let points = lastEmittedPoints, !suppressNativeRouteEmits {
       pendingRouteReEmit = false
       var payload: [String: Any] = ["points": points]
       if let steps = buildStepsForRoute(points: points) {
