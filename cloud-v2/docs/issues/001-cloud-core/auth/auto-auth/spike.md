@@ -13,7 +13,7 @@ login, and the backend can trust who the user is.
 
 This inherits oem-auth's Q2 decisions and does not re-open them:
 
-- The dev-backend handoff identity is `mentraUserId` + `oemId` (an opaque ULID
+- The dev-backend handoff identity is `mentraUserId` + `oemId` (the `users._id`
   per `(oemId, oemUserId)`; `oemId = "mentra"` for Mentra-direct users).
 - The dev configures a trust policy on `oemId`: `trust-all` (default),
   `mentra-direct-only`, or `whitelist`.

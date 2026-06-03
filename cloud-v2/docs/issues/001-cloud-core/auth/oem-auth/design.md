@@ -387,23 +387,29 @@ One document per OEM.
 
 ### Collection: `users`
 
-One document per `MentraUserId`. Identity-only, no PII.
+One document per user. Identity-only, no PII. The document's own `_id` **is**
+the `MentraUserId`: we use the Mongo-generated `_id` rather than minting a
+separate opaque id. `MentraUserId` is `_id` surfaced as its hex string.
 
 ```js
 {
-  _id: ObjectId,
-  mentraUserId: "mu_01HGZX...",            // ULID or similar opaque ID
+  _id: ObjectId,                           // == MentraUserId (hex string externally)
   oemId: "acme-oem",
-  oemUserId: "user-42",
+  oemUserId: "user-42",                    // for Mentra-direct users this is the Supabase `sub`
   createdAt: ISODate
 }
 ```
 
 **Indexes.**
 
-- `{ mentraUserId: 1 }`, unique.
+- `{ _id: 1 }` is the default unique primary key; no separate `mentraUserId`
+  field or index is needed.
 - `{ oemId: 1, oemUserId: 1 }`, unique. Lookup during token exchange
   to find existing user, or create on first sight.
+
+(Implementation note: the current code mints `mu_${ulid()}` in
+`user.service.ts`; switching to `_id` is a code change. v2 is pre-production, so
+there is no data to migrate.)
 
 ### Collection: `refreshTokens`
 
@@ -413,7 +419,7 @@ One document per active refresh token.
 {
   _id: ObjectId,
   refreshTokenHash: "<bcrypt or argon2 hash>",  // never store plaintext
-  mentraUserId: "mu_01HGZX...",
+  mentraUserId: "507f1f77bcf86cd799439011",
   oemId: "acme-oem",
   issuedAt: ISODate,
   expiresAt: ISODate                          // TTL index on this field
@@ -494,7 +500,7 @@ Claims:
 ```json
 {
   "iss": "mentra-cloud",
-  "sub": "mu_01HGZX...",       // MentraUserId
+  "sub": "507f1f77bcf86cd799439011",       // MentraUserId
   "aud": "mentra-cloud",        // resource servers verify
   "exp": 1736815945,
   "iat": 1736812345,
@@ -549,9 +555,10 @@ Steps Mentra performs:
    `invalid_grant`. Otherwise, insert into `seenJtis` with
    `expiresAt = exp + 60s` buffer.
 6. Look up the user in `users` by `(oemId, oemUserId) = (iss, sub)`.
-   If found, use that `mentraUserId`. If not, generate a new ULID
-   and insert. Plain English: "first time we see this user, create
-   their record; thereafter, reuse it."
+   If found, use that user's `_id` as the `mentraUserId`. If not, insert a
+   new user record; its Mongo-generated `_id` is the new `mentraUserId`.
+   Plain English: "first time we see this user, create their record;
+   thereafter, reuse it."
 7. Issue a Mentra access token (1h TTL) and a refresh token (30d TTL).
    Store the hashed refresh token in `refreshTokens`.
 8. Return both tokens to the client.
@@ -632,7 +639,7 @@ miniapp spec, not this one) includes:
 
 ```json
 {
-  "mentraUserId": "mu_01HGZX...",
+  "mentraUserId": "507f1f77bcf86cd799439011",
   "oemId": "acme-oem",
   ...
 }

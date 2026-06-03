@@ -34,8 +34,8 @@ lands.
 | [audio](./002-cloud-runtime/audio/) | Specced / partial | spec + design (proposal, under review); pipeline partially built (UDP + Redis + Soniox, phone WS). Blocked on subscription transport |
 | [camera (managed photo + stream)](./002-cloud-runtime/camera/) | Stub | needs spec |
 | **[003-cloud-proxy](./003-cloud-proxy/)** | Stub | needs spec (hosted connector vs config model) |
-| **[004-cloud-client](./004-cloud-client/)** | | the headless client library we own (`@mentra/cloud-client`) |
-| [runtime](./004-cloud-client/runtime/) | Stub | the live-session transport. Needs design; depends on 002 protocol + the subscription decision |
+| **[004-cloud-client](./004-cloud-client/)** | Spiked | headless `@mentra/cloud-client`; design in [spike.md](./004-cloud-client/spike.md) (auth / runtime / core modules). Left: subscription decision, lock protocol, then spec |
+| [runtime](./004-cloud-client/runtime/) | Stub | the live-session transport. Depends on 002 protocol + the subscription decision |
 | **[005-websites](./005-websites/)** | | web frontends |
 | [console](./005-websites/console/) | Stub | needs spec |
 | [miniapp-store](./005-websites/miniapp-store/) | Stub | needs spec |

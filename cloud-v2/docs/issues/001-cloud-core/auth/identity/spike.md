@@ -17,10 +17,12 @@ User identity for:
 The `MentraUserId` and OEM identity model are settled by oem-auth and inherited
 here:
 
-- `MentraUserId` is an opaque ULID (`mu_...`), created on first sight of an
-  `(oemId, oemUserId)` pair. The same human via two OEMs is two different
-  `MentraUserId`s.
-- Mentra-direct users carry the reserved `oemId = "mentra"`.
+- `MentraUserId` is the `users` document's Mongo `_id` (an ObjectId, surfaced as
+  its hex string), created on first sight of an `(oemId, oemUserId)` pair. We use
+  the DB-generated `_id` rather than minting a separate id. The same human via two
+  OEMs is two different `MentraUserId`s.
+- Mentra-direct users carry the reserved `oemId = "mentra"`, and their `oemUserId`
+  is the Supabase `sub` (stable, unlike email).
 
 ## Part 1: how v1 works today (the core token)
 
@@ -77,16 +79,49 @@ claim, so the access token stays the same shape for every surface.
 ### OEM users
 
 Already specced: the OEM mints an install JWT, exchanges it via RFC 8693 for the
-Mentra access token; Mentra maps `(oemId, oemUserId)` to an opaque `MentraUserId`
-ULID, created on first sight ([`../oem-auth/design.md`](../oem-auth/design.md)).
+Mentra access token; Mentra maps `(oemId, oemUserId)` to a `MentraUserId` (the
+`users._id`), created on first sight ([`../oem-auth/design.md`](../oem-auth/design.md)).
 Identity is owned by the OEM. The dev-backend handoff carries `mentraUserId` +
 `oemId` per Q2 Option B (see [`../auto-auth/spike.md`](../auto-auth/spike.md)).
 
+## Migration bridge: core token to v2 access token
+
+During the v1 to v2 transition the client needs to authenticate to both clouds:
+the legacy v1 path (existing miniapps, the v1 WS/REST) still wants the core token,
+and the v2 path (cloud-runtime, the cloud-client) wants the Mentra access token.
+The low-debt bridge keeps the existing login unchanged and derives the v2 token
+from the core token:
+
+1. The client logs in exactly as today (Supabase to core token at v1) and uses
+   the core token for the v1 path, unchanged.
+2. Cloud Core v2 exposes the RFC 8693 exchange where, for the reserved `mentra`
+   OEM, the **subject token is the core token**. Mentra is "OEM zero," and its
+   "OEM-signed JWT" is the core token it already issues.
+3. Cloud Core verifies the core token (it knows the shared secret), maps
+   `(oemId = "mentra", oemUserId = the Supabase sub carried in the core token)` to
+   a `MentraUserId`, and returns the v2 access + refresh tokens.
+4. The client now holds both tokens at once: core token for v1, access token for
+   v2 (cloud-runtime plus miniapp-token minting).
+
+Two details:
+
+- **Mentra-as-OEM verifies with the shared secret, not a registered public key.**
+  Every other OEM registers an asymmetric key; Mentra's own subject token (the
+  core token) is HS256, so the exchange has one internal issuer (`mentra`) that
+  verifies against the shared `AUGMENTOS_AUTH_JWT_SECRET`.
+- **`oemUserId` for Mentra-direct is the Supabase `sub`** (stable), which the core
+  token already carries as its own `sub`.
+
+End state: once v2 is primary, swap the subject token from "core token" to a
+Supabase session (direct Mentra login), same endpoint, and retire the core-token
+bridge.
+
 ## Open questions
 
-1. **Mentra-user issuance:** Mentra-as-its-own-OEM with reserved
-   `oemId = "mentra"` (single exchange path) vs a dedicated Mentra login endpoint.
-   Lean: as-its-own-OEM.
+1. **Mentra-user issuance:** decided, Mentra-as-its-own-OEM with reserved
+   `oemId = "mentra"`, via the core-token bridge above (the core token is the
+   subject token during transition, a Supabase session after). The dedicated
+   login is the end-state form of the same endpoint.
 2. **Email-to-`mentraUserId` migration.** v1 keyed users (and dev backends) on
    email. oem-auth `design.md` flags migration of existing email-based Mentra
    users as a **separate spec**; track it there.

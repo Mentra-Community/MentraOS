@@ -118,6 +118,12 @@ interface ConnectionAck {
   audio?: {
     sessionTag: number;     // u32 the client stamps into UDP audio frames
     udp: { host: string; port: number };
+    // Per-session key for encrypting UDP audio. Delivered here because the
+    // handshake is over the TLS WebSocket. See audio/protocol.md "Encryption".
+    encryption: {
+      algorithm: "xsalsa20-poly1305";  // NaCl secretbox
+      key: string;                      // base64, 32 bytes
+    };
   };
 }
 ```

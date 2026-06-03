@@ -73,15 +73,36 @@ WebSocket envelope messages (see [`../protocol.md`](../protocol.md#envelope)):
 Binary frames sent to the advertised `connection.ack.audio.udp` host and port:
 
 ```
-offset 0  u32  sessionTag   (from connection.ack.audio.sessionTag, big-endian)
-offset 4  u16  flags/seq    (reserved)
-offset 6  ...  payload      (LC3 audio for real glasses)
+offset 0   u32   sessionTag   (from connection.ack.audio.sessionTag, big-endian)
+offset 4   u16   seq          (per-session packet counter)
+offset 6   [24]  nonce        (random per packet)
+offset 30  ...   ciphertext   (encrypted LC3 + 16-byte Poly1305 tag)
 ```
 
-The cloud accepts LC3. PCM is reserved for future codecs negotiated in
-`connection.init.audio.codec`. The v1 packet header (session id, encryption,
-sequence) is carried forward unchanged; see [`design.md`](./design.md) and the
-v1 UDP audio encryption work.
+The header (`sessionTag`, `seq`) is in the clear because the stateless ingress
+needs it to route the datagram to the right session. Only the audio payload is
+encrypted and authenticated. The cloud accepts LC3; PCM is reserved for future
+codecs negotiated in `connection.init.audio.codec`.
+
+## Encryption
+
+UDP audio is encrypted with **NaCl secretbox (XSalsa20-Poly1305)**, carried
+forward from v1 (`cloud/issues/027-udp-audio-encryption`,
+`mobile/src/services/UdpCrypto.ts`).
+
+- The cloud generates a **per-session 32-byte symmetric key** and delivers it in
+  `connection.ack.audio.encryption.key` (base64), over the TLS WebSocket, so the
+  key never travels over UDP. A new connection means a fresh key (rotation for
+  free).
+- The client encrypts each frame's payload with that key and a fresh random
+  24-byte nonce: `secretbox(LC3, nonce, key)` produces the ciphertext plus a
+  16-byte Poly1305 tag. Overhead is 40 bytes per packet (24 nonce + 16 tag).
+- The cloud decrypts with the same key, authenticating the tag (tampered or
+  forged packets are rejected).
+
+Implementation note: the v2 audio package (`cloud-v2/packages/audio`) does not
+decrypt UDP yet; wiring this scheme into the ingress is part of building the v2
+audio path.
 
 ## What this replaces
 
