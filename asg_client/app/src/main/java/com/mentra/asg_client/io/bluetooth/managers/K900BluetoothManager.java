@@ -232,6 +232,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         + " (" + chunkData.length + " bytes packed)");
                 boolean sent = comManager.send(chunkData);
                 allSent = allSent && sent;
+                if (!sent) {
+                    Log.w(TAG, "📡 ❌ Chunk " + (i + 1) + "/" + chunks.size()
+                            + " failed to send; phone will drop the incomplete message");
+                }
 
                 if (i < chunks.size() - 1) {
                     try {
