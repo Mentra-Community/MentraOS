@@ -395,7 +395,7 @@ export class NavigationController {
       next = `You have arrived${at}`
       durationMs = 10_000
     } else if (!running) {
-      next = "Welcome to Mentra Navigation!\nPick a destination to get started."
+      next = "Welcome to Mentra Maps!\nPick a destination to get started."
       durationMs = 5_000
     } else if (status === "rerouting") {
       next = "Rebuilding route…"
