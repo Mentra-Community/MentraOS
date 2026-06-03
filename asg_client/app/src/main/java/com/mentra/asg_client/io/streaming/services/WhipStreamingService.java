@@ -263,14 +263,7 @@ public class WhipStreamingService extends Service {
     // Check if camera is busy with photo/video capture
     if (CameraNeoService.isCameraInUse()) {
       Log.e(TAG, "Cannot start WHIP stream - camera is busy with photo/video capture");
-      notifyError("camera_busy");
-      // If we were reconnecting, reset state so we don't get stuck in RECONNECTING
-      if (mIsReconnecting) {
-        mIsReconnecting = false;
-        mReconnectAttempts = 0;
-        resetState();
-        notifyStopped();
-      }
+      handleStartupFailure("camera_busy");
       return;
     }
 
@@ -301,9 +294,7 @@ public class WhipStreamingService extends Service {
       createPeerConnectionAndOffer();
     } catch (Exception e) {
       Log.e(TAG, "Failed to start streaming", e);
-      notifyError("Failed to start: " + e.getMessage());
-      cleanupFailedStartup();
-      resetState();
+      handleStartupFailure("Failed to start: " + e.getMessage());
     }
   }
 
@@ -490,8 +481,7 @@ public class WhipStreamingService extends Service {
           @Override
           public void onSetFailure(String error) {
             Log.e(TAG, "setLocalDescription failed: " + error);
-            notifyError("setLocalDescription failed: " + error);
-            resetState();
+            handleStartupFailure("setLocalDescription failed: " + error);
           }
 
           @Override public void onCreateSuccess(SessionDescription sdp) {}
@@ -502,8 +492,7 @@ public class WhipStreamingService extends Service {
       @Override
       public void onCreateFailure(String error) {
         Log.e(TAG, "createOffer failed: " + error);
-        notifyError("createOffer failed: " + error);
-        resetState();
+        handleStartupFailure("createOffer failed: " + error);
       }
 
       @Override public void onSetSuccess() {}
@@ -558,8 +547,7 @@ public class WhipStreamingService extends Service {
         if (response.code() != 201) {
           String msg = "WHIP server returned " + response.code();
           Log.e(TAG, msg);
-          notifyError(msg);
-          resetState();
+          handleStartupFailure(msg);
           return;
         }
 
@@ -573,8 +561,7 @@ public class WhipStreamingService extends Service {
 
         String answerSdp = response.body() != null ? response.body().string() : "";
         if (answerSdp.isEmpty()) {
-          notifyError("WHIP server returned empty SDP answer");
-          resetState();
+          handleStartupFailure("WHIP server returned empty SDP answer");
           return;
         }
 
@@ -613,8 +600,7 @@ public class WhipStreamingService extends Service {
           @Override
           public void onSetFailure(String error) {
             Log.e(TAG, "setRemoteDescription failed: " + error);
-            notifyError("setRemoteDescription failed: " + error);
-            resetState();
+            handleStartupFailure("setRemoteDescription failed: " + error);
           }
 
           @Override public void onCreateSuccess(SessionDescription sdp) {}
@@ -625,8 +611,7 @@ public class WhipStreamingService extends Service {
       @Override
       public void onFailure(Call call, IOException e) {
         Log.e(TAG, "WHIP request failed", e);
-        notifyError("WHIP request failed: " + e.getMessage());
-        resetState();
+        handleStartupFailure("WHIP request failed: " + e.getMessage());
       }
     });
   }
@@ -671,8 +656,7 @@ public class WhipStreamingService extends Service {
           postOfferToWhip(localSdp);
         } else {
           Log.e(TAG, "ICE gathering complete but local SDP is null");
-          notifyError("Local SDP unavailable after ICE gathering");
-          resetState();
+          handleStartupFailure("Local SDP unavailable after ICE gathering");
         }
       }
     }
@@ -762,8 +746,23 @@ public class WhipStreamingService extends Service {
       mWhipResourceUrl = null;
     }
     releaseWebRtc();
+    if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
+      mHardwareManager.setRecordingLedOff();
+    }
+    mIsReconnecting = false;
+    mReconnectAttempts = 0;
     WakeLockManager.releaseAllWakeLocks();
+    resetState();
     updateNotification("Stream failed");
+  }
+
+  private void handleStartupFailure(String error) {
+    if (mMainHandler != null && Looper.myLooper() != Looper.getMainLooper()) {
+      mMainHandler.post(() -> handleStartupFailure(error));
+      return;
+    }
+    notifyError(error);
+    cleanupFailedStartup();
   }
 
   private void resetState() {
@@ -804,7 +803,12 @@ public class WhipStreamingService extends Service {
     StreamingStatusCallback callback = sStatusCallback;
     if (callback != null) {
       String streamId = mCurrentStreamId;
-      mMainHandler.post(() -> callback.onStreamError(error, streamId));
+      Runnable notify = () -> callback.onStreamError(error, streamId);
+      if (Looper.myLooper() == Looper.getMainLooper()) {
+        notify.run();
+      } else {
+        mMainHandler.post(notify);
+      }
     }
   }
 
