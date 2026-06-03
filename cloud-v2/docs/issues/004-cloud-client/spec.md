@@ -1,0 +1,122 @@
+# Cloud Client spec
+
+**Status:** Spec. The concrete API of `@mentra/cloud-client`. Design rationale and
+open questions are in [`spike.md`](./spike.md); this is the contract to build
+against, now that the protocol ([`../002-cloud-runtime/protocol.md`](../002-cloud-runtime/protocol.md))
+and the auth slice ([`../001-cloud-core/auth/spec.md`](../001-cloud-core/auth/spec.md))
+are locked.
+
+## Construction
+
+Class, platform chosen by import path, transports pre-wired per platform:
+
+```ts
+import { CloudClient } from "@mentra/cloud-client/react-native"   // device
+import { CloudClient } from "@mentra/cloud-client/node"           // tests, dev-stack
+
+const cloud = new CloudClient({
+  endpoints: { core: string; runtime: string; proxy?: string },  // proxy rewrites both if set
+  auth:
+    | { subjectToken: string; subjectTokenType: SubjectTokenType }   // exchanged once
+    | { getSubjectToken: () => Promise<{ token: string; type: SubjectTokenType }> }  // fetched on demand
+    | { accessToken: string; refreshToken: string },                 // already exchanged
+})
+
+cloud.auth; cloud.runtime; cloud.core
+```
+
+The core package `@mentra/cloud-client/core` is platform-agnostic and accepts
+injected transports; the platform entries fill them in:
+
+```ts
+interface CloudClientTransports {
+  ws: WebSocketLike            // RN built-in / nitro-websockets / ws (node)
+  udp: UdpSocketLike           // native on device, dgram in node
+  storage: KeyValueStore       // secure store on device, memory/file in node
+}
+```
+
+## `cloud.auth`
+
+```ts
+interface AuthModule {
+  getAccessToken(): Promise<string>                 // current, refreshing as needed (used by runtime/core)
+  getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>  // cached per package
+  readonly identity: { mentraUserId: string; oemId: string }
+  onExpired(handler: () => void): () => void        // refresh failed; host must re-auth
+}
+```
+
+- On first use it exchanges the subject token at
+  `POST /api/client/auth/exchange` for access + refresh, then owns refresh via
+  `POST /api/client/auth/refresh`.
+- `getMiniappToken` calls `POST /api/client/auth/miniapp-token`, caches per
+  packageName, re-mints before expiry. The raw access token never leaves the
+  client; only the miniapp-scoped token is exposed.
+
+## `cloud.runtime`
+
+```ts
+interface RuntimeModule {
+  connect(): Promise<void>
+  close(): void
+
+  setSubscriptions(subs: AudioSubscription[]): Promise<void>   // full-replace, PUT /api/audio/subscriptions
+
+  onTranscript(handler: (data: TranscriptionData) => void): () => void
+  onTranslation(handler: (data: TranslationData) => void): () => void
+
+  requestManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; readUrl: string }>
+  startManagedStream(opts: StreamOptions): Promise<ManagedStream>
+  stopManagedStream(streamId: string): Promise<void>
+
+  onConnected(handler: () => void): () => void
+  onDisconnected(handler: (info: { reason: string }) => void): () => void
+  onError(handler: (err: ProtocolError) => void): () => void
+}
+```
+
+- **Events are per-event methods**, not a stringly emitter: type
+  `cloud.runtime.on` and the IDE lists every event, each callback typed to its
+  payload, nothing to mistype. Every `on*` returns an unsubscribe function.
+- `connect()` does the `connection.init` / `connection.ack` handshake (Bearer from
+  `cloud.auth`), reconnect with backoff, and the client-driven liveness ping.
+- `setSubscriptions` sends `{ subscriptions, sessionId, version }` (full-replace).
+  The client owns `version` (monotonic) and echoes the `sessionId` from
+  `connection.ack`.
+- `requestManagedPhoto` resolves when the cloud pushes `photo.ready`; rejects on
+  `photo.error`. The UDP audio path receives `sessionTag`, the udp host/port, and
+  the encryption key from `connection.ack.audio` and hands them to the injected
+  native UDP transport (bytes do not flow through JS).
+
+## `cloud.core`
+
+Device-facing Cloud Core REST. Bearer from `cloud.auth`. Starts thin; grows with
+miniapp-service (next week).
+
+```ts
+interface CoreModule {
+  miniapps: {
+    list(): Promise<MiniappListing[]>
+    getBundle(packageName: string, version?: string): Promise<{ downloadUrl: string; version: string; manifest: MiniappManifest }>
+  }
+  user: { getProfile(): Promise<Profile> }
+}
+```
+
+Guardrail: device-facing only, no Dev Console / OEM Portal / store web UI.
+
+## Shared types
+
+Wire types come from `@mentra/cloud-runtime/protocol` (zod, isomorphic):
+`AudioSubscription`, `TranscriptionData`, `TranslationData`, `ProtocolError`, the
+envelope and message unions. The cloud-client imports them so it cannot drift from
+the server.
+
+## Consumers
+
+- **island (device):** the host wires this client into island's `configureRuntime`
+  adapter (see [`island-adapter.md`](./island-adapter.md)).
+- **backend test harness (Node/Bun):** constructs `CloudClient` with node
+  transports and drives the full path (auth, connect, subscribe, send, receive),
+  so tests exercise the real wire contract.

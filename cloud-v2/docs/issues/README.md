@@ -25,7 +25,7 @@ lands.
 | [auth / spec](./001-cloud-core/auth/spec.md) | Specced | the v2 auth-slice contract cloud-client needs: exchange (`/api/client/auth/exchange`, OEM JWT + Mentra core/Supabase subject types), refresh, miniapp-token mint, JWKS (separate keys, kid rotation) |
 | [auth / oem-auth](./001-cloud-core/auth/oem-auth/) | Implemented | the OEM-JWT exchange mechanics, built in v2, e2e verified with `test-oem`. Left: finalize doc review |
 | [auth / identity](./001-cloud-core/auth/identity/) | Spiked | Mentra-direct identity (app + console + store) unifies on the access token, plus the core-token migration bridge |
-| [auth / auto-auth](./001-cloud-core/auth/auto-auth/) | Spiked | the end-to-end miniapp dev-backend flow; mint + JWKS now in `auth/spec.md`. Open: injection bridge (client team), API key role |
+| [auth / auto-auth](./001-cloud-core/auth/auto-auth/) | Spiked + proposal | end-to-end miniapp dev-backend flow; mint + JWKS in `auth/spec.md`; [injection.md](./001-cloud-core/auth/auto-auth/injection.md) proposal for the client team. Open: API key role |
 | [oem-service](./001-cloud-core/oem-service/) | Stub | needs spec |
 | [miniapp-service](./001-cloud-core/miniapp-service/) | Stub | needs spec (stores bundles via storage-service) |
 | [dev-console-service](./001-cloud-core/dev-console-service/) | Stub | needs spec |
@@ -33,10 +33,9 @@ lands.
 | **[002-cloud-runtime](./002-cloud-runtime/)** | | self-hostable runtime product |
 | [protocol (transport)](./002-cloud-runtime/protocol.md) | Locked | contract locked (`/api` paths, envelope with `timestamp`, REST subscriptions 2a with `sessionId`+`version`, UDP encryption). Left: write the zod types in `@mentra/cloud-runtime/protocol` |
 | [audio](./002-cloud-runtime/audio/) | Specced / partial | spec + design (proposal, under review); pipeline partially built (UDP + Redis + Soniox, phone WS). Subscription transport decided (2a: REST + stream entry); UDP encryption documented |
-| [camera (managed photo + stream)](./002-cloud-runtime/camera/) | Stub | needs spec |
-| **[003-cloud-proxy](./003-cloud-proxy/)** | Stub | needs spec (hosted connector vs config model) |
-| **[004-cloud-client](./004-cloud-client/)** | Spiked | headless `@mentra/cloud-client`; design in [spike.md](./004-cloud-client/spike.md) (auth / runtime / core modules). Left: subscription decision, lock protocol, then spec |
-| [runtime](./004-cloud-client/runtime/) | Stub | the live-session transport. Depends on locking 002 protocol (subscription transport now decided) |
+| [camera (managed photo + stream)](./002-cloud-runtime/camera/) | Specced | [spec.md](./002-cloud-runtime/camera/spec.md): presigned-upload photo (cloud out of the byte path, storage-event completion, `photo.ready` push) + client-controlled managed stream |
+| **[003-cloud-proxy](./003-cloud-proxy/)** | Stub | needs spike (non-blocking; cloud-client is proxy-aware via endpoint config) |
+| **[004-cloud-client](./004-cloud-client/)** | Specced | [spec.md](./004-cloud-client/spec.md): concrete `@mentra/cloud-client` API (auth / runtime / core, per-event methods, injected transports). Plus [island-adapter.md](./004-cloud-client/island-adapter.md) proposal for the client team |
 | **[005-websites](./005-websites/)** | | web frontends |
 | [console](./005-websites/console/) | Stub | needs spec |
 | [miniapp-store](./005-websites/miniapp-store/) | Stub | needs spec |

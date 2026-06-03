@@ -1,6 +1,7 @@
 # Camera service (managed photo, managed stream)
 
-**Status:** Placeholder. To be specified.
+**Status:** Specced. See [`spec.md`](./spec.md) for the endpoints and the
+presigned-upload + storage-event model.
 
 A service within Mentra Runtime Services (`@mentra/cloud-runtime`). It covers the
 two camera-side cloud capabilities, both client-initiated:
