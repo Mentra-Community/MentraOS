@@ -70,7 +70,9 @@
     <!-- Application node is not neccessary for libraries -->
     <application
         android:name="com.mentra.asg_client.AsgClientApplication"
-        android:usesCleartextTraffic="true">
+        android:testOnly="false"
+        android:usesCleartextTraffic="true"
+        tools:replace="android:testOnly">
         <!--      android:usesCleartextTraffic="true"-->
         <!--      android:icon="@mipmap/ic_launcher"-->
         <!--      android:label="@string/app_name"-->

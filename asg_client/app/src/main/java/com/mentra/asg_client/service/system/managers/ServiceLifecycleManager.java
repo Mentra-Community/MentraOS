@@ -6,7 +6,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
-import com.mentra.asg_client.RecoveryAgentManager;
+import com.mentra.asg_client.RecoveryWorkerManager;
 import com.mentra.asg_client.SysControl;
 import com.mentra.asg_client.io.ota.services.OtaService;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
@@ -25,7 +25,7 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
     private final AsgClientServiceManager serviceManager;
     private final CommandProcessor commandProcessor;
     private final AsgNotificationManager notificationManager;
-    private final RecoveryAgentManager recoveryAgentManager;
+    private final RecoveryWorkerManager recoveryWorkerManager;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private boolean isInitialized = false;
@@ -39,7 +39,7 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
         this.serviceManager = serviceManager;
         this.commandProcessor = commandProcessor;
         this.notificationManager = notificationManager;
-        this.recoveryAgentManager = new RecoveryAgentManager(context);
+        this.recoveryWorkerManager = new RecoveryWorkerManager(context);
     }
 
     @Override
@@ -56,7 +56,7 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
 
         // Schedule OTA service start
         scheduleOtaServiceStart();
-        scheduleRecoveryAgentStart();
+        scheduleRecoveryWorkerStart();
 
         // Clean up system packages
         // cleanupSystemPackages(); Not needed anymore
@@ -108,7 +108,7 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
         if (serviceManager != null) {
             serviceManager.cleanup();
         }
-        recoveryAgentManager.cleanup();
+        recoveryWorkerManager.cleanup();
 
         isInitialized = false;
         Log.d(TAG, "Service lifecycle cleanup completed");
@@ -133,18 +133,18 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
                 5000);
     }
 
-    private void scheduleRecoveryAgentStart() {
+    private void scheduleRecoveryWorkerStart() {
         mainHandler.postDelayed(
                 () -> {
                     if (!isInitialized) {
                         Log.d(
                                 TAG,
-                                "Skipping recovery agent init because lifecycle is not"
+                                "Skipping recovery worker init because lifecycle is not"
                                         + " initialized");
                         return;
                     }
-                    Log.d(TAG, "Ensuring recovery agent after delay");
-                    recoveryAgentManager.initialize();
+                    Log.d(TAG, "Ensuring recovery worker after delay");
+                    recoveryWorkerManager.initialize();
                 },
                 6000);
     }

@@ -25,8 +25,8 @@ public class OtaUpdaterManager {
     private static final String TAG = "OtaUpdaterManager";
     private static final String OTA_UPDATER_PACKAGE = "com.mentra.recovery";
     private static final String OTA_UPDATER_MAIN_ACTIVITY = "com.mentra.recovery.MainActivity";
-    private static final String OTA_APK_ASSET_NAME = "recovery_agent.apk";
-    private static final String OTA_APK_FILE_PATH = "/storage/emulated/0/asg/recovery_agent.apk";
+    private static final String OTA_APK_ASSET_NAME = "recovery_worker.apk";
+    private static final String OTA_APK_FILE_PATH = "/storage/emulated/0/asg/recovery_worker.apk";
 
     private final Context context;
     private final Handler handler;

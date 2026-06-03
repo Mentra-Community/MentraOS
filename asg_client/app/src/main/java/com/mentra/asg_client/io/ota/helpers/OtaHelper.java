@@ -3,6 +3,7 @@ package com.mentra.asg_client.io.ota.helpers;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
@@ -447,7 +448,7 @@ public class OtaHelper {
     private String getApkFilename(String packageName) {
         return packageName.equals("com.mentra.asg_client")
                 ? "asg_client_update.apk"
-                : "recovery_agent_update.apk";
+                : "recovery_worker_update.apk";
     }
 
     private String getApkCacheKey(String packageName) {
@@ -1359,7 +1360,7 @@ public class OtaHelper {
         // Process apps in order - important for sequential updates
         String[] orderedPackages = {
             "com.mentra.asg_client", // Update ASG client first
-            // "com.mentra.recovery"      // Then recovery agent
+            // "com.mentra.recovery"      // Then recovery worker
         };
 
         // PHASE 0: Pre-download firmware artifacts BEFORE any APK install.
@@ -1808,29 +1809,44 @@ public class OtaHelper {
         }
 
         try {
-            PackageInfo info = context.getPackageManager().getPackageInfo(packageName, 0);
-            String sourceApk = info.applicationInfo.sourceDir;
-
-            File backupFile = new File(OtaConstants.BASE_DIR, "asg_client_backup.apk");
-            File sourceFile = new File(sourceApk);
-
-            // Simple file copy
-            FileInputStream fis = new FileInputStream(sourceFile);
-            FileOutputStream fos = new FileOutputStream(backupFile);
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            while ((bytesRead = fis.read(buffer)) != -1) {
-                fos.write(buffer, 0, bytesRead);
+            PackageManager pm = context.getPackageManager();
+            PackageInfo info = pm.getPackageInfo(packageName, 0);
+            File backupSource = resolveInstallableBackupSource(pm, info);
+            if (backupSource == null) {
+                Log.e(
+                        TAG,
+                        "No installable ASG APK for recovery backup (installed build is testOnly and"
+                                + " no release OTA APK at "
+                                + OtaConstants.ASG_UPDATE_APK_PATH
+                                + ")");
+                return;
             }
-            fis.close();
-            fos.close();
+
+            File backupFile = new File(OtaConstants.BASE_DIR, OtaConstants.BACKUP_APK_FILENAME);
+            copyFile(backupSource, backupFile);
+
+            PackageInfo sourceInfo =
+                    pm.getPackageArchiveInfo(
+                            backupSource.getAbsolutePath(),
+                            PackageManager.GET_SIGNING_CERTIFICATES);
+            long versionCode = info.getLongVersionCode();
+            String versionName = info.versionName;
+            if (sourceInfo != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    versionCode = sourceInfo.getLongVersionCode();
+                } else {
+                    versionCode = sourceInfo.versionCode;
+                }
+                versionName = sourceInfo.versionName;
+            }
 
             JSONObject backupMetadata = new JSONObject();
             backupMetadata.put("packageName", packageName);
-            backupMetadata.put("versionCode", info.getLongVersionCode());
-            backupMetadata.put("versionName", info.versionName);
+            backupMetadata.put("versionCode", versionCode);
+            backupMetadata.put("versionName", versionName);
             backupMetadata.put("createdAtMs", System.currentTimeMillis());
             backupMetadata.put("path", backupFile.getAbsolutePath());
+            backupMetadata.put("sourceApk", backupSource.getAbsolutePath());
             File metadataFile = new File(OtaConstants.BASE_DIR, "asg_client_backup.json");
             FileWriter metadataWriter = new FileWriter(metadataFile);
             metadataWriter.write(backupMetadata.toString());
@@ -1838,9 +1854,54 @@ public class OtaHelper {
 
             Log.i(
                     TAG,
-                    "Created backup for " + packageName + " at: " + backupFile.getAbsolutePath());
+                    "Created backup for "
+                            + packageName
+                            + " from "
+                            + backupSource.getAbsolutePath()
+                            + " at "
+                            + backupFile.getAbsolutePath());
         } catch (Exception e) {
             Log.e(TAG, "Failed to create backup for " + packageName, e);
+        }
+    }
+
+    private File resolveInstallableBackupSource(PackageManager pm, PackageInfo installedInfo) {
+        File installedApk = new File(installedInfo.applicationInfo.sourceDir);
+        if (!isTestOnlyApk(pm, installedApk.getAbsolutePath())) {
+            return installedApk;
+        }
+        Log.w(
+                TAG,
+                "Installed ASG APK is testOnly; trying OTA update APK for recovery backup: "
+                        + OtaConstants.ASG_UPDATE_APK_PATH);
+        File otaApk = new File(OtaConstants.ASG_UPDATE_APK_PATH);
+        if (otaApk.exists() && !isTestOnlyApk(pm, otaApk.getAbsolutePath())) {
+            return otaApk;
+        }
+        return null;
+    }
+
+    private boolean isTestOnlyApk(PackageManager pm, String apkPath) {
+        PackageInfo archiveInfo =
+                pm.getPackageArchiveInfo(
+                        apkPath, PackageManager.GET_SIGNING_CERTIFICATES);
+        if (archiveInfo == null || archiveInfo.applicationInfo == null) {
+            return true;
+        }
+        ApplicationInfo appInfo = archiveInfo.applicationInfo;
+        appInfo.sourceDir = apkPath;
+        appInfo.publicSourceDir = apkPath;
+        return (appInfo.flags & ApplicationInfo.FLAG_TEST_ONLY) != 0;
+    }
+
+    private void copyFile(File source, File destination) throws IOException {
+        try (FileInputStream fis = new FileInputStream(source);
+                FileOutputStream fos = new FileOutputStream(destination)) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = fis.read(buffer)) != -1) {
+                fos.write(buffer, 0, bytesRead);
+            }
         }
     }
 

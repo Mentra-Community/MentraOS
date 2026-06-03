@@ -1262,9 +1262,16 @@ public class AsgClientService extends Service
                             String action = intent.getAction();
                             Log.d(TAG, "💓 Heartbeat receiver triggered - Action: " + action);
 
-                            if (ACTION_HEARTBEAT.equals(action)
-                                    || "com.augmentos.otaupdater.ACTION_HEARTBEAT".equals(action)
-                                    || "com.mentra.recovery.ACTION_PING".equals(action)) {
+                            if ("com.mentra.recovery.ACTION_PING".equals(action)) {
+                                // ServiceHeartbeatReceiver (manifest) is the sole PONG sender.
+                                Log.d(
+                                        TAG,
+                                        "💓 Recovery ping received;"
+                                                + " acknowledgment handled by"
+                                                + " ServiceHeartbeatReceiver");
+                            } else if (ACTION_HEARTBEAT.equals(action)
+                                    || "com.augmentos.otaupdater.ACTION_HEARTBEAT"
+                                            .equals(action)) {
 
                                 Log.i(TAG, "💓 Heartbeat received - sending acknowledgment");
 
@@ -1272,10 +1279,6 @@ public class AsgClientService extends Service
                                     Intent ackIntent = new Intent(ACTION_HEARTBEAT_ACK);
                                     ackIntent.setPackage("com.augmentos.otaupdater");
                                     sendBroadcast(ackIntent);
-                                    Intent pongIntent =
-                                            new Intent("com.mentra.recovery.ACTION_PONG");
-                                    pongIntent.setPackage("com.mentra.recovery");
-                                    sendBroadcast(pongIntent);
 
                                     Log.i(TAG, "✅ Heartbeat acknowledgment sent successfully");
                                 } catch (Exception e) {

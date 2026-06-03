@@ -2,7 +2,7 @@
 
 The BES2700 microcontroller on Mentra Live runs its own firmware, separate from the Android (MTK) side. ASG Client can push new BES firmware over UART using the BES OTA protocol — this doc describes how that pipeline works.
 
-For Android-side APK update and crash recovery, see `io/ota/helpers/OtaHelper` and `RecoveryAgentManager` (`com.mentra.recovery` sidecar).
+For Android-side APK update and crash recovery, see `io/ota/helpers/OtaHelper` and `RecoveryWorkerManager` (`com.mentra.recovery` sidecar).
 
 > **Mentra Live = K900.** Throughout this doc and the BES code, you'll see `K900` — that's the internal codename for Mentra Live's hardware platform. See [overview.md](../overview.md#a-naming-note-k900--mentra-live).
 

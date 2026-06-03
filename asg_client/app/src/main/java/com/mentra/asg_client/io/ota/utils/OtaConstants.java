@@ -25,6 +25,8 @@ public class OtaConstants {
     public static final String BASE_DIR = "/storage/emulated/0/asg";
     public static final String BACKUP_APK_FILENAME = "asg_client_backup.apk";
     public static final String BACKUP_APK_PATH = BASE_DIR + "/" + BACKUP_APK_FILENAME;
+    public static final String ASG_UPDATE_APK_FILENAME = "asg_client_update.apk";
+    public static final String ASG_UPDATE_APK_PATH = BASE_DIR + "/" + ASG_UPDATE_APK_FILENAME;
 
     // BES firmware paths
     public static final String BES_FIRMWARE_FILENAME = "bes_firmware.bin";

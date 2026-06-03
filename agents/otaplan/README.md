@@ -3,7 +3,7 @@
 ## Overview
 Complete plan for fixing the unreliable OTA updater across 400 deployed Android Smart Glasses.
 
-**IMPORTANT**: Recovery agent is now a dedicated sidecar package: `com.mentra.recovery`.
+**IMPORTANT**: Recovery worker is now a dedicated sidecar package: `com.mentra.recovery`.
 
 ## Documentation Structure
 
