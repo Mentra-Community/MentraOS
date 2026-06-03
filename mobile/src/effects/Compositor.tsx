@@ -224,7 +224,7 @@ export default function Compositor() {
         />
       </Screen>
       {/* </View> */}
-      {isForeground && (
+      {isForeground && Platform.OS === "ios" && (
         <GestureDetector gesture={swipeGesture}>
           <View
             style={{

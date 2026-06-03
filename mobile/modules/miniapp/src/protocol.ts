@@ -74,6 +74,13 @@ export enum MiniappRequestType {
   /** Write camera FOV settings. */
   CAMERA_FOV = "miniapp_camera_fov",
 
+  /**
+   * Enable/disable raw accelerometer (IMU) streaming on the glasses. The
+   * accel stream also auto-enables on subscribe; this is an explicit override
+   * for callers who want to control the sensor directly. G2 only today.
+   */
+  IMU_SET_ENABLED = "miniapp_imu_set_enabled",
+
   /** Share content via the OS share sheet. */
   SHARE = "miniapp_share",
   /** Open a URL in the system browser. */
@@ -167,6 +174,12 @@ export enum MiniappStreamType {
   BUTTON_PRESS = "button_press",
   TOUCH_EVENT = "touch_event",
   HEAD_POSITION = "head_position",
+  /**
+   * Raw accelerometer reading from the glasses IMU — `{x, y, z}` in g, plus a
+   * timestamp. G2 only today. A richer combined IMU stream (accel + gyro +
+   * magnetometer) is future work; this is the single-sensor precursor.
+   */
+  ACCEL_DATA = "accel_data",
 
   // Status
   GLASSES_BATTERY = "glasses_battery",

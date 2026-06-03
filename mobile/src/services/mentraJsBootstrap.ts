@@ -15,8 +15,10 @@ import {
   MentraJSRouter,
   MentraUIRouter,
   appRegistry,
+  decideDevLaunchRoute,
   devServerBridge,
   localMiniappRuntime,
+  storage,
   useAppStatusStore,
 } from "@mentra/island"
 import {File} from "expo-file-system"
@@ -81,21 +83,6 @@ export function bootstrapMentraJS() {
     const app = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
     const appName = app?.name ?? packageName
 
-    // Pop the /applet/local route if the user is currently looking at
-    // this miniapp's UI. The JSContext is already torn down — leaving
-    // the WebView mounted means it's talking to nothing.
-    try {
-      const navState = useNavigationStore.getState()
-      const top = navState.history.length - 1
-      const topPath = navState.history[top]
-      const topParams = navState.historyParams[top] as {packageName?: string} | undefined
-      if (topPath === "/applet/local" && topParams?.packageName === packageName) {
-        navState.goBack()
-      }
-    } catch {
-      /* navigation singleton may not be ready in early-boot crashes */
-    }
-
     // File an automatic incident. Dedupe so a flapping miniapp doesn't
     // generate one incident per crashloop transition.
     void submitAutomaticBugIncident({
@@ -141,14 +128,43 @@ export function bootstrapMentraJS() {
   // Wire up the dev server's "respawn-bg" signal so a touch under
   // src/background/ kills + re-spawns the JSContext with the latest
   // bundle. The WebView reload path stays separate (devServerBridge.onReload).
+  //
+  // Dev miniapps fetch the fresh background JS straight off the dev server
+  // over HTTP (mirrors LocalMiniappView's HTTP-direct launch). Released
+  // miniapps fall back to reading the installed file:// snapshot.
   devServerBridge.onRespawnBackground(async (packageName) => {
     try {
-      const version = await appRegistry.getActiveVersion(packageName)
-      if (!version) return
-      const entry = appRegistry.getMiniappEntryPaths(packageName, version)
-      const bgUri = entry?.background
-      if (!bgUri) return
-      const bgSource = new File(bgUri).textSync()
+      let bgSource: string | null = null
+
+      const devUrlRes = storage.load<string>(`${packageName}_dev_url`)
+      if (devUrlRes.is_ok()) {
+        // Dev: re-fetch the manifest (entry path may have changed) + the
+        // freshly built background bundle over HTTP.
+        const devUrl = devUrlRes.value
+        const route = await decideDevLaunchRoute(packageName, devUrl)
+        if (route.decision === "offline" || !route.manifest) {
+          console.warn(`MentraJS: respawn-bg dev server unreachable for ${packageName}`)
+          return
+        }
+        const entry = route.manifest.entry as {background?: string} | undefined
+        if (!entry?.background) return
+        const bgUrl = `${devUrl.replace(/\/$/, "")}/dist/${entry.background.replace(/^\.?\/+/, "")}`
+        const res = await fetch(bgUrl)
+        if (!res.ok) {
+          console.warn(`MentraJS: respawn-bg fetch ${res.status} for ${packageName}`)
+          return
+        }
+        bgSource = await res.text()
+      } else {
+        const version = await appRegistry.getActiveVersion(packageName)
+        if (!version) return
+        const entry = appRegistry.getMiniappEntryPaths(packageName, version)
+        const bgUri = entry?.background
+        if (!bgUri) return
+        bgSource = new File(bgUri).textSync()
+      }
+
+      if (bgSource === null) return
       await router.unregister(packageName)
       const ok = await router.spawnAndRegister(packageName, bgSource)
       if (!ok) console.warn(`MentraJS: respawn-bg failed for ${packageName}`)

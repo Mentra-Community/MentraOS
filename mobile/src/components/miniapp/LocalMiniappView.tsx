@@ -15,7 +15,9 @@ import {
   BgTimer,
   buildMentraUiShim,
   buildMiniappGlobalsScript,
+  decideDevLaunchRoute,
   devServerBridge,
+  type InstalledMiniappManifest,
   useAppStatusStore,
 } from "@mentra/island"
 import {useNavigationStore} from "@/stores/navigation"
@@ -183,57 +185,102 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
     }
 
     const launch = async () => {
-      let resolvedVersion: string | null = null
+      // Entry sources, resolved differently for dev (HTTP, straight off the
+      // running dev server) vs released (file:// from the installed snapshot).
+      //   bgSource : the background JS *text* to feed spawnAndRegister.
+      //   uiEntry  : the WebView source uri (http:// for dev, file:// for release).
+      let bgSource: string | null = null
+      let uiEntry: string | null = null
+      let declaredPermissions: string[] = []
+      let installedManifest: InstalledMiniappManifest | undefined
 
       if (devUrl) {
+        // Dev miniapps load directly off the local dev server over HTTP — the
+        // normal web-dev-server model. No zip download / file:// snapshot, so
+        // a plain WebView.reload() (and a JSContext respawn) picks up freshly
+        // built code. The bundle.zip / install path stays for store installs.
         setPhase("installing")
         const portNum = resolveDevPort(devPort, packageName)
         if (portNum === null) {
           fail("no dev port configured")
           return
         }
-        const sidecarBase = buildSidecarBaseUrl(devUrl, portNum)
-        if (!sidecarBase) {
-          fail(`bad dev URL "${devUrl}"`)
+        const base = devUrl.replace(/\/$/, "")
+
+        // Reachability + manifest in one round trip. Callers pre-flight this
+        // before navigating here, so an "offline" result means the server
+        // dropped between pre-flight and mount — surface it as an error.
+        const route = await decideDevLaunchRoute(packageName, devUrl)
+        if (cancelled) return
+        if (route.decision === "offline" || !route.manifest) {
+          fail("dev server unreachable")
           return
         }
-        const versionOverride = `dev-${Date.now()}`
-        const installRes = await appRegistry.installFromUrl(`${sidecarBase}/__mentra_dev/bundle.zip`, {versionOverride})
-        if (installRes.is_error()) {
-          fail(`dev snapshot failed: ${installRes.error?.message ?? installRes.error}`)
+        const manifest = route.manifest
+        const entry = manifest.entry as {background?: string; ui?: string} | undefined
+        if (!entry?.background) {
+          fail("miniapp.json missing entry.background")
           return
         }
-        appRegistry.gcDevVersions(packageName, 2)
+        // entry.* are bundle-root paths (dist/ stripped); the dev server
+        // serves files relative to cwd, so prepend dist/.
+        const bgUrl = `${base}/dist/${entry.background.replace(/^\.?\/+/, "")}`
+        uiEntry = entry.ui ? `${base}/dist/${entry.ui.replace(/^\.?\/+/, "")}` : null
+
+        const perms = manifest.permissions as
+          | Array<{type?: string} | string>
+          | undefined
+        declaredPermissions = (perms ?? [])
+          .map((p) => (typeof p === "string" ? p : p?.type))
+          .filter((t): t is string => typeof t === "string")
+        installedManifest = {
+          permissions: manifest.permissions as InstalledMiniappManifest["permissions"],
+          hardwareRequirements:
+            manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
+        }
+
+        try {
+          const res = await fetch(bgUrl)
+          if (!res.ok) {
+            fail(`background fetch failed: ${res.status}`)
+            return
+          }
+          bgSource = await res.text()
+        } catch (e) {
+          fail(`background fetch failed: ${(e as Error).message}`)
+          return
+        }
+        if (cancelled) return
+
         devServerBridge.connect(packageName, devUrl, portNum)
-        storage.save(`${packageName}_dev_last_reachable`, Date.now())
-        resolvedVersion = await appRegistry.getActiveVersion(packageName)
       } else if (version) {
-        resolvedVersion = version
+        // Released local miniapp — resolve from the installed file:// snapshot.
+        const entryPaths = appRegistry.getMiniappEntryPaths(packageName, version)
+        if (!entryPaths?.background) {
+          fail(`${version} missing entry.background`)
+          return
+        }
+        const manifest = appRegistry.getMiniappManifest(packageName, version) as {
+          permissions?: Array<{type: string; required?: boolean; description?: string}>
+          hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+        } | null
+        declaredPermissions = (manifest?.permissions ?? [])
+          .map((p) => p.type)
+          .filter((t): t is string => typeof t === "string")
+        installedManifest = manifest
+          ? {
+              permissions: manifest.permissions,
+              hardwareRequirements: manifest.hardwareRequirements,
+            }
+          : undefined
+        bgSource = new File(entryPaths.background).textSync()
+        uiEntry = entryPaths.ui
       } else {
         fail("no devUrl or version — cannot launch")
         return
       }
 
-      if (!resolvedVersion || cancelled) return
-
-      const entryPaths = appRegistry.getMiniappEntryPaths(packageName, resolvedVersion)
-      if (!entryPaths?.background) {
-        fail(`${resolvedVersion} missing entry.background`)
-        return
-      }
-      const manifest = appRegistry.getMiniappManifest(packageName, resolvedVersion) as {
-        permissions?: Array<{type: string; required?: boolean; description?: string}>
-        hardwareRequirements?: Array<{type: string; level: string; description?: string}>
-      } | null
-      const declaredPermissions = (manifest?.permissions ?? [])
-        .map((p) => p.type)
-        .filter((t): t is string => typeof t === "string")
-      const installedManifest = manifest
-        ? {
-            permissions: manifest.permissions,
-            hardwareRequirements: manifest.hardwareRequirements,
-          }
-        : undefined
+      if (cancelled || bgSource === null) return
 
       const mj = getMentraJS()
       if (!mj) {
@@ -241,13 +288,11 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
         return
       }
 
-      if (cancelled) return
       setPhase("spawning")
 
       // Spawn the JSContext if it isn't already alive. Re-foregrounding a
       // running miniapp just rebuilds the WebView half.
       if (!mj.router.registeredPackages().includes(packageName)) {
-        const bgSource = new File(entryPaths.background).textSync()
         const ok = await mj.router.spawnAndRegister(packageName, bgSource, {
           permissions: declaredPermissions,
           installedManifest,
@@ -265,9 +310,9 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
       if (cancelled) return
 
       setPhase("opening")
-      if (entryPaths.ui) {
-        setUiUri(entryPaths.ui)
-        setUiBaseDir(entryPaths.ui.replace(/\/[^/]+$/, "/"))
+      if (uiEntry) {
+        setUiUri(uiEntry)
+        setUiBaseDir(uiEntry.replace(/\/[^/]+$/, "/"))
       }
       if (!cancelled) setPhase("ready")
     }
@@ -355,8 +400,11 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
   }, [packageName])
 
   // Dev hot-reload: when the dev server signals a reload for THIS miniapp
-  // (e.g. a file under src/ui/ changed), refresh the WebView. The JSContext
-  // respawn for src/background/ changes is handled by mentraJsBootstrap via
+  // (e.g. a file under src/ui/ changed), refresh the WebView. Because the dev
+  // UI is loaded straight off the dev server over HTTP (with cache-control:
+  // no-store), a plain reload re-fetches the freshly built index.html + its
+  // content-hashed chunks — no re-install needed. The JSContext respawn for
+  // src/background/ changes is handled by mentraJsBootstrap via
   // devServerBridge.onRespawnBackground.
   useEffect(() => {
     if (!packageName || !devUrl) return
@@ -560,15 +608,6 @@ function resolveDevPort(searchParam: string | undefined, packageName: string): n
   const stored = storage.load<number>(`${packageName}_dev_port`)
   if (stored.is_ok()) return stored.value
   return null
-}
-
-function buildSidecarBaseUrl(devUrl: string, sidecarPort: number): string | null {
-  try {
-    const url = new URL(devUrl)
-    return `${url.protocol}//${url.hostname}:${sidecarPort}`
-  } catch {
-    return null
-  }
 }
 
 /**

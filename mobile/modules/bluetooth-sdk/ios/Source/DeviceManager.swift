@@ -241,6 +241,7 @@ struct ViewState {
         get { DeviceStore.shared.get("bluetooth", "shouldSendBootingMessage") as? Bool ?? true }
         set { DeviceStore.shared.apply("bluetooth", "shouldSendBootingMessage", newValue) }
     }
+
     private var lastSystemTimeSyncConnectionKey = ""
 
     private var systemMicUnavailable: Bool {
@@ -700,12 +701,12 @@ struct ViewState {
             case "reference_card":
                 sgc?.sendTextWall(currentViewState.title + "\n\n" + currentViewState.text)
             case "bitmap_view":
-                Bridge.log("MAN: Processing bitmap_view layout")
+                // Bridge.log("MAN: Processing bitmap_view layout")
                 guard let data = currentViewState.data else {
                     Bridge.log("MAN: ERROR: bitmap_view missing data field")
                     return
                 }
-                Bridge.log("MAN: Processing bitmap_view with base64 data, length: \(data.count)")
+                // Bridge.log("MAN: Processing bitmap_view with base64 data, length: \(data.count)")
                 await sgc?.displayBitmap(
                     base64ImageData: data,
                     x: currentViewState.bmpX,
@@ -890,6 +891,14 @@ struct ViewState {
 
         let connectionKey = "\(sgc.type):\(deviceName)"
         syncSystemTimeOnceForConnection(sgc, connectionKey: connectionKey)
+        
+        // re-apply display height/depth after reconnection
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            let h = DeviceStore.shared.get("bluetooth", "dashboard_height") as? Int ?? 4
+            let rawDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 1
+            let d = min(max(rawDepth, 1), 4)
+            sgc.setDashboardPosition(h, d)
+        }
 
         // Show welcome message on first connect for all display glasses
         if shouldSendBootingMessage {
@@ -920,17 +929,6 @@ struct ViewState {
         Bridge.saveSetting("device_name", deviceName)
         Bridge.saveSetting("device_address", deviceAddress)
 
-        // Re-apply display height after reconnection
-        let h = DeviceStore.shared.get("bluetooth", "dashboard_height") as? Int ?? 4
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_NEX
-        let d = NexDashboardDisplayWire.clampDepthFromStore(
-            DeviceStore.shared.get("bluetooth", "dashboard_depth")
-        )
-#else
-        let rawDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 1
-        let d = min(max(rawDepth, 1), 4)
-#endif
-        sgc.setDashboardPosition(h, d)
     }
 
     private func syncSystemTimeOnceForConnection(_ sgc: SGCManager, connectionKey: String) {

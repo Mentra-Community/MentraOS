@@ -121,6 +121,7 @@ object DeviceStore {
         store.set("bluetooth", "dashboard_height", 4)
         store.set("bluetooth", "dashboard_depth", 2)
         store.set("bluetooth", "head_up_angle", 30)
+        store.set("bluetooth", "imu_enabled", false)
         store.set("bluetooth", "contextual_dashboard", true)
         store.set("bluetooth", "gallery_mode", true)
         store.set("bluetooth", "voice_activity_detection_enabled", true)
@@ -236,6 +237,11 @@ object DeviceStore {
             "bluetooth" to "head_up_angle" -> {
                 (value as? Int)?.let { angle ->
                     DeviceManager.getInstance().sgc?.setHeadUpAngle(angle)
+                }
+            }
+            "bluetooth" to "imu_enabled" -> {
+                (value as? Boolean)?.let { enabled ->
+                    DeviceManager.getInstance().sgc?.setImuEnabled(enabled)
                 }
             }
             "bluetooth" to "menu_apps" -> {

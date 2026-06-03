@@ -37,7 +37,7 @@ export class GlassesController {
   private liveTranscript = ""
   private history: string[] = []
   private lastButton = ""
-  private mirrorToGlasses = true
+  private mirrorToGlasses = false
 
   constructor(private readonly session: MiniappSession) {}
 

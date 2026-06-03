@@ -592,7 +592,7 @@ const en = {
     miniappScanPermissionDeniedBody: "Please enable camera access in Settings to scan QR codes.",
     miniappScanCheckingPermission: "Checking camera permission\u2026",
     miniappScanInvalidQrTitle: "Invalid QR",
-    miniappScanInvalidQrBody: "Expected a mentra-miniapp:// or http:// URL",
+    miniappScanInvalidQrBody: "Expected a miniapp:// or http:// URL",
     miniappScanInvalidQrNoUrl: "No URL found in QR code",
     miniappUrlTitle: "Load Mini App from URL",
     miniappUrlGroupTitle: "Dev Server URL",

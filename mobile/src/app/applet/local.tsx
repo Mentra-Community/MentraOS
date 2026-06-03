@@ -1,85 +1,73 @@
 import {useLocalSearchParams} from "expo-router"
-import {useCallback, useEffect, useRef, useState} from "react"
-import {Platform, View} from "react-native"
+import {useEffect, useRef} from "react"
+import {View} from "react-native"
 
 import {Text} from "@/components/ignite"
-import LocalMiniappView, {type LocalMiniappViewHandle} from "@/components/miniapp/LocalMiniappView"
+import MiniappSplash from "@/components/miniapp/MiniappSplash"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {useRegisterCapsule} from "@/stores/capsule"
+import {useAppStatusStore, useSetForeground} from "@mentra/island"
 
 /**
- * Route mount for a DEV local miniapp (QR scanner, developer-url, dev-offline,
- * catalog launch). Installed local miniapps are foregrounded through the
- * <Compositor /> overlay instead (see AppSwitcher → setForeground); this route
- * stays for the dev flows because the dev app often isn't in the apps store
- * yet — it gets installed during LocalMiniappView's launch.
+ * Transient handoff route for launching a DEV local miniapp from the scanner,
+ * developer-url screen, or dev-offline "Try again". It does NOT mount the
+ * miniapp itself — the always-on <Compositor /> overlay owns the single
+ * LocalMiniappView mount (same as the home tile / app switcher launch path).
  *
- * The route owns the capsule button + React-Navigation back-gesture wiring
- * (the Compositor owns those for the overlay path). LocalMiniappView owns the
- * WebView + JSContext lifecycle.
+ * On mount it: ensures the just-registered dev app is in the store (refresh),
+ * foregrounds it so the Compositor takes over rendering, then resets the stack
+ * to /home. The MiniappSplash covers the brief handoff window so there's no
+ * blank frame before the overlay's open animation.
  */
 export default function LocalMiniAppPage() {
-  const {appName, packageName, version, devUrl, iconUrl, devPort} = useLocalSearchParams<{
-    appName: string
+  const {packageName, iconUrl} = useLocalSearchParams<{
+    appName?: string
     packageName: string
     version?: string
     devUrl?: string
     iconUrl?: string
     devPort?: string
   }>()
-  const {goBack, setForceGestureEnabled} = useNavigationStore.getState()
+  const {theme} = useAppTheme()
+  const setForeground = useSetForeground()
 
-  const goBackRef = useRef(goBack)
-  goBackRef.current = goBack
+  // Run the handoff exactly once. Guard so a re-render (e.g. param echo)
+  // doesn't re-foreground / re-navigate mid-animation.
+  const handedOff = useRef(false)
 
-  const viewRef = useRef<LocalMiniappViewHandle | null>(null)
-  const viewShotRef = useRef<View | null>(null)
-  const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
-
-  // Drive React Navigation's swipe-back gesture: enabled only when the WebView
-  // has no in-app history. Mirrors /applet/webview so iOS users get the native
-  // pop-gesture animation when exiting the miniapp.
   useEffect(() => {
-    setForceGestureEnabled(!webViewCanGoBack)
-    return () => setForceGestureEnabled(false)
-  }, [webViewCanGoBack, setForceGestureEnabled])
+    if (handedOff.current) return
+    handedOff.current = true
 
-  // Capsule menu back press: pop the WebView's history first, else pop the
-  // route. Mirrors webview.tsx's handleWebViewBack for the two-layer path.
-  const handleCapsuleBack = useCallback(() => {
-    const popped = viewRef.current?.goBack() ?? false
-    if (popped) return
-    if (Platform.OS === "android") {
-      goBackRef.current()
+    const {clearHistoryAndGoHome} = useNavigationStore.getState()
+
+    if (!packageName) {
+      clearHistoryAndGoHome()
+      return
     }
-    // iOS handles the route pop via the gesture or the capsule's own
-    // captureScreenshot+exit pipeline inside useRegisterCapsule.
-  }, [])
 
-  useRegisterCapsule({
-    packageName: packageName ?? "",
-    viewShotRef,
-    visibleOnRoutes: ["/applet/local"],
-    onBackPress: handleCapsuleBack,
-  })
+    const handoff = async () => {
+      // Land the just-registered dev app in the store before foregrounding —
+      // setForeground() no-ops if the package isn't in apps yet, and the
+      // refresh kicked off by registerDevApp() is fire-and-forget.
+      await useAppStatusStore.getState().refresh()
+      // Compositor begins its fade-in + mounts LocalMiniappView (which runs its
+      // own install/spawn phase machine inside the overlay).
+      await setForeground(packageName)
+      // Pop this route AFTER foregrounding so the overlay is already painting.
+      clearHistoryAndGoHome()
+    }
+
+    void handoff()
+  }, [packageName, setForeground])
 
   if (!packageName) {
     return <Text text="Missing required parameters" />
   }
 
   return (
-    <View ref={viewShotRef} className="flex-1 bg-background">
-      <LocalMiniappView
-        ref={viewRef}
-        packageName={packageName}
-        appName={appName}
-        version={version}
-        devUrl={devUrl}
-        iconUrl={iconUrl}
-        devPort={devPort}
-        onExit={() => goBackRef.current()}
-        onCanGoBackChange={setWebViewCanGoBack}
-      />
+    <View className="flex-1 bg-background">
+      <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} />
     </View>
   )
 }

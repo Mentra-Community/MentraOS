@@ -18,6 +18,14 @@ export type TouchEvent = {
   timestamp: number
 }
 
+export type AccelEvent = {
+  type: "accel_event"
+  x: number
+  y: number
+  z: number
+  timestamp: number
+}
+
 export type HeadUpEvent = {
   up: boolean
 }
@@ -471,6 +479,7 @@ export type BluetoothSdkModuleEvents = {
   glasses_not_ready: (event: GlassesNotReadyEvent) => void
   button_press: (event: ButtonPressEvent) => void
   touch_event: (event: TouchEvent) => void
+  accel_event: (event: AccelEvent) => void
   head_up: (event: HeadUpEvent) => void
   voice_activity_detection_status: (event: VoiceActivityDetectionStatusEvent) => void
   speaking_status: (event: SpeakingStatusEvent) => void
@@ -540,6 +549,7 @@ export type BluetoothSdkEventMap = {
   glasses_not_ready: GlassesNotReadyEvent
   button_press: ButtonPressEvent
   touch_event: TouchEvent
+  accel_event: AccelEvent
   head_up: HeadUpEvent
   voice_activity_detection_status: VoiceActivityDetectionStatusEvent
   speaking_status: SpeakingStatusEvent
@@ -602,6 +612,7 @@ export interface BluetoothSdkPublicModule {
   showDashboard(): Promise<void>
   setDashboardPosition(height: number, depth: number): Promise<void>
   setHeadUpAngle(angleDegrees: number): Promise<void>
+  setImuEnabled(enabled: boolean): Promise<void>
   setScreenDisabled(disabled: boolean): Promise<void>
 
   requestWifiScan(): Promise<void>
@@ -872,6 +883,7 @@ export type BluetoothSettingsUpdate = Partial<{
   screen_disabled: boolean
   contextual_dashboard: boolean
   head_up_angle: number
+  imu_enabled: boolean
   brightness: number
   auto_brightness: boolean
   dashboard_height: number

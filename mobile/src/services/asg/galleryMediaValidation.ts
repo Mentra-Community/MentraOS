@@ -3,7 +3,7 @@
  */
 
 import * as RNFS from "@dr.pogodin/react-native-fs"
-import {Buffer} from "buffer"
+import {Buffer} from "@craftzdog/react-native-buffer"
 
 export const INVALID_DOWNLOADED_MEDIA = "Invalid downloaded media"
 

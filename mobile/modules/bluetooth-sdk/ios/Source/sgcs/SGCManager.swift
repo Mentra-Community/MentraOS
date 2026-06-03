@@ -70,6 +70,9 @@ protocol SGCManager {
     // MARK: - Device Control
 
     func setHeadUpAngle(_ angle: Int)
+    /// Enable/disable raw accelerometer (IMU) reporting from the glasses.
+    /// Default no-op; only G2 streams IMU data today.
+    func setImuEnabled(_ enabled: Bool)
     func getBatteryStatus()
     func setSilentMode(_ enabled: Bool)
     func exit()
@@ -150,6 +153,12 @@ extension SGCManager {
     // MARK: - Notification Panel (default no-op — only G2 supports this)
 
     func showNotificationsPanel() {}
+
+    // MARK: - IMU (default no-op — only G2 streams accelerometer data)
+
+    func setImuEnabled(_: Bool) {
+        Bridge.log("SGC: setImuEnabled not supported")
+    }
 
     // MARK: - Calendar Events (default no-op — only G2 supports this)
 

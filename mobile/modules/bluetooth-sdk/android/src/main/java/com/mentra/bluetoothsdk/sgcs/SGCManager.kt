@@ -88,6 +88,16 @@ abstract class SGCManager {
 
     // Device Control
     abstract fun setHeadUpAngle(angle: Int)
+
+    /**
+     * Enable/disable raw accelerometer (IMU) reporting from the glasses.
+     * Default no-op — only G2 (iOS) streams IMU data today; Android devices
+     * accept the call so the cross-platform JS API stays uniform.
+     */
+    open fun setImuEnabled(enabled: Boolean) {
+        Bridge.log("SGC: setImuEnabled not supported")
+    }
+
     abstract fun getBatteryStatus()
     abstract fun setSilentMode(enabled: Boolean)
     abstract fun exit()

@@ -539,6 +539,8 @@ class LocalMiniappRuntime {
     // Recompute heading subscription — if this app was the last subscriber,
     // the sensor will stop.
     this.recomputeHeadingSubscription()
+    // Same for the IMU/accelerometer stream.
+    this.recomputeImuSubscription()
 
     // Drop this app's location-tier request before recomputing so the
     // aggregate falls back down if it was the strictest. Done before
@@ -702,6 +704,9 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.CAMERA_FOV:
         this.handleCameraFov(packageName, payload, requestId)
+        break
+      case MiniappRequestType.IMU_SET_ENABLED:
+        this.handleImuSetEnabled(packageName, payload, requestId)
         break
       case MiniappRequestType.PING:
         // SDK should handle this itself; reply PONG just in case
@@ -889,6 +894,7 @@ class LocalMiniappRuntime {
     this.recomputeMicRequirements()
     this.updateCloudSubscriptions()
     this.recomputeHeadingSubscription()
+    this.recomputeImuSubscription()
     // Persist this app's requested rate (or clear it if SUBSCRIBE didn't
     // include `location_stream` this time), then ask the host for the
     // strictest rate across all connected apps.
@@ -1297,6 +1303,20 @@ class LocalMiniappRuntime {
   }
 
   /**
+   * Accelerometer is a sensor stream — enable the glasses IMU when any mini
+   * app is subscribed to "accel_data", disable it when none are. Mirrors the
+   * heading pattern. Only G2 streams IMU today; on other devices the native
+   * call is a no-op so this is harmless.
+   */
+  private imuEnabled = false
+  private recomputeImuSubscription(): void {
+    const wantsImu = this.streamSubscribers.has(MiniappStreamType.ACCEL_DATA)
+    if (wantsImu === this.imuEnabled) return
+    this.imuEnabled = wantsImu
+    void BluetoothSdk.setImuEnabled(wantsImu)
+  }
+
+  /**
    * Last rate we asked the host for. Lets us skip the cross-process call
    * when nothing actually changed (most SUBSCRIBE / unregister churn
    * leaves the aggregate unchanged) and tracks state for the no-active-
@@ -1562,6 +1582,32 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Camera FOV error",
+      })
+    }
+  }
+
+  /**
+   * Explicit IMU enable/disable from a miniapp (session.imu.setEnabled).
+   *
+   * The accel stream already auto-toggles the native IMU on subscribe (see
+   * {@link recomputeImuSubscription}); this is a direct override. We sync
+   * `this.imuEnabled` to the requested state so a subsequent subscription
+   * recompute with the same aggregate doesn't issue a redundant native call.
+   * Note that a later subscribe/unsubscribe that changes the aggregate will
+   * still re-derive the sensor state from subscriptions.
+   */
+  private handleImuSetEnabled(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+    try {
+      const enabled = !!payload.enabled
+      console.log(`${LOG_TAG}: imu_set_enabled ${enabled} (by ${packageName})`)
+      this.imuEnabled = enabled
+      void BluetoothSdk.setImuEnabled(enabled)
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      console.error(`${LOG_TAG}: imu_set_enabled error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "IMU set-enabled error",
       })
     }
   }
@@ -2019,10 +2065,10 @@ class LocalMiniappRuntime {
     }
 
     if (normalizedStream.startsWith("transcription:")) {
-      const known = Array.from(this.streamSubscribers.keys())
-      console.log(
-        `${LOG_TAG}: forwardEvent(${streamType} → ${normalizedStream}) matched=${matchedSubs.size} known=[${known.join(", ")}]`,
-      )
+      // const known = Array.from(this.streamSubscribers.keys())
+      // console.log(
+      //   `${LOG_TAG}: forwardEvent(${streamType} → ${normalizedStream}) matched=${matchedSubs.size} known=[${known.join(", ")}]`,
+      // )
     }
 
     if (matchedSubs.size === 0 && !perGestureStream) return
@@ -2071,6 +2117,8 @@ class LocalMiniappRuntime {
     switch (cloudEventName) {
       case "head_up":
         return MiniappStreamType.HEAD_POSITION // head_up → head_position
+      case "accel_event":
+        return MiniappStreamType.ACCEL_DATA // accel_event (native) → accel_data
       case "VAD":
         return MiniappStreamType.VAD // VAD (uppercase) → vad (lowercase)
       case "glasses_battery_update":
@@ -2140,9 +2188,9 @@ class LocalMiniappRuntime {
 
     const serialized = serializeEnvelope(envelope)
     if ((payload as Record<string, unknown>)?.streamType?.toString().startsWith("transcription")) {
-      console.log(
-        `${LOG_TAG}: sendToMiniapp → ${packageName} streamType=${(payload as Record<string, unknown>).streamType}`,
-      )
+      // console.log(
+      //   `${LOG_TAG}: sendToMiniapp → ${packageName} streamType=${(payload as Record<string, unknown>).streamType}`,
+      // )
     }
 
     try {

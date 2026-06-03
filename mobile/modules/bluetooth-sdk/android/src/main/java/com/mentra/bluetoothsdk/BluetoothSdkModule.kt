@@ -156,6 +156,7 @@ class BluetoothSdkModule : Module() {
             "glasses_not_ready",
             "button_press",
             "touch_event",
+            "accel_event",
             "head_up",
             "voice_activity_detection_status",
             "speaking_status",

@@ -129,14 +129,9 @@ export class DisplayManager {
    * Show a bitmap. Phone SGC handles conversion to glasses-native format.
    *
    * Optional `x`/`y`/`width`/`height` position and size the bitmap's container.
-   * On G2, a target larger than a single 200×100 tile (`width>200 || height>100`)
-   * is rendered in quad mode (2×2 grid of 200×100 tiles); otherwise the image is
-   * placed in a single container at the requested rect. Omit them for default
-   * placement. Other glasses ignore positioning and render the bitmap as before.
+   * Omit them for default placement
    *
    * @example
-   * // 200×100 source spread across the full quad region
-   * display.showBitmapView(base64Png, {width: 400, height: 200})
    * // 100×100 image pinned to the bottom-right of the 576×288 canvas
    * display.showBitmapView(base64Png, {x: 476, y: 188, width: 100, height: 100})
    */

@@ -10,7 +10,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {decideDevLaunchRoute} from "@mentra/island"
+import {decideDevLaunchRoute, registerDevApp, useAppStatusStore, type DevAppRecord} from "@mentra/island"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
@@ -92,13 +92,10 @@ export default function MiniappDeveloperUrlScreen() {
       }
     }
 
-    push("/applet/local", {
-      packageName: entry.packageName,
-      devUrl: entry.url,
-      appName: entry.name,
-      iconUrl: entry.iconUrl,
-      manifestJson: JSON.stringify(launchResult.manifest),
-    })
+    await useAppStatusStore.getState().refresh()
+    // Compositor begins its fade-in + mounts LocalMiniappView (which runs its
+    // own install/spawn phase machine inside the overlay).
+    await useAppStatusStore.getState().setForeground(entry.packageName)
   }
 
   const handleLoadUrl = async () => {
@@ -144,6 +141,16 @@ export default function MiniappDeveloperUrlScreen() {
       // getLocalApplets sees it and so home-tile taps after a phone
       // restart can route to the live server.
       storage.save(`${entry.packageName}_dev_url`, entry.url)
+      // Home-tile record so the dev miniapp is re-launchable without
+      // re-entering the URL (dev apps load over HTTP, not installed to disk).
+      registerDevApp({
+        packageName: entry.packageName,
+        name: entry.name,
+        iconUrl: entry.iconUrl ?? `${entry.url}/icon.png`,
+        devUrl: entry.url,
+        permissions: manifest.permissions as DevAppRecord["permissions"],
+        hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+      })
 
       // launchDevMiniapp re-runs the reachability + manifest fetch (cheap;
       // catches manifest changes between save and tap) and runs the

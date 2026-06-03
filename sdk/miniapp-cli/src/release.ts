@@ -7,11 +7,11 @@
  *   2. Validate manifest + pack dist/ → .mentra/<pkg>-<v>.zip (uses pack()).
  *   3. Spin up a tiny HTTP server on the LAN that serves the zip and
  *      manifest at fixed paths.
- *   4. Print a QR with `mentra-miniapp://release?url=<lan-base>&...`.
+ *   4. Print a QR with `miniapp://release?url=<lan-base>&...`.
  *   5. Stay up (default persistent) so multiple devices can install. Print a
  *      ✓ line whenever a phone successfully fetches /bundle.zip.
  *
- * Phone-side: scanner branches on `mentra-miniapp://release`, downloads the
+ * Phone-side: scanner branches on `miniapp://release`, downloads the
  * zip via composer.installMiniApp(<base>/bundle.zip). The miniapp lands in
  * lmas/<pkg>/<manifestVersion>/ and behaves like any installed local
  * miniapp — runs offline, persists across restarts, no laptop required.
@@ -171,7 +171,7 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   })
 
   // ---- 5. QR + banner --------------------------------------------------
-  const qrUrl = `mentra-miniapp://release?url=${encodeURIComponent(baseUrl)}&package=${encodeURIComponent(packageName)}&version=${encodeURIComponent(version)}&name=${encodeURIComponent(name)}`
+  const qrUrl = `miniapp://release?url=${encodeURIComponent(baseUrl)}&package=${encodeURIComponent(packageName)}&version=${encodeURIComponent(version)}&name=${encodeURIComponent(name)}`
 
   console.log('\n╔══════════════════════════════════════════════════════════════╗')
   console.log('║  Install your mini app on a phone:                           ║')
