@@ -115,11 +115,15 @@ their own OIDC issuer, any specific framework or vendor.
 
 ## Endpoints
 
-All endpoints live under `/api/oem/`. Each one below specifies its
-purpose, request shape, response shape, error cases, and the
-plain-English meaning of the protocol details.
+The consolidated v2 endpoint and token surface (paths, the Mentra-as-OEM subject
+token types, the miniapp-token mint, JWKS) is in [`../spec.md`](../spec.md). This
+doc details the **OEM-JWT** path specifically. The client-called endpoints
+(exchange, refresh) live under `/api/client/auth/...` (the mobile client is the
+caller); the OEM-backend endpoints (public-key upload) live under `/api/oem/...`.
+Each one below specifies its purpose, request shape, response shape, error cases,
+and the plain-English meaning of the protocol details.
 
-### `POST /api/oem/oauth/token`
+### `POST /api/client/auth/exchange`
 
 **Purpose.** Token Exchange (RFC 8693). The OEM's mobile app presents
 a JWT signed by the OEM's backend, and Mentra returns a Mentra-issued
@@ -130,7 +134,7 @@ access token and refresh token.
 **Request.**
 
 ```
-POST /api/oem/oauth/token HTTP/1.1
+POST /api/client/auth/exchange HTTP/1.1
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=urn:ietf:params:oauth:grant-type:token-exchange
@@ -203,7 +207,7 @@ Error codes Mentra uses:
 | `unsupported_grant_type` | `grant_type` is not the token-exchange URN | 400 |
 | `server_error` | Mentra-side issue (DB unavailable, key fetch failed) | 500 |
 
-### `POST /api/oem/oauth/refresh`
+### `POST /api/client/auth/refresh`
 
 **Purpose.** Exchange a refresh token for a new access token. The OEM
 backend is not involved in this call; the OEM mobile SDK calls this
@@ -215,7 +219,7 @@ one using this refresh token."
 **Request.**
 
 ```
-POST /api/oem/oauth/refresh HTTP/1.1
+POST /api/client/auth/refresh HTTP/1.1
 Content-Type: application/x-www-form-urlencoded
 
 grant_type=refresh_token
@@ -536,7 +540,7 @@ token and invalidates the old one.
 
 ### Issue session (token exchange)
 
-Triggered by: SDK calls `POST /api/oem/oauth/token` with an OEM-signed
+Triggered by: SDK calls `POST /api/client/auth/exchange` with an OEM-signed
 JWT.
 
 Steps Mentra performs:
@@ -565,7 +569,7 @@ Steps Mentra performs:
 
 ### Refresh access token
 
-Triggered by: SDK calls `POST /api/oem/oauth/refresh` with the
+Triggered by: SDK calls `POST /api/client/auth/refresh` with the
 refresh token.
 
 Steps:
@@ -676,7 +680,7 @@ populated; downstream policy enforcement is the miniapp's concern.
   attacker who changes `iss` to point at a different OEM still fails
   verification because they don't have that OEM's private key.
 - **TLS-required.** All endpoints require HTTPS. No fallback to HTTP.
-- **Rate limiting.** Per-OEM rate limits on `POST /api/oem/oauth/token`
+- **Rate limiting.** Per-OEM rate limits on `POST /api/client/auth/exchange`
   to prevent abuse. Concrete limits TBD.
 - **Audit logging.** Every token exchange, refresh, and revocation
   emits a structured log line with `oemId`, `mentraUserId` (or
@@ -749,7 +753,7 @@ const { jwt } = await fetch(`${TEST_OEM_URL}/test-oem/mint-jwt`, {
 }).then(r => r.json());
 
 // 2. Exchange it with Mentra
-const tokens = await fetch(`${MENTRA_URL}/api/oem/oauth/token`, {
+const tokens = await fetch(`${MENTRA_URL}/api/client/auth/exchange`, {
   method: "POST",
   headers: { "Content-Type": "application/x-www-form-urlencoded" },
   body: new URLSearchParams({
@@ -824,8 +828,8 @@ Rough sketch, will be confirmed when implementation starts:
 cloud-v2/packages/auth/
   src/
     routes/
-      oauth-token.ts             POST /api/oem/oauth/token
-      oauth-refresh.ts           POST /api/oem/oauth/refresh
+      oauth-token.ts             POST /api/client/auth/exchange
+      oauth-refresh.ts           POST /api/client/auth/refresh
       me.ts                      GET  /api/oem/me
       jwks.ts                    POST /api/oem/jwks
       sessions.ts                DELETE endpoints

@@ -3,6 +3,10 @@
 The home for the whole MentraOS auth system: how every actor proves identity to
 Mentra, and how Mentra hands identity to the parties that need it.
 
+The concrete v2 endpoint and token contract (the exchange, refresh, miniapp-token
+mint, and JWKS) is in [`spec.md`](./spec.md). The docs below are the mechanisms
+behind it.
+
 ## Parts
 
 - **OEM auth** ([`oem-auth/`](./oem-auth/)): how an OEM proves who its user is to
@@ -30,11 +34,11 @@ verifies it. Miniapp auto-auth derives a short-lived miniapp-scoped token from i
 
 ## Status
 
-- `oem-auth/`: Implemented (docs under review).
-- `identity/`: Spiked (consumer app + Dev Console + Store unify on the access
-  token). Open questions to resolve, then spec.
-- `auto-auth/`: Spiked (the Phase 2 dev-backend mechanism). Open questions to
-  resolve, then spec.
+- `spec.md`: the v2 endpoint + token contract (exchange, refresh, miniapp-token,
+  JWKS). Specced; this is what the cloud-client implements against.
+- `oem-auth/`: Implemented (the OEM-JWT exchange mechanics; docs under review).
+- `identity/`: Spiked (Mentra-direct identity + the migration bridge).
+- `auto-auth/`: Spiked (the end-to-end miniapp dev-backend mechanism).
 
 ## Related
 

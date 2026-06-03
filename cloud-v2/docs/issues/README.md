@@ -21,10 +21,11 @@ lands.
 | Issue / service | Status | What exists / what is left |
 | --- | --- | --- |
 | **[001-cloud-core](./001-cloud-core/)** | | proprietary cloud product |
-| [auth](./001-cloud-core/auth/) | Mixed | the auth system. oem-auth Implemented; identity + miniapp auto-auth Spiked; console/store auth not started |
-| [auth / oem-auth](./001-cloud-core/auth/oem-auth/) | Implemented | spec + design (under review), built in v2, e2e verified with `test-oem`. Left: finalize doc review |
-| [auth / identity](./001-cloud-core/auth/identity/) | Spiked | Mentra-direct identity (app + console + store) unifies on the access token. Left: resolve open questions, then spec |
-| [auth / auto-auth](./001-cloud-core/auth/auto-auth/) | Spiked | the Phase 2 dev-backend mechanism (miniapp-scoped JWT, JWKS). Left: resolve open questions, then spec |
+| [auth](./001-cloud-core/auth/) | Mixed | the auth system. The v2 endpoint + token contract (`auth/spec.md`) is specced; oem-auth Implemented; identity + auto-auth Spiked |
+| [auth / spec](./001-cloud-core/auth/spec.md) | Specced | the v2 auth-slice contract cloud-client needs: exchange (`/api/client/auth/exchange`, OEM JWT + Mentra core/Supabase subject types), refresh, miniapp-token mint, JWKS (separate keys, kid rotation) |
+| [auth / oem-auth](./001-cloud-core/auth/oem-auth/) | Implemented | the OEM-JWT exchange mechanics, built in v2, e2e verified with `test-oem`. Left: finalize doc review |
+| [auth / identity](./001-cloud-core/auth/identity/) | Spiked | Mentra-direct identity (app + console + store) unifies on the access token, plus the core-token migration bridge |
+| [auth / auto-auth](./001-cloud-core/auth/auto-auth/) | Spiked | the end-to-end miniapp dev-backend flow; mint + JWKS now in `auth/spec.md`. Open: injection bridge (client team), API key role |
 | [oem-service](./001-cloud-core/oem-service/) | Stub | needs spec |
 | [miniapp-service](./001-cloud-core/miniapp-service/) | Stub | needs spec (stores bundles via storage-service) |
 | [dev-console-service](./001-cloud-core/dev-console-service/) | Stub | needs spec |

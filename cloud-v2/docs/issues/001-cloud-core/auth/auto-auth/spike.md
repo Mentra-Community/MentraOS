@@ -108,24 +108,23 @@ The browser path (a webview opened outside the app, or a companion web app) stil
 needs a "Sign in with Mentra" OAuth flow that ends in the same miniapp-scoped token.
 Carry v1's Path B forward, issuing the v2 token.
 
+## Decided (in [`../spec.md`](../spec.md))
+
+- **Mint endpoint:** `POST /api/client/auth/miniapp-token` (cloud-core, Bearer
+  access token), TTL configurable, default 1h.
+- **JWKS:** `/.well-known/jwks.json` on cloud-core, separate signing keys for
+  access vs miniapp tokens, `kid` rotation.
+- **Audience:** per-packageName (`aud = <packageName>`).
+- **Server side is specced in `../spec.md`;** this doc owns the end-to-end flow.
+
 ## Open questions
 
-1. **JWKS.** v1 hardcoded the public key in the SDK; v2 should publish a JWKS URL
-   for rotation. Where is it hosted (cloud-core), and what is the cache/rotation
-   policy for dev backends?
-2. **Who mints the miniapp-scoped token:** a cloud-core endpoint (revocable, audited,
-   one round trip at launch) vs a delegated on-device key (no round trip, harder
-   to revoke). Lean: cloud-core endpoint.
-3. **Token injection into the local webview.** Exact bridge mechanism the runtime
-   uses to pass the token (and refreshes) to the webview, and how
-   `useMentraAuth()` consumes it on-device vs from URL params on the web.
-4. **API key role.** Keep API keys strictly for dev-backend-to-Mentra
+1. **Token injection bridge (client-team coordination).** Exact mechanism the
+   on-device Runtime uses to pass the token (and refreshes) to the webview and the
+   Crust engine, and how `useMentraAuth()` consumes it on-device vs from URL
+   params on the web.
+2. **API key role.** Keep API keys strictly for dev-backend-to-Mentra
    server-to-server calls, or retire them? What still needs them in v2?
-5. **Audience granularity.** Per-packageName audience (safest) vs a shared
-   "miniapp" audience. Lean: per-packageName.
-6. **Where this mechanism is specced.** oem-auth says the handoff "exact
-   mechanism is part of the miniapp spec." Decide whether it lands here (auth) or
-   in the miniapp platform spec.
 
 ## References
 
