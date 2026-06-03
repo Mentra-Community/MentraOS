@@ -601,18 +601,27 @@ public final class PhotoSession {
                 return;
             }
 
+            Handler backgroundHandler = hooks.backgroundHandler();
+            if (backgroundHandler == null || hooks.coordinator().device() == null) {
+                Log.e(TAG, "Camera handler or device not ready in startPreviewWithAeMonitoring");
+                notifyPhotoError("Camera handler not ready");
+                hooks.closeCamera();
+                hooks.stopService();
+                return;
+            }
+
             CaptureRequest previewRequest = hooks.previewBuilder().build();
             Boolean zslInPreview = previewRequest.get(CaptureRequest.CONTROL_ENABLE_ZSL);
             if (zslInPreview != null && zslInPreview) {
                 Log.d(
                         TAG,
-                        "✓ ZSL verified in preview request: CONTROL_ENABLE_ZSL = true (buffer filling)");
+                        "✓ ZSL verified in preview request: CONTROL_ENABLE_ZSL = true (buffer"
+                                + " filling)");
             } else {
                 Log.w(TAG, "⚠ ZSL NOT enabled in preview request - ZSL buffer will not fill!");
             }
 
-            activeSession.setRepeatingRequest(
-                    previewRequest, aeCallback, hooks.backgroundHandler());
+            activeSession.setRepeatingRequest(previewRequest, aeCallback, backgroundHandler);
 
             startPrecaptureSequence();
 
@@ -663,7 +672,8 @@ public final class PhotoSession {
             Log.d(TAG, "Starting AE convergence (monitoring via repeating request callback)...");
             Log.d(
                     TAG,
-                    "🔍 XyCamera2 MODE: No precapture trigger - monitoring AE via repeating request callback");
+                    "🔍 XyCamera2 MODE: No precapture trigger - monitoring AE via repeating request"
+                            + " callback");
 
         } catch (Exception e) {
             Log.e(TAG, "Error starting AE convergence", e);
@@ -677,6 +687,11 @@ public final class PhotoSession {
     }
 
     public void restoreAePreview(CameraCaptureSession session) {
+        Handler backgroundHandler = hooks.backgroundHandler();
+        if (backgroundHandler == null || hooks.coordinator().device() == null) {
+            Log.w(TAG, "Cannot restore AE preview: camera handler or device not ready");
+            return;
+        }
         // A late still/HDR completion can run after a new photo has entered precapture; do not
         // clear AE wait flags in that case or the repeating callback will ignore convergence
         // forever.
@@ -685,10 +700,10 @@ public final class PhotoSession {
                         && shotState != AeStateMachine.ShotState.WAITING_AE_LOCK;
         AePreviewController.restorePreview(
                 session,
-                hooks.coordinator().device() != null,
+                true,
                 hooks.previewBuilder(),
                 aeCallback,
-                hooks.backgroundHandler(),
+                backgroundHandler,
                 hooks.cameraSettings(),
                 aeStateMachine,
                 clearAeWait);
@@ -708,7 +723,8 @@ public final class PhotoSession {
         } else if (!manualSupported) {
             Log.w(
                     TAG,
-                    "Manual exposure requested but MANUAL_SENSOR not supported; using auto exposure");
+                    "Manual exposure requested but MANUAL_SENSOR not supported; using auto"
+                            + " exposure");
             decision = false;
             reason = "MANUAL_SENSOR unsupported";
         } else if (expRange == null || isoRange == null) {
