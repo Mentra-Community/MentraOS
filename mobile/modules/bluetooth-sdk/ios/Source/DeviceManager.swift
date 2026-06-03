@@ -1298,7 +1298,8 @@ struct ViewState {
         }
         sgc.requestPhoto(
             requestId, appId: appId, size: size, webhookUrl: webhookUrl, authToken: authToken,
-            compress: compress, flash: flash, save: save, sound: sound, exposureTimeNs: exposureTimeNs
+            compress: compress, flash: flash, save: save, sound: sound,
+            exposureTimeNs: exposureTimeNs
         )
     }
 

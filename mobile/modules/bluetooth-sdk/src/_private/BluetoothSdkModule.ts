@@ -27,6 +27,7 @@ import {
   StreamKeepAliveRequest,
   StreamStartRequest,
 } from "../BluetoothSdk.types"
+import {photoRequestParamsForNative} from "./photoRequestPayload"
 
 /**
  * Private React Native native-module facade.
@@ -496,26 +497,6 @@ NativeBluetoothSdkModule.scan = async function (modelOrOptions: DeviceModel | Sc
       .then(handleBluetoothStatus)
       .catch((error) => settle(error instanceof Error ? error : new Error(String(error))))
   })
-}
-
-/** Expo Android bridge rejects null values in Map<String, Any> — omit optional nullish fields. */
-function photoRequestParamsForNative(params: PhotoRequestParams): Record<string, string | number | boolean> {
-  const payload: Record<string, string | number | boolean> = {
-    requestId: params.requestId,
-    appId: params.appId,
-    size: params.size,
-    webhookUrl: params.webhookUrl ?? "",
-    compress: params.compress,
-    flash: true,
-    sound: params.sound,
-  }
-  if (params.authToken != null && params.authToken.length > 0) {
-    payload.authToken = params.authToken
-  }
-  if (params.exposureTimeNs != null && Number.isFinite(params.exposureTimeNs) && params.exposureTimeNs > 0) {
-    payload.exposureTimeNs = params.exposureTimeNs
-  }
-  return payload
 }
 
 const nativeRequestPhoto = NativeBluetoothSdkModule.requestPhoto.bind(NativeBluetoothSdkModule)
