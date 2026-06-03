@@ -1,7 +1,20 @@
 # Audio Subscription Transport: WS vs REST
 
-**Status:** Decision pending. This doc exists to choose how the client tells
+**Status:** Decided, **Option 2a** (REST endpoint, with the change delivered to
+the owning worker as a control entry in the user's audio stream, no pub/sub). The
+options analysis below is kept for the record. This doc chose how the client tells
 the cloud which audio streams (transcription, translation) it wants in v2.
+
+## Decision
+
+**Option 2a.** Subscriptions are a REST endpoint (`PUT /v2/runtime/audio/subscriptions`,
+full-replace, `epoch` + `version` guards). The handler (any pod) writes the
+authoritative set to the `{user:X}` Redis key and `XADD`s a `subscriptions-changed`
+control entry into the user's existing `{user:X}:audio` stream; the owning worker
+consumes it in order via its existing `XREADGROUP`, with `XAUTOCLAIM` failover
+replay. No pub/sub is introduced, so the 003 "no pub/sub in the audio path"
+commitment holds. `connection.init.audio.initialSubscriptions` seeds the key at
+session start. This is what `cloud.runtime.setSubscriptions` calls.
 
 ## Scope
 

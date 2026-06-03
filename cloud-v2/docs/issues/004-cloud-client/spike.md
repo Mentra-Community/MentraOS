@@ -146,11 +146,12 @@ coordination point with the island team, since they own island.
 
 ## Open questions
 
-1. **Subscription transport (WS vs REST).** The keystone decision
-   ([`../002-cloud-runtime/audio/subscription-transport.md`](../002-cloud-runtime/audio/subscription-transport.md));
-   it changes `setSubscriptions` and gates the protocol and the audio spec too.
+1. **Subscription transport: decided (Option 2a).** `setSubscriptions` is a REST
+   call; the cloud delivers it to the owning worker via a control entry in the
+   user's audio stream, no pub/sub. See
+   [`../002-cloud-runtime/audio/subscription-transport.md`](../002-cloud-runtime/audio/subscription-transport.md).
 2. **Lock `protocol.md`.** The client implements it; it is currently Draft (now
-   includes the UDP encryption block and the corrected frame).
+   includes REST subscriptions, the UDP encryption block, and the corrected frame).
 3. **Native audio boundary.** Where encryption happens (v1 does it in JS on the
    phone via `UdpManager.ts` / `UdpCrypto.ts`) and the exact injected `udp`
    interface. Lean: encryption in the isomorphic core (tweetnacl), socket send

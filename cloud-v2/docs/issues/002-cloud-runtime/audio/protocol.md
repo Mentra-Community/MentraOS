@@ -46,16 +46,23 @@ either way.
 
 ### Server-side routing (informative)
 
-Implementation guidance, not wire contract.
+Implementation guidance, not wire contract. This is Option 2a from
+[`subscription-transport.md`](./subscription-transport.md): REST, delivered to the
+owning worker through the user's audio stream, no pub/sub.
 
 - The authoritative subscription set lives in a Redis key hash-tagged
   `{user:X}` (matching the audio stream and ownership keys), holding the full set
-  plus the last accepted `epoch`/`version`.
+  plus the last accepted `epoch`/`version`. A stale `epoch` or older `version` is
+  rejected, so a retried or reordered write cannot clobber a live set.
+- The REST handler (any pod) writes the key, then `XADD`s a `subscriptions-changed`
+  control entry into the user's existing `{user:X}:audio` stream. The owning
+  worker already runs `XREADGROUP` on that stream, so it gets the entry in order
+  with audio, on the same shard, with `XAUTOCLAIM` failover replay. No pub/sub.
 - `connection.init.audio.initialSubscriptions` seeds this key atomically with
   session creation, closing the cold-start gap.
-- The key is the source of truth; any cross-pod signal to the owning worker is
-  only a nudge. The worker reconciles from the key on the nudge, on startup, and
-  on ownership acquisition, and never reconciles off a nudge payload alone.
+- The control entry is a nudge; the key is the source of truth. The worker
+  reconciles from the key on the entry, on startup, and on ownership acquisition,
+  never off the entry payload alone.
 - The worker computes its provider set from the full subscription set each time.
   No derived caches across the boundary (legacy proved those drift).
 

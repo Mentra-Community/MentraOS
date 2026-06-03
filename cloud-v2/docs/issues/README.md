@@ -31,11 +31,11 @@ lands.
 | [storage-service](./001-cloud-core/storage-service/) | Stub | needs spec (wrapper around swappable blob providers; used by miniapp-service, dev-console-service) |
 | **[002-cloud-runtime](./002-cloud-runtime/)** | | self-hostable runtime product |
 | [protocol (transport)](./002-cloud-runtime/protocol.md) | Draft | transport contract drafted. Left: team review, then zod types in `@mentra/cloud-runtime/protocol` |
-| [audio](./002-cloud-runtime/audio/) | Specced / partial | spec + design (proposal, under review); pipeline partially built (UDP + Redis + Soniox, phone WS). Blocked on subscription transport |
+| [audio](./002-cloud-runtime/audio/) | Specced / partial | spec + design (proposal, under review); pipeline partially built (UDP + Redis + Soniox, phone WS). Subscription transport decided (2a: REST + stream entry); UDP encryption documented |
 | [camera (managed photo + stream)](./002-cloud-runtime/camera/) | Stub | needs spec |
 | **[003-cloud-proxy](./003-cloud-proxy/)** | Stub | needs spec (hosted connector vs config model) |
 | **[004-cloud-client](./004-cloud-client/)** | Spiked | headless `@mentra/cloud-client`; design in [spike.md](./004-cloud-client/spike.md) (auth / runtime / core modules). Left: subscription decision, lock protocol, then spec |
-| [runtime](./004-cloud-client/runtime/) | Stub | the live-session transport. Depends on 002 protocol + the subscription decision |
+| [runtime](./004-cloud-client/runtime/) | Stub | the live-session transport. Depends on locking 002 protocol (subscription transport now decided) |
 | **[005-websites](./005-websites/)** | | web frontends |
 | [console](./005-websites/console/) | Stub | needs spec |
 | [miniapp-store](./005-websites/miniapp-store/) | Stub | needs spec |
@@ -44,17 +44,19 @@ lands.
 | [local-sdk](./006-dev-toolkit/local-sdk/) | Spiked | findings + open questions, not yet a proposal. Left: spec + design |
 | [cli](./006-dev-toolkit/cli/) | Stub | needs spec |
 
-## Open decisions (blocking)
+## Open decisions
 
-- **Audio subscription transport** (WS vs REST vs REST + pub/sub).
-  [`002-cloud-runtime/audio/subscription-transport.md`](./002-cloud-runtime/audio/subscription-transport.md).
-  Blocks finalizing 002 audio and designing the 004 cloud-client runtime module.
+- None blocking right now. Recently decided: audio subscription transport
+  (Option 2a, REST + stream control entry, see
+  [`002-cloud-runtime/audio/subscription-transport.md`](./002-cloud-runtime/audio/subscription-transport.md));
+  `mentraUserId` = `users._id`; the Mentra-as-OEM core-token migration bridge.
 
 ## What to spec next (rough order)
 
-1. Resolve the audio subscription transport decision (unblocks two issues).
-2. Review and lock `002-cloud-runtime/protocol.md`, then add the shared zod types.
-3. Spec the `004-cloud-client` runtime module (the client end of the protocol).
-4. Spec the rest of `001-cloud-core` (storage-service first, then miniapp-service
+1. Review and lock `002-cloud-runtime/protocol.md` (now includes REST
+   subscriptions, UDP encryption, the corrected frame), then add the shared zod
+   types in `@mentra/cloud-runtime/protocol`.
+2. Spec the `004-cloud-client` runtime module (the client end of the protocol).
+3. Spec the rest of `001-cloud-core` (storage-service first, then miniapp-service
    and dev-console-service that depend on it) since the websites depend on them.
-5. Promote `oem-portal` and `local-sdk` from spike to spec.
+4. Promote `oem-portal` and `local-sdk` from spike to spec.
