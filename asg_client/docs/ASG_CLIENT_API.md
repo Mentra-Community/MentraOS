@@ -98,7 +98,7 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 - No BLE transfer in progress
 - No other photo capture in progress
 
-**Responses:** the handler can produce four different response types depending on the path taken.
+**Responses:** the handler can produce three different response types depending on the path taken.
 
 `photo_response` — direct/auto upload finished:
 
