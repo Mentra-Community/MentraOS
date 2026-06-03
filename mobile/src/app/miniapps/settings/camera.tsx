@@ -1,4 +1,5 @@
 import {getModelCapabilities} from "@/../../cloud/packages/types/src"
+import {useEffect} from "react"
 import {View, ScrollView, ViewStyle, TextStyle} from "react-native"
 
 import {Text, Screen, Header} from "@/components/ignite"
@@ -15,7 +16,8 @@ import {spacing, ThemedStyle} from "@/theme"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
 type PhotoSize = "small" | "medium" | "large"
-type VideoResolution = "720p" | "1080p" | "1440p" | "4K"
+// The Mentra Live sensor only records 1080p/720p — 1440p/4K wedge the camera.
+type VideoResolution = "720p" | "1080p"
 type VideoFps = "30" | "15" | "5"
 type MaxRecordingTime = "3m" | "5m" | "10m" | "15m" | "20m"
 type CameraRoiPosition = 0 | 1 | 2 // 0=Center, 1=Bottom, 2=Top
@@ -54,6 +56,16 @@ const ROI_POSITION_OPTIONS = [
   {key: "2", label: "Top"},
 ]
 
+// The Mentra Live sensor only records 1080p/720p. Older installs may have
+// persisted 1440p/4K button-video dimensions that the glasses now reject, so
+// fold any stored/unknown resolution down to the nearest supported one before
+// we echo it back to the device.
+function normalizeVideoResolution(width?: number, height?: number): {width: number; height: number} {
+  if (width === 1280 && height === 720) return {width: 1280, height: 720}
+  // Everything else — incl. legacy 1440p/4K and unknowns — maps to 1080p.
+  return {width: 1920, height: 1080}
+}
+
 export default function CameraSettingsScreen() {
   const {theme, themed} = useAppTheme()
   const {goBack} = useNavigationStore.getState()
@@ -80,14 +92,22 @@ export default function CameraSettingsScreen() {
       ? (cameraFovSetting.roi_position as CameraRoiPosition)
       : 0
 
-  // Derive video resolution from settings
-  const videoResolution: VideoResolution = (() => {
-    if (!videoSettings) return "1080p"
-    if (videoSettings.width >= 3840) return "4K"
-    if (videoSettings.width >= 2560) return "1440p"
-    if (videoSettings.width >= 1920) return "1080p"
-    return "720p"
-  })()
+  // Derive video resolution from settings, normalizing legacy 1440p/4K down to
+  // a supported option so the picker never highlights an unsupported value.
+  const normalizedVideo = normalizeVideoResolution(videoSettings?.width, videoSettings?.height)
+  const videoResolution: VideoResolution = normalizedVideo.width === 1280 ? "720p" : "1080p"
+
+  // One-time migration: rewrite any persisted legacy 1440p/4K dimensions to a
+  // supported resolution so the stored value and future sends stay consistent.
+  // This only corrects the saved setting (no BLE push to the glasses — the
+  // change handlers below do that when the user actually picks a value).
+  useEffect(() => {
+    if (!videoSettings) return
+    const norm = normalizeVideoResolution(videoSettings.width, videoSettings.height)
+    if (norm.width !== videoSettings.width || norm.height !== videoSettings.height) {
+      setVideoSettings({width: norm.width, height: norm.height, fps: videoSettings.fps ?? 30})
+    }
+  }, [videoSettings, setVideoSettings])
 
   // Derive video fps from settings (snap to the nearest offered option)
   const videoFps: VideoFps = (() => {
@@ -114,11 +134,10 @@ export default function CameraSettingsScreen() {
       console.log("Cannot change video resolution - glasses not connected")
       return
     }
-    const width = resolution === "4K" ? 3840 : resolution === "1440p" ? 2560 : resolution === "1080p" ? 1920 : 1280
-    const height = resolution === "4K" ? 2160 : resolution === "1440p" ? 1920 : resolution === "1080p" ? 1080 : 720
-    // Preserve the user's chosen fps; 4K only supports up to 15 fps, so clamp it there.
-    const currentFps = videoSettings?.fps ?? 30
-    const fps = resolution === "4K" ? Math.min(currentFps, 15) : currentFps
+    const width = resolution === "1080p" ? 1920 : 1280
+    const height = resolution === "1080p" ? 1080 : 720
+    // Preserve the user's chosen fps across a resolution change.
+    const fps = videoSettings?.fps ?? 30
     setVideoSettings({width, height, fps})
     BluetoothSdk.updateBluetoothSettings({
       button_video_width: width,
@@ -132,13 +151,11 @@ export default function CameraSettingsScreen() {
       console.log("Cannot change video fps - glasses not connected")
       return
     }
-    // Keep the current resolution; only change the frame rate.
-    const width = videoSettings?.width ?? 1920
-    const height = videoSettings?.height ?? 1080
-    // 4K tops out at 15 fps — clamp so we never send an unsupported 4K@30 combo
-    // (mirrors the clamp in handleVideoResolutionChange).
-    const requestedFps = parseInt(fpsKey, 10)
-    const fps = width >= 3840 ? Math.min(requestedFps, 15) : requestedFps
+    // Keep the current resolution, but normalize any stale/unsupported stored
+    // dimensions (e.g. legacy 1440p/4K) down to a supported one — the glasses
+    // reject anything other than 1080p/720p.
+    const {width, height} = normalizeVideoResolution(videoSettings?.width, videoSettings?.height)
+    const fps = parseInt(fpsKey, 10)
     setVideoSettings({width, height, fps})
     BluetoothSdk.updateBluetoothSettings({
       button_video_width: width,

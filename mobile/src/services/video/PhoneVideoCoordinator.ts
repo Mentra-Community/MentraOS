@@ -11,8 +11,9 @@
  * Unlike photo, this is fire-and-forget: there's no cloud upload/long-poll.
  * `startRecording` resolves once the BLE command has been dispatched, returning
  * the `recordingId` the miniapp passes back to `stopRecording`. The active
- * recordings map lets the host short-circuit a stale stop and (optionally) react
- * to a glasses-reported video error.
+ * recordings map enforces single-recording (rejecting overlapping starts so we
+ * never hand back a phantom id), validates stop ownership, and lets a
+ * closed/crashed miniapp be cleaned up on unregister.
  */
 
 import BluetoothSdk from "@mentra/bluetooth-sdk"
@@ -46,9 +47,13 @@ interface ActiveRecording {
 }
 
 export class PhoneVideoCoordinator {
-  // recordingId → in-flight recording. Used to validate stop requests and to
-  // let the host react to glasses-reported video errors.
+  // recordingId → active recording. Used to enforce single-recording, validate
+  // stop requests, and clean up on miniapp unregister.
   private readonly activeRecordings = new Map<string, ActiveRecording>()
+
+  // Set while a start is dispatching, before it lands in activeRecordings, so a
+  // second start that races the first is still rejected.
+  private starting = false
 
   async startRecording(packageName: string, opts: VideoRecordingOpts): Promise<VideoRecordingStarted> {
     // Fail fast if glasses aren't connected — the BLE command would otherwise
@@ -58,23 +63,39 @@ export class PhoneVideoCoordinator {
       throw new VideoError("GLASSES_NOT_CONNECTED", "Glasses are not connected")
     }
 
-    const recordingId = `miniapp_video_${Date.now()}_${Math.round(Math.random() * 1e6)}`
-
-    // Only forward settings when at least one field is set; otherwise let the
-    // glasses use their saved button-video defaults.
-    const settings =
-      opts.width != null || opts.height != null || opts.fps != null
-        ? {width: opts.width, height: opts.height, fps: opts.fps}
-        : undefined
-
-    try {
-      await BluetoothSdk.startVideoRecording(recordingId, opts.save ?? false, opts.sound ?? true, settings)
-    } catch (err) {
-      throw this.toVideoError(err, "BLE_SEND_FAILED")
+    // The glasses can only record one video at a time. A second start while one
+    // is already active (or in-flight) is ignored device-side, but we'd still
+    // mint and return a *new* recordingId — and stopping that id would not stop
+    // the real recording, leaving it to run until the max-recording timeout.
+    // Reject up front so the caller gets an honest error instead of a phantom id.
+    if (this.starting || this.activeRecordings.size > 0) {
+      throw new VideoError("ALREADY_RECORDING", "A video recording is already in progress")
     }
 
-    this.activeRecordings.set(recordingId, {packageName, recordingId})
-    return {recordingId}
+    this.starting = true
+    try {
+      const recordingId = `miniapp_video_${Date.now()}_${Math.round(Math.random() * 1e6)}`
+
+      // Only forward settings when at least one field is set; otherwise let the
+      // glasses use their saved button-video defaults. The native serializers
+      // send each provided field independently, so an fps-only override still
+      // applies (the glasses merge the missing fields onto their saved defaults).
+      const settings =
+        opts.width != null || opts.height != null || opts.fps != null
+          ? {width: opts.width, height: opts.height, fps: opts.fps}
+          : undefined
+
+      try {
+        await BluetoothSdk.startVideoRecording(recordingId, opts.save ?? false, opts.sound ?? true, settings)
+      } catch (err) {
+        throw this.toVideoError(err, "BLE_SEND_FAILED")
+      }
+
+      this.activeRecordings.set(recordingId, {packageName, recordingId})
+      return {recordingId}
+    } finally {
+      this.starting = false
+    }
   }
 
   async stopRecording(packageName: string, recordingId?: string): Promise<void> {
@@ -118,19 +139,6 @@ export class PhoneVideoCoordinator {
         this.activeRecordings.delete(rec.recordingId)
       }
     }
-  }
-
-  /** True iff this recordingId is one we currently consider active. */
-  owns(recordingId: string): boolean {
-    return this.activeRecordings.has(recordingId)
-  }
-
-  /**
-   * Called by MantleManager if the glasses report an error for a phone-owned
-   * recording. Drops the active recording so a later stop is a no-op.
-   */
-  handleVideoError(recordingId: string, _errorCode: string, _errorMessage: string): void {
-    this.activeRecordings.delete(recordingId)
   }
 
   private toVideoError(err: unknown, fallbackCode: string): VideoError {

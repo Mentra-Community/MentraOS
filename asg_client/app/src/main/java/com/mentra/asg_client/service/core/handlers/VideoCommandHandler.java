@@ -133,9 +133,26 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
             VideoSettings videoSettings = null;
             JSONObject settings = data.optJSONObject("settings");
             if (settings != null) {
+                // Resolve the merge baseline from the saved button-video defaults,
+                // but only when those persisted defaults are themselves valid. A
+                // stale unsupported saved resolution (e.g. a legacy 1440p/4K
+                // default written before validation existed) would otherwise
+                // poison a partial override: the merged resolution stays
+                // unsupported and the whole settings object gets discarded,
+                // silently dropping e.g. an fps-only request.
                 VideoSettings defaults = VideoSettings.getDefault();
                 if (serviceManager != null && serviceManager.getAsgSettings() != null) {
-                    defaults = serviceManager.getAsgSettings().getButtonVideoSettings();
+                    VideoSettings saved = serviceManager.getAsgSettings().getButtonVideoSettings();
+                    if (saved != null && saved.isValid()) {
+                        defaults = saved;
+                    } else {
+                        Log.w(
+                                TAG,
+                                "Saved button-video defaults invalid ("
+                                        + saved
+                                        + "), falling back to "
+                                        + defaults);
+                    }
                 }
 
                 int width = settings.optInt("width", 0);
@@ -146,6 +163,13 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
                 if (fps <= 0) fps = defaults.fps;
 
                 VideoSettings candidate = new VideoSettings(width, height, fps);
+                // If the only problem is an explicitly requested unsupported
+                // resolution, snap back to the (valid) default resolution while
+                // keeping the requested frame rate, so the fps override is still
+                // honored (CameraOpener also falls back to 1080p at capture time).
+                if (!candidate.isValid() && !VideoSettings.isSupported(width, height)) {
+                    candidate = new VideoSettings(defaults.width, defaults.height, fps);
+                }
                 if (candidate.isValid()) {
                     videoSettings = candidate;
                     Log.d(
