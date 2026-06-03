@@ -201,21 +201,6 @@ export function renderMinimap(input: MinimapInput, size = 100): string | null {
     }
   }
 
-  // Distance rings (faint) for scale.
-  for (const radiusM of RING_RADII_M) {
-    const rp = radiusM / metersPerPx
-    if (rp < center) r.circle(Math.round(center), Math.round(center), Math.round(rp), FAINT)
-  }
-
-  // North tick (faint): a short spoke from center toward true north. In the
-  // heading-up frame north sits at screen-angle -heading from straight up.
-  {
-    const reach = center - 3
-    const nx = center + reach * sinH // north dir rotated by -heading
-    const ny = center - reach * cosH
-    r.disc(Math.round(nx), Math.round(ny), 2, FAINT)
-  }
-
   // Corner brackets instead of a full border — short dashes meeting at each
   // corner (drawn before the route so the route renders on top). Inset by 1px.
   const lo = 1
