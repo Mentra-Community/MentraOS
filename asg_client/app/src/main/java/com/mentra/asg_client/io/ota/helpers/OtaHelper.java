@@ -714,8 +714,9 @@ public class OtaHelper {
                 return true;
             }
             String msg = t.getMessage();
-            if (msg != null && (msg.contains("Certificate not yet valid")
-                    || msg.contains("timestamp check failed"))) {
+            if (msg != null
+                    && (msg.contains("Certificate not yet valid")
+                            || msg.contains("timestamp check failed"))) {
                 return true;
             }
             t = t.getCause();
@@ -736,8 +737,10 @@ public class OtaHelper {
             return "no_internet";
         } else if (e instanceof javax.net.ssl.SSLException || isClockSkewSslError(e)) {
             if (isClockSkewSslError(e)) {
-                Log.w(TAG, "⏰ OTA failure likely due to glasses clock skew (TLS cert validity): "
-                        + e.getMessage());
+                Log.w(
+                        TAG,
+                        "⏰ OTA failure likely due to glasses clock skew (TLS cert validity): "
+                                + e.getMessage());
                 return "clock_skew";
             }
             return "ssl_error";
@@ -1017,9 +1020,7 @@ public class OtaHelper {
         return false;
     }
 
-    /**
-     * Re-run background OTA version check (e.g. after phone fixes glasses clock via BLE).
-     */
+    /** Re-run background OTA version check (e.g. after phone fixes glasses clock via BLE). */
     public void retryBackgroundVersionCheck() {
         if (context == null) {
             Log.w(TAG, "⏰ Cannot retry OTA version check — no context");
@@ -2904,8 +2905,8 @@ public class OtaHelper {
                                 TAG,
                                 "Starting MTK firmware update from: "
                                         + OtaConstants.MTK_FIRMWARE_PATH);
-                        com.mentra.asg_client.SysControl.installOTA(
-                                ctx, OtaConstants.MTK_FIRMWARE_PATH);
+                        com.mentra.asg_client.service.system.core.SystemControllerFactory.get(ctx)
+                                .installSystemOta(OtaConstants.MTK_FIRMWARE_PATH);
                         Log.i(
                                 TAG,
                                 "MTK firmware update initiated - system will handle in background");
@@ -3788,7 +3789,8 @@ public class OtaHelper {
                     .post(com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent.createStarted());
 
             // Trigger MTK OTA installation via system broadcast
-            com.mentra.asg_client.SysControl.installOTA(context, OtaConstants.MTK_FIRMWARE_PATH);
+            com.mentra.asg_client.service.system.core.SystemControllerFactory.get(context)
+                    .installSystemOta(OtaConstants.MTK_FIRMWARE_PATH);
 
             Log.i(
                     TAG,
