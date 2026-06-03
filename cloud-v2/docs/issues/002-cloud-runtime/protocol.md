@@ -128,6 +128,26 @@ interface ConnectionAck {
 }
 ```
 
+### Session identifiers
+
+The handshake returns two ids for the same session, shaped for two planes. They
+are not the same value.
+
+- **`sessionId`** (string, top-level): the **control-plane** id. It is issued
+  unconditionally and is what REST requests carry (for example the subscription
+  guard). It is transport-independent: present whether audio runs over UDP, over
+  the WS fallback, or not at all.
+- **`sessionTag`** (u32, under `audio`): the **data-plane** id. It is stamped into
+  every UDP audio frame so the connectionless, stateless ingress can route the
+  datagram and select its decryption key. It is a compact fixed-size integer
+  because it rides a binary header sent tens of times a second.
+
+Both map to the same session server-side. The `audio` block (`sessionTag`, `udp`,
+`encryption`) is UDP-path specific: on the WS audio fallback the frames ride the
+per-user WS, which already identifies the session and is TLS-encrypted, so neither
+the tag nor the secretbox key is needed there. The one id you always have is
+`sessionId`.
+
 ## Control
 
 - `control.ping` (either direction), answered by `control.pong`. Used for
