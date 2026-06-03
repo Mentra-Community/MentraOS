@@ -2073,14 +2073,14 @@ class G2: NSObject, SGCManager {
             container = imageContainers[i]
             Bridge.log("G2: displayBitmap() - reusing container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh)")
             if !pageCreated {
-                rebuildPage()
+                await rebuildPage()
                 try? await Task.sleep(nanoseconds: 3_000_000_000) // settle before sending image data
             }
         } else {
             container = addImageContainer(x: rx, y: ry, width: rw, height: rh, bmpData: bmpData)
             Bridge.log("G2: displayBitmap() - added container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh), rebuilding page")
             // try? await Task.sleep(nanoseconds: 1_000_000_000) // settle before sending image data
-            rebuildPage()
+            await rebuildPage()
         }
 
         // Bridge.log("G2: displayBitmap() - sending image data to container \(container.id), \(container.bmpData.count) bytes")
