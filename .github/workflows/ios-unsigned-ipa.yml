@@ -1,121 +1,117 @@
-name: iOS IPA (SideStore Build)
+name: iOS Build sidestore
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - dev
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  WORKING_DIR: mobile
+  IOS_DIR: mobile/ios
 
 jobs:
-  build:
-    runs-on: macos-14
+  build-ios:
+    name: iOS Archive
+    runs-on: macos-15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16.1
+      - name: Select Xcode 16.4
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
           xcodebuild -version
-          xcodebuild -showsdks | grep iphoneos
+          swift --version
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Setup Node
+      - name: Setup Node 20
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ${{ env.WORKING_DIR }}/package-lock.json
 
-      - name: Install deps
-        working-directory: ./mobile
-        run: bun install --no-frozen-lockfile
+      - name: Install Node dependencies
+        working-directory: ${{ env.WORKING_DIR }}
+        run: npm ci
 
-      - name: Setup env
-        working-directory: ./mobile
-        run: cp .env.example .env
+      - name: Setup Ruby 3.3
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
 
-      - name: Expo prebuild
-        working-directory: ./mobile
-        run: bun expo prebuild --platform ios
+      - name: Install CocoaPods gem
+        run: gem install cocoapods --no-document
 
-      - name: Setup Sherpa Onnx (optional)
-        working-directory: ./mobile
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        id: pods-cache
+        with:
+          path: ${{ env.IOS_DIR }}/Pods
+          key: ${{ runner.os }}-pods-${{ hashFiles(format('{0}/Podfile.lock', env.IOS_DIR)) }}
+          restore-keys: |
+            ${{ runner.os }}-pods-
+
+      - name: Pod install
+        if: steps.pods-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ env.IOS_DIR }}
+        run: pod install --repo-update
+
+      - name: Fix Pod deployment targets
+        working-directory: ${{ env.IOS_DIR }}
         run: |
-          chmod +x scripts/setup-sherpa-onnx-optional.sh
-          ./scripts/setup-sherpa-onnx-optional.sh || true
+          find Pods/Target\ Support\ Files -name "*.xcconfig" | while read f; do
+            sed -i '' \
+              -e 's/IPHONEOS_DEPLOYMENT_TARGET = 9\.0/IPHONEOS_DEPLOYMENT_TARGET = 13.0/g' \
+              -e 's/IPHONEOS_DEPLOYMENT_TARGET = 10\.0/IPHONEOS_DEPLOYMENT_TARGET = 13.0/g' \
+              -e 's/IPHONEOS_DEPLOYMENT_TARGET = 11\.0/IPHONEOS_DEPLOYMENT_TARGET = 13.0/g' \
+              "$f"
+          done
 
-      - name: Install pods
-        working-directory: ./mobile/ios
-        run: pod install
-
-      - name: List schemes
-        working-directory: ./mobile/ios
-        run: xcodebuild -workspace Mentra.xcworkspace -list
-
-      - name: Archive app
-        working-directory: ./mobile/ios
-        env:
-          SENTRY_DISABLE_AUTO_UPLOAD: "true"
+      - name: Build archive
+        working-directory: ${{ env.IOS_DIR }}
         run: |
           set -o pipefail
+
           xcodebuild archive \
-            -workspace Mentra.xcworkspace \
-            -scheme Mentra \
+            -workspace MentraOSGO2.xcworkspace \
+            -scheme MentraOSGO2 \
             -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -sdk iphoneos \
-            -archivePath "$GITHUB_WORKSPACE/Mentra.xcarchive" \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
+            -archivePath "$RUNNER_TEMP/MentraOSGO2.xcarchive" \
+            -destination "generic/platform=iOS" \
+            IPHONEOS_DEPLOYMENT_TARGET=13.0 \
+            SWIFT_COMPILATION_MODE=singlefile \
             CODE_SIGNING_ALLOWED=NO \
-            AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            DEVELOPMENT_TEAM="" \
-            2>&1 | tee /tmp/xcodebuild.log
-          echo "xcodebuild exit: $?"
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            2>&1 | tee /tmp/xcodebuild.log | xcpretty --color --report html --output /tmp/build-report.html
 
-      - name: Show last 100 lines of build log
-        if: always()
-        run: tail -100 /tmp/xcodebuild.log || echo "No log file"
+          BUILD_RESULT=${PIPESTATUS[0]}
 
-      - name: Verify archive and find .app
-        run: |
-          APP_PATH=$(find "$GITHUB_WORKSPACE" -name "Mentra.app" -type d | head -1)
-          if [ -z "$APP_PATH" ]; then
-            echo "❌ Mentra.app not found"
-            find "$GITHUB_WORKSPACE/Mentra.xcarchive" -maxdepth 5 2>/dev/null || echo "No xcarchive found"
-            exit 1
+          if [ "$BUILD_RESULT" -ne 0 ]; then
+            echo ""
+            echo "========== BUILD FAILED — LAST 200 LINES =========="
+            tail -200 /tmp/xcodebuild.log
+            exit "$BUILD_RESULT"
           fi
-          echo "✅ Found: $APP_PATH"
-          ls -la "$APP_PATH"
-          if [ ! -f "$APP_PATH/Info.plist" ]; then
-            echo "❌ Info.plist missing"
-            exit 1
-          fi
-          echo "✅ Info.plist present"
-          echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
 
-      - name: Package IPA
-        run: |
-          mkdir -p Payload
-          cp -r "${{ env.APP_PATH }}" Payload/App.app
-          touch Payload/App.app/embedded.mobileprovision
-          zip -r Mentra.ipa Payload
-          echo "✅ IPA packaged"
-          ls -lh Mentra.ipa
-
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: Mentra-SideStore-IPA
-          path: Mentra.ipa
-          retention-days: 14
-
-      - name: Upload build log
+      - name: Upload full build log (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: xcodebuild-log
-          path: /tmp/xcodebuild.log
-          retention-days: 5
+          path: |
+            /tmp/xcodebuild.log
+            /tmp/build-report.html
+          retention-days: 14
+
+      - name: Upload archive
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MentraOSGO2-archive
+          path: ${{ runner.temp }}/MentraOSGO2.xcarchive
+          retention-days: 30
