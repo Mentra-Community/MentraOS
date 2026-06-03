@@ -65,7 +65,8 @@ public class SrtStreamingService extends Service {
   private static final String CHANNEL_ID = "SrtStreamingChannel";
   private static final int NOTIFICATION_ID = 8889;
 
-  private static SrtStreamingService sInstance;
+  private static final Object sConfigLock = new Object();
+  private static volatile SrtStreamingService sInstance;
   private static StreamingStatusCallback sStatusCallback;
 
   private final IBinder mBinder = new LocalBinder();
@@ -126,17 +127,28 @@ public class SrtStreamingService extends Service {
   @Override
   public void onCreate() {
     super.onCreate();
-    sInstance = this;
 
-    if (sPendingStateManager != null) {
-      mStateManager = sPendingStateManager;
-      sPendingStateManager = null;
+    boolean appliedPendingStateManager = false;
+    boolean appliedPendingStreamConfig = false;
+    synchronized (sConfigLock) {
+      if (sPendingStateManager != null) {
+        mStateManager = sPendingStateManager;
+        sPendingStateManager = null;
+        appliedPendingStateManager = true;
+      }
+
+      if (sPendingStreamConfig != null) {
+        mStreamConfig = sPendingStreamConfig;
+        sPendingStreamConfig = null;
+        appliedPendingStreamConfig = true;
+      }
+
+      sInstance = this;
+    }
+    if (appliedPendingStateManager) {
       Log.d(TAG, "✅ Applied pending StateManager during onCreate");
     }
-
-    if (sPendingStreamConfig != null) {
-      mStreamConfig = sPendingStreamConfig;
-      sPendingStreamConfig = null;
+    if (appliedPendingStreamConfig) {
       Log.d(TAG, "✅ Applied pending stream config: " + mStreamConfig.toString());
     }
 
@@ -193,7 +205,9 @@ public class SrtStreamingService extends Service {
 
   @Override
   public void onDestroy() {
-    if (sInstance == this) sInstance = null;
+    synchronized (sConfigLock) {
+      if (sInstance == this) sInstance = null;
+    }
 
     if (mReconnectHandler != null) mReconnectHandler.removeCallbacksAndMessages(null);
     cancelStreamTimeout();
@@ -751,12 +765,14 @@ public class SrtStreamingService extends Service {
   }
 
   public static void setStateManager(IStateManager stateManager) {
-    if (sInstance != null) {
-      sInstance.mStateManager = stateManager;
-      Log.d(TAG, "✅ StateManager set for SRT battery monitoring");
-    } else {
-      sPendingStateManager = stateManager;
-      Log.d(TAG, "✅ StateManager stored as pending for SRT service");
+    synchronized (sConfigLock) {
+      if (sInstance != null) {
+        sInstance.mStateManager = stateManager;
+        Log.d(TAG, "✅ StateManager set for SRT battery monitoring");
+      } else {
+        sPendingStateManager = stateManager;
+        Log.d(TAG, "✅ StateManager stored as pending for SRT service");
+      }
     }
   }
 
@@ -811,24 +827,28 @@ public class SrtStreamingService extends Service {
 
   public static void setStreamConfig(RtmpStreamConfig config) {
     if (config == null) config = new RtmpStreamConfig();
-    if (sInstance != null) {
-      sInstance.mStreamConfig = config;
-      Log.d(TAG, "✅ SRT stream config set: " + config.toString());
-    } else {
-      sPendingStreamConfig = config;
-      Log.d(TAG, "✅ SRT stream config stored as pending: " + config.toString());
+    synchronized (sConfigLock) {
+      if (sInstance != null) {
+        sInstance.mStreamConfig = config;
+        Log.d(TAG, "✅ SRT stream config set: " + config.toString());
+      } else {
+        sPendingStreamConfig = config;
+        Log.d(TAG, "✅ SRT stream config stored as pending: " + config.toString());
+      }
     }
   }
 
   /** Returns the effective configuration for the active or pending SRT stream. */
   public static JSONObject getCurrentResolvedConfig() {
-    RtmpStreamConfig config = null;
-    if (sInstance != null) {
-      config = sInstance.mStreamConfig;
-    } else if (sPendingStreamConfig != null) {
-      config = sPendingStreamConfig;
+    synchronized (sConfigLock) {
+      RtmpStreamConfig config = null;
+      if (sInstance != null) {
+        config = sInstance.mStreamConfig;
+      } else if (sPendingStreamConfig != null) {
+        config = sPendingStreamConfig;
+      }
+      return config != null ? config.toStatusJson("srt") : null;
     }
-    return config != null ? config.toStatusJson("srt") : null;
   }
 
   public static void startStreaming(Context context, String srtUrl, String streamId,

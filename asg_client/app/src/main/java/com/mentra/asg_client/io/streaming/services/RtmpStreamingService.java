@@ -67,7 +67,8 @@ public class RtmpStreamingService extends Service {
     private static final int NOTIFICATION_ID = 8888;
 
     // Static instance reference for static method access
-    private static RtmpStreamingService sInstance;
+    private static final Object sConfigLock = new Object();
+    private static volatile RtmpStreamingService sInstance;
 
     // Static callback for streaming status
     private static StreamingStatusCallback sStatusCallback;
@@ -153,20 +154,30 @@ public class RtmpStreamingService extends Service {
     public void onCreate() {
         super.onCreate();
 
-        // Store static instance reference
-        sInstance = this;
+        boolean appliedPendingStateManager = false;
+        boolean appliedPendingStreamConfig = false;
+        synchronized (sConfigLock) {
+            // Apply pending StateManager if it was set before service started
+            if (sPendingStateManager != null) {
+                mStateManager = sPendingStateManager;
+                sPendingStateManager = null; // Clear pending after applying
+                appliedPendingStateManager = true;
+            }
 
-        // Apply pending StateManager if it was set before service started
-        if (sPendingStateManager != null) {
-            mStateManager = sPendingStateManager;
-            sPendingStateManager = null; // Clear pending after applying
+            // Apply pending stream config before publishing the service instance.
+            if (sPendingStreamConfig != null) {
+                mStreamConfig = sPendingStreamConfig;
+                sPendingStreamConfig = null; // Clear pending after applying
+                appliedPendingStreamConfig = true;
+            }
+
+            // Store static instance reference after pending config has been applied.
+            sInstance = this;
+        }
+        if (appliedPendingStateManager) {
             Log.d(TAG, "✅ Applied pending StateManager during onCreate");
         }
-
-        // Apply pending stream config if it was set before service started
-        if (sPendingStreamConfig != null) {
-            mStreamConfig = sPendingStreamConfig;
-            sPendingStreamConfig = null; // Clear pending after applying
+        if (appliedPendingStreamConfig) {
             Log.d(TAG, "✅ Applied pending stream config during onCreate: " + mStreamConfig.toString());
         }
 
@@ -238,8 +249,10 @@ public class RtmpStreamingService extends Service {
     @Override
     public void onDestroy() {
         // Clear static instance reference
-        if (sInstance == this) {
-            sInstance = null;
+        synchronized (sConfigLock) {
+            if (sInstance == this) {
+                sInstance = null;
+            }
         }
 
         // Cancel any pending reconnections
@@ -1290,14 +1303,16 @@ public class RtmpStreamingService extends Service {
      * @param stateManager StateManager instance
      */
     public static void setStateManager(IStateManager stateManager) {
-        if (sInstance != null) {
-            // Service is running, apply immediately
-            sInstance.mStateManager = stateManager;
-            Log.d(TAG, "✅ StateManager set for battery monitoring");
-        } else {
-            // Service not yet started, store in pending field to apply during onCreate()
-            sPendingStateManager = stateManager;
-            Log.d(TAG, "✅ StateManager stored as pending - will be applied when service starts");
+        synchronized (sConfigLock) {
+            if (sInstance != null) {
+                // Service is running, apply immediately
+                sInstance.mStateManager = stateManager;
+                Log.d(TAG, "✅ StateManager set for battery monitoring");
+            } else {
+                // Service not yet started, store in pending field to apply during onCreate()
+                sPendingStateManager = stateManager;
+                Log.d(TAG, "✅ StateManager stored as pending - will be applied when service starts");
+            }
         }
     }
 
@@ -1405,24 +1420,28 @@ public class RtmpStreamingService extends Service {
         if (config == null) {
             config = new RtmpStreamConfig(); // Use defaults if null
         }
-        if (sInstance != null) {
-            sInstance.mStreamConfig = config;
-            Log.d(TAG, "✅ Stream config set: " + config.toString());
-        } else {
-            sPendingStreamConfig = config;
-            Log.d(TAG, "✅ Stream config stored as pending: " + config.toString());
+        synchronized (sConfigLock) {
+            if (sInstance != null) {
+                sInstance.mStreamConfig = config;
+                Log.d(TAG, "✅ Stream config set: " + config.toString());
+            } else {
+                sPendingStreamConfig = config;
+                Log.d(TAG, "✅ Stream config stored as pending: " + config.toString());
+            }
         }
     }
 
     /** Returns the effective configuration for the active or pending RTMP stream. */
     public static JSONObject getCurrentResolvedConfig() {
-        RtmpStreamConfig config = null;
-        if (sInstance != null) {
-            config = sInstance.mStreamConfig;
-        } else if (sPendingStreamConfig != null) {
-            config = sPendingStreamConfig;
+        synchronized (sConfigLock) {
+            RtmpStreamConfig config = null;
+            if (sInstance != null) {
+                config = sInstance.mStreamConfig;
+            } else if (sPendingStreamConfig != null) {
+                config = sPendingStreamConfig;
+            }
+            return config != null ? config.toStatusJson("rtmp") : null;
         }
-        return config != null ? config.toStatusJson("rtmp") : null;
     }
 
     /**

@@ -92,7 +92,8 @@ public class WhipStreamingService extends Service {
   private static final int NOTIFICATION_ID = 8891;
 
   // Static instance so static helper methods can reach the running service
-  private static WhipStreamingService sInstance;
+  private static final Object sConfigLock = new Object();
+  private static volatile WhipStreamingService sInstance;
   private static StreamingStatusCallback sStatusCallback;
   private static WhipStreamConfig sPendingStreamConfig = null;
 
@@ -190,11 +191,18 @@ public class WhipStreamingService extends Service {
   @Override
   public void onCreate() {
     super.onCreate();
-    sInstance = this;
 
-    if (sPendingStreamConfig != null) {
-      mStreamConfig = sPendingStreamConfig;
-      sPendingStreamConfig = null;
+    boolean appliedPendingStreamConfig = false;
+    synchronized (sConfigLock) {
+      if (sPendingStreamConfig != null) {
+        mStreamConfig = sPendingStreamConfig;
+        sPendingStreamConfig = null;
+        appliedPendingStreamConfig = true;
+      }
+
+      sInstance = this;
+    }
+    if (appliedPendingStreamConfig) {
       Log.d(TAG, "Applied pending stream config: " + mStreamConfig);
     }
 
@@ -236,8 +244,10 @@ public class WhipStreamingService extends Service {
 
   @Override
   public void onDestroy() {
-    if (sInstance == this) {
-      sInstance = null;
+    synchronized (sConfigLock) {
+      if (sInstance == this) {
+        sInstance = null;
+      }
     }
     stopStreaming();
     Log.d(TAG, "WhipStreamingService destroyed");
@@ -1035,21 +1045,25 @@ public class WhipStreamingService extends Service {
 
   public static void setStreamConfig(WhipStreamConfig config) {
     if (config == null) return;
-    if (sInstance != null) {
-      sInstance.mStreamConfig = config;
-    } else {
-      sPendingStreamConfig = config;
+    synchronized (sConfigLock) {
+      if (sInstance != null) {
+        sInstance.mStreamConfig = config;
+      } else {
+        sPendingStreamConfig = config;
+      }
     }
   }
 
   /** Returns the effective configuration for the active or pending WHIP stream. */
   public static JSONObject getCurrentResolvedConfig() {
-    WhipStreamConfig config = null;
-    if (sInstance != null) {
-      config = sInstance.mStreamConfig;
-    } else if (sPendingStreamConfig != null) {
-      config = sPendingStreamConfig;
+    synchronized (sConfigLock) {
+      WhipStreamConfig config = null;
+      if (sInstance != null) {
+        config = sInstance.mStreamConfig;
+      } else if (sPendingStreamConfig != null) {
+        config = sPendingStreamConfig;
+      }
+      return config != null ? config.toStatusJson("whip") : null;
     }
-    return config != null ? config.toStatusJson("whip") : null;
   }
 }
