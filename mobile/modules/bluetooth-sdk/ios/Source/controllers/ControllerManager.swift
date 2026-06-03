@@ -20,7 +20,8 @@ protocol ControllerManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, save: Bool, sound: Bool, exposureTimeNs: Double?
+        compress: String?, flash: Bool, save: Bool, sound: Bool,
+        exposureTimeNs: Double?
     )
     func startStream(_ message: [String: Any])
     func stopStream()

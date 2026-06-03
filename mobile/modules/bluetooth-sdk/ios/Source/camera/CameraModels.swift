@@ -258,3 +258,4 @@ public struct PhotoResponseEvent: CustomStringConvertible {
         "PhotoResponseEvent(requestId: \(requestId), state: \(response.state.rawValue))"
     }
 }
+

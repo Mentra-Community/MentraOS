@@ -213,3 +213,4 @@ data class PhotoResponseEvent(
     val requestId: String get() = response.requestId
     val values: Map<String, Any> get() = response.toEventMap()
 }
+
