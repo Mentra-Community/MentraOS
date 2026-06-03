@@ -377,12 +377,14 @@ sealed interface StreamStatus {
             val resolvedConfig = StreamResolvedConfig.fromMap(stringMapValue(values["resolvedConfig"]))
             val attempt = numberValue(values, "attempt")
             val maxAttempts = numberValue(values, "maxAttempts") ?: 0
+            val parsedState = StreamState.fromValue(rawState)
 
             if (streaming != null || hasAnyKey(values, "reconnecting")) {
                 return Snapshot(
                     state = when {
                         reconnecting -> StreamState.RECONNECTING
                         streaming == true -> StreamState.STREAMING
+                        parsedState != null -> parsedState
                         else -> StreamState.STOPPED
                     },
                     streaming = streaming == true,
@@ -394,7 +396,7 @@ sealed interface StreamStatus {
                 )
             }
 
-            val state = StreamState.fromValue(rawState)
+            val state = parsedState
                 ?: return Error(
                     streamId = streamId,
                     errorDetails = rawState?.let { "Unknown stream status: $it" } ?: "Missing stream status",

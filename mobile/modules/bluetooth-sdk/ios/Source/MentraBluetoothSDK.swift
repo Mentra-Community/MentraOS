@@ -542,6 +542,7 @@ public final class MentraBluetoothSDK {
                     )
                 )
                 delegate?.mentraBluetoothSDK(self, didReceive: .streamStatus(event))
+                stopStream()
                 return
             }
         }
@@ -573,9 +574,9 @@ public final class MentraBluetoothSDK {
     }
 
     private func handleStreamStatusForKeepAlive(_ status: StreamStatus) {
-        if let streamId = status.streamId,
-           activeStreamKeepAlive?.streamId != streamId
-        {
+        guard let streamId = status.streamId,
+              activeStreamKeepAlive?.streamId == streamId
+        else {
             return
         }
 

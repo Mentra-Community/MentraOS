@@ -382,11 +382,19 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
         let resolvedConfig = StreamResolvedConfig(values: values["resolvedConfig"] as? [String: Any])
         let attempt = optionalIntValue(values, "attempt")
         let maxAttempts = optionalIntValue(values, "maxAttempts") ?? 0
+        let parsedState = StreamState.from(rawState)
 
         if hasAnyKey(values, "streaming") || hasAnyKey(values, "reconnecting") {
             let streaming = boolValue(values, "streaming") == true
             let reconnecting = boolValue(values, "reconnecting") == true
-            let snapshotState: StreamState = reconnecting ? .reconnecting : (streaming ? .streaming : .stopped)
+            let snapshotState: StreamState
+            if reconnecting {
+                snapshotState = .reconnecting
+            } else if streaming {
+                snapshotState = .streaming
+            } else {
+                snapshotState = parsedState ?? .stopped
+            }
             self = .snapshot(
                 state: snapshotState,
                 streaming: streaming,
@@ -399,7 +407,7 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
             return
         }
 
-        guard let state = StreamState.from(rawState) else {
+        guard let state = parsedState else {
             self = .error(
                 streamId: streamId,
                 errorDetails: rawState.map { "Unknown stream status: \($0)" } ?? "Missing stream status",

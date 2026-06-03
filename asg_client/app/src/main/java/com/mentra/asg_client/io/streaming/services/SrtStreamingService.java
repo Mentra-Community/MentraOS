@@ -429,6 +429,8 @@ public class SrtStreamingService extends Service {
 
       int videoWidth = mStreamConfig.getVideoWidth();
       int videoHeight = mStreamConfig.getVideoHeight();
+      int captureWidth = mStreamConfig.getCaptureSurfaceWidth();
+      int captureHeight = mStreamConfig.getCaptureSurfaceHeight();
       int videoBitrate = mStreamConfig.getVideoBitrate();
       int videoFps = mStreamConfig.getVideoFps();
       int audioBitrate = mStreamConfig.getAudioBitrate();
@@ -448,7 +450,7 @@ public class SrtStreamingService extends Service {
       int level = VideoConfig.Companion.getBestLevel(mimeType, profile);
       VideoConfig videoConfig = new VideoConfig(
           mimeType, videoBitrate, new Size(videoWidth, videoHeight), videoFps, profile, level,
-          2.0f);
+          2.0f, new Size(captureWidth, captureHeight));
 
       mSrtStreamer.configure(videoConfig);
       mSrtStreamer.configure(audioConfig);
@@ -895,6 +897,24 @@ public class SrtStreamingService extends Service {
     if (sInstance != null) {
       synchronized (sInstance.mStateLock) {
         return sInstance.mStreamState == StreamState.STREAMING || sInstance.mStreamState == StreamState.STARTING;
+      }
+    }
+    return false;
+  }
+
+  public static boolean isActivelyStreaming() {
+    if (sInstance != null) {
+      synchronized (sInstance.mStateLock) {
+        return sInstance.mStreamState == StreamState.STREAMING;
+      }
+    }
+    return false;
+  }
+
+  public static boolean isStarting() {
+    if (sInstance != null) {
+      synchronized (sInstance.mStateLock) {
+        return sInstance.mStreamState == StreamState.STARTING;
       }
     }
     return false;

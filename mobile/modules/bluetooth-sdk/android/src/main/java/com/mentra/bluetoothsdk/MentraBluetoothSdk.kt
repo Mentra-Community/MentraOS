@@ -811,6 +811,7 @@ class MentraBluetoothSdk private constructor(
 
         timeoutEvent?.let { event ->
             dispatchToListeners { it.onStreamStatus(event) }
+            stopStream()
             return
         }
 
@@ -833,10 +834,8 @@ class MentraBluetoothSdk private constructor(
 
     private fun handleStreamStatusForKeepAlive(status: StreamStatus) {
         val streamId = status.streamId
-        if (
-                streamId != null &&
-                        synchronized(streamKeepAliveLock) { activeStreamKeepAlive?.streamId } != streamId
-        ) {
+        val activeStreamId = synchronized(streamKeepAliveLock) { activeStreamKeepAlive?.streamId }
+        if (streamId == null || activeStreamId != streamId) {
             return
         }
         when (status.state) {

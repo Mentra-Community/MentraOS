@@ -624,6 +624,8 @@ public class RtmpStreamingService extends Service {
             // Use config values (either from SDK or defaults)
             int videoWidth = mStreamConfig.getVideoWidth();
             int videoHeight = mStreamConfig.getVideoHeight();
+            int captureWidth = mStreamConfig.getCaptureSurfaceWidth();
+            int captureHeight = mStreamConfig.getCaptureSurfaceHeight();
             int videoBitrate = mStreamConfig.getVideoBitrate();
             int videoFps = mStreamConfig.getVideoFps();
             int audioBitrate = mStreamConfig.getAudioBitrate();
@@ -657,7 +659,8 @@ public class RtmpStreamingService extends Service {
                     videoFps,
                     profile,
                     level,
-                    2.0f // Force keyframe every 2 seconds
+                    2.0f, // Force keyframe every 2 seconds
+                    new Size(captureWidth, captureHeight)
             );
 
             // Apply configurations and start preview
@@ -1541,6 +1544,26 @@ public class RtmpStreamingService extends Service {
             synchronized (sInstance.mStateLock) {
                 return sInstance.mStreamState == StreamState.STREAMING ||
                        sInstance.mStreamState == StreamState.STARTING;
+            }
+        }
+        return false;
+    }
+
+    /** @return true only after the RTMP connection is live. */
+    public static boolean isActivelyStreaming() {
+        if (sInstance != null) {
+            synchronized (sInstance.mStateLock) {
+                return sInstance.mStreamState == StreamState.STREAMING;
+            }
+        }
+        return false;
+    }
+
+    /** @return true while RTMP startup is in progress before the connection is live. */
+    public static boolean isStarting() {
+        if (sInstance != null) {
+            synchronized (sInstance.mStateLock) {
+                return sInstance.mStreamState == StreamState.STARTING;
             }
         }
         return false;

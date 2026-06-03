@@ -1011,6 +1011,22 @@ public class WhipStreamingService extends Service {
     }
   }
 
+  /** @return true only after WHIP negotiation has reached a live streaming state. */
+  public static boolean isActivelyStreaming() {
+    if (sInstance == null) return false;
+    synchronized (sInstance.mStateLock) {
+      return sInstance.mStreamState == StreamState.STREAMING;
+    }
+  }
+
+  /** @return true while WHIP startup is in progress before ingest is live. */
+  public static boolean isStarting() {
+    if (sInstance == null) return false;
+    synchronized (sInstance.mStateLock) {
+      return sInstance.mStreamState == StreamState.STARTING;
+    }
+  }
+
   /** @return true if a reconnection is currently in progress */
   public static boolean isReconnecting() {
     return sInstance != null && sInstance.mIsReconnecting;

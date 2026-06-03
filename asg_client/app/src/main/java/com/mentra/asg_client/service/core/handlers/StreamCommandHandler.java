@@ -382,9 +382,13 @@ public class StreamCommandHandler implements ICommandHandler {
     public boolean handleStatusCommand() {
         try {
             boolean isStreaming =
-                    RtmpStreamingService.isStreaming()
-                            || SrtStreamingService.isStreaming()
-                            || WhipStreamingService.isStreaming();
+                    RtmpStreamingService.isActivelyStreaming()
+                            || SrtStreamingService.isActivelyStreaming()
+                            || WhipStreamingService.isActivelyStreaming();
+            boolean isStarting =
+                    RtmpStreamingService.isStarting()
+                            || SrtStreamingService.isStarting()
+                            || WhipStreamingService.isStarting();
             boolean isReconnecting =
                     RtmpStreamingService.isReconnecting()
                             || SrtStreamingService.isReconnecting()
@@ -394,7 +398,9 @@ public class StreamCommandHandler implements ICommandHandler {
             status.put("kind", "snapshot");
             status.put(
                     "status",
-                    isReconnecting ? "reconnecting" : (isStreaming ? "streaming" : "stopped"));
+                    isReconnecting
+                            ? "reconnecting"
+                            : (isStarting ? "initializing" : (isStreaming ? "streaming" : "stopped")));
             status.put("streaming", isStreaming);
             status.put("reconnecting", isReconnecting);
 

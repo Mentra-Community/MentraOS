@@ -152,6 +152,8 @@ public class RtmpStreamConfig {
             resolvedConfig.put("transport", transport);
             video.put("width", getVideoWidth());
             video.put("height", getVideoHeight());
+            video.put("captureWidth", getCaptureSurfaceWidth());
+            video.put("captureHeight", getCaptureSurfaceHeight());
             video.put("bitrate", getVideoBitrate());
             video.put("fps", getVideoFps());
             resolvedConfig.put("video", video);

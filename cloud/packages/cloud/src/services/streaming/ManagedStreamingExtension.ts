@@ -1141,7 +1141,10 @@ export class ManagedStreamingExtension {
         lastStatus.hlsUrl === statusMessage.hlsUrl &&
         lastStatus.dashUrl === statusMessage.dashUrl &&
         lastStatus.webrtcUrl === statusMessage.webrtcUrl &&
+        lastStatus.previewUrl === statusMessage.previewUrl &&
+        lastStatus.thumbnailUrl === statusMessage.thumbnailUrl &&
         lastStatus.message === statusMessage.message &&
+        JSON.stringify(lastStatus.resolvedConfig) === JSON.stringify(statusMessage.resolvedConfig) &&
         JSON.stringify(lastStatus.outputs) === JSON.stringify(statusMessage.outputs);
 
       if (isDuplicate) {
