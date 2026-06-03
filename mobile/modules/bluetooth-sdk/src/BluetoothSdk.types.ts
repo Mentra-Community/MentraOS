@@ -341,18 +341,27 @@ export type StreamStatusLifecycleState = "initializing" | "streaming" | "stoppin
 export type StreamStatusReconnectState = "reconnecting" | "reconnected" | "reconnect_failed"
 export type StreamStatusState = StreamStatusLifecycleState | StreamStatusReconnectState | "error"
 
+/** Effective stream settings reported by the glasses after defaults and clamps. */
 export type StreamResolvedConfig = {
   transport?: "rtmp" | "srt" | "whip"
   video?: {
+    /** Encoded output width sent to the stream endpoint. */
     width: number
+    /** Encoded output height sent to the stream endpoint. */
     height: number
+    /** Native camera buffer width selected before crop/downscale. */
     captureWidth?: number
+    /** Native camera buffer height selected before crop/downscale. */
     captureHeight?: number
+    /** Encoded video bitrate in bits per second. */
     bitrate: number
+    /** Resolved capture/encode frame rate. */
     fps: number
   }
   audio?: {
+    /** Encoded audio bitrate in bits per second. */
     bitrate?: number
+    /** Audio sample rate in Hz. */
     sampleRate?: number
     echoCancellation?: boolean
     noiseSuppression?: boolean

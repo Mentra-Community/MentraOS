@@ -455,14 +455,19 @@ interface StreamStatus {
 interface StreamResolvedConfig {
   transport?: 'rtmp' | 'srt' | 'whip';
   video?: {
+    // Encoded output dimensions sent to the stream endpoint.
     width: number;
     height: number;
+    // Native camera buffer dimensions selected before crop/downscale.
     captureWidth?: number;
     captureHeight?: number;
+    // Encoded video bitrate in bits per second.
     bitrate: number;
+    // Resolved capture/encode frame rate.
     fps: number;
   };
   audio?: {
+    // Encoded audio bitrate in bits per second.
     bitrate?: number;
     sampleRate?: number;
     echoCancellation?: boolean;

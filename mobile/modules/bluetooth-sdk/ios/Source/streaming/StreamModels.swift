@@ -76,12 +76,19 @@ public struct StreamAudioConfig {
     }
 }
 
+/// Effective video settings reported by the glasses after defaults and clamps.
 public struct StreamResolvedVideoConfig: Equatable {
+    /// Encoded output width sent to the stream endpoint.
     public let width: Int
+    /// Encoded output height sent to the stream endpoint.
     public let height: Int
+    /// Native camera buffer width selected before crop/downscale.
     public let captureWidth: Int?
+    /// Native camera buffer height selected before crop/downscale.
     public let captureHeight: Int?
+    /// Encoded video bitrate in bits per second.
     public let bitrate: Int
+    /// Resolved capture/encode frame rate.
     public let fps: Double
 
     public init(

@@ -56,12 +56,19 @@ data class StreamAudioConfig @JvmOverloads constructor(
     }
 }
 
+/** Effective video settings reported by the glasses after defaults and clamps. */
 data class StreamResolvedVideoConfig @JvmOverloads constructor(
+    /** Encoded output width sent to the stream endpoint. */
     val width: Int,
+    /** Encoded output height sent to the stream endpoint. */
     val height: Int,
+    /** Native camera buffer width selected before crop/downscale. */
     val captureWidth: Int? = null,
+    /** Native camera buffer height selected before crop/downscale. */
     val captureHeight: Int? = null,
+    /** Encoded video bitrate in bits per second. */
     val bitrate: Int,
+    /** Resolved capture/encode frame rate. */
     val fps: Double,
 ) {
     fun toMap(): Map<String, Any> =

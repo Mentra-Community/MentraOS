@@ -267,3 +267,11 @@ func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEv
 </Tabs>
 
 Status values include initializing, streaming, stopped, reconnecting, and error states.
+When a status event includes `resolvedConfig`, it contains the effective settings
+used by the glasses after defaults, clamps, and camera-mode selection. In
+`resolvedConfig.video`, `width` and `height` are the encoded output dimensions,
+`captureWidth` and `captureHeight` are the native camera buffer dimensions before
+crop or downscale, `bitrate` is the encoded video bitrate in bits per second, and
+`fps` is the resolved capture/encode frame rate. `resolvedConfig.audio` reports
+the audio bitrate, sample rate, echo cancellation, and noise suppression settings
+when audio is active.
