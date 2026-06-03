@@ -33,6 +33,7 @@ import {captureScreenshot} from "@/effects/CapsuleMenu"
 import {useAppStatusStore, useForegroundApp} from "@mentra/island"
 import {Screen} from "@/components/ignite/Screen"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
+import {useNavigationStore} from "@/stores/navigation"
 const EDGE_HIT_WIDTH = 24
 // Distance past which a slow drag commits the back gesture (fraction of screen
 // width). UIKit's interactive pop commits at ~50%; we sit a hair under that.
@@ -67,6 +68,10 @@ export default function Compositor() {
   }, [foregroundApp])
 
   const isForeground = foregroundApp != null
+  // LocalMiniappView toggles this off while the foregrounded miniapp's WebView
+  // has in-app history (so the WebView's own back-swipe handles it) and back on
+  // once the WebView is at page 0 (so our edge swipe backgrounds the miniapp).
+  const gestureEnabled = useNavigationStore((s) => s.forceGestureEnabled)
   const screenWidth = Dimensions.get("window").width
   const commitThreshold = screenWidth * COMMIT_FRACTION
 
@@ -224,7 +229,7 @@ export default function Compositor() {
         />
       </Screen>
       {/* </View> */}
-      {isForeground && Platform.OS === "ios" && (
+      {isForeground && gestureEnabled && Platform.OS === "ios" && (
         <GestureDetector gesture={swipeGesture}>
           <View
             style={{

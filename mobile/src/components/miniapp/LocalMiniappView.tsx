@@ -1,5 +1,5 @@
 import {File} from "expo-file-system"
-import {forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState} from "react"
+import {useCallback, useEffect, useRef, useState} from "react"
 import {ActivityIndicator, Image, Platform, View} from "react-native"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
 import {WebView, type WebViewMessageEvent} from "react-native-webview"
@@ -37,17 +37,10 @@ import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
  * This was previously the body of the `/applet/local` route; it's now a
  * component so the <Compositor /> overlay can mount/unmount it as a miniapp is
  * foregrounded/backgrounded. The Compositor owns the opening animation,
- * back-swipe gesture, and capsule button — this component just exposes a
- * `goBack()` handle so the gesture can pop in-WebView history before
- * backgrounding.
+ * back-swipe gesture, and capsule button. This component drives the navigation
+ * store's `forceGestureEnabled` flag from the WebView's history state so the
+ * Compositor only arms its edge-swipe once the WebView is at page 0.
  */
-
-export interface LocalMiniappViewHandle {
-  /** Pop the WebView's in-app history. Returns true if it had history to pop. */
-  goBack: () => boolean
-  /** Whether the WebView currently has back history. */
-  canGoBack: boolean
-}
 
 interface LocalMiniappViewProps {
   packageName: string
@@ -58,12 +51,10 @@ interface LocalMiniappViewProps {
   devPort?: string
   /** Called when the WebView's content process terminates / errors fatally. */
   onExit: () => void
-  /** Notified whenever the WebView's in-app back history availability changes. */
-  onCanGoBackChange?: (canGoBack: boolean) => void
   onShouldCapture?: () => void
 }
 
-const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProps>(({
+function LocalMiniappView({
   packageName,
   appName,
   version,
@@ -71,9 +62,8 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
   iconUrl,
   devPort,
   onExit,
-  onCanGoBackChange,
   onShouldCapture = () => undefined,
-}, ref) => {
+}: LocalMiniappViewProps) {
   const {theme} = useAppTheme()
   const insets = useSaferAreaInsets()
   const colorScheme = theme.isDark ? "dark" : "light"
@@ -96,19 +86,6 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
     devUrl || version ? "installing" : "error",
   )
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      goBack: () => {
-        if (!webViewCanGoBack || !webViewRef.current) return false
-        webViewRef.current.goBack()
-        return true
-      },
-      canGoBack: webViewCanGoBack,
-    }),
-    [webViewCanGoBack],
-  )
 
   useEffect(() => {
     if (Platform.OS !== "android") return
@@ -148,21 +125,14 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
   // Block native back gesture/button — route through handleWebViewBack for Android.
   // focusEffectPreventBack(handleWebViewBack, false)
 
-  // Dynamically toggle gesture handling based on webview navigation state:
-  // - Page 0 (no history): disable WebView's gesture, force-enable React Navigation's
-  //   native swipe-back so user can exit miniapp with the real iOS animation.
-  // - Has history: enable WebView's gesture for in-webview navigation,
-  //   React Navigation's gesture stays blocked by focusEffectPreventBack.
+  // Dynamically toggle the Compositor's left-edge swipe-to-back gesture based on
+  // the WebView's navigation state (via the shared `forceGestureEnabled` flag):
+  // - Page 0 (no history): enable the Compositor swipe so a back-swipe
+  //   backgrounds the miniapp with the real iOS animation.
+  // - Has history: disable the Compositor swipe so the WebView's own
+  //   allowsBackForwardNavigationGestures handles in-webview back navigation.
   useEffect(() => {
-    if (!webViewCanGoBack) {
-      // Page 0: force React Navigation gesture on, WebView gesture off
-      setForceGestureEnabled(true)
-    } else {
-      // Has history: let focusEffectPreventBack handle it (gesture disabled),
-      // WebView's allowsBackForwardNavigationGestures handles in-webview swipe
-      setForceGestureEnabled(false)
-    }
-
+    setForceGestureEnabled(!webViewCanGoBack)
     return () => setForceGestureEnabled(false)
   }, [webViewCanGoBack, setForceGestureEnabled])
 
@@ -368,13 +338,9 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
     [packageName],
   )
 
-  const handleNavStateChange = useCallback(
-    ({canGoBack}: {canGoBack: boolean}) => {
-      setWebViewCanGoBack(canGoBack)
-      onCanGoBackChange?.(canGoBack)
-    },
-    [onCanGoBackChange],
-  )
+  const handleNavStateChange = useCallback(({canGoBack}: {canGoBack: boolean}) => {
+    setWebViewCanGoBack(canGoBack)
+  }, [])
 
   const handleLoadEnd = useCallback(() => {
     setIsLoaded(true)
@@ -596,7 +562,7 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
       <CapsuleMenu forceShow={true} />
     </View>
   )
-})
+}
 
 export default LocalMiniappView
 

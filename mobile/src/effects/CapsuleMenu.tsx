@@ -152,12 +152,12 @@ export default function CapsuleMenu({forceShow}: {forceShow: boolean}) {
         onRightPress={() => active?.handleRightPress(true)}
         onLeftPress={() => active?.handleLeftPress(true)}
       />
-      <MiniAppMoreActionsSheet
+      {/* <MiniAppMoreActionsSheet
         ref={bottomSheetRef}
         packageName={active?.packageName ?? ""}
         appNameOverride={active?.appNameOverride}
         iconUrlOverride={active?.iconUrlOverride}
-      />
+      /> */}
     </View>
   )
 }
@@ -213,198 +213,198 @@ export async function captureScreenshot(
   }
 }
 
-interface MiniAppMoreActionsSheetProps {
-  packageName: string
-  appNameOverride?: string
-  iconUrlOverride?: string
-}
+// interface MiniAppMoreActionsSheetProps {
+//   packageName: string
+//   appNameOverride?: string
+//   iconUrlOverride?: string
+// }
 
-export const MiniAppMoreActionsSheet = forwardRef<BottomSheetModal, MiniAppMoreActionsSheetProps>(
-  function MiniAppMoreActionsSheet({packageName, appNameOverride, iconUrlOverride}, ref) {
-    const {theme} = useAppTheme()
-    const screenHeight = Dimensions.get("window").height
-    const snapPoints = useMemo(() => [screenHeight < 700 ? "70%" : "50%"], [screenHeight])
-    const internalRef = useRef<BottomSheetModal>(null)
-    const insets = useSaferAreaInsets()
-    const [app, setApp] = useState<ClientApp | null>(null)
-    const [superMode] = useSetting(SETTINGS.super_mode.key)
+// export const MiniAppMoreActionsSheet = forwardRef<BottomSheetModal, MiniAppMoreActionsSheetProps>(
+//   function MiniAppMoreActionsSheet({packageName, appNameOverride, iconUrlOverride}, ref) {
+//     const {theme} = useAppTheme()
+//     const screenHeight = Dimensions.get("window").height
+//     const snapPoints = useMemo(() => [screenHeight < 700 ? "70%" : "50%"], [screenHeight])
+//     const internalRef = useRef<BottomSheetModal>(null)
+//     const insets = useSaferAreaInsets()
+//     const [app, setApp] = useState<ClientApp | null>(null)
+//     const [superMode] = useSetting(SETTINGS.super_mode.key)
 
-    useEffect(() => {
-      const storeApp = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
-      if (storeApp) {
-        setApp(storeApp)
-      } else if (appNameOverride || iconUrlOverride) {
-        // Dev-sideloaded miniapp not in the applet store — synthesize a minimal
-        // record so the sheet can show a name + icon.
-        setApp({
-          packageName,
-          name: appNameOverride ?? packageName,
-          logoUrl: iconUrlOverride ?? "",
-          loading: false,
-          running: true,
-          hidden: false,
-          healthy: true,
-          permissions: [],
-        } as unknown as ClientApp)
-      }
-    }, [packageName, appNameOverride, iconUrlOverride])
+//     useEffect(() => {
+//       const storeApp = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
+//       if (storeApp) {
+//         setApp(storeApp)
+//       } else if (appNameOverride || iconUrlOverride) {
+//         // Dev-sideloaded miniapp not in the applet store — synthesize a minimal
+//         // record so the sheet can show a name + icon.
+//         setApp({
+//           packageName,
+//           name: appNameOverride ?? packageName,
+//           logoUrl: iconUrlOverride ?? "",
+//           loading: false,
+//           running: true,
+//           hidden: false,
+//           healthy: true,
+//           permissions: [],
+//         } as unknown as ClientApp)
+//       }
+//     }, [packageName, appNameOverride, iconUrlOverride])
 
-    // Merge refs so both the parent and internal ref work
-    useImperativeHandle(ref, () => internalRef.current!)
+//     // Merge refs so both the parent and internal ref work
+//     useImperativeHandle(ref, () => internalRef.current!)
 
-    const renderBackdrop = useCallback(
-      (props: any) => (
-        <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} pressBehavior="close" />
-      ),
-      [],
-    )
+//     const renderBackdrop = useCallback(
+//       (props: any) => (
+//         <BottomSheetBackdrop {...props} disappearsOnIndex={-1} appearsOnIndex={0} pressBehavior="close" />
+//       ),
+//       [],
+//     )
 
-    const handleAddRemoveFromHome = useCallback(() => {
-      useAppStatusStore.getState().setHiddenStatus(packageName, !app?.hidden)
-      internalRef.current?.dismiss()
-      useNavigationStore.getState().clearHistoryAndGoHome()
-    }, [packageName, app?.hidden])
+//     const handleAddRemoveFromHome = useCallback(() => {
+//       useAppStatusStore.getState().setHiddenStatus(packageName, !app?.hidden)
+//       internalRef.current?.dismiss()
+//       useNavigationStore.getState().clearHistoryAndGoHome()
+//     }, [packageName, app?.hidden])
 
-    const handleShare = useCallback(() => {
-      const storeUrl = `https://apps.mentraglass.com/package/${packageName}`
-      // on Android, Share.share ignores `url` and only uses `message`
-      Share.share(
-        Platform.OS === "android"
-          ? {message: `${app?.name ?? packageName}\n${storeUrl}`}
-          : {message: app?.name ?? packageName, url: storeUrl},
-      )
-    }, [packageName, app?.name])
+//     const handleShare = useCallback(() => {
+//       const storeUrl = `https://apps.mentraglass.com/package/${packageName}`
+//       // on Android, Share.share ignores `url` and only uses `message`
+//       Share.share(
+//         Platform.OS === "android"
+//           ? {message: `${app?.name ?? packageName}\n${storeUrl}`}
+//           : {message: app?.name ?? packageName, url: storeUrl},
+//       )
+//     }, [packageName, app?.name])
 
-    const handleFeedback = useCallback(() => {
-      internalRef.current?.dismiss()
-      useNavigationStore.getState().push("/miniapps/settings/feedback", {
-        submissionMode: "USER_INITIATED",
-        triggerArea: "applet_capsule_menu",
-        triggerReason: "manual_bug_report",
-        sourceAppletPackageName: packageName,
-        sourceAppletName: app?.name,
-      })
-    }, [packageName, app?.name])
+//     const handleFeedback = useCallback(() => {
+//       internalRef.current?.dismiss()
+//       useNavigationStore.getState().push("/miniapps/settings/feedback", {
+//         submissionMode: "USER_INITIATED",
+//         triggerArea: "applet_capsule_menu",
+//         triggerReason: "manual_bug_report",
+//         sourceAppletPackageName: packageName,
+//         sourceAppletName: app?.name,
+//       })
+//     }, [packageName, app?.name])
 
-    const handleSettings = useCallback(() => {
-      internalRef.current?.dismiss()
-      useNavigationStore.getState().push("/applet/settings", {
-        packageName: packageName,
-        appName: app?.name,
-      })
-    }, [packageName, app?.name])
+//     const handleSettings = useCallback(() => {
+//       internalRef.current?.dismiss()
+//       useNavigationStore.getState().push("/applet/settings", {
+//         packageName: packageName,
+//         appName: app?.name,
+//       })
+//     }, [packageName, app?.name])
 
-    const isSystemApp = SYSTEM_APPS.includes(packageName)
-    const size = 28
+//     const isSystemApp = SYSTEM_APPS.includes(packageName)
+//     const size = 28
 
-    return (
-      <BottomSheetModal
-        ref={internalRef}
-        snapPoints={snapPoints}
-        backdropComponent={renderBackdrop}
-        enablePanDownToClose
-        enableDynamicSizing={false}
-        backgroundStyle={{backgroundColor: theme.colors.primary_foreground}}
-        handleIndicatorStyle={{backgroundColor: theme.colors.muted_foreground}}>
-        <View className="px-4 flex-1 gap-6" style={{paddingBottom: insets.bottom}}>
-          {/* <View className="gap-4 px-4 mb-2">
-            <Text className="text-lg font-bold text-foreground text-center" tx="home:incompatibleApps" />
-            <Text className="text-sm text-muted-foreground font-medium" tx="home:incompatibleAppsDescription" />
-          </View> */}
+//     return (
+//       <BottomSheetModal
+//         ref={internalRef}
+//         snapPoints={snapPoints}
+//         backdropComponent={renderBackdrop}
+//         enablePanDownToClose
+//         enableDynamicSizing={false}
+//         backgroundStyle={{backgroundColor: theme.colors.primary_foreground}}
+//         handleIndicatorStyle={{backgroundColor: theme.colors.muted_foreground}}>
+//         <View className="px-4 flex-1 gap-6" style={{paddingBottom: insets.bottom}}>
+//           {/* <View className="gap-4 px-4 mb-2">
+//             <Text className="text-lg font-bold text-foreground text-center" tx="home:incompatibleApps" />
+//             <Text className="text-sm text-muted-foreground font-medium" tx="home:incompatibleAppsDescription" />
+//           </View> */}
 
-          <View />
+//           <View />
 
-          <View className="flex-row items-center justify-center gap-4">
-            {app && <AppIcon app={app as ClientApp} disableLoader={true} className="w-12 h-12" />}
-            <View className="gap-1 flex-col">
-              <Text className="text-lg font-bold text-foreground text-center" text={app?.name} />
-              {superMode && <Text className="text-sm text-chart-4 font-medium" text={app?.packageName} />}
-            </View>
-          </View>
+//           <View className="flex-row items-center justify-center gap-4">
+//             {app && <AppIcon app={app as ClientApp} disableLoader={true} className="w-12 h-12" />}
+//             <View className="gap-1 flex-col">
+//               <Text className="text-lg font-bold text-foreground text-center" text={app?.name} />
+//               {superMode && <Text className="text-sm text-chart-4 font-medium" text={app?.packageName} />}
+//             </View>
+//           </View>
 
-          <View className="flex-1 flex-row flex-wrap">
-            {/* <View className="flex-col gap-2 items-center w-16">
-              <Button compactIcon onPress={() => {}} preset="alternate" className="rounded-2xl w-16 h-16">
-                <Icon name="share" color={theme.colors.foreground} size={size} />
-              </Button>
-              <Text className="text-sm text-muted-foreground w-full text-center" text="[settings]" />
-            </View> */}
-            <View className="flex-col gap-2 items-center w-1/4" style={isSystemApp ? {opacity: 0.8} : undefined}>
-              <Button
-                compactIcon
-                onPress={isSystemApp ? undefined : handleShare}
-                preset="alternate"
-                className="rounded-2xl w-16 h-16"
-                disabled={isSystemApp}>
-                <Icon name="share" color={theme.colors.foreground} size={size} />
-              </Button>
-              <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:share" />
-            </View>
-            {app && app.hidden && (
-              <View className="flex-col gap-2 items-center w-1/4">
-                <Button
-                  compactIcon
-                  onPress={handleAddRemoveFromHome}
-                  preset="alternate"
-                  className="rounded-2xl w-16 h-16">
-                  <Icon name="plus" color={theme.colors.foreground} size={size} />
-                </Button>
-                <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:addToHome" />
-              </View>
-            )}
-            {app && !app.hidden && (
-              <View className="flex-col gap-2 items-center w-1/4">
-                <Button
-                  compactIcon
-                  onPress={handleAddRemoveFromHome}
-                  preset="alternate"
-                  className="rounded-2xl w-16 h-16">
-                  <Icon name="minus" color={theme.colors.foreground} size={size} />
-                </Button>
-                <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:removeFromHome" />
-              </View>
-            )}
+//           <View className="flex-1 flex-row flex-wrap">
+//             {/* <View className="flex-col gap-2 items-center w-16">
+//               <Button compactIcon onPress={() => {}} preset="alternate" className="rounded-2xl w-16 h-16">
+//                 <Icon name="share" color={theme.colors.foreground} size={size} />
+//               </Button>
+//               <Text className="text-sm text-muted-foreground w-full text-center" text="[settings]" />
+//             </View> */}
+//             <View className="flex-col gap-2 items-center w-1/4" style={isSystemApp ? {opacity: 0.8} : undefined}>
+//               <Button
+//                 compactIcon
+//                 onPress={isSystemApp ? undefined : handleShare}
+//                 preset="alternate"
+//                 className="rounded-2xl w-16 h-16"
+//                 disabled={isSystemApp}>
+//                 <Icon name="share" color={theme.colors.foreground} size={size} />
+//               </Button>
+//               <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:share" />
+//             </View>
+//             {app && app.hidden && (
+//               <View className="flex-col gap-2 items-center w-1/4">
+//                 <Button
+//                   compactIcon
+//                   onPress={handleAddRemoveFromHome}
+//                   preset="alternate"
+//                   className="rounded-2xl w-16 h-16">
+//                   <Icon name="plus" color={theme.colors.foreground} size={size} />
+//                 </Button>
+//                 <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:addToHome" />
+//               </View>
+//             )}
+//             {app && !app.hidden && (
+//               <View className="flex-col gap-2 items-center w-1/4">
+//                 <Button
+//                   compactIcon
+//                   onPress={handleAddRemoveFromHome}
+//                   preset="alternate"
+//                   className="rounded-2xl w-16 h-16">
+//                   <Icon name="minus" color={theme.colors.foreground} size={size} />
+//                 </Button>
+//                 <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:removeFromHome" />
+//               </View>
+//             )}
 
-            <View className="flex-col gap-2 items-center w-1/4">
-              <Button compactIcon onPress={handleFeedback} preset="alternate" className="rounded-2xl w-16 h-16">
-                <Icon name="message-2-star" color={theme.colors.foreground} size={size} />
-              </Button>
-              <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:feedback" />
-            </View>
+//             <View className="flex-col gap-2 items-center w-1/4">
+//               <Button compactIcon onPress={handleFeedback} preset="alternate" className="rounded-2xl w-16 h-16">
+//                 <Icon name="message-2-star" color={theme.colors.foreground} size={size} />
+//               </Button>
+//               <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:feedback" />
+//             </View>
 
-            <View className="flex-col gap-2 items-center w-1/4" style={isSystemApp ? {opacity: 0.8} : undefined}>
-              <Button
-                compactIcon
-                onPress={isSystemApp ? undefined : handleSettings}
-                preset="alternate"
-                className="rounded-2xl w-16 h-16"
-                disabled={isSystemApp}>
-                <Icon name="cog" color={theme.colors.foreground} size={size} />
-              </Button>
-              <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:settings" />
-            </View>
+//             <View className="flex-col gap-2 items-center w-1/4" style={isSystemApp ? {opacity: 0.8} : undefined}>
+//               <Button
+//                 compactIcon
+//                 onPress={isSystemApp ? undefined : handleSettings}
+//                 preset="alternate"
+//                 className="rounded-2xl w-16 h-16"
+//                 disabled={isSystemApp}>
+//                 <Icon name="cog" color={theme.colors.foreground} size={size} />
+//               </Button>
+//               <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:settings" />
+//             </View>
 
-            {/* Uninstall removed from 3-dot menu - users can uninstall from miniapp settings page */}
-            {/* {isUninstallable && (
-              <View className="flex-col gap-2 items-center w-1/4">
-                <Button compactIcon onPress={handleUninstall} preset="alternate" className="rounded-2xl w-16 h-16">
-                  <Icon name="trash" color={theme.colors.destructive} size={size} />
-                </Button>
-                <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:uninstall" />
-              </View>
-            )} */}
-          </View>
+//             {/* Uninstall removed from 3-dot menu - users can uninstall from miniapp settings page */}
+//             {/* {isUninstallable && (
+//               <View className="flex-col gap-2 items-center w-1/4">
+//                 <Button compactIcon onPress={handleUninstall} preset="alternate" className="rounded-2xl w-16 h-16">
+//                   <Icon name="trash" color={theme.colors.destructive} size={size} />
+//                 </Button>
+//                 <Text className="text-sm text-muted-foreground w-full text-center" tx="appInfo:uninstall" />
+//               </View>
+//             )} */}
+//           </View>
 
-          <View className="flex-1" />
+//           <View className="flex-1" />
 
-          <Button
-            tx="common:cancel"
-            onPress={() => {
-              internalRef.current?.dismiss()
-            }}
-          />
-        </View>
-      </BottomSheetModal>
-    )
-  },
-)
+//           <Button
+//             tx="common:cancel"
+//             onPress={() => {
+//               internalRef.current?.dismiss()
+//             }}
+//           />
+//         </View>
+//       </BottomSheetModal>
+//     )
+//   },
+// )
