@@ -17,6 +17,7 @@ import {
   appRegistry,
   decideDevLaunchRoute,
   devServerBridge,
+  type InstalledMiniappManifest,
   localMiniappRuntime,
   storage,
   useAppStatusStore,
@@ -135,6 +136,13 @@ export function bootstrapMentraJS() {
   devServerBridge.onRespawnBackground(async (packageName) => {
     try {
       let bgSource: string | null = null
+      // Carry the declared permissions + manifest across the respawn. The
+      // original spawn (LocalMiniappView's launch effect) passes these to
+      // spawnAndRegister; omitting them here would respawn the JSContext
+      // with no permissions, so SUBSCRIBE gates and per-call dispatch
+      // checks would start rejecting after a background hot-reload.
+      let declaredPermissions: string[] = []
+      let installedManifest: InstalledMiniappManifest | undefined
 
       const devUrlRes = storage.load<string>(`${packageName}_dev_url`)
       if (devUrlRes.is_ok()) {
@@ -146,8 +154,18 @@ export function bootstrapMentraJS() {
           console.warn(`MentraJS: respawn-bg dev server unreachable for ${packageName}`)
           return
         }
-        const entry = route.manifest.entry as {background?: string} | undefined
+        const manifest = route.manifest
+        const entry = manifest.entry as {background?: string} | undefined
         if (!entry?.background) return
+        const perms = manifest.permissions as Array<{type?: string} | string> | undefined
+        declaredPermissions = (perms ?? [])
+          .map((p) => (typeof p === "string" ? p : p?.type))
+          .filter((t): t is string => typeof t === "string")
+        installedManifest = {
+          permissions: manifest.permissions as InstalledMiniappManifest["permissions"],
+          hardwareRequirements:
+            manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
+        }
         const bgUrl = `${devUrl.replace(/\/$/, "")}/dist/${entry.background.replace(/^\.?\/+/, "")}`
         const res = await fetch(bgUrl)
         if (!res.ok) {
@@ -161,13 +179,34 @@ export function bootstrapMentraJS() {
         const entry = appRegistry.getMiniappEntryPaths(packageName, version)
         const bgUri = entry?.background
         if (!bgUri) return
+        const manifest = appRegistry.getMiniappManifest(packageName, version) as {
+          permissions?: Array<{type: string; required?: boolean; description?: string}>
+          hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+        } | null
+        declaredPermissions = (manifest?.permissions ?? [])
+          .map((p) => p.type)
+          .filter((t): t is string => typeof t === "string")
+        installedManifest = manifest
+          ? {permissions: manifest.permissions, hardwareRequirements: manifest.hardwareRequirements}
+          : undefined
         bgSource = new File(bgUri).textSync()
       }
 
       if (bgSource === null) return
       await router.unregister(packageName)
-      const ok = await router.spawnAndRegister(packageName, bgSource)
-      if (!ok) console.warn(`MentraJS: respawn-bg failed for ${packageName}`)
+      const ok = await router.spawnAndRegister(packageName, bgSource, {
+        permissions: declaredPermissions,
+        installedManifest,
+      })
+      if (!ok) {
+        console.warn(`MentraJS: respawn-bg failed for ${packageName}`)
+        return
+      }
+      // The respawned JSContext is a fresh MiniappSession with ui.bound
+      // false. The mounted WebView won't re-fire mentra.ready() (it's
+      // latched), so re-announce it so RPC replies (mentra.request) reach
+      // the UI again instead of being dropped while unbound.
+      uiRouter.notifyReopen(packageName)
     } catch (e) {
       console.warn(`MentraJS: respawn-bg threw for ${packageName}:`, e)
     }
