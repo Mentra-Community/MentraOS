@@ -12,6 +12,7 @@ import com.mentra.bluetoothsdk.DeviceStore
 
 import mentraos.ble.MentraosBle.DisplayText
 import mentraos.ble.MentraosBle.ClearDisplay
+import mentraos.ble.MentraosBle.DisconnectRequest
 import mentraos.ble.MentraosBle.PhoneToGlasses
 import mentraos.ble.MentraosBle.DisplayImage
 import mentraos.ble.MentraosBle.BatteryStateRequest
@@ -195,6 +196,14 @@ object NexProtobufUtils {
         // VersionRequest/VersionResponse removed from the BLE schema; fw_version now comes via DeviceInfo.
         Bridge.log("Nex: generateVersionRequestCommandBytes is a no-op after schema removal")
         return ByteArray(0)
+    }
+
+    fun generateDisconnectRequestCommandBytes(): ByteArray {
+        val disconnectRequest = DisconnectRequest.newBuilder().build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setDisconnect(disconnectRequest)
+            .build()
+        return generateProtobufCommandBytes(phoneToGlasses)
     }
 
     fun generateBatteryStateRequestCommandBytes(): ByteArray {

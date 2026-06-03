@@ -71,6 +71,8 @@ class MentraNex : SGCManager() {
         private const val DELAY_BETWEEN_CHUNKS_SEND: Long = 10 // Adjust this value as needed
 
         private const val INITIAL_CONNECTION_DELAY_MS = 350L // Adjust this value as needed
+        // Window to let a queued DisconnectRequest flush to the glasses before we close GATT.
+        private const val DISCONNECT_FLUSH_DELAY_MS = 250L
         private const val MICBEAT_INTERVAL_MS: Long = (1000 * 60) * 30; // micbeat every 30 minutes
 
         private const val MAIN_TASK_HANDLER_CODE_GATT_STATUS_CHANGED: Int = 110
@@ -150,8 +152,6 @@ class MentraNex : SGCManager() {
     private var isScanning: Boolean = false
 
     private var protobufVersionPosted: Boolean = false
-
-    private var hasConnectedThisSession: Boolean = false
 
     private var bleScanCallback: ScanCallback? = null
 
@@ -418,12 +418,12 @@ class MentraNex : SGCManager() {
 
     override fun disconnect() {
         DeviceStore.apply("glasses", "fullyBooted", false)
-        destroy();
+        destroy()
     }
 
     override fun forget() {
         DeviceStore.apply("glasses", "fullyBooted", false)
-        destroy();
+        destroy()
     }
 
     override fun cleanup() {
@@ -908,14 +908,6 @@ class MentraNex : SGCManager() {
                 showHomeScreen() // Turn on the NexGlasses display
                 updateConnectionState()
 
-                if (hasConnectedThisSession) {
-                    Bridge.log("Nex: BLE reconnect detected — showing reconnected banner")
-                    sendTextWall("// MentraOS Reconnected")
-                    mainTaskHandler.postDelayed({ clearDisplay() }, 3000)
-                } else {
-                    hasConnectedThisSession = true
-                }
-
                 // Post protobuf schema version information (only once)
                 if (!protobufVersionPosted) {
                     postProtobufSchemaVersionInfo()
@@ -1129,6 +1121,21 @@ class MentraNex : SGCManager() {
     }
 
     private fun destroy() {
+        // Tell the glasses this teardown is intentional so they return to the welcome
+        // screen immediately instead of holding the last frame through the firmware's
+        // unexpected-disconnect grace period. Best-effort: if the write can't be sent
+        // or doesn't flush in time, the firmware grace period is the safety net.
+        val canSend = mainGlassGatt != null && mainWriteChar != null && isMainConnected
+        if (!canSend) {
+            performDestroy()
+            return
+        }
+        Bridge.log("Nex: Sending DisconnectRequest before teardown")
+        sendProtobuf(NexProtobufUtils.generateDisconnectRequestCommandBytes(), 100)
+        mainTaskHandler.postDelayed({ performDestroy() }, DISCONNECT_FLUSH_DELAY_MS)
+    }
+
+    private fun performDestroy() {
         Bridge.log("Nex: MentraNexSGC ONDESTROY")
         showHomeScreen()
         isKilled = true
@@ -1180,7 +1187,6 @@ class MentraNex : SGCManager() {
         sendQueue.offer(emptyArray()) // is this needed?
         isWorkerRunning = false
         isMainConnected = false
-        hasConnectedThisSession = false
         Bridge.log("Nex: MentraNexSGC cleanup complete")
     }
 
