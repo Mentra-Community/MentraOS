@@ -25,6 +25,7 @@ import com.mentra.asg_client.camera.lifecycle.CameraCoordinator;
 import com.mentra.asg_client.camera.lifecycle.CameraOpener;
 import com.mentra.asg_client.camera.lifecycle.CameraRecoveryHelper;
 import com.mentra.asg_client.camera.lifecycle.CameraServiceNotification;
+import com.mentra.asg_client.camera.lifecycle.HandlerExecutor;
 import com.mentra.asg_client.camera.lifecycle.ImageReaderTwin;
 import com.mentra.asg_client.camera.lifecycle.PhotoSession;
 import com.mentra.asg_client.camera.lifecycle.VideoRecordingSession;
@@ -471,7 +472,8 @@ public class CameraNeoService extends LifecycleService {
                 // Service exists but camera/session is not ready yet.
                 Log.d(
                         TAG,
-                        "Service active but camera not ready - request will be processed when ready");
+                        "Service active but camera not ready - request will be processed when"
+                                + " ready");
             } else {
                 // Need to start the service
                 Log.d(TAG, "Starting service to process photo request");
@@ -928,7 +930,8 @@ public class CameraNeoService extends LifecycleService {
                 previewBuilder.addTarget(readers.getPreviewSurface());
                 Log.d(
                         TAG,
-                        "🔍 Using TEMPLATE_PREVIEW for repeating request, target=previewReader (ZSL compatible)");
+                        "🔍 Using TEMPLATE_PREVIEW for repeating request, target=previewReader (ZSL"
+                                + " compatible)");
             }
 
             VideoSettings pendingSettings = videoSession.pendingSettings();
@@ -960,8 +963,18 @@ public class CameraNeoService extends LifecycleService {
                     new CameraCaptureSession.StateCallback() {
                         @Override
                         public void onConfigured(@NonNull CameraCaptureSession session) {
-                            // Store the session atomically
+                            Handler handler;
+                            CameraDevice device;
                             synchronized (SERVICE_LOCK) {
+                                handler = backgroundHandler;
+                                device = cameraCoordinator.device();
+                                if (handler == null || device == null) {
+                                    Log.w(
+                                            TAG,
+                                            "onConfigured after camera teardown; closing session");
+                                    session.close();
+                                    return;
+                                }
                                 cameraCoordinator.setSession(session);
                             }
 
@@ -987,6 +1000,17 @@ public class CameraNeoService extends LifecycleService {
 
                         @Override
                         public void onConfigureFailed(@NonNull CameraCaptureSession session) {
+                            Handler handler;
+                            CameraDevice device;
+                            synchronized (SERVICE_LOCK) {
+                                handler = backgroundHandler;
+                                device = cameraCoordinator.device();
+                            }
+                            if (handler == null || device == null) {
+                                Log.w(TAG, "onConfigureFailed after camera teardown; ignoring");
+                                session.close();
+                                return;
+                            }
                             Log.e(
                                     TAG,
                                     "Failed to configure camera session for "
@@ -1007,11 +1031,15 @@ public class CameraNeoService extends LifecycleService {
                 for (Surface surface : surfaces) {
                     outputConfigurations.add(new OutputConfiguration(surface));
                 }
+                Executor sessionExecutor =
+                        backgroundHandler != null
+                                ? new HandlerExecutor(backgroundHandler)
+                                : executor;
                 SessionConfiguration config =
                         new SessionConfiguration(
                                 SessionConfiguration.SESSION_REGULAR,
                                 outputConfigurations,
-                                executor,
+                                sessionExecutor,
                                 sessionStateCallback);
                 activeCameraDevice.createCaptureSession(config);
             } else {
@@ -1054,7 +1082,6 @@ public class CameraNeoService extends LifecycleService {
                 videoSession.stopRecording(videoSession.currentVideoId());
             }
             closeCamera();
-            stopBackgroundThread();
             releaseWakeLocks();
 
             sInstance = null;
@@ -1062,6 +1089,9 @@ public class CameraNeoService extends LifecycleService {
             QueuedPhotoRequestQueue.getInstance()
                     .failAllPending("Camera service terminated unexpectedly");
         }
+        // API 28+ session callbacks run on backgroundHandler and also take SERVICE_LOCK to detect
+        // teardown. Do not join the handler thread while holding that lock.
+        stopBackgroundThread();
     }
 
     /** Start background thread */
@@ -1083,7 +1113,8 @@ public class CameraNeoService extends LifecycleService {
             if (!lockAcquired) {
                 Log.e(
                         TAG,
-                        "closeCamera: Failed to acquire lock within 5 seconds, proceeding with cleanup anyway");
+                        "closeCamera: Failed to acquire lock within 5 seconds, proceeding with"
+                                + " cleanup anyway");
             }
             cameraCoordinator.closeDeviceAndSession();
             photoSession.closeImageReadersIfPresent();
