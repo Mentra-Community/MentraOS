@@ -5710,6 +5710,18 @@ public class MentraLive extends SGCManager {
         }
     }
 
+    private double[] jsonArrayToDoubleArray(JSONArray source, int expectedLength) {
+        if (source == null) {
+            return new double[0];
+        }
+        int length = Math.min(expectedLength, source.length());
+        double[] out = new double[length];
+        for (int i = 0; i < length; i++) {
+            out[i] = source.optDouble(i, 0.0);
+        }
+        return out;
+    }
+
     private void handleStreamImuData(JSONObject json) {
         try {
             JSONArray readings = json.getJSONArray("readings");

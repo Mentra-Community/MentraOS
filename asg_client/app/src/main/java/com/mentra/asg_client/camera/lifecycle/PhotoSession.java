@@ -30,9 +30,11 @@ import com.mentra.asg_client.camera.request.StillCaptureCallback;
 import com.mentra.asg_client.sensors.ImuRecorder;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.concurrent.Executor;
+import org.json.JSONObject;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -483,13 +485,7 @@ public final class PhotoSession {
                     new HdrBurstCapture.Callback() {
                         @Override
                         public void onBurstComplete(String basePath) {
-                            ImuRecorder imu = hooks.imuRecorderOrNull();
-                            if (imu != null) {
-                                String imuPath = imu.stopRecordingAndSave(basePath);
-                                if (imuPath != null) {
-                                    Log.d(TAG, "IMU sidecar saved: " + imuPath);
-                                }
-                            }
+                            finishImuRecording(basePath);
                             notifyPhotoCaptured(basePath);
                         }
 
@@ -510,13 +506,7 @@ public final class PhotoSession {
             boolean success = saveImageDataToFile(bytes, targetPath);
 
             if (success) {
-                ImuRecorder imu = hooks.imuRecorderOrNull();
-                if (imu != null) {
-                    String imuPath = imu.stopRecordingAndSave(targetPath);
-                    if (imuPath != null) {
-                        Log.d(TAG, "IMU sidecar saved: " + imuPath);
-                    }
-                }
+                finishImuRecording(targetPath);
 
                 notifyPhotoCaptured(targetPath);
                 Log.d(TAG, "Photo saved successfully: " + targetPath);
@@ -546,6 +536,26 @@ public final class PhotoSession {
                 hooks.closeCamera();
                 hooks.stopService();
             }
+        }
+    }
+
+    private void finishImuRecording(String photoPath) {
+        ImuRecorder imu = hooks.imuRecorderOrNull();
+        if (imu == null) {
+            return;
+        }
+        JSONObject payload = imu.stopRecordingAndBuildPayload();
+        if (payload == null || payload.optInt("sampleCount", 0) <= 0) {
+            return;
+        }
+        try {
+            PhotoExifMetadataWriter.writeImuPayload(photoPath, payload);
+        } catch (IOException e) {
+            Log.w(TAG, "Failed to write IMU EXIF on photo: " + photoPath, e);
+        }
+        String imuPath = imu.writeSidecar(photoPath, payload);
+        if (imuPath != null) {
+            Log.d(TAG, "IMU sidecar saved: " + imuPath);
         }
     }
 

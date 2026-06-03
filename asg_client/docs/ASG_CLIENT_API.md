@@ -184,6 +184,8 @@ Action-button photos emitted by the glasses use the same `photo_status` shape wh
 
 Error codes the handler can emit: `BATTERY_LOW`, `VIDEO_RECORDING_ACTIVE`, `BLE_TRANSFER_BUSY`, `CAMERA_BUSY`, `INSUFFICIENT_STORAGE`, `UPLOAD_SYSTEM_BUSY`, `CAPTURE_TIMEOUT`, `CAMERA_CAPTURE_FAILED`, `BLE_TRANSFER_BUSY`, `BLE_TRANSFER_FAILED`, `BLE_TRANSFER_FAILED_TO_START`.
 
+Photo captures embed IMU payload directly into JPEG EXIF metadata when available.
+
 ---
 
 ### Video recording
