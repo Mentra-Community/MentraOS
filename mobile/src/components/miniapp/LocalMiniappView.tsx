@@ -307,6 +307,16 @@ const LocalMiniappView = forwardRef<LocalMiniappViewHandle, LocalMiniappViewProp
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
       if (!packageName) return
+      // Intercept `dev_log` envelopes from the WebView's console-tap shim
+      // (miniappGlobals.ts wraps console.log/warn/error to post these).
+      // MentraUIRouter does NOT handle dev_log — it drops unknown
+      // envelopes silently — so without this interception WebView console
+      // output never reaches the dev sidecar or the RN console. Affects
+      // both iOS and Android: the legacy single-bundle webview.tsx had
+      // its own forwardWebViewDevLog helper that did this, but
+      // LocalMiniappView (the two-layer path) lacked the equivalent
+      // until now.
+      if (forwardWebViewDevLog(packageName, event.nativeEvent.data)) return
       const mj = getMentraJS()
       mj?.uiRouter.routeFromWebView(packageName, event.nativeEvent.data)
     },
@@ -559,4 +569,48 @@ function buildSidecarBaseUrl(devUrl: string, sidecarPort: number): string | null
   } catch {
     return null
   }
+}
+
+/**
+ * Intercept the WebView's console-tap `dev_log` envelope. The shim in
+ * miniappGlobals.ts wraps `console.log/warn/error/info/debug` to post
+ * `{payload:{type:"dev_log", level, args, ...}}` via
+ * `window.ReactNativeWebView.postMessage`. Without this interception
+ * `MentraUIRouter` would drop the envelope silently (it only knows
+ * `msg` / `cancel` shapes) and the dev sidecar would never receive UI
+ * logs — that's the root cause of "WebView console output never reaches
+ * the terminal on iOS" we hit while debugging long-press.
+ *
+ * Forwards to:
+ *   1. `devServerBridge.forwardLog(packageName, level, args, ts, "ui")` —
+ *      ships to the laptop's `mentra-miniapp dev` terminal. No-op when no
+ *      sidecar is connected.
+ *   2. The React Native console — surfaces the log in Metro / Xcode /
+ *      adb logcat so installed-miniapp errors are still inspectable when
+ *      there's no laptop attached.
+ *
+ * Returns true when the frame was a dev_log envelope and was handled
+ * (caller should stop routing); false otherwise.
+ */
+function forwardWebViewDevLog(packageName: string, raw: string): boolean {
+  let env: {payload?: {type?: string; level?: string; args?: unknown; timestamp?: number}}
+  try {
+    env = JSON.parse(raw)
+  } catch {
+    return false
+  }
+  const payload = env.payload
+  if (!payload || payload.type !== "dev_log") return false
+  const level = typeof payload.level === "string" ? payload.level : "log"
+  const args = Array.isArray(payload.args) ? (payload.args as unknown[]) : []
+  const timestamp = typeof payload.timestamp === "number" ? payload.timestamp : Date.now()
+  devServerBridge.forwardLog(packageName, level, args, timestamp, "ui")
+  const tag = `[MINIAPP ${packageName}]`
+  const fn = (console as unknown as Record<string, (...a: unknown[]) => void>)[level] ?? console.log
+  try {
+    fn(tag, ...args)
+  } catch {
+    console.log(tag, ...args)
+  }
+  return true
 }

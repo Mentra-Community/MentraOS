@@ -228,39 +228,25 @@ export function NavMap({
     let downAt = 0
     let armed = false
     let cancelled = false
-    const onDown = (e: PointerEvent) => {
-      if (!e.isPrimary) {
-        // Second finger arrived (pinch). Disarm.
-        armed = false
-        cancelled = true
-        return
-      }
-      downX = e.clientX
-      downY = e.clientY
-      downAt = Date.now()
-      armed = true
-      cancelled = false
-    }
-    const onMove = (e: PointerEvent) => {
-      if (!armed) return
-      const dx = e.clientX - downX
-      const dy = e.clientY - downY
-      if (dx * dx + dy * dy > MAX_MOVE_PX * MAX_MOVE_PX) {
-        armed = false
-        cancelled = true
+    // Long-press synthesis timer for iOS. WKWebView never dispatches
+    // `contextmenu` for a finger long-press — the page sees pointerdown
+    // → pointerup ~700ms later with no contextmenu in between. We fire
+    // our own long-press signal after LONG_PRESS_MS without movement.
+    // On Android the OS still fires contextmenu first; whichever path
+    // reaches `fireLongPress(...)` first wins, the other is gated by
+    // `armed = false`.
+    const LONG_PRESS_MS = 600
+    let longPressTimer: ReturnType<typeof setTimeout> | null = null
+    const clearLongPressTimer = () => {
+      if (longPressTimer != null) {
+        clearTimeout(longPressTimer)
+        longPressTimer = null
       }
     }
-    // The WebView's `contextmenu` event IS the OS-level long-press
-    // signal. We can't stretch the duration past it because the
-    // WebView synthesizes a pointerup right after, killing the
-    // gesture. Treat contextmenu itself as "the user long-pressed
-    // here" — same approach google.com/maps uses.
-    const onContextMenu = (e: Event) => {
-      e.preventDefault()
-      console.log("[NavMap] contextmenu fired", {armed, cancelled, sinceDown: Date.now() - downAt})
+    const fireLongPress = (source: "timer" | "contextmenu") => {
       if (!armed || cancelled) return
-      if (Date.now() - downAt > MAX_CONTEXTMENU_DELAY_MS) return
       armed = false
+      clearLongPressTimer()
       const rect = container.getBoundingClientRect()
       const point = new g.maps.Point(downX - rect.left, downY - rect.top)
       const proj =
@@ -274,15 +260,70 @@ export function NavMap({
       }
       const lat = ll.lat()
       const lng = ll.lng()
-      console.log("[NavMap] long-press @", lat.toFixed(6), lng.toFixed(6))
+      console.log(`[NavMap] long-press @`, lat.toFixed(6), lng.toFixed(6), `(via ${source})`)
       onLongPressRef.current?.({lat, lng})
+    }
+    const onDown = (e: PointerEvent) => {
+      if (!e.isPrimary) {
+        // Second finger arrived (pinch). Disarm.
+        armed = false
+        cancelled = true
+        clearLongPressTimer()
+        return
+      }
+      downX = e.clientX
+      downY = e.clientY
+      downAt = Date.now()
+      armed = true
+      cancelled = false
+      // Start the iOS fallback timer.
+      clearLongPressTimer()
+      longPressTimer = setTimeout(() => fireLongPress("timer"), LONG_PRESS_MS)
+    }
+    const onMove = (e: PointerEvent) => {
+      if (!armed) return
+      const dx = e.clientX - downX
+      const dy = e.clientY - downY
+      if (dx * dx + dy * dy > MAX_MOVE_PX * MAX_MOVE_PX) {
+        armed = false
+        cancelled = true
+        // User panned — kill the fallback timer so it doesn't fire
+        // after they release.
+        clearLongPressTimer()
+      }
+    }
+    // pointerup before the timer fires = short tap; cancel the long
+    // press so it doesn't trigger ~hundreds of ms later.
+    const onUp = () => {
+      clearLongPressTimer()
+    }
+    const onCancel = () => {
+      armed = false
+      cancelled = true
+      clearLongPressTimer()
+    }
+    // Android still fires `contextmenu` at ~500ms; iOS never does.
+    // Whichever path reaches `fireLongPress` first wins, and the second
+    // is gated by `armed = false`. Keeping both means we get the
+    // OS-native long-press feel on Android and a 600ms timer fallback
+    // on iOS without conditional platform code.
+    const onContextMenu = (e: Event) => {
+      e.preventDefault()
+      if (!armed || cancelled) return
+      if (Date.now() - downAt > MAX_CONTEXTMENU_DELAY_MS) return
+      fireLongPress("contextmenu")
     }
     container.addEventListener("pointerdown", onDown, {capture: true})
     container.addEventListener("pointermove", onMove, {capture: true})
+    container.addEventListener("pointerup", onUp, {capture: true})
+    container.addEventListener("pointercancel", onCancel, {capture: true})
     container.addEventListener("contextmenu", onContextMenu)
     return () => {
+      clearLongPressTimer()
       container.removeEventListener("pointerdown", onDown, {capture: true} as any)
       container.removeEventListener("pointermove", onMove, {capture: true} as any)
+      container.removeEventListener("pointerup", onUp, {capture: true} as any)
+      container.removeEventListener("pointercancel", onCancel, {capture: true} as any)
       container.removeEventListener("contextmenu", onContextMenu)
     }
   }, [ready])

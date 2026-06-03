@@ -102,6 +102,17 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
       .catch(() => {})
   }, [focused, query, selected, refreshKey])
 
+  // Read coords via a ref inside the effect instead of as a dependency.
+  // `coords` ticks on every GPS update (every ~1-2s in the foreground),
+  // and including it in the deps re-fires the search every tick — the
+  // user sees their suggestions list rebuild itself every couple of
+  // seconds while they're not even typing. The location bias only
+  // matters at the moment the search is issued, so a ref read at
+  // call-time gives the same result without retriggering.
+  const coordsRef = useRef(coords)
+  useEffect(() => {
+    coordsRef.current = coords
+  }, [coords])
   useEffect(() => {
     if (selected || disabled || !focused) return
     const trimmed = query.trim()
@@ -114,7 +125,8 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
     setLoading(true)
     const t = setTimeout(() => {
       setError(null)
-      autocomplete({query: trimmed, near: coords ? {lat: coords.lat, lng: coords.lng} : undefined})
+      const c = coordsRef.current
+      autocomplete({query: trimmed, near: c ? {lat: c.lat, lng: c.lng} : undefined})
         .then((results) => {
           setSuggestions(results)
           setOpen(true)
@@ -128,7 +140,8 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
         })
     }, DEBOUNCE_MS)
     return () => clearTimeout(t)
-  }, [query, selected, disabled, focused, autocomplete, coords])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, selected, disabled, focused, autocomplete])
 
   async function pick(s: PlaceSuggestion) {
     setOpen(false)
