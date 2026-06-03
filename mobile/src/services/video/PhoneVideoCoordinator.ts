@@ -131,12 +131,13 @@ export class PhoneVideoCoordinator {
     for (const rec of owned) {
       try {
         await BluetoothSdk.stopVideoRecording(rec.recordingId)
+        // Only drop tracking once the BLE stop actually dispatched (mirrors
+        // stopRecording). If we deleted on failure the glasses could still be
+        // recording while the single-recording guard reads "idle", letting the
+        // next start hand back a phantom id that can't stop the real recording.
+        this.activeRecordings.delete(rec.recordingId)
       } catch (err) {
         console.warn(`[PhoneVideoCoordinator] failed to stop ${rec.recordingId} for ${packageName} on cleanup`, err)
-      } finally {
-        // Best-effort cleanup — drop tracking regardless so the map doesn't leak
-        // entries for a gone miniapp.
-        this.activeRecordings.delete(rec.recordingId)
       }
     }
   }
