@@ -1,5 +1,5 @@
 {
-  "name": "@mentra/cloud-audio",
+  "name": "@mentra/cloud-runtime",
   "version": "0.0.0",
   "private": true,
   "type": "module",

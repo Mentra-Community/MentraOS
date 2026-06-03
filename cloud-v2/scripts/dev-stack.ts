@@ -29,7 +29,7 @@
 import crypto from "node:crypto";
 import { Buffer } from "node:buffer";
 import { startCore } from "../packages/core/src/index";
-import { startAudio } from "../packages/audio/src/index";
+import { startAudio } from "../packages/runtime/src/index";
 import { startTestOem } from "../test/test-oem/src/index";
 import { OemModel } from "../packages/core/src/models/oem.model";
 

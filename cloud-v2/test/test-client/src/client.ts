@@ -19,7 +19,7 @@
 import type { udp } from "bun";
 import { Buffer } from "node:buffer";
 
-// Subscription types duplicated from `packages/audio/src/audio.types.ts`.
+// Subscription types duplicated from `packages/runtime/src/audio.types.ts`.
 // Kept local to the client to preserve the test-client tsconfig's `rootDir`
 // boundary; mirrors the cloud-side wire format. Update both if either
 // changes (compile-time test below would help — TODO).
@@ -45,7 +45,7 @@ export type AudioSubscription =
 
 /**
  * Format an internal subscription to its v1 wire string. Mirror of
- * `packages/audio/src/wire/phone-protocol.formatPhoneSubscription` (kept local
+ * `packages/runtime/src/wire/phone-protocol.formatPhoneSubscription` (kept local
  * to preserve the test-client tsconfig's `rootDir` boundary; update both if
  * the grammar changes).
  */

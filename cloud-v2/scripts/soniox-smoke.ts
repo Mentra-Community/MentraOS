@@ -22,7 +22,7 @@
 
 import crypto from "node:crypto";
 import { startCore } from "../packages/core/src/index";
-import { startAudio } from "../packages/audio/src/index";
+import { startAudio } from "../packages/runtime/src/index";
 import { startTestOem } from "../test/test-oem/src/index";
 import { OemModel } from "../packages/core/src/models/oem.model";
 import { TestClient } from "../test/test-client/src/client";

@@ -1,6 +1,7 @@
 /**
- * `@mentra/cloud-audio` — Audio Stack. UDP ingress, workers, Redis-routed
- * ownership, transcription + translation providers.
+ * `@mentra/cloud-runtime` — Mentra Runtime Services. Audio (UDP ingress, workers,
+ * Redis-routed ownership, transcription + translation providers) is the first
+ * service; streaming and photo land here too.
  *
  * Boot order:
  *   1. Connect Redis (main + streams clients).
