@@ -10,8 +10,6 @@ import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
-import android.hardware.camera2.CaptureResult;
-import android.hardware.camera2.TotalCaptureResult;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -289,16 +287,9 @@ public class WhipCameraCapturer implements VideoCapturer {
       builder.set(CaptureRequest.HOT_PIXEL_MODE,
           CaptureRequest.HOT_PIXEL_MODE_OFF);
 
-      mCaptureSession.setRepeatingRequest(builder.build(), new CameraCaptureSession.CaptureCallback() {
-        @Override
-        public void onCaptureCompleted(@NonNull CameraCaptureSession session,
-            @NonNull CaptureRequest request, @NonNull TotalCaptureResult result) {
-          Long frameDurationNs = result.get(CaptureResult.SENSOR_FRAME_DURATION);
-          if (frameDurationNs != null && frameDurationNs > 0) {
-            notifyCameraFps(1_000_000_000.0 / frameDurationNs);
-          }
-        }
-      }, mCameraHandler);
+      // Avoid per-frame metadata callbacks: SENSOR_FRAME_DURATION is instantaneous and can make
+      // resolvedConfig.video.fps jitter even though the requested camera FPS is stable.
+      mCaptureSession.setRepeatingRequest(builder.build(), null, mCameraHandler);
 
       // Match the stock WebRTC Camera2 session semantics:
       // 1. Apply a texture transform for sensor/front-camera correction.
