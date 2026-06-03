@@ -23,20 +23,12 @@ function withSettingsGradleModifications(config: any) {
   return withSettingsGradle(config, (config) => {
     let settingsGradle = config.modResults.contents
     const bluetoothSdkRoot = getBluetoothSdkRoot()
-
-    if (!settingsGradle.includes("def mentraBluetoothSdkRoot =")) {
-      settingsGradle = `
-def mentraBluetoothSdkRoot = System.getenv("MENTRA_BLUETOOTH_SDK_PACKAGE_PATH")
-if (!mentraBluetoothSdkRoot) {
-  mentraBluetoothSdkRoot = ${toGroovyString(bluetoothSdkRoot)}
-}
-${settingsGradle}`
-    }
+    const bluetoothSdkRootExpression = `System.getenv("MENTRA_BLUETOOTH_SDK_PACKAGE_PATH") ?: ${toGroovyString(bluetoothSdkRoot)}`
 
     if (!settingsGradle.includes("project(':mentra-bluetooth-sdk').projectDir")) {
       const bluetoothSdkProjectBlock = `
   if (findProject(':mentra-bluetooth-sdk') != null) {
-    project(':mentra-bluetooth-sdk').projectDir = new File(mentraBluetoothSdkRoot, 'android')
+    project(':mentra-bluetooth-sdk').projectDir = new File(${bluetoothSdkRootExpression}, 'android')
   }
 `
       const lc3Include = "  include ':lc3Lib'"
@@ -53,7 +45,7 @@ ${settingsGradle}`
 
     if (!settingsGradle.includes("project(':lc3Lib').projectDir")) {
       settingsGradle += `
-  project(':lc3Lib').projectDir = new File(mentraBluetoothSdkRoot, 'android/lc3Lib')
+  project(':lc3Lib').projectDir = new File(${bluetoothSdkRootExpression}, 'android/lc3Lib')
   `
     }
 
@@ -65,7 +57,7 @@ ${settingsGradle}`
 
     if (!settingsGradle.includes("project(':silero').projectDir")) {
       settingsGradle += `
-  project(':silero').projectDir = new File(mentraBluetoothSdkRoot, 'android/silero')
+  project(':silero').projectDir = new File(${bluetoothSdkRootExpression}, 'android/silero')
   `
     }
 

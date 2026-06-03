@@ -657,6 +657,14 @@ public class AsgClientServiceManager {
     }
 
     /**
+     * Mark the phone connection active after any standard command arrives from the phone.
+     */
+    public void onPhoneCommandReceived() {
+        Log.d(TAG, "📱 Phone command received");
+        service.onPhoneCommandReceived();
+    }
+
+    /**
      * Handle service heartbeat received from MentraLiveSGC
      */
     public void onServiceHeartbeatReceived() {
