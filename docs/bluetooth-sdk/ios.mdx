@@ -4,32 +4,49 @@ description: "Use the Mentra Bluetooth SDK from a native iOS app."
 icon: "apple"
 ---
 
-Native iOS apps use the CocoaPod `MentraBluetoothSDK`.
+Native iOS apps use the `MentraBluetoothSDK` Swift package.
 
 ## Requirements
 
 - iOS deployment target `15.1` or newer.
 - Xcode 15 or newer.
-- CocoaPods.
+- Swift Package Manager.
 - A physical iPhone for Bluetooth, camera, microphone, direct phone photo, and direct phone WebRTC testing.
 
-## Podfile
+## Install
 
-```ruby
-platform :ios, '15.1'
+The public SwiftPM repository is:
 
-target 'YourApp' do
-  use_frameworks!
-
-  pod 'MentraBluetoothSDK', '0.1.6'
-end
+```text
+https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Install pods:
+In Xcode, choose **File > Add Package Dependencies**, enter that URL, select version `0.1.7` or newer, and add the `MentraBluetoothSDK` product to your app target.
 
-```bash
-pod install
+For `Package.swift` consumers:
+
+```swift
+.package(
+  url: "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git",
+  from: "0.1.7"
+)
 ```
+
+Then add the product to your target:
+
+```swift
+.product(name: "MentraBluetoothSDK", package: "mentra-bluetooth-sdk-ios")
+```
+
+For local SDK development, add the package folder directly in Xcode:
+
+```text
+/path/to/MentraOS/mobile/modules/bluetooth-sdk
+```
+
+<Warning>
+The SwiftPM package currently builds the core Bluetooth SDK only. It does not build the optional local STT, Nex/SwiftProtobuf, Vuzix/Ultralite, or tar.bz2 extraction code paths.
+</Warning>
 
 ## Permissions
 
@@ -133,11 +150,10 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
 
 ## Local SDK Override
 
-Use this when testing SDK source changes locally:
+Use this when testing native Swift SDK source changes locally:
 
-```bash
-export MENTRA_BLUETOOTH_SDK_LOCAL_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk/ios
-pod install
+```text
+/path/to/MentraOS/mobile/modules/bluetooth-sdk
 ```
 
-Keep `MENTRA_BLUETOOTH_SDK_LOCAL_PATH` in your shell or CI environment, not in committed project settings.
+Add that folder as a local Swift package in Xcode. Keep local paths in your workspace settings or CI environment, not in committed project settings.

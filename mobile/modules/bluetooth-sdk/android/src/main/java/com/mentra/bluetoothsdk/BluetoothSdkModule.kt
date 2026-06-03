@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk
 
+import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -204,11 +205,17 @@ class BluetoothSdkModule : Module() {
                     appContext.reactContext
                             ?: appContext.currentActivity
                                     ?: throw IllegalStateException("No context available")
+            BleTraceLogger.logLifecycle(context, "BluetoothSdkModule", "module_create")
             sdk = MentraBluetoothSdk.create(context, sdkListener)
             deviceManager = DeviceManager.getInstance()
         }
 
         OnDestroy {
+            BleTraceLogger.logLifecycle(
+                    appContext.reactContext ?: appContext.currentActivity,
+                    "BluetoothSdkModule",
+                    "module_destroy"
+            )
             sdk?.close()
             sdk = null
             deviceManager = null

@@ -20,7 +20,7 @@ type VideoFps = "30" | "15" | "5"
 type MaxRecordingTime = "3m" | "5m" | "10m" | "15m" | "20m"
 type CameraRoiPosition = 0 | 1 | 2 // 0=Center, 1=Bottom, 2=Top
 
-const CAMERA_FOV_MIN = 82
+const CAMERA_FOV_MIN = 62
 const CAMERA_FOV_MAX = 118
 
 const PHOTO_SIZE_OPTIONS = [
