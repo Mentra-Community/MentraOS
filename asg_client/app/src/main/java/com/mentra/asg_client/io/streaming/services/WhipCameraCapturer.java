@@ -296,6 +296,7 @@ public class WhipCameraCapturer implements VideoCapturer {
       // 2. Preserve frame rotation metadata so downstream width/height handling stays correct.
       mSurfaceTextureHelper.startListening(frame -> {
         if (shouldDropFrame(frame.getTimestampNs())) {
+          // SurfaceTextureHelper owns and releases this input frame after onFrame returns.
           return;
         }
 
@@ -316,17 +317,37 @@ public class WhipCameraCapturer implements VideoCapturer {
               + ", frame rotation: " + frameRotation + ")");
         }
 
-        TextureBufferImpl modifiedBuffer = texBuffer.applyTransformMatrix(
-            createTextureTransformMatrix(), texBuffer.getWidth(), texBuffer.getHeight());
-        VideoFrame.Buffer outputBuffer = adaptOutputBuffer(modifiedBuffer);
-        if (outputBuffer != modifiedBuffer) {
-          modifiedBuffer.release();
-        }
+        TextureBufferImpl modifiedBuffer = null;
+        VideoFrame.Buffer outputBuffer = null;
+        VideoFrame modifiedFrame = null;
+        try {
+          modifiedBuffer = texBuffer.applyTransformMatrix(
+              createTextureTransformMatrix(), texBuffer.getWidth(), texBuffer.getHeight());
+          outputBuffer = adaptOutputBuffer(modifiedBuffer);
+          if (outputBuffer != modifiedBuffer) {
+            modifiedBuffer.release();
+            modifiedBuffer = null;
+          }
 
-        VideoFrame modifiedFrame = new VideoFrame(
-            outputBuffer, frameRotation, frame.getTimestampNs());
-        mObserver.onFrameCaptured(modifiedFrame);
-        modifiedFrame.release();
+          VideoFrame.Buffer frameBuffer = outputBuffer;
+          if (frameBuffer == modifiedBuffer) {
+            modifiedBuffer = null;
+          }
+          modifiedFrame = new VideoFrame(frameBuffer, frameRotation, frame.getTimestampNs());
+          outputBuffer = null;
+          mObserver.onFrameCaptured(modifiedFrame);
+        } finally {
+          if (modifiedFrame != null) {
+            modifiedFrame.release();
+          } else {
+            if (outputBuffer != null) {
+              outputBuffer.release();
+            }
+            if (modifiedBuffer != null) {
+              modifiedBuffer.release();
+            }
+          }
+        }
       });
 
       mObserver.onCapturerStarted(true);
