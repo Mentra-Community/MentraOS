@@ -253,6 +253,9 @@ dependencies {
   // OkHttp for HTTP requests
   implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 
+  // Local photo upload receiver
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
+
   // LC3 audio codec library
   implementation project(':lc3Lib')
 
