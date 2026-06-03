@@ -73,12 +73,23 @@ interface RuntimeModule {
   onConnected(handler: () => void): () => void
   onDisconnected(handler: (info: { reason: string }) => void): () => void
   onError(handler: (err: ProtocolError) => void): () => void
+
+  // generic surface for forwarding / iteration / logging (typed via the event map)
+  on<K extends keyof RuntimeEvents>(event: K, handler: (data: RuntimeEvents[K]) => void): () => void
+  off<K extends keyof RuntimeEvents>(event: K, handler: (data: RuntimeEvents[K]) => void): void
+  onAny(handler: (event: keyof RuntimeEvents, data: unknown) => void): () => void
 }
 ```
 
-- **Events are per-event methods**, not a stringly emitter: type
-  `cloud.runtime.on` and the IDE lists every event, each callback typed to its
-  payload, nothing to mistype. Every `on*` returns an unsubscribe function.
+- **Events: per-event methods plus a typed generic emitter, one source of truth.**
+  A single typed emitter (an event map `RuntimeEvents` of name to payload) is the
+  implementation; the `on*` methods are thin sugar over it. Use the **per-event
+  methods** (`cloud.runtime.onTranscript(cb)`) for the common case: discoverable
+  (the IDE lists them), payload typed, nothing to mistype. Use the **generic
+  `on(event, cb)` / `onAny(cb)`** for forwarding, iteration, or logging (for
+  example island re-emitting all runtime events). The generic `on` is still typed
+  through the event map, so there are no magic strings. Every `on*`/`on` returns
+  an unsubscribe function.
 - `connect()` does the `connection.init` / `connection.ack` handshake (Bearer from
   `cloud.auth`), reconnect with backoff, and the client-driven liveness ping.
 - `setSubscriptions` sends `{ subscriptions, sessionId, version }` (full-replace).
