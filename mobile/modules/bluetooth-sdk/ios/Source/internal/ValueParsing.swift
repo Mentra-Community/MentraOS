@@ -7,6 +7,13 @@ func intValue(_ value: Any?) -> Int? {
     return nil
 }
 
+func doubleValue(_ value: Any?) -> Double? {
+    if let double = value as? Double { return double }
+    if let int = value as? Int { return Double(int) }
+    if let number = value as? NSNumber { return number.doubleValue }
+    return nil
+}
+
 func stringValue(_ values: [String: Any], _ keys: String...) -> String? {
     stringValue(values, keys)
 }

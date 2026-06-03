@@ -62,7 +62,7 @@ data class StreamResolvedVideoConfig @JvmOverloads constructor(
     val captureWidth: Int? = null,
     val captureHeight: Int? = null,
     val bitrate: Int,
-    val fps: Int,
+    val fps: Double,
 ) {
     fun toMap(): Map<String, Any> =
         buildMap {
@@ -84,7 +84,7 @@ data class StreamResolvedVideoConfig @JvmOverloads constructor(
                 captureWidth = numberValue(values, "captureWidth"),
                 captureHeight = numberValue(values, "captureHeight"),
                 bitrate = numberValue(values, "bitrate") ?: return null,
-                fps = numberValue(values, "fps") ?: return null,
+                fps = doubleValue(values, "fps") ?: return null,
             )
         }
     }
