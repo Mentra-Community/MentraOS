@@ -517,10 +517,11 @@ class AppRegistry {
     storage.remove(`${packageName}_dev_url`)
     storage.remove(`${packageName}_dev_port`)
     storage.remove(`${packageName}_dev_last_reachable`)
-    // Drop the home-tile metadata record + index entry. Dev miniapps load
+    // Drop the single dev slot's home-tile metadata + dev URL/port keys (all
+    // stored under DEV_APP_PACKAGE_NAME, not `packageName`). Dev miniapps load
     // over HTTP and aren't on disk, so without this the projected tile would
     // reappear on the next getInstalledMiniapps() refresh.
-    unregisterDevApp(packageName)
+    unregisterDevApp()
   }
 
   /**
@@ -858,30 +859,68 @@ export function getLocalAppScreenshot(packageName: string): string | undefined {
 export interface DevAppRecord {
   packageName: string
   name: string
-  /** Absolute http(s) icon URL, e.g. `${devUrl}/icon.png`. */
   iconUrl: string
   devUrl: string
+  devPort?: number
   permissions?: Array<string | {type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
 }
 
 const DEV_APPS_INDEX_KEY = "dev_apps_index"
 
-/** Register (or refresh) a dev miniapp's home-tile metadata. */
+/**
+ * The one and only package name a dev miniapp is registered under.
+ *
+ * There is a SINGLE dev slot: scanning a new QR (or entering a new dev URL)
+ * replaces the previous dev app rather than adding a second tile. Because the
+ * whole launch chain — JSContext registration, UI-router binding,
+ * setForeground, dev_url/dev_port storage keys, respawn-bg lookup — keys on
+ * this package name, every consumer MUST use `DEV_APP_PACKAGE_NAME` (not the
+ * manifest's real packageName) so messages route consistently. Mixing the two
+ * was the cause of the "CONNECT_ACK timeout" — the tile said `com.dev` while
+ * the dev URL/port and foreground target used the manifest name.
+ */
+export const DEV_APP_PACKAGE_NAME = "com.dev"
+const DEV_APP_NAME = "Dev"
+
+/**
+ * Register (or replace) THE dev miniapp. Persists the home-tile metadata AND
+ * the dev_url/dev_port keyed on {@link DEV_APP_PACKAGE_NAME}, so this function
+ * is the single source of truth for the dev slot — callers must not write the
+ * `*_dev_url` / `*_dev_port` keys under the manifest's real package name.
+ */
 export function registerDevApp(record: DevAppRecord): void {
-  storage.save(`${record.packageName}_dev_meta`, JSON.stringify(record))
+  const devRecord: DevAppRecord = {
+    ...record,
+    packageName: DEV_APP_PACKAGE_NAME,
+    name: DEV_APP_NAME,
+    iconUrl: record.iconUrl,
+  }
+  storage.save(`${DEV_APP_PACKAGE_NAME}_dev_meta`, JSON.stringify(devRecord))
+  // The launch chain (LocalMiniappView.resolveDevPort, mentraJsBootstrap
+  // respawn-bg) reads these keys under DEV_APP_PACKAGE_NAME — persist them
+  // here so callers can't key them on the wrong (real) package name.
+  storage.save(`${DEV_APP_PACKAGE_NAME}_dev_url`, record.devUrl)
+  if (typeof record.devPort === "number" && Number.isFinite(record.devPort)) {
+    storage.save(`${DEV_APP_PACKAGE_NAME}_dev_port`, record.devPort)
+  } else {
+    storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_port`)
+  }
   const idx = getDevAppIndex()
-  if (!idx.includes(record.packageName)) {
-    idx.push(record.packageName)
+  if (!idx.includes(DEV_APP_PACKAGE_NAME)) {
+    idx.push(DEV_APP_PACKAGE_NAME)
     storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(idx))
   }
   appRegistry.markRefreshNeeded()
 }
 
-/** Drop a dev miniapp's home-tile metadata. */
-export function unregisterDevApp(packageName: string): void {
-  storage.remove(`${packageName}_dev_meta`)
-  const idx = getDevAppIndex().filter((p) => p !== packageName)
+/** Drop the dev miniapp's home-tile metadata + dev URL/port keys. */
+export function unregisterDevApp(): void {
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_url`)
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_port`)
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_last_reachable`)
+  const idx = getDevAppIndex().filter((p) => p !== DEV_APP_PACKAGE_NAME)
   storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(idx))
   appRegistry.markRefreshNeeded()
 }

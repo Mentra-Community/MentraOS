@@ -40,7 +40,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
   }
 
   return (
-    <View className={`items-center ${app.compatibility?.isCompatible ? "" : "opacity-30"}`}>
+    <View className={`items-center justify-center ${app.compatibility?.isCompatible ? "" : "opacity-30"}`}>
       <WrapperComponent
         onPress={onClick}
         activeOpacity={onClick ? 0.7 : undefined}
@@ -62,6 +62,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
               <ActivityIndicator size="large" color={theme.colors.palette.white} />
             </View>
           )}
+          {app.isMiniappDev && <DevMiniappBadge size={iconSize.width as number}/>}
           <Image
             source={imageSource}
             style={{width: "100%", height: "100%", resizeMode: "cover"}}
@@ -85,7 +86,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
           <Icon name="alert" size={theme.spacing.s4} color={theme.colors.error} />
         </View>
       )}
-      {app.isMiniappDev && <DevMiniappBadge />}
+      {/* {app.isMiniappDev && <DevMiniappBadge size={iconSize.width as number}/>} */}
       {/* Show wifi-off badge for offline apps (excluding camera app) */}
       {/* disabled for now */}
       {/* {app.offline && app.packageName !== getMoreAppsApplet().packageName && app.packageName !== cameraPackageName && (

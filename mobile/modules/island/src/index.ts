@@ -9,6 +9,7 @@ export {
   registerDevApp,
   unregisterDevApp,
   getDevAppRecords,
+  DEV_APP_PACKAGE_NAME,
   type DevAppRecord,
 } from "./services/AppRegistry"
 export {default as devServerBridge} from "./services/DevServerBridge"

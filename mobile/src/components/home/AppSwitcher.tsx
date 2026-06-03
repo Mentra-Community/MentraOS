@@ -195,6 +195,14 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
 
   const imageHeight = imageAspectRatio != null ? (CARD_WIDTH - 4) * imageAspectRatio : null
 
+  const SwipeIndicator = useCallback(() => {
+    return (
+      <View className="absolute bottom-2 left-0 right-0 items-center">
+        <View className="w-24 h-[5px] rounded-full bg-white/30" />
+      </View>
+    )
+  }, [])
+
   return (
     <GestureDetector gesture={composedGesture}>
       <AnimatedPressable
@@ -219,27 +227,23 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
           </Animated.View>
         </View>
         <View
-          className="rounded-3xl overflow-hidden w-full shadow-2xl bg-primary-foreground"
+          className="rounded-4xl overflow-hidden w-full shadow-2xl bg-primary-foreground"
           style={{
             boxShadow: "0px 8px 32px 0px rgba(0, 0, 0, 0.2)",
-            height: imageHeight,
+            // height: imageHeight,
+            height: CARD_HEIGHT - 24,
           }}>
-          {!app.screenshot && (
-            <View className="flex-1 items-center justify-center">
-              <AppIcon app={app} className="w-12 h-12" />
-            </View>
-          )}
-
-          {app.screenshot && (
+          {app.screenshot ? (
             <View className="flex-1" style={{overflow: "hidden"}}>
               <Image source={{uri: app.screenshot}} style={{width: "100%", height: "100%"}} contentFit="cover" />
+              <SwipeIndicator />
+            </View>
+          ) : (
+            <View className="flex-1 items-center justify-center">
+              <AppIcon app={app} className="w-12 h-12" />
+              <SwipeIndicator />
             </View>
           )}
-        </View>
-
-        {/* Swipe indicator */}
-        <View className="absolute bottom-2 left-0 right-0 items-center">
-          <View className="w-24 h-[5px] rounded-full bg-white/30" />
         </View>
       </AnimatedPressable>
     </GestureDetector>

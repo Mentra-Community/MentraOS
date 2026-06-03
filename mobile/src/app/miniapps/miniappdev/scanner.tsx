@@ -8,9 +8,15 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {appRegistry, decideDevLaunchRoute, registerDevApp, useAppStatusStore, type DevAppRecord} from "@mentra/island"
+import {
+  appRegistry,
+  decideDevLaunchRoute,
+  registerDevApp,
+  useAppStatusStore,
+  DEV_APP_PACKAGE_NAME,
+  type DevAppRecord,
+} from "@mentra/island"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
-import {storage} from "@/utils/storage/storage"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
 
 export default function MiniappDeveloperScannerScreen() {
@@ -101,27 +107,22 @@ export default function MiniappDeveloperScannerScreen() {
           : `${devUrl.replace(/\/$/, "")}/${iconPath.replace(/^\//, "")}`
       }
 
-      if (packageName) {
-        storage.save(`${packageName}_dev_url`, devUrl)
-        if (devPort) {
-          const portNum = parseInt(devPort, 10)
-          if (Number.isFinite(portNum)) {
-            storage.save(`${packageName}_dev_port`, portNum)
-          }
-        }
-        // Persist a home-tile record so the dev miniapp is re-launchable
-        // without re-scanning. Dev apps load over HTTP and aren't installed
-        // to disk, so the lmas/ scan can't surface them.
-        if (manifest) {
-          registerDevApp({
-            packageName,
-            name: name ?? packageName,
-            iconUrl: iconUrl ?? `${devUrl.replace(/\/$/, "")}/icon.png`,
-            devUrl,
-            permissions: manifest.permissions as DevAppRecord["permissions"],
-            hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
-          })
-        }
+      // Persist a home-tile record so the dev miniapp is re-launchable
+      // without re-scanning. Dev apps load over HTTP and aren't installed
+      // to disk, so the lmas/ scan can't surface them. registerDevApp owns
+      // the dev_url/dev_port keys (under DEV_APP_PACKAGE_NAME) so the launch
+      // chain reads them under the same single package name it routes by.
+      if (manifest) {
+        const portNum = devPort ? parseInt(devPort, 10) : NaN
+        registerDevApp({
+          packageName,
+          name: name ?? packageName,
+          iconUrl: iconUrl ?? `${devUrl.replace(/\/$/, "")}/icon.png`,
+          devUrl,
+          devPort: Number.isFinite(portNum) ? portNum : undefined,
+          permissions: manifest.permissions as DevAppRecord["permissions"],
+          hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+        })
       }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {})
@@ -158,7 +159,10 @@ export default function MiniappDeveloperScannerScreen() {
 
       clearHistoryAndGoHome()
       await useAppStatusStore.getState().refresh()
-      await useAppStatusStore.getState().setForeground(packageName)
+      // Foreground the single dev slot, NOT the manifest's real package name —
+      // the projected tile + JSContext are registered under DEV_APP_PACKAGE_NAME,
+      // so setForeground(realName) would no-op (the store has no such app).
+      await useAppStatusStore.getState().setForeground(DEV_APP_PACKAGE_NAME)
     } catch (error) {
       showAlert("Error", String(error), [{text: "OK", onPress: () => setScanned(false)}])
     }

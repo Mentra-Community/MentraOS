@@ -48,7 +48,7 @@ const MIN_FLICK_TRANSLATION = 12
 // blow past the off-screen target and snap back visibly.
 const MAX_COMMIT_VELOCITY = 3000
 const FADE_IN_DELAY_MS = 0
-const FADE_IN_DURATION_MS = 1000
+const FADE_IN_DURATION_MS = Platform.OS === "ios" ? 250 : 400
 const FADE_IN_SCALE_FROM = 0.4
 const FADE_OUT_DURATION_MS = 300
 const FADE_OUT_SCALE_TO = 0.4

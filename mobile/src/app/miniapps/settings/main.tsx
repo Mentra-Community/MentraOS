@@ -29,7 +29,6 @@ export default function MainSettingsPage() {
   })
 
   return (
-    <>
       <Screen preset="fixed" safeAreaEdges={["top"]} ref={viewShotRef} className="px-0">
         <ScrollView className="pt-8 px-6" contentInsetAdjustmentBehavior="automatic">
           <View style={{flex: 1, gap: theme.spacing.s6}}>
@@ -104,6 +103,5 @@ export default function MainSettingsPage() {
           <Spacer height={theme.spacing.s10} />
         </ScrollView>
       </Screen>
-    </>
   )
 }
