@@ -1,10 +1,6 @@
 name: Mobile App iOS Build
 
 on:
-  pull_request:
-    paths:
-      - "mobile/**"
-      - ".github/workflows/mentraos-manager-ios-build.yml"
   push:
     branches:
       - main
