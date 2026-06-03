@@ -6,10 +6,10 @@ import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
 const startStream = mock(async (_req: unknown) => {})
 const startExternallyManagedStream = mock(async (_req: unknown) => {})
 const stopStream = mock(async () => {})
-const sendCloudStreamKeepAlive = mock(async (_req: unknown) => {})
+const sendExternallyManagedStreamKeepAlive = mock(async (_req: unknown) => {})
 
 mock.module("@mentra/bluetooth-sdk-internal", () => ({
-  default: {startStream, startExternallyManagedStream, stopStream, sendCloudStreamKeepAlive},
+  default: {startStream, startExternallyManagedStream, stopStream, sendExternallyManagedStreamKeepAlive},
 }))
 
 const provisionManagedStream = mock(async (_destinations?: unknown) => ({
@@ -41,7 +41,7 @@ beforeEach(() => {
   startStream.mockClear()
   startExternallyManagedStream.mockClear()
   stopStream.mockClear()
-  sendCloudStreamKeepAlive.mockClear()
+  sendExternallyManagedStreamKeepAlive.mockClear()
   provisionManagedStream.mockClear()
   getManagedStreamStatus.mockClear()
   teardownManagedStream.mockClear()

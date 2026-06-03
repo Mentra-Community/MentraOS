@@ -422,7 +422,7 @@ export class PhoneStreamCoordinator {
       },
       {
         sendKeepAlive: async (ackId) => {
-          await CoreModule.sendCloudStreamKeepAlive({
+          await CoreModule.sendExternallyManagedStreamKeepAlive({
             type: "keep_stream_alive",
             streamId,
             ackId,

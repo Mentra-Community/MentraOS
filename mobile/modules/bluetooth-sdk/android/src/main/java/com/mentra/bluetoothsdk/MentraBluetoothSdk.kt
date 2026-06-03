@@ -472,7 +472,7 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    internal fun sendCloudStreamKeepAlive(request: StreamKeepAliveRequest) {
+    internal fun sendExternallyManagedStreamKeepAlive(request: StreamKeepAliveRequest) {
         deviceManager.keepStreamAlive(request.toMap().toMutableMap())
     }
 

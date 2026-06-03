@@ -587,7 +587,7 @@ class SocketComms {
 
   private handle_keep_stream_alive(msg: any) {
     console.log(`SOCKET: Received KEEP_STREAM_ALIVE: ${JSON.stringify(msg)}`)
-    BluetoothSdk.sendCloudStreamKeepAlive(msg)
+    BluetoothSdk.sendExternallyManagedStreamKeepAlive(msg)
   }
 
   private handle_start_video_recording(msg: any) {

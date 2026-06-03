@@ -439,7 +439,7 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    func sendCloudStreamKeepAlive(_ request: StreamKeepAliveRequest) {
+    func sendExternallyManagedStreamKeepAlive(_ request: StreamKeepAliveRequest) {
         DeviceManager.shared.keepStreamAlive(request.values)
     }
 
