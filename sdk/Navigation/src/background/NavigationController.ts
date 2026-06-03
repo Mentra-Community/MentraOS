@@ -278,11 +278,24 @@ export class NavigationController {
         this.appendLog(`START ${destinationName ?? "(unnamed)"}`)
         this.ui.send("nav:trip-state", this.trip)
         try {
-          await this.navigation.start(startOpts)
+          // start() resolves `{ok:false}` (it never throws) for
+          // permission, GPS, REST, or native failures — on those the
+          // native trip never began and no synthetic onRoute will land,
+          // so we must roll the optimistic "navigating" state set above
+          // back to idle. Inspecting only `catch` left the UI stuck on a
+          // routeless trip with no recovery but a manual stop.
+          const res = await this.navigation.start(startOpts)
+          if (!res.ok) {
+            this.appendLog(`START failed: ${res.error ?? "unknown"}`)
+            this.trip = {...this.trip, status: "idle", running: false}
+            this.ui.send("nav:trip-state", this.trip)
+            this.refreshHUD()
+          }
         } catch (err) {
           this.appendLog(`START error: ${err instanceof Error ? err.message : String(err)}`)
           this.trip = {...this.trip, status: "idle", running: false}
           this.ui.send("nav:trip-state", this.trip)
+          this.refreshHUD()
         }
       }),
     )

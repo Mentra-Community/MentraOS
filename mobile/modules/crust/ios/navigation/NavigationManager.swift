@@ -162,6 +162,11 @@ final class NavigationManager: NSObject {
       self.mapView = mapView
 
       guard let nav = mapView.navigator else {
+        // Release the suppression latch armed at the top of start() —
+        // this failure path never reaches stop() (the only other place
+        // it clears), so leaving it set would silently suppress a later
+        // trip's (or external) route emits.
+        self.suppressNativeRouteEmits = false
         completion(false, "Navigator unavailable — accept Terms & Conditions first")
         return
       }
@@ -191,6 +196,9 @@ final class NavigationManager: NSObject {
       nav.setDestinations(waypoints) { [weak self] routeStatus in
         guard let self else { return }
         guard routeStatus == .OK else {
+          // See the navigator-unavailable note above: clear the latch on
+          // this start failure so it doesn't leak into the next trip.
+          self.suppressNativeRouteEmits = false
           completion(false, "Route calculation failed (status \(routeStatus.rawValue))")
           return
         }

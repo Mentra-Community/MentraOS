@@ -326,11 +326,23 @@ object NavigationManager {
     // into navigator init.
     ensureTermsAccepted(activity) { accepted ->
       if (!accepted) {
-        callbacks.onError("Navigation terms not accepted")
+        failStart(callbacks, "Navigation terms not accepted")
         return@ensureTermsAccepted
       }
       startNavigatorSkippingTerms(activity, options, callbacks)
     }
+  }
+
+  /**
+   * Abort a start that already armed `suppressNativeRouteEmits`.
+   * Releases the latch — so a later trip or external `emitRoute()` isn't
+   * silently suppressed by a stale flag — before surfacing the error.
+   * These failure paths never reach `stop()`, which is otherwise the
+   * only place the latch is cleared.
+   */
+  private fun failStart(callbacks: Callbacks, message: String) {
+    suppressNativeRouteEmits = false
+    callbacks.onError(message)
   }
 
   private fun startNavigatorSkippingTerms(
@@ -371,7 +383,7 @@ object NavigationManager {
         override fun onError(errorCode: Int) {
           val msg = errorCodeToString(errorCode)
           Log.e(TAG, "navigator init error: $msg")
-          callbacks.onError(msg)
+          failStart(callbacks, msg)
         }
       },
       TermsAndConditionsCheckOption.SKIPPED,
@@ -808,12 +820,6 @@ object NavigationManager {
     lastEmittedKey = null
     simulating = false
     simulationSpeed = 1f
-    // Release the trip's route-emit suppression so a subsequent start
-    // arms it cleanly. Belt-and-suspenders — start() also sets it true
-    // — but clearing here means an external code path that revives
-    // emitRoute() without going through start() (none today) wouldn't
-    // silently inherit a stale latch.
-    suppressNativeRouteEmits = false
     navigator?.let { nav ->
       try {
         nav.simulator?.unsetUserLocation()
@@ -829,6 +835,12 @@ object NavigationManager {
         Log.e(TAG, "stop failed", e)
       }
     }
+    // Release the trip's route-emit suppression so a subsequent start
+    // arms it cleanly. Cleared AFTER detachListeners(nav) above so a
+    // teardown-time SDK route callback (e.g. fired by clearDestinations)
+    // can't slip through emitRoute() to the miniapp during stop().
+    // Belt-and-suspenders — start() also sets it true on the next trip.
+    suppressNativeRouteEmits = false
     NavInfoHolder.reset()
     lastSpeedMps = null
     offRouteFired = false
@@ -907,7 +919,7 @@ object NavigationManager {
           .build()
       }
     } catch (e: Waypoint.UnsupportedPlaceIdException) {
-      callbacks.onError("Unsupported destination: ${e.message}")
+      failStart(callbacks, "Unsupported destination: ${e.message}")
       return
     }
 
@@ -948,7 +960,7 @@ object NavigationManager {
         else -> {
           val msg = "route status: $status"
           Log.e(TAG, msg)
-          callbacks.onError(msg)
+          failStart(callbacks, msg)
         }
       }
     }
