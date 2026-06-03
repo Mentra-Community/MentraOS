@@ -236,7 +236,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     /// Device discovery cache (like MentraLive)
     private var discoveredPeripherals = [String: CBPeripheral]() // name -> peripheral
-    private var hasConnectedThisSession = false
     private var lastConnectionTimestamp: TimeInterval = 0
     private var lastReceivedLc3Sequence = -1
     private var currentImageChunks: [[UInt8]] = []
@@ -1968,6 +1967,38 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     @objc func disconnect() {
         Bridge.log("NEX: 🔌 User-initiated disconnect")
+        // Light teardown: drop the link but stay able to reconnect.
+        sendIntentionalDisconnectThen { [weak self] in self?.finalizeDisconnect() }
+    }
+
+    /// Best-effort: tell the glasses this disconnect is intentional so they return to
+    /// the welcome screen immediately rather than holding the last frame through the
+    /// firmware's unexpected-disconnect grace period, then run `teardown` after a short
+    /// window to let the write flush. Falls straight through if nothing is connected.
+    private func sendIntentionalDisconnectThen(_ teardown: @escaping () -> Void) {
+        isDisconnecting = true
+        stopReconnectionTimer()
+        guard peripheral != nil, servicesReady else {
+            teardown()
+            return
+        }
+        sendDisconnectRequest()
+        MentraNexSGC._bluetoothQueue.asyncAfter(deadline: .now() + 0.25, execute: teardown)
+    }
+
+    private func sendDisconnectRequest() {
+        let phoneToGlasses = Mentraos_Ble_PhoneToGlasses.with {
+            $0.disconnect = Mentraos_Ble_DisconnectRequest()
+        }
+        guard let protobufData = try? phoneToGlasses.serializedData() else {
+            Bridge.log("NEX: ⚠️ Failed to serialize DisconnectRequest")
+            return
+        }
+        Bridge.log("NEX: 📤 Sending DisconnectRequest before teardown")
+        queueDataWithOptimalChunking(protobufData, packetType: PACKET_TYPE_PROTOBUF)
+    }
+
+    private func finalizeDisconnect() {
         if let peripheral {
             // Save microphone state before disconnection (like Java implementation)
             saveMicrophoneStateBeforeDisconnection()
@@ -1975,7 +2006,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             // Stop mic beat system
             stopMicBeat()
 
-            isDisconnecting = true
             connectionState = ConnTypes.DISCONNECTED
             centralManager?.cancelPeripheralConnection(peripheral)
         }
@@ -1989,6 +2019,12 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     // MARK: - Lifecycle Management (ported from Java)
 
     @objc func destroy() {
+        // Route through the shared path so forget()/cleanup() also signal an
+        // intentional disconnect to the glasses before the link goes down.
+        sendIntentionalDisconnectThen { [weak self] in self?.performDestroy() }
+    }
+
+    private func performDestroy() {
         Bridge.log("NEX: 💥 Destroying MentraNexSGC instance")
 
         isKilled = true
@@ -2031,7 +2067,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // Reset initialization flags
         whiteListedAlready = false
         protobufVersionPosted = false
-        hasConnectedThisSession = false
         currentImageChunks.removeAll()
         isImageSendProgressing = false
         currentMTU = MTU_DEFAULT
@@ -2068,7 +2103,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         micBeatCount = 0
         shouldUseGlassesMic = true
         microphoneStateBeforeDisconnection = false
-        hasConnectedThisSession = false
         currentImageChunks.removeAll()
         isImageSendProgressing = false
         updateConnectedState(isConnected: false)
@@ -2352,7 +2386,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         bmpChunkSize = MTU_DEFAULT - 20
         currentImageChunks.removeAll()
         isImageSendProgressing = false
-        hasConnectedThisSession = false
         updateConnectedState(isConnected: false)
 
         // Clear command queue if needed
@@ -2500,17 +2533,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // 4. Show home screen to turn on the NexGlasses display (Java line 673)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { // 50ms delay
             self.showHomeScreen()
-        }
-
-        if hasConnectedThisSession {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                self.sendTextWall("// MentraOS Reconnected")
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.08) {
-                self.clearDisplay()
-            }
-        } else {
-            hasConnectedThisSession = true
         }
 
         // 5. Post protobuf schema version information (Java lines 684-687)
