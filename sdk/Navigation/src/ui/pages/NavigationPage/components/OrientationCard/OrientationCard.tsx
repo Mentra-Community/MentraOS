@@ -1,4 +1,3 @@
-import type {ReactNode} from "react"
 import {AnimatePresence, motion} from "motion/react"
 import type {NavManeuver} from "@mentra/miniapp"
 
@@ -7,6 +6,7 @@ import type {Pivot} from "@mentra/miniapp"
 import {useNavStore} from "@/ui/store/navStore"
 import {formatDistance} from "@/ui/lib/formatDistance"
 import {haversineMeters} from "@/ui/lib/geometry"
+import {ManeuverIcon} from "@/ui/components/icons"
 import type {Coords, LatLng, NavStatus} from "@/shared/types"
 
 const SPRING = {type: "spring", stiffness: 400, damping: 32, mass: 0.6} as const
@@ -109,20 +109,6 @@ export function OrientationCard({
   )
 }
 
-function LaneArrow({direction, highlight}: {direction: "left" | "straight" | "right"; highlight: boolean}) {
-  const color = highlight ? "#111111" : "#9CA3AF"
-  const path =
-    direction === "left"
-      ? "M14 4 L4 12 L14 20 M4 12 L20 12"
-      : direction === "right"
-        ? "M10 4 L20 12 L10 20 M20 12 L4 12"
-        : "M12 4 L12 20 M6 10 L12 4 L18 10"
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-      <path d={path} stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
 
 /* -------------------------------------------------------------------------- */
 /* Snapshot + maneuver -> display fields                                       */
@@ -275,37 +261,3 @@ function realRoadName(raw: string | null | undefined): string | null {
   return trimmed
 }
 
-/* -------------------------------------------------------------------------- */
-/* Maneuver SVG arrows                                                         */
-
-function ManeuverIcon({type, size = 32, stroke = false}: {type: string; size?: number; stroke?: boolean}) {
-  const t = type.toUpperCase()
-  const color = stroke ? "#000000D9" : "#FBF6E8"
-  const sw = stroke ? 6 : 0
-
-  const svg = (path: ReactNode) => (
-    <svg width={size} height={size} viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-      {path}
-    </svg>
-  )
-
-  if (t === "TURN_RIGHT" || t === "SLIGHT_RIGHT" || t === "SHARP_RIGHT") return svg(
-    <path d="M18 56 L18 38 Q18 26 30 26 L52 26 L52 14 L72 32 L52 50 L52 38 L34 38 L34 56 Z" fill={stroke ? "none" : color} stroke={stroke ? color : undefined} strokeWidth={sw} strokeLinejoin="round" />
-  )
-  if (t === "TURN_LEFT" || t === "SLIGHT_LEFT" || t === "SHARP_LEFT" || t === "U_TURN") return svg(
-    <path d="M62 56 L62 38 Q62 26 50 26 L28 26 L28 14 L8 32 L28 50 L28 38 L46 38 L46 56 Z" fill={stroke ? "none" : color} stroke={stroke ? color : undefined} strokeWidth={sw} strokeLinejoin="round" />
-  )
-  if (t === "ARRIVE") return svg(<>
-    <circle cx="40" cy="34" r="12" fill={color} />
-    <path d="M40 46 L40 66" stroke={color} strokeWidth="8" strokeLinecap="round" />
-    <circle cx="40" cy="34" r="5" fill="#5AC878" />
-  </>)
-
-  // Straight / continue / default
-  if (stroke) return svg(
-    <path d="M40 64 L40 28 L24 36 L40 12 L56 36 L40 28" stroke={color} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" fill="none" />
-  )
-  return svg(
-    <path d="M32 62 L32 32 L20 32 L40 10 L60 32 L48 32 L48 62 Z" fill={color} />
-  )
-}

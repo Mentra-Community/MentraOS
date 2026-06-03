@@ -3,6 +3,7 @@ import {formatDistance} from "@/ui/lib/formatDistance"
 import {haversineMeters} from "@/ui/lib/geometry"
 import {parseAddress} from "@/ui/lib/parseAddress"
 import {useToast} from "@/ui/components/Toast/Toast"
+import {CopyIcon} from "@/ui/components/icons"
 import type {LatLng, PlaceDetails} from "@/shared/types"
 
 type Props = {
@@ -107,10 +108,7 @@ export function DestinationPreviewDrawer({
                         .catch(() => toast("Couldn’t copy address"))
                     }}
                     className="shrink-0 flex items-center justify-center size-8 rounded-full bg-[#0000000A] active:bg-[#0000001A] mt-1">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <rect x="9" y="9" width="11" height="11" rx="2.5" stroke="#000000A6" strokeWidth="1.8" />
-                      <path d="M5 15V5a2 2 0 0 1 2-2h8" stroke="#000000A6" strokeWidth="1.8" strokeLinecap="round" />
-                    </svg>
+                    <CopyIcon />
                   </button>
                 </div>
               </>

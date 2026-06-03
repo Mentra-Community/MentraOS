@@ -11,6 +11,7 @@ import {reverseGeocode} from "@/ui/lib/reverseGeocode"
 import {LocationInput} from "./components/LocationInput/LocationInput"
 import {SuggestionsList} from "./components/SuggestionsList/SuggestionsList"
 import { safeHeadingAddPlaces } from "@/ui/components/SafeHeading/SafeHeading"
+import {BackChevronIcon, HomeIconOutline, WorkIconOutline} from "@/ui/components/icons"
 
 type Props = {
   /**
@@ -342,9 +343,7 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
           type="button"
           onClick={onClose}
           className="flex items-center justify-center size-9 rounded-full bg-[#0000000A] shrink-0">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M15 19L8 12L15 5" stroke="#1A1A1A" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <BackChevronIcon />
         </button>
         <div className="text-[32px] tracking-tight leading-none font-sans font-bold text-black">Add a place</div>
       </div>    
@@ -403,9 +402,7 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
                   onClick={() => pickSlot("home")}
                   className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-[#0000000A]">
                   <div className="size-7 rounded-full bg-[#0000000A] flex items-center justify-center shrink-0">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M3 11l9-8 9 8v10a2 2 0 0 1-2 2h-4v-7h-6v7H5a2 2 0 0 1-2-2V11z" stroke="#1A1A1A" strokeWidth="2" strokeLinejoin="round" />
-                    </svg>
+                    <HomeIconOutline />
                   </div>
                   <div className="grow min-w-0">
                     <div className="font-sans font-semibold text-[#000000E6] text-[15px]/4">Home</div>
@@ -421,9 +418,7 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
                   onClick={() => pickSlot("work")}
                   className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-[#0000000A]">
                   <div className="size-7 rounded-full bg-[#0000000A] flex items-center justify-center shrink-0">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M4 7h16v13H4z M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" stroke="#1A1A1A" strokeWidth="2" strokeLinejoin="round" fill="none" />
-                    </svg>
+                    <WorkIconOutline />
                   </div>
                   <div className="grow min-w-0">
                     <div className="font-sans font-semibold text-[#000000E6] text-[15px]/4">Work</div>

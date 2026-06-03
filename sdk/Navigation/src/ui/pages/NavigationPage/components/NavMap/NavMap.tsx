@@ -3,6 +3,7 @@ import {motion, useMotionValue, useTransform} from "motion/react"
 
 import {useNavStore} from "@/ui/store/navStore"
 import {bearingDeg, haversineMeters, rdpSmooth} from "@/ui/lib/geometry"
+import {MinusIcon, PlusIcon, RecenterIcon} from "@/ui/components/icons"
 
 // Experiment toggle: render the route line with RDP smoothing applied or
 // straight from the raw points Google returned. Flip to false to see the
@@ -11,6 +12,7 @@ import {bearingDeg, haversineMeters, rdpSmooth} from "@/ui/lib/geometry"
 const SMOOTH_ROUTE_LINE = true
 import type {LatLng} from "@/shared/types"
 import {isDev} from "@/ui/lib/env"
+import {useDevOverride} from "@/ui/lib/devOverride"
 import {getGoogleMaps} from "@/ui/lib/googleMaps"
 import {useDrawerOffset} from "@/ui/components/Drawer/DrawerOffsetContext"
 
@@ -60,6 +62,12 @@ export function NavMap({
   // load. Decoupled from `useNavStore` so a stalled background handshake
   // (no CONNECT_ACK, no snapshot push) can't keep the map grey.
   const [ready, setReady] = useState(false)
+
+  // Dev-only debug chrome (pivot dots + labels rendered as map overlays)
+  // shows when the build is dev OR when the user has unlocked the
+  // override via the 5-second hold on the search bar. See lib/devOverride.
+  const devOverride = useDevOverride()
+  const devEnabled = isDev || devOverride
 
   // Anchor the floating right-rail (zoom / recenter buttons) just
   // above whichever drawer is currently mounted. `useDrawerOffset()`
@@ -605,7 +613,7 @@ export function NavMap({
   // Refetch whenever the route or preview turns change. `cancelled`
   // guards against an async RPC resolve landing after teardown.
   useEffect(() => {
-    if (!isDev) return
+    if (!devEnabled) return
     if (!ready || !mapRef.current) return
 
     function teardown() {
@@ -771,7 +779,7 @@ export function NavMap({
       clearTimeout(refetchHandle)
       teardown()
     }
-  }, [ready, routePoints, previewTurns])
+  }, [ready, routePoints, previewTurns, devEnabled])
 
   if (error) {
     return <div className="p-3 text-red-700 text-[13px]">Map failed to load: {error}</div>
@@ -824,9 +832,7 @@ export function NavMap({
               if (!m) return
               m.setZoom(Math.min((m.getZoom() ?? 17) + 1, 21))
             }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-              <path d="M12 5V19M5 12H19" stroke="#000000D9" strokeWidth="2.4" strokeLinecap="round" />
-            </svg>
+            <PlusIcon size={20} color="#000000D9" />
           </button>
 
           <button
@@ -838,9 +844,7 @@ export function NavMap({
               if (!m) return
               m.setZoom(Math.max((m.getZoom() ?? 17) - 1, 3))
             }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-              <path d="M5 12H19" stroke="#000000D9" strokeWidth="2.4" strokeLinecap="round" />
-            </svg>
+            <MinusIcon />
           </button>
 
           <button
@@ -853,11 +857,7 @@ export function NavMap({
               m.panTo(new window.google.maps.LatLng(me.lat, me.lng))
               setFollowUser(true)
             }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-              <circle cx="12" cy="12" r="3" fill={followUser ? "#0A84FF" : "#1a1a1a"} />
-              <circle cx="12" cy="12" r="7" stroke="#000000D9" strokeWidth="1.6" />
-              <path d="M12 1V4M12 20V23M1 12H4M20 12H23" stroke="#000000D9" strokeWidth="2" strokeLinecap="round" />
-            </svg>
+            <RecenterIcon active={followUser} />
           </button>
         </motion.div>
       ) : null}

@@ -12,6 +12,7 @@ import {bearingDeg, haversineMeters, signedAngleDiff} from "@/ui/lib/geometry"
 import {DrawerOffsetProvider} from "@/ui/components/Drawer/DrawerOffsetContext"
 import {FloatingDevPanel} from "@/ui/components/FloatingDevPanel/FloatingDevPanel"
 import {isDev} from "@/ui/lib/env"
+import {toggleDevOverride, useDevOverride} from "@/ui/lib/devOverride"
 import {SimulationControls} from "@/ui/pages/NavigationPage/components/Controls/Controls"
 import {ArrivalDrawer} from "@/ui/pages/NavigationPage/components/ArrivalDrawer/ArrivalDrawer"
 import {DestinationPreviewDrawer} from "@/ui/pages/NavigationPage/components/DestinationPreviewDrawer/DestinationPreviewDrawer"
@@ -168,6 +169,17 @@ type Props = {
 }
 
 export function NavigationPage({savedPlacesVersion = 0}: Props) {
+  // ---- dev override --------------------------------------------------------
+  //
+  // Production builds hide the FloatingDevPanel by default. Holding the
+  // search bar for 5s toggles a persisted flag that re-enables it; see
+  // the search-area wrapper below for the gesture handler. The hook
+  // returns true in prod when the user has unlocked, and false
+  // otherwise. Dev builds ignore this entirely — `isDev` is already
+  // true there.
+  const devOverride = useDevOverride()
+  const devEnabled = isDev || devOverride
+
   // ---- store reads ---------------------------------------------------------
   //
   // Trip/sensor state is owned by the background NavigationController and
@@ -697,7 +709,51 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         {/* Top floating stack — search bar, then orientation card while running. */}
         <div className="absolute top-0 left-0 right-0  pt-3 flex flex-col gap-2 pointer-events-none bg-r">
           {!running && devDrawer !== "running" && devDrawer !== "arrived" && (
-            <div className="pointer-events-auto">
+            <div
+              className="pointer-events-auto"
+              onPointerDownCapture={(e) => {
+                // 5-second hold on the search bar toggles the dev-panel
+                // override. We listen in CAPTURE phase so the gesture
+                // also arms when the press lands on the <input> child
+                // (whose own handlers would otherwise stop propagation).
+                // Significant movement or an early pointerup cancels —
+                // see the matching handlers below. No visible feedback
+                // during the hold by design.
+                const startX = e.clientX
+                const startY = e.clientY
+                const target = e.currentTarget
+                let cancelled = false
+                const cleanup = () => {
+                  clearTimeout(timer)
+                  target.removeEventListener("pointermove", onMove)
+                  target.removeEventListener("pointerup", onEnd)
+                  target.removeEventListener("pointercancel", onEnd)
+                }
+                const onMove = (ev: PointerEvent) => {
+                  const dx = ev.clientX - startX
+                  const dy = ev.clientY - startY
+                  // ~10px of slop accounts for finger jitter while
+                  // holding still; anything beyond is intentional
+                  // motion (scroll, drag) so we bail.
+                  if (dx * dx + dy * dy > 100) {
+                    cancelled = true
+                    cleanup()
+                  }
+                }
+                const onEnd = () => {
+                  cancelled = true
+                  cleanup()
+                }
+                const timer = setTimeout(() => {
+                  cleanup()
+                  if (cancelled) return
+                  const next = toggleDevOverride()
+                  append(`dev panel ${next ? "enabled" : "disabled"}`)
+                }, 5000)
+                target.addEventListener("pointermove", onMove)
+                target.addEventListener("pointerup", onEnd)
+                target.addEventListener("pointercancel", onEnd)
+              }}>
               <LocationSearch
                 selected={destination}
                 onSelect={(place) => setDestination(place)}
@@ -781,7 +837,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           onDone={handleStop}
         />
 
-        {isDev && !isSearching ? (
+        {devEnabled && !isSearching ? (
           <FloatingDevPanel title="Navigation Dev" storageKey="NavigationPage:dev">
             <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
               <span className="text-[13px] font-medium text-neutral-700">Show test text on glasses</span>

@@ -9,6 +9,14 @@ import type {PlaceDetails, PlaceSuggestion, SavedPlace} from "@/shared/types"
 import {useNavStore} from "@/ui/store/navStore"
 import {suppressNextRouterPopOnce} from "@/ui/router"
 import { safeHeadingSearchPill, safeHeadingSearchResults } from "@/ui/components/SafeHeading/SafeHeading"
+import {
+  CloseIcon,
+  HomeIconFilled,
+  PinIconFilled,
+  PinIconOutline,
+  StarIcon,
+  WorkIconFilled,
+} from "@/ui/components/icons"
 
 type Props = {
   selected: PlaceDetails | null
@@ -22,25 +30,6 @@ type Props = {
 }
 
 const DEBOUNCE_MS = 200
-
-// ---- icons ------------------------------------------------------------------
-
-function PinIconFilled() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-      <path d="M12 2C7.58 2 4 5.58 4 10c0 6 8 12 8 12s8-6 8-12C20 5.58 16.42 2 12 2z" fill="#FFFFFF" />
-      <circle cx="12" cy="10" r="3" fill="#1A1A1A" />
-    </svg>
-  )
-}
-
-function PinIconOutline() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-      <path d="M12 2C7.58 2 4 5.58 4 10c0 6 8 12 8 12s8-6 8-12C20 5.58 16.42 2 12 2z" stroke="#000000A6" strokeWidth="1.8" fill="none" />
-    </svg>
-  )
-}
 
 // ---- component --------------------------------------------------------------
 
@@ -285,9 +274,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
               disabled={disabled}
               className="w-6.5 h-6.5 flex items-center justify-center shrink-0 rounded-full bg-[#00000014]"
               aria-label="Clear">
-              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10" fill="none">
-                <path d="M1 1L9 9M9 1L1 9" stroke="#737373" strokeWidth="1.75" strokeLinecap="round"/>
-              </svg>
+              <CloseIcon />
             </button>
           ) : null}
         </div>
@@ -421,34 +408,12 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
   )
 }
 
-function SavedPlaceStarIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" fill="#FFFFFF" />
-    </svg>
-  )
-}
-
-function HomeIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M3 12 L12 4 L21 12 L21 20 H14 V14 H10 V20 H3 Z" fill="#FFFFFF" />
-    </svg>
-  )
-}
-
-function WorkIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect x="3" y="8" width="18" height="13" rx="1.5" fill="#FFFFFF" />
-      <path d="M9 8 V5 H15 V8" stroke="#FFFFFF" strokeWidth="2" fill="none" />
-    </svg>
-  )
-}
-
 /** Resolve the chip icon for a saved place by its tag ("home"/"work"/none). */
 function SavedPlaceIcon({type}: {type?: "home" | "work"}) {
-  if (type === "home") return <HomeIcon />
-  if (type === "work") return <WorkIcon />
-  return <SavedPlaceStarIcon />
+  // Saved-place chips sit on a dark surface, so all three variants use
+  // the filled-white form. Override the default 16px size to 18px for
+  // visual weight inside the larger chip.
+  if (type === "home") return <HomeIconFilled size={18} />
+  if (type === "work") return <WorkIconFilled size={18} />
+  return <StarIcon size={18} color="#FFFFFF" />
 }
