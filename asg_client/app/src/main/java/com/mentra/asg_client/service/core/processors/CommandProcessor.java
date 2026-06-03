@@ -185,6 +185,7 @@ public class CommandProcessor {
                             + commandData.messageId()
                             + ", Data: "
                             + commandData.data());
+            serviceManager.onPhoneCommandReceived();
 
             // Check for duplicate message ID
             if (isDuplicateMessage(commandData.messageId())) {
@@ -224,6 +225,7 @@ public class CommandProcessor {
 
             if (!result.isValid()) {
                 if ("chunk_in_progress".equals(result.commandType())) {
+                    serviceManager.onPhoneCommandReceived();
                     return null;
                 }
                 Log.w(

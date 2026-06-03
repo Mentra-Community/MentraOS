@@ -268,6 +268,9 @@ dependencies {
   testImplementation 'org.assertj:assertj-core:3.24.2'
   testImplementation 'androidx.test:core:1.5.0'
 
+  // Local photo upload receiver
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
+
   // LC3 audio codec library
   implementation project(':lc3Lib')
 
