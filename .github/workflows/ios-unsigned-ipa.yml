@@ -63,21 +63,22 @@ jobs:
       - name: Archive app
         working-directory: ./mobile/ios
         env:
-          SENTRY_DISABLE_AUTO_UPLOAD: "true"
+        SENTRY_DISABLE_AUTO_UPLOAD: "true"
         run: |
-          set -o pipefail
-          xcodebuild archive \
-            -workspace *.xcworkspace \
-            -scheme $(xcodebuild -list -json | /usr/bin/python3 -c "import sys, json; print(json.load(sys.stdin)['workspace']['schemes'][0])") \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -sdk iphoneos \
-            -archivePath $GITHUB_WORKSPACE/app.xcarchive \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            DEVELOPMENT_TEAM="" \
-            2>&1 | tee /tmp/xcodebuild.log
+    set -o pipefail
+
+    xcodebuild archive \
+      -workspace Mentra.xcworkspace \
+      -scheme Mentra \
+      -configuration Release \
+      -destination 'generic/platform=iOS' \
+      -sdk iphoneos \
+      -archivePath $GITHUB_WORKSPACE/app.xcarchive \
+      CODE_SIGN_IDENTITY="" \
+      CODE_SIGNING_REQUIRED=NO \
+      CODE_SIGNING_ALLOWED=NO \
+      DEVELOPMENT_TEAM="" \
+      2>&1 | tee /tmp/xcodebuild.log
 
       - name: Show build log
         if: always()
