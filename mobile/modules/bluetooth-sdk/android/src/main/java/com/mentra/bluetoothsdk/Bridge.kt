@@ -367,15 +367,6 @@ public class Bridge private constructor() {
             event["errorMessage"] = errorMessage
             event["timestamp"] = timestamp
             sendTypedMessage("photo_response", event as Map<String, Any>)
-
-            val status = HashMap<String, Any>()
-            status["type"] = "photo_status"
-            status["status"] = "failed"
-            status["requestId"] = requestId
-            status["errorCode"] = errorCode
-            status["errorMessage"] = errorMessage
-            status["timestamp"] = timestamp
-            sendTypedMessage("photo_status", status as Map<String, Any>)
         }
 
         /** Send RGB LED control response */

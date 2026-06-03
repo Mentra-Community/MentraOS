@@ -294,20 +294,6 @@ class Bridge {
             event["errorMessage"] = errorMessage
         }
         Bridge.sendTypedMessage("photo_response", body: event)
-
-        var status: [String: Any] = [
-            "type": "photo_status",
-            "status": "failed",
-            "requestId": requestId,
-            "timestamp": timestamp,
-        ]
-        if !errorCode.isEmpty {
-            status["errorCode"] = errorCode
-        }
-        if !errorMessage.isEmpty {
-            status["errorMessage"] = errorMessage
-        }
-        Bridge.sendTypedMessage("photo_status", body: status)
     }
 
     static func sendMiniappSelected(packageName: String) {
