@@ -50,23 +50,15 @@ jobs:
         working-directory: ./mobile/ios
         run: pod install
 
-      - name: Patch Pod xcconfigs
+      - name: Fix Pod deployment targets only
         working-directory: ./mobile/ios
         run: |
           find Pods/Target\ Support\ Files -name "*.xcconfig" | while read f; do
-            # Fix deployment targets
             sed -i '' \
               -e 's/IPHONEOS_DEPLOYMENT_TARGET = 9\.0/IPHONEOS_DEPLOYMENT_TARGET = 13.0/g' \
               -e 's/IPHONEOS_DEPLOYMENT_TARGET = 10\.0/IPHONEOS_DEPLOYMENT_TARGET = 13.0/g' \
               -e 's/IPHONEOS_DEPLOYMENT_TARGET = 11\.0/IPHONEOS_DEPLOYMENT_TARGET = 13.0/g' \
               "$f"
-            # Force Swift 5 mode on every pod — prevents EmitSwiftModule failures
-            # from pods that haven't been updated for Swift 6 (RNScreens etc)
-            if grep -q "SWIFT_VERSION" "$f"; then
-              sed -i '' 's/SWIFT_VERSION = .*/SWIFT_VERSION = 5/g' "$f"
-            else
-              echo "SWIFT_VERSION = 5" >> "$f"
-            fi
           done
 
       - name: List schemes
@@ -93,8 +85,6 @@ jobs:
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             DEVELOPMENT_TEAM="" \
             IPHONEOS_DEPLOYMENT_TARGET=13.0 \
-            SWIFT_COMPILATION_MODE=singlefile \
-            SWIFT_VERSION=5 \
             2>&1 | tee /tmp/xcodebuild.log
 
           BUILD_RESULT=${PIPESTATUS[0]}
@@ -102,10 +92,10 @@ jobs:
           if [ "$BUILD_RESULT" -ne 0 ]; then
             echo ""
             echo "========== ACTUAL COMPILER ERRORS =========="
-            grep -E " error: | error:$" /tmp/xcodebuild.log | grep -v "^note:" | head -80
+            grep -E " error: " /tmp/xcodebuild.log | grep -v "^note:" | head -80
             echo ""
             echo "========== FAILED TARGETS =========="
-            grep -E "FAILED|failed|EmitSwift|CompileSwift|Archiving" /tmp/xcodebuild.log | tail -20
+            grep -E "FAILED|EmitSwift|CompileSwift|Archiving" /tmp/xcodebuild.log | tail -20
             exit "$BUILD_RESULT"
           fi
 
