@@ -1106,8 +1106,22 @@ class DeviceManager {
 
         syncSystemTimeOnceForConnection(readyKey)
 
-        // Apply dashboard position before any boot text so content doesn't jump.
-        sgc?.setDashboardPosition(dashboardHeight, dashboardDepth)
+        // re-apply display height/depth after reconnection
+        mainHandler.postDelayed(
+                {
+                    val h =
+                            (DeviceStore.store.get("bluetooth", "dashboard_height") as? Number)
+                                    ?.toInt()
+                                    ?: 4
+                    val rawDepth =
+                            (DeviceStore.store.get("bluetooth", "dashboard_depth") as? Number)
+                                    ?.toInt()
+                                    ?: 1
+                    val d = rawDepth.coerceIn(1, 4)
+                    sgc?.setDashboardPosition(h, d)
+                },
+                2000
+        )
 
         // Show welcome message on first connect for all display glasses
         if (shouldSendBootingMessage) {
