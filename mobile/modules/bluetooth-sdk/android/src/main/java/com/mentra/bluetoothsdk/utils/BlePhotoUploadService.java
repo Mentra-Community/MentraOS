@@ -102,8 +102,14 @@ public class BlePhotoUploadService {
 
             if (imuJson != null && !imuJson.isEmpty()) {
                 logImuData(imuJson);
-                writeImuJsonToJpeg(outputFile.getAbsolutePath(), imuJson);
-                Log.d(TAG, "Re-attached IMU EXIF UserComment on output JPEG (" + imuJson.length() + " chars)");
+                // IMU EXIF is enrichment, not the payload: a write failure must not drop the
+                // already-decoded photo. Log and upload the plain JPEG instead.
+                try {
+                    writeImuJsonToJpeg(outputFile.getAbsolutePath(), imuJson);
+                    Log.d(TAG, "Re-attached IMU EXIF UserComment on output JPEG (" + imuJson.length() + " chars)");
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed to attach IMU EXIF; uploading photo without it", e);
+                }
             } else {
                 boolean rawHasExif = containsExifMarkerInBytes(imageData);
                 Log.w(
