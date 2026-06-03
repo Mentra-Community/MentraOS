@@ -1980,6 +1980,9 @@ class G2 : SGCManager() {
         for (i in textContainers.indices) {
             textContainers[i].content = " "
         }
+        for (i in imageContainers.indices) {
+            imageContainers[i].bmpData = ByteArray(0)
+        }
         // shutdown the page and then recreate the containers without the content:
         val msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)

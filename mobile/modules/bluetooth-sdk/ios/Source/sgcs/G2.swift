@@ -1991,6 +1991,9 @@ class G2: NSObject, SGCManager {
         for i in textContainers.indices {
             textContainers[i].content = " "
         }
+        for i in imageContainers.indices {
+            imageContainers[i].bmpData = Data()
+        }
         // shutdown the page and then recreate the containers without the content:
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
