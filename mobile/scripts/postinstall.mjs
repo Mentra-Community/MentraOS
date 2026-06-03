@@ -19,12 +19,24 @@ await $({ stdio: 'inherit', cwd: 'modules/miniapp' })`bun run prepare`;
 // install in parallel with its workspace deps.
 await $({ stdio: 'inherit', cwd: 'modules/island' })`bun run build:module`;
 
-// Dependency patches (incl. the Supabase fix that strips a dynamic
-// import('@opentelemetry/api') Hermes can't parse) are applied by bun
-// itself via the `patchedDependencies` map in package.json — no
-// patch-package step here. patch-package eagerly applied every file in
-// patches/, including stale orphans (expo+55.0.5, react-native+0.83.2)
-// whose versions no longer match, and exited 1 under CI.
+// Apply the Supabase patch via patch-package from its OWN directory
+// (patches-runtime/, holding only this one patch). It strips a dynamic
+// import('@opentelemetry/api') that Metro/Hermes can't parse — without
+// it the release bundle fails at `createBundleReleaseJsAndAssets`.
+//
+// Why patch-package here instead of bun's native `patchedDependencies`:
+// the CI bun (1.3.14) does NOT apply the native patch on a fresh
+// install, so the bundle shipped unpatched and the Android release build
+// failed. patch-package runs every postinstall and writes the file
+// deterministically, independent of bun version.
+//
+// Why a separate dir: a bare `patch-package` scans all of patches/ and
+// chokes on the stale orphan patches there (expo+55.0.5,
+// react-native+0.83.2) whose installed versions have moved —
+// --error-on-fail (default in CI) then fails the whole install.
+// --patch-dir isolates this to the one patch we own; the patches/ dir
+// stays bun-native-only.
+await $({ stdio: 'inherit' })`bunx patch-package --patch-dir patches-runtime`;
 
 // ignore scripts to avoid infinite loop:
 // await $({ stdio: 'inherit' })`bun install --ignore-scripts`;
