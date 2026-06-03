@@ -575,7 +575,7 @@ class SocketComms {
   private handle_start_stream(msg: any) {
     const streamUrl = msg.streamUrl
     if (streamUrl) {
-      BluetoothSdk.startCloudManagedStream(msg)
+      BluetoothSdk.startExternallyManagedStream(msg)
     } else {
       console.log("Invalid stream request: missing stream URL")
     }

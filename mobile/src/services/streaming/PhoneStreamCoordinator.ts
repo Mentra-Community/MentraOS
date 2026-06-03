@@ -218,7 +218,7 @@ export class PhoneStreamCoordinator {
       this.current = entry
 
       try {
-        await CoreModule.startStream({
+        await CoreModule.startExternallyManagedStream({
           type: "start_stream",
           streamUrl: opts.streamUrl,
           streamId,
@@ -306,7 +306,7 @@ export class PhoneStreamCoordinator {
       this.current = entry
 
       try {
-        await CoreModule.startStream({
+        await CoreModule.startExternallyManagedStream({
           type: "start_stream",
           streamUrl: ingestUrl,
           streamId,

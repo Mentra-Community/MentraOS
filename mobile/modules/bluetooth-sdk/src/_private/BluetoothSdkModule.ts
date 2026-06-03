@@ -123,7 +123,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // Stream Commands
   startStream(params: StreamStartRequest): Promise<void>
-  startCloudManagedStream(params: StreamStartRequest): Promise<void>
+  startExternallyManagedStream(params: StreamStartRequest): Promise<void>
   stopStream(): Promise<void>
   sendCloudStreamKeepAlive(params: StreamKeepAliveRequest): Promise<void>
 
@@ -525,7 +525,7 @@ NativeBluetoothSdkModule.requestPhoto = function (params: PhotoRequestParams) {
 }
 
 const nativeStartStream = NativeBluetoothSdkModule.startStream.bind(NativeBluetoothSdkModule)
-NativeBluetoothSdkModule.startCloudManagedStream = function (params: StreamStartRequest) {
+NativeBluetoothSdkModule.startExternallyManagedStream = function (params: StreamStartRequest) {
   return nativeStartStream({...params, keepAliveMode: "external"} as StreamStartRequest)
 }
 
