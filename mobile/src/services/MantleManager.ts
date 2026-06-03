@@ -1066,7 +1066,8 @@ class MantleManager {
       this.subs.push(
         BluetoothSdk.addListener("keep_alive_ack", (event) => {
           if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) {
-            phoneStreamCoordinator.handleKeepAliveAck(event)
+            // Phone-owned stream ACKs are consumed by the Bluetooth SDK's
+            // stream keep-alive monitor. Keep them off the cloud socket.
             return
           }
           console.log("MANTLE: Forwarding keep-alive ACK to server:", event)
