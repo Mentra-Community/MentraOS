@@ -20,6 +20,9 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - name: Download iOS platform
+        run: xcodebuild -downloadPlatform iOS
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
@@ -53,7 +56,6 @@ jobs:
       - name: Patch Pod xcconfigs
         working-directory: ./mobile/ios
         run: |
-          # Fix deployment targets on all pods
           find Pods/Target\ Support\ Files -name "*.xcconfig" | while read f; do
             sed -i '' \
               -e 's/IPHONEOS_DEPLOYMENT_TARGET = 9\.0/IPHONEOS_DEPLOYMENT_TARGET = 13.0/g' \
@@ -62,17 +64,11 @@ jobs:
               "$f"
           done
 
-          # Force singlefile compilation ONLY on SwiftProtobuf
-          # This prevents OOM when the compiler tries to WMO 80+ .pb.swift files at once
           SWIFTPB_DIR="Pods/Target Support Files/SwiftProtobuf"
           if [ -d "$SWIFTPB_DIR" ]; then
             find "$SWIFTPB_DIR" -name "*.xcconfig" | while read f; do
-              echo "Patching: $f"
               echo "SWIFT_COMPILATION_MODE = singlefile" >> "$f"
             done
-          else
-            echo "WARNING: SwiftProtobuf xcconfig dir not found at expected path"
-            find Pods/Target\ Support\ Files -type d | grep -i swift
           fi
 
       - name: List schemes
@@ -104,10 +100,8 @@ jobs:
           BUILD_RESULT=${PIPESTATUS[0]}
 
           if [ "$BUILD_RESULT" -ne 0 ]; then
-            echo ""
             echo "========== ACTUAL COMPILER ERRORS =========="
             grep ": error:" /tmp/xcodebuild.log | head -50
-            echo ""
             echo "========== FAILED TARGETS =========="
             grep -E "FAILED|EmitSwift|CompileSwift" /tmp/xcodebuild.log | tail -20
             exit "$BUILD_RESULT"
