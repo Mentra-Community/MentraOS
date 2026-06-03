@@ -46,6 +46,14 @@ public struct CameraFov {
     public static let minRoiPosition = 0
     public static let maxRoiPosition = 2
     public static let defaultRoiPosition = 0
+    public static let standard = CameraFov(
+        fov: CameraFov.maxFov,
+        roiPosition: CameraFov.defaultRoiPosition
+    )
+    public static let wide = CameraFov(
+        fov: CameraFov.maxFov,
+        roiPosition: CameraFov.defaultRoiPosition
+    )
 
     public let fov: Int
     public let roiPosition: Int

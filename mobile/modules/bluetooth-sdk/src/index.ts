@@ -135,6 +135,8 @@ export type {
   ButtonPhotoSize,
   ButtonPressEvent,
   CameraFov,
+  CameraFovPreset,
+  CameraFovValue,
   CameraRoiPosition,
   CompatibleGlassesSearchStopEvent,
   ConnectOptions,

@@ -11,6 +11,8 @@ import {
   CAMERA_FOV_MAX,
   CAMERA_FOV_MIN,
   CameraFov,
+  CameraFovPreset,
+  CameraFovSetting,
   ConnectOptions,
   DashboardMenuItem,
   Device,
@@ -201,11 +203,20 @@ const DEFAULT_SCAN_TIMEOUT_MS = 15_000
 const CAMERA_ROI_MIN = 0
 const CAMERA_ROI_MAX = 2
 
+const LEGACY_CAMERA_FOV_SETTINGS: Record<CameraFovPreset, CameraFovSetting> = {
+  standard: {fov: CAMERA_FOV_MAX, roiPosition: 0},
+  wide: {fov: CAMERA_FOV_MAX, roiPosition: 0},
+}
+
 function clampInteger(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.round(value)))
 }
 
-function normalizeCameraFov(setting: CameraFov): Required<CameraFov> {
+function normalizeCameraFov(setting: CameraFov): CameraFovSetting {
+  if (typeof setting === "string") {
+    return LEGACY_CAMERA_FOV_SETTINGS[setting] ?? LEGACY_CAMERA_FOV_SETTINGS.wide
+  }
+
   return {
     fov: clampInteger(
       Number.isFinite(setting.fov) ? setting.fov : CAMERA_FOV_DEFAULT,
@@ -216,7 +227,7 @@ function normalizeCameraFov(setting: CameraFov): Required<CameraFov> {
       Number.isFinite(setting.roiPosition ?? 0) ? (setting.roiPosition ?? 0) : 0,
       CAMERA_ROI_MIN,
       CAMERA_ROI_MAX,
-    ) as Required<CameraFov>["roiPosition"],
+    ) as CameraFovSetting["roiPosition"],
   }
 }
 
