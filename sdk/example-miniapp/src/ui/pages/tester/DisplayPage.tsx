@@ -111,7 +111,7 @@ const CORNERS = [
   {code: "BL", x: 0, y: 188},
 ] as const
 
-type CornerCode = (typeof CORNERS)[number]["code"]
+type CornerCode = "TL" | "TR" | "BR" | "BL" | "CE" | "full"
 
 export default function DisplayPage() {
   const navigate = useNavigate()
@@ -125,14 +125,21 @@ export default function DisplayPage() {
     TR: 0,
     BR: 0,
     BL: 0,
+    CE: 0,
+    full: 0,
   })
 
   const pressCorner = (code: CornerCode, x: number, y: number) => {
+    const next = incrementCount(code)
+    // First press: just the corner code. Subsequent presses: code + count.
+    const label = `${code} ${next}`
+    invoke("showBitmapView", [makeBitmap(100, 100, label), {x, y, width: 100, height: 100}])
+  }
+
+  const incrementCount = (code: CornerCode) => {
     const next = counts[code] + 1
     setCounts((c) => ({...c, [code]: next}))
-    // First press: just the corner code. Subsequent presses: code + count.
-    const label = next === 1 ? code : `${code} #${next - 1}`
-    invoke("showBitmapView", [makeBitmap(100, 100, label), {x, y, width: 100, height: 100}])
+    return next
   }
 
   return (
@@ -140,36 +147,49 @@ export default function DisplayPage() {
       <MiniappHeader title="session.display" onBack={() => navigate("/tester")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
-          Render text on the glasses display. Tap a button to invoke the
-          corresponding `session.display.*` method in background.
+          Render text on the glasses display. Tap a button to invoke the corresponding `session.display.*` method in
+          background.
         </p>
         <Label htmlFor="display-text">text</Label>
         <Input id="display-text" value={text} onChange={(e) => setText(e.target.value)} />
         <div className="mt-3 flex flex-col gap-2">
           <Button onClick={() => invoke("showTextWall", [text])}>showTextWall(text)</Button>
-          <Button onClick={() => invoke("showReferenceCard", ["Title", text])}>
-            showReferenceCard(title, text)
-          </Button>
-          <Button onClick={() => invoke("showDoubleTextWall", ["Top", text])}>
-            showDoubleTextWall(top, bottom)
-          </Button>
+          <Button onClick={() => invoke("showReferenceCard", ["Title", text])}>showReferenceCard(title, text)</Button>
+          <Button onClick={() => invoke("showDoubleTextWall", ["Top", text])}>showDoubleTextWall(top, bottom)</Button>
         </div>
 
         <p className="mb-2 mt-5 text-[13px] text-muted-foreground">
-          Bitmaps. `showBitmapView(data, options)` accepts optional `x`/`y`/`width`/`height`.
-          On G2 the page tracks up to 4 image containers, keyed by rect: a new rect adds a
-          container (evicting the oldest past 4), an existing rect updates in place. Each corner
-          button sends its code on first press, then increments a count in place on later presses.
+          Bitmaps. `showBitmapView(data, options)` accepts optional `x`/`y`/`width`/`height`. On G2 the page tracks up
+          to 4 image containers, keyed by rect: a new rect adds a container (evicting the oldest past 4), an existing
+          rect updates in place. Each corner button sends its code on first press, then increments a count in place on
+          later presses.
         </p>
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-row gap-2">
           {CORNERS.map(({code, x, y}) => (
-            <Button key={code} onClick={() => pressCorner(code, x, y)}>
-              showBitmapView — 100×100 {code}
-              {counts[code] > 0 ? ` (#${counts[code] - 1})` : ""}
+            <Button key={code} onClick={() => pressCorner(code, x, y)} className="w-1/5">
+              {code}
+              {` ${counts[code]}`}
             </Button>
           ))}
-          <Button onClick={() => invoke("showBitmapView", [makeBitmap(100, 100, "CE"), {x: 200, y: 100, width: 100, height: 100}])}>
-            showBitmapView — 100×100 Center
+        </div>
+
+        <div className="flex flex-row gap-2 mt-5">
+          <Button
+            onClick={() => {
+              let next = incrementCount("CE")
+              invoke("showBitmapView", [makeBitmap(100, 100, `CE ${next}`), {x: 288 - 100 / 2, y: 144 - 100 / 2, width: 100, height: 100}])
+            }}>
+            Center
+          </Button>
+          <Button
+            onClick={() => {
+              let next = incrementCount("full")
+              invoke("showBitmapView", [
+                makeBitmap(288, 144, `full ${next}`),
+                {x: 288 - 288 / 2, y: 144 - 144 / 2, width: 288, height: 144},
+              ])
+            }}>
+            Large
           </Button>
         </div>
 
@@ -177,10 +197,10 @@ export default function DisplayPage() {
           <Button
             variant="destructive"
             onClick={() => {
-              setCounts({TL: 0, TR: 0, BR: 0, BL: 0})
-              invoke("clearView", [])
+              setCounts({TL: 0, TR: 0, BR: 0, BL: 0, CE: 0, full: 0})
+              invoke("clear", [])
             }}>
-            clearView()
+            clearDisplay()
           </Button>
         </div>
         <ErrorRow event={lastError} />

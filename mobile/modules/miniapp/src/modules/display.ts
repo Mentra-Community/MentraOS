@@ -141,7 +141,7 @@ export class DisplayManager {
   }
 
   /** Clear the specified view. */
-  clearView(view: ViewType = "main"): void {
+  clear(view: ViewType = "main"): void {
     this.send({layoutType: "clear_view"}, {view})
   }
 }

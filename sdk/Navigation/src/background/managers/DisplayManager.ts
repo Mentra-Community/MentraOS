@@ -50,7 +50,7 @@ export class DisplayManager {
 
   /** Wipe whatever's on the glasses. */
   clear(): void {
-    this.safeCall(() => this.session.display.clearView())
+    this.safeCall(() => this.session.display.clear())
   }
 
   private safeCall(fn: () => void): void {

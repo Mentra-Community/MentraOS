@@ -1386,9 +1386,9 @@ class G2 : SGCManager() {
     /** Fixed pool of container IDs the page protocol expects. */
     private val imageContainerIDPool: List<Int> = listOf(10, 11, 12, 13)
     private val textContainerIDPool: List<Int> = listOf(1, 2, 3, 4, 5, 6)
-    /** Default container seeded into every fresh page: 200x100 at 288,144. */
-    private val defaultImgX = 288
-    private val defaultImgY = 144
+    /** Default container seeded into every fresh page: 200x100 centered at 188,44. */
+    private val defaultImgX = 188
+    private val defaultImgY = 44
     private val defaultImgWidth = 200
     private val defaultImgHeight = 100
     /** Default text container: full-screen 576x288 with a 4px padding. */

@@ -1522,7 +1522,7 @@ class G2: NSObject, SGCManager {
     private let imageContainerIDPool: [Int32] = [10, 11, 12, 13]
     private let textContainerIDPool: [Int32] = [1, 2, 3, 4, 5, 6]
     /// Default container seeded into every fresh page: 100x100 in the top-left.
-    private static let defaultImgContainer = (x: Int32(288), y: Int32(144), width: Int32(200), height: Int32(100))
+    private static let defaultImgContainer = (x: Int32(188), y: Int32(44), width: Int32(200), height: Int32(100))
     private static let defaultTextContainer = (x: Int32(0), y: Int32(0), width: Int32(576), height: Int32(288), borderWidth: Int32(0), borderColor: Int32(0), borderRadius: Int32(0), paddingLength: Int32(4))
 
     @Published var aiListening: Bool = false
@@ -1949,13 +1949,13 @@ class G2: NSObject, SGCManager {
             container = textContainers[i]
             Bridge.log("G2: sendText() - reusing container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh)")
             if !pageCreated {
-                rebuildPage()
+                await rebuildPage()
                 try? await Task.sleep(nanoseconds: 1_000_000_000) // settle before sending image data
             }
         } else {
             container = addTextContainer(x: rx, y: ry, width: rw, height: rh, content: content, borderWidth: borderWidth, borderColor: borderColor, borderRadius: borderRadius, paddingLength: paddingLength)
             Bridge.log("G2: sendText() - added text container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh), rebuilding page")
-            rebuildPage()
+            await rebuildPage()
             try? await Task.sleep(nanoseconds: 1_000_000_000) // settle before sending text data
         }
 
@@ -2067,6 +2067,7 @@ class G2: NSObject, SGCManager {
 
         // Reuse an existing container if the rect matches exactly; otherwise add a new one.
         var container: ImgContainer
+        var didRebuild = false
         if let i = imageContainers.firstIndex(where: { $0.matches(x: rx, y: ry, width: rw, height: rh) }) {
             imageContainers[i].bmpData = bmpData
             container = imageContainers[i]
@@ -2078,20 +2079,21 @@ class G2: NSObject, SGCManager {
         } else {
             container = addImageContainer(x: rx, y: ry, width: rw, height: rh, bmpData: bmpData)
             Bridge.log("G2: displayBitmap() - added container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh), rebuilding page")
+            // try? await Task.sleep(nanoseconds: 1_000_000_000) // settle before sending image data
             rebuildPage()
-            try? await Task.sleep(nanoseconds: 1_000_000_000) // settle before sending image data
         }
 
-        Bridge.log("G2: displayBitmap() - sending image data to container \(container.id), \(container.bmpData.count) bytes")
+        // Bridge.log("G2: displayBitmap() - sending image data to container \(container.id), \(container.bmpData.count) bytes")
 
-        let success = await sendImageData(
-            containerID: container.id, containerName: container.name, bmpData: container.bmpData
-        )
-        if !success {
-            Bridge.log("G2: displayBitmap() - failed sending image data")
-        }
-        Bridge.log("G2: displayBitmap() - image sent to container \(container.id), \(bmpData.count) bytes")
-        return success
+        // let success = await sendImageData(
+        //     containerID: container.id, containerName: container.name, bmpData: container.bmpData
+        // )
+        // if !success {
+        //     Bridge.log("G2: displayBitmap() - failed sending image data")
+        // }
+        // Bridge.log("G2: displayBitmap() - image sent to container \(container.id), \(bmpData.count) bytes")
+        // return success
+        return true
     }
 
     /// Add a new image container for `rect`, evicting the oldest when the list is full (max 4).
@@ -2125,41 +2127,39 @@ class G2: NSObject, SGCManager {
     }
 
     /// shutdown and rebuild everything, re-sends all data to the glasses:
-    private func rebuildPage() {
+    private func rebuildPage() async -> Void {
         let msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
-        rebuildState()
+        await rebuildState()
     }
     
     // re-creates the containers and sends all images and text again to the glasses:
-    private func rebuildState() {
+    private func rebuildState() async -> Void {
         Bridge.log("G2: rebuildState()")
-        Task {
-            // recreate the containers:
-            createPageWithContainers()
-            // send any image containers we have
-            // go through each container and send the data:
-            for container in imageContainers {
-                let success = await sendImageData(
-                    containerID: container.id, containerName: container.name, bmpData: container.bmpData
-                )
-                if !success {
-                    Bridge.log("G2: rebuildState() - failed sending image data for container \(container.id)")
-                }
-                try? await Task.sleep(nanoseconds: 300_000_000) // 200ms between containers
+        // recreate the containers:
+        createPageWithContainers()
+        // send any image containers we have
+        // go through each container and send the data:
+        for container in imageContainers {
+            let success = await sendImageData(
+                containerID: container.id, containerName: container.name, bmpData: container.bmpData
+            )
+            if !success {
+                Bridge.log("G2: rebuildState() - failed sending image data for container \(container.id)")
             }
+            try? await Task.sleep(nanoseconds: 300_000_000) // 200ms between containers
+        }
 
-            // go through each text container and send the data:
-            for container in textContainers {
-                // let msg = EvenHubProto.updateTextMessage(
-                //     containerID: container.id,
-                //     contentOffset: 0,
-                //     contentLength: Int32(container.content.utf8.count),
-                //     content: container.content
-                // )
-                // sendEvenHubCommand(msg)
-            }
+        // go through each text container and send the data:
+        for container in textContainers {
+            // let msg = EvenHubProto.updateTextMessage(
+            //     containerID: container.id,
+            //     contentOffset: 0,
+            //     contentLength: Int32(container.content.utf8.count),
+            //     content: container.content
+            // )
+            // sendEvenHubCommand(msg)
         }
     }
 
@@ -2560,6 +2560,11 @@ class G2: NSObject, SGCManager {
                 containerName: c.name, isEventCapture: c.id == 0,
                 content: c.content
             )
+        }
+
+        // remove any image containers that are empty:
+        imageContainers = imageContainers.filter { c in
+            c.bmpData.count > 0
         }
 
         // Build the page's image containers from the live tracked list.
@@ -3929,11 +3934,13 @@ class G2: NSObject, SGCManager {
                     // make sure the container exists:
                     // DeviceManager.shared.sendCurrentState()
                     // rebuild state:
-                    rebuildState()
-                    // set the mic back on if it should be on
-                    let micEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-                    if micEnabled {
-                        restartMic()
+                    Task {
+                        rebuildState()
+                        // set the mic back on if it should be on
+                        let micEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
+                        if micEnabled {
+                            restartMic()
+                        }
                     }
                     return
                 }
