@@ -8,14 +8,17 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-14
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+      - name: Select Xcode 15.4
+        run: |
+          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+          xcodebuild -version
+          swift --version
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -63,26 +66,26 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$GITHUB_WORKSPACE/Mentra.xcarchive" \
+            SWIFT_VERSION=5 \
+            SWIFT_STRICT_CONCURRENCY=minimal \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             DEVELOPMENT_TEAM="" \
             2>&1 | tee /tmp/xcodebuild.log
-          echo "xcodebuild exit: $?"
+          echo "Exit: $?"
 
       - name: Show last 100 lines of build log
         if: always()
-        run: tail -100 /tmp/xcodebuild.log || echo "No log file found"
+        run: tail -100 /tmp/xcodebuild.log || echo "No log file"
 
       - name: Verify archive and find .app
         run: |
-          echo "=== Looking for Mentra.app ==="
-          find "$GITHUB_WORKSPACE" -name "Mentra.app" -type d 2>/dev/null | head -5
-
-          APP_PATH=$(find "$GITHUB_WORKSPACE" -name "Mentra.app" -type d | head -1)
+          APP_PATH=$(find "$GITHUB_WORKSPACE/Mentra.xcarchive" -name "Mentra.app" -type d | head -1)
           if [ -z "$APP_PATH" ]; then
-            echo "❌ Mentra.app not found"
+            echo "❌ Mentra.app not found in archive"
+            find "$GITHUB_WORKSPACE/Mentra.xcarchive" -maxdepth 6 2>/dev/null || echo "No archive found"
             exit 1
           fi
           echo "✅ Found: $APP_PATH"
