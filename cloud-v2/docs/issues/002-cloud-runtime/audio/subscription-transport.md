@@ -7,8 +7,8 @@ the cloud which audio streams (transcription, translation) it wants in v2.
 
 ## Decision
 
-**Option 2a.** Subscriptions are a REST endpoint (`PUT /v2/runtime/audio/subscriptions`,
-full-replace, `epoch` + `version` guards). The handler (any pod) writes the
+**Option 2a.** Subscriptions are a REST endpoint (`PUT /api/audio/subscriptions`,
+full-replace, `sessionId` + `version` guards). The handler (any pod) writes the
 authoritative set to the `{user:X}` Redis key and `XADD`s a `subscriptions-changed`
 control entry into the user's existing `{user:X}:audio` stream; the owning worker
 consumes it in order via its existing `XREADGROUP`, with `XAUTOCLAIM` failover
@@ -45,11 +45,11 @@ These come from the prior cloud-v2 specs and from scars in the legacy cloud
 2. **Ordering across reconnects.** Legacy flapped because updates applied
    out of order, and because a stale or empty snapshot arriving after a
    reconnect overwrote good state. The fix legacy converged on is
-   **epoch (per connection/session) + version (monotonic per snapshot)**: ignore
-   writes from a stale epoch, discard out-of-order versions. Any option that lets
-   more than one writer touch the set must carry epoch + version.
+   **sessionId (per connection/session) + version (monotonic per snapshot)**: ignore
+   writes from a stale sessionId, discard out-of-order versions. Any option that lets
+   more than one writer touch the set must carry sessionId + version.
 3. **No empty-wipe.** A late or retried empty set must not clobber a live
-   non-empty set. The epoch + version guard plus explicit-clear semantics cover
+   non-empty set. The sessionId + version guard plus explicit-clear semantics cover
    this.
 4. **Single source of truth, computed on demand.** Legacy added derived caches
    for O(1) reads, then removed them because caches drift. The worker should
@@ -83,8 +83,8 @@ client --WS subscriptions.update {subs}--> owner pod main thread --postMessage--
   003 commitment that pub/sub is not used in the audio path.
 - Failover is trivially correct: the client re-asserts the full set to whichever
   pod it reconnects to. No stale Redis state to reconcile or expire.
-- Ordering is natural: one ordered WS connection per session. Epoch is just the
-  connection. Less machinery to get #2 and #3 right.
+- Ordering is natural: one ordered WS connection per session. The session is just
+  the connection. Less machinery to get #2 and #3 right.
 
 **Cons**
 - The WS is no longer mostly downstream. The client initiates subscription
@@ -98,12 +98,12 @@ client --WS subscriptions.update {subs}--> owner pod main thread --postMessage--
 
 The client sends the full set to a stateless REST endpoint that any pod can
 serve. The handler writes the authoritative set to a `{user:X}` Redis key
-(guarded by epoch + version) and then makes sure the owner's worker learns about
+(guarded by sessionId + version) and then makes sure the owner's worker learns about
 it. The REST handler never needs to reach the owner pod directly.
 
 ```
-PUT /v2/runtime/subscriptions { subscriptions, epoch, version }
-   -> any pod: validate, CAS-write {user:X}:subs (reject stale epoch/older version)
+PUT /api/audio/subscriptions { subscriptions, sessionId, version }
+   -> any pod: validate, CAS-write {user:X}:subs (reject stale sessionId/older version)
    -> signal the owner (see 2a / 2b)
    -> owner worker reconciles from the full set
 ```
@@ -153,9 +153,9 @@ it stale.
 
 **Cons (Option 2 overall)**
 - Reintroduces cross-pod coordination and the consistency hazards legacy fought:
-  needs epoch + version, explicit-clear semantics, and key-lifetime management.
+  needs sessionId + version, explicit-clear semantics, and key-lifetime management.
 - More moving parts than Option 1 (a key, a signal channel, reconcile-on-takeover).
-- Two writers of the set (WS init seed + REST updates) must agree via epoch +
+- Two writers of the set (WS init seed + REST updates) must agree via sessionId +
   version.
 
 ## Comparison
@@ -168,16 +168,16 @@ it stale.
 | Client request/response + ack | no | yes | yes |
 | WS mostly downstream | no | yes | yes |
 | Failover correctness | client re-send | key + XAUTOCLAIM replay | key + reconcile-on-takeover |
-| Ordering machinery needed | minimal (one socket) | epoch + version | epoch + version |
+| Ordering machinery needed | minimal (one socket) | sessionId + version | sessionId + version |
 | Moving parts | fewest | medium | most |
 
 ## Cross-cutting requirements (whichever we pick)
 
 - If more than one writer can touch the set (any REST option), carry
-  **epoch + version** and reject stale epoch / older version. Reply with an ack
+  **sessionId + version** and reject stale sessionId / older version. Reply with an ack
   that includes a `rejected[]` list.
 - Define **explicit clear**: an empty set is honored only when it is the latest
-  version for the current epoch, so a stale empty cannot wipe a live set.
+  version for the current sessionId, so a stale empty cannot wipe a live set.
 - Worker reconciles from the **full set**, no derived caches across the boundary.
 - All keys hash-tagged `{user:X}`.
 
@@ -192,15 +192,15 @@ is materially simpler and is what the prior design already specifies.
 Option 2b is only preferable if we end up wanting general cross-pod control
 fan-out for other reasons, at which point a real pub/sub channel pays for itself.
 
-## Open questions
+## Open questions (remaining)
 
-1. Is "WS mostly downstream" a hard goal, or a preference we would trade for
-   Option 1's simplicity?
-2. If Option 2: stream control entry in `{user:X}:audio`, or a dedicated
-   `{user:X}:control` stream?
-3. Epoch source: the WS session id from `connection.ack`, or a client-generated
-   per-connection nonce echoed on every REST call?
-4. Subscription key lifetime: TTL refreshed by the owner, or explicit delete on
+The transport (2a) and the guard source (`sessionId` from `connection.ack`) are
+decided. Smaller implementation choices still open:
+
+1. Stream control entry in `{user:X}:audio`, or a dedicated `{user:X}:control`
+   stream? Lean: a dedicated control stream so the worker does not branch on entry
+   type inside the audio path.
+2. Subscription key lifetime: TTL refreshed by the owner, or explicit delete on
    clean disconnect, or both?
 
 ## References
@@ -209,7 +209,7 @@ fan-out for other reasons, at which point a real pub/sub channel pays for itself
 - [`design.md`](./design.md) (Scenario 2 subscription update, Scenario 3/4
   failover, the "no pub/sub" note, hash-tag keys)
 - `cloud/packages/cloud/src/services/session/docs/SUBSCRIPTION-CONSISTENCY.md`
-  (out-of-order and empty-wipe scars, epoch + version proposal)
+  (out-of-order and empty-wipe scars, stale-write guard proposal)
 - `cloud/packages/cloud/src/services/session/SubscriptionManager.ts`
   (single-source-of-truth, no-caches, full-set replace, per-app serialization)
 - [`../protocol.md`](../protocol.md) (the v2 wire

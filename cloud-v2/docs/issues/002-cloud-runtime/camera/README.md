@@ -27,8 +27,8 @@ the OEM's own blob config, independent of Cloud Core's instance.
 ## Endpoints (to be specified)
 
 ```
-POST /v2/runtime/camera/photo     # managed photo request
-POST /v2/runtime/camera/stream    # managed stream provisioning
+POST /api/camera/photo     # managed photo request
+POST /api/camera/stream    # managed stream provisioning
 ```
 
 Request and response shapes, provider selection, and lifecycle (expiry, cleanup)

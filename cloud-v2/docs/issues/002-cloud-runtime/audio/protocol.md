@@ -21,28 +21,29 @@ those types move on the wire.
 ## Subscription REST endpoint
 
 ```
-PUT /v2/runtime/audio/subscriptions
+PUT /api/audio/subscriptions
 Authorization: Bearer <access_token>
 Content-Type: application/json
 
 {
   "subscriptions": AudioSubscription[],   // canonical type, see spec.md
-  "epoch": string,                         // per-connection/session; stale epochs ignored
+  "sessionId": string,                     // from connection.ack; writes from a stale session are ignored
   "version": number                        // monotonic per snapshot; older versions discarded
 }
 ```
 
-Full-set replace. `epoch` + `version` exist because of the legacy scars
+Full-set replace. `sessionId` + `version` exist because of the legacy scars
 (out-of-order application, and an empty snapshot after reconnect wiping a live
-set). The server ignores writes from a stale epoch and discards out-of-order
-versions, and replies with an ack carrying any `rejected[]` entries (for example
-an unsupported language). An empty set is honored only when it is the latest
-version for the current epoch, so a stale empty cannot wipe a live set.
+set). The server ignores writes whose `sessionId` is not the current session and
+discards out-of-order versions, and replies with an ack carrying any `rejected[]`
+entries (for example an unsupported language). An empty set is honored only when
+it is the latest version for the current session, so a stale empty cannot wipe a
+live set.
 
-Whether subscriptions flow over this REST endpoint or over the WebSocket is an
-open decision: see [`subscription-transport.md`](./subscription-transport.md).
-The endpoint here is the REST option; the data model and guards are the same
-either way.
+This REST endpoint is the decided transport (Option 2a); see
+[`subscription-transport.md`](./subscription-transport.md). The cloud delivers the
+change to the owning worker as a control entry in the user's audio stream, no
+pub/sub.
 
 ### Server-side routing (informative)
 
@@ -52,7 +53,7 @@ owning worker through the user's audio stream, no pub/sub.
 
 - The authoritative subscription set lives in a Redis key hash-tagged
   `{user:X}` (matching the audio stream and ownership keys), holding the full set
-  plus the last accepted `epoch`/`version`. A stale `epoch` or older `version` is
+  plus the last accepted `sessionId`/`version`. A stale `sessionId` or older `version` is
   rejected, so a retried or reordered write cannot clobber a live set.
 - The REST handler (any pod) writes the key, then `XADD`s a `subscriptions-changed`
   control entry into the user's existing `{user:X}:audio` stream. The owning

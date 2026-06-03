@@ -54,8 +54,8 @@ Every WebSocket message is a JSON object with this shape:
 interface Envelope<T = unknown> {
   v: 2;            // protocol major; mismatched major is rejected at handshake
   type: string;    // namespaced, e.g. "stream.transcript"
-  id?: string;     // optional client-generated id for request/ack correlation
-  ts: number;      // epoch milliseconds
+  id?: string;        // optional, only when a message needs request/ack correlation
+  timestamp: number;  // epoch milliseconds (Unix time)
   payload: T;
 }
 ```
@@ -161,7 +161,10 @@ audio service's `SUBSCRIPTION_INVALID`); those are documented in the service doc
 
 - All client-initiated commands are REST, stateless, and pod-agnostic, behind the
   normal load balancer. Auth is `Authorization: Bearer <access_token>`.
-- Endpoints are versioned under `/v2/runtime/...` and scoped by service.
+- Endpoints live under an `/api/...` prefix on the runtime's own domain, scoped by
+  service, with **no version segment**: the domain (a fresh v2 service) already
+  distinguishes this from the legacy cloud, and the runtime API is on its first
+  version. If a breaking change is ever needed, it takes `/api/v2/...`.
 - Per-service endpoints live in their service doc (audio subscriptions in
   [`audio/protocol.md`](./audio/protocol.md); managed photo and managed stream in
   [`camera/README.md`](./camera/README.md)).
