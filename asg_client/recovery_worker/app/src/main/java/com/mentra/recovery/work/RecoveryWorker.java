@@ -76,6 +76,22 @@ public class RecoveryWorker extends Worker {
       return Result.success();
     }
 
+    if (waitForPong(context, WAIT_PING_INTERVAL_MS * 2)) {
+      store.setState(RecoveryConstants.STATE_COOLDOWN, "LATE_PONG_BEFORE_REINSTALL");
+      telemetry.emit(
+          "mentra_recovery_recovered", RecoveryConstants.STATE_HEALTHY, "LATE_PONG_BEFORE_REINSTALL", attempt, true);
+      return Result.success();
+    }
+    String stateBeforeReinstall = store.getState();
+    if (RecoveryConstants.STATE_HEALTHY.equals(stateBeforeReinstall)
+        || RecoveryConstants.STATE_COOLDOWN.equals(stateBeforeReinstall)) {
+      Log.i(RecoveryConstants.TAG, "ASG healthy before reinstall; aborting reinstall");
+      store.setState(RecoveryConstants.STATE_COOLDOWN, "HEALTHY_BEFORE_REINSTALL");
+      telemetry.emit(
+          "mentra_recovery_recovered", RecoveryConstants.STATE_HEALTHY, "HEALTHY_BEFORE_REINSTALL", attempt, true);
+      return Result.success();
+    }
+
     store.setState(RecoveryConstants.STATE_REINSTALLING_BACKUP, "RESTART_FAILED");
     telemetry.emit(
         "mentra_recovery_reinstall_attempted",
@@ -92,6 +108,16 @@ public class RecoveryWorker extends Worker {
       context.sendBroadcast(
           new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED)
               .setPackage(RecoveryConstants.RECOVERY_PACKAGE));
+      if (waitForPong(context, RecoveryConstants.RESTART_GRACE_MS)) {
+        store.setState(RecoveryConstants.STATE_COOLDOWN, "ASG_ALIVE_SKIP_REINSTALL");
+        telemetry.emit(
+            "mentra_recovery_recovered",
+            RecoveryConstants.STATE_HEALTHY,
+            "ASG_ALIVE_SKIP_REINSTALL",
+            attempt,
+            true);
+        return Result.success();
+      }
       store.setState(RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "NO_VALID_BACKUP");
       telemetry.emit(
           "mentra_recovery_failed", RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "NO_VALID_BACKUP", attempt, false);
