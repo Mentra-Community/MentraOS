@@ -8,7 +8,9 @@ are locked.
 
 ## Construction
 
-Class, platform chosen by import path, transports pre-wired per platform:
+You make one `CloudClient`. Which build you import decides the platform, and each
+build already has its network sockets and storage wired in, so the constructor is
+just config:
 
 ```ts
 import { CloudClient } from "@mentra/cloud-client/react-native"   // device
@@ -25,8 +27,9 @@ const cloud = new CloudClient({
 cloud.auth; cloud.runtime; cloud.core
 ```
 
-The core package `@mentra/cloud-client/core` is platform-agnostic and accepts
-injected transports; the platform entries fill them in:
+The shared core (`@mentra/cloud-client/core`) doesn't know what platform it's on; it
+takes the platform pieces as inputs, and the `react-native` and `node` builds are
+thin wrappers that supply them:
 
 ```ts
 interface CloudClientTransports {
@@ -103,8 +106,9 @@ interface RuntimeModule {
 
 ## `cloud.core`
 
-Device-facing Cloud Core REST. Bearer from `cloud.auth`. Starts thin; grows with
-miniapp-service (next week).
+The other v2 REST calls the device makes (not the live session, not auth), each sent
+with the access token from `cloud.auth`. It starts small and grows as miniapp-service
+lands.
 
 ```ts
 interface CoreModule {
@@ -120,10 +124,10 @@ Guardrail: device-facing only, no Dev Console / OEM Portal / store web UI.
 
 ## Shared types
 
-Wire types come from `@mentra/cloud-runtime/protocol` (zod, isomorphic):
-`AudioSubscription`, `TranscriptionData`, `TranslationData`, `ProtocolError`, the
-envelope and message unions. The cloud-client imports them so it cannot drift from
-the server.
+The message types (`AudioSubscription`, `TranscriptionData`, `TranslationData`,
+`ProtocolError`, and the rest) aren't defined here. They come from
+`@mentra/cloud-runtime/protocol`, the one package the cloud server also uses. The
+cloud-client imports them, so it can't drift from what the cloud actually accepts.
 
 ## Consumers
 
