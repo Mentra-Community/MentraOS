@@ -373,6 +373,8 @@ public class OtaService extends Service {
                         "📱 First boot with version tracking - recording ASG version: "
                                 + currentVersion);
                 prefs.edit().putLong("last_seen_asg_version", currentVersion).apply();
+                // Clear any recovery heartbeat pause that may have been set before this install.
+                OtaHelper.notifyRecoveryInstallCompleted(this);
 
                 if (otaHelper != null) {
                     Log.i(
