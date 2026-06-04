@@ -1319,6 +1319,7 @@ class G2 : SGCManager() {
     private var dashboardMenuItems: MutableList<MenuProto.MenuItem> = mutableListOf()
     private var activeMenuAppId: Int? = null
     private var lastClickTimestamp: Long? = null
+    private var lastEvenHubResponseTimestamp: Long? = null
     private var lastMenuSelectTimestamp: Long? = null
     private var lastGestureCtrlTimestamp: Long? = null
 
@@ -2386,6 +2387,21 @@ class G2 : SGCManager() {
                     )
                 }
 
+        // iterate all image containers, remove any entries with duplicate ids or empty data,
+        // and ensure the ids are still in the imageContainerIDPool:
+        val seenIDs = mutableSetOf<Int>()
+        imageContainers.retainAll { c ->
+            if (c.bmpData.isEmpty()) {
+                Bridge.log("G2: removing empty image container ${c.id}")
+                return@retainAll false
+            }
+            if (!seenIDs.add(c.id)) {
+                Bridge.log("G2: removing duplicate image container ${c.id}")
+                return@retainAll false
+            }
+            imageContainerIDPool.contains(c.id)
+        }
+
         // Build the page's image containers from the live tracked list.
         val imageContainerProps: List<ByteArray> =
                 imageContainers.map { c ->
@@ -2570,9 +2586,9 @@ class G2 : SGCManager() {
             bmp.write(rowBuf)
         }
 
-        Bridge.log(
-                "G2: build4BitBmp - ${bmp.size()} bytes (header=$headerSize, pixels=$pixelDataSize, rows=${paddedRowSize}x$height)"
-        )
+        // Bridge.log(
+        //         "G2: build4BitBmp - ${bmp.size()} bytes (header=$headerSize, pixels=$pixelDataSize, rows=${paddedRowSize}x$height)"
+        // )
         return bmp.toByteArray()
     }
 
@@ -2604,7 +2620,7 @@ class G2 : SGCManager() {
         sendEvenHubCommand(msg)
         mainHandler.postDelayed({
             val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
-            Bridge.log("G2: setMicEnabled - useNativeDashboard=$useNativeDashboard, dashboardShowing=$dashboardShowing")
+            // Bridge.log("G2: setMicEnabled - useNativeDashboard=$useNativeDashboard, dashboardShowing=$dashboardShowing")
             if (useNativeDashboard && dashboardShowing > 0) {
                 return@postDelayed
             }
@@ -3593,6 +3609,14 @@ class G2 : SGCManager() {
                 Bridge.log("G2: Menu selection ignored — placeholder or unknown appId=$appId")
             }
         } else {
+            // response codes:
+            val timestamp = System.currentTimeMillis()
+            val lastResponse = lastEvenHubResponseTimestamp
+            if (lastResponse != null && timestamp - lastResponse < 100) {
+                return
+            }
+            lastEvenHubResponseTimestamp = timestamp
+
             // Parse error codes from responses
             // field 4 = StartupResCmd, field 6 = ImgResCmd, field 8 = RebuildResCmd, field 10 =
             // TextResCmd
@@ -3807,9 +3831,9 @@ class G2 : SGCManager() {
         // Ignore heartbeat acks
         if (cmdValue == DevCfgCommandId.BASE_CONN_HEART_BEAT.value) return
 
-        Bridge.log(
-                "G2: DevSettings response: ${payload.take(32).joinToString(":") { String.format("%02X", it) }}"
-        )
+        // Bridge.log(
+        //         "G2: DevSettings response: ${payload.take(32).joinToString(":") { String.format("%02X", it) }}"
+        // )
 
         if (cmdValue == DevCfgCommandId.AUTHENTICATION.value) {
             // DevCfgDataPackage: field 2 = magicRandom, field 3 = AuthMgr { field 1 = secAuth }
@@ -3851,7 +3875,7 @@ class G2 : SGCManager() {
                 }
 
                 val connStatus = ringFields[4] as? Int ?: -1
-                Bridge.log("G2: Ring connection status: connStatus?=$connStatus")
+                // Bridge.log("G2: Ring connection status: connStatus?=$connStatus")
 
                 if (connStatus == 22) {
                     Bridge.log("G2: Ring disconnected")
@@ -3919,7 +3943,7 @@ class G2 : SGCManager() {
         val timestamp = System.currentTimeMillis()
         val last = lastGestureCtrlTimestamp
         if (last != null && timestamp - last < 500) {
-            Bridge.log("G2: gesture_ctrl dedup")
+            // Bridge.log("G2: gesture_ctrl dedup")
             return
         }
         lastGestureCtrlTimestamp = timestamp
