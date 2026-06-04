@@ -41,6 +41,12 @@ export class NavigationController {
   private showMinimap = false
   private lastCoordsAt = 0
   private gettingFix = false
+  // Tracks whether a trip has completed (arrived or stopped) in this
+  // session. Used to suppress the "Welcome to Mentra Maps!" message
+  // after the first arrival — the welcome line should only show at
+  // the very start of the session, not every time the user finishes
+  // and returns to idle.
+  private hasCompletedTrip = false
 
   // Canonical state (mirrored to UI).
   private coords: Coords | null = null
@@ -193,6 +199,7 @@ export class NavigationController {
               routeSteps: null,
               offRouteAt: null,
             }
+            this.hasCompletedTrip = true
             break
           case "error":
             this.trip = {...this.trip, status: "idle", running: false}
@@ -330,6 +337,7 @@ export class NavigationController {
           routeSteps: null,
           offRouteAt: null,
         }
+        this.hasCompletedTrip = true
         this.ui.send("nav:trip-state", this.trip)
         this.refreshHUD()
       }),
@@ -444,7 +452,7 @@ export class NavigationController {
       const at = activeDestinationName ? ` at ${activeDestinationName}` : ""
       next = `You have arrived${at}`
       durationMs = 10_000
-    } else if (!running) {
+    } else if (!running && !this.hasCompletedTrip) {
       next = "Welcome to Mentra Maps!\nPick a destination to get started."
       durationMs = 5_000
     } else if (status === "rerouting") {
