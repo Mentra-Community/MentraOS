@@ -8,6 +8,10 @@ private final class ActiveStreamKeepAlive {
     var pendingAckId: String?
     var missedAckCount = 0
     var task: Task<Void, Never>?
+    // Missed-ACK counting only begins once the stream is confirmed live/coming up, so a slow
+    // startup (glasses can't ACK until they reach starting/streaming) can't trip a false
+    // keep-alive timeout before the stream is ever up.
+    var armed = false
 
     init(streamId: String, intervalSeconds: Int) {
         self.streamId = streamId
@@ -528,7 +532,7 @@ public final class MentraBluetoothSDK {
     private func sendNextStreamKeepAlive(for tracker: ActiveStreamKeepAlive) {
         guard activeStreamKeepAlive === tracker else { return }
 
-        if tracker.pendingAckId != nil {
+        if tracker.armed, tracker.pendingAckId != nil {
             tracker.missedAckCount += 1
             if tracker.missedAckCount >= 3 {
                 activeStreamKeepAlive = nil
@@ -584,7 +588,10 @@ public final class MentraBluetoothSDK {
         case .stopped, .stopping, .error, .reconnectFailed:
             stopStreamKeepAliveMonitor()
         default:
-            break
+            // A non-terminal status means the stream is live or coming up and the glasses can
+            // now ACK; arm the missed-ACK detector from here so a slow startup before the first
+            // ACK can't trip a false keep-alive timeout.
+            activeStreamKeepAlive?.armed = true
         }
     }
 
