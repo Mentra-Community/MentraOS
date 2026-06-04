@@ -473,7 +473,14 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun startVideoRecording(request: VideoRecordingRequest) {
-        deviceManager.startVideoRecording(request.requestId, request.save, request.sound)
+        deviceManager.startVideoRecording(
+                request.requestId,
+                request.save,
+                request.sound,
+                request.width,
+                request.height,
+                request.fps,
+        )
     }
 
     fun stopVideoRecording(requestId: String) {

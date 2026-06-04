@@ -1123,7 +1123,8 @@ public final class PhotoSession {
             shotState = AeStateMachine.ShotState.SHOOTING;
 
             ImuRecorder imu = hooks.ensureImuRecorder();
-            imu.startRecording();
+            String imuStartPath = (currentFilePath() != null) ? currentFilePath() : listenerFallbackPhotoPath;
+            imu.startRecording(imuStartPath);
 
             CaptureRequest.Builder stillBuilder =
                     activeCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
@@ -1325,7 +1326,8 @@ public final class PhotoSession {
             shotState = AeStateMachine.ShotState.SHOOTING;
 
             ImuRecorder imu = hooks.ensureImuRecorder();
-            imu.startRecording();
+            String imuStartPath = (currentFilePath() != null) ? currentFilePath() : listenerFallbackPhotoPath;
+            imu.startRecording(imuStartPath);
 
             Log.i(
                     TAG,

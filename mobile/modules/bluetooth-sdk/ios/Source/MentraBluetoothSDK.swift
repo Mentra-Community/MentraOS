@@ -442,7 +442,10 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.startVideoRecording(
             request.requestId,
             request.save,
-            request.sound
+            request.sound,
+            request.width,
+            request.height,
+            request.fps
         )
     }
 

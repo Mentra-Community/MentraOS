@@ -425,8 +425,25 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - Video Recording Commands
 
-        AsyncFunction("startVideoRecording") { requestId: String, save: Boolean, sound: Boolean ->
-            sdk?.startVideoRecording(VideoRecordingRequest(requestId, save, sound))
+        AsyncFunction("startVideoRecording") {
+                requestId: String,
+                save: Boolean,
+                sound: Boolean,
+                settings: Map<String, Any?>? ->
+            // Optional per-recording {width,height,fps}. Absent fields stay 0, which
+            // the glasses treat as "use the saved button-video default". JS numbers
+            // arrive as Double across the bridge, so coerce to Int.
+            fun dim(key: String): Int = (settings?.get(key) as? Number)?.toInt() ?: 0
+            sdk?.startVideoRecording(
+                    VideoRecordingRequest(
+                            requestId,
+                            save,
+                            sound,
+                            dim("width"),
+                            dim("height"),
+                            dim("fps"),
+                    )
+            )
         }
 
         AsyncFunction("stopVideoRecording") { requestId: String ->

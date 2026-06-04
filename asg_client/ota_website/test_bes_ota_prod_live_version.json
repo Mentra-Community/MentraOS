@@ -1,10 +1,10 @@
 {
   "apps": {
     "com.mentra.asg_client": {
-      "versionCode": 38,
-      "versionName": "38.0",
-      "apkUrl": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/asg-client-38-test.apk",
-      "sha256": "d504e1f164e50109419c8c2181428f468a393575884294700270fcffe0cc7b59"
+      "versionCode": 37,
+      "versionName": "37.0",
+      "apkUrl": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/asg-client-37.apk",
+      "sha256": "a637d23919ffde6e92025249ad91fde7befd6f4900c80c4be86cde2e75ae3564"
     },
     "com.augmentos.otaupdater": {
       "versionCode": 0,
@@ -15,15 +15,21 @@
   },
   "mtk_patches": [
     {
+      "start_firmware": "MentraLive_20260204",
+      "end_firmware": "MentraLive_20260525",
+      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260204_20260525.zip",
+      "sha256": "6078863f99b28fa7a6a7988e12e001ee6384f928861a3129f50652bec82bbd27"
+    },
+    {
       "start_firmware": "MentraLive_20260113",
-      "end_firmware": "MentraLive_20260204",
-      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_firmware_20260113_20260204.zip",
-      "sha256": "dac093bca108228c084963e58213e9db0c472c0d5d586203acdc19b48ab04abd"
+      "end_firmware": "MentraLive_20260525",
+      "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/mtk_ota_update_20260113_20260525.zip",
+      "sha256": "23b391985ee5da2ac3ec0adca2186e48bcaf5fa8ea50eb2f90a7145fe8d856a7"
     }
   ],
   "bes_firmware": {
-    "version": "17.26.04.01",
-    "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/bes_firmware_17.26.04.01.bin",
-    "sha256": "67a7d1c48dd7fbed16fc1a94c9d221ebae2e817f493d0007a58e8d49028f4e82"
+    "version": "17.26.05.22",
+    "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/bes_firmware_17.26.05.22.bin",
+    "sha256": "9499b1d132b934d3564c9dadf166595b4e9729cdf865b4be4e55b1d77cc5fa3c"
   }
 }

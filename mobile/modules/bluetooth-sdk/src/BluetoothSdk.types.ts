@@ -4,8 +4,11 @@ export type GlassesNotReadyEvent = {
   message: string
 }
 
+// NOTE: unlike most events below, the native module does NOT include a `type`
+// field on the button_press payload — it sends only {buttonId, pressType,
+// timestamp} (see BluetoothSdkModule on both iOS and Android). Consumers must
+// filter on `pressType` / the "button_press" listener name, never `event.type`.
 export type ButtonPressEvent = {
-  type: "button_press"
   buttonId: string
   pressType: "long" | "short"
   timestamp: number
@@ -41,34 +44,34 @@ export type BatteryStatusEvent = {
 }
 
 export type GlassesConnectionStatus =
-  | {state: 'disconnected'}
-  | {state: 'scanning'}
-  | {state: 'connecting'}
-  | {state: 'bonding'}
-  | {state: 'connected'; fullyBooted: boolean}
+  | {state: "disconnected"}
+  | {state: "scanning"}
+  | {state: "connecting"}
+  | {state: "bonding"}
+  | {state: "connected"; fullyBooted: boolean}
 
-export type ConnectedGlassesConnectionStatus = Extract<GlassesConnectionStatus, {state: 'connected'}>
+export type ConnectedGlassesConnectionStatus = Extract<GlassesConnectionStatus, {state: "connected"}>
 
 export function isConnectedGlassesConnectionStatus(
   status: GlassesConnectionStatus,
 ): status is ConnectedGlassesConnectionStatus {
-  return status.state === 'connected'
+  return status.state === "connected"
 }
 
 export function isReadyGlassesConnectionStatus(status: GlassesConnectionStatus): boolean {
-  return status.state === 'connected' && status.fullyBooted
+  return status.state === "connected" && status.fullyBooted
 }
 
 export function isBusyGlassesConnectionStatus(status: GlassesConnectionStatus): boolean {
-  return status.state === 'scanning' || status.state === 'connecting' || status.state === 'bonding'
+  return status.state === "scanning" || status.state === "connecting" || status.state === "bonding"
 }
 
 export function createDisconnectedGlassesStatus(): Partial<GlassesStatus> {
   return {
-    connection: {state: 'disconnected'},
-    hotspot: {state: 'disabled'},
+    connection: {state: "disconnected"},
+    hotspot: {state: "disabled"},
     voiceActivityDetectionEnabled: true,
-    wifi: {state: 'disconnected'},
+    wifi: {state: "disconnected"},
   }
 }
 
@@ -93,24 +96,24 @@ export type LogEvent = {
   message: string
 }
 
-export type WifiStatus = {state: 'disconnected'} | {state: 'connected'; ssid: string; localIp?: string}
+export type WifiStatus = {state: "disconnected"} | {state: "connected"; ssid: string; localIp?: string}
 
-export type ConnectedWifiStatus = Extract<WifiStatus, {state: 'connected'}>
+export type ConnectedWifiStatus = Extract<WifiStatus, {state: "connected"}>
 
 export function isConnectedWifiStatus(status: WifiStatus): status is ConnectedWifiStatus {
-  return status.state === 'connected'
+  return status.state === "connected"
 }
 
 export type WifiStatusChangeEvent = WifiStatus & {
   type: "wifi_status_change"
 }
 
-export type HotspotStatus = {state: 'disabled'} | {state: 'enabled'; ssid: string; password: string; localIp: string}
+export type HotspotStatus = {state: "disabled"} | {state: "enabled"; ssid: string; password: string; localIp: string}
 
-export type EnabledHotspotStatus = Extract<HotspotStatus, {state: 'enabled'}>
+export type EnabledHotspotStatus = Extract<HotspotStatus, {state: "enabled"}>
 
 export function isEnabledHotspotStatus(status: HotspotStatus): status is EnabledHotspotStatus {
-  return status.state === 'enabled'
+  return status.state === "enabled"
 }
 
 export type HotspotStatusChangeEvent = HotspotStatus & {
@@ -283,6 +286,17 @@ export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
 export type PhotoSize = "small" | "medium" | "large" | "full"
 export type ButtonPhotoSize = "small" | "medium" | "large"
 export type PhotoCompression = "none" | "medium" | "heavy"
+
+/**
+ * Optional per-recording video settings for {@link startVideoRecording}. When
+ * omitted, the glasses fall back to their saved button-video settings. Any
+ * field left undefined is omitted from the BLE command (glasses default applies).
+ */
+export interface VideoRecordingSettings {
+  width?: number
+  height?: number
+  fps?: number
+}
 export const DeviceModels = {
   Simulated: "Simulated Glasses",
   G1: "Even Realities G1",
@@ -523,11 +537,11 @@ export type OtaStatusEvent = {
   session_id: string
   total_steps: number
   current_step: number
-  step_type: 'apk' | 'mtk' | 'bes'
-  phase: 'download' | 'install'
+  step_type: "apk" | "mtk" | "bes"
+  phase: "download" | "install"
   step_percent: number
   overall_percent: number
-  status: 'in_progress' | 'step_complete' | 'complete' | 'failed' | 'idle'
+  status: "in_progress" | "step_complete" | "complete" | "failed" | "idle"
   error_message?: string
 }
 
@@ -705,19 +719,19 @@ export interface BluetoothSdkPublicModule {
   setCameraFov(fov: CameraFov): Promise<void>
   queryGalleryStatus(): Promise<void>
   requestPhoto(params: PhotoRequestParams): Promise<void>
-  startVideoRecording(requestId: string, save: boolean, sound: boolean): Promise<void>
+  startVideoRecording(
+    requestId: string,
+    save: boolean,
+    sound: boolean,
+    settings?: VideoRecordingSettings,
+  ): Promise<void>
   stopVideoRecording(requestId: string): Promise<void>
 
   startStream(params: StreamStartRequest): Promise<void>
   stopStream(): Promise<void>
   keepStreamAlive(params: StreamKeepAliveRequest): Promise<void>
 
-  setMicState(
-    enabled: boolean,
-    useGlassesMic?: boolean,
-    sendTranscript?: boolean,
-    sendLc3Data?: boolean,
-  ): Promise<void>
+  setMicState(enabled: boolean, useGlassesMic?: boolean, sendTranscript?: boolean, sendLc3Data?: boolean): Promise<void>
   setPreferredMic(preferredMic: MicPreference): Promise<void>
   setOwnAppAudioPlaying(playing: boolean): Promise<void>
   getGlassesMediaVolume(): Promise<GlassesMediaVolumeGetResult>
@@ -749,7 +763,7 @@ export interface BluetoothSdkPublicModule {
   // checkTtsModelAvailable(): Promise<boolean>
   // validateTtsModel(path: string): Promise<boolean>
   // generateTtsAudio(text: string, path: string, outputPath: string, speakerId: number, speed: number): Promise<boolean>
-  
+
   // STT Commands (TODO: MOVE TO CRUST)
   setSttModelDetails(path: string, languageCode: string): Promise<void>
   getSttModelPath(): Promise<string>
@@ -781,11 +795,11 @@ export interface OtaStatus {
   sessionId: string
   totalSteps: number
   currentStep: number
-  stepType: 'apk' | 'mtk' | 'bes'
-  phase: 'download' | 'install'
+  stepType: "apk" | "mtk" | "bes"
+  phase: "download" | "install"
   stepPercent: number
   overallPercent: number
-  status: 'in_progress' | 'step_complete' | 'complete' | 'failed' | 'idle'
+  status: "in_progress" | "step_complete" | "complete" | "failed" | "idle"
   error?: string
 }
 

@@ -428,10 +428,20 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - Video Recording Commands
 
-        AsyncFunction("startVideoRecording") { (requestId: String, save: Bool, sound: Bool) in
+        AsyncFunction("startVideoRecording") {
+            (requestId: String, save: Bool, sound: Bool, settings: [String: Any]?) in
+            // Optional per-recording {width,height,fps}. Absent fields stay 0, which
+            // the glasses treat as "use the saved button-video default". JS numbers
+            // arrive as Double across the bridge, so coerce to Int.
+            func dim(_ key: String) -> Int {
+                (settings?[key] as? NSNumber)?.intValue ?? 0
+            }
             await MainActor.run {
                 self.bluetoothSdk().startVideoRecording(
-                    VideoRecordingRequest(requestId: requestId, save: save, sound: sound)
+                    VideoRecordingRequest(
+                        requestId: requestId, save: save, sound: sound,
+                        width: dim("width"), height: dim("height"), fps: dim("fps")
+                    )
                 )
             }
         }

@@ -130,6 +130,8 @@ export const emitCoreModuleEvent = (eventName: string, payload: any) => {
   listeners.get(eventName)?.forEach((listener) => listener(payload))
 }
 
+export const getCoreModuleListenerCount = (eventName: string) => listeners.get(eventName)?.size ?? 0
+
 export const resetCoreModuleMock = () => {
   listeners.clear()
   Object.values(coreModuleMock).forEach((value) => {

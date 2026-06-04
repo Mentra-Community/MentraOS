@@ -42,7 +42,7 @@
     "lint": "eslint . --fix",
     "lint:check": "eslint .",
     "patch": "patch-package",
-    "test": "jest",
+    "test": "jest --no-watchman",
     "test:watch": "jest --watch",
     "test:maestro": "maestro test -e MAESTRO_APP_ID=${APP_PACKAGE_NAME:-com.mentra.mentra} .maestro/flows",
     "test:maestro:ci": "maestro test -e MAESTRO_APP_ID=${APP_PACKAGE_NAME:-com.mentra.mentra} .maestro/flows",
