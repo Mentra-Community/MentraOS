@@ -498,6 +498,11 @@ async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promi
       avoidTolls: avoid.tolls === true,
       avoidFerries: avoid.ferries === true,
     },
+    // Without this Google defaults to OVERVIEW — sparse polyline with
+    // vertices that drift 10-20m from actual road centerlines at
+    // intersections, putting our turn-pivot dots off the visible roads.
+    // HIGH_QUALITY traces the road tightly.
+    polylineQuality: "HIGH_QUALITY",
   }
   if (intermediates.length > 0) body.intermediates = intermediates
 
