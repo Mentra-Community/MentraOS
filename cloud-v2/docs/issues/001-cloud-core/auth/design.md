@@ -239,8 +239,8 @@ await fetch("https://api.theirapp.com/...", {
   (from `cloud.auth.getMiniappToken`).
 - Inject the miniapp token into the bundle's two JS contexts (webview + Crust), and
   refresh/re-inject before expiry (mechanism in "On-device injection" above).
-- The cloud-client is wired in through the runtime transport adapter
-  ([`../../004-cloud-client/island-adapter.md`](../../004-cloud-client/island-adapter.md)).
+- The cloud-client is wired in at the runtime's `configureRuntime` hook
+  ([`../../004-cloud-client/architecture.md`](../../004-cloud-client/architecture.md)).
 
 ### 4. Developer SDK and backend verifier
 

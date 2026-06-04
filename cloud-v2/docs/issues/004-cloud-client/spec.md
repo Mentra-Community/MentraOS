@@ -1,8 +1,8 @@
 # Cloud Client spec
 
-**Status:** Spec. The concrete API of `@mentra/cloud-client`. Design rationale and
-open questions are in [`spike.md`](./spike.md); this is the contract to build
-against, now that the protocol ([`../002-cloud-runtime/protocol.md`](../002-cloud-runtime/protocol.md))
+**Status:** Spec. The concrete API of `@mentra/cloud-client`. The rationale and the
+big picture are in [`architecture.md`](./architecture.md); this is the contract to
+build against, now that the protocol ([`../002-cloud-runtime/protocol.md`](../002-cloud-runtime/protocol.md))
 and the auth slice ([`../001-cloud-core/auth/spec.md`](../001-cloud-core/auth/spec.md))
 are locked.
 
@@ -127,8 +127,8 @@ the server.
 
 ## Consumers
 
-- **island (device):** the host wires this client into island's `configureRuntime`
-  adapter (see [`island-adapter.md`](./island-adapter.md)).
+- **island (device):** the host wires this client in at island's `configureRuntime`
+  hook (see [`architecture.md`](./architecture.md), sections 4 and 8).
 - **backend test harness (Node/Bun):** constructs `CloudClient` with node
   transports and drives the full path (auth, connect, subscribe, send, receive),
   so tests exercise the real wire contract.

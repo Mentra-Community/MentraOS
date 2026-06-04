@@ -391,8 +391,7 @@ here's the direction we'd take for each.
   Its methods already match what the runtime needs (`setSubscriptions`,
   `onTranscript`, `onTranslation`, `requestManagedPhoto`, `startManagedStream`, the
   connection lifecycle), and they're typed against the shared protocol. One surface,
-  no mapping layer to drift. (Supersedes the per-hook shape in
-  [`island-adapter.md`](./island-adapter.md).)
+  no mapping layer to drift.
 - **One transport-selection point at boot.** Construct `CloudClient` where
   `configureRuntime` runs today and pick v1 vs v2 there with a single flag,
   defaulting to v2 for the v2 cloud. Keep the choice in one place so the rest of the
@@ -401,16 +400,14 @@ here's the direction we'd take for each.
   NaCl secretbox encryption inside the cloud-client itself (the code that runs the
   same on phone and server, using tweetnacl), and pass in only a thin native socket to
   send the bytes. That keeps the encryption testable on a server and identical on the
-  phone; the native side just sends and receives. (Detail in [`spike.md`](./spike.md).)
+  phone; the native side just sends and receives.
 
 ## References
 
 - [`README.md`](./README.md), [`spec.md`](./spec.md): the cloud-client overview and
   concrete API.
-- [`island-adapter.md`](./island-adapter.md): the per-hook adapter proposal (to be
-  folded into this doc during the cloud-client doc cleanup).
 - [`../002-cloud-runtime/protocol.md`](../002-cloud-runtime/protocol.md): the v2
-  transport contract the cloud-client implements.
+  protocol the cloud-client implements.
 - [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md): how auth
   moves into `cloud.auth`.
 - On-device code (base + PR #3086 `fixes-navigation-bitmaps`):

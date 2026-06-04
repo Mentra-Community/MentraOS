@@ -1,55 +1,60 @@
 # 004 Cloud Client
 
-The headless, isomorphic client library we own: `@mentra/cloud-client`. It is the
-device's single connection to Cloud V2, and it is a **dependency** the mobile
-client uses, not the mobile client app itself. The on-device Mentra Runtime
-(`@mentra/island`) plugs into it through its `configureRuntime` adapters; OEM
-hosts embed the same library; and the backend test harness drives the **same**
-library from Node/Bun.
+`@mentra/cloud-client` is the phone's connection to Cloud V2: a TypeScript library
+(just code, no UI) that opens the connection, sends requests up, and receives events
+back. The on-device Mentra Runtime (`@mentra/island`) plugs into it; OEM hosts embed
+the same library; and the backend test harness runs the **same** library on a server,
+so the tests drive the exact client the phone uses. It's a dependency the mobile app
+uses, not the app itself.
 
-Docs: [`architecture.md`](./architecture.md) (the e2e on-device + transport
-architecture and the cloud-client decisions, the alignment doc), [`spec.md`](./spec.md)
-(the concrete API), [`spike.md`](./spike.md) (design rationale),
-[`island-adapter.md`](./island-adapter.md) (the proposed island wiring).
+Docs:
+
+- [`architecture.md`](./architecture.md): the whole picture, how a miniapp runs on
+  the phone and reaches the cloud, what the cloud-client is and why, how auth works
+  for Mentra and OEMs, and the decisions. **Start here.**
+- [`spec.md`](./spec.md): the concrete API (the three modules, construction, the
+  injected transports).
 
 ## Design goals
 
-- **Headless and isomorphic.** Pure TS core with no React Native, Expo, or DOM
-  imports. Platform-specific pieces (WebSocket, UDP, secure storage) are injected
-  and selected by import path: `@mentra/cloud-client/react-native` on device,
-  `@mentra/cloud-client/node` for tests. Construction is `new CloudClient(config)`.
-- **v2-native.** It speaks only the runtime protocol; none of the v1 message
-  shapes (`phone_subscription_update`, `data_stream`, legacy REST).
-- **Typed, no stringly surface.** Subscriptions and events use the typed unions
-  from `@mentra/cloud-runtime/protocol` (the one source of truth), not strings.
+- **Just code, runs anywhere.** No React Native, Expo, or web-page imports in the
+  core. The platform-specific pieces (WebSocket, UDP socket, secure storage) are
+  passed in, and chosen by import path: `@mentra/cloud-client/react-native` on the
+  phone, `@mentra/cloud-client/node` for tests. You construct it with
+  `new CloudClient(config)`.
+- **v2-native.** It speaks only the v2 protocol; none of the v1 message shapes
+  (`phone_subscription_update`, `data_stream`, legacy REST).
+- **Typed, no magic strings.** Subscriptions and events use the typed definitions
+  from `@mentra/cloud-runtime/protocol` (the one source of truth), not hand-written
+  strings.
 
-## Modules
+## The three modules
 
-A single `CloudClient` owns endpoints, proxy routing, and the shared token state,
-and exposes three modules:
+A single `CloudClient` owns the endpoints, proxy routing, and the shared login
+state, and exposes three areas (full API in [`spec.md`](./spec.md)):
 
-- [`auth`](./auth/): token lifecycle. Holds and refreshes the Mentra access
-  token, mints miniapp-scoped tokens. This is the **client half** of
-  [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md#miniapp-auto-auth);
-  the access token is the Bearer to Mentra's APIs but is never handed to a miniapp.
-- [`runtime`](./runtime/): the live session (the runtime transport). WS handshake,
-  subscriptions, stream events, managed photo/stream, UDP audio coordination.
+- **`cloud.auth`:** login and tokens. Gets and refreshes the Mentra access token,
+  and mints the per-miniapp tokens. The access token is the Bearer to Mentra's own
+  APIs but is never handed to a miniapp. The client half of
+  [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md#miniapp-auto-auth).
+- **`cloud.runtime`:** the live audio and event session. Connection handshake,
+  subscriptions, transcript/translation events, managed photo/stream, UDP audio.
   Implements [`../002-cloud-runtime/protocol.md`](../002-cloud-runtime/protocol.md).
-- [`core`](./core/): device-facing Cloud Core REST (miniapp bundles + catalog,
-  user profile). Calls [`../001-cloud-core/`](../001-cloud-core/) services. Guardrail:
-  device-facing only, no Dev Console / OEM Portal / store web UI.
+- **`cloud.core`:** the other v2 REST calls the device makes (miniapp bundles +
+  catalog, user profile). Calls [`../001-cloud-core/`](../001-cloud-core/) services.
+  Device-facing only, no Dev Console / OEM Portal / store web UI.
 
 ## Consumers
 
-- **On device:** `@mentra/island` via `configureRuntime` adapters.
-- **Backend test harness:** the same library in Node/Bun, so tests exercise the
-  real wire contract and auth flow (this answers the 003-audio "test client
-  deployment" open question).
+- **On device:** `@mentra/island`, wired in at the host's `configureRuntime` hook.
+- **Backend test harness:** the same library on a server (Node/Bun), so tests run the
+  real connection and auth flow (this answers the 003-audio "test client deployment"
+  open question).
 
 ## Related
 
-- [`../002-cloud-runtime/protocol.md`](../002-cloud-runtime/protocol.md): the wire
-  contract `runtime` implements.
-- [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md): the token
-  design `auth` consumes.
+- [`../002-cloud-runtime/protocol.md`](../002-cloud-runtime/protocol.md): the v2
+  protocol `cloud.runtime` implements.
+- [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md): the auth
+  design `cloud.auth` consumes.
 - [`../../mentra-overhaul-plan.md`](../../mentra-overhaul-plan.md)
