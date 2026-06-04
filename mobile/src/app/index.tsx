@@ -113,14 +113,14 @@ export default function InitScreen() {
     if (pendingRoute) {
       setPendingRoute(null)
       // Navigate to home first so the deep link screen has a proper back destination
-      clearHistoryAndGoHome({transition: "fade"})
+      clearHistoryAndGoHome({transition: "none"})
       setTimeout(() => processUrl(pendingRoute), DEEPLINK_DELAY)
       return
     }
 
     await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
     setAnimationDelayed()
-    clearHistoryAndGoHome({transition: "fade"})
+    clearHistoryAndGoHome({transition: "none"})
   }, [user, getPendingRoute, processUrl, clearHistoryAndGoHome, replace, replaceAll, setPendingRoute, setAnimation])
 
   const checkLoggedIn = async (): Promise<void> => {
