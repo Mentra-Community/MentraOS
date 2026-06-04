@@ -333,8 +333,11 @@ public class StreamCommandHandler implements ICommandHandler {
                 return false;
             }
 
-            config.setStatusVideoFps(
-                    WhipCameraCapturer.resolveCameraFps(characteristics, config.getVideoFps()));
+            // Effective transmitted fps is the lower of the camera capture rate and the
+            // output target (frames are dropped when the camera runs faster).
+            config.setStatusVideoFps(Math.min(
+                    WhipCameraCapturer.resolveCameraFps(characteristics, config.getVideoFps()),
+                    config.getVideoFps()));
             return true;
         } catch (Exception e) {
             Log.w(TAG, "Unable to validate WHIP stream resolution; allowing request", e);
