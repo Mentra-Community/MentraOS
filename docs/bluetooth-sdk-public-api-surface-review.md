@@ -202,7 +202,7 @@ const CAMERA_FOV_MIN = 62
 const CAMERA_FOV_MAX = 118
 const CAMERA_FOV_DEFAULT = 102
 type CameraRoiPosition = 0 | 1 | 2
-type CameraFovPreset = "standard" | "wide"
+type CameraFovPreset = "narrow" | "standard" | "wide"
 type CameraFovValue = {
   fov: number
   roiPosition?: CameraRoiPosition

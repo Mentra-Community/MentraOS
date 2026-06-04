@@ -240,7 +240,7 @@ export const CAMERA_FOV_MAX = 118
 export const CAMERA_FOV_DEFAULT = 102
 
 export type CameraRoiPosition = 0 | 1 | 2
-export type CameraFovPreset = "standard" | "wide"
+export type CameraFovPreset = "narrow" | "standard" | "wide"
 
 export type CameraFovValue = {
   fov: number

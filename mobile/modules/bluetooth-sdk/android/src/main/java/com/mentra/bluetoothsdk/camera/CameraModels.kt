@@ -58,11 +58,14 @@ class CameraFov @JvmOverloads constructor(
         const val MIN_FOV = 62
         const val MAX_FOV = 118
         const val DEFAULT_FOV = 102
+        const val NARROW_FOV = 82
         const val MIN_ROI_POSITION = 0
         const val MAX_ROI_POSITION = 2
         const val DEFAULT_ROI_POSITION = 0
         @JvmField
-        val STANDARD = CameraFov(MAX_FOV, DEFAULT_ROI_POSITION)
+        val NARROW = CameraFov(NARROW_FOV, DEFAULT_ROI_POSITION)
+        @JvmField
+        val STANDARD = CameraFov(DEFAULT_FOV, DEFAULT_ROI_POSITION)
         @JvmField
         val WIDE = CameraFov(MAX_FOV, DEFAULT_ROI_POSITION)
     }

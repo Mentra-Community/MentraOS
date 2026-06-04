@@ -106,7 +106,7 @@ try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: 0))
 
 Use `setGalleryModeEnabled(false)` when you want the action button to report events without triggering local gallery capture while the glasses are connected.
 
-`setCameraFov` accepts FOV degrees from 62 to 118 and ROI position `0` center, `1` bottom, or `2` top. Legacy `"standard"` and `"wide"` presets remain accepted for compatibility and map to 118 degrees / center ROI. On Mentra Live, applying FOV/ROI restarts the camera for about 5 seconds; wait for that restart before requesting a photo. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
+`setCameraFov` accepts FOV degrees from 62 to 118 and ROI position `0` center, `1` bottom, or `2` top. The `"narrow"` (82°), `"standard"` (102°), and `"wide"` (118°) presets are also accepted and map to center ROI. On Mentra Live, applying FOV/ROI restarts the camera for about 5 seconds; wait for that restart before requesting a photo. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
 
 ## Streaming
 

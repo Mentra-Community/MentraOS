@@ -43,11 +43,16 @@ public struct CameraFov {
     public static let minFov = 62
     public static let maxFov = 118
     public static let defaultFov = 102
+    public static let narrowFov = 82
     public static let minRoiPosition = 0
     public static let maxRoiPosition = 2
     public static let defaultRoiPosition = 0
+    public static let narrow = CameraFov(
+        fov: CameraFov.narrowFov,
+        roiPosition: CameraFov.defaultRoiPosition
+    )
     public static let standard = CameraFov(
-        fov: CameraFov.maxFov,
+        fov: CameraFov.defaultFov,
         roiPosition: CameraFov.defaultRoiPosition
     )
     public static let wide = CameraFov(

@@ -210,8 +210,11 @@ const DEFAULT_SCAN_TIMEOUT_MS = 15_000
 const CAMERA_ROI_MIN = 0
 const CAMERA_ROI_MAX = 2
 
-const LEGACY_CAMERA_FOV_SETTINGS: Record<CameraFovPreset, CameraFovSetting> = {
-  standard: {fov: CAMERA_FOV_MAX, roiPosition: 0},
+// Named presets are a convenience layer over the numeric {fov, roiPosition} API.
+// "narrow" uses 82, a device-tested FOV; "standard" matches CAMERA_FOV_DEFAULT.
+const CAMERA_FOV_PRESETS: Record<CameraFovPreset, CameraFovSetting> = {
+  narrow: {fov: 82, roiPosition: 0},
+  standard: {fov: CAMERA_FOV_DEFAULT, roiPosition: 0},
   wide: {fov: CAMERA_FOV_MAX, roiPosition: 0},
 }
 
@@ -221,7 +224,7 @@ function clampInteger(value: number, min: number, max: number): number {
 
 function normalizeCameraFov(setting: CameraFov): CameraFovSetting {
   if (typeof setting === "string") {
-    return LEGACY_CAMERA_FOV_SETTINGS[setting] ?? LEGACY_CAMERA_FOV_SETTINGS.wide
+    return CAMERA_FOV_PRESETS[setting] ?? CAMERA_FOV_PRESETS.standard
   }
 
   return {
