@@ -3,7 +3,8 @@
 **Status:** Alignment doc. Shared reference for the on-device runtime team and the
 cloud-v2 team. Its job: give everyone one mental model of how a local miniapp runs
 on the phone and reaches the cloud, explain what `@mentra/cloud-client` is and why
-it exists, and record the decisions we have made so we build the v2 transport once,
+it exists, show how device and miniapp auth work through it (for Mentra and for
+OEMs), and record the decisions we have made so we build the v2 transport once,
 typed, with no tech debt.
 
 **TL;DR:** Local miniapps never talk to the cloud directly. The phone is the single
@@ -166,7 +167,73 @@ Why a dedicated library rather than more methods on `SocketComms`:
   miniapp-scoped tokens; the raw access token never reaches a miniapp. The phone
   stops hand-managing tokens for transport.
 
-## 6. The decisions
+## 6. Auth: how the device and miniapps authenticate
+
+`cloud.auth` is the single owner of credentials on the device. It is a module of the
+cloud-client, so the same code authenticates the phone for Mentra and for OEMs, and
+issues the per-miniapp tokens auto-auth needs. The raw access token never leaves the
+cloud-client.
+
+### Device auth (the phone proves who the user is to v2 cloud)
+
+The cloud-client is constructed with a **subject token** and exchanges it once at
+`POST /api/client/auth/exchange` for a v2 **access token** plus a refresh token, then
+owns refresh from there (`cloud.auth.getAccessToken()`). What the subject token is
+depends on who runs the app:
+
+- **OEM users.** The OEM's own backend mints a short-lived signed JWT for the
+  signed-in user (the OEM owns its accounts; there is no Mentra login screen). The
+  OEM's host app hands that JWT to the cloud-client at construction. Mentra verifies
+  it against the OEM's registered public key and maps `(oemId, oemUserId)` to a
+  `mentraUserId`.
+- **Mentra users.** Mentra is "OEM zero" (`oemId = "mentra"`). The subject token is
+  the existing core token during the transition, a Supabase session at the end
+  state, same endpoint.
+
+Either way the device ends up holding one Mentra-issued v2 access token, and
+`cloud.runtime` / `cloud.core` use it as the Bearer for every v2 call. Full
+mechanics: [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md).
+
+### Miniapp auto-auth (a miniapp calls its own backend as the user)
+
+A miniapp with its own developer backend needs to call it as the current user, with
+no login. The access token is never handed to the miniapp (it is the device's
+credential to all of Mentra). Instead:
+
+1. At launch the runtime asks the cloud-client for a **miniapp-scoped token**:
+   `cloud.auth.getMiniappToken(packageName)`. cloud-core mints an Ed25519 JWT with
+   `sub = mentraUserId`, `oemId`, and `aud = <packageName>`, short-lived, scoped to
+   that one miniapp.
+2. The runtime **injects** that token into the miniapp's two contexts: the background
+   JSContext (via `MentraJSRouter`) and, if present, the UI WebView (via
+   `MentraUIRouter` / the `window.mentra` shim). `useMentraAuth()` reads
+   `{ mentraUserId, token }` from the bridge; both contexts see the same token.
+3. The miniapp calls its developer backend with
+   `Authorization: Bearer <miniapp-scoped-token>`. The backend verifies it against
+   Mentra's published public keys (JWKS), checks `aud == its packageName`, and applies
+   its trust policy on `oemId`. No per-request call to Mentra.
+4. The runtime re-mints and re-injects before expiry (`cloud.auth` caches per
+   packageName).
+
+So auto-auth adds a small amount of on-device work on the v2 path: hold a
+`cloud.auth`, fetch the scoped token at launch, inject it into both contexts, and
+re-inject on refresh. The bridges already exist (they carry session messages); the
+auth token is one more message type over them.
+
+Why this shape answers the questions Matt and others will have:
+
+- **"How does an OEM's user reach our cloud with no Mentra account?"** Their backend
+  vouches with a signed JWT; the exchange turns it into a Mentra token.
+- **"How does a miniapp know who the user is and call my backend safely?"** A
+  per-miniapp token the backend verifies itself via JWKS, audience-pinned so a token
+  for miniapp A cannot be replayed against miniapp B.
+- **"Where do tokens live?"** In `cloud.auth`. A miniapp only ever holds its own
+  scoped token; the access token stays in the cloud-client.
+
+For the from-zero version of these terms (JWT, asymmetric signing, JWKS, audience,
+exchange), see [`../001-cloud-core/auth/concepts.md`](../001-cloud-core/auth/concepts.md).
+
+## 7. The decisions
 
 Recorded so we build it once.
 
@@ -199,7 +266,7 @@ small and reviewable.
 are owned by the cloud-client; miniapps receive only the scoped token. See
 [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md).
 
-## 7. Before and after, at the seam
+## 8. Before and after, at the seam
 
 The seam shape (`mobile/modules/island/src/runtime/config.ts`), v1 then v2:
 
@@ -268,7 +335,7 @@ The stringly `"transcription:en-US"` is mapped to an `AudioSubscription` exactly
 once, where subscriptions are built; after that the value is typed all the way to
 the cloud.
 
-## 8. End-to-end trace: a transcription subscription
+## 9. End-to-end trace: a transcription subscription
 
 A miniapp's background JSContext runs `session.transcription.on(cb)`.
 
@@ -285,22 +352,28 @@ A miniapp's background JSContext runs `session.transcription.on(cb)`.
   `forwardEvent()` -> the JSContext `cb`. The hardware path (mic capture, BLE,
   display) is unchanged.
 
-## 9. What each side owns, and open questions
+## 10. Proposals on the points still open
 
-- **On-device runtime (Matt's domain):** the typed `cloud` adapter shape in
-  `runtime/config.ts`, and the handful of `LocalMiniappRuntime` call sites that move
-  from v1 shapes to typed `cloud.runtime.*`. The aggregation and fan-out logic stays
-  the same; only the values it produces and the method it calls change.
-- **cloud-v2 (our domain):** `@mentra/cloud-client` (the library) and
-  `@mentra/cloud-runtime/protocol` (the shared types). The host wiring that
-  constructs `CloudClient` and injects it through `configureRuntime`.
-- **Open questions to settle together:**
-  1. The exact typed adapter surface (method names, which lifecycle events) the
-     island runtime wants, versus the `cloud.runtime` API in [`spec.md`](./spec.md).
-  2. Where `new CloudClient(...)` is constructed and how the v1-vs-v2 path is
-     selected at boot.
-  3. The native UDP audio boundary on the v2 path (encryption location, the injected
-     `udp` interface), tracked in [`spike.md`](./spike.md).
+A few things are not yet pinned. Rather than leave them as questions, here is the
+proposed direction for each.
+
+- **The injected surface is `cloud.runtime` itself, with no translation layer.**
+  Instead of defining a separate island adapter interface and mapping it onto
+  `cloud.runtime`, inject the `cloud.runtime` surface directly as the `cloud` hook.
+  Its methods already match what the runtime needs (`setSubscriptions`,
+  `onTranscript`, `onTranslation`, `requestManagedPhoto`, `startManagedStream`, the
+  connection lifecycle) and they are typed against the shared protocol. One surface,
+  no mapping seam to drift. (Supersedes the per-hook shape in
+  [`island-adapter.md`](./island-adapter.md).)
+- **One transport-selection point at boot.** Construct `CloudClient` where
+  `configureRuntime` runs today and select v1 vs v2 there with a single flag,
+  defaulting to v2 for the v2 cloud. Keep the choice in one place so the rest of the
+  runtime never branches on cloud version.
+- **UDP audio: encrypt in the isomorphic core, send native.** Do the NaCl secretbox
+  encryption in the cloud-client core (tweetnacl) and inject only a thin native
+  socket for sending bytes. The crypto stays testable in Node (the harness) and
+  identical on device; the native layer does only I/O. (Detail in
+  [`spike.md`](./spike.md).)
 
 ## References
 
