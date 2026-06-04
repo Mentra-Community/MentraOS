@@ -4,7 +4,7 @@ import {ActivityIndicator, Image, Platform, View} from "react-native"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
 import {WebView, type WebViewMessageEvent} from "react-native-webview"
 
-import {Text} from "@/components/ignite"
+import {Button, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {useStressTestStore} from "@/stores/stressTest"
@@ -500,6 +500,13 @@ function LocalMiniappView({
 
   return (
     <View className="flex-1 bg-black" style={{borderRadius: theme.spacing.s12}}>
+      <View className="w-full h-30 bg-transparent items-center justify-end">
+        <Button text="Test Reload" onPress={() => {
+          if (webViewRef.current) {
+            webViewRef.current.reload()
+          }
+        }} />
+      </View>
       <WebView
         ref={handleRef}
         source={{uri: uiUri}}
