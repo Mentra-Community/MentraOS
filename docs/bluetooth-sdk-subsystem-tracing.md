@@ -158,7 +158,7 @@ sequenceDiagram
     participant Router as ASG command router
     participant Feature as ASG feature subsystem
 
-    App->>SDK: startStream({ video: { fps } })
+    App->>SDK: startStream({ video: { frameRate } })
     SDK->>PhoneBLE: JSON command
     Note over PhoneBLE: MentraBleTrace<br/>direction=phone_to_glasses<br/>layer=sdk_ble_command
     PhoneBLE->>ASGBLE: BLE bytes

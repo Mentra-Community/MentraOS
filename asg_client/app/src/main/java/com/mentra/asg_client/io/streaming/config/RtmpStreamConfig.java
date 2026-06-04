@@ -157,7 +157,7 @@ public class RtmpStreamConfig {
             video.put("captureWidth", getCaptureSurfaceWidth());
             video.put("captureHeight", getCaptureSurfaceHeight());
             video.put("bitrate", getVideoBitrate());
-            video.put("fps", getVideoFps());
+            video.put("frameRate", getVideoFps());
             resolvedConfig.put("video", video);
         } catch (Exception ignored) {
             // JSONObject writes above are deterministic for primitive values.

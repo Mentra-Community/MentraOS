@@ -4,18 +4,18 @@ public struct StreamVideoConfig {
     public let width: Int?
     public let height: Int?
     public let bitrate: Int?
-    public let fps: Int?
+    public let frameRate: Int?
 
     public init(
         width: Int? = nil,
         height: Int? = nil,
         bitrate: Int? = nil,
-        fps: Int? = nil
+        frameRate: Int? = nil
     ) {
         self.width = width
         self.height = height
         self.bitrate = bitrate
-        self.fps = fps
+        self.frameRate = frameRate
     }
 
     var dictionary: [String: Any] {
@@ -23,7 +23,7 @@ public struct StreamVideoConfig {
         if let width { values["width"] = width }
         if let height { values["height"] = height }
         if let bitrate { values["bitrate"] = bitrate }
-        if let fps { values["frameRate"] = fps }
+        if let frameRate { values["frameRate"] = frameRate }
         return values
     }
 
@@ -33,7 +33,7 @@ public struct StreamVideoConfig {
             width: intValue(values["width"]),
             height: intValue(values["height"]),
             bitrate: intValue(values["bitrate"]),
-            fps: intValue(values["fps"])
+            frameRate: intValue(values["frameRate"])
         )
     }
 }
@@ -89,7 +89,7 @@ public struct StreamResolvedVideoConfig: Equatable {
     /// Encoded video bitrate in bits per second.
     public let bitrate: Int
     /// Resolved capture/encode frame rate.
-    public let fps: Double
+    public let frameRate: Double
 
     public init(
         width: Int,
@@ -97,14 +97,14 @@ public struct StreamResolvedVideoConfig: Equatable {
         captureWidth: Int? = nil,
         captureHeight: Int? = nil,
         bitrate: Int,
-        fps: Double
+        frameRate: Double
     ) {
         self.width = width
         self.height = height
         self.captureWidth = captureWidth
         self.captureHeight = captureHeight
         self.bitrate = bitrate
-        self.fps = fps
+        self.frameRate = frameRate
     }
 
     init?(values: [String: Any]?) {
@@ -112,7 +112,7 @@ public struct StreamResolvedVideoConfig: Equatable {
               let width = intValue(values["width"]),
               let height = intValue(values["height"]),
               let bitrate = intValue(values["bitrate"]),
-              let fps = doubleValue(values["fps"])
+              let frameRate = doubleValue(values["frameRate"])
         else {
             return nil
         }
@@ -122,7 +122,7 @@ public struct StreamResolvedVideoConfig: Equatable {
             captureWidth: intValue(values["captureWidth"]),
             captureHeight: intValue(values["captureHeight"]),
             bitrate: bitrate,
-            fps: fps
+            frameRate: frameRate
         )
     }
 
@@ -131,7 +131,7 @@ public struct StreamResolvedVideoConfig: Equatable {
             "width": width,
             "height": height,
             "bitrate": bitrate,
-            "fps": fps,
+            "frameRate": frameRate,
         ]
         if let captureWidth { values["captureWidth"] = captureWidth }
         if let captureHeight { values["captureHeight"] = captureHeight }

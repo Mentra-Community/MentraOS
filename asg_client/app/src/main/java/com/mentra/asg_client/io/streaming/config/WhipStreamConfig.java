@@ -86,7 +86,7 @@ public class WhipStreamConfig {
   }
 
   /**
-   * Android JSONObject strips ".0" from regular numeric values. This keeps fps as a JSON
+   * Android JSONObject strips ".0" from regular numeric values. This keeps frameRate as a JSON
    * number while preserving the requested one-decimal wire representation.
    */
   private static final class OneDecimalNumber extends Number {
@@ -168,7 +168,7 @@ public class WhipStreamConfig {
       video.put("width", getVideoWidth());
       video.put("height", getVideoHeight());
       video.put("bitrate", getVideoBitrate());
-      video.put("fps", oneDecimal(getStatusVideoFps()));
+      video.put("frameRate", oneDecimal(getStatusVideoFps()));
       resolvedConfig.put("video", video);
     } catch (Exception ignored) {
       // JSONObject writes above are deterministic for primitive values.

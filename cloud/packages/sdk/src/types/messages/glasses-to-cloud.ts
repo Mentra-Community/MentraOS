@@ -359,7 +359,7 @@ export interface StreamResolvedConfig {
     /** Encoded video bitrate in bits per second. */
     bitrate: number;
     /** Resolved capture/encode frame rate. */
-    fps: number;
+    frameRate: number;
   };
   audio?: {
     /** Encoded audio bitrate in bits per second. */

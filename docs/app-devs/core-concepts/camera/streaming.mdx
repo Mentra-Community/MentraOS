@@ -186,7 +186,7 @@ cleanup();
 Status values include `"initializing"`, `"active"`, `"stopped"`, and `"error"`.
 
 When the glasses report the effective settings they used, stream status includes `resolvedConfig`.
-This is separate from runtime `stats`: `resolvedConfig.video.fps`, `width`, `height`, and
+This is separate from runtime `stats`: `resolvedConfig.video.frameRate`, `width`, `height`, and
 `bitrate` describe the configured stream after defaults and glasses-side clamps.
 `resolvedConfig.video.width` and `height` are the encoded output dimensions. When
 present, `resolvedConfig.video.captureWidth` and `captureHeight` are the native
