@@ -99,6 +99,14 @@ public final class PhotoSession {
     private Runnable pendingCaptureMetadataTimeout;
     private boolean photoCapturedCallbackSent;
 
+    /**
+     * Bumped every time capture metadata state is reset (i.e. a new shot begins). A {@link
+     * StillCaptureCallback} captures the generation in flight when it is created; a late
+     * {@code onCaptureCompleted} from a previous shot is then dropped instead of being attached to
+     * the next photo's {@code captured} status/callback.
+     */
+    private long captureMetadataGeneration;
+
     private final Hooks hooks;
     private final AeCaptureCallback aeCallback;
 
@@ -486,7 +494,8 @@ public final class PhotoSession {
                         @Override
                         public void onBurstComplete(String basePath) {
                             finishImuRecording(basePath);
-                            notifyPhotoCaptured(basePath);
+                            // HDR has no StillCaptureCallback metadata to wait for.
+                            notifyPhotoCaptured(basePath, false);
                         }
 
                         @Override
@@ -588,6 +597,7 @@ public final class PhotoSession {
             pendingCapturedStartTimeMs = 0L;
             pendingCaptureMetadataTimeout = null;
             photoCapturedCallbackSent = false;
+            captureMetadataGeneration++;
         }
         if (timeoutToCancel != null) {
             Handler h = hooks.backgroundHandler();
@@ -630,6 +640,17 @@ public final class PhotoSession {
     }
 
     private void notifyPhotoCaptured(String filePath) {
+        notifyPhotoCaptured(filePath, true);
+    }
+
+    /**
+     * @param waitForStillMetadata when {@code true}, briefly defer the {@code captured} callback to
+     *     attach still-capture HAL metadata (single still path). HDR bursts have no {@link
+     *     StillCaptureCallback} and never record that metadata, so they pass {@code false} to emit
+     *     immediately instead of always hitting the {@link #CAPTURE_METADATA_WAIT_TIMEOUT_MS}
+     *     timeout.
+     */
+    private void notifyPhotoCaptured(String filePath, boolean waitForStillMetadata) {
         long startMs = currentStartTimeMs();
         CameraNeoService.PhotoCaptureCallback callback =
                 activeCapture != null ? activeCapture.callback : null;
@@ -640,26 +661,31 @@ public final class PhotoSession {
             }
             metadataToSend = pendingStillCaptureMetadata;
             if (metadataToSend == null) {
-                if (pendingCapturedFilePath != null) {
-                    if (!Objects.equals(pendingCapturedFilePath, filePath)) {
-                        Log.w(
-                                TAG,
-                                "Ignoring duplicate photo captured callback while waiting for "
-                                        + "metadata. pending="
-                                        + pendingCapturedFilePath
-                                        + " duplicate="
-                                        + filePath);
+                if (waitForStillMetadata) {
+                    if (pendingCapturedFilePath != null) {
+                        if (!Objects.equals(pendingCapturedFilePath, filePath)) {
+                            Log.w(
+                                    TAG,
+                                    "Ignoring duplicate photo captured callback while waiting for "
+                                            + "metadata. pending="
+                                            + pendingCapturedFilePath
+                                            + " duplicate="
+                                            + filePath);
+                        }
+                        return;
                     }
+                    pendingCapturedFilePath = filePath;
+                    pendingCapturedCallback = callback;
+                    pendingCapturedStartTimeMs = startMs;
+                    scheduleCaptureMetadataTimeoutLocked(filePath);
                     return;
                 }
-                pendingCapturedFilePath = filePath;
-                pendingCapturedCallback = callback;
-                pendingCapturedStartTimeMs = startMs;
-                scheduleCaptureMetadataTimeoutLocked(filePath);
-                return;
+                // No still metadata is coming (e.g. HDR burst); emit immediately.
+                photoCapturedCallbackSent = true;
+            } else {
+                pendingStillCaptureMetadata = null;
+                photoCapturedCallbackSent = true;
             }
-            pendingStillCaptureMetadata = null;
-            photoCapturedCallbackSent = true;
         }
         emitPhotoCaptured(filePath, metadataToSend, callback, startMs);
     }
@@ -701,13 +727,24 @@ public final class PhotoSession {
         }
     }
 
-    private void recordStillCaptureMetadata(JSONObject captureMetadata) {
+    private void recordStillCaptureMetadata(long captureGeneration, JSONObject captureMetadata) {
         String filePathToNotify = null;
         CameraNeoService.PhotoCaptureCallback callback = null;
         long startMs = 0L;
         Runnable timeoutToCancel = null;
 
         synchronized (captureMetadataLock) {
+            if (captureGeneration != captureMetadataGeneration) {
+                // Late completion from a previous shot; do not attach to the current photo.
+                Log.w(
+                        TAG,
+                        "Ignoring stale still capture metadata from a previous shot (gen "
+                                + captureGeneration
+                                + " != "
+                                + captureMetadataGeneration
+                                + ")");
+                return;
+            }
             if (photoCapturedCallbackSent) {
                 return;
             }
@@ -1254,6 +1291,10 @@ public final class PhotoSession {
             }
 
             notifyPhotoCapturing(requestedCaptureConfig, meteredPreview);
+            final long captureGeneration;
+            synchronized (captureMetadataLock) {
+                captureGeneration = captureMetadataGeneration;
+            }
             activeSession.capture(
                     captureRequest,
                     new StillCaptureCallback(
@@ -1265,7 +1306,7 @@ public final class PhotoSession {
 
                                 @Override
                                 public void recordCaptureMetadata(JSONObject captureMetadata) {
-                                    recordStillCaptureMetadata(captureMetadata);
+                                    recordStillCaptureMetadata(captureGeneration, captureMetadata);
                                 }
 
                                 @Override

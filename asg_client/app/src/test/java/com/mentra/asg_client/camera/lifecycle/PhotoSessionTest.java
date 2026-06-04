@@ -191,6 +191,59 @@ public class PhotoSessionTest {
         verify(hooks).startKeepAliveTimer();
     }
 
+    @Test
+    public void notifyPhotoCaptured_hdrPathDoesNotWaitForMetadata_emitsImmediately()
+            throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        CameraNeoService.PhotoCaptureCallback callback =
+                mock(CameraNeoService.PhotoCaptureCallback.class);
+        QueuedPhotoRequest request =
+                new QueuedPhotoRequest("/tmp/hdr.jpg", "large", false, true, null, callback);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(session, request);
+
+        // HDR completion never records still metadata; it must not arm the wait timeout.
+        notifyPhotoCaptured(session, "/tmp/hdr.jpg", false);
+
+        verify(callback).onPhotoCaptured(eq("/tmp/hdr.jpg"), (JSONObject) isNull());
+        assertThat(pendingCaptureMetadataTimeout(session)).isNull();
+        assertThat(activeCapture(session)).isNull();
+        assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.IDLE);
+        verify(hooks).startKeepAliveTimer();
+    }
+
+    @Test
+    public void recordStillCaptureMetadata_staleGenerationIgnored_doesNotLeakToNextPhoto()
+            throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        CameraNeoService.PhotoCaptureCallback callback =
+                mock(CameraNeoService.PhotoCaptureCallback.class);
+        PhotoSession session = new PhotoSession(hooks);
+
+        // First shot activates; capture the generation its StillCaptureCallback would carry.
+        QueuedPhotoRequest first =
+                new QueuedPhotoRequest("/tmp/first.jpg", "large", false, true, null, null);
+        activateQueuedRequest(session, first);
+        long staleGeneration = captureMetadataGeneration(session);
+
+        // Second shot begins, advancing the generation.
+        QueuedPhotoRequest second =
+                new QueuedPhotoRequest("/tmp/second.jpg", "large", false, true, null, callback);
+        activateQueuedRequest(session, second);
+
+        // A late completion from the first shot must be dropped, not stored for the second.
+        JSONObject staleMetadata = new JSONObject().put("iso", 100);
+        recordStillCaptureMetadata(session, staleGeneration, staleMetadata);
+        assertThat(pendingStillCaptureMetadata(session)).isNull();
+
+        // The second photo completes via timeout with no (stale) metadata attached.
+        notifyPhotoCaptured(session, "/tmp/second.jpg");
+        Runnable timeout = pendingCaptureMetadataTimeout(session);
+        timeout.run();
+
+        verify(callback).onPhotoCaptured(eq("/tmp/second.jpg"), (JSONObject) isNull());
+    }
+
     private static PhotoSession.Hooks mockConfiguredCameraHooks() {
         PhotoSession.Hooks hooks = mock(PhotoSession.Hooks.class);
         doReturn(new Object()).when(hooks).serviceLock();
@@ -227,6 +280,36 @@ public class PhotoSessionTest {
         Method notify = PhotoSession.class.getDeclaredMethod("notifyPhotoCaptured", String.class);
         notify.setAccessible(true);
         notify.invoke(session, filePath);
+    }
+
+    private static void notifyPhotoCaptured(
+            PhotoSession session, String filePath, boolean waitForStillMetadata) throws Exception {
+        Method notify =
+                PhotoSession.class.getDeclaredMethod(
+                        "notifyPhotoCaptured", String.class, boolean.class);
+        notify.setAccessible(true);
+        notify.invoke(session, filePath, waitForStillMetadata);
+    }
+
+    private static void recordStillCaptureMetadata(
+            PhotoSession session, long generation, JSONObject metadata) throws Exception {
+        Method record =
+                PhotoSession.class.getDeclaredMethod(
+                        "recordStillCaptureMetadata", long.class, JSONObject.class);
+        record.setAccessible(true);
+        record.invoke(session, generation, metadata);
+    }
+
+    private static long captureMetadataGeneration(PhotoSession session) throws Exception {
+        Field field = PhotoSession.class.getDeclaredField("captureMetadataGeneration");
+        field.setAccessible(true);
+        return field.getLong(session);
+    }
+
+    private static JSONObject pendingStillCaptureMetadata(PhotoSession session) throws Exception {
+        Field field = PhotoSession.class.getDeclaredField("pendingStillCaptureMetadata");
+        field.setAccessible(true);
+        return (JSONObject) field.get(session);
     }
 
     private static void clearActiveCapture(PhotoSession session) throws Exception {
