@@ -515,9 +515,7 @@ public final class PhotoSession {
                 if (imu != null) {
                     imu.cancel();
                 }
-                notifyPhotoError("Failed to save image");
-                shotState = AeStateMachine.ShotState.IDLE;
-                dispatchNextPhotoRequest();
+                finishFailedPhotoCapture("Failed to save image");
             }
         } catch (Exception e) {
             Log.e(TAG, "Error handling image data", e);
@@ -619,6 +617,13 @@ public final class PhotoSession {
     }
 
     private void finishSuccessfulPhotoCapture() {
+        clearActiveCapture();
+        shotState = AeStateMachine.ShotState.IDLE;
+        dispatchNextPhotoRequest();
+    }
+
+    private void finishFailedPhotoCapture(String errorMessage) {
+        notifyPhotoError(errorMessage);
         clearActiveCapture();
         shotState = AeStateMachine.ShotState.IDLE;
         dispatchNextPhotoRequest();

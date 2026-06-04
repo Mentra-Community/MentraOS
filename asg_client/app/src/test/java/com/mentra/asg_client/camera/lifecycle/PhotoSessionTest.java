@@ -148,6 +148,24 @@ public class PhotoSessionTest {
         verify(hooks, never()).cancelKeepAliveTimer();
     }
 
+    @Test
+    public void finishFailedPhotoCapture_clearsActiveCaptureBeforeDispatch() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        QueuedPhotoRequest request =
+                new QueuedPhotoRequest("/tmp/failed.jpg", "large", false, true, null, null);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(session, request);
+
+        Method finishFailed =
+                PhotoSession.class.getDeclaredMethod("finishFailedPhotoCapture", String.class);
+        finishFailed.setAccessible(true);
+        finishFailed.invoke(session, "Failed to save image");
+
+        assertThat(activeCapture(session)).isNull();
+        assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.IDLE);
+        verify(hooks).startKeepAliveTimer();
+    }
+
     private static PhotoSession.Hooks mockConfiguredCameraHooks() {
         PhotoSession.Hooks hooks = mock(PhotoSession.Hooks.class);
         doReturn(new Object()).when(hooks).serviceLock();
@@ -184,6 +202,12 @@ public class PhotoSessionTest {
         Field activeCaptureField = PhotoSession.class.getDeclaredField("activeCapture");
         activeCaptureField.setAccessible(true);
         activeCaptureField.set(session, null);
+    }
+
+    private static Object activeCapture(PhotoSession session) throws Exception {
+        Field activeCaptureField = PhotoSession.class.getDeclaredField("activeCapture");
+        activeCaptureField.setAccessible(true);
+        return activeCaptureField.get(session);
     }
 
     @Test
