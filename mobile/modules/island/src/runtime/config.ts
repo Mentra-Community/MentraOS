@@ -266,6 +266,30 @@ export interface StreamingAdapter {
   ) => void
 }
 
+export type CameraRoiPosition = 0 | 1 | 2
+
+export interface CameraFovAck {
+  type: "settings_ack"
+  requestId: string
+  setting: "camera_fov" | string
+  status: string
+  ready?: boolean
+  timestamp: number
+  fov?: number
+  roiPosition?: CameraRoiPosition
+  hardwareApplied?: boolean
+  errorCode?: string
+  errorMessage?: string
+}
+
+/**
+ * Camera settings adapter. Used for local miniapp camera.setFov so the
+ * miniapp Promise resolves from the glasses-side settings_ack flow.
+ */
+export interface CameraSettingsAdapter {
+  setFov: (packageName: string, opts: {fov: number; roiPosition: CameraRoiPosition}) => Promise<CameraFovAck>
+}
+
 export interface RuntimeHooks {
   socketComms?: SocketCommsAdapter
   audioPlayback?: AudioPlaybackAdapter
@@ -310,6 +334,8 @@ export interface RuntimeHooks {
   photo?: PhotoAdapter
   /** Phone-orchestrated video recording (session.camera.startVideoRecording). */
   videoRecording?: VideoRecordingAdapter
+  /** Phone-orchestrated camera settings (session.camera.setFov). */
+  cameraSettings?: CameraSettingsAdapter
   /** Phone-orchestrated RTMP/SRT/WHIP publishing. */
   streaming?: StreamingAdapter
 }

@@ -119,7 +119,7 @@ All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: 
 | `session.phone.calendar`      | `on(handler)`, `stop()`, `hasPermission`                                                                                                 |
 | `session.phone`               | `onBattery(handler)`                                                                                                                     |
 | `session.system`              | `share(opts)`, `openUrl(url)`, `copyToClipboard(text)`, `download(opts)`                                                                 |
-| `session.camera`              | `takePhoto({size?, compress?, sound?, saveToGallery?})`, `setFov({horizontal, vertical})`, `hasPermission`                               |
+| `session.camera`              | `takePhoto({size?, compress?, sound?, saveToGallery?})`, `setFov({horizontal?, fov?, roiPosition?})`, `hasPermission`                    |
 | `session.led`                 | `turnOn({color?, ontime?, offtime?, count?})`, `turnOff()`, `blink(color, ontime, offtime, count)`, `solid(color, duration)`             |
 | `session.permissions`         | `has(type)`, `getAll()`, `onUpdate(handler)`, `onPermissionError(handler)`                                                               |
 | `session.storage`             | `get(key)`, `set(key, value)`, `delete(key)`, `list()` — strings only, scoped to `(userId, packageName)`                                 |
@@ -127,6 +127,10 @@ All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: 
 | `session.dashboard`           | `setContent(mode, content)` — **noop in v1**, prints a one-time `console.warn`. Cloud DashboardManager owns rendering.                   |
 
 `session.events` is **internal**. It exposes `subscribe(rawStreamType, handler)` only as a forward-compat escape hatch for new event types not yet wrapped on a domain module — prefer the typed module surface.
+
+### Camera FOV
+
+`await session.camera.setFov({fov, roiPosition})` applies camera FOV/ROI on the glasses and resolves with `CameraFovResult` after the ASG client reports the setting was applied and the camera is ready again. `roiPosition` accepts `"center"`/`0`, `"bottom"`/`1`, or `"top"`/`2`. The call requires `CAMERA` in `miniapp.json` and rejects with `MiniappRequestError` if the host cannot apply the setting or the glasses report an error.
 
 ### Transcription language convention
 

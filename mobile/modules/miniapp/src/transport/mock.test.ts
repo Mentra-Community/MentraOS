@@ -78,6 +78,28 @@ describe("MockTransport", () => {
     expect(payload.data.photoUrl.startsWith("data:image/png;base64,")).toBe(true)
   })
 
+  test("CAMERA_FOV returns a synthetic settings ack", async () => {
+    const t = new MockTransport({silent: true})
+    const received: string[] = []
+    t.onMessage((raw) => received.push(raw))
+    await t.open()
+
+    t.send(envelope({type: MiniappRequestType.CAMERA_FOV, fov: 102, roiPosition: "top"}, "rid-fov"))
+    await new Promise((r) => queueMicrotask(() => r(null)))
+
+    const payload = parseEnvelope(received[0])!.payload as {data: Record<string, unknown>}
+    expect(payload.data).toMatchObject({
+      type: "settings_ack",
+      requestId: "rid-fov",
+      setting: "camera_fov",
+      status: "ready",
+      ready: true,
+      fov: 102,
+      roiPosition: 2,
+      hardwareApplied: true,
+    })
+  })
+
   test("SUBSCRIBE silently no-ops (no events fire)", async () => {
     const t = new MockTransport({silent: true})
     const received: string[] = []

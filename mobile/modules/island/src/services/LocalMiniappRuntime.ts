@@ -35,7 +35,7 @@ import localDisplayManager from "./LocalDisplayManager"
 import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
-import {getRuntimeHooks, ISLAND_SETTINGS_KEYS, type TtsSynthesisResult} from "../runtime/config"
+import {getRuntimeHooks, ISLAND_SETTINGS_KEYS, type CameraRoiPosition, type TtsSynthesisResult} from "../runtime/config"
 import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 
@@ -90,6 +90,10 @@ const PING_INTERVAL_MS = 5_000
 const PING_TIMEOUT_THRESHOLD = 3 // unregister after 3 missed pongs (~15s)
 const RGB_LED_ACTIONS = new Set<RgbLedAction>(["on", "off"])
 const RGB_LED_COLORS = new Set<RgbLedColor>(["red", "green", "blue", "orange", "white"])
+const CAMERA_FOV_MIN = 62
+const CAMERA_FOV_MAX = 118
+const CAMERA_FOV_DEFAULT = 118
+const CAMERA_ROI_POSITION_BY_NAME: Record<string, CameraRoiPosition> = {center: 0, bottom: 1, top: 2}
 
 // =============================================================================
 // Declared-permission record helper (for CONNECT_ACK / PERMISSIONS_UPDATE)
@@ -120,6 +124,29 @@ function normalizeRgbLedAction(value: unknown): RgbLedAction {
 
 function normalizeRgbLedColor(value: unknown): RgbLedColor | null {
   return typeof value === "string" && RGB_LED_COLORS.has(value as RgbLedColor) ? (value as RgbLedColor) : null
+}
+
+function normalizeCameraFovPayload(payload: Record<string, unknown>): number {
+  const rawFov =
+    typeof payload.horizontal === "number" && Number.isFinite(payload.horizontal)
+      ? payload.horizontal
+      : typeof payload.fov === "number" && Number.isFinite(payload.fov)
+      ? payload.fov
+      : CAMERA_FOV_DEFAULT
+
+  return Math.min(CAMERA_FOV_MAX, Math.max(CAMERA_FOV_MIN, rawFov))
+}
+
+function normalizeCameraRoiPosition(value: unknown): CameraRoiPosition {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 2) {
+    return value as CameraRoiPosition
+  }
+
+  if (typeof value === "string") {
+    return CAMERA_ROI_POSITION_BY_NAME[value] ?? 0
+  }
+
+  return 0
 }
 
 const ALL_CANONICAL_PERMISSIONS = ["location", "microphone", "camera", "notifications", "calendar"] as const
@@ -705,7 +732,7 @@ class LocalMiniappRuntime {
         this.sendResult(packageName, requestId, true)
         break
       case MiniappRequestType.CAMERA_FOV:
-        this.handleCameraFov(packageName, payload, requestId)
+        void this.handleCameraFov(packageName, payload, requestId)
         break
       case MiniappRequestType.PING:
         // SDK should handle this itself; reply PONG just in case
@@ -731,7 +758,7 @@ class LocalMiniappRuntime {
 
       // Cloud-coordinated features
       case MiniappRequestType.PHOTO:
-        this.handlePhoto(packageName, payload, requestId)
+        void this.handlePhoto(packageName, payload, requestId)
         break
       case MiniappRequestType.VIDEO_RECORDING_START:
         void this.handleVideoRecordingStart(packageName, payload, requestId)
@@ -1550,27 +1577,63 @@ class LocalMiniappRuntime {
   // Camera FOV
   // ---------------------------------------------------------------------------
 
-  private handleCameraFov(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+  private async handleCameraFov(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const app = this.connectedApps.get(packageName)
+    const hasCameraPermission = app?.installedManifest?.permissions?.some((p) => p.type === "CAMERA")
+    if (!hasCameraPermission) {
+      logPermissionNotDeclared(packageName, "CAMERA", "to set camera FOV", `{"type": "CAMERA"}`)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+        message: `CAMERA permission not declared in miniapp.json. Add {"type": "CAMERA"} to the "permissions" array.`,
+        permission: "CAMERA",
+        operation: MiniappRequestType.CAMERA_FOV,
+      })
+      return
+    }
+
+    const cameraSettings = getRuntimeHooks().cameraSettings
+    if (!cameraSettings) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_IMPLEMENTED,
+        message: "Camera FOV settings are not configured on this host",
+      })
+      return
+    }
+
     try {
-      const ROI_MAP: Record<string, number> = {center: 0, bottom: 1, top: 2}
-      // SDK sends {horizontal, vertical} degrees; settings store uses {fov, roi_position}
-      // Accept both the SDK field names and legacy field names for backwards compat
-      const horizontal = payload.horizontal as number | undefined
-      const fov =
-        typeof horizontal === "number"
-          ? Math.min(118, Math.max(62, horizontal))
-          : typeof payload.fov === "number"
-            ? Math.min(118, Math.max(62, payload.fov))
-            : 118
-      const roiStr = (payload.roiPosition as string) ?? "center"
-      const numericRoi = ROI_MAP[roiStr] ?? 0
-      console.log(`${LOG_TAG}: camera_fov_set fov=${fov} roi=${roiStr} (${numericRoi})`)
-      getRuntimeHooks().settings?.setSetting(ISLAND_SETTINGS_KEYS.cameraFov, {fov, roi_position: numericRoi}, false)
-      this.sendResult(packageName, requestId, true)
+      const fov = normalizeCameraFovPayload(payload)
+      const roiPosition = normalizeCameraRoiPosition(payload.roiPosition ?? payload.roi_position)
+      console.log(`${LOG_TAG}: camera_fov_set fov=${fov} roi=${roiPosition}`)
+
+      const ack = await cameraSettings.setFov(packageName, {fov, roiPosition})
+      if (ack.status === "error") {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: ack.errorCode || MiniappErrorCode.INTERNAL,
+          message: ack.errorMessage || "Camera FOV request failed",
+        })
+        return
+      }
+
+      const appliedFov = ack.fov ?? fov
+      const appliedRoiPosition = ack.roiPosition ?? roiPosition
+      getRuntimeHooks().settings?.setSetting(
+        ISLAND_SETTINGS_KEYS.cameraFov,
+        {fov: appliedFov, roi_position: appliedRoiPosition},
+        false,
+      )
+      this.sendResult(packageName, requestId, true, {
+        ...ack,
+        fov: appliedFov,
+        roiPosition: appliedRoiPosition,
+      })
     } catch (err) {
       console.error(`${LOG_TAG}: camera_fov error:`, err)
       this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Camera FOV error",
       })
     }

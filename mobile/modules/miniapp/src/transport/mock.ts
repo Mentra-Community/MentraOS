@@ -109,7 +109,7 @@ export class MockTransport implements Transport {
         // Anything that has a requestId expects a REQUEST_RESULT. Reply with a
         // synthetic empty success so app code that awaits the promise resolves.
         if (envelope.requestId) {
-          this.deliverSyntheticResult(envelope.requestId, type ?? "<unknown>")
+          this.deliverSyntheticResult(envelope.requestId, type ?? "<unknown>", payload)
         }
         return
     }
@@ -151,8 +151,12 @@ export class MockTransport implements Transport {
     queueMicrotask(() => this.messageHandler?.(serializeEnvelope(envelope)))
   }
 
-  private deliverSyntheticResult(requestId: string, requestType: string): void {
-    const data = syntheticDataFor(requestType)
+  private deliverSyntheticResult(
+    requestId: string,
+    requestType: string,
+    requestPayload: Record<string, unknown>,
+  ): void {
+    const data = syntheticDataFor(requestId, requestType, requestPayload)
     const responsePayload = {
       type: MiniappResponseType.REQUEST_RESULT,
       ok: true,
@@ -174,8 +178,30 @@ export class MockTransport implements Transport {
  * Synthetic payload for an unrecognized request that nonetheless awaits a
  * REQUEST_RESULT. Returns enough shape to satisfy callers without crashing.
  */
-function syntheticDataFor(requestType: string): unknown {
+function syntheticDataFor(requestId: string, requestType: string, requestPayload: Record<string, unknown>): unknown {
   switch (requestType) {
+    case MiniappRequestType.CAMERA_FOV: {
+      const fov =
+        typeof requestPayload.horizontal === "number"
+          ? requestPayload.horizontal
+          : typeof requestPayload.fov === "number"
+          ? requestPayload.fov
+          : 118
+      const roi = requestPayload.roiPosition
+      const roiPosition = roi === 1 || roi === "bottom" ? 1 : roi === 2 || roi === "top" ? 2 : 0
+      return {
+        type: "settings_ack",
+        requestId,
+        setting: "camera_fov",
+        status: "ready",
+        ready: true,
+        timestamp: Date.now(),
+        fov,
+        roiPosition,
+        hardwareApplied: true,
+      }
+    }
+
     case MiniappRequestType.PHOTO:
       // 1×1 transparent PNG so consumers that try to render don't 404.
       return {

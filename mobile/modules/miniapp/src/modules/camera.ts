@@ -5,11 +5,31 @@
 import {MiniappRequestType} from "../protocol"
 import {MiniappSession} from "../session"
 
+export type CameraRoiPosition = "center" | "bottom" | "top" | 0 | 1 | 2
+
 export interface SetCameraFovOptions {
-  /** Horizontal FOV, degrees. */
+  /** Horizontal FOV, degrees. Alias for `fov`. */
   horizontal?: number
-  /** Vertical FOV, degrees. */
+  /** Horizontal FOV, degrees. */
+  fov?: number
+  /** Vertical FOV, degrees. Reserved for future camera firmware. */
   vertical?: number
+  /** Crop/region position: center (0), bottom (1), or top (2). */
+  roiPosition?: CameraRoiPosition
+}
+
+export interface CameraFovResult {
+  type: "settings_ack"
+  requestId: string
+  setting: "camera_fov" | string
+  status: string
+  ready?: boolean
+  timestamp: number
+  fov?: number
+  roiPosition?: 0 | 1 | 2
+  hardwareApplied?: boolean
+  errorCode?: string
+  errorMessage?: string
 }
 
 export interface TakePhotoOptions {
@@ -61,12 +81,19 @@ export class CameraModule {
     return this.session._hasManifestPermission("CAMERA")
   }
 
-  /** Write camera FOV settings. */
-  setFov(options: SetCameraFovOptions): void {
-    this.session.sendOneShot({
+  /**
+   * Apply camera FOV/ROI settings on the glasses.
+   *
+   * Resolves after the ASG client reports that the setting was applied and the
+   * camera is ready again. Requires CAMERA permission declared in miniapp.json.
+   */
+  async setFov(options: SetCameraFovOptions): Promise<CameraFovResult> {
+    return this.session.sendRequest<CameraFovResult>({
       type: MiniappRequestType.CAMERA_FOV,
-      horizontal: options.horizontal,
+      horizontal: options.horizontal ?? options.fov,
+      fov: options.fov,
       vertical: options.vertical,
+      roiPosition: options.roiPosition,
     })
   }
 
