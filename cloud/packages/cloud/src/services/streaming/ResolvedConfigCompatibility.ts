@@ -2,10 +2,10 @@ import { StreamStatus } from "@mentra/sdk";
 
 type StreamResolvedConfig = NonNullable<StreamStatus["resolvedConfig"]>;
 type StreamResolvedVideoConfig = NonNullable<StreamResolvedConfig["video"]>;
-type CompatibleStreamResolvedVideoConfig = Omit<StreamResolvedVideoConfig, "frameRate"> &
-  Partial<Pick<StreamResolvedVideoConfig, "frameRate">> & {
-    fps?: number;
-  };
+type CompatibleStreamResolvedVideoConfig = Omit<StreamResolvedVideoConfig, "frameRate"> & {
+  frameRate?: number;
+  fps?: number;
+};
 type CompatibleStreamResolvedConfig = Omit<StreamResolvedConfig, "video"> & {
   video?: CompatibleStreamResolvedVideoConfig;
 };
@@ -17,16 +17,18 @@ export function normalizeStreamResolvedConfig(
     return resolvedConfig;
   }
 
-  const frameRate = resolvedConfig.video.frameRate ?? resolvedConfig.video.fps;
+  const video = resolvedConfig.video as CompatibleStreamResolvedVideoConfig;
+  const frameRate = video.frameRate ?? video.fps;
   if (frameRate === undefined) {
-    return resolvedConfig as StreamStatus["resolvedConfig"];
+    const { video: _video, ...withoutVideo } = resolvedConfig;
+    return withoutVideo;
   }
 
-  const { fps: _fps, ...video } = resolvedConfig.video;
+  const { fps: _fps, ...videoWithoutLegacyFps } = video;
   return {
     ...resolvedConfig,
     video: {
-      ...video,
+      ...videoWithoutLegacyFps,
       frameRate,
     },
   };
