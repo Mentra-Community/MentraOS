@@ -318,16 +318,28 @@ export type DashboardMenuItem = {
   values?: Record<string, unknown>
 }
 
-export type CameraFov = "standard" | "wide"
+export const CAMERA_FOV_MIN = 62
+export const CAMERA_FOV_MAX = 118
+export const CAMERA_FOV_DEFAULT = 102
+
+export type CameraRoiPosition = 0 | 1 | 2
+export type CameraFovPreset = "narrow" | "standard" | "wide"
+
+export type CameraFovValue = {
+  fov: number
+  roiPosition?: CameraRoiPosition
+}
+
+export type CameraFov = CameraFovValue | CameraFovPreset
 
 export type CameraFovSetting = {
   fov: number
-  roiPosition: number
+  roiPosition: CameraRoiPosition
 }
 
 type NativeCameraFovSetting = {
   fov: number
-  roi_position: number
+  roi_position: CameraRoiPosition
 }
 
 export type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
@@ -440,58 +452,74 @@ export type StreamStatusLifecycleState = "initializing" | "streaming" | "stoppin
 export type StreamStatusReconnectState = "reconnecting" | "reconnected" | "reconnect_failed"
 export type StreamStatusState = StreamStatusLifecycleState | StreamStatusReconnectState | "error"
 
+/** Effective stream settings reported by the glasses after defaults and clamps. */
+export type StreamResolvedConfig = {
+  transport?: "rtmp" | "srt" | "whip"
+  video?: {
+    /** Encoded output width sent to the stream endpoint. */
+    width: number
+    /** Encoded output height sent to the stream endpoint. */
+    height: number
+    /** Native camera buffer width selected before crop/downscale. */
+    captureWidth?: number
+    /** Native camera buffer height selected before crop/downscale. */
+    captureHeight?: number
+    /** Encoded video bitrate in bits per second. */
+    bitrate: number
+    /** Resolved capture/encode frame rate. */
+    fps: number
+  }
+  audio?: {
+    /** Encoded audio bitrate in bits per second. */
+    bitrate?: number
+    /** Audio sample rate in Hz. */
+    sampleRate?: number
+    echoCancellation?: boolean
+    noiseSuppression?: boolean
+  }
+}
+
+type StreamStatusCommon = {
+  type: "stream_status"
+  streamId?: string
+  timestamp?: number
+  resolvedConfig?: StreamResolvedConfig
+}
+
 export type StreamStatusEvent =
-  | {
-      type: "stream_status"
+  | (StreamStatusCommon & {
       kind: "lifecycle"
       status: StreamStatusLifecycleState
-      streamId?: string
-      timestamp?: number
-    }
-  | {
-      type: "stream_status"
+    })
+  | (StreamStatusCommon & {
       kind: "reconnect"
       status: "reconnecting"
-      streamId?: string
       attempt: number
       maxAttempts: number
       reason: string
-      timestamp?: number
-    }
-  | {
-      type: "stream_status"
+    })
+  | (StreamStatusCommon & {
       kind: "reconnect"
       status: "reconnected"
-      streamId?: string
       attempt: number
-      timestamp?: number
-    }
-  | {
-      type: "stream_status"
+    })
+  | (StreamStatusCommon & {
       kind: "reconnect"
       status: "reconnect_failed"
-      streamId?: string
       maxAttempts: number
-      timestamp?: number
-    }
-  | {
-      type: "stream_status"
+    })
+  | (StreamStatusCommon & {
       kind: "error"
       status: "error"
-      streamId?: string
       errorDetails: string
-      timestamp?: number
-    }
-  | {
-      type: "stream_status"
+    })
+  | (StreamStatusCommon & {
       kind: "snapshot"
       status: "streaming" | "reconnecting" | "stopped"
       streaming: boolean
       reconnecting: boolean
-      streamId?: string
       attempt?: number
-      timestamp?: number
-    }
+    })
 
 export type KeepAliveAckEvent = {
   type: "keep_alive_ack"
@@ -662,7 +690,9 @@ export type BluetoothSdkEventMap = {
   mic_pcm: MicPcmEvent
   mic_lc3: MicLc3Event
   stream_status: StreamStatusEvent
-  keep_alive_ack: KeepAliveAckEvent
+  ota_update_available: OtaUpdateAvailableEvent
+  ota_start_ack: OtaStartAckEvent
+  ota_status: OtaStatusEvent
   extraction_progress: ExtractionProgressEvent
 }
 
@@ -729,7 +759,6 @@ export interface BluetoothSdkPublicModule {
 
   startStream(params: StreamStartRequest): Promise<void>
   stopStream(): Promise<void>
-  keepStreamAlive(params: StreamKeepAliveRequest): Promise<void>
 
   setMicState(enabled: boolean, useGlassesMic?: boolean, sendTranscript?: boolean, sendLc3Data?: boolean): Promise<void>
   setPreferredMic(preferredMic: MicPreference): Promise<void>
@@ -748,6 +777,12 @@ export interface BluetoothSdkPublicModule {
   ): Promise<void>
 
   requestVersionInfo(): Promise<void>
+  /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
+  checkForOtaUpdate(): Promise<void>
+  /** Start the OTA flow after your app has presented the available update to the user. */
+  startOtaUpdate(): Promise<void>
+  /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
+  retryOtaVersionCheck(): Promise<void>
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>
