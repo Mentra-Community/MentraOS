@@ -14,6 +14,8 @@ public class WhipStreamConfig {
   public static final int DEFAULT_VIDEO_HEIGHT = 480;
   public static final int DEFAULT_VIDEO_FPS = 15;
   public static final int DEFAULT_VIDEO_BITRATE = 1000000; // 1 Mbps
+  public static final int MIN_VIDEO_FPS = 5;
+  public static final int MAX_VIDEO_FPS = 30;
 
   public static final boolean DEFAULT_ECHO_CANCELLATION = false;
   public static final boolean DEFAULT_NOISE_SUPPRESSION = false;
@@ -47,7 +49,10 @@ public class WhipStreamConfig {
       config.videoWidth = clamp(optIntWithFallback(videoJson, "width", "w", DEFAULT_VIDEO_WIDTH), 320, 1920);
       config.videoHeight = clamp(optIntWithFallback(videoJson, "height", "h", DEFAULT_VIDEO_HEIGHT), 240, 1080);
       config.videoBitrate = clamp(optIntWithFallback(videoJson, "bitrate", "br", DEFAULT_VIDEO_BITRATE), 100000, 10000000);
-      config.videoFps = clamp(optIntWithFallback(videoJson, "frameRate", "fr", DEFAULT_VIDEO_FPS), 1, 30);
+      config.videoFps = clamp(
+          optIntWithFallback(videoJson, "frameRate", "fr", DEFAULT_VIDEO_FPS),
+          MIN_VIDEO_FPS,
+          MAX_VIDEO_FPS);
     }
 
     if (audioJson != null) {
@@ -139,13 +144,13 @@ public class WhipStreamConfig {
   }
 
   public WhipStreamConfig setVideoFps(int fps) {
-    this.videoFps = clamp(fps, 1, 30);
+    this.videoFps = clamp(fps, MIN_VIDEO_FPS, MAX_VIDEO_FPS);
     return this;
   }
 
   public WhipStreamConfig setStatusVideoFps(double fps) {
     if (!Double.isNaN(fps) && !Double.isInfinite(fps)) {
-      this.statusVideoFps = clamp(fps, 1.0, 30.0);
+      this.statusVideoFps = clamp(fps, MIN_VIDEO_FPS, MAX_VIDEO_FPS);
     }
     return this;
   }
@@ -158,6 +163,7 @@ public class WhipStreamConfig {
   public JSONObject toStatusJson(String transport) {
     JSONObject resolvedConfig = new JSONObject();
     JSONObject video = new JSONObject();
+    JSONObject audio = new JSONObject();
     try {
       resolvedConfig.put("transport", transport);
       video.put("width", getVideoWidth());
@@ -165,6 +171,9 @@ public class WhipStreamConfig {
       video.put("bitrate", getVideoBitrate());
       video.put("fps", oneDecimal(getStatusVideoFps()));
       resolvedConfig.put("video", video);
+      audio.put("echoCancellation", isEchoCancellation());
+      audio.put("noiseSuppression", isNoiseSuppression());
+      resolvedConfig.put("audio", audio);
     } catch (Exception ignored) {
       // JSONObject writes above are deterministic for primitive values.
     }

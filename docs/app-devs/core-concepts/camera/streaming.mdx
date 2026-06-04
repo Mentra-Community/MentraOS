@@ -109,7 +109,7 @@ When you set `video`, each field you pass must be an integer within these ranges
 
 - **width:** 320–1920 (default 854)
 - **height:** 240–1080 (default 480)
-- **frameRate:** 1–30 fps (default 15)
+- **frameRate:** 5–30 fps (default 15)
 - **bitrate:** 100_000–10_000_000 bits per second (default 1_000_000)
 
 **Behavior:** The glasses pick a native camera mode and may center-crop or downscale to your requested size without upscaling. If the camera cannot reach the resolution without upscale, stream start is rejected on the device. Out-of-range `video` values cause the SDK to throw `RangeError` before any request is sent. Portrait resolutions are not yet recommended on Mentra Live.
@@ -188,6 +188,12 @@ Status values include `"initializing"`, `"active"`, `"stopped"`, and `"error"`.
 When the glasses report the effective settings they used, stream status includes `resolvedConfig`.
 This is separate from runtime `stats`: `resolvedConfig.video.fps`, `width`, `height`, and
 `bitrate` describe the configured stream after defaults and glasses-side clamps.
+`resolvedConfig.video.width` and `height` are the encoded output dimensions. When
+present, `resolvedConfig.video.captureWidth` and `captureHeight` are the native
+camera buffer dimensions selected by the glasses before center-crop or downscale;
+they can match the output dimensions when no separate capture size is needed.
+`resolvedConfig.audio` reports the audio bitrate, sample rate, echo cancellation,
+and noise suppression settings used for the stream.
 
 Always subscribe to status events before starting a stream. For managed streams, don't use playback URLs until status reports `"active"`.
 

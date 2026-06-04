@@ -106,7 +106,7 @@ export const coreModuleMock = {
   startStream: jest.fn(() => Promise.resolve()),
   startExternallyManagedStream: jest.fn(() => Promise.resolve()),
   stopStream: jest.fn(() => Promise.resolve()),
-  sendCloudStreamKeepAlive: jest.fn(() => Promise.resolve()),
+  sendExternallyManagedStreamKeepAlive: jest.fn(() => Promise.resolve()),
   setMicState: jest.fn(() => Promise.resolve()),
   restartTranscriber: jest.fn(() => Promise.resolve()),
   setOwnAppAudioPlaying: jest.fn(() => Promise.resolve()),
@@ -130,6 +130,8 @@ export const coreModuleMock = {
 export const emitCoreModuleEvent = (eventName: string, payload: any) => {
   listeners.get(eventName)?.forEach((listener) => listener(payload))
 }
+
+export const getCoreModuleListenerCount = (eventName: string) => listeners.get(eventName)?.size ?? 0
 
 export const resetCoreModuleMock = () => {
   listeners.clear()

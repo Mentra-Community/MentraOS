@@ -76,13 +76,20 @@ public struct StreamAudioConfig {
     }
 }
 
+/// Effective video settings reported by the glasses after defaults and clamps.
 public struct StreamResolvedVideoConfig: Equatable {
+    /// Encoded output width sent to the stream endpoint.
     public let width: Int
+    /// Encoded output height sent to the stream endpoint.
     public let height: Int
+    /// Native camera buffer width selected before crop/downscale.
     public let captureWidth: Int?
+    /// Native camera buffer height selected before crop/downscale.
     public let captureHeight: Int?
+    /// Encoded video bitrate in bits per second.
     public let bitrate: Int
-    public let fps: Int
+    /// Resolved capture/encode frame rate.
+    public let fps: Double
 
     public init(
         width: Int,
@@ -90,7 +97,7 @@ public struct StreamResolvedVideoConfig: Equatable {
         captureWidth: Int? = nil,
         captureHeight: Int? = nil,
         bitrate: Int,
-        fps: Int
+        fps: Double
     ) {
         self.width = width
         self.height = height
@@ -105,7 +112,7 @@ public struct StreamResolvedVideoConfig: Equatable {
               let width = intValue(values["width"]),
               let height = intValue(values["height"]),
               let bitrate = intValue(values["bitrate"]),
-              let fps = intValue(values["fps"])
+              let fps = doubleValue(values["fps"])
         else {
             return nil
         }
@@ -382,11 +389,19 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
         let resolvedConfig = StreamResolvedConfig(values: values["resolvedConfig"] as? [String: Any])
         let attempt = optionalIntValue(values, "attempt")
         let maxAttempts = optionalIntValue(values, "maxAttempts") ?? 0
+        let parsedState = StreamState.from(rawState)
 
         if hasAnyKey(values, "streaming") || hasAnyKey(values, "reconnecting") {
             let streaming = boolValue(values, "streaming") == true
             let reconnecting = boolValue(values, "reconnecting") == true
-            let snapshotState: StreamState = reconnecting ? .reconnecting : (streaming ? .streaming : .stopped)
+            let snapshotState: StreamState
+            if reconnecting {
+                snapshotState = .reconnecting
+            } else if streaming {
+                snapshotState = .streaming
+            } else {
+                snapshotState = parsedState ?? .stopped
+            }
             self = .snapshot(
                 state: snapshotState,
                 streaming: streaming,
@@ -399,7 +414,7 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
             return
         }
 
-        guard let state = StreamState.from(rawState) else {
+        guard let state = parsedState else {
             self = .error(
                 streamId: streamId,
                 errorDetails: rawState.map { "Unknown stream status: \($0)" } ?? "Missing stream status",

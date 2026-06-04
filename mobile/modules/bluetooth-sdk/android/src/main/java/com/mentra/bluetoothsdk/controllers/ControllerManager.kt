@@ -25,6 +25,7 @@ abstract class ControllerManager {
         save: Boolean,
         sound: Boolean,
         exposureTimeNs: Long?,
+        iso: Int?,
     )
     abstract fun startStream(message: Map<String, Any>)
     abstract fun stopStream()

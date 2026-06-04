@@ -67,7 +67,8 @@ public class RtmpStreamingService extends Service {
     private static final int NOTIFICATION_ID = 8888;
 
     // Static instance reference for static method access
-    private static RtmpStreamingService sInstance;
+    private static final Object sConfigLock = new Object();
+    private static volatile RtmpStreamingService sInstance;
 
     // Static callback for streaming status
     private static StreamingStatusCallback sStatusCallback;
@@ -153,20 +154,30 @@ public class RtmpStreamingService extends Service {
     public void onCreate() {
         super.onCreate();
 
-        // Store static instance reference
-        sInstance = this;
+        boolean appliedPendingStateManager = false;
+        boolean appliedPendingStreamConfig = false;
+        synchronized (sConfigLock) {
+            // Apply pending StateManager if it was set before service started
+            if (sPendingStateManager != null) {
+                mStateManager = sPendingStateManager;
+                sPendingStateManager = null; // Clear pending after applying
+                appliedPendingStateManager = true;
+            }
 
-        // Apply pending StateManager if it was set before service started
-        if (sPendingStateManager != null) {
-            mStateManager = sPendingStateManager;
-            sPendingStateManager = null; // Clear pending after applying
+            // Apply pending stream config before publishing the service instance.
+            if (sPendingStreamConfig != null) {
+                mStreamConfig = sPendingStreamConfig;
+                sPendingStreamConfig = null; // Clear pending after applying
+                appliedPendingStreamConfig = true;
+            }
+
+            // Store static instance reference after pending config has been applied.
+            sInstance = this;
+        }
+        if (appliedPendingStateManager) {
             Log.d(TAG, "✅ Applied pending StateManager during onCreate");
         }
-
-        // Apply pending stream config if it was set before service started
-        if (sPendingStreamConfig != null) {
-            mStreamConfig = sPendingStreamConfig;
-            sPendingStreamConfig = null; // Clear pending after applying
+        if (appliedPendingStreamConfig) {
             Log.d(TAG, "✅ Applied pending stream config during onCreate: " + mStreamConfig.toString());
         }
 
@@ -238,8 +249,10 @@ public class RtmpStreamingService extends Service {
     @Override
     public void onDestroy() {
         // Clear static instance reference
-        if (sInstance == this) {
-            sInstance = null;
+        synchronized (sConfigLock) {
+            if (sInstance == this) {
+                sInstance = null;
+            }
         }
 
         // Cancel any pending reconnections
@@ -611,6 +624,8 @@ public class RtmpStreamingService extends Service {
             // Use config values (either from SDK or defaults)
             int videoWidth = mStreamConfig.getVideoWidth();
             int videoHeight = mStreamConfig.getVideoHeight();
+            int captureWidth = mStreamConfig.getCaptureSurfaceWidth();
+            int captureHeight = mStreamConfig.getCaptureSurfaceHeight();
             int videoBitrate = mStreamConfig.getVideoBitrate();
             int videoFps = mStreamConfig.getVideoFps();
             int audioBitrate = mStreamConfig.getAudioBitrate();
@@ -637,6 +652,11 @@ public class RtmpStreamingService extends Service {
             int profile = VideoConfig.Companion.getBestProfile(mimeType);
             int level = VideoConfig.Companion.getBestLevel(mimeType, profile);
 
+            // Encode at output size; camera buffer at native capture size when it differs.
+            Size captureSize =
+                (captureWidth != videoWidth || captureHeight != videoHeight)
+                    ? new Size(captureWidth, captureHeight)
+                    : null;
             VideoConfig videoConfig = new VideoConfig(
                     MediaFormat.MIMETYPE_VIDEO_AVC,
                     videoBitrate,
@@ -644,7 +664,8 @@ public class RtmpStreamingService extends Service {
                     videoFps,
                     profile,
                     level,
-                    2.0f // Force keyframe every 2 seconds
+                    2.0f, // Force keyframe every 2 seconds
+                    captureSize
             );
 
             // Apply configurations and start preview
@@ -1290,14 +1311,16 @@ public class RtmpStreamingService extends Service {
      * @param stateManager StateManager instance
      */
     public static void setStateManager(IStateManager stateManager) {
-        if (sInstance != null) {
-            // Service is running, apply immediately
-            sInstance.mStateManager = stateManager;
-            Log.d(TAG, "✅ StateManager set for battery monitoring");
-        } else {
-            // Service not yet started, store in pending field to apply during onCreate()
-            sPendingStateManager = stateManager;
-            Log.d(TAG, "✅ StateManager stored as pending - will be applied when service starts");
+        synchronized (sConfigLock) {
+            if (sInstance != null) {
+                // Service is running, apply immediately
+                sInstance.mStateManager = stateManager;
+                Log.d(TAG, "✅ StateManager set for battery monitoring");
+            } else {
+                // Service not yet started, store in pending field to apply during onCreate()
+                sPendingStateManager = stateManager;
+                Log.d(TAG, "✅ StateManager stored as pending - will be applied when service starts");
+            }
         }
     }
 
@@ -1405,24 +1428,28 @@ public class RtmpStreamingService extends Service {
         if (config == null) {
             config = new RtmpStreamConfig(); // Use defaults if null
         }
-        if (sInstance != null) {
-            sInstance.mStreamConfig = config;
-            Log.d(TAG, "✅ Stream config set: " + config.toString());
-        } else {
-            sPendingStreamConfig = config;
-            Log.d(TAG, "✅ Stream config stored as pending: " + config.toString());
+        synchronized (sConfigLock) {
+            if (sInstance != null) {
+                sInstance.mStreamConfig = config;
+                Log.d(TAG, "✅ Stream config set: " + config.toString());
+            } else {
+                sPendingStreamConfig = config;
+                Log.d(TAG, "✅ Stream config stored as pending: " + config.toString());
+            }
         }
     }
 
     /** Returns the effective configuration for the active or pending RTMP stream. */
     public static JSONObject getCurrentResolvedConfig() {
-        RtmpStreamConfig config = null;
-        if (sInstance != null) {
-            config = sInstance.mStreamConfig;
-        } else if (sPendingStreamConfig != null) {
-            config = sPendingStreamConfig;
+        synchronized (sConfigLock) {
+            RtmpStreamConfig config = null;
+            if (sInstance != null) {
+                config = sInstance.mStreamConfig;
+            } else if (sPendingStreamConfig != null) {
+                config = sPendingStreamConfig;
+            }
+            return config != null ? config.toStatusJson("rtmp") : null;
         }
-        return config != null ? config.toStatusJson("rtmp") : null;
     }
 
     /**
@@ -1518,10 +1545,33 @@ public class RtmpStreamingService extends Service {
      * @return true if streaming, false if not or if service is not running
      */
     public static boolean isStreaming() {
-        if (sInstance != null) {
-            synchronized (sInstance.mStateLock) {
-                return sInstance.mStreamState == StreamState.STREAMING ||
-                       sInstance.mStreamState == StreamState.STARTING;
+        RtmpStreamingService instance = sInstance;
+        if (instance != null) {
+            synchronized (instance.mStateLock) {
+                return instance.mStreamState == StreamState.STREAMING ||
+                       instance.mStreamState == StreamState.STARTING;
+            }
+        }
+        return false;
+    }
+
+    /** @return true only after the RTMP connection is live. */
+    public static boolean isActivelyStreaming() {
+        RtmpStreamingService instance = sInstance;
+        if (instance != null) {
+            synchronized (instance.mStateLock) {
+                return instance.mStreamState == StreamState.STREAMING;
+            }
+        }
+        return false;
+    }
+
+    /** @return true while RTMP startup is in progress before the connection is live. */
+    public static boolean isStarting() {
+        RtmpStreamingService instance = sInstance;
+        if (instance != null) {
+            synchronized (instance.mStateLock) {
+                return instance.mStreamState == StreamState.STARTING;
             }
         }
         return false;

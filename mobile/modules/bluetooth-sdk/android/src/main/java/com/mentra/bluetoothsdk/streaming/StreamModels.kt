@@ -56,13 +56,20 @@ data class StreamAudioConfig @JvmOverloads constructor(
     }
 }
 
+/** Effective video settings reported by the glasses after defaults and clamps. */
 data class StreamResolvedVideoConfig @JvmOverloads constructor(
+    /** Encoded output width sent to the stream endpoint. */
     val width: Int,
+    /** Encoded output height sent to the stream endpoint. */
     val height: Int,
+    /** Native camera buffer width selected before crop/downscale. */
     val captureWidth: Int? = null,
+    /** Native camera buffer height selected before crop/downscale. */
     val captureHeight: Int? = null,
+    /** Encoded video bitrate in bits per second. */
     val bitrate: Int,
-    val fps: Int,
+    /** Resolved capture/encode frame rate. */
+    val fps: Double,
 ) {
     fun toMap(): Map<String, Any> =
         buildMap {
@@ -84,7 +91,7 @@ data class StreamResolvedVideoConfig @JvmOverloads constructor(
                 captureWidth = numberValue(values, "captureWidth"),
                 captureHeight = numberValue(values, "captureHeight"),
                 bitrate = numberValue(values, "bitrate") ?: return null,
-                fps = numberValue(values, "fps") ?: return null,
+                fps = doubleValue(values, "fps") ?: return null,
             )
         }
     }
@@ -377,12 +384,14 @@ sealed interface StreamStatus {
             val resolvedConfig = StreamResolvedConfig.fromMap(stringMapValue(values["resolvedConfig"]))
             val attempt = numberValue(values, "attempt")
             val maxAttempts = numberValue(values, "maxAttempts") ?: 0
+            val parsedState = StreamState.fromValue(rawState)
 
             if (streaming != null || hasAnyKey(values, "reconnecting")) {
                 return Snapshot(
                     state = when {
                         reconnecting -> StreamState.RECONNECTING
                         streaming == true -> StreamState.STREAMING
+                        parsedState != null -> parsedState
                         else -> StreamState.STOPPED
                     },
                     streaming = streaming == true,
@@ -394,7 +403,7 @@ sealed interface StreamStatus {
                 )
             }
 
-            val state = StreamState.fromValue(rawState)
+            val state = parsedState
                 ?: return Error(
                     streamId = streamId,
                     errorDetails = rawState?.let { "Unknown stream status: $it" } ?: "Missing stream status",

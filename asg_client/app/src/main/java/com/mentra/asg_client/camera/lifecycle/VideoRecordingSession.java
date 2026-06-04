@@ -184,6 +184,13 @@ public final class VideoRecordingSession {
             Log.e(TAG, "MediaRecorder error: what=" + what + ", extra=" + extra);
             isRecording = false;
             String errorMsg = VideoRecorderPolicy.mediaRecorderErrorMessage(what);
+            // Stop IMU first: it unregisters the sensor listener and closes/discards the partial.
+            // Otherwise the listener keeps running and writing into a directory deleteCorruptCapture
+            // is about to wipe. Mirrors the stop()-failure path.
+            ImuRecorder imu = hooks.currentImuRecorder();
+            if (imu != null) {
+                imu.cancel();
+            }
             deleteCorruptCapture(currentVideoPath);
             notifyError(currentVideoId, errorMsg);
             try {
@@ -235,12 +242,17 @@ public final class VideoRecordingSession {
                 }
 
                 mediaRecorder.start();
+                // Anchor for the video timeline on the IMU clock (elapsedRealtimeNanos), captured as
+                // close to recorder start as possible. Written to the IMU sidecar so the consumer can
+                // align frames (relative MP4 PTS) to IMU samples and subtract the fixed startup offset.
+                long videoStartElapsedRealtimeNs = android.os.SystemClock.elapsedRealtimeNanos();
                 isRecording = true;
                 recordingStartTime = System.currentTimeMillis();
 
                 ImuRecorder imu = hooks.ensureImuRecorder();
                 if (imu != null) {
-                    imu.startRecording();
+                    imu.startRecording(currentVideoPath);
+                    imu.setVideoStartAnchor(videoStartElapsedRealtimeNs);
                 }
 
                 pendingSettings = null;
@@ -269,6 +281,12 @@ public final class VideoRecordingSession {
                 Log.e(TAG, "Failed to start recording after delay", e);
                 notifyError(currentVideoId, "Failed to start recording: " + e.getMessage());
                 isRecording = false;
+                // IMU may already be recording (started above); stop it so the sensor listener and
+                // partial stream don't keep running after a failed start.
+                ImuRecorder imu = hooks.currentImuRecorder();
+                if (imu != null) {
+                    imu.cancel();
+                }
             }
         }, VideoRecorderPolicy.RECORDER_SURFACE_WARMUP_MS);
     }

@@ -10,8 +10,6 @@ import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
-import android.hardware.camera2.CaptureResult;
-import android.hardware.camera2.TotalCaptureResult;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -24,6 +22,7 @@ import android.view.WindowManager;
 
 import androidx.annotation.NonNull;
 
+import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 
 import org.webrtc.CapturerObserver;
@@ -113,7 +112,7 @@ public class WhipCameraCapturer implements VideoCapturer {
     mWidth = width;
     mHeight = height;
     mRequestedFps = fps;
-    mOutputFps = clamp(fps, 1, 30);
+    mOutputFps = clamp(fps, WhipStreamConfig.MIN_VIDEO_FPS, WhipStreamConfig.MAX_VIDEO_FPS);
     mCameraFps = mOutputFps;
     mOutputFrameIntervalNs = fpsToIntervalNs(mOutputFps);
     mNextForwardFrameTimestampNs = 0L;
@@ -171,7 +170,10 @@ public class WhipCameraCapturer implements VideoCapturer {
 
       Log.i(TAG, "Resolved WHIP capture fps: requested=" + mRequestedFps
           + ", output=" + mOutputFps + ", camera=" + mCameraFps);
-      notifyCameraFps(mCameraFps);
+      // Report the effective transmitted rate: when the camera runs faster than the output
+      // target, frames are dropped to pace the track at mOutputFps; when it runs slower, the
+      // track is capped at mCameraFps. The resolved fps is the lower of the two.
+      notifyCameraFps(Math.min(mCameraFps, mOutputFps));
 
       cameraManager.openCamera(cameraId, new CameraDevice.StateCallback() {
         @Override
@@ -289,22 +291,16 @@ public class WhipCameraCapturer implements VideoCapturer {
       builder.set(CaptureRequest.HOT_PIXEL_MODE,
           CaptureRequest.HOT_PIXEL_MODE_OFF);
 
-      mCaptureSession.setRepeatingRequest(builder.build(), new CameraCaptureSession.CaptureCallback() {
-        @Override
-        public void onCaptureCompleted(@NonNull CameraCaptureSession session,
-            @NonNull CaptureRequest request, @NonNull TotalCaptureResult result) {
-          Long frameDurationNs = result.get(CaptureResult.SENSOR_FRAME_DURATION);
-          if (frameDurationNs != null && frameDurationNs > 0) {
-            notifyCameraFps(1_000_000_000.0 / frameDurationNs);
-          }
-        }
-      }, mCameraHandler);
+      // Avoid per-frame metadata callbacks: SENSOR_FRAME_DURATION is instantaneous and can make
+      // resolvedConfig.video.fps jitter even though the requested camera FPS is stable.
+      mCaptureSession.setRepeatingRequest(builder.build(), null, mCameraHandler);
 
       // Match the stock WebRTC Camera2 session semantics:
       // 1. Apply a texture transform for sensor/front-camera correction.
       // 2. Preserve frame rotation metadata so downstream width/height handling stays correct.
       mSurfaceTextureHelper.startListening(frame -> {
         if (shouldDropFrame(frame.getTimestampNs())) {
+          // SurfaceTextureHelper owns and releases this input frame after onFrame returns.
           return;
         }
 
@@ -325,17 +321,37 @@ public class WhipCameraCapturer implements VideoCapturer {
               + ", frame rotation: " + frameRotation + ")");
         }
 
-        TextureBufferImpl modifiedBuffer = texBuffer.applyTransformMatrix(
-            createTextureTransformMatrix(), texBuffer.getWidth(), texBuffer.getHeight());
-        VideoFrame.Buffer outputBuffer = adaptOutputBuffer(modifiedBuffer);
-        if (outputBuffer != modifiedBuffer) {
-          modifiedBuffer.release();
-        }
+        TextureBufferImpl modifiedBuffer = null;
+        VideoFrame.Buffer outputBuffer = null;
+        VideoFrame modifiedFrame = null;
+        try {
+          modifiedBuffer = texBuffer.applyTransformMatrix(
+              createTextureTransformMatrix(), texBuffer.getWidth(), texBuffer.getHeight());
+          outputBuffer = adaptOutputBuffer(modifiedBuffer);
+          if (outputBuffer != modifiedBuffer) {
+            modifiedBuffer.release();
+            modifiedBuffer = null;
+          }
 
-        VideoFrame modifiedFrame = new VideoFrame(
-            outputBuffer, frameRotation, frame.getTimestampNs());
-        mObserver.onFrameCaptured(modifiedFrame);
-        modifiedFrame.release();
+          VideoFrame.Buffer frameBuffer = outputBuffer;
+          if (frameBuffer == modifiedBuffer) {
+            modifiedBuffer = null;
+          }
+          modifiedFrame = new VideoFrame(frameBuffer, frameRotation, frame.getTimestampNs());
+          outputBuffer = null;
+          mObserver.onFrameCaptured(modifiedFrame);
+        } finally {
+          if (modifiedFrame != null) {
+            modifiedFrame.release();
+          } else {
+            if (outputBuffer != null) {
+              outputBuffer.release();
+            }
+            if (modifiedBuffer != null) {
+              modifiedBuffer.release();
+            }
+          }
+        }
       });
 
       mObserver.onCapturerStarted(true);
@@ -416,7 +432,7 @@ public class WhipCameraCapturer implements VideoCapturer {
     Range<Integer>[] ranges =
         chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
     if (ranges == null || ranges.length == 0) {
-      return clamp(outputFps, 5, 30);
+      return clamp(outputFps, WhipStreamConfig.MIN_VIDEO_FPS, WhipStreamConfig.MAX_VIDEO_FPS);
     }
 
     int minSupportedFps = Integer.MAX_VALUE;
