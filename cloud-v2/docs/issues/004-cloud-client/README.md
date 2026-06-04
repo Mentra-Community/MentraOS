@@ -15,18 +15,23 @@ Docs:
 - [`spec.md`](./spec.md): the concrete API (the three modules, construction, the
   injected transports).
 
-## Design goals
+## What makes it worth a separate library
 
-- **Just code, runs anywhere.** No React Native, Expo, or web-page imports in the
-  core. The platform-specific pieces (WebSocket, UDP socket, secure storage) are
-  passed in, and chosen by import path: `@mentra/cloud-client/react-native` on the
-  phone, `@mentra/cloud-client/node` for tests. You construct it with
-  `new CloudClient(config)`.
-- **v2-native.** It speaks only the v2 protocol; none of the v1 message shapes
-  (`phone_subscription_update`, `data_stream`, legacy REST).
-- **Typed, no magic strings.** Subscriptions and events use the typed definitions
-  from `@mentra/cloud-runtime/protocol` (the one source of truth), not hand-written
-  strings.
+- **The same code runs on the phone and on a server.** The library has no
+  phone-only or browser-only imports. The parts that only exist on a real phone (the
+  network sockets, secure storage) are passed in from outside, picked by which build
+  you import (`@mentra/cloud-client/react-native` on the phone,
+  `@mentra/cloud-client/node` for tests). That's the payoff: the backend test harness
+  is literally this same library, so a passing test is evidence the phone works too.
+- **It only knows the v2 cloud.** It carries none of the old v1 cloud's messages or
+  REST calls, so there's no v1 baggage to keep alive or accidentally lean on. The v1
+  connection stays separate (see [`architecture.md`](./architecture.md)).
+- **The cloud's types are the only types.** Subscriptions and events are built from
+  the shared definitions in `@mentra/cloud-runtime/protocol`, the exact ones the
+  cloud server uses. So if the phone and the cloud ever disagree about a message, it's
+  a compile error here, not a bug in the field.
+
+(More on the why in [`architecture.md`](./architecture.md) section 5.)
 
 ## The three modules
 
