@@ -1836,6 +1836,61 @@ public class OtaHelper {
         }
     }
 
+    /**
+     * Ensures {@link OtaConstants#BACKUP_APK_PATH} matches or exceeds the installed ASG build.
+     * Called on service startup so adb/IDE installs refresh recovery's reinstall target.
+     */
+    public static void ensureRecoveryBackupIfNeeded(Context context) {
+        try {
+            Context appContext = context.getApplicationContext();
+            PackageManager pm = appContext.getPackageManager();
+            PackageInfo installed =
+                    pm.getPackageInfo(
+                            "com.mentra.asg_client", PackageManager.GET_SIGNING_CERTIFICATES);
+            long installedVersion =
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                            ? installed.getLongVersionCode()
+                            : installed.versionCode;
+
+            File backupApk = new File(OtaConstants.BASE_DIR, OtaConstants.BACKUP_APK_FILENAME);
+            long backupVersion = -1L;
+            if (backupApk.exists() && backupApk.canRead()) {
+                PackageInfo archive =
+                        pm.getPackageArchiveInfo(
+                                backupApk.getAbsolutePath(),
+                                PackageManager.GET_SIGNING_CERTIFICATES);
+                if (archive != null) {
+                    backupVersion =
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                                    ? archive.getLongVersionCode()
+                                    : archive.versionCode;
+                }
+            }
+
+            if (backupVersion >= installedVersion) {
+                Log.d(
+                        TAG,
+                        "Recovery backup up to date (backup="
+                                + backupVersion
+                                + ", installed="
+                                + installedVersion
+                                + ")");
+                return;
+            }
+
+            Log.i(
+                    TAG,
+                    "Refreshing recovery backup (backup="
+                            + backupVersion
+                            + ", installed="
+                            + installedVersion
+                            + ")");
+            initialize(appContext).createAppBackup("com.mentra.asg_client", appContext);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to ensure recovery backup", e);
+        }
+    }
+
     private void createAppBackup(String packageName, Context context) {
         // Only backup ASG client - OTA updater can be restored from ASG client assets
         if (!packageName.equals("com.mentra.asg_client")) {
