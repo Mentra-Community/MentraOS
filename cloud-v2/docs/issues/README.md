@@ -33,7 +33,7 @@ lands.
 | [audio](./002-cloud-runtime/audio/) | Specced / partial | spec + design (proposal, under review); pipeline partially built (UDP + Redis + Soniox, phone WS). Subscription transport decided (2a: REST + stream entry); UDP encryption documented |
 | [camera (managed photo + stream)](./002-cloud-runtime/camera/) | Specced | [spec.md](./002-cloud-runtime/camera/spec.md): presigned-upload photo (cloud out of the byte path, storage-event completion, `photo.ready` push) + client-controlled managed stream |
 | **[003-cloud-proxy](./003-cloud-proxy/)** | Stub | needs spike (non-blocking; cloud-client is proxy-aware via endpoint config) |
-| **[004-cloud-client](./004-cloud-client/)** | Specced | [architecture.md](./004-cloud-client/architecture.md): the big picture (how a miniapp reaches the cloud, what the cloud-client is and why, auth for Mentra + OEMs, decisions). [spec.md](./004-cloud-client/spec.md): the concrete `@mentra/cloud-client` API (auth / runtime / core, injected transports) |
+| **[004-cloud-client](./004-cloud-client/)** | Specced | [architecture.md](./004-cloud-client/architecture.md): the big picture (how a miniapp reaches the cloud, what the cloud-client is and why, auth for Mentra + OEMs, decisions). [spec.md](./004-cloud-client/spec.md): the public API. [design.md](./004-cloud-client/design.md): how it's built (transports, connection lifecycle, token refresh) |
 | **[005-websites](./005-websites/)** | | web frontends |
 | [console](./005-websites/console/) | Stub | needs spec |
 | [miniapp-store](./005-websites/miniapp-store/) | Stub | needs spec |

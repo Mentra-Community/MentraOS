@@ -12,8 +12,11 @@ Docs:
 - [`architecture.md`](./architecture.md): the whole picture, how a miniapp runs on
   the phone and reaches the cloud, what the cloud-client is and why, how auth works
   for Mentra and OEMs, and the decisions. **Start here.**
-- [`spec.md`](./spec.md): the concrete API (the three modules, construction, the
+- [`spec.md`](./spec.md): the public API (the three modules, construction, the
   injected transports).
+- [`design.md`](./design.md): how it's built behind that API (the connection
+  lifecycle, token refresh, the transports, the mechanics behind each method). The
+  build plan.
 
 ## What makes it worth a separate library
 
@@ -46,8 +49,8 @@ state, and exposes three areas (full API in [`spec.md`](./spec.md)):
   subscriptions, transcript/translation events, managed photo/stream, UDP audio.
   Implements [`../002-cloud-runtime/protocol.md`](../002-cloud-runtime/protocol.md).
 - **`cloud.core`:** the other v2 REST calls the device makes (miniapp bundles +
-  catalog, user profile). Calls [`../001-cloud-core/`](../001-cloud-core/) services.
-  Device-facing only, no Dev Console / OEM Portal / store web UI.
+  catalog). Calls [`../001-cloud-core/`](../001-cloud-core/) services. Device-facing
+  only, no Dev Console / OEM Portal / store web UI.
 
 ## Consumers
 

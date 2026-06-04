@@ -1,8 +1,9 @@
 # Cloud Client spec
 
-**Status:** Spec. The concrete API of `@mentra/cloud-client`. The rationale and the
-big picture are in [`architecture.md`](./architecture.md); this is the contract to
-build against, now that the protocol ([`../002-cloud-runtime/protocol.md`](../002-cloud-runtime/protocol.md))
+**Status:** Spec. The public API of `@mentra/cloud-client`. The big picture and the
+decisions are in [`architecture.md`](./architecture.md), and how it's built behind
+this API is in [`design.md`](./design.md). This is the contract to build against, now
+that the protocol ([`../002-cloud-runtime/protocol.md`](../002-cloud-runtime/protocol.md))
 and the auth slice ([`../001-cloud-core/auth/spec.md`](../001-cloud-core/auth/spec.md))
 are locked.
 
@@ -116,7 +117,6 @@ interface CoreModule {
     list(): Promise<MiniappListing[]>
     getBundle(packageName: string, version?: string): Promise<{ downloadUrl: string; version: string; manifest: MiniappManifest }>
   }
-  user: { getProfile(): Promise<Profile> }
 }
 ```
 
