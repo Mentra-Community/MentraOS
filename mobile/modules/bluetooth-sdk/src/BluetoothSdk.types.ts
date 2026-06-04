@@ -318,16 +318,28 @@ export type DashboardMenuItem = {
   values?: Record<string, unknown>
 }
 
-export type CameraFov = "standard" | "wide"
+export const CAMERA_FOV_MIN = 62
+export const CAMERA_FOV_MAX = 118
+export const CAMERA_FOV_DEFAULT = 102
+
+export type CameraRoiPosition = 0 | 1 | 2
+export type CameraFovPreset = "narrow" | "standard" | "wide"
+
+export type CameraFovValue = {
+  fov: number
+  roiPosition?: CameraRoiPosition
+}
+
+export type CameraFov = CameraFovValue | CameraFovPreset
 
 export type CameraFovSetting = {
   fov: number
-  roiPosition: number
+  roiPosition: CameraRoiPosition
 }
 
 type NativeCameraFovSetting = {
   fov: number
-  roi_position: number
+  roi_position: CameraRoiPosition
 }
 
 export type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
@@ -678,6 +690,9 @@ export type BluetoothSdkEventMap = {
   mic_pcm: MicPcmEvent
   mic_lc3: MicLc3Event
   stream_status: StreamStatusEvent
+  ota_update_available: OtaUpdateAvailableEvent
+  ota_start_ack: OtaStartAckEvent
+  ota_status: OtaStatusEvent
   extraction_progress: ExtractionProgressEvent
 }
 
@@ -762,6 +777,12 @@ export interface BluetoothSdkPublicModule {
   ): Promise<void>
 
   requestVersionInfo(): Promise<void>
+  /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
+  checkForOtaUpdate(): Promise<void>
+  /** Start the OTA flow after your app has presented the available update to the user. */
+  startOtaUpdate(): Promise<void>
+  /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
+  retryOtaVersionCheck(): Promise<void>
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>

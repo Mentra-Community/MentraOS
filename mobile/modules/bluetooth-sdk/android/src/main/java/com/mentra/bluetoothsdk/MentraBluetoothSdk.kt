@@ -517,16 +517,27 @@ class MentraBluetoothSdk private constructor(
         deviceManager.requestVersionInfo()
     }
 
+    /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
+    fun checkForOtaUpdate() {
+        deviceManager.sendOtaQueryStatus()
+    }
+
+    /** Start the OTA flow after your app has presented the available update to the user. */
+    fun startOtaUpdate() {
+        deviceManager.sendOtaStart()
+    }
+
+    /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
+    fun retryOtaVersionCheck() {
+        deviceManager.retryOtaVersionCheck()
+    }
+
     internal fun sendOtaStart() {
         deviceManager.sendOtaStart()
     }
 
     internal fun sendOtaQueryStatus() {
         deviceManager.sendOtaQueryStatus()
-    }
-
-    internal fun retryOtaVersionCheck() {
-        deviceManager.retryOtaVersionCheck()
     }
 
     internal fun sendShutdown() {
@@ -708,6 +719,10 @@ class MentraBluetoothSdk private constructor(
                     dispatchToListeners { it.onKeepAliveAck(event) }
                 }
             }
+            "ota_update_available" ->
+                dispatchToListeners { it.onOtaUpdateAvailable(OtaUpdateAvailableEvent.fromMap(data)) }
+            "ota_start_ack" -> dispatchToListeners { it.onOtaStartAck(OtaStartAckEvent.fromMap(data)) }
+            "ota_status" -> dispatchToListeners { it.onOtaStatus(OtaStatusEvent.fromMap(data)) }
             "mic_pcm" -> {
                 val event = MicPcmEvent(data)
                 if (event.pcm.isNotEmpty()) {

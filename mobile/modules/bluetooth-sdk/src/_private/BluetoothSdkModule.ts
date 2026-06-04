@@ -7,7 +7,11 @@ import {
   BluetoothStatus,
   ButtonPhotoSize,
   CalendarEvent,
+  CAMERA_FOV_DEFAULT,
+  CAMERA_FOV_MAX,
+  CAMERA_FOV_MIN,
   CameraFov,
+  CameraFovPreset,
   CameraFovSetting,
   ConnectOptions,
   DashboardMenuItem,
@@ -115,6 +119,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   sendOtaQueryStatus(): Promise<void>
   /** Re-run glasses-side OTA version check (called after a clock fix invalidates a TLS failure). */
   retryOtaVersionCheck(): Promise<void>
+  checkForOtaUpdate(): Promise<void>
+  startOtaUpdate(): Promise<void>
 
   // Version Info Commands
   requestVersionInfo(): Promise<void>
@@ -204,9 +210,38 @@ const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
 
 const DEFAULT_SCAN_TIMEOUT_MS = 15_000
 
-const CAMERA_FOV_SETTINGS: Record<CameraFov, CameraFovSetting> = {
-  standard: {fov: 118, roiPosition: 0},
-  wide: {fov: 118, roiPosition: 0},
+const CAMERA_ROI_MIN = 0
+const CAMERA_ROI_MAX = 2
+
+// Named presets are a convenience layer over the numeric {fov, roiPosition} API.
+// "narrow" uses 82, a device-tested FOV; "standard" matches CAMERA_FOV_DEFAULT.
+const CAMERA_FOV_PRESETS: Record<CameraFovPreset, CameraFovSetting> = {
+  narrow: {fov: 82, roiPosition: 0},
+  standard: {fov: CAMERA_FOV_DEFAULT, roiPosition: 0},
+  wide: {fov: CAMERA_FOV_MAX, roiPosition: 0},
+}
+
+function clampInteger(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.round(value)))
+}
+
+function normalizeCameraFov(setting: CameraFov): CameraFovSetting {
+  if (typeof setting === "string") {
+    return CAMERA_FOV_PRESETS[setting] ?? CAMERA_FOV_PRESETS.standard
+  }
+
+  return {
+    fov: clampInteger(
+      Number.isFinite(setting.fov) ? setting.fov : CAMERA_FOV_DEFAULT,
+      CAMERA_FOV_MIN,
+      CAMERA_FOV_MAX,
+    ),
+    roiPosition: clampInteger(
+      Number.isFinite(setting.roiPosition ?? 0) ? (setting.roiPosition ?? 0) : 0,
+      CAMERA_ROI_MIN,
+      CAMERA_ROI_MAX,
+    ) as CameraFovSetting["roiPosition"],
+  }
 }
 
 function searchResultsForModel(status: Partial<PublicBluetoothStatus>, model: DeviceModel): Device[] {
@@ -402,7 +437,7 @@ NativeBluetoothSdkModule.setButtonMaxRecordingTime = function (minutes: number) 
 }
 
 NativeBluetoothSdkModule.setCameraFov = function (fov: CameraFov) {
-  const setting = CAMERA_FOV_SETTINGS[fov]
+  const setting = normalizeCameraFov(fov)
   return this.updateBluetoothSettings({
     camera_fov: {fov: setting.fov, roi_position: setting.roiPosition},
   })
@@ -515,6 +550,8 @@ const nativeStartStream = NativeBluetoothSdkModule.startStream.bind(NativeBlueto
 NativeBluetoothSdkModule.startExternallyManagedStream = function (params: StreamStartRequest) {
   return nativeStartStream({...params, keepAliveMode: "external"} as StreamStartRequest)
 }
+NativeBluetoothSdkModule.checkForOtaUpdate = NativeBluetoothSdkModule.sendOtaQueryStatus.bind(NativeBluetoothSdkModule)
+NativeBluetoothSdkModule.startOtaUpdate = NativeBluetoothSdkModule.sendOtaStart.bind(NativeBluetoothSdkModule)
 
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkPublicModule
