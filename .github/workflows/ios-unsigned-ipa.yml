@@ -14,14 +14,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16.2
+      - name: Confirm Xcode version
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
           xcodebuild -version
           swift --version
-
-      - name: Xcode first launch setup
-        run: sudo xcodebuild -runFirstLaunch
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -53,7 +49,7 @@ jobs:
         working-directory: ./mobile/ios
         run: pod install
 
-      - name: Patch Pods project via xcodeproj
+      - name: Patch Pods project
         working-directory: ./mobile/ios
         run: |
           ruby << 'RUBY'
@@ -63,20 +59,28 @@ jobs:
 
           project.targets.each do |target|
             target.build_configurations.each do |config|
-              # Fix deployment targets for all pods
-              if config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'].to_f < 13.0
+              # Fix low deployment targets
+              current = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'].to_f
+              if current > 0 && current < 13.0
                 config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
               end
-              # Force singlefile compilation on SwiftProtobuf specifically
+
+              # SwiftProtobuf: singlefile prevents OOM compiling 80+ files via WMO
               if target.name == 'SwiftProtobuf'
                 config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
-                puts "Patched SwiftProtobuf #{config.name}: SWIFT_COMPILATION_MODE=singlefile"
+                puts "SwiftProtobuf #{config.name}: singlefile compilation set"
+              end
+
+              # All Swift pods: disable strict concurrency so Swift 6 (Xcode 16.4)
+              # does not break RNScreens and other RN pods at EmitSwiftModule
+              if config.build_settings['SWIFT_VERSION']
+                config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'
               end
             end
           end
 
           project.save
-          puts "Pods.xcodeproj saved successfully"
+          puts "Pods.xcodeproj patched and saved"
           RUBY
 
       - name: List schemes
@@ -95,7 +99,6 @@ jobs:
             -scheme Mentra \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -sdk iphoneos \
             -archivePath "$GITHUB_WORKSPACE/Mentra.xcarchive" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
@@ -108,19 +111,10 @@ jobs:
           BUILD_RESULT=${PIPESTATUS[0]}
 
           if [ "$BUILD_RESULT" -ne 0 ]; then
-            echo "========== ALL ERROR LINES =========="
-            grep -E "error:|Killed|signal|crash|failed|cannot|unable" /tmp/xcodebuild.log \
-              | grep -v "^note:" | head -80
-            echo ""
-            echo "========== 50 LINES BEFORE SwiftProtobuf FAILURE =========="
-            grep -n "SwiftProtobuf" /tmp/xcodebuild.log \
-              | grep -i "error\|fail\|emit\|compile" \
-              | head -5 \
-              | awk -F: '{print $1}' \
-              | while read linenum; do
-                  start=$((linenum > 50 ? linenum - 50 : 1))
-                  sed -n "${start},${linenum}p" /tmp/xcodebuild.log
-                done
+            echo "========== ACTUAL ERRORS =========="
+            grep ": error:" /tmp/xcodebuild.log | grep -v "^note:" | head -80
+            echo "========== FAILED TARGETS =========="
+            grep -E "FAILED|EmitSwift|CompileSwift" /tmp/xcodebuild.log | tail -20
             exit "$BUILD_RESULT"
           fi
 
