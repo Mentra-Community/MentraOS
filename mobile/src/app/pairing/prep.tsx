@@ -194,8 +194,13 @@ export default function PairingPrepScreen() {
     console.log("needsBluetoothPermissions", needsBluetoothPermissions)
 
     // Stop any running apps from previous sessions to prevent mic race conditions
-    // This is symmetric with the logic in DeviceSettings that stops apps when unpairing
-    await useAppStatusStore.getState().stopAll()
+    // This is symmetric with the logic in DeviceSettings that stops apps when unpairing.
+    // Don't let a failed request (e.g. no internet, NO_ACTIVE_SESSION) block pairing.
+    try {
+      await useAppStatusStore.getState().stopAll()
+    } catch (error) {
+      console.warn("PREP: stopAll() failed, continuing to pairing anyway:", error)
+    }
 
     // skip pairing for simulated glasses:
     if (deviceModel.startsWith(DeviceTypes.SIMULATED)) {
