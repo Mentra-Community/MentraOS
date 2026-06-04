@@ -49,40 +49,41 @@ jobs:
         working-directory: ./mobile/ios
         run: pod install
 
-      - name: Patch Pods project
+      - name: Patch Pods
         working-directory: ./mobile/ios
         run: |
+          # Fix RNScreens xcconfig directly — xcconfig wins over pbxproj for SWIFT_VERSION
+          # gamma/ files fail under Swift 6 (Xcode 16.4), force Swift 5 mode
+          find "Pods/Target Support Files/RNScreens" -name "*.xcconfig" | while read f; do
+            sed -i '' '/^SWIFT_VERSION/d' "$f"
+            sed -i '' '/^SWIFT_STRICT_CONCURRENCY/d' "$f"
+            echo "SWIFT_VERSION = 5" >> "$f"
+            echo "SWIFT_STRICT_CONCURRENCY = minimal" >> "$f"
+            echo "Patched RNScreens xcconfig: $f"
+          done
+
+          # Fix SwiftProtobuf via xcodeproj — singlefile prevents OOM on 80+ files
           ruby << 'RUBY'
           require 'xcodeproj'
-
           project = Xcodeproj::Project.open('Pods/Pods.xcodeproj')
-
           project.targets.each do |target|
+            next unless target.name == 'SwiftProtobuf'
             target.build_configurations.each do |config|
-              # Fix low deployment targets on all pods
-              current = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'].to_f
-              if current > 0 && current < 13.0
-                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
-              end
-
-              case target.name
-              when 'SwiftProtobuf'
-                # WMO OOM-kills compiler on 80+ files — force singlefile
-                config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
-                puts "SwiftProtobuf #{config.name}: singlefile set"
-
-              when 'RNScreens'
-                # gamma/ files have Swift 6 incompatibilities — compile in Swift 5 mode
-                config.build_settings['SWIFT_VERSION'] = '5'
-                config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'
-                puts "RNScreens #{config.name}: SWIFT_VERSION=5, strict-concurrency=minimal"
-              end
+              config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
+              puts "SwiftProtobuf #{config.name}: singlefile set"
             end
           end
-
           project.save
-          puts "Done"
           RUBY
+
+          # Fix low deployment targets on all pods
+          find Pods/Target\ Support\ Files -name "*.xcconfig" | while read f; do
+            sed -i '' \
+              -e 's/IPHONEOS_DEPLOYMENT_TARGET = 9\.0/IPHONEOS_DEPLOYMENT_TARGET = 13.0/g' \
+              -e 's/IPHONEOS_DEPLOYMENT_TARGET = 10\.0/IPHONEOS_DEPLOYMENT_TARGET = 13.0/g' \
+              -e 's/IPHONEOS_DEPLOYMENT_TARGET = 11\.0/IPHONEOS_DEPLOYMENT_TARGET = 13.0/g' \
+              "$f"
+          done
 
 
       - name: List schemes
