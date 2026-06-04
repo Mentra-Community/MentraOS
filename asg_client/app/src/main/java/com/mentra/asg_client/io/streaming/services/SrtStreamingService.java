@@ -448,9 +448,13 @@ public class SrtStreamingService extends Service {
       String mimeType = MediaFormat.MIMETYPE_VIDEO_AVC;
       int profile = VideoConfig.Companion.getBestProfile(mimeType);
       int level = VideoConfig.Companion.getBestLevel(mimeType, profile);
+      Size captureSize =
+          (captureWidth != videoWidth || captureHeight != videoHeight)
+              ? new Size(captureWidth, captureHeight)
+              : null;
       VideoConfig videoConfig = new VideoConfig(
           mimeType, videoBitrate, new Size(videoWidth, videoHeight), videoFps, profile, level,
-          2.0f, new Size(captureWidth, captureHeight));
+          2.0f, captureSize);
 
       mSrtStreamer.configure(videoConfig);
       mSrtStreamer.configure(audioConfig);

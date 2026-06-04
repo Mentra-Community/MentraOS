@@ -652,6 +652,11 @@ public class RtmpStreamingService extends Service {
             int profile = VideoConfig.Companion.getBestProfile(mimeType);
             int level = VideoConfig.Companion.getBestLevel(mimeType, profile);
 
+            // Encode at output size; camera buffer at native capture size when it differs.
+            Size captureSize =
+                (captureWidth != videoWidth || captureHeight != videoHeight)
+                    ? new Size(captureWidth, captureHeight)
+                    : null;
             VideoConfig videoConfig = new VideoConfig(
                     MediaFormat.MIMETYPE_VIDEO_AVC,
                     videoBitrate,
@@ -660,7 +665,7 @@ public class RtmpStreamingService extends Service {
                     profile,
                     level,
                     2.0f, // Force keyframe every 2 seconds
-                    new Size(captureWidth, captureHeight)
+                    captureSize
             );
 
             // Apply configurations and start preview
