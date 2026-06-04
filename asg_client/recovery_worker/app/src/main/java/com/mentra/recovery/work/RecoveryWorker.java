@@ -206,7 +206,7 @@ public class RecoveryWorker extends Worker {
     Intent ping = new Intent(RecoveryConstants.ACTION_PING);
     ping.setPackage(RecoveryConstants.ASG_PACKAGE);
     ping.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
-    context.sendBroadcast(ping);
+    context.sendBroadcast(ping, RecoveryConstants.RECOVERY_HEARTBEAT_PERMISSION);
   }
 
   private void createNotificationChannelIfNeeded(Context context) {

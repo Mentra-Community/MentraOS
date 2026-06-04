@@ -118,7 +118,8 @@
         <receiver
             android:name="com.mentra.asg_client.receiver.ServiceHeartbeatReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:permission="com.mentra.recovery.permission.HEARTBEAT">
             <intent-filter>
                 <action android:name="com.mentra.recovery.ACTION_PING" />
                 <action android:name="com.mentra.asg_client.ACTION_HEARTBEAT" />

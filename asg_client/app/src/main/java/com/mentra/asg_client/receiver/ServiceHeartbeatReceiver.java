@@ -3,6 +3,7 @@ package com.mentra.asg_client.receiver;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.util.Log;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -21,6 +22,12 @@ public class ServiceHeartbeatReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
+        if (context.checkCallingPermission(RECOVERY_HEARTBEAT_PERMISSION)
+                != PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "Ignoring heartbeat: sender lacks " + RECOVERY_HEARTBEAT_PERMISSION);
+            return;
+        }
+
         String action = intent.getAction();
         if (ACTION_HEARTBEAT_LEGACY.equals(action) || ACTION_PING.equals(action)) {
             long currentTime = System.currentTimeMillis();
