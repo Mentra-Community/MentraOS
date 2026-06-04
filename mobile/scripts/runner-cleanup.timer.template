@@ -1,0 +1,19 @@
+# MentraOS runner cache cleanup systemd timer.
+# Installed by mobile/scripts/setup-runner.sh into
+#   ~/.config/systemd/user/runner-cleanup.timer
+#
+# Fires the runner-cleanup.service every Sunday at 03:00 local time.
+
+[Unit]
+Description=Weekly trigger for MentraOS runner cache cleanup
+Requires=runner-cleanup.service
+
+[Timer]
+OnCalendar=Sun *-*-* 03:00:00
+# If the machine was off at 03:00, run as soon as it's available again.
+Persistent=true
+# Don't fire multiple times concurrently if the service is somehow still running.
+Unit=runner-cleanup.service
+
+[Install]
+WantedBy=timers.target

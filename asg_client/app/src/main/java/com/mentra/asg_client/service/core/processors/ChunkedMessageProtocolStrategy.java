@@ -65,7 +65,8 @@ public class ChunkedMessageProtocolStrategy implements CommandProtocolDetector.P
             String data = optStringFallback(chunkMessage, "data", "d");
             long messageId = chunkMessage.optLong("mId", -1);
 
-            if (chunkId == null || chunkIndex < 0 || totalChunks < 0 || data == null) {
+            if (chunkId == null || chunkId.isEmpty() || chunkIndex < 0
+                    || totalChunks <= 0 || chunkIndex >= totalChunks || data == null) {
                 Log.e(TAG, "Missing required chunk fields");
                 return new CommandProtocolDetector.ProtocolDetectionResult(
                     CommandProtocolDetector.ProtocolType.UNKNOWN, json, "", -1, false);

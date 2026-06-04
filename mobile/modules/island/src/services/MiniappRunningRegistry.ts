@@ -1,18 +1,16 @@
 /**
- * MiniappRunningRegistry — module-level set of currently-mounted miniapp
+ * MiniappRunningRegistry — module-level set of currently-running miniapp
  * packageNames.
  *
- * "Running" for a local miniapp means "MiniappHost has a WebView mounted for
- * this package," foreground OR backgrounded. It is a session-scoped fact
- * (cleared on app boot) so it lives in memory, not MMKV.
+ * "Running" means the miniapp's **background JSContext is alive** in the
+ * host process. The UI WebView open/close state is separate — that's
+ * tracked by MentraUIRouter.isBound(). A miniapp can be "running"
+ * (JSContext alive, processing glasses events) without any WebView
+ * mounted, which is the steady-state.
  *
- * MiniappHost is the single writer: mount/mountDev add, unmount removes.
- * setForeground/setBackground don't change membership — backgrounded miniapps
- * are still running.
- *
- * Composer.getLocalApplets() reads from here when projecting the `running`
- * field for local applets, so the switcher / tray reflect actual mount state
- * regardless of how many `refreshApplets()` calls fire.
+ * MentraJSRouter is the single writer: `spawnAndRegister` adds,
+ * `unregister` removes. Home tile / tray reads from here to project the
+ * `running` field on local applets.
  */
 
 type Listener = () => void
@@ -50,10 +48,6 @@ export const miniappRunningRegistry = {
     return Array.from(running)
   },
 
-  /**
-   * Subscribe to membership changes. Listener fires after every add/remove.
-   * Returns an unsubscribe function.
-   */
   subscribe(fn: Listener): () => void {
     listeners.add(fn)
     return () => {

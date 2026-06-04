@@ -28,7 +28,9 @@
   "author": "fossephate <6175367+fossephate@users.noreply.github.com> (https://github.com/fossephate)",
   "license": "MIT",
   "homepage": "https://github.com/fossephate/crust#readme",
-  "dependencies": {},
+  "dependencies": {
+    "@mentra/jspolyfill": "workspace:*"
+  },
   "devDependencies": {
     "expo-module-scripts": "^55.0.2"
   },

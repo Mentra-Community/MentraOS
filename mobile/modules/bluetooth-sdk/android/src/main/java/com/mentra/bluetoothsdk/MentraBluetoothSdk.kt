@@ -300,6 +300,14 @@ class MentraBluetoothSdk private constructor(
         )
     }
 
+    internal fun setCalendarEvents(events: List<CalendarEvent>) {
+        DeviceStore.apply(
+            ObservableStore.BLUETOOTH_CATEGORY,
+            "calendar_events",
+            events.map { it.toMap() },
+        )
+    }
+
     fun setHeadUpAngle(angleDegrees: Int) {
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "head_up_angle", angleDegrees)
     }
@@ -413,6 +421,10 @@ class MentraBluetoothSdk private constructor(
         deviceManager.setHotspotState(enabled)
     }
 
+    fun setSystemTime(timestampMs: Long) {
+        deviceManager.setSystemTime(timestampMs)
+    }
+
     fun requestPhoto(request: PhotoRequest) {
         Bridge.log(
             "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=${request.requestId} appId=${request.appId}"
@@ -425,8 +437,10 @@ class MentraBluetoothSdk private constructor(
             request.authToken,
             request.compress.value,
             request.flash,
+            request.save,
             request.sound,
             request.exposureTimeNs,
+            request.iso,
         )
     }
 
@@ -459,7 +473,14 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun startVideoRecording(request: VideoRecordingRequest) {
-        deviceManager.startVideoRecording(request.requestId, request.save, request.sound)
+        deviceManager.startVideoRecording(
+                request.requestId,
+                request.save,
+                request.sound,
+                request.width,
+                request.height,
+                request.fps,
+        )
     }
 
     fun stopVideoRecording(requestId: String) {
@@ -476,6 +497,10 @@ class MentraBluetoothSdk private constructor(
 
     internal fun sendOtaQueryStatus() {
         deviceManager.sendOtaQueryStatus()
+    }
+
+    internal fun retryOtaVersionCheck() {
+        deviceManager.retryOtaVersionCheck()
     }
 
     internal fun sendShutdown() {
@@ -644,6 +669,7 @@ class MentraBluetoothSdk private constructor(
             "hotspot_error" -> dispatchToListeners { it.onHotspotError(HotspotErrorEvent(data)) }
             "gallery_status" -> dispatchToListeners { it.onGalleryStatus(GalleryStatusEvent(data)) }
             "photo_response" -> dispatchToListeners { it.onPhotoResponse(PhotoResponseEvent(data)) }
+            "photo_status" -> dispatchToListeners { it.onPhotoStatus(PhotoStatusEvent(data)) }
             "stream_status" -> dispatchToListeners { it.onStreamStatus(StreamStatusEvent(data)) }
             "keep_alive_ack" -> dispatchToListeners { it.onKeepAliveAck(KeepAliveAckEvent(data)) }
             "mic_pcm" -> {

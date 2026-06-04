@@ -4,7 +4,14 @@ import type {OtaUpdateInfo} from "@mentra/bluetooth-sdk-internal"
 import {useEffect, useRef} from "react"
 
 import {useNavigationStore} from "@/stores/navigation"
-import {isGlassesConnected, selectGlassesConnected, useGlassesStore, waitForGlassesState} from "@/stores/glasses"
+import {maybeFixGlassesClockFromVersionInfo} from "@/services/asg/glassesClockSync"
+import {
+  getGlassesSystemTimeMs,
+  isGlassesConnected,
+  selectGlassesConnected,
+  useGlassesStore,
+  waitForGlassesState,
+} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n/translate"
@@ -161,7 +168,7 @@ export function findMatchingMtkPatch(
 /**
  * Check if BES firmware update is available.
  * BES does not require sequential updates - can install any newer version directly.
- * If current version is unknown, skip BES comparison for this pass.
+ * If current version is unknown, assume update is needed (matches glasses OtaHelper).
  */
 export function checkBesUpdate(besFirmware: BesFirmware | undefined, currentVersion: string | undefined): boolean {
   if (!besFirmware) {
@@ -169,8 +176,8 @@ export function checkBesUpdate(besFirmware: BesFirmware | undefined, currentVers
   }
 
   if (!currentVersion) {
-    console.log("📱 BES current version unknown - skipping BES update check")
-    return false
+    console.log(`📱 BES current version unknown - assuming update needed (server: ${besFirmware.version})`)
+    return true
   }
   // BES does not require sequential updates - can install any newer version directly
   return compareVersions(besFirmware.version, currentVersion) > 0
@@ -620,7 +627,7 @@ export function OtaUpdateChecker() {
           latestBesFirmwareVersion = useGlassesStore.getState().besFirmwareVersion
           console.log(`OTA: BES version arrived: ${latestBesFirmwareVersion}`)
         } else {
-          console.log("OTA: BES version still unknown after extended wait - proceeding without it")
+          console.log("OTA: BES version still unknown after extended wait - will assume BES update if published")
         }
         connected = areGlassesConnectedNow()
         if (!connected) {
@@ -633,6 +640,11 @@ export function OtaUpdateChecker() {
         `OTA: check starting (MTK: ${latestMtkFirmwareVersion || "unknown"}, BES: ${latestBesFirmwareVersion || "unknown"})`,
       )
       hasCheckedOta.current = true // Mark as checked to prevent duplicate checks
+
+      const systemTimeMs = getGlassesSystemTimeMs()
+      await maybeFixGlassesClockFromVersionInfo(systemTimeMs > 0 ? systemTimeMs : undefined).catch((error) => {
+        console.warn("OTA: clock fix attempt failed; continuing OTA check", error)
+      })
 
       checkForOtaUpdate(OTA_VERSION_URL_PROD, buildNumber, latestMtkFirmwareVersion, latestBesFirmwareVersion)
         .then(({updateAvailable, latestVersionInfo, updates}) => {

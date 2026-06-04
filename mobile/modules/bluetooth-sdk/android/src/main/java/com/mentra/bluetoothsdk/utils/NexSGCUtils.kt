@@ -8,12 +8,13 @@ import android.content.Context
 import android.util.Log
 
 import com.mentra.bluetoothsdk.Bridge
+import com.mentra.bluetoothsdk.DeviceStore
 
 import mentraos.ble.MentraosBle.DisplayText
 import mentraos.ble.MentraosBle.ClearDisplay
+import mentraos.ble.MentraosBle.DisconnectRequest
 import mentraos.ble.MentraosBle.PhoneToGlasses
 import mentraos.ble.MentraosBle.DisplayImage
-import mentraos.ble.MentraosBle.PingRequest
 import mentraos.ble.MentraosBle.BatteryStateRequest
 import mentraos.ble.MentraosBle.MicStateConfig
 import mentraos.ble.MentraosBle.BrightnessConfig
@@ -43,9 +44,9 @@ object NexDisplayConstants {
     const val FONT_DIVIDER: Float = 2.0f
     const val LINES_PER_SCREEN: Int = 5 // Lines per screen
 
-    /** Matches dashboard depth slider in app settings (1-3); values outside range clamp. */
+    /** Matches dashboard depth slider in app settings (1-4); values outside range clamp. */
     const val DASHBOARD_DEPTH_MIN: Int = 1
-    const val DASHBOARD_DEPTH_MAX: Int = 3
+    const val DASHBOARD_DEPTH_MAX: Int = 4
 }
 
 object NexBluetoothPacketTypes {
@@ -62,7 +63,7 @@ object NexProtobufUtils {
 
     /**
      * Maps dashboard depth to the value Nex firmware expects in [DisplayDistanceConfig.distance_cm].
-     * The protobuf field is still named `distance_cm`, but Nex treats it as a **tier** 1–3, not centimeters.
+     * The protobuf field is still named `distance_cm`, but Nex treats it as a **tier** 1–4, not centimeters.
      * Keep in sync with iOS `NexDashboardDisplayWire.depthToWireTier`.
      */
     fun dashboardDepthToDistanceCm(depth: Int): Int {
@@ -112,14 +113,6 @@ object NexProtobufUtils {
         return chunks
     }
 
-    fun constructPongResponse(): ByteArray {
-        Bridge.log("Nex: Constructing pong response to glasses ping")
-        // New schema flips the heartbeat names: glasses sends `pong`, phone replies with `ping` (acting as the pong-response).
-        val pingRequest = PingRequest.newBuilder().build()
-        val phoneToGlasses = PhoneToGlasses.newBuilder().setPing(pingRequest).build()
-        return generateProtobufCommandBytes(phoneToGlasses)
-    }
-    
     /**
      * Gets the current protobuf schema version from the compiled protobuf descriptor
      */
@@ -205,6 +198,14 @@ object NexProtobufUtils {
         return ByteArray(0)
     }
 
+    fun generateDisconnectRequestCommandBytes(): ByteArray {
+        val disconnectRequest = DisconnectRequest.newBuilder().build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setDisconnect(disconnectRequest)
+            .build()
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
     fun generateBatteryStateRequestCommandBytes(): ByteArray {
         Bridge.log("Nex: === SENDING BATTERY STATUS QUERY TO GLASSES ===")
         val batteryStateRequest = BatteryStateRequest.newBuilder().build()
@@ -245,17 +246,21 @@ object NexProtobufUtils {
         Bridge.log("Nex: Text: \"$text\"")
         Bridge.log("Nex: Text Length: ${text.length} characters")
 
-        // Replace all m-dashes with normal dash
-        val textWithNormalDash = text.replace("—", "-")
-        
-        val sanitizedText = textWithNormalDash.replace(
-            Regex("""[^A-Za-z0-9 \r\n.,!?;:\-\[\]\(\)\{\}'"+=/]"""),
-            ""
-        )
+        // When Chinese captions are disabled (default), strip characters the Nex font
+        // can't render (CJK etc.): replace m-dashes, then keep only the supported ASCII set.
+        val chineseCaptionsEnabled = DeviceStore.get("bluetooth", "nex_chinese_captions") as? Boolean ?: false
+        val displayText = if (chineseCaptionsEnabled) {
+            text
+        } else {
+            text.replace("—", "-").replace(
+                Regex("""[^A-Za-z0-9 \r\n.,!?;:\-\[\]\(\)\{\}'"+=/]"""),
+                ""
+            )
+        }
 
         val textNewBuilder = DisplayText.newBuilder()
             .setColor(10000)
-            .setText(sanitizedText)
+            .setText(displayText)
             .setSize(48)
             .setX(20)
             .setY(260)
@@ -429,18 +434,18 @@ object NexProtobufUtils {
         }
     }
 
+    /**
+     * Returns the raw serialized PhoneToGlasses protobuf bytes.
+     *
+     * Transport framing (the 0x02 packet type and the [seq][totalChunks][chunkIndex]
+     * fragmentation header) is applied at send time by MentraNexSGC.sendProtobuf(),
+     * which owns the negotiated MTU / chunk size. Keeping framing out of here lets a
+     * single chunker handle every control command uniformly.
+     */
     private fun generateProtobufCommandBytes(phoneToGlasses: PhoneToGlasses): ByteArray {
         val contentBytes = phoneToGlasses.toByteArray()
-        val chunk = ByteBuffer.allocate(contentBytes.size + 1)
-
-        chunk.put(NexBluetoothPacketTypes.PACKET_TYPE_PROTOBUF)
-        chunk.put(contentBytes)
-
-        // Enhanced logging for protobuf messages
-        val result = chunk.array()
-        logProtobufMessage(phoneToGlasses, result)
-
-        return result
+        logProtobufMessage(phoneToGlasses, contentBytes)
+        return contentBytes
     }
 
     private fun logProtobufMessage(phoneToGlasses: PhoneToGlasses, fullMessage: ByteArray) {

@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk
 
+import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -108,6 +109,10 @@ class BluetoothSdkModule : Module() {
                     sendEvent("photo_response", event.values)
                 }
 
+                override fun onPhotoStatus(event: PhotoStatusEvent) {
+                    sendEvent("photo_status", event.values)
+                }
+
                 override fun onStreamStatus(event: StreamStatusEvent) {
                     sendEvent("stream_status", event.values)
                 }
@@ -164,6 +169,7 @@ class BluetoothSdkModule : Module() {
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
+            "photo_status",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",
@@ -196,6 +202,7 @@ class BluetoothSdkModule : Module() {
             "receive_command_from_ble",
             "miniapp_selected",
             "captions_tester_incident",
+            "extraction_progress",
         )
 
         OnCreate {
@@ -203,11 +210,17 @@ class BluetoothSdkModule : Module() {
                     appContext.reactContext
                             ?: appContext.currentActivity
                                     ?: throw IllegalStateException("No context available")
+            BleTraceLogger.logLifecycle(context, "BluetoothSdkModule", "module_create")
             sdk = MentraBluetoothSdk.create(context, sdkListener)
             deviceManager = DeviceManager.getInstance()
         }
 
         OnDestroy {
+            BleTraceLogger.logLifecycle(
+                    appContext.reactContext ?: appContext.currentActivity,
+                    "BluetoothSdkModule",
+                    "module_destroy"
+            )
             sdk?.close()
             sdk = null
             deviceManager = null
@@ -356,6 +369,10 @@ class BluetoothSdkModule : Module() {
             sdk?.setHotspotState(enabled)
         }
 
+        AsyncFunction("setSystemTime") { timestampMs: Double ->
+            sdk?.setSystemTime(timestampMs.toLong())
+        }
+
         // MARK: - Gallery Commands
 
         AsyncFunction("setGalleryModeEnabled") { enabled: Boolean ->
@@ -376,7 +393,7 @@ class BluetoothSdkModule : Module() {
                     }.toMap()
             val req = PhotoRequest.fromMap(sanitized)
             Bridge.log(
-                    "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} appId=${req.appId} size=${req.size} compress=${req.compress} flash=${req.flash} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs}"
+                    "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} appId=${req.appId} size=${req.size} compress=${req.compress} flash=${req.flash} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs} iso=${req.iso}"
             )
             val activeSdk = sdk
             if (activeSdk == null) {
@@ -394,6 +411,8 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("sendOtaQueryStatus") { sdk?.sendOtaQueryStatus() }
 
+        AsyncFunction("retryOtaVersionCheck") { sdk?.retryOtaVersionCheck() }
+
         // MARK: - Version Info Commands
 
         AsyncFunction("requestVersionInfo") { sdk?.requestVersionInfo() }
@@ -406,8 +425,25 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - Video Recording Commands
 
-        AsyncFunction("startVideoRecording") { requestId: String, save: Boolean, sound: Boolean ->
-            sdk?.startVideoRecording(VideoRecordingRequest(requestId, save, sound))
+        AsyncFunction("startVideoRecording") {
+                requestId: String,
+                save: Boolean,
+                sound: Boolean,
+                settings: Map<String, Any?>? ->
+            // Optional per-recording {width,height,fps}. Absent fields stay 0, which
+            // the glasses treat as "use the saved button-video default". JS numbers
+            // arrive as Double across the bridge, so coerce to Int.
+            fun dim(key: String): Int = (settings?.get(key) as? Number)?.toInt() ?: 0
+            sdk?.startVideoRecording(
+                    VideoRecordingRequest(
+                            requestId,
+                            save,
+                            sound,
+                            dim("width"),
+                            dim("height"),
+                            dim("fps"),
+                    )
+            )
         }
 
         AsyncFunction("stopVideoRecording") { requestId: String ->
@@ -516,6 +552,63 @@ class BluetoothSdkModule : Module() {
             com.mentra.bluetoothsdk.stt.STTTools.extractTarBz2(sourcePath, destinationPath)
         }
 
+        // MARK: - TTS Commands
+
+        AsyncFunction("setTtsModelDetails") { path: String, languageCode: String ->
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
+            com.mentra.core.tts.TTSTools.setTtsModelDetails(context, path, languageCode)
+        }
+
+        AsyncFunction("getTtsModelPath") { ->
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
+            com.mentra.core.tts.TTSTools.getTtsModelPath(context)
+        }
+
+        AsyncFunction("getTtsModelLanguage") { ->
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
+            com.mentra.core.tts.TTSTools.getTtsModelLanguage(context)
+        }
+
+        AsyncFunction("checkTtsModelAvailable") { ->
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
+            com.mentra.core.tts.TTSTools.checkTTSModelAvailable(context)
+        }
+
+        AsyncFunction("validateTtsModel") { path: String ->
+            com.mentra.core.tts.TTSTools.validateTTSModel(path)
+        }
+
+        AsyncFunction("generateTtsAudio") {
+                text: String,
+                modelPath: String,
+                outputPath: String,
+                speakerId: Int,
+                speed: Double ->
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
+            com.mentra.core.tts.TTSTools.generateTtsAudio(
+                    context,
+                    text,
+                    modelPath,
+                    outputPath,
+                    speakerId,
+                    speed.toFloat()
+            )
+        }
     }
 }
 

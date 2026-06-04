@@ -35,10 +35,12 @@ class Simulated : SGCManager() {
             authToken: String?,
             compress: String?,
             flash: Boolean,
+            save: Boolean,
             sound: Boolean,
             exposureTimeNs: Long?,
+            iso: Int?,
     ) {
-        Bridge.log("requestPhoto flash=$flash, sound=$sound")
+        Bridge.log("requestPhoto flash=$flash, save=$save, sound=$sound")
     }
 
     override fun startStream(message: MutableMap<String, Any>) {
@@ -99,7 +101,13 @@ class Simulated : SGCManager() {
         Bridge.log("sendDoubleTextWall")
     }
 
-    override fun displayBitmap(base64ImageData: String): Boolean {
+    override fun displayBitmap(
+            base64ImageData: String,
+            x: Int?,
+            y: Int?,
+            width: Int?,
+            height: Int?
+    ): Boolean {
         Bridge.log("displayBitmap")
         return false
     }

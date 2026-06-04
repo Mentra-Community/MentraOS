@@ -496,16 +496,20 @@ private object DevSettingsProto {
         return w.toByteArray()
     }
 
+    /// DevCfgDataPackage with TIME_SYNC command.
+    /// TimeSync submessage: f1 = (Unix seconds + TZ offset seconds) as Int32, no TZ field.
+    /// Firmware appears to ignore the TZ field, so we pre-shift the timestamp itself
+    /// to make UTC interpretation read as local. Empirically confirmed via probe variants in dbg1().
     fun timeSync(magicRandom: Int): ByteArray {
         val w = ProtobufWriter()
         w.writeInt32Field(1, DevCfgCommandId.TIME_SYNC.value)
         w.writeInt32Field(2, magicRandom)
 
         val tsW = ProtobufWriter()
-        val timestamp = (System.currentTimeMillis() / 1000).toInt()
-        tsW.writeInt32Field(1, timestamp)
-        val tz = TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 3600000
-        tsW.writeInt32Field(2, tz)
+        val nowMs = System.currentTimeMillis()
+        val nowSec = nowMs / 1000
+        val tzSec = (TimeZone.getDefault().getOffset(nowMs) / 1000).toLong()
+        tsW.writeInt32Field(1, (nowSec + tzSec).toInt())
         w.writeMessageField(128, tsW.toByteArray())
         return w.toByteArray()
     }
@@ -676,6 +680,69 @@ private object EvenAIProto {
         w.writeMessageField(13, configW.toByteArray()) // config (field 13)
         return w.toByteArray()
     }
+
+    /**
+     * EvenAIDataPackage with CTRL — used to put glasses into / out of an AI session.
+     * Mirrors Flutter `sendWakeupResp` which sends EvenAIControl{status=ENTER}.
+     * status: 1 WAKE_UP, 2 ENTER, 3 EXIT
+     */
+    fun aiCtrl(magicRandom: Int, status: Int): ByteArray {
+        val ctrlW = ProtobufWriter()
+        ctrlW.writeInt32Field(1, status) // status
+
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, 1) // commandId = CTRL
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(3, ctrlW.toByteArray()) // ctrl (field 3)
+        return w.toByteArray()
+    }
+
+    /**
+     * EvenAIDataPackage with ASK — what the phone sends after cloud ASR resolves the
+     * user's audio into text. Mirrors Flutter `sendAsr`: EvenAIAskInfo{text, streamEnable=0}.
+     */
+    fun aiAsk(magicRandom: Int, text: String, streamEnable: Int = 0): ByteArray {
+        val askW = ProtobufWriter()
+        askW.writeInt32Field(2, streamEnable) // streamEnable
+        askW.writeBytesField(4, text.toByteArray(Charsets.UTF_8)) // text
+
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, 3) // commandId = ASK
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(5, askW.toByteArray()) // askInfo (field 5)
+        return w.toByteArray()
+    }
+
+    /**
+     * EvenAIDataPackage with SKILL — triggers a built-in glasses UI the same way
+     * "Hey Even, show X" voice command does.
+     * skillId values (per even_ai.proto):
+     *   0 SKILL_NONE, 1 BRIGHTNESS, 2 TRANSLATE_CTRL, 3 NOTIFICATION,
+     *   4 TELEPROMPT, 5 NAVIGATE, 6 CONVERSATE, 7 QUICKLIST, 8 AUTO_BRIGHTNESS
+     */
+    fun triggerSkill(
+        magicRandom: Int,
+        skillId: Int,
+        skillParam: Int = 0,
+        text: String = "",
+        streamEnable: Int = 1,
+        fTextEnd: Int = 1
+    ): ByteArray {
+        // EvenAISkillInfo
+        val skillW = ProtobufWriter()
+        skillW.writeInt32Field(1, streamEnable) // streamEnable
+        skillW.writeInt32Field(2, skillId) // skillId
+        skillW.writeInt32Field(3, skillParam) // skillParam — for NOTIFICATION skill this is a NotificationType enum
+        skillW.writeBytesField(4, text.toByteArray(Charsets.UTF_8)) // text
+        skillW.writeInt32Field(6, fTextEnd) // fTextEnd — 1 signals "this is the final/complete packet"
+
+        // EvenAIDataPackage
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, 6) // commandId = SKILL
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(8, skillW.toByteArray()) // skillInfo (field 8)
+        return w.toByteArray()
+    }
 }
 
 // ---------- Menu Protobuf Builders (menu.proto, service ID 3) ----------
@@ -754,6 +821,124 @@ private object MenuProto {
         w.writeInt32Field(2, magicRandom) // MagicRandom
         w.writeMessageField(3, menuW.toByteArray()) // sendData (field 3)
         return Pair(w.toByteArray(), appIdMap)
+    }
+}
+
+/**
+ * Builders for the dashboard calendar widget (service 0x01, command Dashboard_Receive = 2).
+ * Field numbers come from the extracted dashboard.proto v2.1.0_beta_v3 and mirror the iOS
+ * DashboardProto.calendarPush builder so both platforms produce the same wire payload.
+ */
+private object CalendarProto {
+    // Dashboard_Receive — phone → glasses widget/config push.
+    const val DASHBOARD_RECEIVE = 2
+
+    /**
+     * Build a Schedule submessage (the calendar event payload).
+     *   f1 = scheduleId (int32, required)
+     *   f2 = title (string, optional)
+     *   f3 = location (string, optional)
+     *   f4 = time (string, optional — display text e.g. "10:00 AM")
+     *   f5 = endTimestamp (int32, Unix seconds — pre-shifted by TZ so the glasses,
+     *        which treat timestamps as already-local, display local time)
+     */
+    private fun schedule(
+            scheduleId: Int,
+            title: String?,
+            location: String?,
+            time: String?,
+            endTimestamp: Int
+    ): ByteArray {
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, scheduleId)
+        title?.let { w.writeStringField(2, it) }
+        location?.let { w.writeStringField(3, it) }
+        time?.let { w.writeStringField(4, it) }
+        w.writeInt32Field(5, endTimestamp)
+        return w.toByteArray()
+    }
+
+    /**
+     * Build the full calendar-push DashboardDataPackage:
+     *   DashboardDataPackage {
+     *     commandId = Dashboard_Receive (2)
+     *     magicRandom
+     *     dashboardReceive = DashboardReceiveFromApp {
+     *       packageId = 1
+     *       bashboardConfig = DashboardContent {
+     *         widgetComponents = rWidgetComponent {
+     *           schedule = rScheduleWidget {
+     *             scheduleTotal, scheduleNum (0-based), Schedule, scheduleAuthority
+     *           }
+     *         }
+     *       }
+     *     }
+     *   }
+     */
+    fun calendarPush(
+            magicRandom: Int,
+            packageId: Int,
+            scheduleId: Int,
+            title: String?,
+            location: String?,
+            time: String?,
+            endTimestamp: Int,
+            scheduleAuthority: Int,
+            scheduleTotal: Int,
+            scheduleNum: Int
+    ): ByteArray {
+        val sched = schedule(scheduleId, title, location, time, endTimestamp)
+
+        // rScheduleWidget { f1 = scheduleTotal, f2 = scheduleNum, f3 = Schedule, f4 = scheduleAuthority }
+        val rSchedW = ProtobufWriter()
+        rSchedW.writeInt32Field(1, scheduleTotal)
+        rSchedW.writeInt32Field(2, scheduleNum)
+        rSchedW.writeMessageField(3, sched)
+        rSchedW.writeInt32Field(4, scheduleAuthority)
+
+        // rWidgetComponent { f3 = rScheduleWidget }
+        val rWidgetW = ProtobufWriter()
+        rWidgetW.writeMessageField(3, rSchedW.toByteArray())
+
+        // DashboardContent { f2 = rWidgetComponent }
+        val contentW = ProtobufWriter()
+        contentW.writeMessageField(2, rWidgetW.toByteArray())
+
+        // DashboardReceiveFromApp { f1 = packageId, f3 = DashboardContent }
+        val receiveW = ProtobufWriter()
+        receiveW.writeInt32Field(1, packageId)
+        receiveW.writeMessageField(3, contentW.toByteArray())
+
+        // DashboardDataPackage { f1 = commandId, f2 = magicRandom, f4 = dashboardReceive }
+        val pkgW = ProtobufWriter()
+        pkgW.writeInt32Field(1, DASHBOARD_RECEIVE)
+        pkgW.writeInt32Field(2, magicRandom)
+        pkgW.writeMessageField(4, receiveW.toByteArray())
+        return pkgW.toByteArray()
+    }
+
+    fun calendarClear(magicRandom: Int, packageId: Int, scheduleAuthority: Int): ByteArray {
+        // rScheduleWidget with scheduleTotal=0 clears the widget without sending a stale Schedule.
+        val rSchedW = ProtobufWriter()
+        rSchedW.writeInt32Field(1, 0)
+        rSchedW.writeInt32Field(2, 0)
+        rSchedW.writeInt32Field(4, scheduleAuthority)
+
+        val rWidgetW = ProtobufWriter()
+        rWidgetW.writeMessageField(3, rSchedW.toByteArray())
+
+        val contentW = ProtobufWriter()
+        contentW.writeMessageField(2, rWidgetW.toByteArray())
+
+        val receiveW = ProtobufWriter()
+        receiveW.writeInt32Field(1, packageId)
+        receiveW.writeMessageField(3, contentW.toByteArray())
+
+        val pkgW = ProtobufWriter()
+        pkgW.writeInt32Field(1, DASHBOARD_RECEIVE)
+        pkgW.writeInt32Field(2, magicRandom)
+        pkgW.writeMessageField(4, receiveW.toByteArray())
+        return pkgW.toByteArray()
     }
 }
 
@@ -1050,6 +1235,7 @@ class G2 : SGCManager() {
     private var leftAuthenticated: Boolean = false
     private var rightAuthenticated: Boolean = false
     private var currentBitmapBase64: String = ""
+    private var dashboardShowing = 0
 
     // Dashboard menu state
     private var menuAppIdToPackageName: MutableMap<Int, String> = mutableMapOf()
@@ -1057,6 +1243,35 @@ class G2 : SGCManager() {
     private var activeMenuAppId: Int? = null
     private var lastClickTimestamp: Long? = null
     private var lastMenuSelectTimestamp: Long? = null
+    private var lastGestureCtrlTimestamp: Long? = null
+
+    /** A tracked image container on the current page. Keyed by its rect for reuse. */
+    private data class ImgContainer(
+            val id: Int,
+            val x: Int,
+            val y: Int,
+            val width: Int,
+            val height: Int
+    ) {
+        val name: String
+            get() = "img-$id"
+
+        fun matches(x: Int, y: Int, width: Int, height: Int): Boolean =
+                this.x == x && this.y == y && this.width == width && this.height == height
+    }
+
+    /**
+     * Live list of image containers on the page, ordered oldest→newest (for LRU eviction). The page
+     * may hold at most 4 image containers (IDs from the pool below).
+     */
+    private val imageContainers: MutableList<ImgContainer> = mutableListOf()
+    /** Fixed pool of container IDs the page protocol expects. */
+    private val imageContainerIDPool: List<Int> = listOf(10, 11, 12, 13)
+    /** Default container seeded into every fresh page: 100x100 in the top-left. */
+    private val defaultImgX = 0
+    private val defaultImgY = 0
+    private val defaultImgWidth = 100
+    private val defaultImgHeight = 100
 
     // Battery state
     private var _batteryLevel: Int = -1
@@ -1137,7 +1352,7 @@ class G2 : SGCManager() {
                         payload = payload,
                         reserveFlag = true
                 )
-        sendToGlasses(packets)
+        sendToGlasses(packets, left = true, right = true)
     }
 
     private fun sendDevSettingsCommand(
@@ -1303,11 +1518,13 @@ class G2 : SGCManager() {
                                                                         0x10,
                                                                         0x00, // distanceUnit=0
                                                                         0x18,
-                                                                        0x01, // timeFormat=1
+                                                                        dashboardHalfDayFormat().toByte(),
+                                                                        // timeFormat / halfDayFormat
                                                                         0x20,
                                                                         0x00, // dateFormat=0
                                                                         0x28,
-                                                                        0x01 // temperatureUnit=1
+                                                                        dashboardTemperatureUnit().toByte(),
+                                                                        // temperatureUnit
                                                                 )
                                                         )
                                                         sendG2SettingCommand(univW.toByteArray())
@@ -1435,11 +1652,11 @@ class G2 : SGCManager() {
                                                         ) // widgetDisplayOrder
                                                         dashDisplayW.writeInt32Field(
                                                                 6,
-                                                                1
+                                                                dashboardHalfDayFormat()
                                                         ) // halfDayFormat
                                                         dashDisplayW.writeInt32Field(
                                                                 7,
-                                                                1
+                                                                dashboardTemperatureUnit()
                                                         ) // temperatureUnit
 
                                                         val dashRecvW = ProtobufWriter()
@@ -1615,6 +1832,7 @@ class G2 : SGCManager() {
                                                         requestDeviceInfo()
 
                                                         sendMenuApps()
+                                                        sendStoredCalendarEvents()
                                                     },
                                                     500
                                             )
@@ -1653,8 +1871,8 @@ class G2 : SGCManager() {
                     dashDisplayW.writeMessageField(3, byteArrayOf(1, 2, 3)) // statusDisplayOrder
                     dashDisplayW.writeInt32Field(4, 4) // widgetDisplayCount
                     dashDisplayW.writeMessageField(5, byteArrayOf(1, 3, 2, 2)) // widgetDisplayOrder
-                    dashDisplayW.writeInt32Field(6, 1) // halfDayFormat
-                    dashDisplayW.writeInt32Field(7, 1) // temperatureUnit
+                    dashDisplayW.writeInt32Field(6, dashboardHalfDayFormat()) // halfDayFormat
+                    dashDisplayW.writeInt32Field(7, dashboardTemperatureUnit()) // temperatureUnit
 
                     val dashRecvW = ProtobufWriter()
                     dashRecvW.writeMessageField(2, dashDisplayW.toByteArray())
@@ -1669,6 +1887,36 @@ class G2 : SGCManager() {
                 },
                 1000
         )
+    }
+
+    private fun dashboardHalfDayFormat(): Int {
+        val twelveHour = DeviceStore.get("bluetooth", "twelve_hour_time") as? Boolean ?: true
+        return if (twelveHour) 1 else 0
+    }
+
+    private fun dashboardTemperatureUnit(): Int {
+        val metric = DeviceStore.get("bluetooth", "metric_system") as? Boolean ?: false
+        return if (metric) 1 else 2
+    }
+
+    override fun sendDashboardDisplaySettings() {
+        val dashDisplayW = ProtobufWriter()
+        dashDisplayW.writeInt32Field(1, 4) // displayMode
+        dashDisplayW.writeInt32Field(2, 3) // statusDisplayCount
+        dashDisplayW.writeMessageField(3, byteArrayOf(1, 2, 3)) // statusDisplayOrder
+        dashDisplayW.writeInt32Field(4, 4) // widgetDisplayCount
+        dashDisplayW.writeMessageField(5, byteArrayOf(1, 3, 2, 2)) // widgetDisplayOrder
+        dashDisplayW.writeInt32Field(6, dashboardHalfDayFormat()) // halfDayFormat
+        dashDisplayW.writeInt32Field(7, dashboardTemperatureUnit()) // temperatureUnit
+
+        val dashRecvW = ProtobufWriter()
+        dashRecvW.writeMessageField(2, dashDisplayW.toByteArray())
+
+        val dashPkgW = ProtobufWriter()
+        dashPkgW.writeInt32Field(1, 2) // Dashboard_Receive
+        dashPkgW.writeInt32Field(2, sendManager.nextMagicRandom())
+        dashPkgW.writeMessageField(4, dashRecvW.toByteArray())
+        sendDashboardCommand(dashPkgW.toByteArray())
     }
 
     // ---------- Heartbeats ----------
@@ -1760,10 +2008,23 @@ class G2 : SGCManager() {
         }
     }
 
+    private fun sendStoredCalendarEvents() {
+        val calendarEvents =
+                DeviceStore.get("bluetooth", "calendar_events") as? List<Map<String, Any>>
+                        ?: emptyList()
+        sendCalendarEvents(calendarEvents)
+    }
+
     // ---------- SGCManager: Display Control ----------
 
     override fun sendTextWall(text: String) {
         // Bridge.log("G2: sendTextWall(${text.take(10)}...)")
+
+        // ignore events while the ER dashboard is open:
+        val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
+        if (useNativeDashboard && dashboardShowing > 0) {
+            return
+        }
 
         if (text.isEmpty()) {
             clearDisplay()
@@ -1789,121 +2050,113 @@ class G2 : SGCManager() {
         }
     }
 
-    override fun displayBitmap(base64ImageData: String): Boolean {
+    /**
+     * Display a bitmap inside a positioned image container.
+     *
+     * The page keeps a live list of up to 4 image containers keyed by exact rect:
+     * - If a container with the requested rect already exists, the image is just resent to it (no
+     * page rebuild).
+     * - Otherwise a new container is added (evicting the oldest when the list would exceed 4) and
+     * the page is rebuilt before the image is sent.
+     *
+     * Omitted params default to a 100x100 container in the top-left corner.
+     */
+    override fun displayBitmap(
+            base64ImageData: String,
+            x: Int?,
+            y: Int?,
+            width: Int?,
+            height: Int?
+    ): Boolean {
         currentBitmapBase64 = base64ImageData
         currentTextContent = ""
-        return displayBitmapQuad(base64ImageData)
-    }
 
-    private fun displayBitmapQuad(base64ImageData: String): Boolean {
+        val rx = x ?: defaultImgX
+        val ry = y ?: defaultImgY
+        val rw = width ?: defaultImgWidth
+        val rh = height ?: defaultImgHeight
+
         val rawData =
                 Base64.decode(base64ImageData, Base64.DEFAULT)
                         ?: run {
-                            Bridge.log("G2: displayBitmapQuad() - failed to decode base64")
+                            Bridge.log("G2: displayBitmap() - failed to decode base64")
                             return false
                         }
 
-        val tiles =
-                renderAndSliceTo4Tiles(rawData)
+        // Create the startup page lazily, seeded with the default top-left container.
+        val freshPage = !startupPageCreated
+        if (freshPage) {
+            imageContainers.clear()
+            imageContainers.add(
+                    ImgContainer(
+                            id = imageContainerIDPool[0],
+                            x = defaultImgX,
+                            y = defaultImgY,
+                            width = defaultImgWidth,
+                            height = defaultImgHeight
+                    )
+            )
+            createPageWithText("")
+            Bridge.log("G2: displayBitmap() - startup page created")
+        }
+
+        // Reuse an existing container if the rect matches exactly; otherwise add a new one.
+        val existing = imageContainers.firstOrNull { it.matches(rx, ry, rw, rh) }
+        val container: ImgContainer
+        val needsRebuild: Boolean
+        if (existing != null) {
+            container = existing
+            needsRebuild = false
+            Bridge.log("G2: displayBitmap() - reusing container ${existing.id} for rect $rx,$ry ${rw}x$rh")
+        } else {
+            container = addImageContainer(rx, ry, rw, rh)
+            needsRebuild = true
+            Bridge.log("G2: displayBitmap() - added container ${container.id} for rect $rx,$ry ${rw}x$rh, rebuilding page")
+            rebuildPage()
+        }
+
+        val bmpData =
+                convertToG2Bmp(rawData, containerWidth = container.width, containerHeight = container.height)
                         ?: run {
-                            Bridge.log(
-                                    "G2: displayBitmapQuad() - failed to slice image into tiles"
-                            )
+                            Bridge.log("G2: displayBitmap() - failed to convert image to BMP")
                             return false
                         }
 
-        // 2x2 grid of 200x100 tiles covering 400x200 (matches G2.swift:1729-1745)
-        val container1 =
-                EvenHubProto.imageContainerProperty(
-                        x = 0,
-                        y = 0,
-                        width = 200,
-                        height = 100,
-                        containerID = 10,
-                        containerName = "img-10"
-                )
-        val container2 =
-                EvenHubProto.imageContainerProperty(
-                        x = 200,
-                        y = 0,
-                        width = 200,
-                        height = 100,
-                        containerID = 11,
-                        containerName = "img-11"
-                )
-        val container3 =
-                EvenHubProto.imageContainerProperty(
-                        x = 0,
-                        y = 100,
-                        width = 200,
-                        height = 100,
-                        containerID = 12,
-                        containerName = "img-12"
-                )
-        val container4 =
-                EvenHubProto.imageContainerProperty(
-                        x = 200,
-                        y = 100,
-                        width = 200,
-                        height = 100,
-                        containerID = 13,
-                        containerName = "img-13"
-                )
-        val containers = listOf(container1, container2, container3, container4)
-
-        val msg: ByteArray =
-                if (!startupPageCreated) {
-                    startupPageCreated = true
-                    EvenHubProto.createPageMessage(
-                            imageContainers = containers,
-                            magicRandom = sendManager.nextMagicRandom(),
-                            appId = activeMenuAppId
-                    )
-                } else {
-                    EvenHubProto.rebuildPageMessage(
-                            imageContainers = containers,
-                            magicRandom = sendManager.nextMagicRandom(),
-                            appId = activeMenuAppId
-                    )
-                }
-        sendEvenHubCommand(msg)
-        pageCreated = true
-        pageHasTextContainer = false
-        currentTextContent = ""
-
-        // After the 1s settle delay iOS waits, send each tile's BMP in series. Android's
-        // displayBitmap signature is synchronous Boolean, so this is fire-and-forget — we
-        // chain tiles via callbacks rather than awaiting like iOS.
-        Bridge.log("G2: displayBitmapQuad() - page sent, scheduling fragment send in 1s...")
-        mainHandler.postDelayed(
-                {
-                    sendImageDataChained(
-                            tiles =
-                                    listOf(
-                                            Triple(10, "img-10", tiles[0]),
-                                            Triple(11, "img-11", tiles[1]),
-                                            Triple(12, "img-12", tiles[2]),
-                                            Triple(13, "img-13", tiles[3])
-                                    ),
-                            index = 0
-                    )
-                },
-                1000
-        )
+        // Fire-and-forget. If the page was just created/rebuilt, defer the BMP send 1s to let the
+        // glasses process the page (matches iOS's await). Reuse path sends immediately.
+        if (freshPage || needsRebuild) {
+            mainHandler.postDelayed(
+                    { sendImageData(container.id, container.name, bmpData) },
+                    1000
+            )
+        } else {
+            sendImageData(container.id, container.name, bmpData)
+        }
 
         return true
     }
 
-    /** Send the next tile's BMP in series; recurse to the next tile after this one finishes. */
-    private fun sendImageDataChained(
-            tiles: List<Triple<Int, String, ByteArray>>,
-            index: Int
-    ) {
-        if (index >= tiles.size) return
-        val (containerID, containerName, bmpData) = tiles[index]
-        sendImageData(containerID, containerName, bmpData) {
-            sendImageDataChained(tiles, index + 1)
+    /**
+     * Add a new image container for the rect, evicting the oldest when the list is full (max 4).
+     * Returns the newly tracked container (with an assigned ID from the pool).
+     */
+    private fun addImageContainer(x: Int, y: Int, width: Int, height: Int): ImgContainer {
+        // Evict the oldest container when at capacity, freeing its ID for reuse.
+        if (imageContainers.size >= imageContainerIDPool.size) {
+            val evicted = imageContainers.removeAt(0)
+            Bridge.log("G2: evicting oldest image container ${evicted.id}")
         }
+        // Pick the lowest free ID from the pool.
+        val usedIDs = imageContainers.map { it.id }.toSet()
+        val id = imageContainerIDPool.firstOrNull { it !in usedIDs } ?: imageContainerIDPool[0]
+        val container = ImgContainer(id = id, x = x, y = y, width = width, height = height)
+        imageContainers.add(container)
+        return container
+    }
+
+    /** Rebuild the page from the current text + image container list. */
+    private fun rebuildPage() {
+        createPageWithText(currentTextContent)
     }
 
     private fun sendImageData(
@@ -1948,9 +2201,8 @@ class G2 : SGCManager() {
             fragmentIndex++
             offset = end
 
-            // 200ms between fragments — and also before onComplete, so the next tile in
-            // sendImageDataChained gets the same gap before its first fragment (matches iOS,
-            // which awaits 200ms after every fragment including the last).
+            // 200ms between fragments — and also before onComplete (matches iOS, which awaits
+            // 200ms after every fragment including the last).
             if (offset < bmpData.size) {
                 mainHandler.postDelayed({ sendNextFragment() }, 200)
             } else {
@@ -1964,93 +2216,23 @@ class G2 : SGCManager() {
         sendNextFragment()
     }
 
-    /**
-     * Render any image to 400x200 grayscale, then slice into 4 tiles (200x100 each).
-     * Returns 4 BMP ByteArrays: [top-left, top-right, bottom-left, bottom-right].
-     * Mirrors G2.swift renderAndSliceTo4Tiles.
-     */
-    private fun renderAndSliceTo4Tiles(data: ByteArray): List<ByteArray>? {
-        val srcBitmap =
-                BitmapFactory.decodeByteArray(data, 0, data.size)
-                        ?: run {
-                            Bridge.log("G2: renderAndSliceTo4Tiles - could not decode image")
-                            return null
-                        }
-
-        val srcWidth = srcBitmap.width
-        val srcHeight = srcBitmap.height
-        val tileWidth = 200
-        val tileHeight = 100
-        val totalW = tileWidth * 2 // 400
-        val totalH = tileHeight * 2 // 200
-
-        // Scale source to fit within 400x200 (maintain aspect ratio)
-        val scale = minOf(totalW.toDouble() / srcWidth, totalH.toDouble() / srcHeight)
-        val scaledW = maxOf(1, (srcWidth * scale).toInt())
-        val scaledH = maxOf(1, (srcHeight * scale).toInt())
-        val offsetX = (totalW - scaledW) / 2
-        val offsetY = (totalH - scaledH) / 2
-
-        Bridge.log(
-                "G2: renderAndSliceTo4Tiles - input ${srcWidth}x${srcHeight} → ${scaledW}x${scaledH} in ${totalW}x${totalH}"
-        )
-
-        // Render to 400x200 with black background
-        val destBitmap = Bitmap.createBitmap(totalW, totalH, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(destBitmap)
-        canvas.drawColor(Color.BLACK)
-        val srcRect = Rect(0, 0, srcWidth, srcHeight)
-        val dstRect = Rect(offsetX, offsetY, offsetX + scaledW, offsetY + scaledH)
-        val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-        canvas.drawBitmap(srcBitmap, srcRect, dstRect, paint)
-        srcBitmap.recycle()
-
-        // Pull a single 400x200 grayscale buffer once; slice each tile from it
-        val fullPixels = ByteArray(totalW * totalH)
-        val argbRow = IntArray(totalW)
-        for (y in 0 until totalH) {
-            destBitmap.getPixels(argbRow, 0, totalW, 0, y, totalW, 1)
-            val rowOffset = y * totalW
-            for (x in 0 until totalW) {
-                val pixel = argbRow[x]
-                val r = (pixel shr 16) and 0xFF
-                val g = (pixel shr 8) and 0xFF
-                val b = pixel and 0xFF
-                fullPixels[rowOffset + x] = ((r * 299 + g * 587 + b * 114) / 1000).toByte()
-            }
-        }
-        destBitmap.recycle()
-
-        // Slice into 4 tiles: top-left, top-right, bottom-left, bottom-right (matches iOS order)
-        val tileOrigins = listOf(0 to 0, tileWidth to 0, 0 to tileHeight, tileWidth to tileHeight)
-        val tiles = mutableListOf<ByteArray>()
-        for ((ox, oy) in tileOrigins) {
-            val tilePixels = ByteArray(tileWidth * tileHeight)
-            for (row in 0 until tileHeight) {
-                val srcRowStart = (oy + row) * totalW + ox
-                System.arraycopy(
-                        fullPixels,
-                        srcRowStart,
-                        tilePixels,
-                        row * tileWidth,
-                        tileWidth
-                )
-            }
-            val bmp =
-                    build4BitBmp(tilePixels, tileWidth, tileHeight)
-                            ?: run {
-                                Bridge.log(
-                                        "G2: renderAndSliceTo4Tiles - failed to build BMP for tile"
-                                )
-                                return null
-                            }
-            tiles.add(bmp)
-        }
-        return tiles
-    }
-
+    /// Bring the Even Realities dashboard (the OS-level home/idle screen) to
+    /// the foreground by tearing down whatever EvenHub page we currently own.
+    /// The glasses fall back to the dashboard automatically when no page is up.
     override fun showDashboard() {
-        // G2 doesn't have a native dashboard concept via EvenHub
+        Bridge.log("G2: showDashboard()")
+        dashboardShowing += 2
+        val msg = EvenHubProto.shutdownMessage()
+        sendEvenHubCommand(msg)
+        pageCreated = false
+        pageHasTextContainer = false
+        currentTextContent = ""
+        currentBitmapBase64 = ""
+        mainHandler.postDelayed({
+            // activate the dashboard by setting depth to the current setting:
+            val currentDepth = DeviceStore.get("bluetooth", "dashboard_depth") as? Int ?: 0
+            setDashboardDepthOnly(currentDepth)
+        }, 500)
     }
 
     override fun setDashboardPosition(height: Int, depth: Int) {
@@ -2091,6 +2273,95 @@ class G2 : SGCManager() {
         sendMenuCommand(msg)
     }
 
+    /**
+     * Bridge entry for `calendar_events` store updates. Each map is expected to match
+     * the TS `CalendarEvent` shape: { title, location?, time, endDate } where `endDate`
+     * is Unix seconds.
+     *
+     * Sends one BLE push per event, with `scheduleTotal` set to the batch size and
+     * `scheduleNum` set to this event's 0-based slot. The widget pages through them on
+     * the glasses — without paging info the firmware overwrites slot 0 on each push and
+     * only the last event survives.
+     */
+    override fun sendCalendarEvents(events: List<Map<String, Any>>) {
+        Bridge.log("G2: sendCalendarEvents -- ${events.size} events")
+        if (events.isEmpty()) {
+            sendDashboardCommand(
+                    CalendarProto.calendarClear(
+                            magicRandom = sendManager.nextMagicRandom(),
+                            packageId = 1,
+                            scheduleAuthority = 1
+                    )
+            )
+            return
+        }
+
+        val total = events.size
+        // Fold the local TZ offset into the timestamp so the glasses (which treat
+        // timestamps as already-local) display the correct time — same hack as time-sync.
+        val tzSec = TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 1000
+        events.forEachIndexed { i, ev ->
+            val title = ev["title"] as? String ?: return@forEachIndexed
+            val time = ev["time"] as? String ?: return@forEachIndexed
+            val endTs = (ev["endDate"] as? Number)?.toLong() ?: return@forEachIndexed
+            val location = ev["location"] as? String
+
+            val payload =
+                    CalendarProto.calendarPush(
+                            magicRandom = sendManager.nextMagicRandom(),
+                            packageId = 1,
+                            scheduleId = i + 1,
+                            title = title,
+                            location = location,
+                            time = time,
+                            endTimestamp = (endTs + tzSec).toInt(),
+                            scheduleAuthority = 1,
+                            scheduleTotal = total,
+                            scheduleNum = i
+                    )
+            sendDashboardCommand(payload)
+        }
+    }
+
+    /**
+     * Open the on-glasses notification panel — same effect as the user saying
+     * "Hey Even, show notifications". Replicates the official-app voice flow:
+     *   1. CTRL{status=ENTER}     — puts glasses in AI session
+     *   2. ASK{text=" "}          — minimal ASR transcript to seed session context
+     *   3. SKILL{skillId=NOTIFICATION, skillParam=show, ...} — dispatches the intent
+     * The SKILL step alone is ignored by firmware; the preceding ENTER+ASK
+     * supply the session context that lets the glasses act on the SKILL.
+     */
+    override fun showNotificationsPanel() {
+        Bridge.log("G2: showNotificationsPanel()")
+        val enterPayload = EvenAIProto.aiCtrl(
+                magicRandom = sendManager.nextMagicRandom(),
+                status = 2 // EVEN_AI_ENTER
+        )
+        sendEvenAICommand(enterPayload)
+
+        mainHandler.postDelayed({
+            val askPayload = EvenAIProto.aiAsk(
+                    magicRandom = sendManager.nextMagicRandom(),
+                    text = " ",
+                    streamEnable = 0
+            )
+            sendEvenAICommand(askPayload)
+
+            mainHandler.postDelayed({
+                val skillPayload = EvenAIProto.triggerSkill(
+                        magicRandom = sendManager.nextMagicRandom(),
+                        skillId = 3, // NOTIFICATION
+                        skillParam = 1, // show
+                        text = " ",
+                        streamEnable = 1,
+                        fTextEnd = 1
+                )
+                sendEvenAICommand(skillPayload)
+            }, 400)
+        }, 400)
+    }
+
     override fun setBrightness(level: Int, autoMode: Boolean) {
         Bridge.log("G2: setBrightness($level, auto=$autoMode)")
         val msg =
@@ -2121,12 +2392,26 @@ class G2 : SGCManager() {
                         content = text
                 )
 
+        // Build the page's image containers from the live tracked list.
+        val imageContainerProps: List<ByteArray> =
+                imageContainers.map { c ->
+                    EvenHubProto.imageContainerProperty(
+                            x = c.x,
+                            y = c.y,
+                            width = c.width,
+                            height = c.height,
+                            containerID = c.id,
+                            containerName = c.name
+                    )
+                }
+
         val msg: ByteArray
         if (!startupPageCreated) {
             Bridge.log("G2: createPageWithText - using createPageMessage (first time)")
             msg =
                     EvenHubProto.createPageMessage(
                             textContainers = listOf(tc),
+                            imageContainers = imageContainerProps,
                             magicRandom = sendManager.nextMagicRandom(),
                             appId = activeMenuAppId
                     )
@@ -2136,6 +2421,7 @@ class G2 : SGCManager() {
             msg =
                     EvenHubProto.rebuildPageMessage(
                             textContainers = listOf(tc),
+                            imageContainers = imageContainerProps,
                             magicRandom = sendManager.nextMagicRandom(),
                             appId = activeMenuAppId
                     )
@@ -2327,21 +2613,33 @@ class G2 : SGCManager() {
 
     // ---------- SGCManager: Audio Control ----------
 
+    fun restartMic() {
+        // if already enabled, set to disabled, then send enabled after 500ms:
+        DeviceStore.apply("glasses", "micEnabled", true)
+        val msg = EvenHubProto.audioControlMessage(false)
+        sendEvenHubCommand(msg)
+        mainHandler.postDelayed({
+            val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
+            Bridge.log("G2: setMicEnabled - useNativeDashboard=$useNativeDashboard, dashboardShowing=$dashboardShowing")
+            if (useNativeDashboard && dashboardShowing > 0) {
+                return@postDelayed
+            }
+            if (!pageCreated || !pageHasTextContainer) {
+                DeviceManager.getInstance().sendCurrentState() // should re-create the page if needed
+            }
+            val msg = EvenHubProto.audioControlMessage(true)
+            sendEvenHubCommand(msg)
+        }, 500)
+    }
+
     override fun setMicEnabled(enabled: Boolean) {
         Bridge.log("G2: setMicEnabled($enabled)")
         val currentEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
-
-        // if already enabled, set to disabled, then send enabled after 500ms:
         if (currentEnabled && enabled) {
-            DeviceStore.apply("glasses", "micEnabled", true)
-            val msg = EvenHubProto.audioControlMessage(false)
-            sendEvenHubCommand(msg)
-            mainHandler.postDelayed({
-                val msg = EvenHubProto.audioControlMessage(true)
-                sendEvenHubCommand(msg)
-            }, 500)
+            restartMic()
             return
         }
+
         DeviceStore.apply("glasses", "micEnabled", enabled)
         val msg = EvenHubProto.audioControlMessage(enabled)
         sendEvenHubCommand(msg)
@@ -2360,8 +2658,10 @@ class G2 : SGCManager() {
             authToken: String?,
             compress: String?,
             flash: Boolean,
+            save: Boolean,
             sound: Boolean,
             exposureTimeNs: Long?,
+            iso: Int?,
     ) {
         Bridge.log("G2: requestPhoto - not supported (no camera)")
     }
@@ -2463,6 +2763,8 @@ class G2 : SGCManager() {
         startupPageCreated = false
         pageCreated = false
         pageHasTextContainer = false
+        imageContainers.clear()
+        dashboardShowing = 0
         heartbeatCounter = 0
         currentBitmapBase64 = ""
         menuAppIdToPackageName.clear()
@@ -2505,7 +2807,7 @@ class G2 : SGCManager() {
     }
 
     override fun dbg1() {
-        connectController()
+        showNotificationsPanel()
     }
     override fun dbg2() {
         disconnectController()
@@ -2603,6 +2905,14 @@ class G2 : SGCManager() {
 
     override fun sendReboot() {
         // TODO: Implement via dev_settings
+    }
+
+    /// Push the current time to the glasses. Useful after DST transitions,
+    /// time-zone travel, or a long sleep where the glasses' clock has drifted.
+    fun syncTime() {
+        Bridge.log("G2: syncTime()")
+        val msg = DevSettingsProto.timeSync(sendManager.nextMagicRandom())
+        sendDevSettingsCommand(msg, left = true, right = true)
     }
 
     override fun sendRgbLedControl(
@@ -2939,6 +3249,7 @@ class G2 : SGCManager() {
                         startupPageCreated = false
                         pageCreated = false
                         pageHasTextContainer = false
+                        dashboardShowing = 0
                         DeviceStore.apply("glasses", "connected", false)
                         DeviceStore.apply("glasses", "fullyBooted", false)
 
@@ -3187,7 +3498,11 @@ class G2 : SGCManager() {
                 }
                 (resFields[8] as? Int)?.let { errorCode ->
                     // ImgResCmd has ErrorCode in field 8
-                    Bridge.log("G2: EvenHub ImgRes errorCode=$errorCode")
+                    if (errorCode == 4) {
+                        Bridge.log("G2: img_success")
+                    } else {
+                        Bridge.log("G2: EvenHub ImgRes errorCode=$errorCode")
+                    }
                 }
             }
 
@@ -3268,12 +3583,14 @@ class G2 : SGCManager() {
             if (eventType == OsEventType.DOUBLE_CLICK) {
                 // trigger dashboard:
                 val isHeadUp = DeviceStore.get("glasses", "headUp") as? Boolean ?: false
-                // toggle head up:
-                DeviceStore.apply("glasses", "headUp", !isHeadUp)
-                // if (isHeadUp) {
-                //     // clear the display after a delay:
-                //     mainHandler.postDelayed({ clearDisplay() }, 500)
-                // }
+
+                val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
+                if (useNativeDashboard) {
+                    showDashboard()
+                } else {
+                    // toggle head up:
+                    DeviceStore.apply("glasses", "headUp", !isHeadUp)
+                }
             }
 
             // System exit: glasses killed our EvenHub page (user opened menu or another app)
@@ -3444,14 +3761,47 @@ class G2 : SGCManager() {
     }
 
     private fun handleGestureCtrl(payload: ByteArray) {
+        // Dedup: L and R peripherals both deliver this event, so debounce within 500ms.
+        val timestamp = System.currentTimeMillis()
+        val last = lastGestureCtrlTimestamp
+        if (last != null && timestamp - last < 500) {
+            Bridge.log("G2: gesture_ctrl dedup")
+            return
+        }
+        lastGestureCtrlTimestamp = timestamp
+
         // Dashboard close detection: 08011A00 means dashboard closed
         if (payload.contentEquals(byteArrayOf(0x08, 0x01, 0x1A, 0x00))) {
-            Bridge.log("G2: gesture_ctrl response: dashboard closed")
-            // Re-send mic on / update mic state
-            DeviceStore.apply("glasses", "micEnabled", false)
-            DeviceManager.getInstance().updateMicState()
-            // Reset the text container
-            sendTextWall(" ")
+            Bridge.log("G2: dashboard closed / shutdown - dashboardShowing=$dashboardShowing")
+            val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
+            if (!useNativeDashboard) {
+                // make sure the container exists:
+                DeviceManager.getInstance().sendCurrentState()
+                // re-send mic on / if it's enabled:
+                val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
+                if (micEnabled) {
+                    restartMic()
+                }
+            } else {
+                // if we aren't trying to show the dashboard
+                // then we need to turn the mic back on and display the mentra main page:
+                if (dashboardShowing <= 1) {
+                    dashboardShowing = 0
+                    // make sure the container exists:
+                    DeviceManager.getInstance().sendCurrentState()
+                    // set the mic back on if it should be on
+                    val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
+                    if (micEnabled) {
+                        restartMic()
+                    }
+                    return
+                }
+                // do nothing this time since we just closed the dashboard
+                dashboardShowing -= 1
+                if (dashboardShowing < 0) {
+                    dashboardShowing = 0
+                }
+            }
         }
     }
 

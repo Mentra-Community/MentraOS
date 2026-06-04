@@ -7,8 +7,8 @@ The package includes:
 - A React Native / Expo module API exposed as `BluetoothSdk`.
 - React hooks under `@mentra/bluetooth-sdk/react` for common scan,
   connection, status, and event lifecycles.
-- Native Android code published as `com.mentra:bluetooth-sdk`.
-- Native iOS code published as the `MentraBluetoothSDK` CocoaPod.
+- Native Android code published as `com.mentraglass:bluetooth-sdk`.
+- Native iOS code available as the `MentraBluetoothSDK` Swift package.
 - An Expo config plugin that wires the native dependencies into generated Android and iOS projects.
 
 Use a development build or production native build. Expo Go cannot load this package because the SDK contains native code.
@@ -266,11 +266,16 @@ await BluetoothSdk.requestPhoto({
   authToken: 'optional-token',
   compress: 'medium',
   sound: true,
+  exposureTimeNs: null, // auto exposure; pass a positive nanosecond value for manual exposure
+  iso: null, // auto ISO; pass a positive ISO only with manual exposureTimeNs
 })
 ```
 
 The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
 
+For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
+
+Use `setCameraFov({fov, roiPosition})` to configure Mentra Live camera field of view and crop position. FOV is clamped to 62-118 degrees; ROI position is `0` center, `1` bottom, or `2` top. Applying FOV/ROI restarts the camera for about 5 seconds, so wait before requesting the next photo.
 ## Streaming
 
 ```ts
@@ -304,6 +309,7 @@ import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react'
 export function HardwareEventLogger() {
   useBluetoothEvent('button_press', (event) => console.log(event))
   useBluetoothEvent('touch_event', (event) => console.log(event))
+  useBluetoothEvent('photo_status', (event) => console.log(event.status, event.resolvedConfig, event.captureMetadata))
   useBluetoothEvent('photo_response', (event) => console.log(event))
   useBluetoothEvent('stream_status', (event) => console.log(event))
   useBluetoothEvent('speaking_status', (event) => console.log(event.speaking))
@@ -318,9 +324,19 @@ export function HardwareEventLogger() {
 
 For non-React modules, `BluetoothSdk.addListener(...)` is the low-level subscription API. Keep the returned subscription and call `remove()` when the listener is no longer needed.
 
-Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `hotspot_status_change`, `photo_response`, `gallery_status`, `stream_status`, `keep_alive_ack`, `mic_pcm`, `mic_lc3`, `local_transcription`, `rgb_led_control_response`, `audio_connected`, `audio_disconnected`, and `log`.
+Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `hotspot_status_change`, `photo_status`, `photo_response`, `gallery_status`, `stream_status`, `keep_alive_ack`, `mic_pcm`, `mic_lc3`, `local_transcription`, `rgb_led_control_response`, `audio_connected`, `audio_disconnected`, and `log`.
 
-React Native event payload fields use camelCase. For example, `touch_event` includes `gestureName`, `photo_response` success includes `uploadUrl`, and `gallery_status` includes `hasContent` and `cameraBusy`. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
+React Native event payload fields use camelCase. For example, `touch_event` includes `gestureName`, `photo_response` success includes `uploadUrl`, and `gallery_status` includes `hasContent` and `cameraBusy`. `photo_status` reports intermediate photo states such as `accepted`, `queued`, `configuring`, `capturing`, `captured`, `compressing`, `ble_fallback_compression`, `uploading`, `ready_for_transfer`, `transferring`, and `failed`; the `configuring` event includes `resolvedConfig` with the effective JPEG dimensions, quality, requested size, transfer method, compression, and manual exposure fields when present. The `capturing` event may include `requestedCaptureConfig` and `meteredPreview`; the `captured` event may include `captureMetadata` with the HAL-applied exposure, ISO, frame duration, and AE state. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
+
+Photo status metadata is tied to the capture stage where the glasses know it:
+
+| Status | Optional metadata | Meaning |
+| --- | --- | --- |
+| `configuring` | `resolvedConfig` | Effective JPEG size, quality, requested size, source, transfer method, compression, and manual capture settings when present. |
+| `capturing` | `requestedCaptureConfig`, `meteredPreview` | Camera2 still request about to be submitted, plus the latest auto-exposure preview estimate before capture. |
+| `captured` | `captureMetadata` | HAL-applied still capture result, including actual exposure, ISO, frame duration, AE state, and related camera modes when available. |
+
+Upload and transfer statuses such as `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring` describe transport progress only and do not carry capture metadata. `ble_fallback_compression` means the direct Wi-Fi/webhook upload failed and the glasses are compressing the already-captured photo for Bluetooth fallback delivery. Local action-button photos emitted by the glasses use the same `photo_status` event shape when the phone SDK is connected; those events use `resolvedConfig.source: "button"` and `resolvedConfig.transferMethod: "local"`.
 
 Only documented imports are supported for app developers. Undocumented package subpaths or symbols with a leading underscore can change without notice.
 
@@ -334,6 +350,34 @@ MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk
 ```
 
 Use `bunx expo run:android` for Android. Keep local paths in your shell or CI environment, not in committed app config.
+
+For bare native iOS apps, use the public SwiftPM repository:
+
+```text
+https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
+```
+
+Add the `MentraBluetoothSDK` product to your app target at version `0.1.7` or newer.
+
+For local SDK development, add this package folder directly in Xcode:
+
+```text
+/path/to/MentraOS/mobile/modules/bluetooth-sdk
+```
+
+The core Swift package intentionally excludes optional local STT, Nex/SwiftProtobuf, Vuzix/Ultralite, and tar.bz2 extraction code paths.
+
+Maintainers publishing the public SwiftPM mirror should follow
+[RELEASING_IOS_SPM.md](./RELEASING_IOS_SPM.md).
+
+## Android Maven Publishing
+
+Maintainers publishing the native Android artifacts to Maven Central should
+follow [RELEASING_ANDROID_MAVEN.md](./RELEASING_ANDROID_MAVEN.md).
+
+Use `android/gradle.properties.example` as the template for Sonatype Central and
+GPG signing properties. Put real values in `~/.gradle/gradle.properties` or CI
+secrets, not in the repository.
 
 ## Starter Example App
 

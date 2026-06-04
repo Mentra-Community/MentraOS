@@ -29,7 +29,7 @@ export interface PhotoOptions {
   saveToGallery?: boolean;
   sound?: boolean;
   /**
-   * Sensor exposure time for this photo request only, in nanoseconds (Camera2 `SENSOR_EXPOSURE_TIME`).
+   * Sensor exposure time for this photo request only, in nanoseconds.
    * Not saved as a camera preference. Omit for auto exposure. Invalid or unsupported values fall back to auto exposure on device.
    */
   exposureTimeNs?: number;

@@ -1,34 +1,39 @@
-import BluetoothSdk, {
-  ButtonPressEvent,
-  BluetoothStatus,
-  GlassesStatus,
-  OtaStatus,
-  OtaProgress,
-  OtaUpdateInfo,
-} from "@mentra/bluetooth-sdk-internal"
+import BluetoothSdk, {ButtonPressEvent, BluetoothStatus, OtaStatus} from "@mentra/bluetooth-sdk-internal"
 import CrustModule from "crust"
+import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
 import * as Location from "expo-location"
 import * as TaskManager from "expo-task-manager"
 import {shallow} from "zustand/shallow"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
-import {requestMiniappSdkPhoto} from "@/services/miniapp/MiniappSdkPhotoHandler"
+import headingService from "@/services/HeadingService"
+import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
+import navigationService from "@/services/NavigationService"
+import {phonePhotoCoordinator} from "@/services/photo/PhonePhotoCoordinator"
+import {phoneVideoCoordinator} from "@/services/video/PhoneVideoCoordinator"
+import {phoneStreamCoordinator} from "@/services/streaming/PhoneStreamCoordinator"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
+import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
+import {WebSocketStatus} from "@/services/ws-types"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
+import {handleOtaClockSkewFromGlasses} from "@/services/asg/glassesClockSync"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
 import {
   appRegistry,
   configureRuntime,
+  displayProcessor,
   localMiniappRuntime,
   localSttFallbackCoordinator,
   micStateCoordinator,
+  offlineSpeechModelService,
   BgTimer,
   useAppStatusStore,
 } from "@mentra/island"
+import {useConnectionStore} from "@/stores/connection"
 import {useDisplayStore} from "@/stores/display"
 import {getGlasesInfoPartial, isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
@@ -49,6 +54,36 @@ import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
+
+/**
+ * Miniapp bundles shipped inside the app binary, installed on first launch by
+ * MantleManager.installBundledMiniapps(). BUNDLED_MINIAPPS is code-generated
+ * from every *.zip in assets/miniapps/ by scripts/generate-bundled-miniapps.mjs
+ * (Metro can only bundle assets referenced by a literal string require(), so the
+ * list must be static) — to ship an update, just drop a new zip in that
+ * directory; the generator runs on `bun start`/prebuild.
+ *
+ * The filename encodes packageName + version (e.g.
+ * `com.mentra.navigation-1.0.2.zip`), so we read those straight off the asset
+ * name to decide whether the bundle is already installed and up to date — no
+ * need to unzip just to check. See src/generated/bundledMiniapps.ts.
+ */
+
+/**
+ * Parse `<packageName>-<version>` out of a bundled miniapp asset name like
+ * `com.mentra.navigation-1.0.2.zip`. Splits on the last hyphen so dotted
+ * package names (which contain no hyphens) stay intact. Returns null if the
+ * name doesn't match the expected shape.
+ */
+function parseBundledMiniappName(name: string): {packageName: string; version: string} | null {
+  const base = name.replace(/\.zip$/i, "")
+  const lastHyphen = base.lastIndexOf("-")
+  if (lastHyphen <= 0 || lastHyphen === base.length - 1) return null
+  return {
+    packageName: base.slice(0, lastHyphen),
+    version: base.slice(lastHyphen + 1),
+  }
+}
 
 // @ts-ignore
 TaskManager.defineTask(LOCATION_TASK_NAME, ({data: {locations}, error}) => {
@@ -128,6 +163,13 @@ class MantleManager {
     }
     this.initialized = true
 
+    // iOS: require a second swipe across the bottom edge to invoke the Home
+    // indicator / app switcher, so users don't accidentally background the
+    // app mid-glasses-session. No-op on Android.
+    // CrustModule.setDeferredSystemGestures(["bottom"]).catch((e) =>
+    //   console.warn("MANTLE: setDeferredSystemGestures failed", e),
+    // )
+
     // Wire host-side adapters into the island runtime. Must run before any
     // island service that reads settings / glasses status / sockets / audio
     // (LocalMiniappRuntime, LocalDisplayManager, LocalSttFallbackCoordinator,
@@ -166,18 +208,78 @@ class MantleManager {
             (value) => onChange(value as never),
           ),
       },
+      cloudConnection: {
+        isConnected: () => useConnectionStore.getState().status === WebSocketStatus.CONNECTED,
+        // The connection store is plain zustand (no subscribeWithSelector
+        // middleware), so we subscribe to all state changes and dedupe to
+        // the connected boolean ourselves.
+        addListener: (l) => {
+          let lastConnected = useConnectionStore.getState().status === WebSocketStatus.CONNECTED
+          return useConnectionStore.subscribe((state) => {
+            const connected = state.status === WebSocketStatus.CONNECTED
+            if (connected !== lastConnected) {
+              lastConnected = connected
+              l(connected)
+            }
+          })
+        },
+      },
       setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
       sendDisplayEvent: (event) => BluetoothSdk.displayEvent(event),
       subscribeGlassesStatus: (onChange) => BluetoothSdk.onGlassesStatus(onChange),
       restartTranscriber: () => BluetoothSdk.restartTranscriber(),
       setMicRequirements: (requirements) =>
-        BluetoothSdk.update("core", {
+        BluetoothSdk.updateBluetoothSettings({
           should_send_pcm: requirements.shouldSendPcm,
           should_send_lc3: requirements.shouldSendLc3,
           should_send_transcript: requirements.shouldSendTranscript,
         }),
-      requestMiniappSdkPhoto: (params) => requestMiniappSdkPhoto(params),
+      photo: {
+        takePhoto: (pkg, opts) => phonePhotoCoordinator.takePhoto(pkg, opts),
+      },
+      videoRecording: {
+        startRecording: (pkg, opts) => phoneVideoCoordinator.startRecording(pkg, opts),
+        stopRecording: (pkg, recordingId) => phoneVideoCoordinator.stopRecording(pkg, recordingId),
+        stopForApp: (pkg) => phoneVideoCoordinator.stopForApp(pkg),
+      },
+      // Google Nav SDK adapter — the island runtime fan-outs nav events to
+      // miniapps subscribed to navigation_*. Delegates straight to the host's
+      // singleton NavigationService.
+      navigation: {
+        getState: () => navigationService.getState(),
+        getSnapshot: () => navigationService.getSnapshot(),
+        addListener: (l) => navigationService.addListener(l),
+        addLocationListener: (l) => navigationService.addLocationListener(l),
+        addRouteListener: (l) => navigationService.addRouteListener(l),
+        start: (coords, options) => navigationService.start(coords, options),
+        stop: () => navigationService.stop(),
+        simulateDeviation: (offsetMeters) => navigationService.simulateDeviation(offsetMeters),
+        setWrongSidewalkOffset: (enabled) => navigationService.setWrongSidewalkOffset(enabled),
+        setSkipCrossings: (enabled) => navigationService.setSkipCrossings(enabled),
+        requestPermission: () => navigationService.requestPermission(),
+        computeRoute: (payload) => navigationService.computeRoute(payload),
+      },
+      heading: {
+        addListener: (l) => headingService.addListener(l),
+      },
+      locationTier: {
+        setLocationTier: (rate) => this.setLocationTier(rate),
+      },
+      streaming: {
+        startUnmanaged: (pkg, opts) => phoneStreamCoordinator.startUnmanaged(pkg, opts),
+        startManaged: (pkg, opts) => phoneStreamCoordinator.startManaged(pkg, opts),
+        stop: (pkg, streamId) => phoneStreamCoordinator.stop(pkg, streamId),
+        setStatusSubscriber: (cb) => phoneStreamCoordinator.setStatusSubscriber(cb),
+      },
     })
+    // Wire the runtime's status fanout now that the streaming hook is in.
+    localMiniappRuntime.wireStreamingStatusFanout()
+
+    // DisplayProcessor's singleton was constructed at module load — before runtime
+    // hooks existed — so its initial deviceModel read and glasses-status subscription
+    // silently no-op'd. Re-attach now that hooks are wired so captions are wrapped with
+    // the correct profile (e.g. NEX_PROFILE for Mentra Display) instead of the G1 default.
+    displayProcessor.attachToRuntime()
 
     // Register the offline-app catalog with island's AppRegistry before
     // anything triggers an apps refresh.
@@ -208,6 +310,8 @@ class MantleManager {
     // Send device timezone to cloud (used for calendar/time display)
     this.syncTimezone()
 
+    offlineSpeechModelService.startBackgroundDownloads()
+
     // give the core some time to boot before sending all the initial settings:
     BgTimer.setTimeout(() => {
       const initialCoreSettings = useSettingsStore.getState().getCoreSettings()
@@ -219,6 +323,7 @@ class MantleManager {
     await this.syncNotificationSettingsToCrust()
 
     this.initServices()
+    this.initMiniapps()
     this.setupPeriodicTasks()
     this.setupSubscriptions()
   }
@@ -257,6 +362,17 @@ class MantleManager {
     socketComms.connectWebsocket()
     gallerySyncService.initialize()
 
+    // Bootstrap MentraJS — wires MentraJSRouter + MentraUIRouter +
+    // MentraJSCrashController. The /applet/local route binds the UI
+    // router to its inline WebView via getMentraJS().uiRouter directly.
+    try {
+      bootstrapMentraJS()
+    } catch (e) {
+      console.warn("mentraJsBootstrap failed:", e)
+    }
+  }
+
+  private async initMiniapps() {
     // Warm the local miniapp registry by reading lmas/ off disk. Cheap call —
     // it populates AppRegistry's cache so the first refreshApplets() doesn't
     // pay the disk-walk cost in the UI thread.
@@ -264,6 +380,57 @@ class MantleManager {
 
     // Initialize local miniapp runtime
     localMiniappRuntime.initialize()
+
+    // Install any bundled miniapps that ship with the app and aren't on disk
+    // yet (or are an older version). Runs after the registry is warm so the
+    // already-installed check below sees the real on-disk state.
+    await this.installBundledMiniapps()
+  }
+
+  /**
+   * Install the miniapp zips bundled into the app binary under
+   * @assets/miniapps. Metro's `require` needs static string literals, so the
+   * BUNDLED_MINIAPPS require() list is code-generated from the directory
+   * (see src/generated/bundledMiniapps.ts) rather than globbed at runtime.
+   *
+   * The asset name carries packageName + version, so we read those off the
+   * filename and skip the bundle entirely when that exact version is already
+   * installed — no unzip needed to check. Otherwise we materialize the asset
+   * to disk (expo-asset gives us a file:// URI, but `File.downloadFileAsync`
+   * is HTTP-only) and hand the local zip to AppRegistry, which unzips and
+   * installs it.
+   */
+  private async installBundledMiniapps() {
+    for (const module of BUNDLED_MINIAPPS) {
+      try {
+        const asset = Asset.fromModule(module)
+        const parsed = parseBundledMiniappName(asset.name)
+        if (!parsed) {
+          console.warn(`MANTLE: bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
+          continue
+        }
+        const {packageName, version} = parsed
+
+        if (appRegistry.getInstalledVersions(packageName).includes(version)) {
+          continue
+        }
+
+        await asset.downloadAsync()
+        if (!asset.localUri) {
+          console.warn(`MANTLE: bundled miniapp ${packageName} has no localUri after download`)
+          continue
+        }
+
+        const res = await appRegistry.installFromLocalZip(asset.localUri)
+        if (res.is_error()) {
+          console.error(`MANTLE: failed to install bundled miniapp ${packageName}@${version}:`, res.error)
+          continue
+        }
+        console.log(`MANTLE: installed bundled miniapp ${res.value.packageName}@${res.value.version}`)
+      } catch (error) {
+        console.error(`MANTLE: error installing bundled miniapp:`, error)
+      }
+    }
   }
 
   private async syncNotificationSettingsToCrust() {
@@ -279,12 +446,9 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(
-      () => {
-        this.sendCalendarEvents()
-      },
-      60 * 60 * 1000,
-    ) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(() => {
+      this.sendCalendarEvents()
+    }, 60 * 60 * 1000) // 1 hour
 
     try {
       // only start location updates if we have the location permission:
@@ -444,6 +608,33 @@ class MantleManager {
 
       this.subs.push(
         BluetoothSdk.addListener("photo_response", (event) => {
+          // Local miniapps' photos are tracked by phonePhotoCoordinator. If
+          // glasses report an error (BATTERY_LOW, CAMERA_BUSY, ...) for a
+          // phone-owned requestId, short-circuit the in-flight long-poll
+          // with the typed error. Cloud-app photos (third-party SDK) still
+          // forward to cloud's PhotoManager.
+          //
+          // Note: glasses only emit photo_response on ERROR (verified in
+          // asg_client/.../MediaCaptureService.java — only sendPhotoErrorResponse
+          // emits this event). Successful uploads land directly on cloud's
+          // /api/v2/client/photo/upload and the coordinator learns via its
+          // long-poll. So the state === "success" branch is unreachable for
+          // phone-owned requestIds.
+          //
+          // Caveat: BLE-fallback upload failures on the phone-side
+          // BlePhotoUploadService only log (no photo_response is emitted),
+          // so the coordinator falls back to the 30s long-poll timeout in
+          // that path. Pre-existing v1 behavior; not regressed here.
+          if (event.requestId && phonePhotoCoordinator.owns(event.requestId)) {
+            if (event.state === "error") {
+              phonePhotoCoordinator.handlePhotoError(
+                event.requestId,
+                event.errorCode ?? "GLASSES_ERROR",
+                event.errorMessage ?? "Glasses reported an error",
+              )
+            }
+            return
+          }
           restComms.sendPhotoResponse(event)
         }),
       )
@@ -519,20 +710,12 @@ class MantleManager {
           const switchValue = event.switchValue ?? -1
           const timestamp = typeof event.timestamp === "number" ? event.timestamp : Date.now()
           socketComms.sendSwitchStatus(switchType, switchValue, timestamp)
-          // TODO: remove
-          GlobalEventEmitter.emit("SWITCH_STATUS", {switchType, switchValue, timestamp})
         }),
       )
 
       this.subs.push(
         BluetoothSdk.addListener("rgb_led_control_response", (event) => {
           socketComms.sendRgbLedControlResponse(event)
-          // TODO: remove
-          GlobalEventEmitter.emit("rgb_led_control_response", {
-            requestId: event.requestId,
-            success: event.state === "success",
-            error: event.state === "error" ? event.errorCode : null,
-          })
         }),
       )
 
@@ -597,7 +780,7 @@ class MantleManager {
       )
 
       this.subs.push(
-        CrustModule.addListener("phone_notification", async (event) => {
+        (CrustModule.addListener as any)("phone_notification", async (event: any) => {
           // Direct forward to local miniapps subscribed to phone_notification.
           // Gated by READ_NOTIFICATIONS in miniapp.json at subscribe time.
           localMiniappRuntime.forwardEvent("phone_notification", {
@@ -625,7 +808,7 @@ class MantleManager {
       )
 
       this.subs.push(
-        CrustModule.addListener("phone_notification_dismissed", async (event) => {
+        (CrustModule.addListener as any)("phone_notification_dismissed", async (event: any) => {
           // Direct forward to local miniapps subscribed to
           // phone_notification_dismissed (Android only — iOS never emits this).
           // Gated by READ_NOTIFICATIONS at subscribe time.
@@ -647,7 +830,7 @@ class MantleManager {
       )
 
       this.subs.push(
-        CrustModule.addListener("captions_tester_incident", (event) => {
+        (CrustModule.addListener as any)("captions_tester_incident", (event: any) => {
           const failureCode = typeof event.failure_code === "string" ? event.failure_code : "unknown"
           const failureMessage =
             typeof event.failure_message === "string" ? event.failure_message : "Captions tester incident detected."
@@ -779,12 +962,6 @@ class MantleManager {
       //   }),
       // )
 
-      // this.subs.push(
-      //   BluetoothSdk.addListener("audio_chunk", (event) => {
-      //     localMiniappRuntime.forwardEvent("audio_chunk", event)
-      //   }),
-      // )
-
       // G2 dashboard menu: user selected a miniapp from the glasses swipe menu
       // G2.swift resolves the numeric appId → packageName before sending this event
       this.subs.push(
@@ -850,13 +1027,12 @@ class MantleManager {
       )
 
       this.subs.push(
-        BluetoothSdk.addListener("mic_pcm", () => {
-          // mic_pcm events are strictly on-device. Local miniapps consume
-          // raw PCM via the `audio_chunk` listener; Sherpa-ONNX consumes
-          // it via the local-STT path. The cloud only ever receives LC3
-          // (mic_lc3 listener above). Never forward PCM bytes upstream —
-          // we'd interleave them with LC3 frames on the same binary
-          // WebSocket and corrupt the cloud's audio decoder.
+        BluetoothSdk.addListener("mic_pcm", (event) => {
+          // mic_pcm events are strictly on-device. The cloud only ever
+          // receives LC3 (mic_lc3 listener above) — never forward PCM
+          // bytes upstream, or we'd interleave them with LC3 frames on
+          // the same binary WebSocket and corrupt the cloud's decoder.
+          // Sherpa-ONNX is fed PCM natively inside the BT SDK, not here.
           if (this.micDataTimeout) {
             BgTimer.clearTimeout(this.micDataTimeout)
           }
@@ -864,11 +1040,30 @@ class MantleManager {
             useDebugStore.getState().setDebugInfo({micDataRecvd: false})
           }, this.MIC_TIMEOUT_MS)
           useDebugStore.getState().setDebugInfo({micDataRecvd: true})
+
+          // Fan raw PCM to local miniapps that subscribed to `audio_chunk`
+          // (session.mic.onAudioChunk). forwardEvent is subscriber-gated —
+          // a no-op when no miniapp is listening — and should_send_pcm is
+          // only flipped on by the runtime when a subscription exists.
+          // ArrayBuffer can't survive the JSON bridge, so base64-encode.
+          // PERF: ~100 events/sec/subscriber, unbatched; revisit with
+          // frame batching if a real always-on audio miniapp ships.
+          localMiniappRuntime.forwardEvent("audio_chunk", {
+            data: Buffer.from(event.pcm).toString("base64"),
+            sampleRate: event.sampleRate,
+            format: event.encoding,
+          })
         }),
       )
 
       this.subs.push(
         BluetoothSdk.addListener("stream_status", (event) => {
+          // Phone-owned streams stay on-device; cloud-SDK app streams
+          // forward so cloud's lifecycle state machine sees them.
+          if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) {
+            phoneStreamCoordinator.handleGlassesStatus(event)
+            return
+          }
           console.log("MANTLE: Forwarding stream status to server:", event)
           socketComms.sendStreamStatus(event)
         }),
@@ -876,6 +1071,10 @@ class MantleManager {
 
       this.subs.push(
         BluetoothSdk.addListener("keep_alive_ack", (event) => {
+          if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) {
+            phoneStreamCoordinator.handleKeepAliveAck(event)
+            return
+          }
           console.log("MANTLE: Forwarding keep-alive ACK to server:", event)
           socketComms.sendKeepAliveAck(event)
         }),
@@ -936,6 +1135,20 @@ class MantleManager {
             console.warn("MANTLE: ota_status legacy otaProgress mapping failed", err)
           }
 
+          if (status.status === "failed") {
+            const raw = event as Record<string, unknown>
+            const glassesTimeMs = Number(raw.glasses_time_ms ?? raw.glassesTimeMs ?? 0) || undefined
+            const errorCode = normalized.error_message
+            if (
+              errorCode === "clock_skew" ||
+              (errorCode === "ssl_error" && typeof glassesTimeMs === "number" && Number.isFinite(glassesTimeMs))
+            ) {
+              handleOtaClockSkewFromGlasses(errorCode, glassesTimeMs).catch((err) => {
+                console.warn("MANTLE: OTA clock skew auto-fix failed", err)
+              })
+            }
+          }
+
           if (status.status === "complete" || status.status === "failed") {
             useGlassesStore.getState().setOtaUpdateAvailable(null)
           }
@@ -958,10 +1171,46 @@ class MantleManager {
       console.log("MANTLE: sendCalendarEvents()")
       const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT)
       const calendarIds = calendars.map((calendar: Calendar.Calendar) => calendar.id)
-      // from 2 hours ago to 1 week from now:
+      // from 2 hours ago to 3 days from now:
       const startDate = new Date(Date.now() - 2 * 60 * 60 * 1000)
-      const endDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-      const events = await Calendar.getEventsAsync(calendarIds, startDate, endDate)
+      const endDate = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)
+      let events = await Calendar.getEventsAsync(calendarIds, startDate, endDate)
+
+      // sort by start date (soonest first)
+      events.sort((a: Calendar.Event, b: Calendar.Event) => {
+        return new Date(a.startDate as string | Date).getTime() - new Date(b.startDate as string | Date).getTime()
+      })
+
+      // limit to first 3 events:
+      events = events.slice(0, 3)
+
+      // Shape into the {title, location?, time, endDate} contract the SDK expects.
+      // time is a pre-formatted display label; endDate is unix seconds.
+      const shapedEvents = events.map((ev: Calendar.Event) => {
+        const start = new Date(ev.startDate as string | Date)
+        const end = new Date(ev.endDate as string | Date)
+        let time: string
+
+        if (ev.allDay) {
+          time = "All day"
+        } else {
+          time = start.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})
+        }
+        // add the duration of the event, i.e. "10:00AM - 11:00AM"
+        const duration = end.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})
+        if (!ev.allDay) {
+          time += ` - ${duration}`
+        }
+        return {
+          title: ev.title ?? "",
+          ...(ev.location ? {location: ev.location} : {}),
+          time,
+          endDate: Math.floor(end.getTime() / 1000),
+        }
+      })
+      void BluetoothSdk.setCalendarEvents(shapedEvents).catch(error => {
+        console.warn("MANTLE: Failed to sync calendar events to glasses", error)
+      })
       restComms.sendCalendarData({events, calendars})
 
       // Direct forward to local miniapps. Emit one event per calendar entry
@@ -1014,14 +1263,24 @@ class MantleManager {
 
   public async setLocationTier(tier: string) {
     console.log("MANTLE: setLocationTier()", tier)
-    // restComms.sendLocationData({tier})
     try {
+      const isRegistered = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false)
+      if (isRegistered) {
+        await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME)
+      }
+      // "off" means no app is asking for location — leave the task
+      // stopped so the OS can power GPS down. Anything else: restart
+      // the task at the matching accuracy.
+      if (tier === "off") {
+        console.log("MANTLE: setLocationTier() stopped — no active subscribers")
+        return
+      }
       const accuracy = this.getLocationAccuracy(tier)
-      await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME)
       await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-        accuracy: accuracy,
+        accuracy,
         pausesUpdatesAutomatically: false,
       })
+      console.log("MANTLE: setLocationTier() success —", tier)
     } catch (error) {
       console.log("MANTLE: Error setting location tier", error)
     }
@@ -1128,13 +1387,17 @@ class MantleManager {
       return
     }
 
+    // Local transcripts only ever flow to local miniapps. The cloud-side
+    // pipeline (cloud miniapps, cloud-relayed transcripts) is unaffected
+    // by this branch — when the cloud WS is up, cloud transcripts arrive
+    // independently via SocketComms and reach miniapps via the same
+    // forwardEvent. Coordinator's `isActive()` already covers
+    // "subscription present AND cloud is dead", so if we got here without
+    // it being active there's no consumer and we drop the transcript.
     if (localSttFallbackCoordinator.isActive()) {
       const lang = data?.transcribeLanguage ?? localSttFallbackCoordinator.getActiveLanguage() ?? "en-US"
       localMiniappRuntime.forwardEvent(`transcription:${lang}`, data)
-      return
     }
-
-    socketComms.sendLocalTranscription(data)
   }
 
   public async handle_button_press(event: ButtonPressEvent) {

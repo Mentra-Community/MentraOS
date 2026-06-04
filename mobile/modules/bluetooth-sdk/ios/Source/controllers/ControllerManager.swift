@@ -20,7 +20,7 @@ protocol ControllerManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, sound: Bool, exposureTimeNs: Double?
+        compress: String?, flash: Bool, save: Bool, sound: Bool, exposureTimeNs: Double?, iso: Int?
     )
     func startStream(_ message: [String: Any])
     func stopStream()
@@ -41,7 +41,7 @@ protocol ControllerManager {
     func clearDisplay()
     func sendTextWall(_ text: String)
     func sendDoubleTextWall(_ top: String, _ bottom: String)
-    func displayBitmap(base64ImageData: String) async -> Bool
+    func displayBitmap(base64ImageData: String, x: Int32?, y: Int32?, width: Int32?, height: Int32?) async -> Bool
     func showDashboard()
     func setDashboardPosition(_ height: Int, _ depth: Int)
 

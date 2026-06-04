@@ -1,10 +1,19 @@
 #!/bin/bash
 #
-# MentraOS Mac mini self-hosted runner bootstrap.
+# MentraOS self-hosted runner bootstrap (macOS + Linux).
 #
-# Bootstraps a fresh Mac mini into a working GitHub Actions runner host for
-# the MentraOS iOS + Android pipelines. Run once per new machine. Re-running
-# is safe — every step is idempotent.
+# Bootstraps a fresh Mac mini OR a Linux box (Ubuntu/Debian) into a working
+# GitHub Actions runner host for the MentraOS pipelines. Re-running is safe —
+# every step is idempotent.
+#
+# Platform support:
+#   macOS  — full support: mobile iOS + mobile Android + ASG client
+#   Linux  — partial: mobile Android + ASG client only (no iOS). Use a Linux
+#            runner to take Android/ASG load off the Mac minis once you have
+#            >2 macOS runners.
+#
+# NOTE: The Linux paths in this script are not yet exercised in CI. Treat
+# them as "best effort, will fix when we actually onboard a Linux box."
 #
 # Manual prerequisites (do these once before running this script):
 #   1. Sign in to the Mac with the dedicated CI Apple ID.
@@ -13,6 +22,20 @@
 #   3. Generate the secrets below (only if you want this script to register
 #      runners — pass --runners 0 to skip runner registration entirely if
 #      you've already set them up by hand).
+#
+# Manual post-install steps (do these once after running this script):
+#   1. Copy ~/.mentra/credentials/ from an existing runner (or your laptop).
+#      Three files are required for the staging-builds workflow:
+#        - appstore-connect.env       (ASC API key id + issuer id)
+#        - AuthKey_<id>.p8             (ASC API private key)
+#        - google-play-key.json        (Play Store internal-track service acct)
+#      Auth proper to your team — these are NOT in this repo.
+#
+# What this script does NOT need to set up:
+#   - iOS signing identity / provisioning profile. The staging-builds workflow
+#     pulls the encrypted distribution cert + provisioning profile from
+#     Mentra-Community/match-certs via fastlane match on every build run, so
+#     each runner gets a fresh import per build. No per-runner Xcode bootstrap.
 #
 # Required env vars (only when registering runners):
 #   GH_RUNNER_TOKEN   - short-lived registration token from
@@ -93,8 +116,15 @@ fi
 # Preflight
 # ---------------------------------------------------------------------------
 
-[[ "$(uname -s)" == "Darwin" ]] || fail "This script only runs on macOS."
-[[ "$(uname -m)" == "arm64" ]]  || fail "Apple Silicon required (arm64)."
+case "$(uname -s)" in
+    Darwin) PLATFORM=mac ;;
+    Linux)  PLATFORM=linux ;;
+    *)      fail "This script supports macOS and Linux only (got $(uname -s))." ;;
+esac
+
+if [[ "$PLATFORM" == "mac" ]]; then
+    [[ "$(uname -m)" == "arm64" ]] || fail "Apple Silicon required on macOS (arm64)."
+fi
 
 GH_RUNNER_URL="${GH_RUNNER_URL:-https://github.com/Mentra-Community/MentraOS}"
 
@@ -174,65 +204,102 @@ fi
 # Xcode license + CLI tools
 # ---------------------------------------------------------------------------
 
-info "Ensuring Xcode CLI tools are installed"
-if ! xcode-select -p >/dev/null 2>&1; then
-    xcode-select --install || true
-    warn "Xcode CLI tools were missing. Re-run this script after the GUI install completes."
-    exit 1
-fi
+if [[ "$PLATFORM" == "mac" ]]; then
+    info "Ensuring Xcode CLI tools are installed"
+    if ! xcode-select -p >/dev/null 2>&1; then
+        xcode-select --install || true
+        warn "Xcode CLI tools were missing. Re-run this script after the GUI install completes."
+        exit 1
+    fi
 
-if [[ -d "/Applications/Xcode.app" ]]; then
-    sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-    sudo xcodebuild -license accept || true
-    sudo xcodebuild -runFirstLaunch || true
-    ok "Xcode pointed at /Applications/Xcode.app"
+    if [[ -d "/Applications/Xcode.app" ]]; then
+        sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+        sudo xcodebuild -license accept || true
+        sudo xcodebuild -runFirstLaunch || true
+        ok "Xcode pointed at /Applications/Xcode.app"
+    else
+        fail "Xcode.app not found in /Applications. Install Xcode from the App Store first."
+    fi
 else
-    fail "Xcode.app not found in /Applications. Install Xcode from the App Store first."
+    info "Skipping Xcode setup (Linux runner — Android + ASG only)."
 fi
 
 # ---------------------------------------------------------------------------
 # Homebrew
 # ---------------------------------------------------------------------------
 
-if ! command -v brew >/dev/null 2>&1; then
-    info "Installing Homebrew"
-    NONINTERACTIVE=1 /bin/bash -c \
-        "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-fi
+if [[ "$PLATFORM" == "mac" ]]; then
+    if ! command -v brew >/dev/null 2>&1; then
+        info "Installing Homebrew"
+        NONINTERACTIVE=1 /bin/bash -c \
+            "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    fi
 
-# Ensure brew is on PATH for the rest of this script + future shells.
-BREW_PREFIX="/opt/homebrew"
-eval "$($BREW_PREFIX/bin/brew shellenv)"
+    # Ensure brew is on PATH for the rest of this script + future shells.
+    BREW_PREFIX="/opt/homebrew"
+    eval "$($BREW_PREFIX/bin/brew shellenv)"
 
-ZPROFILE="$HOME/.zprofile"
-if ! grep -q 'brew shellenv' "$ZPROFILE" 2>/dev/null; then
-    echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$ZPROFILE"
+    ZPROFILE="$HOME/.zprofile"
+    if ! grep -q 'brew shellenv' "$ZPROFILE" 2>/dev/null; then
+        echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$ZPROFILE"
+    fi
+    ok "Homebrew ready"
+else
+    BREW_PREFIX=""  # not used on Linux but referenced in env-var setup
+    ZPROFILE="$HOME/.profile"
+    info "Updating apt package index"
+    sudo apt-get update -qq
+    ok "apt ready"
 fi
-ok "Homebrew ready"
 
 # ---------------------------------------------------------------------------
 # Core toolchain
 # ---------------------------------------------------------------------------
 
 info "Installing core toolchain"
-brew update
+if [[ "$PLATFORM" == "mac" ]]; then
+    brew update
 
-# applesimutils lives in the wix tap.
-brew tap wix/brew >/dev/null 2>&1 || true
+    # applesimutils lives in the wix tap.
+    brew tap wix/brew >/dev/null 2>&1 || true
 
-brew install \
-    git \
-    git-lfs \
-    gh \
-    cocoapods \
-    watchman \
-    swiftformat \
-    openjdk@17 \
-    xcbeautify \
-    coreutils \
-    jq \
-    wix/brew/applesimutils \
-    xcodesorg/made/xcodes
+    brew install \
+        git \
+        git-lfs \
+        gh \
+        cocoapods \
+        watchman \
+        swiftformat \
+        openjdk@17 \
+        xcbeautify \
+        coreutils \
+        jq \
+        wix/brew/applesimutils \
+        xcodesorg/made/xcodes
+else
+    # Linux: install gh via GitHub's apt repo (not in default Ubuntu repos).
+    if ! command -v gh >/dev/null 2>&1; then
+        sudo apt-get install -y curl gnupg
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | \
+            sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+        sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+            | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+        sudo apt-get update -qq
+    fi
+    sudo apt-get install -y \
+        git \
+        git-lfs \
+        gh \
+        openjdk-17-jdk \
+        jq \
+        build-essential \
+        autoconf bison patch rustc libssl-dev libyaml-dev libreadline-dev \
+        zlib1g-dev libgmp-dev libncurses-dev libffi-dev libgdbm6 libgdbm-dev \
+        libdb-dev uuid-dev
+    # ^ that long list is ruby-build's recommended deps for compiling Ruby
+    # 3.4 from source via rbenv. Without them, `rbenv install` will fail.
+fi
 
 # Bun: installed via the official script (not in homebrew-core; the oven-sh
 # tap exists but the upstream-recommended install path is curl|bash).
@@ -262,20 +329,79 @@ if ! grep -q '\.maestro/bin' "$ZPROFILE" 2>/dev/null; then
 fi
 export PATH="$HOME/.maestro/bin:$PATH"
 
-# Java 17 needs a symlink to be picked up by /usr/libexec/java_home.
-if [[ ! -L "/Library/Java/JavaVirtualMachines/openjdk-17.jdk" ]]; then
-    sudo ln -sfn \
-        "$BREW_PREFIX/opt/openjdk@17/libexec/openjdk.jdk" \
-        "/Library/Java/JavaVirtualMachines/openjdk-17.jdk"
+# Java 17 needs a symlink to be picked up by /usr/libexec/java_home (Mac).
+# On Linux, openjdk-17-jdk installs to a known path that JAVA_HOME can point to.
+if [[ "$PLATFORM" == "mac" ]]; then
+    if [[ ! -L "/Library/Java/JavaVirtualMachines/openjdk-17.jdk" ]]; then
+        sudo ln -sfn \
+            "$BREW_PREFIX/opt/openjdk@17/libexec/openjdk.jdk" \
+            "/Library/Java/JavaVirtualMachines/openjdk-17.jdk"
+    fi
 fi
 
-# Ruby for fastlane / cocoapods. Use system Ruby + bundler.
+# Ruby via rbenv. macOS ships an Apple-deprecated Ruby 2.6 whose
+# bundler is too old (<2.0) to read modern Gemfile.lock files. Modern
+# fastlane and bundler require Ruby >=3. Pin to RUBY_VERSION so every
+# runner matches what developers use locally — avoids "works on my
+# machine" version drift in CI.
+RUBY_VERSION="3.4.2"
+
+if ! command -v rbenv >/dev/null 2>&1; then
+    info "Installing rbenv + ruby-build"
+    if [[ "$PLATFORM" == "mac" ]]; then
+        brew install rbenv ruby-build
+    else
+        # Linux: rbenv via git clone (it's not in apt). Idempotent thanks
+        # to the `command -v` check above.
+        git clone https://github.com/rbenv/rbenv.git "$HOME/.rbenv"
+        git clone https://github.com/rbenv/ruby-build.git "$HOME/.rbenv/plugins/ruby-build"
+    fi
+fi
+
+# Persist rbenv shims on PATH for future shells AND the runner service.
+# Use raw PATH prepend instead of `eval rbenv init` here to avoid a
+# `complete: command not found` zsh-completion warning under bash (which
+# tripped `set -e` when first written).
+if ! grep -q 'rbenv init' "$ZPROFILE" 2>/dev/null; then
+    cat >> "$ZPROFILE" <<'EOF'
+
+# rbenv (added by setup-runner.sh)
+eval "$(rbenv init - --no-rehash zsh)"
+EOF
+fi
+export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
+
+if ! rbenv versions --bare 2>/dev/null | grep -qx "$RUBY_VERSION"; then
+    info "Installing Ruby $RUBY_VERSION (this can take ~5 minutes)"
+    rbenv install -s "$RUBY_VERSION"
+fi
+rbenv global "$RUBY_VERSION"
+rbenv rehash
+
+ok "Ruby $(ruby -v)"
+
+# Bundler matching the one used to generate mobile/Gemfile.lock. Modern
+# rbenv-installed Rubies ship a recent bundler by default; gem install is
+# idempotent and brings it forward if needed.
 gem install bundler --no-document || true
 
-# fastlane is gem-installed (no longer in homebrew-core).
+# fastlane is gem-installed (no longer in homebrew-core). With rbenv
+# managing Ruby we never need sudo here.
 if ! command -v fastlane >/dev/null 2>&1; then
     info "Installing fastlane via RubyGems"
-    gem install fastlane --no-document || sudo gem install fastlane --no-document
+    gem install fastlane --no-document
+fi
+rbenv rehash
+
+# Required by mobile/scripts/set-build-env.mjs (called at the top of
+# release-android.mjs / release-ios.mjs). The script reads `git config
+# user.name` to label the build in the in-app debug menu. If unset,
+# release scripts crash at Step 1. Value is purely cosmetic; pick anything
+# that's safe to display in the app's debug overlay.
+if [[ -z "$(git config --global user.name 2>/dev/null)" ]]; then
+    git config --global user.name "Mentra CI"
+    git config --global user.email "ci@mentra.glass"
+    ok "Set global git identity (Mentra CI <ci@mentra.glass>)"
 fi
 
 ok "Core toolchain installed"
@@ -286,14 +412,31 @@ ok "Core toolchain installed"
 
 if [[ "${SKIP_ANDROID:-0}" != "1" ]]; then
     info "Installing Android SDK"
-    brew install --cask android-commandlinetools || true
 
-    ANDROID_HOME="$HOME/Library/Android/sdk"
+    if [[ "$PLATFORM" == "mac" ]]; then
+        brew install --cask android-commandlinetools || true
+        ANDROID_HOME="$HOME/Library/Android/sdk"
+        SDKMANAGER="$BREW_PREFIX/share/android-commandlinetools/cmdline-tools/latest/bin/sdkmanager"
+    else
+        # Linux: manual cmdline-tools install.
+        ANDROID_HOME="$HOME/Android/Sdk"
+        mkdir -p "$ANDROID_HOME/cmdline-tools"
+        if [[ ! -d "$ANDROID_HOME/cmdline-tools/latest" ]]; then
+            TMP_DIR=$(mktemp -d)
+            CMD_TOOLS_VERSION="11076708"  # known-good version; bump as needed
+            curl -fsSL -o "$TMP_DIR/cmdtools.zip" \
+                "https://dl.google.com/android/repository/commandlinetools-linux-${CMD_TOOLS_VERSION}_latest.zip"
+            (cd "$TMP_DIR" && unzip -q cmdtools.zip)
+            mv "$TMP_DIR/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+            rm -rf "$TMP_DIR"
+        fi
+        SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+    fi
+
     mkdir -p "$ANDROID_HOME"
     export ANDROID_HOME
     export ANDROID_SDK_ROOT="$ANDROID_HOME"
 
-    SDKMANAGER="$BREW_PREFIX/share/android-commandlinetools/cmdline-tools/latest/bin/sdkmanager"
     if [[ -x "$SDKMANAGER" ]]; then
         yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
         "$SDKMANAGER" --sdk_root="$ANDROID_HOME" \
@@ -311,12 +454,12 @@ if [[ "${SKIP_ANDROID:-0}" != "1" ]]; then
         cat >> "$ZPROFILE" <<EOF
 
 # Android SDK (added by setup-runner.sh)
-export ANDROID_HOME="\$HOME/Library/Android/sdk"
+export ANDROID_HOME="$ANDROID_HOME"
 export ANDROID_SDK_ROOT="\$ANDROID_HOME"
 export PATH="\$ANDROID_HOME/platform-tools:\$ANDROID_HOME/cmdline-tools/latest/bin:\$PATH"
 EOF
     fi
-    ok "Android SDK installed"
+    ok "Android SDK installed at $ANDROID_HOME"
 else
     info "Skipping Android SDK (SKIP_ANDROID=1)"
 fi
@@ -327,14 +470,19 @@ fi
 
 if [[ "${ENABLE_TAILSCALE:-0}" == "1" ]]; then
     info "Installing Tailscale"
-    if ! command -v tailscale >/dev/null 2>&1; then
-        brew install --cask tailscale
+    if [[ "$PLATFORM" == "mac" ]]; then
+        if ! command -v tailscale >/dev/null 2>&1; then
+            brew install --cask tailscale
+        fi
+        # The cask installs the GUI app. Launching it once registers the system
+        # extension so the CLI works.
+        open -a "Tailscale" || true
+        sleep 5
+    else
+        if ! command -v tailscale >/dev/null 2>&1; then
+            curl -fsSL https://tailscale.com/install.sh | sudo sh
+        fi
     fi
-
-    # The cask installs the GUI app. Launching it once registers the system
-    # extension so the CLI works.
-    open -a "Tailscale" || true
-    sleep 5
 
     info "Joining tailnet"
     sudo tailscale up \
@@ -351,20 +499,24 @@ fi
 # Power + auto-login behavior for a headless build box
 # ---------------------------------------------------------------------------
 
-info "Disabling sleep and enabling auto-restart"
-sudo pmset -a sleep 0
-sudo pmset -a disksleep 0
-sudo pmset -a displaysleep 30
-sudo pmset -a autorestart 1
-sudo pmset -a powernap 0
-sudo systemsetup -setrestartfreeze on >/dev/null 2>&1 || true
-sudo systemsetup -setrestartpowerfailure on >/dev/null 2>&1 || true
-ok "Power settings tuned for unattended use"
+if [[ "$PLATFORM" == "mac" ]]; then
+    info "Disabling sleep and enabling auto-restart"
+    sudo pmset -a sleep 0
+    sudo pmset -a disksleep 0
+    sudo pmset -a displaysleep 30
+    sudo pmset -a autorestart 1
+    sudo pmset -a powernap 0
+    sudo systemsetup -setrestartfreeze on >/dev/null 2>&1 || true
+    sudo systemsetup -setrestartpowerfailure on >/dev/null 2>&1 || true
+    ok "Power settings tuned for unattended use"
 
-# Auto-login is set in System Settings > Users & Groups (requires GUI + the
-# user's password). The runner uses launchd anyway, so we don't strictly need
-# auto-login — but it makes recovering from a power-cut faster.
-warn "Auto-login is GUI-only on modern macOS. Set it once in System Settings > Users & Groups."
+    # Auto-login is set in System Settings > Users & Groups (requires GUI + the
+    # user's password). The runner uses launchd anyway, so we don't strictly need
+    # auto-login — but it makes recovering from a power-cut faster.
+    warn "Auto-login is GUI-only on modern macOS. Set it once in System Settings > Users & Groups."
+else
+    info "Linux power management: assumes the box stays on (e.g. ATX desktop, VM). Skipping."
+fi
 
 # ---------------------------------------------------------------------------
 # File descriptor limits
@@ -374,6 +526,7 @@ warn "Auto-login is GUI-only on modern macOS. Set it once in System Settings > U
 # look like build flakes but are pure config. Bump system-wide limits.
 
 info "Raising file descriptor limits"
+if [[ "$PLATFORM" == "mac" ]]; then
 sudo tee /Library/LaunchDaemons/limit.maxfiles.plist >/dev/null <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -398,6 +551,18 @@ sudo chown root:wheel /Library/LaunchDaemons/limit.maxfiles.plist
 sudo chmod 644 /Library/LaunchDaemons/limit.maxfiles.plist
 sudo launchctl load -w /Library/LaunchDaemons/limit.maxfiles.plist 2>/dev/null || true
 ok "File descriptor limit raised to 524288 (system-wide)"
+else
+    # Linux: bump via systemd user limits + /etc/security/limits.conf.
+    if ! grep -q "MentraOS runner" /etc/security/limits.conf 2>/dev/null; then
+        sudo tee -a /etc/security/limits.conf >/dev/null <<'EOF'
+
+# MentraOS runner (added by setup-runner.sh)
+* soft nofile 524288
+* hard nofile 524288
+EOF
+    fi
+    ok "File descriptor limit raised to 524288 (effective after next login)"
+fi
 
 # ---------------------------------------------------------------------------
 # Spotlight exclusions
@@ -405,13 +570,71 @@ ok "File descriptor limit raised to 524288 (system-wide)"
 # Spotlight indexing Xcode DerivedData and the runner workspace burns 5-10%
 # CPU during builds and contends with the SSD. Exclude them.
 
-info "Excluding build dirs from Spotlight"
-mkdir -p "$RUNNER_BASE_DIR"
-mkdir -p "$HOME/Library/Developer/Xcode/DerivedData"
-sudo mdutil -i off "$RUNNER_BASE_DIR" 2>/dev/null || true
-sudo mdutil -i off "$HOME/Library/Developer/Xcode/DerivedData" 2>/dev/null || true
-sudo mdutil -i off "$HOME/Library/Caches/CocoaPods" 2>/dev/null || true
-ok "Spotlight indexing disabled for build artifact directories"
+if [[ "$PLATFORM" == "mac" ]]; then
+    info "Excluding build dirs from Spotlight"
+    mkdir -p "$RUNNER_BASE_DIR"
+    mkdir -p "$HOME/Library/Developer/Xcode/DerivedData"
+    sudo mdutil -i off "$RUNNER_BASE_DIR" 2>/dev/null || true
+    sudo mdutil -i off "$HOME/Library/Developer/Xcode/DerivedData" 2>/dev/null || true
+    sudo mdutil -i off "$HOME/Library/Caches/CocoaPods" 2>/dev/null || true
+    ok "Spotlight indexing disabled for build artifact directories"
+else
+    mkdir -p "$RUNNER_BASE_DIR"
+fi
+
+# ---------------------------------------------------------------------------
+# Weekly cache cleanup scheduler
+# ---------------------------------------------------------------------------
+# Runs runner-cleanup.sh every Sunday at 03:00 local. The script auto-defers
+# if a build is active, so this never interrupts work. See
+# mobile/scripts/runner-cleanup.sh + .plist.template for the moving parts.
+
+info "Installing weekly cache cleanup scheduler"
+
+SCRIPT_DIR_ABS="$(cd "$(dirname "$0")" && pwd)"
+CLEANUP_SCRIPT_SRC="$SCRIPT_DIR_ABS/runner-cleanup.sh"
+CLEANUP_SCRIPT_DST="$RUNNER_BASE_DIR/runner-cleanup.sh"
+
+if [[ ! -f "$CLEANUP_SCRIPT_SRC" ]]; then
+    warn "runner-cleanup.sh not found next to setup-runner.sh — skipping cleanup scheduler install."
+else
+    mkdir -p "$RUNNER_BASE_DIR"
+    cp "$CLEANUP_SCRIPT_SRC" "$CLEANUP_SCRIPT_DST"
+    chmod +x "$CLEANUP_SCRIPT_DST"
+
+    if [[ "$PLATFORM" == "mac" ]]; then
+        CLEANUP_PLIST_SRC="$SCRIPT_DIR_ABS/runner-cleanup.plist.template"
+        CLEANUP_PLIST_DST="$HOME/Library/LaunchAgents/com.mentra.runner-cleanup.plist"
+        if [[ ! -f "$CLEANUP_PLIST_SRC" ]]; then
+            warn "runner-cleanup.plist.template not found — cleanup install skipped."
+        else
+            mkdir -p "$(dirname "$CLEANUP_PLIST_DST")"
+            sed "s|@@HOME_DIR@@|$HOME|g" "$CLEANUP_PLIST_SRC" > "$CLEANUP_PLIST_DST"
+            launchctl unload "$CLEANUP_PLIST_DST" 2>/dev/null || true
+            launchctl load -w "$CLEANUP_PLIST_DST" 2>/dev/null || true
+            ok "Weekly cleanup scheduled (launchd): Sundays 03:00"
+        fi
+    else
+        # Linux: systemd --user units. Need lingering enabled so they fire
+        # without an interactive session.
+        SVC_SRC="$SCRIPT_DIR_ABS/runner-cleanup.service.template"
+        TIMER_SRC="$SCRIPT_DIR_ABS/runner-cleanup.timer.template"
+        UNIT_DIR="$HOME/.config/systemd/user"
+        if [[ ! -f "$SVC_SRC" || ! -f "$TIMER_SRC" ]]; then
+            warn "Cleanup service/timer templates missing — skipping Linux cleanup install."
+        else
+            mkdir -p "$UNIT_DIR"
+            sed "s|@@HOME_DIR@@|$HOME|g" "$SVC_SRC" > "$UNIT_DIR/runner-cleanup.service"
+            sed "s|@@HOME_DIR@@|$HOME|g" "$TIMER_SRC" > "$UNIT_DIR/runner-cleanup.timer"
+            # `loginctl enable-linger` keeps user systemd units alive without
+            # an interactive login. Idempotent.
+            sudo loginctl enable-linger "$USER" || true
+            systemctl --user daemon-reload || true
+            systemctl --user enable --now runner-cleanup.timer || true
+            ok "Weekly cleanup scheduled (systemd): Sundays 03:00"
+        fi
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # GitHub Actions runner(s)
@@ -422,7 +645,15 @@ if [[ "$SKIP_RUNNER_REGISTRATION" -eq 1 ]]; then
 elif [[ "$RUNNER_COUNT" -eq 0 ]]; then
     info "Runner registration skipped (--runners 0)."
 else
-    LABELS="self-hosted,macOS,ARM64"
+    if [[ "$PLATFORM" == "mac" ]]; then
+        LABELS="self-hosted,macOS,ARM64"
+    else
+        # uname -m → x86_64 / aarch64 → arch labels x64 / arm64
+        case "$(uname -m)" in
+            x86_64)  LABELS="self-hosted,linux,x64" ;;
+            aarch64) LABELS="self-hosted,linux,arm64" ;;
+        esac
+    fi
     if [[ -n "$RUNNER_LABELS_EXTRA" ]]; then
         LABELS="$LABELS,$RUNNER_LABELS_EXTRA"
     fi
@@ -437,7 +668,14 @@ else
         cd "$RUNNER_HOME"
 
         if [[ ! -f ./config.sh ]]; then
-            RUNNER_TARBALL="actions-runner-osx-arm64-${RUNNER_VERSION}.tar.gz"
+            # Pick the right tarball for the platform.
+            case "$PLATFORM-$(uname -m)" in
+                mac-arm64)     RUNNER_OS_ARCH="osx-arm64" ;;
+                linux-x86_64)  RUNNER_OS_ARCH="linux-x64" ;;
+                linux-aarch64) RUNNER_OS_ARCH="linux-arm64" ;;
+                *) fail "Unsupported platform-arch combo: $PLATFORM $(uname -m)" ;;
+            esac
+            RUNNER_TARBALL="actions-runner-${RUNNER_OS_ARCH}-${RUNNER_VERSION}.tar.gz"
             curl -fL -o "$RUNNER_TARBALL" \
                 "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/${RUNNER_TARBALL}"
             tar xzf "$RUNNER_TARBALL"
@@ -459,25 +697,40 @@ else
 
         # Bake env vars the runner should see at job time. The runner reads
         # ./.env on startup. Keep this in sync with what the workflows expect.
+        # rbenv shims must come first on PATH so `ruby` / `bundle` / `gem`
+        # resolve to the rbenv-installed 3.4.x, not Apple's system 2.6.
         {
-            echo "PATH=$HOME/.bun/bin:$HOME/.maestro/bin:$BREW_PREFIX/bin:$BREW_PREFIX/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+            if [[ "$PLATFORM" == "mac" ]]; then
+                echo "PATH=$HOME/.rbenv/shims:$HOME/.bun/bin:$HOME/.maestro/bin:$BREW_PREFIX/bin:$BREW_PREFIX/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+                echo "JAVA_HOME=$BREW_PREFIX/opt/openjdk@17"
+            else
+                echo "PATH=$HOME/.rbenv/shims:$HOME/.rbenv/bin:$HOME/.bun/bin:$HOME/.maestro/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+                echo "JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64"
+            fi
             echo "LANG=en_US.UTF-8"
-            echo "JAVA_HOME=$BREW_PREFIX/opt/openjdk@17"
             if [[ "${SKIP_ANDROID:-0}" != "1" ]]; then
-                echo "ANDROID_HOME=$HOME/Library/Android/sdk"
-                echo "ANDROID_SDK_ROOT=$HOME/Library/Android/sdk"
+                echo "ANDROID_HOME=$ANDROID_HOME"
+                echo "ANDROID_SDK_ROOT=$ANDROID_HOME"
             fi
         } > "$RUNNER_HOME/.env"
 
-        # Install + start the launchd service so the runner survives reboots.
-        # svc.sh's plist lives in ~/Library/LaunchAgents — check that rather
-        # than relying on `svc.sh status` exit codes (which vary by version).
-        SVC_PLIST="$HOME/Library/LaunchAgents/actions.runner.$(printf '%s' "$GH_RUNNER_URL" | sed 's|https://github.com/||; s|/|-|g').${RUNNER_NAME}.plist"
-        if [[ ! -f "$SVC_PLIST" ]]; then
-            sudo ./svc.sh install "$USER"
+        # Install + start the runner as a service so it survives reboots.
+        # On macOS svc.sh writes a launchd plist; on Linux it writes a
+        # systemd unit. Both ship in the GH Actions runner tarball.
+        if [[ "$PLATFORM" == "mac" ]]; then
+            SVC_PLIST="$HOME/Library/LaunchAgents/actions.runner.$(printf '%s' "$GH_RUNNER_URL" | sed 's|https://github.com/||; s|/|-|g').${RUNNER_NAME}.plist"
+            if [[ ! -f "$SVC_PLIST" ]]; then
+                sudo ./svc.sh install "$USER"
+            fi
+            sudo ./svc.sh start || true
+        else
+            # svc.sh on Linux uses systemd by default. Needs root to install
+            # because the unit goes in /etc/systemd/system. Runs as the
+            # invoking user via User= directive.
+            sudo ./svc.sh install "$USER" || true
+            sudo ./svc.sh start || true
         fi
-        sudo ./svc.sh start || true
-        ok "Runner $RUNNER_NAME registered and running as a launchd service"
+        ok "Runner $RUNNER_NAME registered and running as a service"
     done
 fi
 
@@ -488,15 +741,27 @@ fi
 cat <<EOF
 
 ==========================================================================
-  Host '$RUNNER_NAME_BASE' bootstrapped.
+  Host '$RUNNER_NAME_BASE' bootstrapped ($PLATFORM).
 
   GitHub URL: $GH_RUNNER_URL
   Runner home(s): $RUNNER_BASE_DIR/actions-runner-*
 
   Next steps you should do manually once:
+$([ "$PLATFORM" = mac ] && cat <<MAC_STEPS
     - System Settings > Users & Groups > set this user to auto-login
     - System Settings > Lock Screen > Require password "Never"
     - Sign in to the Apple Developer account in Xcode (Settings > Accounts)
+MAC_STEPS
+)
     - Confirm runner(s) appear at $GH_RUNNER_URL/settings/actions/runners
+    - Copy ~/.mentra/credentials/ from an existing runner (or your laptop):
+        scp ~/.mentra/credentials/{appstore-connect.env,AuthKey_*.p8,google-play-key.json} \\
+            user@$RUNNER_NAME_BASE:~/.mentra/credentials/
+$([ "$PLATFORM" = mac ] && echo "    - For Android signing: also copy ~/.gradle/gradle.properties (has MENTRAOS_UPLOAD_* keys).")
+
+  Automated maintenance:
+    - Weekly cache cleanup runs Sundays at 03:00 (defers if a build is active).
+      Logs: $RUNNER_BASE_DIR/runner-cleanup.log
+      Manual deep clean: $RUNNER_BASE_DIR/runner-cleanup.sh --tier all --force
 ==========================================================================
 EOF

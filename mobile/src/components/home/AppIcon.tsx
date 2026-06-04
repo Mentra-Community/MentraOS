@@ -40,7 +40,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
   }
 
   return (
-    <View className={`items-center`}>
+    <View className={`items-center ${app.compatibility?.isCompatible ? "" : "opacity-30"}`}>
       <WrapperComponent
         onPress={onClick}
         activeOpacity={onClick ? 0.7 : undefined}
@@ -56,7 +56,6 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
             alignItems: "center",
             justifyContent: "center",
             ...iconSize,
-            // backgroundColor: app.compatibility?.isCompatible ? "transparent" : "gray",
           }}>
           {app.loading && !disableLoader && (
             <View className="absolute inset-0 justify-center items-center z-10 bg-black/40">
@@ -70,7 +69,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
             transition={200}
             cachePolicy="memory-disk"
           />
-          {!app.compatibility?.isCompatible && !app.packageName.startsWith("@") && (
+          {/* {!app.compatibility?.isCompatible && !app.packageName.startsWith("@") && (
             <View
               style={{
                 ...StyleSheet.absoluteFill,
@@ -78,7 +77,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
                 mixBlendMode: "saturation",
               }}
             />
-          )}
+          )} */}
         </SquircleView>
       </WrapperComponent>
       {!app.healthy && (

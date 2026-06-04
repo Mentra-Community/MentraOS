@@ -90,6 +90,8 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 | `compress`       | string  | `"none"`            | Compression preset passed to capture pipeline               |
 | `flash`          | boolean | `true`              | Fire the privacy LED during capture                         |
 | `sound`          | boolean | `true`              | Play shutter sound                                          |
+| `exposureTimeNs` | number  | absent              | Optional one-shot manual sensor exposure time in ns         |
+| `iso`            | number  | absent              | Optional one-shot manual sensor ISO; ignored without manual exposure |
 
 **Constraints (all enforced in `PhotoCommandHandler`):**
 
@@ -117,6 +119,58 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 {"type": "ble_photo_ready", "bleImgId": "img_001", "requestId": "photo_001"}
 ```
 
+`photo_status` — capture and transfer progress:
+
+```json
+{
+  "type": "photo_status",
+  "requestId": "photo_001",
+  "status": "capturing",
+  "timestamp": 1708963201234,
+  "requestedCaptureConfig": {
+    "manual": false,
+    "aeMode": 1,
+    "aeTargetFpsRange": {"min": 5, "max": 30}
+  },
+  "meteredPreview": {
+    "exposureTimeNs": 8333333,
+    "iso": 200,
+    "totalLightProxy": 1666.6666
+  }
+}
+```
+
+Status metadata is stage-specific:
+
+| Status | Optional fields | Description |
+| ------ | --------------- | ----------- |
+| `configuring` | `resolvedConfig` | Effective JPEG dimensions, quality, requested size, source (`sdk` or `button`), transfer method, compression, and manual exposure fields when present |
+| `capturing` | `requestedCaptureConfig`, `meteredPreview` | Camera2 still request about to be submitted, plus the latest AE preview estimate before capture |
+| `captured` | `captureMetadata` | HAL-applied still capture result, including actual exposure time, ISO, frame duration, AE state/name, sensor timestamp, and related camera modes when available |
+| `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, `transferring` | none | Transport progress only; capture metadata is not repeated here. `ble_fallback_compression` means Wi-Fi/webhook upload failed and the photo is being compressed for Bluetooth fallback |
+| `failed` | `errorCode`, `errorMessage` | Capture or transfer failure details |
+
+`captureMetadata` on `captured` is the right place to read the actual still capture values:
+
+```json
+{
+  "type": "photo_status",
+  "requestId": "photo_001",
+  "status": "captured",
+  "timestamp": 1708963202345,
+  "captureMetadata": {
+    "manual": false,
+    "exposureTimeNs": 8333333,
+    "iso": 200,
+    "frameDurationNs": 33333333,
+    "aeState": 2,
+    "aeStateName": "CONVERGED"
+  }
+}
+```
+
+Action-button photos emitted by the glasses use the same `photo_status` shape while the phone SDK is connected. These local captures use a `local_<timestamp>` request ID and report `resolvedConfig.source: "button"` with `resolvedConfig.transferMethod: "local"`.
+
 `ble_photo_error` / `photo_error_response` — capture or transfer failed:
 
 ```json
@@ -129,6 +183,8 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 ```
 
 Error codes the handler can emit: `BATTERY_LOW`, `VIDEO_RECORDING_ACTIVE`, `BLE_TRANSFER_BUSY`, `CAMERA_BUSY`, `INSUFFICIENT_STORAGE`, `UPLOAD_SYSTEM_BUSY`, `CAPTURE_TIMEOUT`, `CAMERA_CAPTURE_FAILED`, `BLE_TRANSFER_BUSY`, `BLE_TRANSFER_FAILED`, `BLE_TRANSFER_FAILED_TO_START`.
+
+Photo captures embed IMU payload directly into JPEG EXIF metadata when available.
 
 ---
 
@@ -318,6 +374,16 @@ Response:
   "hotspot_gateway_ip": "192.168.43.1"
 }
 ```
+
+#### `set_system_time`
+
+Sets the glasses system clock from the phone. Sent only when the phone detects clock skew during gallery sync or OTA version checks (not on every BLE connect).
+
+```json
+{"type": "set_system_time", "timestamp_ms": 1710000000000}
+```
+
+No response is required for V1 (fire-and-forget).
 
 #### `disconnect_wifi`
 

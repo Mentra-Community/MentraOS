@@ -863,8 +863,8 @@ class R1 : ControllerManager() {
     override fun sendJson(jsonOriginal: Map<String, Any>, wakeUp: Boolean, requireAck: Boolean) {}
     override fun requestPhoto(
         requestId: String, appId: String, size: String?, webhookUrl: String?,
-        authToken: String?, compress: String?, flash: Boolean, sound: Boolean,
-        exposureTimeNs: Long?,
+        authToken: String?, compress: String?, flash: Boolean, save: Boolean, sound: Boolean,
+        exposureTimeNs: Long?, iso: Int?,
     ) {}
     override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {}
     override fun stopVideoRecording(requestId: String) {}
@@ -879,7 +879,13 @@ class R1 : ControllerManager() {
     override fun clearDisplay() {}
     override fun sendTextWall(text: String) {}
     override fun sendDoubleTextWall(top: String, bottom: String) {}
-    override fun displayBitmap(base64ImageData: String): Boolean = false
+    override fun displayBitmap(
+            base64ImageData: String,
+            x: Int?,
+            y: Int?,
+            width: Int?,
+            height: Int?
+    ): Boolean = false
     override fun showDashboard() {}
     override fun setDashboardPosition(height: Int, depth: Int) {}
     override fun setHeadUpAngle(angle: Int) {}

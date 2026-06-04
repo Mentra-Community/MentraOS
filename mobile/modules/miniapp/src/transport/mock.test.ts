@@ -1,4 +1,4 @@
-import {describe, expect, test, beforeEach, mock} from "bun:test"
+import {describe, expect, test} from "bun:test"
 import {MockTransport} from "./mock"
 import {parseEnvelope, serializeEnvelope, makeRequestId} from "../envelope"
 import {MiniappRequestType, MiniappResponseType} from "../protocol"
@@ -62,7 +62,7 @@ describe("MockTransport", () => {
     const payload = env!.payload as {type: string; ok: boolean; data: any}
     expect(payload.type).toBe(MiniappResponseType.REQUEST_RESULT)
     expect(payload.ok).toBe(true)
-    expect(payload.data).toEqual({lat: 0, lng: 0, accuracy: 0, timestamp: expect.any(Number)})
+    expect(payload.data).toEqual({lat: 37.7956, lng: -122.3933, accuracy: 0, timestamp: expect.any(Number)})
   })
 
   test("PHOTO returns a placeholder data: URL", async () => {

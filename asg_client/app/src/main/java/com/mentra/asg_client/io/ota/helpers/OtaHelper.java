@@ -710,6 +710,23 @@ public class OtaHelper {
     }
 
     /** Classify download exceptions into semantic error codes for actionable user feedback. */
+    private boolean isClockSkewSslError(Throwable e) {
+        Throwable t = e;
+        while (t != null) {
+            if (t instanceof java.security.cert.CertificateNotYetValidException) {
+                return true;
+            }
+            String msg = t.getMessage();
+            if (msg != null
+                    && (msg.contains("Certificate not yet valid")
+                            || msg.contains("timestamp check failed"))) {
+                return true;
+            }
+            t = t.getCause();
+        }
+        return false;
+    }
+
     private String classifyDownloadError(Exception e) {
         if (e instanceof FirmwareDownloadException) {
             // Non-network failure (size cap, sha256 mismatch). Carry the stable code through
@@ -721,7 +738,14 @@ public class OtaHelper {
             return "no_internet";
         } else if (e instanceof java.net.ConnectException) {
             return "no_internet";
-        } else if (e instanceof javax.net.ssl.SSLException) {
+        } else if (e instanceof javax.net.ssl.SSLException || isClockSkewSslError(e)) {
+            if (isClockSkewSslError(e)) {
+                Log.w(
+                        TAG,
+                        "⏰ OTA failure likely due to glasses clock skew (TLS cert validity): "
+                                + e.getMessage());
+                return "clock_skew";
+            }
             return "ssl_error";
         } else if (e instanceof java.net.SocketException) {
             // Mid-download link loss, RST, or "Software caused connection abort" — not worth
@@ -1005,6 +1029,16 @@ public class OtaHelper {
         }
         Log.e(TAG, "No WiFi connection detected");
         return false;
+    }
+
+    /** Re-run background OTA version check (e.g. after phone fixes glasses clock via BLE). */
+    public void retryBackgroundVersionCheck() {
+        if (context == null) {
+            Log.w(TAG, "⏰ Cannot retry OTA version check — no context");
+            return;
+        }
+        Log.i(TAG, "⏰ Retrying OTA version check after clock sync from phone");
+        startVersionCheck(context);
     }
 
     public void startVersionCheck(Context context) {
@@ -2973,8 +3007,8 @@ public class OtaHelper {
                                 TAG,
                                 "Starting MTK firmware update from: "
                                         + OtaConstants.MTK_FIRMWARE_PATH);
-                        com.mentra.asg_client.SysControl.installOTA(
-                                ctx, OtaConstants.MTK_FIRMWARE_PATH);
+                        com.mentra.asg_client.service.system.core.SystemControllerFactory.get(ctx)
+                                .installSystemOta(OtaConstants.MTK_FIRMWARE_PATH);
                         Log.i(
                                 TAG,
                                 "MTK firmware update initiated - system will handle in background");
@@ -3624,6 +3658,9 @@ public class OtaHelper {
             // object, so we add "type" directly to sessionState rather than nesting it under
             // "data".
             sessionState.put("type", "ota_status");
+            if ("failed".equals(sessionState.optString("status"))) {
+                sessionState.put("glasses_time_ms", System.currentTimeMillis());
+            }
             phoneConnectionProvider.sendOtaStatus(sessionState);
         } catch (JSONException e) {
             Log.e(TAG, "Failed to send OTA status", e);
@@ -3654,6 +3691,7 @@ public class OtaHelper {
                 o.put(
                         "error_message",
                         lastOtaPhoneError != null ? lastOtaPhoneError : "Update failed");
+                o.put("glasses_time_ms", System.currentTimeMillis());
             } else if ("FINISHED".equals(ev)) {
                 if ("install".equals(lastOtaPhoneStage)) {
                     o.put("status", "complete");
@@ -3830,7 +3868,8 @@ public class OtaHelper {
                     .post(com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent.createStarted());
 
             // Trigger MTK OTA installation via system broadcast
-            com.mentra.asg_client.SysControl.installOTA(context, OtaConstants.MTK_FIRMWARE_PATH);
+            com.mentra.asg_client.service.system.core.SystemControllerFactory.get(context)
+                    .installSystemOta(OtaConstants.MTK_FIRMWARE_PATH);
 
             Log.i(
                     TAG,

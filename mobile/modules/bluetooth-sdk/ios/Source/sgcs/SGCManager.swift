@@ -20,12 +20,19 @@ protocol SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, sound: Bool, exposureTimeNs: Double?
+        compress: String?, flash: Bool, save: Bool, sound: Bool, exposureTimeNs: Double?, iso: Int?
     )
     func startStream(_ message: [String: Any])
     func stopStream()
     func sendStreamKeepAlive(_ message: [String: Any])
     func startVideoRecording(requestId: String, save: Bool, flash: Bool, sound: Bool)
+    /// Start video recording with optional per-recording resolution/fps. A width,
+    /// height, or fps of 0 means "use the device's saved button-video default".
+    /// Defaulted in an extension to delegate to the basic recording path; devices
+    /// that support custom settings (e.g. Mentra Live) override this.
+    func startVideoRecording(
+        requestId: String, save: Bool, flash: Bool, sound: Bool, width: Int, height: Int, fps: Int
+    )
     func stopVideoRecording(requestId: String)
 
     // MARK: - Button Settings
@@ -42,7 +49,9 @@ protocol SGCManager {
     func clearDisplay()
     func sendTextWall(_ text: String)
     func sendDoubleTextWall(_ top: String, _ bottom: String)
-    func displayBitmap(base64ImageData: String) async -> Bool
+    /// Display a bitmap. Optional `x`/`y`/`width`/`height` position and size the target
+    /// container (used by G2; other SGCs ignore positioning and render the bitmap as before).
+    func displayBitmap(base64ImageData: String, x: Int32?, y: Int32?, width: Int32?, height: Int32?) async -> Bool
     func showDashboard()
     func setDashboardPosition(_ height: Int, _ depth: Int)
     /// Default implementation sends both via [setDashboardPosition]; Nex overrides to one protobuf.
@@ -52,6 +61,18 @@ protocol SGCManager {
     // MARK: - Dashboard Menu
 
     func setDashboardMenu(_ items: [[String: Any]])
+
+    // MARK: - Notification Panel
+
+    func showNotificationsPanel()
+
+    // MARK: - Calendar Events
+
+    func sendCalendarEvents(_ events: [[String: Any]])
+
+    // MARK: - Dashboard Display Settings
+
+    func sendDashboardDisplaySettings()
 
     // MARK: - Device Control
 
@@ -89,6 +110,8 @@ protocol SGCManager {
     func sendHotspotState(_ enabled: Bool)
     func sendOtaStart()
     func sendOtaQueryStatus()
+    func sendSetSystemTime(_ timestampMs: Int64)
+    func sendOtaRetryVersionCheck()
 
     // MARK: - User Context (for crash reporting)
 
@@ -115,6 +138,15 @@ protocol SGCManager {
 /// doesn't seem to work for concurrency reasons :(
 /// we can make read-only getters for convienence though:
 extension SGCManager {
+    // MARK: - Video recording (default: ignore custom settings, use saved defaults)
+
+    func startVideoRecording(
+        requestId: String, save: Bool, flash: Bool, sound: Bool, width _: Int, height _: Int,
+        fps _: Int
+    ) {
+        startVideoRecording(requestId: requestId, save: save, flash: flash, sound: sound)
+    }
+
     // MARK: - Dashboard (default: combined wire format; Nex implements single-field)
 
     func setDashboardHeightOnly(_ height: Int) {
@@ -131,9 +163,30 @@ extension SGCManager {
 
     func setDashboardMenu(_: [[String: Any]]) {}
 
+    // MARK: - Notification Panel (default no-op — only G2 supports this)
+
+    func showNotificationsPanel() {}
+
+    // MARK: - Calendar Events (default no-op — only G2 supports this)
+
+    func sendCalendarEvents(_: [[String: Any]]) {}
+
+    // MARK: - Dashboard Display Settings (default no-op — only G2 supports this)
+
+    func sendDashboardDisplaySettings() {}
+
     // MARK: - Voice Activity Detection (default no-op — Mentra Live supports this)
 
     func sendVoiceActivityDetectionSetting() {}
+
+    /// Default no-op; Mentra Live overrides when phone detects clock skew during gallery sync.
+    func sendSetSystemTime(_: Int64) {
+        Bridge.log("SGC: sendSetSystemTime not supported")
+    }
+
+    func sendOtaRetryVersionCheck() {
+        Bridge.log("SGC: sendOtaRetryVersionCheck not supported")
+    }
 
     // MARK: - Default DeviceStore-backed property implementations
 

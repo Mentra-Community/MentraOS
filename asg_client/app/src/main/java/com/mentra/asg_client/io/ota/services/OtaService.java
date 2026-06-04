@@ -222,8 +222,7 @@ public class OtaService extends Service {
                         // can decide whether to start another round.
                         Log.i(
                                 TAG,
-                                "📱 MTK complete (no session) - notifying phone via legacy"
-                                        + " broadcast");
+                                "📱 MTK complete (no session) - notifying phone via legacy broadcast");
                         sendMtkUpdateCompleteMessage();
                     }
                 } else {
@@ -345,15 +344,14 @@ public class OtaService extends Service {
                 if (isApkInstallRestart) {
                     Log.i(
                             TAG,
-                            "📱 Active APK install session found without restart guard — resuming"
-                                    + " next step");
+                            "📱 Active APK install session found without restart guard — resuming next step");
                     resumeFromSession(sessionManager);
                     return;
                 }
                 Log.i(
                         TAG,
-                        "📱 Active OTA session found without restart guard but not APK install"
-                                + " restart (step="
+                        "📱 Active OTA session found without restart guard but not APK install restart "
+                                + "(step="
                                 + currentStepIndex
                                 + " type="
                                 + currentStepType
@@ -379,8 +377,7 @@ public class OtaService extends Service {
                 if (otaHelper != null) {
                     Log.i(
                             TAG,
-                            "📱 Triggering background OTA pre-download check (first boot or update"
-                                    + " from old version)");
+                            "📱 Triggering background OTA pre-download check (first boot or update from old version)");
                     otaHelper.startVersionCheck(this);
                 }
             } else if (currentVersion > previousVersion) {
@@ -395,8 +392,7 @@ public class OtaService extends Service {
                 if (otaHelper != null) {
                     Log.i(
                             TAG,
-                            "📱 Auto-resuming background OTA pre-download check for MTK/BES"
-                                    + " updates");
+                            "📱 Auto-resuming background OTA pre-download check for MTK/BES updates");
                     otaHelper.startVersionCheck(this);
                 }
             } else {
