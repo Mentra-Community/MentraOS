@@ -64,6 +64,8 @@ data class PhotoRequest @JvmOverloads constructor(
     val sound: Boolean = true,
     /** Sensor exposure time for this capture only (ns), or null for auto exposure */
     val exposureTimeNs: Double? = null,
+    /** Sensor ISO for this capture only. Only used when exposureTimeNs enables manual exposure. */
+    val iso: Int? = null,
 ) {
     companion object {
         /** Mirrors iOS `BluetoothSdkModule` defaults for keys omitted from the JS bridge. */
@@ -73,6 +75,17 @@ data class PhotoRequest @JvmOverloads constructor(
             val exposureTimeNs: Double? =
                 when (rawExp) {
                     is Number -> rawExp.toDouble().takeIf { it.isFinite() && it > 0 }
+                    else -> null
+                }
+            val rawIso = values["iso"]
+            val iso: Int? =
+                when (rawIso) {
+                    is Number -> rawIso.toDouble().takeIf { it.isFinite() && it > 0 }?.let { value ->
+                        when {
+                            value > Int.MAX_VALUE.toDouble() -> Int.MAX_VALUE
+                            else -> value.toInt()
+                        }
+                    }
                     else -> null
                 }
             return PhotoRequest(
@@ -86,6 +99,7 @@ data class PhotoRequest @JvmOverloads constructor(
                 save = boolValue(values, "save", "saveToGallery") ?: false,
                 sound = boolValue(values, "sound") ?: true,
                 exposureTimeNs = exposureTimeNs,
+                iso = iso,
             )
         }
     }
@@ -214,3 +228,16 @@ data class PhotoResponseEvent(
     val values: Map<String, Any> get() = response.toEventMap()
 }
 
+data class PhotoStatusEvent(
+    val values: Map<String, Any>,
+) {
+    val requestId: String get() = stringValue(values, "requestId").orEmpty()
+    val status: String get() = stringValue(values, "status").orEmpty()
+    val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()
+    val resolvedConfig: Map<String, Any>? get() = stringMapValue(values["resolvedConfig"])
+    val requestedCaptureConfig: Map<String, Any>? get() = stringMapValue(values["requestedCaptureConfig"])
+    val meteredPreview: Map<String, Any>? get() = stringMapValue(values["meteredPreview"])
+    val captureMetadata: Map<String, Any>? get() = stringMapValue(values["captureMetadata"])
+    val errorCode: String? get() = stringValue(values, "errorCode")
+    val errorMessage: String? get() = stringValue(values, "errorMessage")
+}

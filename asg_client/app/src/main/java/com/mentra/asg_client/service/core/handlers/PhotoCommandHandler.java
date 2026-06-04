@@ -81,6 +81,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             boolean flash = data.optBoolean("flash", true);
             boolean sound = data.optBoolean("sound", true);
             Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
+            Integer requestedIso = PhotoIso.parse(data);
+            Integer iso = exposureTimeNs != null ? requestedIso : null;
             if (exposureTimeNs != null) {
                 Log.i(
                         TAG,
@@ -89,6 +91,14 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                                 + ": "
                                 + exposureTimeNs
                                 + " ns");
+            }
+            if (requestedIso != null && exposureTimeNs == null) {
+                Log.i(TAG, "Mentra Live ignoring ISO for take_photo request "
+                        + requestId + " because exposureTimeNs was not set");
+            }
+            if (iso != null) {
+                Log.i(TAG, "Mentra Live using manual ISO for take_photo request "
+                        + requestId + ": ISO " + iso);
             }
 
             // Route SDK no-save captures into the sync-hidden _sdk_pending area so an in-flight
@@ -195,7 +205,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                             flash,
                             sound,
                             compress,
-                            exposureTimeNs);
+                            exposureTimeNs,
+                            iso);
             logCommandResult("take_photo", success, success ? null : "Photo capture failed");
             if (success) {
                 Log.i(TAG, "PHOTO PIPELINE [ASG 3/3] Capture accepted requestId=" + requestId);
@@ -239,7 +250,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             boolean flash,
             boolean sound,
             String compress,
-            Long exposureTimeNs) {
+            Long exposureTimeNs,
+            Integer iso) {
         Log.d(TAG, "Processing photo capture with transfer method: " + transferMethod);
         switch (transferMethod) {
             case "ble":
@@ -251,7 +263,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         size,
                         flash,
                         sound,
-                        exposureTimeNs);
+                        exposureTimeNs,
+                        iso);
                 return true;
             case "auto":
                 if (bleImgId.isEmpty()) {
@@ -269,7 +282,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         flash,
                         sound,
                         compress,
-                        exposureTimeNs);
+                        exposureTimeNs,
+                        iso);
                 return true;
             default:
                 captureService.takePhotoAndUpload(
@@ -282,7 +296,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         flash,
                         sound,
                         compress,
-                        exposureTimeNs);
+                        exposureTimeNs,
+                        iso);
                 return true;
         }
     }
