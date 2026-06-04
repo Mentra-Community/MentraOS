@@ -1,9 +1,9 @@
 # Mentra user identity: spike
 
-**Status:** Findings and open questions. Not a proposal yet. Covers identity for
-Mentra's own users (consumer app, Dev Console, App/MiniApp Store) and how OEM
-users fit. The developer auto-auth mechanism is a sibling spike,
-[`../auto-auth/spike.md`](../auto-auth/spike.md).
+**Status:** The identity model and the migration bridge are decided (below).
+Covers identity for Mentra's own users (consumer app, Dev Console, App/MiniApp
+Store) and how OEM users fit. The developer auto-auth mechanism is a sibling
+spike, [`../auto-auth/spike.md`](../auto-auth/spike.md).
 
 ## Scope
 
@@ -38,9 +38,8 @@ here:
 - **The same flow backs every Mentra-direct surface, not just the consumer app.**
   The Store exchanges at `POST /api/store/auth/exchange-token`
   (`api/hono/store/store.auth.api.ts`); the Dev Console verifies the same core
-  token in `console.middleware.ts`, keyed on `email` and carrying
-  `organizations` / `defaultOrg` for the dev org model. One identity system
-  across consumer app, Dev Console, and Store.
+  token in `console.middleware.ts`, keyed on `email`. One identity system across
+  consumer app, Dev Console, and Store.
 
 Properties worth noting: symmetric secret (only cloud can verify), identity ==
 email, no asymmetric/JWKS story.
@@ -59,22 +58,11 @@ and on `mentraUserId`, retiring the symmetric core token and email-as-id.
 on one identity today (Supabase + core token, Part 1). v2 keeps them on a single
 identity system and unifies them on the Mentra access token. Architecturally
 Mentra's app is just the first consumer of the OEM Toolkit (Mentra is "OEM
-zero"). Two ways to issue the token:
-
-- **(a) Mentra as its own OEM.** Supabase is Mentra's identity provider; a small
-  Mentra-side issuer mints an OEM-style subject JWT that goes through the same
-  `POST /api/oem/oauth/token` exchange. One code path for everyone.
-- **(b) Dedicated Mentra login.** A direct endpoint that takes the Supabase
-  session and issues the same Ed25519 access token without the OEM exchange
-  shape.
-
-Either way the output is the same token format. Lean: (a), so there is a single
-issuance and revocation path.
-
-The Dev Console surface carries one extra dimension: developer **organization**
-membership (today the core token's `organizations` / `defaultOrg`). In v2 that
-should be an org/profile lookup owned by `dev-console-service`, not a token
-claim, so the access token stays the same shape for every surface.
+zero"), so Mentra issues its users' tokens as **its own reserved OEM**
+(`oemId = "mentra"`): a Mentra-side issuer presents the user's Supabase identity
+to the same exchange (the core token during transition, a Supabase session at the
+end state). One issuance and revocation path for every surface. See the migration
+bridge below.
 
 ### OEM users
 
@@ -116,17 +104,11 @@ End state: once v2 is primary, swap the subject token from "core token" to a
 Supabase session (direct Mentra login), same endpoint, and retire the core-token
 bridge.
 
-## Open questions
+## Tracked separately
 
-1. **Mentra-user issuance:** decided, Mentra-as-its-own-OEM with reserved
-   `oemId = "mentra"`, via the core-token bridge above (the core token is the
-   subject token during transition, a Supabase session after). The dedicated
-   login is the end-state form of the same endpoint.
-2. **Email-to-`mentraUserId` migration.** v1 keyed users (and dev backends) on
-   email. oem-auth `design.md` flags migration of existing email-based Mentra
-   users as a **separate spec**; track it there.
-3. **Dev org model.** Confirm `organizations` / `defaultOrg` moves to
-   `dev-console-service` rather than the access token.
+- **Email-to-`mentraUserId` migration.** v1 keyed users (and dev backends) on
+  email. oem-auth `design.md` flags migrating existing email-based Mentra users as
+  a separate spec; track it there.
 
 ## References
 
