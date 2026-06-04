@@ -310,7 +310,19 @@ public class MediaCaptureService {
         return CameraRestartCooldown.isActive();
     }
 
-    private void playShutterSound() {
+    /**
+     * Plays the photo feedback sound, choosing a short "hot" clip when the upcoming capture will
+     * reuse the already-running camera and a long "cold" clip when it will pay the 1–2s camera/ISP
+     * startup on Mentra Live. The decision is made synchronously here, at button-press time and
+     * before the request is enqueued, so it predicts whether THIS capture is fast or slow. The
+     * upcoming-capture parameters must match those passed to {@code enqueuePhotoRequest} so the
+     * warmth prediction lines up with the path the request actually takes.
+     *
+     * @param size requested photo size for the upcoming capture (nullable)
+     * @param isFromSdk whether the upcoming capture is an SDK request (vs. a button photo)
+     * @param exposureTimeNs requested manual exposure for the upcoming capture, or null for auto
+     */
+    private void playShutterSound(String size, boolean isFromSdk, Long exposureTimeNs) {
         if (hardwareManager == null) {
             Log.w(TAG, "⚠️ hardwareManager is null, cannot play shutter sound");
             return;
@@ -321,13 +333,10 @@ public class MediaCaptureService {
             return;
         }
 
-        // Pick the feedback sound based on whether this capture will reuse an already-running
-        // camera (warm) or trigger a cold camera/ISP startup (1–2s on Mentra Live). We decide at
-        // button-press time, synchronously before enqueuing the request: a warm camera is reused
-        // immediately by enqueuePhotoRequest, so a short "hot" sound matches the quick capture; a
-        // cold camera needs a longer "cold" sound that spans the warmup so the user keeps still
-        // until the photo actually lands.
-        boolean cameraWarm = CameraNeoService.isCameraWarm();
+        // A warm capture reuses the open camera (including queuing behind an in-flight shot), so a
+        // short "hot" sound matches the quick capture. A cold capture needs a longer "cold" sound
+        // that spans the camera/ISP warmup so the user keeps still until the photo actually lands.
+        boolean cameraWarm = CameraNeoService.isCameraWarm(size, isFromSdk, exposureTimeNs);
         String shutterAsset =
                 cameraWarm ? AudioAssets.TAKE_PHOTO_HOT : AudioAssets.TAKE_PHOTO_COLD;
         Log.d(TAG, "📸 Playing " + (cameraWarm ? "HOT (short)" : "COLD (long)") + " shutter sound");
@@ -1307,7 +1316,9 @@ public class MediaCaptureService {
             // RGB LED always flashes for photos (user visibility indicator)
             triggerPhotoFlashLed();
             if (enableSound) {
-                playShutterSound();
+                // Button photo: isFromSdk=false, auto exposure (null) — matches the
+                // enqueuePhotoRequest call below so the warm/cold prediction lines up.
+                playShutterSound(size, false, null);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto(); // Flash privacy LED
@@ -1557,7 +1568,9 @@ public class MediaCaptureService {
             if (!shouldSuppressPhotoFeedback()) {
                 triggerPhotoFlashLed();
                 if (enableSound) {
-                    playShutterSound();
+                    // SDK photo: isFromSdk=true; size and exposure match the enqueuePhotoRequest
+                    // call below so the warm/cold prediction lines up.
+                    playShutterSound(size, true, exposureTimeNs);
                 }
                 if (enableFlash) {
                     flashPrivacyLedForPhoto();
@@ -3177,7 +3190,9 @@ public class MediaCaptureService {
         if (!shouldSuppressPhotoFeedback()) {
             triggerPhotoFlashLed();
             if (enableSound) {
-                playShutterSound();
+                // BLE-transfer SDK photo: isFromSdk=true; size and exposure match the
+                // enqueuePhotoRequest call below so the warm/cold prediction lines up.
+                playShutterSound(size, true, exposureTimeNs);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();

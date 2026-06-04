@@ -321,20 +321,32 @@ public class CameraNeoService extends LifecycleService {
     }
 
     /**
-     * Check whether the camera is currently "warm" — open and kept alive after a recent photo,
-     * sitting idle and ready to capture the next shot almost instantly.
+     * Predicts whether a photo with the given parameters would be a "warm" capture — one that
+     * reuses the already-open camera/ISP instead of paying the 1–2s cold startup cost on Mentra
+     * Live. Callers use this to choose between a short feedback sound (warm, capture is quick) and
+     * a long one (cold, capture lags behind the button press while the camera spins up).
      *
-     * <p>This is the inverse of a cold start: when warm, a new photo request reuses the open
-     * camera session instead of paying the 1–2s cold camera/ISP startup cost. Callers use this
-     * to decide between a short feedback sound (warm, capture is quick) and a long one (cold,
-     * capture lags behind the button press while the camera spins up).
+     * <p>A capture is warm when both hold:
      *
-     * @return true if the camera is open, kept alive, and idle; false otherwise.
+     * <ul>
+     *   <li>The HAL session is already open. This includes the case where a previous capture is
+     *       still in progress — a rapid second press simply queues behind it (see {@code
+     *       enqueuePhotoRequest}) and runs without a cold ISP start, so we must NOT gate on the
+     *       shot state being idle.
+     *   <li>The open session won't be reconfigured for this request. A differing size, SDK flag,
+     *       or manual exposure forces a close + reopen (see {@code
+     *       PhotoSession#willReuseConfiguredCamera}), which is effectively a cold start.
+     * </ul>
+     *
+     * @param size requested photo size for the upcoming capture (nullable)
+     * @param isFromSdk whether the upcoming capture is an SDK request (vs. a button photo)
+     * @param exposureTimeNs requested manual exposure for the upcoming capture, or null for auto
+     * @return true if the upcoming capture would reuse the open camera; false otherwise.
      */
-    public static boolean isCameraWarm() {
+    public static boolean isCameraWarm(String size, boolean isFromSdk, Long exposureTimeNs) {
         return sInstance != null
-                && sInstance.cameraCoordinator.isCameraKeptAlive()
-                && sInstance.photoSession.shotState() == AeStateMachine.ShotState.IDLE;
+                && sInstance.cameraCoordinator.hasConfiguredCamera()
+                && sInstance.photoSession.willReuseConfiguredCamera(size, isFromSdk, exposureTimeNs);
     }
 
     /**

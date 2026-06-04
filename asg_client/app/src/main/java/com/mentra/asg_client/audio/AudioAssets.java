@@ -8,7 +8,7 @@ package com.mentra.asg_client.audio;
  * Usage:
  * <pre>
  * if (hardwareManager.supportsAudioPlayback()) {
- *     hardwareManager.playAudioAsset(AudioAssets.CAMERA_SOUND);
+ *     hardwareManager.playAudioAsset(AudioAssets.TAKE_PHOTO_HOT);
  * }
  * </pre>
  */
@@ -28,11 +28,6 @@ public final class AudioAssets {
      * Storage full notification sound
      */
     public static final String STORAGE_FULL = "storage_full.mp3";
-
-    /**
-     * Camera shutter sound for photo capture
-     */
-    public static final String CAMERA_SOUND = "camera_sound.wav";
 
     /**
      * Shutter sound for a "cold" photo capture — the camera was not already running, so it must
