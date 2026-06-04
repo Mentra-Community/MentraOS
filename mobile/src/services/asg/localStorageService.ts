@@ -98,6 +98,14 @@ export class LocalStorageService {
     return `${this.ASG_THUMBNAILS_DIR}/${filename}_thumb.jpg`
   }
 
+  private loadRawDownloadedFiles(): Record<string, DownloadedFile> {
+    const res = storage.load<Record<string, DownloadedFile>>(this.DOWNLOADED_FILES_KEY)
+    if (res.is_error()) {
+      return {}
+    }
+    return res.value
+  }
+
   /**
    * Initialize client ID if not exists
    */
@@ -153,7 +161,7 @@ export class LocalStorageService {
    */
   async saveDownloadedFile(file: DownloadedFile): Promise<void> {
     try {
-      const files = await this.getDownloadedFiles()
+      const files = this.loadRawDownloadedFiles()
 
       // 🔍 DIAGNOSTIC: Check if file already exists
       // const existingFile = files[file.name]
