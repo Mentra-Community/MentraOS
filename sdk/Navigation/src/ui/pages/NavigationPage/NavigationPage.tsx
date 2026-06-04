@@ -229,6 +229,9 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [searchFrozen, setSearchFrozen] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
   const [rawMapOpen, setRawMapOpen] = useState(false)
+  const [showPivots, setShowPivots] = useState(false)
+  const [showMinimap, setShowMinimap] = useState(false)
+  const [devTab, setDevTab] = useState<"nav" | "display">("nav")
 
   // Swallow every long-press-derived `contextmenu` event app-wide
   // while the search drawer is open. Kills the map's drop-pin
@@ -691,6 +694,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           // from the SAME Routes REST response, so the dots are
           // identical end-to-end).
           previewTurns={running ? liveTurns : previewTurns}
+          showPivots={showPivots}
           // Idle map shows saved-place pins so the user can see their
           // home / work / starred locations at a glance. Hide them
           // while running so they don't compete with the active route.
@@ -839,20 +843,54 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
 
         {devEnabled && !isSearching ? (
           <FloatingDevPanel title="Navigation Dev" storageKey="NavigationPage:dev">
-            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-              <span className="text-[13px] font-medium text-neutral-700">Show test text on glasses</span>
-              <button
-                type="button"
-                onClick={() =>
-                  mentra.request("test:show-text-test", {
-                    text: "Hello from the UI",
-                    durationMs: 3000,
-                  })
-                }
-                className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
-                Send
-              </button>
+            <div className="flex gap-1 p-1 mb-3 rounded-xl bg-[#0000000A]">
+              {(
+                [
+                  {id: "nav", label: "Nav"},
+                  {id: "display", label: "Display tests"},
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setDevTab(tab.id)}
+                  className={`flex-1 text-[12px] px-2.5 py-1.5 rounded-lg font-semibold transition-colors ${
+                    devTab === tab.id
+                      ? "bg-white text-neutral-900 shadow-sm"
+                      : "bg-transparent text-neutral-600 hover:text-neutral-800"
+                  }`}>
+                  {tab.label}
+                </button>
+              ))}
             </div>
+            {devTab === "display" ? (
+              <>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Show test text on glasses</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      mentra.request("test:show-text-test", {
+                        text: "Hello from the UI",
+                        durationMs: 3000,
+                      })
+                    }
+                    className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                    Send
+                  </button>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Send test bitmap to glasses</span>
+                  <button
+                    type="button"
+                    onClick={() => mentra.request("test:show-bitmap-test", undefined)}
+                    className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                    Send
+                  </button>
+                </div>
+              </>
+            ) : null}
+            {devTab === "nav" ? <>
             <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
               <span className="text-[13px] font-medium text-neutral-700">Raw map (no overlays)</span>
               <button
@@ -860,6 +898,32 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 onClick={() => setRawMapOpen(true)}
                 className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-neutral-800 text-white">
                 Open
+              </button>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700">Turn pivot markers</span>
+              <button
+                type="button"
+                onClick={() => setShowPivots((v) => !v)}
+                className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${
+                  showPivots ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
+                }`}>
+                {showPivots ? "On" : "Off"}
+              </button>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700">Glasses minimap bitmap</span>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !showMinimap
+                  setShowMinimap(next)
+                  mentra.send("nav:set-show-minimap", next)
+                }}
+                className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${
+                  showMinimap ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
+                }`}>
+                {showMinimap ? "On" : "Off"}
               </button>
             </div>
             <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
@@ -978,6 +1042,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
               </button>
             </div>
             <LiveLog log={log} running={running} status={status} maneuver={maneuver} />
+            </> : null}
           </FloatingDevPanel>
         ) : null}
       </div>

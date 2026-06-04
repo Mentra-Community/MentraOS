@@ -48,6 +48,7 @@ export interface Channels {
   "nav:deviate": Record<string, never>
   "nav:set-destination": PlaceDetails | null
   "nav:set-dev-settings": Partial<DevSettings>
+  "nav:set-show-minimap": boolean
 
   // ── UI → background RPC ────────────────────────────────────────────────
   "nav:compute-route": Rpc<ComputeRouteOptions, ComputeRouteResult>
@@ -66,6 +67,7 @@ export interface Channels {
 
   // test channels
   "test:show-text-test": Rpc<{text: string; durationMs?: number}, void>
+  "test:show-bitmap-test": Rpc<void, void>
 }
 
 // Convenience: the typed shape of `window.mentra` for this miniapp.

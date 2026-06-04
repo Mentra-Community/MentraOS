@@ -22,6 +22,7 @@ import {SimpleStorageManager} from "./managers/SimpleStorageManager"
 import {formatDistance} from "./lib/formatDistance"
 import {haversineMeters} from "./lib/geometry"
 import {renderMinimap} from "./lib/MinimapRenderer"
+import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
 
 export class NavigationController {
   private readonly ui: UIModule<Channels>
@@ -37,6 +38,7 @@ export class NavigationController {
   private logSeq = 0
   private lastHudKey = ""
   private lastMinimapPng: string | null = null
+  private showMinimap = false
 
   // Canonical state (mirrored to UI).
   private coords: Coords | null = null
@@ -367,8 +369,32 @@ export class NavigationController {
     )
 
     this.unsubs.push(
+      this.ui.on("nav:set-show-minimap", (show) => {
+        if (show === this.showMinimap) return
+        this.showMinimap = show
+        if (!show) {
+          // Wipe whatever bitmap is on the glasses and reset the dedup
+          // cache so toggling back on re-pushes the next frame.
+          this.display.clear()
+          this.lastMinimapPng = null
+          this.lastHudKey = ""
+        } else {
+          // Force the next HUD pump to repush.
+          this.lastMinimapPng = null
+          this.refreshHUD()
+        }
+      }),
+    )
+
+    this.unsubs.push(
       this.ui.handle("test:show-text-test", ({text, durationMs}) => {
         this.display.showText(text, durationMs)
+      }),
+    )
+
+    this.unsubs.push(
+      this.ui.handle("test:show-bitmap-test", () => {
+        this.display.showBitmapTest(TEST_BITMAP_288_B64)
       }),
     )
 
@@ -459,6 +485,7 @@ export class NavigationController {
    * encoded PNG so we don't re-send identical frames while idle.
    */
   private refreshMinimap(): void {
+    if (!this.showMinimap) return
     if (!this.trip.running || !this.coords) return
     const png = renderMinimap({
       coords: {lat: this.coords.lat, lng: this.coords.lng},
