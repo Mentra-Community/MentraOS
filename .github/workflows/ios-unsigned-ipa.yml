@@ -59,29 +59,31 @@ jobs:
 
           project.targets.each do |target|
             target.build_configurations.each do |config|
-              # Fix low deployment targets
+              # Fix low deployment targets on all pods
               current = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'].to_f
               if current > 0 && current < 13.0
                 config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
               end
 
-              # SwiftProtobuf: singlefile prevents OOM compiling 80+ files via WMO
-              if target.name == 'SwiftProtobuf'
+              case target.name
+              when 'SwiftProtobuf'
+                # WMO OOM-kills compiler on 80+ files — force singlefile
                 config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
-                puts "SwiftProtobuf #{config.name}: singlefile compilation set"
-              end
+                puts "SwiftProtobuf #{config.name}: singlefile set"
 
-              # All Swift pods: disable strict concurrency so Swift 6 (Xcode 16.4)
-              # does not break RNScreens and other RN pods at EmitSwiftModule
-              if config.build_settings['SWIFT_VERSION']
+              when 'RNScreens'
+                # gamma/ files have Swift 6 incompatibilities — compile in Swift 5 mode
+                config.build_settings['SWIFT_VERSION'] = '5'
                 config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'
+                puts "RNScreens #{config.name}: SWIFT_VERSION=5, strict-concurrency=minimal"
               end
             end
           end
 
           project.save
-          puts "Pods.xcodeproj patched and saved"
+          puts "Done"
           RUBY
+
 
       - name: List schemes
         working-directory: ./mobile/ios
