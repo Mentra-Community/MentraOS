@@ -11,8 +11,8 @@ typed, with no tech debt.
 hub: it runs the miniapp (a background JSContext plus an optional WebView UI),
 handles most things locally, and proxies a small set of services to the cloud. That
 cloud proxy is today the v1 `SocketComms` / `RestComms`. We are adding a parallel
-**v2 transport**, `@mentra/cloud-client`, injected at the same seam. On the v2 path
-the on-device runtime speaks the typed v2 protocol directly (no stringly shapes),
+**v2 transport**, `@mentra/cloud-client`, injected the same way (through the host's `configureRuntime` hook). On the v2 path
+the on-device runtime speaks the typed v2 protocol directly (typed values, not magic strings),
 using the **same** `@mentra/cloud-runtime/protocol` types the cloud server and the
 backend test harness use, so on-device and cloud cannot drift.
 
@@ -20,7 +20,7 @@ This doc spans three codebases at different stages; keep them straight:
 
 | Where | State | What lives there |
 | --- | --- | --- |
-| base mobile app (`mobile/`, on `dev`) | live | v1 transport: `SocketComms`, `RestComms`, the `configureRuntime` seam |
+| base mobile app (`mobile/`, on `dev`) | live | v1 transport: `SocketComms`, `RestComms`, the `configureRuntime` hook |
 | PR #3086 `fixes-navigation-bitmaps` | in flight, not merged | the two-layer local miniapp runtime (background JSContext + UI WebView) |
 | `cloud-v2/` (this repo area) | in progress | the v2 cloud, `@mentra/cloud-client`, `@mentra/cloud-runtime/protocol` |
 
@@ -102,7 +102,7 @@ v1 transport for v2.** The local hardware path does not care which cloud exists.
 ## 4. The transport today (v1)
 
 The cloud-proxied traffic goes through the host's transport, injected into the
-island runtime at the `configureRuntime` seam
+island runtime at the `configureRuntime` hook
 (`mobile/modules/island/src/runtime/config.ts`, the `socketComms` hook), wired in
 `mobile/src/services/MantleManager.ts`:
 
@@ -132,7 +132,7 @@ configureRuntime({
   subscribed miniapps); `phone_photo_ready` / `phone_stream_status` ->
   `LocalMiniappRuntime.handleCloudMessage()`.
 
-Two properties to notice, because v2 removes both: subscriptions are **stringly**
+Two properties to notice, because v2 removes both: subscriptions are **magic strings**
 (`"transcription:en-US"`), and messages are **raw untyped objects** keyed by a
 `type` string.
 
@@ -148,7 +148,7 @@ same core runs on the phone and in Node. Full API in
 Why a dedicated library rather than more methods on `SocketComms`:
 
 - **It is the v2 protocol, isolated.** v1 `SocketComms` is shaped around the v1
-  wire. v2 has a clean envelope, REST-for-commands, WS-for-push, and v2 auth. Mixing
+  wire. v2 has a clean message format, REST for commands, WebSocket for push, and v2 auth. Mixing
   them into one class rebuilds the tech debt we are trying to leave behind.
 - **One contract, shared by everyone.** The cloud-client speaks only
   `@mentra/cloud-runtime/protocol`: the zod types and validators that the **cloud
@@ -221,7 +221,7 @@ So auto-auth adds a small amount of on-device work on the v2 path: hold a
 re-inject on refresh. The bridges already exist (they carry session messages); the
 auth token is one more message type over them.
 
-Why this shape answers the questions Matt and others will have:
+Common questions this shape answers:
 
 - **"How does an OEM's user reach our cloud with no Mentra account?"** Their backend
   vouches with a signed JWT; the exchange turns it into a Mentra token.
@@ -240,19 +240,19 @@ exchange), see [`../001-cloud-core/auth/concepts.md`](../001-cloud-core/auth/con
 Recorded so we build it once.
 
 **D1. The cloud-client is the v2 transport, injected at the existing
-`configureRuntime` seam.** It is not a rewrite of the island runtime. The host
+`configureRuntime` hook.** It is not a rewrite of the island runtime. The host
 constructs `new CloudClient(...)` and injects its surface where v1 `socketComms`
 goes today. The island runtime stays the owner of subscription aggregation and
 fan-out.
 
-**D2. Change the island runtime and kill the string shapes (typed seam).** The
+**D2. Change the island runtime and kill the string shapes (typed hook).** The
 `socketComms` hook (`sendMessage(object)`, `updatePhoneSubscriptions(string[])`) is
 replaced by a typed v2 surface, and the handful of `LocalMiniappRuntime` call sites
 that build v1 shapes are updated to build typed values from
 `@mentra/cloud-runtime/protocol` and call typed `cloud.runtime.*` methods.
 Rationale: no tech debt, real TypeScript safety, and parity with the cloud and the
 test harness by construction. The alternative (keep v1 signatures, translate on the
-host side) would preserve the stringly surface inside the runtime and reintroduce a
+host side) would preserve the magic-string surface inside the runtime and reintroduce a
 drift point; we are not doing that.
 
 **D3. v1 and v2 coexist as separate transport paths.** The v1 `SocketComms` /
@@ -268,9 +268,10 @@ small and reviewable.
 are owned by the cloud-client; miniapps receive only the scoped token. See
 [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md).
 
-## 8. Before and after, at the seam
+## 8. Current vs proposed v2: the code that changes
 
-The seam shape (`mobile/modules/island/src/runtime/config.ts`), v1 then v2:
+The host-injected transport hook (`mobile/modules/island/src/runtime/config.ts`),
+today then v2:
 
 ```ts
 // today
@@ -295,7 +296,7 @@ The call site that builds subscriptions
 `updateCloudSubscriptions()`), v1 then v2:
 
 ```ts
-// today: stringly
+// today: magic strings
 const cloudStreams = new Set<string>()
 for (const [stream, subscribers] of this.streamSubscribers) {
   if (subscribers.size === 0) continue
@@ -333,15 +334,15 @@ const { streamId } = await getRuntimeHooks().cloud?.startManagedStream({
 })
 ```
 
-The stringly `"transcription:en-US"` is mapped to an `AudioSubscription` exactly
+The magic string `"transcription:en-US"` is mapped to an `AudioSubscription` exactly
 once, where subscriptions are built; after that the value is typed all the way to
 the cloud.
 
-## 9. End-to-end trace: a transcription subscription
+## 9. Current vs proposed v2: end to end (a transcription subscription)
 
 A miniapp's background JSContext runs `session.transcription.on(cb)`.
 
-- **Today (v1):** envelope -> `MentraJSRouter` -> `LocalMiniappRuntime`
+- **Today (v1):** the message -> `MentraJSRouter` -> `LocalMiniappRuntime`
   (`streamSubscribers += this app`) -> `updateCloudSubscriptions()` ->
   `socketComms.updatePhoneSubscriptions(["transcription:en-US"])` -> `SocketComms`
   WS `phone_subscription_update` -> v1 cloud. Transcript returns as `data_stream` ->
@@ -365,7 +366,7 @@ proposed direction for each.
   Its methods already match what the runtime needs (`setSubscriptions`,
   `onTranscript`, `onTranslation`, `requestManagedPhoto`, `startManagedStream`, the
   connection lifecycle) and they are typed against the shared protocol. One surface,
-  no mapping seam to drift. (Supersedes the per-hook shape in
+  no mapping layer to drift. (Supersedes the per-hook shape in
   [`island-adapter.md`](./island-adapter.md).)
 - **One transport-selection point at boot.** Construct `CloudClient` where
   `configureRuntime` runs today and select v1 vs v2 there with a single flag,
