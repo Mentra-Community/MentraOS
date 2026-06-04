@@ -17,19 +17,12 @@
  */
 
 import BluetoothSdk from "@mentra/bluetooth-sdk"
-import {getRuntimeHooks} from "@mentra/island"
+import {getRuntimeHooks, type RuntimeHooks} from "@mentra/island"
 
-export interface VideoRecordingOpts {
-  width?: number
-  height?: number
-  fps?: number
-  sound?: boolean
-  save?: boolean
-}
+type VideoRecordingAdapter = NonNullable<RuntimeHooks["videoRecording"]>
 
-export interface VideoRecordingStarted {
-  recordingId: string
-}
+export type VideoRecordingOpts = Parameters<VideoRecordingAdapter["startRecording"]>[1]
+export type VideoRecordingStarted = Awaited<ReturnType<VideoRecordingAdapter["startRecording"]>>
 
 export class VideoError extends Error {
   constructor(

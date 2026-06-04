@@ -31,6 +31,7 @@ import {
   micStateCoordinator,
   offlineSpeechModelService,
   BgTimer,
+  type RuntimeHooks,
   useAppStatusStore,
 } from "@mentra/island"
 import {useConnectionStore} from "@/stores/connection"
@@ -174,6 +175,12 @@ class MantleManager {
     // island service that reads settings / glasses status / sockets / audio
     // (LocalMiniappRuntime, LocalDisplayManager, LocalSttFallbackCoordinator,
     // DisplayProcessor) is touched.
+    const videoRecording: NonNullable<RuntimeHooks["videoRecording"]> = {
+      startRecording: (pkg, opts) => phoneVideoCoordinator.startRecording(pkg, opts),
+      stopRecording: (pkg, recordingId) => phoneVideoCoordinator.stopRecording(pkg, recordingId),
+      stopForApp: (pkg) => phoneVideoCoordinator.stopForApp(pkg),
+    }
+
     configureRuntime({
       socketComms: {
         sendMessage: (message) => socketComms.sendMessage(message as Parameters<typeof socketComms.sendMessage>[0]),
@@ -237,11 +244,7 @@ class MantleManager {
       photo: {
         takePhoto: (pkg, opts) => phonePhotoCoordinator.takePhoto(pkg, opts),
       },
-      videoRecording: {
-        startRecording: (pkg, opts) => phoneVideoCoordinator.startRecording(pkg, opts),
-        stopRecording: (pkg, recordingId) => phoneVideoCoordinator.stopRecording(pkg, recordingId),
-        stopForApp: (pkg) => phoneVideoCoordinator.stopForApp(pkg),
-      },
+      videoRecording,
       // Google Nav SDK adapter — the island runtime fan-outs nav events to
       // miniapps subscribed to navigation_*. Delegates straight to the host's
       // singleton NavigationService.

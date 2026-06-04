@@ -35,7 +35,7 @@ import localDisplayManager from "./LocalDisplayManager"
 import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
-import {getRuntimeHooks, ISLAND_SETTINGS_KEYS, type TtsSynthesisResult} from "../runtime/config"
+import {getRuntimeHooks, ISLAND_SETTINGS_KEYS, type TtsSynthesisResult, type VideoRecordingOptions} from "../runtime/config"
 import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 
@@ -1771,13 +1771,14 @@ class LocalMiniappRuntime {
     }
 
     try {
-      const result = await video.startRecording(packageName, {
-        width: payload.width as number | undefined,
-        height: payload.height as number | undefined,
-        fps: payload.fps as number | undefined,
-        sound: payload.sound as boolean | undefined,
-        save: payload.save as boolean | undefined,
-      })
+      const opts: VideoRecordingOptions = {}
+      if (typeof payload.width === "number") opts.width = payload.width
+      if (typeof payload.height === "number") opts.height = payload.height
+      if (typeof payload.fps === "number") opts.fps = payload.fps
+      if (typeof payload.sound === "boolean") opts.sound = payload.sound
+      if (typeof payload.save === "boolean") opts.save = payload.save
+
+      const result = await video.startRecording(packageName, opts)
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
       this.sendResult(packageName, requestId, false, undefined, {

@@ -321,17 +321,20 @@ export interface RuntimeHooks {
  * the bluetooth-sdk startVideoRecording/stopVideoRecording). Unlike photo, this
  * is fire-and-forget start/stop — no uploaded URL is returned.
  */
+export interface VideoRecordingOptions {
+  width?: number
+  height?: number
+  fps?: number
+  sound?: boolean
+  save?: boolean
+}
+
+export interface VideoRecordingStarted {
+  recordingId: string
+}
+
 export interface VideoRecordingAdapter {
-  startRecording: (
-    packageName: string,
-    opts: {
-      width?: number
-      height?: number
-      fps?: number
-      sound?: boolean
-      save?: boolean
-    },
-  ) => Promise<{recordingId: string}>
+  startRecording: (packageName: string, opts: VideoRecordingOptions) => Promise<VideoRecordingStarted>
   stopRecording: (packageName: string, recordingId?: string) => Promise<void>
   /**
    * Stop any recordings still owned by an app (e.g. on miniapp disconnect/crash)
