@@ -318,16 +318,28 @@ export type DashboardMenuItem = {
   values?: Record<string, unknown>
 }
 
-export type CameraFov = "standard" | "wide"
+export const CAMERA_FOV_MIN = 62
+export const CAMERA_FOV_MAX = 118
+export const CAMERA_FOV_DEFAULT = 102
+
+export type CameraRoiPosition = 0 | 1 | 2
+export type CameraFovPreset = "narrow" | "standard" | "wide"
+
+export type CameraFovValue = {
+  fov: number
+  roiPosition?: CameraRoiPosition
+}
+
+export type CameraFov = CameraFovValue | CameraFovPreset
 
 export type CameraFovSetting = {
   fov: number
-  roiPosition: number
+  roiPosition: CameraRoiPosition
 }
 
 type NativeCameraFovSetting = {
   fov: number
-  roi_position: number
+  roi_position: CameraRoiPosition
 }
 
 export type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"

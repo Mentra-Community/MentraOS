@@ -198,7 +198,16 @@ setGalleryModeEnabled(enabled: boolean)
 type PhotoSize = "small" | "medium" | "large" | "full"
 type ButtonPhotoSize = "small" | "medium" | "large"
 type PhotoCompression = "none" | "medium" | "heavy"
-type CameraFov = "standard" | "wide"
+const CAMERA_FOV_MIN = 62
+const CAMERA_FOV_MAX = 118
+const CAMERA_FOV_DEFAULT = 102
+type CameraRoiPosition = 0 | 1 | 2
+type CameraFovPreset = "narrow" | "standard" | "wide"
+type CameraFovValue = {
+  fov: number
+  roiPosition?: CameraRoiPosition
+}
+type CameraFov = CameraFovValue | CameraFovPreset
 type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
 type RgbLedAction = "on" | "off"
 type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
