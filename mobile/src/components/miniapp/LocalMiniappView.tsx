@@ -82,8 +82,8 @@ function LocalMiniappView({
   // Phase machine for the pre-WebView affordance. "ready" means we have a
   // uiUri and the WebView is mounted; the loading card is rendered for
   // every phase prior so the user always sees something happening.
-  const [phase, setPhase] = useState<"installing" | "spawning" | "opening" | "ready" | "error">(
-    devUrl || version ? "installing" : "error",
+  const [phase, setPhase] = useState<"initializing" | "installing" | "spawning" | "opening" | "ready" | "error">(
+    devUrl || version ? "initializing" : "error",
   )
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
@@ -163,7 +163,7 @@ function LocalMiniappView({
       let uiEntry: string | null = null
       let declaredPermissions: string[] = []
       let installedManifest: InstalledMiniappManifest | undefined
-
+      
       if (devUrl) {
         // Dev miniapps load directly off the local dev server over HTTP — the
         // normal web-dev-server model. No zip download / file:// snapshot, so
@@ -197,16 +197,13 @@ function LocalMiniappView({
         const bgUrl = `${base}/dist/${entry.background.replace(/^\.?\/+/, "")}`
         uiEntry = entry.ui ? `${base}/dist/${entry.ui.replace(/^\.?\/+/, "")}` : null
 
-        const perms = manifest.permissions as
-          | Array<{type?: string} | string>
-          | undefined
+        const perms = manifest.permissions as Array<{type?: string} | string> | undefined
         declaredPermissions = (perms ?? [])
           .map((p) => (typeof p === "string" ? p : p?.type))
           .filter((t): t is string => typeof t === "string")
         installedManifest = {
           permissions: manifest.permissions as InstalledMiniappManifest["permissions"],
-          hardwareRequirements:
-            manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
+          hardwareRequirements: manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
         }
 
         try {
@@ -221,9 +218,9 @@ function LocalMiniappView({
           return
         }
         if (cancelled) return
-
         devServerBridge.connect(packageName, devUrl, portNum)
       } else if (version) {
+        console.log("LocalMiniappView: launching released miniapp", packageName, version)
         // Released local miniapp — resolve from the installed file:// snapshot.
         const entryPaths = appRegistry.getMiniappEntryPaths(packageName, version)
         if (!entryPaths?.background) {
@@ -284,7 +281,17 @@ function LocalMiniappView({
         setUiUri(uiEntry)
         setUiBaseDir(uiEntry.replace(/\/[^/]+$/, "/"))
       }
-      if (!cancelled) setPhase("ready")
+      if (!cancelled) {
+        setPhase("ready")
+        
+        if (Platform.OS === "android") {
+          BgTimer.setTimeout(() => {
+            if (webViewRef.current) {
+              webViewRef.current.reload()
+            }
+          }, 1000)
+        }
+      }
     }
 
     launch()
@@ -402,12 +409,7 @@ function LocalMiniappView({
   let androidGateNotPassed = Platform.OS === "android" && !androidGatePassed
 
   if (phase !== "ready" || !uiUri) {
-    // return (
-    //   <View className="flex-1">
-    //     <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} />
-    //   </View>
-    // )
-    let label
+    let label = undefined
     switch (phase) {
       case "installing":
         label = "Downloading..."
@@ -418,38 +420,17 @@ function LocalMiniappView({
       case "opening":
         label = "Opening…"
         break
+      case "initializing":
+        label = undefined
+        break
       default:
         label = "Couldn't open"
         break
     }
+    let error = phase === "error" ? errorMessage ?? "Couldn't open" : undefined
     return (
-      <View className="flex-1 items-center justify-center px-8 bg-background">
-        <View className="items-center gap-4">
-          {iconUrl ? (
-            <Image source={{uri: iconUrl}} style={{width: 72, height: 72, borderRadius: 16}} resizeMode="cover" />
-          ) : (
-            <View
-              style={{
-                width: 72,
-                height: 72,
-                borderRadius: 16,
-                backgroundColor: "rgba(120,120,120,0.2)",
-              }}
-            />
-          )}
-          {appName ? <Text className="text-base font-semibold text-center" text={appName} /> : null}
-          {phase === "error" ? (
-            <Text
-              className="text-[13px] text-center text-red-500 max-w-[280px]"
-              text={errorMessage ?? "Couldn't open"}
-            />
-          ) : (
-            <View className="flex-row items-center gap-2">
-              <ActivityIndicator />
-              <Text className="text-[13px] text-muted-foreground" text={label} />
-            </View>
-          )}
-        </View>
+      <View className="flex-1">
+        <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} name={appName} error={error} label={label} />
       </View>
     )
   }
