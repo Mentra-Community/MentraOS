@@ -58,7 +58,22 @@ public class BackupStore {
         PackageInfo installedInfo =
             pm.getPackageInfo(RecoveryConstants.ASG_PACKAGE, PackageManager.GET_SIGNING_CERTIFICATES);
         Set<String> installedSigners = getSignerDigests(installedInfo);
-        return !installedSigners.isEmpty() && archiveSigners.equals(installedSigners);
+        if (installedSigners.isEmpty() || !archiveSigners.equals(installedSigners)) {
+          return false;
+        }
+        long installedVersion = getLongVersionCode(installedInfo);
+        long archiveVersion = getLongVersionCode(archiveInfo);
+        if (archiveVersion < installedVersion) {
+          Log.e(
+              RecoveryConstants.TAG,
+              "Backup APK version "
+                  + archiveVersion
+                  + " is older than installed "
+                  + installedVersion
+                  + "; refusing reinstall to avoid VERSION_DOWNGRADE");
+          return false;
+        }
+        return true;
       } catch (NameNotFoundException e) {
         // ASG may be uninstalled during recovery; archive signer presence is the best check.
         Log.w(RecoveryConstants.TAG, "ASG not installed; validating backup package and signature only");
@@ -78,6 +93,13 @@ public class BackupStore {
     appInfo.sourceDir = apkPath;
     appInfo.publicSourceDir = apkPath;
     return (appInfo.flags & ApplicationInfo.FLAG_TEST_ONLY) != 0;
+  }
+
+  private static long getLongVersionCode(PackageInfo info) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      return info.getLongVersionCode();
+    }
+    return info.versionCode;
   }
 
   private Set<String> getSignerDigests(PackageInfo info) {
