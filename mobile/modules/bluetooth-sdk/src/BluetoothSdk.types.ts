@@ -4,8 +4,11 @@ export type GlassesNotReadyEvent = {
   message: string
 }
 
+// NOTE: unlike most events below, the native module does NOT include a `type`
+// field on the button_press payload — it sends only {buttonId, pressType,
+// timestamp} (see BluetoothSdkModule on both iOS and Android). Consumers must
+// filter on `pressType` / the "button_press" listener name, never `event.type`.
 export type ButtonPressEvent = {
-  type: "button_press"
   buttonId: string
   pressType: "long" | "short"
   timestamp: number

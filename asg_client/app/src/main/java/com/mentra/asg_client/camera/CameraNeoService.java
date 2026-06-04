@@ -1082,6 +1082,10 @@ public class CameraNeoService extends LifecycleService {
                 videoSession.stopRecording(videoSession.currentVideoId());
             }
             closeCamera();
+            if (mImuRecorder != null) {
+                mImuRecorder.release();
+                mImuRecorder = null;
+            }
             releaseWakeLocks();
 
             sInstance = null;
