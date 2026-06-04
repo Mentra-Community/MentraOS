@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -14,6 +15,7 @@ import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CaptureRequest;
 import android.os.Handler;
+import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
@@ -24,6 +26,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.json.JSONObject;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
@@ -166,6 +169,28 @@ public class PhotoSessionTest {
         verify(hooks).startKeepAliveTimer();
     }
 
+    @Test
+    public void notifyPhotoCaptured_duplicateWhileMetadataPending_keepsTimeoutCompletingQueue()
+            throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        CameraNeoService.PhotoCaptureCallback callback =
+                mock(CameraNeoService.PhotoCaptureCallback.class);
+        QueuedPhotoRequest request =
+                new QueuedPhotoRequest("/tmp/first.jpg", "large", false, true, null, callback);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(session, request);
+
+        notifyPhotoCaptured(session, "/tmp/first.jpg");
+        Runnable timeout = pendingCaptureMetadataTimeout(session);
+        notifyPhotoCaptured(session, "/tmp/second.jpg");
+        timeout.run();
+
+        verify(callback).onPhotoCaptured(eq("/tmp/first.jpg"), (JSONObject) isNull());
+        assertThat(activeCapture(session)).isNull();
+        assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.IDLE);
+        verify(hooks).startKeepAliveTimer();
+    }
+
     private static PhotoSession.Hooks mockConfiguredCameraHooks() {
         PhotoSession.Hooks hooks = mock(PhotoSession.Hooks.class);
         doReturn(new Object()).when(hooks).serviceLock();
@@ -198,6 +223,12 @@ public class PhotoSessionTest {
         load.invoke(session, request);
     }
 
+    private static void notifyPhotoCaptured(PhotoSession session, String filePath) throws Exception {
+        Method notify = PhotoSession.class.getDeclaredMethod("notifyPhotoCaptured", String.class);
+        notify.setAccessible(true);
+        notify.invoke(session, filePath);
+    }
+
     private static void clearActiveCapture(PhotoSession session) throws Exception {
         Field activeCaptureField = PhotoSession.class.getDeclaredField("activeCapture");
         activeCaptureField.setAccessible(true);
@@ -208,6 +239,13 @@ public class PhotoSessionTest {
         Field activeCaptureField = PhotoSession.class.getDeclaredField("activeCapture");
         activeCaptureField.setAccessible(true);
         return activeCaptureField.get(session);
+    }
+
+    private static Runnable pendingCaptureMetadataTimeout(PhotoSession session) throws Exception {
+        Field pendingTimeoutField =
+                PhotoSession.class.getDeclaredField("pendingCaptureMetadataTimeout");
+        pendingTimeoutField.setAccessible(true);
+        return (Runnable) pendingTimeoutField.get(session);
     }
 
     @Test

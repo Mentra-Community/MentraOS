@@ -640,6 +640,18 @@ public final class PhotoSession {
             }
             metadataToSend = pendingStillCaptureMetadata;
             if (metadataToSend == null) {
+                if (pendingCapturedFilePath != null) {
+                    if (!Objects.equals(pendingCapturedFilePath, filePath)) {
+                        Log.w(
+                                TAG,
+                                "Ignoring duplicate photo captured callback while waiting for "
+                                        + "metadata. pending="
+                                        + pendingCapturedFilePath
+                                        + " duplicate="
+                                        + filePath);
+                    }
+                    return;
+                }
                 pendingCapturedFilePath = filePath;
                 pendingCapturedCallback = callback;
                 pendingCapturedStartTimeMs = startMs;
