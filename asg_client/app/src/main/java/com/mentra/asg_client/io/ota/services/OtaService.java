@@ -412,6 +412,8 @@ public class OtaService extends Service {
 
     private void resumeFromSession(OtaSessionManager sessionManager) {
         try {
+            // Clear any recovery heartbeat pause that was set before the APK install.
+            OtaHelper.notifyRecoveryInstallCompleted(this);
             sessionManager.clearRestartGuard();
             int nextStep = sessionManager.getCurrentStepIndex() + 1;
 

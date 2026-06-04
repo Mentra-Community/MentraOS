@@ -1751,11 +1751,6 @@ public class OtaHelper {
                         Log.w(TAG, "Failed deleting old APK before refresh: " + apkFile.getName());
                     }
 
-                    // Create backup before update install
-                    if (installNow) {
-                        createAppBackup(packageName, context);
-                    }
-
                     boolean downloadOk = downloadApk(apkUrl, appInfo, context, filename);
                     if (!downloadOk) {
                         clearCachedArtifact(cacheKey, UPDATE_TYPE_APK);
@@ -1782,6 +1777,10 @@ public class OtaHelper {
                 if (!installNow) {
                     return true;
                 }
+
+                // Create backup immediately before install so both fresh-download and
+                // cache-hit paths always have an up-to-date recovery APK.
+                createAppBackup(packageName, context);
 
                 Log.i(
                         TAG,
