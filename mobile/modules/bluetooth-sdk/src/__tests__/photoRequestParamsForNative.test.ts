@@ -17,4 +17,17 @@ describe("photoRequestParamsForNative", () => {
       ["appId", "compress", "flash", "requestId", "size", "sound", "webhookUrl"].sort(),
     )
   })
+
+  it("includes ISO only with manual exposure", () => {
+    expect(photoRequestParamsForNative({...baseParams, iso: 400})).not.toHaveProperty("iso")
+
+    const payload = photoRequestParamsForNative({
+      ...baseParams,
+      exposureTimeNs: 8_333_333,
+      iso: 401.8,
+    })
+
+    expect(payload.exposureTimeNs).toBe(8_333_333)
+    expect(payload.iso).toBe(402)
+  })
 })

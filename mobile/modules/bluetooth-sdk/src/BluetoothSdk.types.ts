@@ -143,6 +143,89 @@ export type PhotoResponseEvent =
       errorMessage: string
     }
 
+export type PhotoStatusState =
+  | "accepted"
+  | "queued"
+  | "configuring"
+  | "capturing"
+  | "captured"
+  | "compressing"
+  | "ble_fallback_compression"
+  | "uploading"
+  | "uploaded"
+  | "ready_for_transfer"
+  | "transferring"
+  | "failed"
+
+export type PhotoResolvedConfig = {
+  format?: "jpeg" | string
+  width?: number
+  height?: number
+  quality?: number
+  requestedSize?: PhotoSize | string
+  source?: "sdk" | "button" | string
+  transferMethod?: "webhook" | "ble" | "local" | string
+  compression?: PhotoCompression | string
+  saveToGallery?: boolean
+  exposureTimeNs?: number
+  iso?: number
+}
+
+export type PhotoFpsRange = {
+  min?: number
+  max?: number
+}
+
+export type PhotoRequestedCaptureConfig = {
+  manual?: boolean
+  exposureTimeNs?: number
+  iso?: number
+  frameDurationNs?: number
+  aeMode?: number
+  aeLock?: boolean
+  aeExposureCompensation?: number
+  aeTargetFpsRange?: PhotoFpsRange
+  noiseReductionMode?: number
+  edgeMode?: number
+  afMode?: number
+  zsl?: boolean
+}
+
+export type PhotoMeteredPreview = {
+  exposureTimeNs?: number
+  iso?: number
+  totalLightProxy?: number
+}
+
+export type PhotoCaptureMetadata = {
+  manual?: boolean
+  exposureTimeNs?: number
+  iso?: number
+  frameDurationNs?: number
+  aeMode?: number
+  aeState?: number
+  aeStateName?: string
+  noiseReductionMode?: number
+  edgeMode?: number
+  zsl?: boolean
+  sensorTimestampNs?: number
+  totalLightProxy?: number
+  mfnrLikely?: boolean
+}
+
+export type PhotoStatusEvent = {
+  type: "photo_status"
+  requestId: string
+  status: PhotoStatusState | string
+  timestamp: number
+  resolvedConfig?: PhotoResolvedConfig
+  requestedCaptureConfig?: PhotoRequestedCaptureConfig
+  meteredPreview?: PhotoMeteredPreview
+  captureMetadata?: PhotoCaptureMetadata
+  errorCode?: string
+  errorMessage?: string
+}
+
 export type GalleryStatusEvent = {
   type: "gallery_status"
   photos: number
@@ -272,6 +355,8 @@ export type PhotoRequestParams = {
   save?: boolean
   sound: boolean
   exposureTimeNs?: number | null
+  /** Sensor ISO for this capture only. Only used when exposureTimeNs enables manual exposure. */
+  iso?: number | null
 }
 
 export type StreamVideoConfig = {
@@ -506,6 +591,7 @@ export type BluetoothSdkModuleEvents = {
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
   hotspot_error: (event: HotspotErrorEvent) => void
   photo_response: (event: PhotoResponseEvent) => void
+  photo_status: (event: PhotoStatusEvent) => void
   gallery_status: (event: GalleryStatusEvent) => void
   compatible_glasses_search_stop: (event: CompatibleGlassesSearchStopEvent) => void
   heartbeat_sent: (event: HeartbeatSentEvent) => void
@@ -575,6 +661,7 @@ export type BluetoothSdkEventMap = {
   hotspot_status_change: HotspotStatusChangeEvent
   hotspot_error: HotspotErrorEvent
   photo_response: PhotoResponseEvent
+  photo_status: PhotoStatusEvent
   gallery_status: GalleryStatusEvent
   compatible_glasses_search_stop: CompatibleGlassesSearchStopEvent
   swipe_volume_status: SwipeVolumeStatusEvent

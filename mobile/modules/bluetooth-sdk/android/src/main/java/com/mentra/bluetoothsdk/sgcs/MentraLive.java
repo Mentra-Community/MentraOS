@@ -2302,6 +2302,13 @@ public class MentraLive extends SGCManager {
             case "ble_photo_ready":
                 processBlePhotoReady(json);
                 break;
+            case "photo_status":
+                try {
+                    Bridge.sendPhotoStatus(jsonObjectToMap(json));
+                } catch (JSONException e) {
+                    Log.e(TAG, "Error converting photo status to Map", e);
+                }
+                break;
             case "stream_status":
                 // Process streaming status update from ASG client
                 Bridge.log("LIVE: Received stream status update from glasses: " + json.toString());
@@ -2336,13 +2343,7 @@ public class MentraLive extends SGCManager {
 
                 // Forward to websocket system via Bridge (matches iOS emitRtmpStreamStatus)
                 try {
-                    Map<String, Object> rtmpMap = new HashMap<>();
-                    Iterator<String> keys = json.keys();
-                    while (keys.hasNext()) {
-                        String key = keys.next();
-                        rtmpMap.put(key, json.get(key));
-                    }
-                    Bridge.sendStreamStatus(rtmpMap);
+                    Bridge.sendStreamStatus(jsonObjectToMap(json));
                 } catch (JSONException e) {
                     Log.e(TAG, "Error converting RTMP status to Map", e);
                 }
@@ -3016,6 +3017,38 @@ public class MentraLive extends SGCManager {
         }
     }
 
+    private Map<String, Object> jsonObjectToMap(JSONObject json) throws JSONException {
+        Map<String, Object> map = new HashMap<>();
+        Iterator<String> keys = json.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            Object value = json.get(key);
+            if (value == JSONObject.NULL) {
+                continue;
+            }
+            map.put(key, jsonValueToBridgeValue(value));
+        }
+        return map;
+    }
+
+    private Object jsonValueToBridgeValue(Object value) throws JSONException {
+        if (value instanceof JSONObject) {
+            return jsonObjectToMap((JSONObject) value);
+        }
+        if (value instanceof JSONArray) {
+            JSONArray array = (JSONArray) value;
+            List<Object> list = new ArrayList<>();
+            for (int i = 0; i < array.length(); i++) {
+                Object item = array.get(i);
+                if (item != JSONObject.NULL) {
+                    list.add(jsonValueToBridgeValue(item));
+                }
+            }
+            return list;
+        }
+        return value;
+    }
+
     private void processChunkedJsonMessage(JSONObject json) {
         try {
             MessageChunker.ChunkInfo chunkInfo = MessageChunker.getChunkInfo(json);
@@ -3047,7 +3080,6 @@ public class MentraLive extends SGCManager {
             Log.e(TAG, "Error processing chunked JSON message", e);
         }
     }
-
     /**
      * Process K900 command format JSON messages (messages with "C" field)
      */
@@ -4234,9 +4266,9 @@ public class MentraLive extends SGCManager {
         }
     }
 
-    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean save, boolean sound, Long exposureTimeNs) {
+    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean save, boolean sound, Long exposureTimeNs, Integer iso) {
         boolean hasAuthToken = authToken != null && !authToken.isEmpty();
-        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", save=" + save + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs);
+        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", save=" + save + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs + ", iso=" + iso);
         Bridge.log("LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry — requestId=" + requestId + ", appId=" + appId);
 
         try {
@@ -4264,6 +4296,10 @@ public class MentraLive extends SGCManager {
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
                 Bridge.log("LIVE: Using manual exposure time for photo request " + requestId + ": " + exposureTimeNs + " ns");
                 json.put("exposureTimeNs", exposureTimeNs);
+            }
+            if (iso != null && iso > 0) {
+                Bridge.log("LIVE: Using manual ISO for photo request " + requestId + ": ISO " + iso);
+                json.put("iso", iso);
             }
 
             // Always generate BLE ID for potential fallback
@@ -5811,7 +5847,7 @@ public class MentraLive extends SGCManager {
 
     private String summarizeOutgoingMessage(String payload) {
         if (payload == null || payload.isEmpty()) {
-            return "type=unknown, requestId=none, appId=none, transferMethod=none, bleImgId=none, exposureTimeNs=none, mId=none";
+            return "type=unknown, requestId=none, appId=none, transferMethod=none, bleImgId=none, exposureTimeNs=none, iso=none, mId=none";
         }
         try {
             JSONObject obj = new JSONObject(payload);
@@ -5821,6 +5857,7 @@ public class MentraLive extends SGCManager {
             String transferMethod = obj.optString("transferMethod", "none");
             String bleImgId = obj.optString("bleImgId", "none");
             String exposure = obj.has("exposureTimeNs") ? String.valueOf(obj.optLong("exposureTimeNs")) : "none";
+            String iso = obj.has("iso") ? String.valueOf(obj.optInt("iso")) : "none";
             String mId = obj.has("mId") ? String.valueOf(obj.optLong("mId")) : "none";
             return "type=" + type
                     + ", requestId=" + requestId
@@ -5828,6 +5865,7 @@ public class MentraLive extends SGCManager {
                     + ", transferMethod=" + transferMethod
                     + ", bleImgId=" + bleImgId
                     + ", exposureTimeNs=" + exposure
+                    + ", iso=" + iso
                     + ", mId=" + mId;
         } catch (JSONException ignored) {
             return "type=non_json, payloadLen=" + payload.length();

@@ -22,6 +22,8 @@ await BluetoothSdk.requestPhoto({
   authToken: 'optional-token',
   compress: 'medium',
   sound: true,
+  exposureTimeNs: null,
+  iso: null,
 });
 ```
 
@@ -38,6 +40,8 @@ sdk.requestPhoto(
         authToken = "optional-token",
         compress = PhotoCompression.MEDIUM,
         sound = true,
+        exposureTimeNs = null,
+        iso = null,
     )
 )
 ```
@@ -54,7 +58,9 @@ sdk.requestPhoto(
         webhookUrl: "https://api.example.com/mentra/photo",
         authToken: "optional-token",
         compress: .medium,
-        sound: true
+        sound: true,
+        exposureTimeNs: nil,
+        iso: nil
     )
 )
 ```
@@ -63,6 +69,37 @@ sdk.requestPhoto(
 </Tabs>
 
 The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
+
+For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null` / `nil`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
+
+Listen for `photo_status` to render progress and inspect the effective settings the glasses used:
+
+```ts
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+useBluetoothEvent('photo_status', (event) => {
+  if (event.status === 'configuring') {
+    console.log('effective JPEG config', event.resolvedConfig);
+  }
+  if (event.status === 'capturing') {
+    console.log('requested still config', event.requestedCaptureConfig);
+    console.log('latest metered preview', event.meteredPreview);
+  }
+  if (event.status === 'captured') {
+    console.log('actual still capture', event.captureMetadata);
+  }
+});
+```
+
+`photo_status` metadata is stage-specific:
+
+| Status | Optional metadata | When to use it |
+| --- | --- | --- |
+| `configuring` | `resolvedConfig` | Show the effective JPEG dimensions, quality, requested size, source, transfer method, compression, and manual exposure fields when present. |
+| `capturing` | `requestedCaptureConfig`, `meteredPreview` | Compare the Camera2 still request with the latest auto-exposure preview estimate before the capture is fired. |
+| `captured` | `captureMetadata` | Read the actual HAL-applied still capture values, including exposure time, ISO, frame duration, AE state/name, noise reduction mode, edge mode, sensor timestamp, and MFNR hint when available. |
+
+Upload and BLE transfer statuses such as `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring` are transport progress only. They do not carry capture metadata, so use the `captured` event when you need the actual exposure/ISO/frame data for debugging or UI. `ble_fallback_compression` means the direct Wi-Fi/webhook upload failed and the glasses are compressing the already-captured photo for Bluetooth fallback delivery.
 
 ## Gallery Mode
 
@@ -105,6 +142,8 @@ try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: 0))
 </Tabs>
 
 Use `setGalleryModeEnabled(false)` when you want the action button to report events without triggering local gallery capture while the glasses are connected.
+
+Action-button photos emitted by the glasses use the same `photo_status` metadata shape when the phone SDK is connected. These local captures report `resolvedConfig.source: "button"` and `resolvedConfig.transferMethod: "local"`, then expose `requestedCaptureConfig` / `meteredPreview` on `capturing` and `captureMetadata` on `captured`.
 
 `setCameraFov` accepts FOV degrees from 62 to 118 and ROI position `0` center, `1` bottom, or `2` top. The `"narrow"` (82°), `"standard"` (102°), and `"wide"` (118°) presets are also accepted and map to center ROI. On Mentra Live, applying FOV/ROI restarts the camera for about 5 seconds; wait for that restart before requesting a photo. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
 

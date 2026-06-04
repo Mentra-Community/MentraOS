@@ -85,6 +85,8 @@ public struct PhotoRequest {
     public let sound: Bool
     /// Sensor exposure time for this capture only (ns), or nil for auto exposure
     public let exposureTimeNs: Double?
+    /// Sensor ISO for this capture only. Only used when exposureTimeNs enables manual exposure.
+    public let iso: Int?
 
     public init(
         requestId: String,
@@ -96,7 +98,8 @@ public struct PhotoRequest {
         flash: Bool = true,
         save: Bool = false,
         sound: Bool,
-        exposureTimeNs: Double? = nil
+        exposureTimeNs: Double? = nil,
+        iso: Int? = nil
     ) {
         self.requestId = requestId
         self.appId = appId
@@ -108,6 +111,7 @@ public struct PhotoRequest {
         self.save = save
         self.sound = sound
         self.exposureTimeNs = exposureTimeNs
+        self.iso = iso
     }
 }
 
@@ -279,3 +283,56 @@ public struct PhotoResponseEvent: CustomStringConvertible {
     }
 }
 
+public struct PhotoStatusEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        var values = values
+        values["type"] = "photo_status"
+        self.values = values
+    }
+
+    public var requestId: String {
+        stringValue(values, "requestId") ?? ""
+    }
+
+    public var status: String {
+        stringValue(values, "status") ?? ""
+    }
+
+    public var timestamp: Int64 {
+        if let value = values["timestamp"] as? Int64 { return value }
+        if let value = values["timestamp"] as? Int { return Int64(value) }
+        if let value = values["timestamp"] as? Double { return Int64(value) }
+        if let value = values["timestamp"] as? NSNumber { return value.int64Value }
+        return Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    public var resolvedConfig: [String: Any]? {
+        values["resolvedConfig"] as? [String: Any]
+    }
+
+    public var requestedCaptureConfig: [String: Any]? {
+        values["requestedCaptureConfig"] as? [String: Any]
+    }
+
+    public var meteredPreview: [String: Any]? {
+        values["meteredPreview"] as? [String: Any]
+    }
+
+    public var captureMetadata: [String: Any]? {
+        values["captureMetadata"] as? [String: Any]
+    }
+
+    public var errorCode: String? {
+        stringValue(values, "errorCode")
+    }
+
+    public var errorMessage: String? {
+        stringValue(values, "errorMessage")
+    }
+
+    public var description: String {
+        "PhotoStatusEvent(requestId: \(requestId), status: \(status))"
+    }
+}
