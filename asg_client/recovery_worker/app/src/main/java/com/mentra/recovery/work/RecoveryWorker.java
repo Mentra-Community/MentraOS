@@ -65,6 +65,17 @@ public class RecoveryWorker extends Worker {
       return Result.success();
     }
 
+    // Guard: a late PONG may have arrived after the restart wait window closed.
+    // If ASG is already healthy, skip reinstall to avoid replacing a running app.
+    String stateAfterRestart = store.getState();
+    if (RecoveryConstants.STATE_HEALTHY.equals(stateAfterRestart)
+        || RecoveryConstants.STATE_COOLDOWN.equals(stateAfterRestart)) {
+      Log.i(RecoveryConstants.TAG, "ASG became healthy before reinstall; aborting reinstall");
+      store.setState(RecoveryConstants.STATE_COOLDOWN, "LATE_PONG_BEFORE_REINSTALL");
+      telemetry.emit("mentra_recovery_recovered", RecoveryConstants.STATE_HEALTHY, "LATE_PONG_BEFORE_REINSTALL", attempt, true);
+      return Result.success();
+    }
+
     store.setState(RecoveryConstants.STATE_REINSTALLING_BACKUP, "RESTART_FAILED");
     telemetry.emit(
         "mentra_recovery_reinstall_attempted",

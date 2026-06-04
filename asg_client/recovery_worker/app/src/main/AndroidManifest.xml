@@ -15,6 +15,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="com.mentra.recovery.permission.HEARTBEAT" />
+    <uses-permission android:name="com.mentra.recovery.permission.CONTROL" />
     <uses-permission android:name="com.mentra.asg_client.permission.RECOVERY_TELEMETRY" />
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
