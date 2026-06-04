@@ -18,7 +18,6 @@ import android.os.Looper;
 import android.util.Log;
 import android.util.Size;
 import com.dev.api.DevApi;
-import com.mentra.asg_client.SysControl;
 import com.mentra.asg_client.camera.UvcStreamingState;
 import com.mentra.asg_client.hardware.K900RgbLedController;
 import com.mentra.asg_client.io.bluetooth.interfaces.BluetoothStateListener;
@@ -31,11 +30,13 @@ import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
+import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 // Note: AugmentosService removed - legacy dependency no longer needed
 // import com.augmentos.augmentos_core.AugmentosService;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.service.system.interfaces.IServiceLifecycle;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
@@ -97,6 +98,7 @@ public class AsgClientService extends Service
     private static final String ACTION_HEARTBEAT = "com.mentra.asg_client.ACTION_HEARTBEAT";
     private static final String ACTION_HEARTBEAT_ACK = "com.mentra.asg_client.ACTION_HEARTBEAT_ACK";
     private static final long HEARTBEAT_TIMEOUT_MS = 35000; // 35 seconds timeout
+
     /** Solid white RGB LED duration while USB UVC streaming (same as video recording). */
     private static final int UVC_STREAMING_LED_DURATION_MS = 1_800_000;
 
@@ -215,6 +217,7 @@ public class AsgClientService extends Service
         super.onCreate();
         Log.i(TAG, "🚀 AsgClientServiceV2 onCreate() started");
         Log.d(TAG, "📊 Android API Level: " + Build.VERSION.SDK_INT);
+        BleTraceLogger.logLifecycle(this, "AsgClientService", "service_create");
 
         instance = this;
 
@@ -231,7 +234,7 @@ public class AsgClientService extends Service
             // EIS is toggled on/off at point of use:
             // - Enabled before video recording (CameraNeoService)
             // - Disabled before streaming (StreamCommandHandler)
-            SysControl.setEisEnable(this, false);
+            SystemControllerFactory.get(this).setEisEnabled(false);
 
             // Initialize dependency injection container
             Log.d(TAG, "🔧 Initializing service container");
@@ -249,7 +252,7 @@ public class AsgClientService extends Service
                     .postDelayed(
                             () -> {
                                 Log.d(TAG, "📶 Enabling 5 GHz Hotspot scan via SysControl");
-                                SysControl.setHotspot5G(this, true);
+                                SystemControllerFactory.get(this).setHotspot5GEnabled(true);
                             },
                             3000);
 
@@ -286,6 +289,13 @@ public class AsgClientService extends Service
         super.onStartCommand(intent, flags, startId);
 
         try {
+            JSONObject lifecycleDetails = new JSONObject();
+            lifecycleDetails.put("action", intent != null ? intent.getAction() : JSONObject.NULL);
+            lifecycleDetails.put("flags", flags);
+            lifecycleDetails.put("startId", startId);
+            BleTraceLogger.logLifecycle(
+                    this, "AsgClientService", "service_start_command", lifecycleDetails);
+
             ensureForegroundStarted();
 
             if (intent == null || intent.getAction() == null) {
@@ -322,6 +332,7 @@ public class AsgClientService extends Service
     @Override
     public void onDestroy() {
         Log.i(TAG, "🛑 AsgClientServiceV2 onDestroy() started");
+        BleTraceLogger.logLifecycle(this, "AsgClientService", "service_destroy_start");
 
         try {
             // Unregister from EventBus
@@ -383,6 +394,7 @@ public class AsgClientService extends Service
             handleSwipeVolumeControl(true);
 
             Log.i(TAG, "✅ AsgClientServiceV2 onDestroy() completed successfully");
+            BleTraceLogger.logLifecycle(this, "AsgClientService", "service_destroy_complete");
         } catch (Exception e) {
             Log.e(TAG, "💥 Error in onDestroy()", e);
         }
@@ -401,7 +413,10 @@ public class AsgClientService extends Service
         return instance;
     }
 
-    /** Handle MTK UVC streaming state forwarded from {@link com.mentra.asg_client.receiver.UvcStreamingBroadcastReceiver}. */
+    /**
+     * Handle MTK UVC streaming state forwarded from {@link
+     * com.mentra.asg_client.receiver.UvcStreamingBroadcastReceiver}.
+     */
     public void handleUvcStreamingState(boolean streaming) {
         if (streaming == lastUvcStreaming) {
             Log.d(TAG, "UVC streaming state unchanged (" + streaming + "), skipping LED update");
@@ -748,7 +763,7 @@ public class AsgClientService extends Service
             int roiPosition = asgSettings.getCameraRoiPosition();
             try {
                 DevApi.setCameraFov(fov, roiPosition);
-                SysControl.restartCameraHal(this);
+                SystemControllerFactory.get(this).restartCameraHal();
                 CameraRestartCooldown.setCooldown();
                 Log.d(
                         TAG,
@@ -1120,7 +1135,7 @@ public class AsgClientService extends Service
             }
 
             // Include MTK firmware version (from system property)
-            String mtkFirmwareVersion = SysControl.getSystemCurrentVersion(this);
+            String mtkFirmwareVersion = SystemControllerFactory.get(this).getSystemOtaVersion();
 
             // Include BES BT MAC address as unique device identifier (stored in system properties)
             String besBtMac = SysProp.getBesBtMac(this);
@@ -1483,6 +1498,12 @@ public class AsgClientService extends Service
         resetHeartbeatTimeout();
     }
 
+    /** Handle any standard command received from the phone over Bluetooth. */
+    public void onPhoneCommandReceived() {
+        Log.d(TAG, "📱 Phone command received - marking phone connection active");
+        resetHeartbeatTimeout();
+    }
+
     /** Handle service heartbeat received from MentraLiveSGC */
     public void onServiceHeartbeatReceived() {
         Log.d(TAG, "💓 Service heartbeat received from MentraLiveSGC");
@@ -1699,11 +1720,11 @@ public class AsgClientService extends Service
         try {
             if (bEnable) {
                 Log.d(TAG, "📶 Enabling WiFi via ADB command");
-                SysControl.injectAdbCommand(context, "svc wifi enable");
+                SystemControllerFactory.get(context).injectAdbCommand("svc wifi enable");
                 Log.d(TAG, "✅ WiFi enable command executed");
             } else {
                 Log.d(TAG, "📶 Disabling WiFi via ADB command");
-                SysControl.injectAdbCommand(context, "svc wifi disable");
+                SystemControllerFactory.get(context).injectAdbCommand("svc wifi disable");
                 Log.d(TAG, "✅ WiFi disable command executed");
             }
         } catch (Exception e) {

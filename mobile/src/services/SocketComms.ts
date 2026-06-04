@@ -595,7 +595,14 @@ class SocketComms {
     const videoRequestId = msg.requestId || `video_${Date.now()}`
     const save = msg.save !== false
     const sound = msg.sound ?? true
-    BluetoothSdk.startVideoRecording(videoRequestId, save, sound)
+    // Optional per-recording video settings; when absent the glasses use their
+    // saved button-video settings. Only forward fields that are present.
+    const s = msg.settings ?? {}
+    const settings =
+      s.width != null || s.height != null || s.fps != null
+        ? {width: s.width, height: s.height, fps: s.fps}
+        : undefined
+    BluetoothSdk.startVideoRecording(videoRequestId, save, sound, settings)
   }
 
   private handle_stop_video_recording(msg: any) {
@@ -628,7 +635,7 @@ class SocketComms {
 
   private handle_camera_fov_set(msg: any) {
     const ROI_MAP: Record<string, number> = {center: 0, bottom: 1, top: 2}
-    const fov = typeof msg.fov === "number" ? Math.min(118, Math.max(82, msg.fov)) : 118
+    const fov = typeof msg.fov === "number" ? Math.min(118, Math.max(62, msg.fov)) : 118
     const roiStr: string = msg.roiPosition ?? "center"
     const numericRoi = ROI_MAP[roiStr] ?? 0
     console.log(`SOCKET: camera_fov_set fov=${fov} roi=${roiStr} (${numericRoi})`)

@@ -30,6 +30,26 @@ abstract class SGCManager {
     abstract fun stopStream()
     abstract fun sendStreamKeepAlive(message: MutableMap<String, Any>)
     abstract fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean)
+
+    /**
+     * Start video recording with optional per-recording resolution/fps. A width,
+     * height, or fps of 0 means "use the device's saved button-video default".
+     * The base implementation ignores the settings and delegates to the default
+     * recording path; devices that support custom settings (e.g. Mentra Live)
+     * override this.
+     */
+    open fun startVideoRecording(
+        requestId: String,
+        save: Boolean,
+        flash: Boolean,
+        sound: Boolean,
+        width: Int,
+        height: Int,
+        fps: Int,
+    ) {
+        startVideoRecording(requestId, save, flash, sound)
+    }
+
     abstract fun stopVideoRecording(requestId: String)
 
     // Button Settings
@@ -138,6 +158,9 @@ abstract class SGCManager {
 
     // Voice Activity Detection
     open fun sendVoiceActivityDetectionSetting() {}
+
+    // Start/stop LC3 audio playback from glasses based on the nex_audio_playback flag.
+    open fun applyNexAudioPlaybackSetting() {}
 
     // Version info
     abstract fun requestVersionInfo()

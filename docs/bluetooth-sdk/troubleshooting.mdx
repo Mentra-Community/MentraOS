@@ -6,9 +6,11 @@ icon: "circle-question"
 
 ## Android Dependency Resolution Fails
 
-- Confirm your app has `google()`, `mavenCentral()`, and any required SDK repository configured.
-- Confirm `com.mentra:bluetooth-sdk:<version>` matches the SDK version you are integrating.
-- Confirm Gradle can resolve the companion SDK artifacts.
+- Confirm your app has `google()`, `mavenCentral()`, and `maven("https://www.jitpack.io")` configured.
+- Confirm `com.mentraglass:bluetooth-sdk:<version>` matches the SDK version you are integrating.
+- Confirm JitPack is reachable if Gradle cannot resolve runtime dependencies such as the Vuzix Ultralite SDK; these are transitive runtime dependencies and are not exposed by the SDK's public Android API.
+- Confirm Gradle can resolve the companion `com.mentraglass:lc3Lib` artifact transitively.
+- If a version was just published, Maven Central mirror propagation can lag briefly. Retry after the artifact appears under `https://repo.maven.apache.org/maven2/com/mentraglass/bluetooth-sdk/`.
 - If you are testing an unreleased SDK, publish the SDK and companion artifacts to `mavenLocal()` and include `mavenLocal()` in the app repositories.
 
 ## Android Build Fails On Native Libraries
@@ -19,16 +21,9 @@ icon: "circle-question"
 - Confirm no app-level packaging rule excludes `libc++_shared.so`, ONNX Runtime, or SDK native libraries.
 - Clean only the app build output first. Do not delete SDK source artifacts unless you are intentionally resetting your workspace.
 
-## iOS Pod Install Fails
+## iOS Swift Package Resolution Fails
 
-Run:
-
-```bash
-pod repo update
-pod install --repo-update
-```
-
-Check that your iOS deployment target is at least `15.1` and that the `MentraBluetoothSDK` pod version exists.
+Check that your iOS deployment target is at least `15.1`, that the package URL is `https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git`, and that Xcode resolves version `0.1.7` or newer. If Xcode has stale package state, reset package caches and resolve packages again from Xcode.
 
 If your app also uses Firebase with static frameworks, Firebase modular header configuration belongs in your app, not in the Bluetooth SDK.
 
@@ -37,7 +32,7 @@ If your app also uses Firebase with static frameworks, Firebase modular header c
 - Confirm you are running a development build or production native build. Expo Go cannot load `@mentra/bluetooth-sdk`.
 - Run `bunx expo prebuild` after adding the SDK plugin to `app.json`.
 - Confirm `@mentra/bluetooth-sdk` is installed in the app that is being prebuilt.
-- On iOS, run `pod install` inside the generated `ios/` directory or rerun `bunx expo run:ios`.
+- On iOS, rerun `bunx expo run:ios` after changing native module dependencies.
 - If you are testing a local SDK package, set `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` to the same package path you installed with Bun.
 
 ## Bluetooth Permission Problems

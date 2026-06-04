@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk
 
+import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -204,11 +205,17 @@ class BluetoothSdkModule : Module() {
                     appContext.reactContext
                             ?: appContext.currentActivity
                                     ?: throw IllegalStateException("No context available")
+            BleTraceLogger.logLifecycle(context, "BluetoothSdkModule", "module_create")
             sdk = MentraBluetoothSdk.create(context, sdkListener)
             deviceManager = DeviceManager.getInstance()
         }
 
         OnDestroy {
+            BleTraceLogger.logLifecycle(
+                    appContext.reactContext ?: appContext.currentActivity,
+                    "BluetoothSdkModule",
+                    "module_destroy"
+            )
             sdk?.close()
             sdk = null
             deviceManager = null
@@ -413,8 +420,25 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - Video Recording Commands
 
-        AsyncFunction("startVideoRecording") { requestId: String, save: Boolean, sound: Boolean ->
-            sdk?.startVideoRecording(VideoRecordingRequest(requestId, save, sound))
+        AsyncFunction("startVideoRecording") {
+                requestId: String,
+                save: Boolean,
+                sound: Boolean,
+                settings: Map<String, Any?>? ->
+            // Optional per-recording {width,height,fps}. Absent fields stay 0, which
+            // the glasses treat as "use the saved button-video default". JS numbers
+            // arrive as Double across the bridge, so coerce to Int.
+            fun dim(key: String): Int = (settings?.get(key) as? Number)?.toInt() ?: 0
+            sdk?.startVideoRecording(
+                    VideoRecordingRequest(
+                            requestId,
+                            save,
+                            sound,
+                            dim("width"),
+                            dim("height"),
+                            dim("fps"),
+                    )
+            )
         }
 
         AsyncFunction("stopVideoRecording") { requestId: String ->
