@@ -5131,13 +5131,16 @@ extension MentraLive {
             "sound": sound,
         ]
 
-        // Add video settings if provided
-        if width > 0, height > 0 {
-            json["settings"] = [
-                "width": width,
-                "height": height,
-                "fps": fps > 0 ? fps : 30,
-            ]
+        // Add video settings when any field is overridden. Each field is sent
+        // only when > 0; the glasses merge the missing fields onto their saved
+        // button-video defaults, so a partial override (e.g. fps-only) still
+        // takes effect instead of being dropped here.
+        if width > 0 || height > 0 || fps > 0 {
+            var settings: [String: Any] = [:]
+            if width > 0 { settings["width"] = width }
+            if height > 0 { settings["height"] = height }
+            if fps > 0 { settings["fps"] = fps }
+            json["settings"] = settings
         }
         sendJson(json)
     }
