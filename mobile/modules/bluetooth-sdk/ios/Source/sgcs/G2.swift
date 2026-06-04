@@ -2052,13 +2052,13 @@ class G2: NSObject, SGCManager {
         let rh = height ?? G2.defaultImgContainer.height
 
         guard let rawData = Data(base64Encoded: base64ImageData) else {
-            Bridge.log("G2: displayBitmap() - failed to decode base64")
+            Bridge.log("G2: failed to decode base64")
             return false
         }
 
         guard let bmpData = convertToG2Bmp(rawData, containerWidth: Int(rw), containerHeight: Int(rh))
         else {
-            Bridge.log("G2: displayBitmap() - failed to convert image to BMP")
+            Bridge.log("G2: failed to convert image to BMP")
             return false
         }
 
@@ -2138,6 +2138,8 @@ class G2: NSObject, SGCManager {
         Bridge.log("G2: rebuildState()")
         // recreate the containers:
         createPageWithContainers()
+        
+        try? await Task.sleep(nanoseconds: 300_000_000) // 300ms to settle
         // send any image containers we have
         // go through each container and send the data:
         for container in imageContainers {
@@ -2265,9 +2267,9 @@ class G2: NSObject, SGCManager {
         let offsetX = (containerWidth - scaledW) / 2
         let offsetY = (containerHeight - scaledH) / 2
 
-        Bridge.log(
-            "G2: convertToG2Bmp - input \(srcWidth)x\(srcHeight) → scaled \(scaledW)x\(scaledH) in \(containerWidth)x\(containerHeight)"
-        )
+        // Bridge.log(
+        //     "G2: convertToG2Bmp - input \(srcWidth)x\(srcHeight) → scaled \(scaledW)x\(scaledH) in \(containerWidth)x\(containerHeight)"
+        // )
 
         // Render to 8-bit grayscale at the CONTAINER size (not scaled size)
         guard
