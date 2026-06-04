@@ -1,33 +1,24 @@
 /**
  * @fileoverview Shared audio types used across services + workers.
  *
- * Currently:
- *   - AudioSubscription (discriminated union: transcription | translation)
- *   - Subscription canonicalization for structural equality
+ * The canonical subscription/result types and their zod schemas live in
+ * `protocol/audio.ts` (the isomorphic `@mentra/cloud-runtime/protocol`
+ * entrypoint). This module re-exports the subscription types and adds the
+ * server-side `subscriptionKey()` canonicalization used for structural
+ * equality + Map keys.
  *
- * Per the design (docs/issues/003-audio/spec.md "Subscription model"):
- * "Phone aggregates and dedupes across local miniapps; sends a flat list
- * to cloud on every (re)connect. Identity is structural."
+ * Per the design (docs/issues/002-cloud-runtime/audio/spec.md "Subscription
+ * model"): "Phone aggregates and dedupes across local miniapps; sends a flat
+ * list to cloud on every (re)connect. Identity is structural."
  */
+export type {
+  LanguageSource,
+  TranscriptionSubscription,
+  TranslationSubscription,
+  AudioSubscription,
+} from "./protocol/audio";
 
-export type LanguageSource =
-  | { mode: "specific"; code: string }
-  | { mode: "auto"; hints?: string[] };
-
-export interface TranscriptionSubscription {
-  kind: "transcription";
-  language: LanguageSource;
-}
-
-export interface TranslationSubscription {
-  kind: "translation";
-  source: LanguageSource;
-  target: string;
-}
-
-export type AudioSubscription =
-  | TranscriptionSubscription
-  | TranslationSubscription;
+import type { AudioSubscription, LanguageSource } from "./protocol/audio";
 
 /**
  * Stable string key for a subscription, used for equality + Map keys.

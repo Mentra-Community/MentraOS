@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol": "./src/protocol/index.ts"
+  },
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "test": "bun test"
@@ -12,6 +16,7 @@
     "@mentra/cloud-shared": "workspace:*",
     "@soniox/node": "^2.1.0",
     "ioredis": "^5.4.1",
-    "ulid": "^3.0.2"
+    "ulid": "^3.0.2",
+    "zod": "^3.24.1"
   }
 }
