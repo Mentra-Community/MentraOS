@@ -266,16 +266,21 @@ Mentra Live firmware owns the OTA flow. The SDK mirrors the MentraOS app command
 ```ts
 import BluetoothSdk from '@mentra/bluetooth-sdk'
 
-BluetoothSdk.addListener('ota_update_available', (event) => {
+// Start OTA only after the glasses report an update and the user accepts it.
+BluetoothSdk.addListener('ota_update_available', async (event) => {
   console.log('Update available', event.version_name, event.updates)
+  const userAccepted = await promptUserToInstallUpdate(event) // your app's UI
+  if (userAccepted) {
+    await BluetoothSdk.startOtaUpdate()
+  }
 })
 
 BluetoothSdk.addListener('ota_status', (event) => {
   console.log(`OTA ${event.status}: ${event.overall_percent}%`)
 })
 
+// Ask the glasses to report availability; the answer arrives as `ota_update_available`.
 await BluetoothSdk.checkForOtaUpdate()
-await BluetoothSdk.startOtaUpdate()
 ```
 
 OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until `ota_status.status` is `complete` or `failed`.
