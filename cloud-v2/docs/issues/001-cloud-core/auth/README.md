@@ -3,11 +3,11 @@
 The home for the whole MentraOS auth system: how every actor proves identity to
 Mentra, and how Mentra hands identity to the parties that need it.
 
-Two docs give the full v2 picture without reading the spikes:
-[`spec.md`](./spec.md) is the endpoint and token contract (the "what"), and
-[`design.md`](./design.md) is the end-to-end implementation design across
-cloud-core, cloud-client, on-device, and the dev SDK (the "how", every code
-change). The docs below are the mechanisms behind them.
+**Reading order:** [`spec.md`](./spec.md) (the endpoint and token contract, the
+"what"), then [`design.md`](./design.md) (the end-to-end implementation design
+across cloud-core, cloud-client, on-device, and the dev SDK, the "how", every
+code change). Those two give the full v2 picture. The rest below (`oem-auth/`,
+`identity.md`, `auto-auth.md`, `injection.md`) is supporting detail.
 
 ## Parts
 
@@ -15,13 +15,13 @@ change). The docs below are the mechanisms behind them.
   Mentra (RFC 8693 exchange of an OEM-signed JWT for a Mentra access token), and
   how Mentra hands user identity to miniapp backends (the `mentraUserId` +
   `oemId` handoff and trust policy). Specced and implemented.
-- **User identity** ([`identity/`](./identity/)): the identity for "Mentra's own
+- **User identity** ([`identity.md`](./identity.md)): the identity for "Mentra's own
   users," which today spans the consumer app, the Dev Console website, and the
   App/MiniApp Store website, all via the **same** Supabase sign-in plus core-token
   exchange (not three separate systems). v2 unifies them on the Mentra access
   token, with Mentra as "OEM zero" (reserved `oemId = "mentra"`). OEM users reach
   the same token via oem-auth. Spike.
-- **Miniapp auto-auth** ([`auto-auth/`](./auto-auth/)): injecting Mentra auth
+- **Miniapp auto-auth** ([`auto-auth.md`](./auto-auth.md)): injecting Mentra auth
   into a local miniapp so it can call the developer's own backend with no login
   (the Phase 2 that oem-auth deferred). Spike.
 
@@ -41,8 +41,9 @@ verifies it. Miniapp auto-auth derives a short-lived miniapp-scoped token from i
 - `design.md`: the end-to-end implementation design (the code changes across
   cloud-core, cloud-client, on-device, and the dev SDK).
 - `oem-auth/`: Implemented (the OEM-JWT exchange mechanics; docs under review).
-- `identity/`: Spiked (Mentra-direct identity + the migration bridge).
-- `auto-auth/`: Spiked (the end-to-end miniapp dev-backend mechanism).
+- `identity.md`: Mentra-direct identity + the migration bridge (decided).
+- `auto-auth.md` + `injection.md`: the miniapp dev-backend mechanism (decided) and
+  the on-device injection proposal.
 
 ## Related
 

@@ -60,7 +60,7 @@ Identity throughout is `mentraUserId` (the `users._id`) + `oemId`.
   token (from `cloud.auth.getMiniappToken`).
 - Inject the miniapp token into the bundle's two JS contexts (webview + Crust),
   and refresh/re-inject before expiry. Mechanism in
-  [`auto-auth/injection.md`](./auto-auth/injection.md).
+  [`injection.md`](./injection.md).
 - The cloud-client is wired in through the runtime transport adapter
   ([`../../004-cloud-client/island-adapter.md`](../../004-cloud-client/island-adapter.md)).
 
@@ -93,10 +93,10 @@ Identity throughout is `mentraUserId` (the `users._id`) + `oemId`.
 ## References
 
 - [`spec.md`](./spec.md): the endpoint and token contract.
-- [`identity/spike.md`](./identity/spike.md): the identity model and the migration
+- [`identity.md`](./identity.md): the identity model and the migration
   bridge.
-- [`auto-auth/spike.md`](./auto-auth/spike.md) and
-  [`auto-auth/injection.md`](./auto-auth/injection.md): the miniapp flow and the
+- [`auto-auth.md`](./auto-auth.md) and
+  [`injection.md`](./injection.md): the miniapp flow and the
   on-device injection.
 - [`oem-auth/design.md`](./oem-auth/design.md): the OEM-JWT verification and replay
   protection.

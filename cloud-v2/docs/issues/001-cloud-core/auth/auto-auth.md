@@ -1,11 +1,11 @@
 # Miniapp auto-auth: spike
 
 **Status:** The mechanism is decided. The server side (mint endpoint, JWKS, token)
-is specced in [`../spec.md`](../spec.md); the on-device injection is proposed in
+is specced in [`./spec.md`](./spec.md); the on-device injection is proposed in
 [`injection.md`](./injection.md). This is the "Miniapp to developer-server auth
 (Phase 2)" that oem-auth deferred: how Mentra injects auth into a local miniapp so
 it can call the developer's own backend with no login. The user identity it
-carries is the sibling spike, [`../identity/spike.md`](../identity/spike.md).
+carries is the sibling spike, [`./identity.md`](./identity.md).
 
 ## Scope
 
@@ -28,7 +28,7 @@ dev backend now that miniapps are local.
 
 The v1 handshake injects auth into a miniapp webview so it is authenticated
 against the developer's backend with no login. Full writeup in
-[`cloud/.architecture/auth.md`](../../../../../../cloud/.architecture/auth.md);
+[`cloud/.architecture/auth.md`](../../../../../cloud/.architecture/auth.md);
 summary:
 
 The miniapp is served **remotely** from the developer's server. Two paths produce
@@ -63,7 +63,7 @@ Two shifts force a redesign:
    no remote webview URL to inject tokens into; the runtime is next to the
    webview and can hand it auth directly.
 2. **v2 has a real token.** The Ed25519 Mentra access token already exists (see
-   [`../identity/spike.md`](../identity/spike.md)), asymmetric and verifiable with
+   [`./identity.md`](./identity.md)), asymmetric and verifiable with
    Mentra's public key.
 
 The v2 mechanism:
@@ -75,7 +75,7 @@ The v2 mechanism:
    with `sub = mentraUserId`, `oemId` (so the backend can apply its Q2 trust
    policy), `aud = <packageName>` (scoped to this one miniapp), short expiry. It is
    minted by the cloud-core endpoint `POST /api/client/auth/miniapp-token`, which
-   the runtime calls with the user's access token (see [`../spec.md`](../spec.md)).
+   the runtime calls with the user's access token (see [`./spec.md`](./spec.md)).
    Minting is server-side so it can be revoked and audited.
 3. The runtime injects this token into the bundle's two JS contexts (the webview
    and the Crust engine), not via a URL param; `useMentraAuth()` reads it from the
@@ -108,14 +108,14 @@ The browser path (a webview opened outside the app, or a companion web app) stil
 needs a "Sign in with Mentra" OAuth flow that ends in the same miniapp-scoped token.
 Carry v1's Path B forward, issuing the v2 token.
 
-## Decided (in [`../spec.md`](../spec.md))
+## Decided (in [`./spec.md`](./spec.md))
 
 - **Mint endpoint:** `POST /api/client/auth/miniapp-token` (cloud-core, Bearer
   access token), TTL configurable, default 1h.
 - **JWKS:** `/.well-known/jwks.json` on cloud-core, separate signing keys for
   access vs miniapp tokens, `kid` rotation.
 - **Audience:** per-packageName (`aud = <packageName>`).
-- **Server side is specced in `../spec.md`;** this doc owns the end-to-end flow.
+- **Server side is specced in `./spec.md`;** this doc owns the end-to-end flow.
 
 ## Open
 
@@ -128,10 +128,10 @@ exact bridge messages and SDK surface are finalized during implementation.
 
 ## References
 
-- [`cloud/.architecture/auth.md`](../../../../../../cloud/.architecture/auth.md):
+- [`cloud/.architecture/auth.md`](../../../../../cloud/.architecture/auth.md):
   the full v1 webview auto-auth writeup.
-- [`../identity/spike.md`](../identity/spike.md): the user identity this carries.
-- [`../oem-auth/spec.md`](../oem-auth/spec.md): Q2 (miniapp identity handoff,
+- [`./identity.md`](./identity.md): the user identity this carries.
+- [`./oem-auth/spec.md`](./oem-auth/spec.md): Q2 (miniapp identity handoff,
   trust policies, Option C) that this inherits.
 - v1 code: `cloud/packages/sdk/src/app/webview/index.ts`,
   `cloud/packages/react-sdk/src/`,

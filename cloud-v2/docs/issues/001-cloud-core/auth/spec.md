@@ -7,9 +7,9 @@ the sibling docs and are referenced, not duplicated:
 - OEM onboarding, key registration, subject-token verification, replay protection:
   [`oem-auth/`](./oem-auth/).
 - `mentraUserId`, the audiences, and the v1 to v2 migration bridge:
-  [`identity/spike.md`](./identity/spike.md).
+  [`identity.md`](./identity.md).
 - The end-to-end miniapp auto-auth flow and dev-backend verification:
-  [`auto-auth/spike.md`](./auto-auth/spike.md).
+  [`auto-auth.md`](./auto-auth.md).
 
 ## Path and caller convention
 

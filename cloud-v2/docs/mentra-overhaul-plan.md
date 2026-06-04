@@ -27,12 +27,13 @@ Cloud V1's mini-app server protocol goes away. The cloud gets smaller and more s
 
 ## References
 
-**Design docs / specs**
+**Design docs / specs** (read this plan first, then pick an area)
 
 - [Issue tracker (all areas plus status)](issues/)
-- [OEM auth](issues/001-cloud-core/auth/oem-auth/)
+- [Cloud Core auth](issues/001-cloud-core/auth/): start at the README, then `spec.md` + `design.md`.
+- [Cloud Client](issues/004-cloud-client/): the headless `@mentra/cloud-client`.
+- [Cloud Runtime](issues/002-cloud-runtime/): the protocol, audio, and camera.
 - [OEM portal](issues/005-websites/oem-portal/)
-- [Audio](issues/002-cloud-runtime/audio/)
 - [Local SDK](issues/006-dev-toolkit/local-sdk/)
 - [Runbooks](runbooks/)
 

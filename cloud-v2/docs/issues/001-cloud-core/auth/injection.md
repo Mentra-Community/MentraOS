@@ -3,7 +3,7 @@
 **Status:** Design proposal. How the on-device Mentra Runtime delivers the
 miniapp-scoped token to a running miniapp and refreshes it, so the miniapp can
 call its developer backend. The token, the mint endpoint, and JWKS are specced in
-[`../spec.md`](../spec.md); the end-to-end flow is in [`spike.md`](./spike.md).
+[`./spec.md`](./spec.md); the end-to-end flow is in [`spike.md`](./auto-auth.md).
 This doc is the client-side delivery half.
 
 ## Principle

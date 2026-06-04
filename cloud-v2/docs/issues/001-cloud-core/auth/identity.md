@@ -3,7 +3,7 @@
 **Status:** The identity model and the migration bridge are decided (below).
 Covers identity for Mentra's own users (consumer app, Dev Console, App/MiniApp
 Store) and how OEM users fit. The developer auto-auth mechanism is a sibling
-spike, [`../auto-auth/spike.md`](../auto-auth/spike.md).
+spike, [`./auto-auth.md`](./auto-auth.md).
 
 ## Scope
 
@@ -12,7 +12,7 @@ User identity for:
 1. **Mentra's own users**: the Mentra consumer app, plus the Dev Console and the
    App/MiniApp Store websites, which all use the same sign-in.
 2. **OEM users**: an OEM's app, identity owned by the OEM. Already specced in
-   [`../oem-auth/`](../oem-auth/).
+   [`./oem-auth/`](./oem-auth/).
 
 The `MentraUserId` and OEM identity model are settled by oem-auth and inherited
 here:
@@ -68,9 +68,9 @@ bridge below.
 
 Already specced: the OEM mints an install JWT, exchanges it via RFC 8693 for the
 Mentra access token; Mentra maps `(oemId, oemUserId)` to a `MentraUserId` (the
-`users._id`), created on first sight ([`../oem-auth/design.md`](../oem-auth/design.md)).
+`users._id`), created on first sight ([`./oem-auth/design.md`](./oem-auth/design.md)).
 Identity is owned by the OEM. The dev-backend handoff carries `mentraUserId` +
-`oemId` per Q2 Option B (see [`../auto-auth/spike.md`](../auto-auth/spike.md)).
+`oemId` per Q2 Option B (see [`./auto-auth.md`](./auto-auth.md)).
 
 ## Migration bridge: core token to v2 access token
 
@@ -112,9 +112,9 @@ bridge.
 
 ## References
 
-- [`../oem-auth/design.md`](../oem-auth/design.md): the Mentra access token shape
+- [`./oem-auth/design.md`](./oem-auth/design.md): the Mentra access token shape
   and the `(oemId, oemUserId) -> mentraUserId` mapping.
-- [`../auto-auth/spike.md`](../auto-auth/spike.md): the developer auto-auth
+- [`./auto-auth.md`](./auto-auth.md): the developer auto-auth
   mechanism that consumes this identity.
 - v1 code: `cloud/packages/cloud/src/utils/generateCoreToken.ts`,
   `.../api/hono/routes/auth.routes.ts`,
