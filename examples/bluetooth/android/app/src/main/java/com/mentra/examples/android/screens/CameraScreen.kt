@@ -497,7 +497,7 @@ private fun CameraFovSettingsCard(controller: MentraExampleController) {
             }
         }
         Text(
-            "${state.cameraSettingsStatus}. Applying FOV/ROI restarts the Mentra Live camera for about 5 seconds.",
+            "${state.cameraSettingsStatus}. Applying FOV/ROI waits for the Mentra Live camera-ready ack.",
             color = AppColor.muted,
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,

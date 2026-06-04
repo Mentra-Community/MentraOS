@@ -12,11 +12,12 @@ import BluetoothSdk, {
   type DeviceModel,
   type MicLc3Event,
   type MicPcmEvent,
+  type OtaQueryResult,
   type OtaStatusEvent,
   type OtaUpdateAvailableEvent,
   type PhotoResponseEvent,
   type PhotoStatusEvent,
-  type RgbLedControlResponseEvent,
+  type SettingsAckEvent,
   type SpeakingStatusEvent,
   type StreamStatusEvent,
   type TouchEvent,
@@ -179,7 +180,7 @@ export const PHOTO_EXPOSURE_DEFAULT_NS = 8_333_333;
 export const PHOTO_ISO_MIN = 100;
 export const PHOTO_ISO_MAX = 6400;
 export const PHOTO_ISO_DEFAULT = 200;
-export const CAMERA_FOV_MIN = 50;
+export const CAMERA_FOV_MIN = 62;
 export const CAMERA_FOV_MAX = 118;
 export const CAMERA_FOV_DEFAULT = 102;
 export const CAMERA_ROI_POSITIONS = [
@@ -539,20 +540,12 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       MentraVideoStreamReceiver.addListener('streamFrame', handleDirectStreamFrame),
       MentraVideoStreamReceiver.addListener('streamFirstFrame', handleDirectStreamFirstFrame),
       BluetoothSdk.addListener('photo_status', handlePhotoStatus),
-      BluetoothSdk.addListener('photo_response', handlePhotoResponse),
       BluetoothSdk.addListener('stream_status', (payload: StreamStatusEvent) => {
         applyStreamStatus(payload);
         if (streamCloudServerEnabledRef.current) {
           setStreamStatus(JSON.stringify(payload));
         }
         addEvent('LIVE', `stream status ${summarizeMap(payload)}`);
-      }),
-      BluetoothSdk.addListener('ota_update_available', (payload: OtaUpdateAvailableEvent) => {
-        setOtaUpdateAvailable(payload);
-        addEvent('LIVE', `OTA available ${payload.version_name ?? 'unknown'} (${(payload.updates ?? []).join(', ') || 'update'})`);
-      }),
-      BluetoothSdk.addListener('ota_start_ack', () => {
-        addEvent('LIVE', 'OTA start acknowledged');
       }),
       BluetoothSdk.addListener('ota_status', (payload: OtaStatusEvent) => {
         setOtaStatus(payload);
@@ -606,9 +599,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           addEvent('BLE', `scan stopped for ${payload.deviceModel ?? 'glasses'}`);
         },
       ),
-      BluetoothSdk.addListener('rgb_led_control_response', (payload: RgbLedControlResponseEvent) => {
-        addEvent('LIVE', `RGB LED ${payload.state === 'success' ? 'ack' : payload.errorCode}`);
-      }),
       BluetoothSdk.addListener('log', (payload: LogEvent) => {
         addEvent('LIVE', payload.message);
       }),
@@ -647,7 +637,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   useEffect(() => {
     if (glassesConnected) {
       if (!wasConnectedRef.current) {
-        void BluetoothSdk.checkForOtaUpdate().catch((error) => {
+        void checkForOtaUpdateResult().catch((error) => {
           addEvent('TX', `OTA check failed: ${formatError(error)}`);
         });
       }
@@ -789,8 +779,23 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       if (!glassesConnected) {
         throw new Error('Connect glasses first.');
       }
-      await BluetoothSdk.checkForOtaUpdate();
+      await checkForOtaUpdateResult();
     });
+  }
+
+  async function checkForOtaUpdateResult(): Promise<OtaQueryResult> {
+    const result = await BluetoothSdk.checkForOtaUpdate();
+    if (result.type === 'ota_update_available') {
+      setOtaUpdateAvailable(result);
+      addEvent('LIVE', `OTA available ${result.version_name ?? 'unknown'} (${(result.updates ?? []).join(', ') || 'update'})`);
+      return result;
+    }
+    setOtaStatus(result);
+    if (result.status === 'complete' || result.status === 'failed') {
+      setOtaUpdateAvailable(null);
+    }
+    addEvent('LIVE', `OTA ${result.status} ${result.overall_percent ?? 0}%`);
+    return result;
   }
 
   async function startOtaUpdate() {
@@ -799,6 +804,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         throw new Error('Connect glasses first.');
       }
       await BluetoothSdk.startOtaUpdate();
+      addEvent('LIVE', 'OTA start acknowledged');
     });
   }
 
@@ -895,7 +901,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       resetBarcodeScan();
       setCameraStatus(`Camera: webhook upload requested (${requestId})`);
       try {
-        await BluetoothSdk.requestPhoto({
+        const response = await BluetoothSdk.requestPhoto({
           requestId,
           appId: PHOTO_APP_ID,
           size: photoSize,
@@ -906,6 +912,10 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
           iso: photoExposureManual ? photoIso : null,
         });
+        handlePhotoResponse(response);
+        if (response.state === 'error') {
+          throw new Error(response.errorMessage || response.errorCode || 'Photo request failed');
+        }
       } catch (error) {
         markPhotoRequestFailed(requestId, 'REQUEST_FAILED', formatError(error));
         throw error;
@@ -936,7 +946,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }, DIRECT_PHOTO_UPLOAD_TIMEOUT_MS);
 
     try {
-      await BluetoothSdk.requestPhoto({
+      const response = await BluetoothSdk.requestPhoto({
         requestId,
         appId: PHOTO_APP_ID,
         size: photoSize,
@@ -947,6 +957,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
         iso: photoExposureManual ? photoIso : null,
       });
+      handlePhotoResponse(response);
+      if (response.state === 'error') {
+        clearPhotoUploadTimeout();
+        throw new Error(response.errorMessage || response.errorCode || 'Photo request failed');
+      }
     } catch (error) {
       clearPhotoUploadTimeout();
       markPhotoRequestFailed(requestId, 'REQUEST_FAILED', formatError(error));
@@ -1505,15 +1520,15 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       requireConnected('apply camera settings');
       const fov = clampRounded(cameraFov, CAMERA_FOV_MIN, CAMERA_FOV_MAX);
       const roiPosition = fov === CAMERA_FOV_MAX ? 0 : cameraRoiPosition;
-      setCameraSettingsStatus('Camera settings: applying; camera restarts for about 5s');
-      const setCameraFov = BluetoothSdk.setCameraFov as unknown as (params: {
-        fov: number;
-        roiPosition?: CameraRoiPosition;
-      }) => Promise<void>;
-      await setCameraFov({fov, roiPosition});
-      addEvent('TX', `setCameraFov fov=${fov} roiPosition=${roiPosition}`);
-      await delay(5000);
-      setCameraSettingsStatus(`Camera settings: field of view ${fov}°, ${roiPositionLabel(roiPosition)} crop`);
+      setCameraSettingsStatus('Camera settings: waiting for glasses camera-ready ack');
+      const ack = await BluetoothSdk.setCameraFov({fov, roiPosition});
+      addEvent('LIVE', `settings_ack ${describeSettingsAck(ack)}`);
+      if (ack.status === 'error') {
+        throw new Error(ack.errorMessage || ack.errorCode || 'Camera settings failed');
+      }
+      setCameraSettingsStatus(
+        `Camera settings: ${ack.ready || ack.status === 'ready' ? 'camera ready' : 'applied on glasses'}; field of view ${fov}°, ${roiPositionLabel(roiPosition)} crop`,
+      );
     });
   }
 
@@ -2077,7 +2092,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   async function sendRgbLedRequest(mode: LedMode, color: LedColor) {
     const requestId = `rgb-${Date.now()}`;
     const request = rgbLedRequestFor(mode, color);
-    await BluetoothSdk.rgbLedControl(
+    const response = await BluetoothSdk.rgbLedControl(
       requestId,
       PHOTO_APP_ID,
       request.action,
@@ -2086,6 +2101,10 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       request.offtime,
       request.count,
     );
+    if (response.state === 'error') {
+      throw new Error(`RGB LED failed: ${response.errorCode}`);
+    }
+    addEvent('LIVE', `RGB LED ack ${response.requestId}`);
   }
 
   function rgbLedRequestFor(mode: LedMode, color: LedColor): { action: RgbLedAction; color: LedColor | null; ontime: number; offtime: number; count: number } {
@@ -3075,6 +3094,23 @@ function summarizeMap(values: object) {
     .slice(0, 3)
     .map((key) => `${key}: ${String(record[key])}`)
     .join(', ');
+}
+
+function describeSettingsAck(ack: SettingsAckEvent) {
+  const parts = [`${ack.setting} ${ack.status}`];
+  if (ack.ready !== undefined) {
+    parts.push(ack.ready ? 'ready' : 'not ready');
+  }
+  if (ack.fov !== undefined) {
+    parts.push(`fov=${ack.fov}`);
+  }
+  if (ack.roiPosition !== undefined) {
+    parts.push(`roi=${ack.roiPosition}`);
+  }
+  if (ack.errorCode) {
+    parts.push(ack.errorCode);
+  }
+  return parts.join(' ');
 }
 
 function delay(ms: number) {

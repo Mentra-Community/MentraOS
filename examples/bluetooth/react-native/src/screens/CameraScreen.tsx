@@ -42,12 +42,12 @@ function cameraSdkCall(
 ) {
   const exposureLine = exposureManual ? `  exposureTimeNs: ${exposureTimeNs},` : '  exposureTimeNs: null, // auto exposure';
   const isoLine = exposureManual ? `  iso: ${iso},` : '  iso: null, // auto ISO';
-  const prefix = `await BluetoothSdk.setCameraFov({ fov: ${cameraFov}, roiPosition: ${cameraRoiPosition} });
-// Mentra Live restarts the camera for about 5s after FOV/ROI changes.
+  const prefix = `const cameraAck = await BluetoothSdk.setCameraFov({ fov: ${cameraFov}, roiPosition: ${cameraRoiPosition} });
+if (!cameraAck.ready) throw new Error(cameraAck.errorMessage ?? "Camera FOV was not ready");
 `;
   if (!useCloudServer) {
     return `${prefix}const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();
-await BluetoothSdk.requestPhoto({
+const photo = await BluetoothSdk.requestPhoto({
   requestId,
   appId: PHOTO_APP_ID,
   size: "${size}",
@@ -57,9 +57,10 @@ await BluetoothSdk.requestPhoto({
   sound: true,
 ${exposureLine}
 ${isoLine}
-})`;
+})
+if (photo.state === "error") throw new Error(photo.errorMessage)`;
   }
-  return `${prefix}await BluetoothSdk.requestPhoto({
+  return `${prefix}const photo = await BluetoothSdk.requestPhoto({
   requestId,
   appId: PHOTO_APP_ID,
   size: "${size}",
@@ -69,7 +70,8 @@ ${isoLine}
   sound: true,
 ${exposureLine}
 ${isoLine}
-})`;
+})
+if (photo.state === "error") throw new Error(photo.errorMessage)`;
 }
 
 export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
@@ -657,7 +659,7 @@ function CameraSettingsControl({
           />
         ))}
       </OptionGroup>
-      <Text style={styles.settingDescription}>{status}. Applying FOV/ROI restarts the Mentra Live camera for about 5 seconds.</Text>
+      <Text style={styles.settingDescription}>{status}. Applying FOV/ROI waits for the Mentra Live camera-ready ack.</Text>
     </View>
   );
 }

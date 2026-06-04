@@ -30,6 +30,7 @@ import com.mentra.bluetoothsdk.MentraBluetoothSdk
 import com.mentra.bluetoothsdk.MentraBluetoothSdkCallback
 import com.mentra.bluetoothsdk.MicLc3Event
 import com.mentra.bluetoothsdk.MicPcmEvent
+import com.mentra.bluetoothsdk.OtaQueryResult
 import com.mentra.bluetoothsdk.OtaStatusEvent
 import com.mentra.bluetoothsdk.OtaUpdateAvailableEvent
 import com.mentra.bluetoothsdk.ButtonPressEvent
@@ -51,6 +52,7 @@ import com.mentra.bluetoothsdk.RgbLedAction
 import com.mentra.bluetoothsdk.RgbLedColor
 import com.mentra.bluetoothsdk.RgbLedRequest
 import com.mentra.bluetoothsdk.ScanSession
+import com.mentra.bluetoothsdk.SettingsAckEvent
 import com.mentra.bluetoothsdk.SpeakingStatusEvent
 import com.mentra.bluetoothsdk.StreamState
 import com.mentra.bluetoothsdk.StreamRequest
@@ -153,7 +155,7 @@ const val PHOTO_EXPOSURE_DEFAULT_NS = 8_333_333
 const val PHOTO_ISO_MIN = 100
 const val PHOTO_ISO_MAX = 6400
 const val PHOTO_ISO_DEFAULT = 200
-const val CAMERA_FOV_MIN = 50
+const val CAMERA_FOV_MIN = 62
 const val CAMERA_FOV_MAX = 118
 const val CAMERA_FOV_DEFAULT = 102
 val cameraRoiPositions = listOf("Center" to 0, "Bottom" to 1, "Top" to 2)
@@ -415,7 +417,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun setGalleryModeEnabled(enabled: Boolean) = runAction(if (enabled) "Save in gallery mode" else "Report button events") {
         requireConnected("change gallery mode")
-        mentraBluetoothSdk.setGalleryModeEnabled(enabled)
+        val ack = withContext(Dispatchers.IO) { mentraBluetoothSdk.setGalleryModeEnabled(enabled) }
+        if (ack.status == "error") {
+            throw IllegalStateException(ack.errorMessage ?: ack.errorCode ?: "Gallery mode failed")
+        }
+        addEvent("LIVE", "settings_ack ${describeSettingsAck(ack)}")
         state = state.copy(galleryModeEnabled = enabled)
     }
 
@@ -472,13 +478,15 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         requireConnected("apply camera settings")
         val fov = state.cameraFov.coerceIn(CAMERA_FOV_MIN, CAMERA_FOV_MAX)
         val roiPosition = if (fov == CAMERA_FOV_MAX) 0 else state.cameraRoiPosition.coerceIn(0, 2)
-        state = state.copy(cameraSettingsStatus = "Camera settings: applying; camera restarts for about 5s")
-        mentraBluetoothSdk.setCameraFov(CameraFov(fov, roiPosition))
-        addEvent("TX", "setCameraFov fov=$fov roiPosition=$roiPosition")
-        scope.launch {
-            delay(5_000)
-            state = state.copy(cameraSettingsStatus = "Camera settings: field of view ${fov}°, ${roiPositionLabel(roiPosition)} crop")
+        state = state.copy(cameraSettingsStatus = "Camera settings: waiting for glasses camera-ready ack")
+        val ack = withContext(Dispatchers.IO) { mentraBluetoothSdk.setCameraFov(CameraFov(fov, roiPosition)) }
+        addEvent("LIVE", "settings_ack ${describeSettingsAck(ack)}")
+        if (ack.status == "error") {
+            throw IllegalStateException(ack.errorMessage ?: ack.errorCode ?: "Camera settings failed")
         }
+        state = state.copy(
+            cameraSettingsStatus = "Camera settings: ${if (ack.ready) "camera ready" else "applied on glasses"}; field of view ${fov}°, ${roiPositionLabel(roiPosition)} crop",
+        )
     }
 
     fun captureAndUpload() = runAction("Capture & upload") {
@@ -508,22 +516,31 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             photoPreviewDetails = null,
             photoPreviewUrl = null,
         )
-        mentraBluetoothSdk.requestPhoto(
-            PhotoRequest(
-                requestId = requestId,
-                appId = "com.mentra.examples.android",
-                size = PhotoSize.fromValue(state.photoSize),
-                webhookUrl = uploadUrl,
-                compress = PhotoCompression.fromValue(state.photoCompression),
-                sound = true,
-                exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
-                iso = if (state.photoExposureManual) state.photoIso else null,
+        val responseEvent = withContext(Dispatchers.IO) {
+            mentraBluetoothSdk.requestPhoto(
+                PhotoRequest(
+                    requestId = requestId,
+                    appId = "com.mentra.examples.android",
+                    size = PhotoSize.fromValue(state.photoSize),
+                    webhookUrl = uploadUrl,
+                    compress = PhotoCompression.fromValue(state.photoCompression),
+                    sound = true,
+                    exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
+                    iso = if (state.photoExposureManual) state.photoIso else null,
+                )
             )
-        )
+        }
+        handlePhotoResponse(responseEvent)
+        val photoResponse = responseEvent.response
+        if (photoResponse is PhotoResponse.Error) {
+            throw IllegalStateException(
+                photoResponse.errorMessage.ifBlank { photoResponse.errorCode ?: "Photo request failed" },
+            )
+        }
         pollPhotoPreview(requestId, statusUrl, generation)
     }
 
-    private fun captureAndUploadToPhone() {
+    private suspend fun captureAndUploadToPhone() {
         val uploadUrl = startPhonePhotoServer()
         val requestId = "photo-${System.currentTimeMillis()}"
         activePhotoRequestId = requestId
@@ -542,18 +559,28 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             photoPreviewDetails = null,
             photoPreviewUrl = null,
         )
-        mentraBluetoothSdk.requestPhoto(
-            PhotoRequest(
-                requestId = requestId,
-                appId = "com.mentra.examples.android",
-                size = PhotoSize.fromValue(state.photoSize),
-                webhookUrl = uploadUrl,
-                compress = PhotoCompression.fromValue(state.photoCompression),
-                sound = true,
-                exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
-                iso = if (state.photoExposureManual) state.photoIso else null,
+        val responseEvent = withContext(Dispatchers.IO) {
+            mentraBluetoothSdk.requestPhoto(
+                PhotoRequest(
+                    requestId = requestId,
+                    appId = "com.mentra.examples.android",
+                    size = PhotoSize.fromValue(state.photoSize),
+                    webhookUrl = uploadUrl,
+                    compress = PhotoCompression.fromValue(state.photoCompression),
+                    sound = true,
+                    exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
+                    iso = if (state.photoExposureManual) state.photoIso else null,
+                )
             )
-        )
+        }
+        handlePhotoResponse(responseEvent)
+        val photoResponse = responseEvent.response
+        if (photoResponse is PhotoResponse.Error) {
+            directPhotoTimeoutJob?.cancel()
+            throw IllegalStateException(
+                photoResponse.errorMessage.ifBlank { photoResponse.errorCode ?: "Photo request failed" },
+            )
+        }
         addEvent("TX", "requestPhoto requestId=$requestId webhookUrl=$uploadUrl")
     }
 
@@ -1182,19 +1209,25 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
     }
 
-    private fun sendRgbLedRequest(mode: String, color: String) {
+    private suspend fun sendRgbLedRequest(mode: String, color: String) {
         val request = rgbLedRequestFor(mode, color)
-        mentraBluetoothSdk.rgbLedControl(
-            RgbLedRequest(
-                requestId = "rgb-${System.currentTimeMillis()}",
-                packageName = "com.mentra.examples.android",
-                action = request.action,
-                color = request.color,
-                onDurationMs = request.onDurationMs,
-                offDurationMs = request.offDurationMs,
-                count = request.count,
+        val response = withContext(Dispatchers.IO) {
+            mentraBluetoothSdk.rgbLedControl(
+                RgbLedRequest(
+                    requestId = "rgb-${System.currentTimeMillis()}",
+                    packageName = "com.mentra.examples.android",
+                    action = request.action,
+                    color = request.color,
+                    onDurationMs = request.onDurationMs,
+                    offDurationMs = request.offDurationMs,
+                    count = request.count,
+                )
             )
-        )
+        }
+        if (response.state == "error") {
+            throw IllegalStateException("RGB LED failed: ${response.errorCode ?: "unknown error"}")
+        }
+        addEvent("LIVE", "RGB LED ack ${response.requestId}")
     }
 
     private fun rgbLedRequestFor(mode: String, color: String): RgbLedPattern {
@@ -1249,7 +1282,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             applyDisconnectedState("Disconnected")
         } else if (!wasConnected && isGlassesConnected()) {
             refreshGlassesMediaVolume()
-            mentraBluetoothSdk.checkForOtaUpdate()
+            scope.launch {
+                try {
+                    handleOtaQueryResult(withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() })
+                } catch (error: Throwable) {
+                    addEvent("TX", "OTA check failed: ${error.message ?: error::class.java.simpleName}")
+                }
+            }
         }
         addEvent("STORE", summarize(glasses))
     }
@@ -1342,7 +1381,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("TX", "hotspot error ${event.message ?: summarize(event.values)}")
     }
 
-    override fun onPhotoResponse(event: com.mentra.bluetoothsdk.PhotoResponseEvent) {
+    private fun handlePhotoResponse(event: com.mentra.bluetoothsdk.PhotoResponseEvent) {
         val response = event.response
         val requestId = response.requestId
         if (activePhotoRequestId != null && requestId != activePhotoRequestId) {
@@ -1404,15 +1443,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("LIVE", "stream ${summarize(event.values)}")
     }
 
-    override fun onOtaUpdateAvailable(event: OtaUpdateAvailableEvent) {
-        state = state.copy(otaUpdateAvailable = event)
-        addEvent("LIVE", "OTA available ${event.versionName ?: "unknown"} (${event.updates.joinToString().ifBlank { "update" }})")
-    }
-
-    override fun onOtaStartAck(event: com.mentra.bluetoothsdk.OtaStartAckEvent) {
-        addEvent("LIVE", "OTA start acknowledged")
-    }
-
     override fun onOtaStatus(event: OtaStatusEvent) {
         state = state.copy(
             otaStatus = event,
@@ -1421,6 +1451,43 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             },
         )
         addEvent("LIVE", "OTA ${event.status} ${event.overallPercent}%")
+    }
+
+    private fun handleOtaQueryResult(result: OtaQueryResult) {
+        if (result.type == "ota_update_available") {
+            val event = OtaUpdateAvailableEvent(
+                versionCode = result.values.longValue("version_code"),
+                versionName = result.values.stringValue("version_name"),
+                updates = (result.values["updates"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+                totalSize = result.values.longValue("total_size"),
+                cacheReady = result.values["cache_ready"] as? Boolean,
+                values = result.values,
+            )
+            state = state.copy(otaUpdateAvailable = event)
+            addEvent("LIVE", "OTA available ${event.versionName ?: "unknown"} (${event.updates.joinToString().ifBlank { "update" }})")
+            return
+        }
+
+        val event = OtaStatusEvent(
+            sessionId = result.values.stringValue("session_id").orEmpty(),
+            totalSteps = result.values.intValue("total_steps") ?: 0,
+            currentStep = result.values.intValue("current_step") ?: 0,
+            stepType = result.values.stringValue("step_type").orEmpty(),
+            phase = result.values.stringValue("phase").orEmpty(),
+            stepPercent = result.values.intValue("step_percent") ?: 0,
+            overallPercent = result.values.intValue("overall_percent") ?: 0,
+            status = result.values.stringValue("status").orEmpty(),
+            errorMessage = result.values.stringValue("error_message"),
+            glassesTimeMs = result.values.longValue("glasses_time_ms"),
+            values = result.values,
+        )
+        state = state.copy(
+            otaStatus = event,
+            otaUpdateAvailable = state.otaUpdateAvailable.takeUnless {
+                event.status == "complete" || event.status == "failed"
+            },
+        )
+        addEvent("LIVE", "OTA ${event.status.ifBlank { "status" }} ${event.overallPercent}%")
     }
 
     override fun onMicPcm(event: MicPcmEvent) {
@@ -1469,12 +1536,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun checkForOtaUpdate() = runAction("Check OTA") {
         requireConnected("check OTA")
-        mentraBluetoothSdk.checkForOtaUpdate()
+        handleOtaQueryResult(withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() })
     }
 
     fun startOtaUpdate() = runAction("Start OTA") {
         requireConnected("start OTA")
-        mentraBluetoothSdk.startOtaUpdate()
+        withContext(Dispatchers.IO) { mentraBluetoothSdk.startOtaUpdate() }
+        addEvent("LIVE", "OTA start acknowledged")
     }
 
     fun openBluetoothSettings() = runAction("Open Bluetooth settings") {
@@ -1639,18 +1707,20 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         )
     }
 
-    private fun runAction(label: String, action: () -> Unit) {
+    private fun runAction(label: String, action: suspend () -> Unit) {
         state = state.copy(activeAction = label, lastAction = "Running: $label")
         addEvent("TX", label)
-        try {
-            action()
-            state = state.copy(lastAction = "Requested: $label")
-        } catch (error: Throwable) {
-            state = state.copy(lastAction = "Failed: $label - ${error.message}", activeAction = null)
-            addEvent("TX", "$label failed: ${error.message}")
-            return
+        scope.launch {
+            try {
+                action()
+                state = state.copy(lastAction = "Requested: $label")
+            } catch (error: Throwable) {
+                state = state.copy(lastAction = "Failed: $label - ${error.message}")
+                addEvent("TX", "$label failed: ${error.message}")
+            } finally {
+                state = state.copy(activeAction = state.activeAction.takeUnless { it == label })
+            }
         }
-        state = state.copy(activeAction = null)
     }
 
     private fun autoConnectDefaultOnStartup() {
@@ -2214,8 +2284,8 @@ fun cameraSdkCall(
     cameraFov: Int,
     cameraRoiPosition: Int,
 ): String = """
-mentraBluetoothSdk.setCameraFov(CameraFov(fov = $cameraFov, roiPosition = $cameraRoiPosition))
-// Mentra Live restarts the camera for about 5s after FOV/ROI changes.
+val cameraAck = mentraBluetoothSdk.setCameraFov(CameraFov(fov = $cameraFov, roiPosition = $cameraRoiPosition))
+check(cameraAck.ready) { cameraAck.errorMessage ?: "Camera FOV was not ready" }
 mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
       requestId = requestId,
@@ -2481,6 +2551,24 @@ fun rtmpPathSegmentCount(streamUrl: String): Int? {
 
 fun summarize(values: Map<String, Any>): String =
     values.entries.take(3).joinToString(", ") { "${it.key}: ${it.value}" }.ifBlank { "empty update" }
+
+fun describeSettingsAck(ack: SettingsAckEvent): String =
+    listOfNotNull(
+        "${ack.setting} ${ack.status}",
+        if (ack.ready) "ready" else "not ready",
+        ack.values.intValue("fov")?.let { "fov=$it" },
+        ack.values.intValue("roiPosition")?.let { "roi=$it" },
+        ack.errorCode,
+    ).joinToString(" ")
+
+private fun Map<String, Any>.stringValue(key: String): String? =
+    this[key] as? String
+
+private fun Map<String, Any>.intValue(key: String): Int? =
+    (this[key] as? Number)?.toInt()
+
+private fun Map<String, Any>.longValue(key: String): Long? =
+    (this[key] as? Number)?.toLong()
 
 fun summarize(status: GlassesRuntimeState): String =
     listOfNotNull(

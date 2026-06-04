@@ -22,11 +22,13 @@ private func cameraSdkCall(
         ? "      iso: \(iso)"
         : "      iso: nil // auto ISO"
     return """
-    try await mentraBluetoothSdk.setCameraFov(
+    let cameraAck = try await mentraBluetoothSdk.setCameraFov(
         CameraFov(fov: \(cameraFov), roiPosition: \(cameraRoiPosition))
     )
-    // Mentra Live restarts the camera for about 5s after FOV/ROI changes.
-    mentraBluetoothSdk.requestPhoto(
+    guard cameraAck.ready else {
+        throw ExampleActionError(message: cameraAck.errorMessage ?? "Camera FOV was not ready")
+    }
+    try await mentraBluetoothSdk.requestPhoto(
         PhotoRequest(
           requestId: requestId,
           appId: "com.mentra.examples.ios",
@@ -523,7 +525,7 @@ private struct CameraFovSettingsCard: View {
                         }
                 }
             }
-            Text("\(model.cameraSettingsStatus). Applying FOV/ROI restarts the Mentra Live camera for about 5 seconds.")
+            Text("\(model.cameraSettingsStatus). Applying FOV/ROI waits for the Mentra Live camera-ready ack.")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(AppColor.muted)
         }

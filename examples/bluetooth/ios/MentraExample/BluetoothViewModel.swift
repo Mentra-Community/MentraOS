@@ -24,6 +24,20 @@ private struct GalleryServerCheck {
     let eventText: String
 }
 
+private func describeSettingsAck(_ ack: SettingsAckEvent) -> String {
+    var parts = ["\(ack.setting) \(ack.status)", ack.ready ? "ready" : "not ready"]
+    if let fov = ack.values["fov"] {
+        parts.append("fov=\(fov)")
+    }
+    if let roiPosition = ack.values["roiPosition"] {
+        parts.append("roi=\(roiPosition)")
+    }
+    if let errorCode = ack.errorCode {
+        parts.append(errorCode)
+    }
+    return parts.joined(separator: " ")
+}
+
 private let defaultPhotoUploadUrl = "http://<computer-ip>:8787/upload"
 let scanModelOptions: [DeviceModel] = [.mentraLive, .g2]
 let photoExposureMinNs = 1_000_000
@@ -32,7 +46,7 @@ let photoExposureDefaultNs = 8_333_333
 let photoIsoMin = 100
 let photoIsoMax = 6400
 let photoIsoDefault = 200
-let cameraFovMin = 50
+let cameraFovMin = 62
 let cameraFovMax = 118
 let cameraFovDefault = 102
 let cameraRoiPositions: [(label: String, value: Int)] = [("Center", 0), ("Bottom", 1), ("Top", 2)]
@@ -411,24 +425,29 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func checkForOtaUpdate() {
-        runAction("Check OTA") {
+        runAsyncAction("Check OTA") { [self] in
             try requireConnected("check OTA")
-            mentraBluetoothSdk.checkForOtaUpdate()
+            handleOtaQueryResult(try await mentraBluetoothSdk.checkForOtaUpdate())
         }
     }
 
     func startOtaUpdate() {
-        runAction("Start OTA") {
+        runAsyncAction("Start OTA") { [self] in
             try requireConnected("start OTA")
-            mentraBluetoothSdk.startOtaUpdate()
+            _ = try await mentraBluetoothSdk.startOtaUpdate()
+            append(tag: "LIVE", text: "OTA start acknowledged")
         }
     }
 
     func setGalleryModeEnabled(_ enabled: Bool) {
-        runAction(enabled ? "Save in gallery mode" : "Report button events") {
+        runAsyncAction(enabled ? "Save in gallery mode" : "Report button events") { [self] in
             try requireConnected("change gallery mode")
+            let ack = try await mentraBluetoothSdk.setGalleryModeEnabled(enabled)
+            if ack.status == "error" {
+                throw ExampleActionError(message: ack.errorMessage ?? ack.errorCode ?? "Gallery mode failed")
+            }
+            append(tag: "LIVE", text: "settings_ack \(describeSettingsAck(ack))")
             galleryModeEnabled = enabled
-            Task { try? await mentraBluetoothSdk.setGalleryModeEnabled(enabled) }
         }
     }
 
@@ -483,36 +502,26 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func applyCameraSettings() {
-        runAction("Apply camera settings") {
+        runAsyncAction("Apply camera settings") { [self] in
             try requireConnected("apply camera settings")
             let fov = cameraFov
             let roiPosition = fov == cameraFovMax ? 0 : cameraRoiPosition
-            cameraSettingsStatus = "Camera settings: applying; camera restarts for about 5s"
-            Task { [weak self] in
-                do {
-                    try await self?.mentraBluetoothSdk.setCameraFov(CameraFov(fov: fov, roiPosition: roiPosition))
-                    await MainActor.run {
-                        self?.append(tag: "TX", text: "setCameraFov fov=\(fov) roiPosition=\(roiPosition)")
-                    }
-                    try await Task.sleep(nanoseconds: 5_000_000_000)
-                    await MainActor.run {
-                        self?.cameraSettingsStatus = "Camera settings: field of view \(fov)°, \(roiPositionLabel(roiPosition)) crop"
-                    }
-                } catch {
-                    await MainActor.run {
-                        self?.cameraSettingsStatus = "Camera settings failed: \(error.localizedDescription)"
-                    }
-                }
+            cameraSettingsStatus = "Camera settings: waiting for glasses camera-ready ack"
+            let ack = try await mentraBluetoothSdk.setCameraFov(CameraFov(fov: fov, roiPosition: roiPosition))
+            append(tag: "LIVE", text: "settings_ack \(describeSettingsAck(ack))")
+            if ack.status == "error" {
+                throw ExampleActionError(message: ack.errorMessage ?? ack.errorCode ?? "Camera settings failed")
             }
+            cameraSettingsStatus = "Camera settings: \(ack.ready ? "camera ready" : "applied on glasses"); field of view \(fov)°, \(roiPositionLabel(roiPosition)) crop"
         }
     }
 
     func captureAndUpload() {
-        runAction("Capture & upload") {
+        runAsyncAction("Capture & upload") { [self] in
             try requireConnected("capture photos")
             try requireGlassesWifi("capture photos")
             if photoDestination == .thisPhone {
-                try captureAndUploadToPhone()
+                try await captureAndUploadToPhone()
                 return
             }
             let uploadUrl = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -533,7 +542,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             photoPreviewUrl = nil
             photoPreviewImage = nil
             cameraStatus = "Camera: webhook upload requested (\(requestId))"
-            mentraBluetoothSdk.requestPhoto(
+            let responseEvent = try await mentraBluetoothSdk.requestPhoto(
                 PhotoRequest(
                     requestId: requestId,
                     appId: "com.mentra.examples.ios",
@@ -545,11 +554,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                     iso: photoExposureManual ? photoIso : nil
                 )
             )
+            handlePhotoResponse(responseEvent.response)
+            if case let .error(_, errorCode, errorMessage, _) = responseEvent.response {
+                throw ExampleActionError(message: errorMessage.isEmpty ? (errorCode ?? "Photo request failed") : errorMessage)
+            }
             pollPhotoPreview(requestId: requestId, statusUrl: statusUrl.deletingLastPathComponent().appendingPathComponent("\(requestId).json"), generation: generation)
         }
     }
 
-    private func captureAndUploadToPhone() throws {
+    private func captureAndUploadToPhone() async throws {
         let uploadUrl = try startPhonePhotoServer()
         let requestId = "photo-\(Int(Date().timeIntervalSince1970 * 1000))"
         activePhotoRequestId = requestId
@@ -568,7 +581,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         photoPreviewUrl = nil
         photoPreviewImage = nil
         cameraStatus = "Camera: requested phone upload (\(requestId))"
-        mentraBluetoothSdk.requestPhoto(
+        let responseEvent = try await mentraBluetoothSdk.requestPhoto(
             PhotoRequest(
                 requestId: requestId,
                 appId: "com.mentra.examples.ios",
@@ -580,6 +593,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 iso: photoExposureManual ? photoIso : nil
             )
         )
+        handlePhotoResponse(responseEvent.response)
+        if case let .error(_, errorCode, errorMessage, _) = responseEvent.response {
+            directPhotoTimeoutTask?.cancel()
+            throw ExampleActionError(message: errorMessage.isEmpty ? (errorCode ?? "Photo request failed") : errorMessage)
+        }
         append(tag: "TX", text: "requestPhoto requestId=\(requestId) webhookUrl=\(uploadUrl)")
     }
 
@@ -1167,29 +1185,29 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func selectLedMode(_ mode: String) {
-        runAction("RGB LED \(mode)") {
+        runAsyncAction("RGB LED \(mode)") { [self] in
             try requireConnected("control the RGB LED")
             ledMode = mode
-            sendRgbLedRequest(mode: mode, color: ledColor)
+            try await sendRgbLedRequest(mode: mode, color: ledColor)
         }
     }
 
     func selectLedColor(_ color: String) {
-        runAction("RGB LED color \(color.uppercased())") {
+        runAsyncAction("RGB LED color \(color.uppercased())") { [self] in
             try requireConnected("control the RGB LED")
             guard validLedColors.contains(color) else {
                 throw ExampleActionError(message: "Unsupported RGB LED color: \(color)")
             }
             ledColor = color
             if ledMode != "Off" {
-                sendRgbLedRequest(mode: ledMode, color: color)
+                try await sendRgbLedRequest(mode: ledMode, color: color)
             }
         }
     }
 
-    private func sendRgbLedRequest(mode: String, color: String) {
+    private func sendRgbLedRequest(mode: String, color: String) async throws {
         let request = rgbLedRequest(for: mode, color: color)
-        mentraBluetoothSdk.rgbLedControl(
+        let response = try await mentraBluetoothSdk.rgbLedControl(
             RgbLedRequest(
                 requestId: "rgb-\(Int(Date().timeIntervalSince1970 * 1000))",
                 packageName: "com.mentra.examples.ios",
@@ -1200,6 +1218,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 count: request.count
             )
         )
+        if response.state == "error" {
+            throw ExampleActionError(message: "RGB LED failed: \(response.errorCode ?? "unknown error")")
+        }
+        append(tag: "LIVE", text: "RGB LED ack \(response.requestId)")
     }
 
     private func rgbLedRequest(for mode: String, color: String) -> (action: RgbLedAction, color: RgbLedColor?, onDurationMs: Int, offDurationMs: Int, count: Int) {
@@ -1223,7 +1245,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         if !glasses.connected {
             applyDisconnectedState(status: "Disconnected")
         } else if !wasConnected {
-            mentraBluetoothSdk.checkForOtaUpdate()
+            Task { @MainActor [weak self] in
+                do {
+                    guard let self else { return }
+                    let result = try await self.mentraBluetoothSdk.checkForOtaUpdate()
+                    self.handleOtaQueryResult(result)
+                } catch {
+                    self?.append(tag: "TX", text: "OTA check failed: \(error.localizedDescription)")
+                }
+            }
         }
         refreshGalleryServerStatusForCurrentHotspot(defaultStatus: hotspotEnabled ? galleryServerStatus : "Gallery server: hotspot off")
         append(tag: "STORE", text: summarize(glasses))
@@ -1267,15 +1297,12 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             handleRawEvent(name: "hotspot_status_change", values: status.values)
         case let .hotspotError(error):
             handleRawEvent(name: "hotspot_error", values: error.values)
-        case let .photoResponse(response):
-            handlePhotoResponse(response.response)
+        case .photoResponse:
+            break
         case let .streamStatus(status):
             handleStreamStatus(status.status)
-        case let .otaUpdateAvailable(event):
-            otaUpdateAvailable = event
-            append(tag: "LIVE", text: "OTA available \(event.versionName ?? "unknown") (\(event.updates.joined(separator: ", ")))")
-        case .otaStartAck:
-            append(tag: "LIVE", text: "OTA start acknowledged")
+        case .otaUpdateAvailable, .otaStartAck, .settingsAck, .rgbLedControlResponse:
+            break
         case let .otaStatus(event):
             otaStatus = event
             if event.status == "complete" || event.status == "failed" {
@@ -1287,6 +1314,22 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         default:
             append(tag: "LIVE", text: event.description)
         }
+    }
+
+    private func handleOtaQueryResult(_ result: OtaQueryResult) {
+        if result.type == "ota_update_available" {
+            let event = OtaUpdateAvailableEvent(values: result.values)
+            otaUpdateAvailable = event
+            append(tag: "LIVE", text: "OTA available \(event.versionName ?? "unknown") (\(event.updates.joined(separator: ", ")))")
+            return
+        }
+
+        let event = OtaStatusEvent(values: result.values)
+        otaStatus = event
+        if event.status == "complete" || event.status == "failed" {
+            otaUpdateAvailable = nil
+        }
+        append(tag: "LIVE", text: "OTA \(event.status.isEmpty ? "status" : event.status) \(event.overallPercent)%")
     }
 
     private func applyWifiStatus(_ event: WifiStatusEvent) {
@@ -1337,6 +1380,25 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             append(tag: "TX", text: "\(label) failed: \(error.localizedDescription)")
         }
         activeAction = nil
+    }
+
+    private func runAsyncAction(_ label: String, _ action: @escaping () async throws -> Void) {
+        activeAction = label
+        lastAction = "Running: \(label)"
+        append(tag: "TX", text: label)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await action()
+                lastAction = "Requested: \(label)"
+            } catch {
+                lastAction = "Failed: \(label) - \(error.localizedDescription)"
+                append(tag: "TX", text: "\(label) failed: \(error.localizedDescription)")
+            }
+            if activeAction == label {
+                activeAction = nil
+            }
+        }
     }
 
     private func scheduleAutoConnectDefaultOnStartup() {
