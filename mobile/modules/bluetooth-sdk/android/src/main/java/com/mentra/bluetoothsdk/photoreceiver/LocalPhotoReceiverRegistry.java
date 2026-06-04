@@ -27,11 +27,9 @@ public final class LocalPhotoReceiverRegistry {
                 Set<URI> nextUploadUris = new HashSet<>(activeUploadUris);
                 nextUploadUris.add(uri);
                 activeUploadUris = Collections.unmodifiableSet(nextUploadUris);
-                return;
             }
         } catch (Exception ignored) {
         }
-        activeUploadUris = Collections.emptySet();
     }
 
     public static void unregister() {

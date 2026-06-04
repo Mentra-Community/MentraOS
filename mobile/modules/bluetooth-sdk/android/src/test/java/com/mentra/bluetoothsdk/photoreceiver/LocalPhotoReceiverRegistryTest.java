@@ -55,6 +55,16 @@ public class LocalPhotoReceiverRegistryTest {
     }
 
     @Test
+    public void register_keepsExistingReceiverUrlsWhenInvalidUrlArrives() {
+        LocalPhotoReceiverRegistry.register("http://192.168.1.20:8787/upload");
+        LocalPhotoReceiverRegistry.register("not a url");
+
+        assertThat(LocalPhotoReceiverRegistry.isActive()).isTrue();
+        assertThat(LocalPhotoReceiverRegistry.loopbackUploadUrlFor("http://192.168.1.20:8787/upload"))
+                .isEqualTo("http://127.0.0.1:8787/upload");
+    }
+
+    @Test
     public void register_rejectsInvalidReceiverUrl() {
         LocalPhotoReceiverRegistry.register("https://api.example.com/photo");
 
