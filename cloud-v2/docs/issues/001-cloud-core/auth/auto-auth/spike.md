@@ -1,10 +1,11 @@
 # Miniapp auto-auth: spike
 
-**Status:** Findings and open questions. Not a proposal yet. This is the "Miniapp
-to developer-server auth (Phase 2)" that oem-auth explicitly deferred: how Mentra
-injects auth into a local miniapp so it can call the developer's own backend
-with no login. The user identity it carries is the sibling spike,
-[`../identity/spike.md`](../identity/spike.md).
+**Status:** The mechanism is decided. The server side (mint endpoint, JWKS, token)
+is specced in [`../spec.md`](../spec.md); the on-device injection is proposed in
+[`injection.md`](./injection.md). This is the "Miniapp to developer-server auth
+(Phase 2)" that oem-auth deferred: how Mentra injects auth into a local miniapp so
+it can call the developer's own backend with no login. The user identity it
+carries is the sibling spike, [`../identity/spike.md`](../identity/spike.md).
 
 ## Scope
 
@@ -65,21 +66,20 @@ Two shifts force a redesign:
    [`../identity/spike.md`](../identity/spike.md)), asymmetric and verifiable with
    Mentra's public key.
 
-Sketch to pressure-test:
+The v2 mechanism:
 
 1. The miniapp declares it has a backend (in `miniapp.json`), with the
    audience/key id it expects.
 2. At launch, the on-device runtime (which holds the user's Mentra access token)
    obtains a short-lived **miniapp-scoped user token**: an Ed25519 Mentra-signed JWT
    with `sub = mentraUserId`, `oemId` (so the backend can apply its Q2 trust
-   policy), `aud = <packageName>` (scoped to this one miniapp), short expiry. Likely
-   minted by a cloud-core endpoint the runtime calls with the user's access token
-   (the v2 analog of `generate-webview-signed-user-token`, but asymmetric,
-   audience-scoped, keyed on `mentraUserId`). Minting stays server-side so it can
-   be revoked and audited.
-3. The runtime injects this token into the **local** webview directly (through
-   the runtime bridge / SDK, not a URL param). `@mentra/react` `useMentraAuth()`
-   reads it from the bridge.
+   policy), `aud = <packageName>` (scoped to this one miniapp), short expiry. It is
+   minted by the cloud-core endpoint `POST /api/client/auth/miniapp-token`, which
+   the runtime calls with the user's access token (see [`../spec.md`](../spec.md)).
+   Minting is server-side so it can be revoked and audited.
+3. The runtime injects this token into the bundle's two JS contexts (the webview
+   and the Crust engine), not via a URL param; `useMentraAuth()` reads it from the
+   bridge. See [`injection.md`](./injection.md).
 4. The webview calls the developer's backend with
    `Authorization: Bearer <miniapp-scoped-token>`.
 5. The developer's backend verifies the token against **Mentra's published public
@@ -97,9 +97,9 @@ What this buys over v1:
   against miniapp B's backend.
 - `mentraUserId` instead of email as the stable identifier.
 
-API keys do not vanish: a dev backend that calls Mentra server-to-server still
-needs a credential. The proposal narrows API keys to that role and takes them out
-of the per-user verification path.
+API keys are out of the per-user verification path entirely. Whether they survive
+at all (only for dev-backend-to-Mentra server-to-server calls) is the one open
+item below.
 
 Miniapps with **no backend** need none of this: the local SDK already hands them
 `mentraUserId` on-device. Auto-auth only matters for miniapps that call a dev backend.
@@ -117,14 +117,14 @@ Carry v1's Path B forward, issuing the v2 token.
 - **Audience:** per-packageName (`aud = <packageName>`).
 - **Server side is specced in `../spec.md`;** this doc owns the end-to-end flow.
 
-## Open questions
+## Open
 
-1. **Token injection bridge (client-team coordination).** Exact mechanism the
-   on-device Runtime uses to pass the token (and refreshes) to the webview and the
-   Crust engine, and how `useMentraAuth()` consumes it on-device vs from URL
-   params on the web.
-2. **API key role.** Keep API keys strictly for dev-backend-to-Mentra
-   server-to-server calls, or retire them? What still needs them in v2?
+- **API key role.** Keep API keys strictly for dev-backend-to-Mentra
+  server-to-server calls, or retire them entirely? They are already out of the
+  per-user verification path; this is only about whether any role remains.
+
+The on-device token injection is proposed in [`injection.md`](./injection.md); the
+exact bridge messages and SDK surface are for the island / mobile team to finalize.
 
 ## References
 
