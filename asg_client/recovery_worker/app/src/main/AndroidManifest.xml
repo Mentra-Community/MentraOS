@@ -2,6 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <permission
+        android:name="com.mentra.recovery.permission.HEARTBEAT"
+        android:protectionLevel="signature" />
+    <permission
+        android:name="com.mentra.recovery.permission.CONTROL"
+        android:protectionLevel="signature" />
+
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
@@ -19,12 +26,7 @@
         android:supportsRtl="true">
         <activity
             android:name=".ui.LauncherActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:exported="true" />
         <service
             android:name=".service.RecoveryService"
             android:exported="false"
@@ -34,6 +36,13 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".service.RecoveryControlReceiver"
+            android:exported="true"
+            android:permission="com.mentra.recovery.permission.CONTROL">
+            <intent-filter>
                 <action android:name="com.mentra.recovery.ACTION_START_RECOVERY" />
             </intent-filter>
         </receiver>

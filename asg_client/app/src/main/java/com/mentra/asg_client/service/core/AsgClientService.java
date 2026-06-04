@@ -1395,21 +1395,6 @@ public class AsgClientService extends Service
                                         "💓 Recovery ping received;"
                                                 + " acknowledgment handled by"
                                                 + " ServiceHeartbeatReceiver");
-                            } else if (ACTION_HEARTBEAT.equals(action)
-                                    || "com.augmentos.otaupdater.ACTION_HEARTBEAT"
-                                            .equals(action)) {
-
-                                Log.i(TAG, "💓 Heartbeat received - sending acknowledgment");
-
-                                try {
-                                    Intent ackIntent = new Intent(ACTION_HEARTBEAT_ACK);
-                                    ackIntent.setPackage("com.augmentos.otaupdater");
-                                    sendBroadcast(ackIntent);
-
-                                    Log.i(TAG, "✅ Heartbeat acknowledgment sent successfully");
-                                } catch (Exception e) {
-                                    Log.e(TAG, "💥 Error sending heartbeat acknowledgment", e);
-                                }
                             } else {
                                 Log.d(TAG, "⏭️ Unknown action received: " + action);
                             }
@@ -1417,7 +1402,6 @@ public class AsgClientService extends Service
                     };
 
             IntentFilter heartbeatFilter = new IntentFilter();
-            heartbeatFilter.addAction(ACTION_HEARTBEAT);
             heartbeatFilter.addAction(ACTION_OTA_HEARTBEAT);
 
             registerReceiver(heartbeatReceiver, heartbeatFilter);

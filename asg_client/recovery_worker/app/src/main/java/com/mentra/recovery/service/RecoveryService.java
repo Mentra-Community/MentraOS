@@ -15,6 +15,7 @@ import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
+import androidx.core.content.ContextCompat;
 
 import com.mentra.recovery.health.HealthMonitor;
 import com.mentra.recovery.reset.ResetController;
@@ -78,10 +79,13 @@ public class RecoveryService extends Service {
             }
           }
         };
-    registerReceiver(
+    ContextCompat.registerReceiver(
+        this,
         pongReceiver,
         new IntentFilter(RecoveryConstants.ACTION_PONG),
-        Context.RECEIVER_NOT_EXPORTED);
+        RecoveryConstants.RECOVERY_HEARTBEAT_PERMISSION,
+        null,
+        ContextCompat.RECEIVER_EXPORTED);
 
     installStateReceiver =
         new BroadcastReceiver() {
@@ -97,7 +101,13 @@ public class RecoveryService extends Service {
     IntentFilter installFilter = new IntentFilter();
     installFilter.addAction(RecoveryConstants.ACTION_INSTALL_IN_PROGRESS);
     installFilter.addAction(RecoveryConstants.ACTION_INSTALL_COMPLETED);
-    registerReceiver(installStateReceiver, installFilter, Context.RECEIVER_NOT_EXPORTED);
+    ContextCompat.registerReceiver(
+        this,
+        installStateReceiver,
+        installFilter,
+        RecoveryConstants.RECOVERY_CONTROL_PERMISSION,
+        null,
+        ContextCompat.RECEIVER_EXPORTED);
   }
 
   private void unregisterReceivers() {

@@ -8,11 +8,14 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.core.app.NotificationCompat;
+import androidx.core.content.ContextCompat;
 import androidx.work.ForegroundInfo;
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
@@ -25,6 +28,8 @@ import com.mentra.recovery.telemetry.RecoveryTelemetry;
 import com.mentra.recovery.util.RecoveryConstants;
 
 public class RecoveryWorker extends Worker {
+  private static final long WAIT_PING_INTERVAL_MS = 3000L;
+
   public RecoveryWorker(@NonNull Context context, @NonNull WorkerParameters params) {
     super(context, params);
   }
@@ -37,7 +42,7 @@ public class RecoveryWorker extends Worker {
     Notification notification =
         new NotificationCompat.Builder(context, RecoveryConstants.CHANNEL_ID)
             .setContentTitle(context.getString(R.string.notification_title))
-            .setContentText("Running recovery workflow")
+            .setContentText(context.getString(R.string.notification_recovery_workflow))
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setOngoing(true)
             .build();
@@ -67,11 +72,15 @@ public class RecoveryWorker extends Worker {
         "RESTART_FAILED",
         attempt,
         false);
-    context.sendBroadcast(new Intent(RecoveryConstants.ACTION_INSTALL_IN_PROGRESS).setPackage(RecoveryConstants.RECOVERY_PACKAGE));
+    context.sendBroadcast(
+        new Intent(RecoveryConstants.ACTION_INSTALL_IN_PROGRESS)
+            .setPackage(RecoveryConstants.RECOVERY_PACKAGE));
 
     ReinstallStrategy reinstall = new ReinstallStrategy(context);
     if (!reinstall.execute()) {
-      context.sendBroadcast(new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED).setPackage(RecoveryConstants.RECOVERY_PACKAGE));
+      context.sendBroadcast(
+          new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED)
+              .setPackage(RecoveryConstants.RECOVERY_PACKAGE));
       store.setState(RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "NO_VALID_BACKUP");
       telemetry.emit(
           "mentra_recovery_failed", RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "NO_VALID_BACKUP", attempt, false);
@@ -91,7 +100,9 @@ public class RecoveryWorker extends Worker {
       return completeReinstallSuccess(context, store, telemetry, attempt, "REINSTALL_LATE_PONG");
     }
 
-    context.sendBroadcast(new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED).setPackage(RecoveryConstants.RECOVERY_PACKAGE));
+    context.sendBroadcast(
+        new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED)
+            .setPackage(RecoveryConstants.RECOVERY_PACKAGE));
     store.setState(RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "REINSTALL_NO_HEARTBEAT");
     telemetry.emit(
         "mentra_recovery_failed",
@@ -119,6 +130,7 @@ public class RecoveryWorker extends Worker {
   private boolean waitForPong(Context context, long timeoutMs) {
     final Object lock = new Object();
     final boolean[] gotAck = {false};
+    final Handler pingHandler = new Handler(Looper.getMainLooper());
     BroadcastReceiver pongReceiver =
         new BroadcastReceiver() {
           @Override
@@ -131,11 +143,29 @@ public class RecoveryWorker extends Worker {
             }
           }
         };
+    Runnable pingRunnable =
+        new Runnable() {
+          @Override
+          public void run() {
+            synchronized (lock) {
+              if (gotAck[0]) {
+                return;
+              }
+            }
+            sendPingToAsg(context);
+            pingHandler.postDelayed(this, WAIT_PING_INTERVAL_MS);
+          }
+        };
     try {
-      context.registerReceiver(
+      ContextCompat.registerReceiver(
+          context,
           pongReceiver,
           new IntentFilter(RecoveryConstants.ACTION_PONG),
-          Context.RECEIVER_NOT_EXPORTED);
+          RecoveryConstants.RECOVERY_HEARTBEAT_PERMISSION,
+          null,
+          ContextCompat.RECEIVER_EXPORTED);
+      sendPingToAsg(context);
+      pingHandler.postDelayed(pingRunnable, WAIT_PING_INTERVAL_MS);
       synchronized (lock) {
         long deadline = SystemClock.elapsedRealtime() + timeoutMs;
         while (!gotAck[0]) {
@@ -152,12 +182,20 @@ public class RecoveryWorker extends Worker {
     } catch (Exception e) {
       Log.e(RecoveryConstants.TAG, "Receiver registration failed while waiting for pong", e);
     } finally {
+      pingHandler.removeCallbacks(pingRunnable);
       try {
         context.unregisterReceiver(pongReceiver);
       } catch (Exception ignored) {
       }
     }
     return gotAck[0];
+  }
+
+  private void sendPingToAsg(Context context) {
+    Intent ping = new Intent(RecoveryConstants.ACTION_PING);
+    ping.setPackage(RecoveryConstants.ASG_PACKAGE);
+    ping.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
+    context.sendBroadcast(ping);
   }
 
   private void createNotificationChannelIfNeeded(Context context) {

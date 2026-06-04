@@ -16,7 +16,8 @@ public class ServiceHeartbeatReceiver extends BroadcastReceiver {
     private static final String ACTION_HEARTBEAT_LEGACY = "com.mentra.asg_client.ACTION_HEARTBEAT";
     private static final String ACTION_PING = "com.mentra.recovery.ACTION_PING";
     private static final String ACTION_PONG = "com.mentra.recovery.ACTION_PONG";
-    private static final String ACTION_HEARTBEAT_ACK = "com.mentra.asg_client.ACTION_HEARTBEAT_ACK";
+    private static final String RECOVERY_HEARTBEAT_PERMISSION =
+            "com.mentra.recovery.permission.HEARTBEAT";
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -39,15 +40,9 @@ public class ServiceHeartbeatReceiver extends BroadcastReceiver {
             lastHeartbeatTime = currentTime;
 
             try {
-                // New recovery protocol acknowledgment
                 Intent pongIntent = new Intent(ACTION_PONG);
                 pongIntent.setPackage("com.mentra.recovery");
-                context.sendBroadcast(pongIntent);
-
-                // Keep legacy ack for one release window
-                Intent ackIntent = new Intent(ACTION_HEARTBEAT_ACK);
-                ackIntent.setPackage("com.augmentos.otaupdater");
-                context.sendBroadcast(ackIntent);
+                context.sendBroadcast(pongIntent, RECOVERY_HEARTBEAT_PERMISSION);
                 Log.d(TAG, "Sent heartbeat acknowledgment");
             } catch (Exception e) {
                 Log.e(TAG, "Failed to send heartbeat acknowledgment: " + e.getMessage(), e);

@@ -11,6 +11,8 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import androidx.core.content.ContextCompat;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
@@ -23,6 +25,8 @@ public class RecoveryWorkerManager {
     private static final String LEGACY_UPDATER_PACKAGE = "com.augmentos.otaupdater";
     private static final String RECOVERY_LAUNCHER_ACTIVITY = "com.mentra.recovery.ui.LauncherActivity";
     private static final String ACTION_START_RECOVERY = "com.mentra.recovery.ACTION_START_RECOVERY";
+    private static final String RECOVERY_CONTROL_PERMISSION =
+            "com.mentra.recovery.permission.CONTROL";
     private static final String RECOVERY_APK_ASSET_NAME = "recovery_worker.apk";
     private static final String RECOVERY_APK_FILE_PATH =
             "/storage/emulated/0/asg/recovery_worker.apk";
@@ -79,7 +83,7 @@ public class RecoveryWorkerManager {
             return;
         }
         try {
-            SysControl.stopApp(context, LEGACY_UPDATER_PACKAGE);
+            SystemControllerFactory.get(context).stopApp(LEGACY_UPDATER_PACKAGE);
             Intent intent = new Intent("com.xy.xsetting.action");
             intent.setPackage("com.android.systemui");
             intent.putExtra("cmd", "uninstall");
@@ -159,7 +163,7 @@ public class RecoveryWorkerManager {
             return false;
         }
         try {
-            context.sendBroadcast(startIntent);
+            context.sendBroadcast(startIntent, RECOVERY_CONTROL_PERMISSION);
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Failed to send recovery start broadcast", e);
@@ -204,7 +208,11 @@ public class RecoveryWorkerManager {
         filter.addAction(Intent.ACTION_PACKAGE_ADDED);
         filter.addAction(Intent.ACTION_PACKAGE_REPLACED);
         filter.addDataScheme("package");
-        context.registerReceiver(packageInstallReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        ContextCompat.registerReceiver(
+                context,
+                packageInstallReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED);
     }
 
     private void unregisterPackageInstallReceiver() {

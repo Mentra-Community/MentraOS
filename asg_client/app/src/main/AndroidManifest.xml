@@ -7,6 +7,9 @@
         android:name="com.mentra.asg_client.permission.RECOVERY_TELEMETRY"
         android:protectionLevel="signature" />
 
+    <uses-permission android:name="com.mentra.recovery.permission.HEARTBEAT" />
+    <uses-permission android:name="com.mentra.recovery.permission.CONTROL" />
+
     <uses-feature
         android:name="android.hardware.telephony"
         android:required="false" />

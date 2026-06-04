@@ -388,6 +388,7 @@ public class OtaService extends Service {
                                 + " to "
                                 + currentVersion);
                 prefs.edit().putLong("last_seen_asg_version", currentVersion).apply();
+                OtaHelper.notifyRecoveryInstallCompleted(this);
 
                 if (otaHelper != null) {
                     Log.i(

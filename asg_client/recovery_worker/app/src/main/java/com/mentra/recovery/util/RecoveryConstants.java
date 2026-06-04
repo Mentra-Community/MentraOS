@@ -11,6 +11,10 @@ public final class RecoveryConstants {
   public static final String ASG_PACKAGE = "com.mentra.asg_client";
   public static final String ASG_TELEMETRY_PERMISSION =
       "com.mentra.asg_client.permission.RECOVERY_TELEMETRY";
+  public static final String RECOVERY_HEARTBEAT_PERMISSION =
+      "com.mentra.recovery.permission.HEARTBEAT";
+  public static final String RECOVERY_CONTROL_PERMISSION =
+      "com.mentra.recovery.permission.CONTROL";
   public static final String ASG_SERVICE_CLASS = "com.mentra.asg_client.service.core.AsgClientService";
   public static final String ACTION_RESTART_SERVICE = "com.mentra.asg_client.ACTION_RESTART_SERVICE";
 

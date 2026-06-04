@@ -4,4 +4,5 @@
     <string name="notification_channel_description">ASG recovery watchdog</string>
     <string name="notification_title">Mentra Recovery Active</string>
     <string name="notification_text">Monitoring ASG health</string>
+    <string name="notification_recovery_workflow">Running recovery workflow</string>
 </resources>

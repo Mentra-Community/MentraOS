@@ -6,6 +6,7 @@ import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.Signature;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -39,6 +40,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
@@ -1807,8 +1810,7 @@ public class OtaHelper {
                     // the prefetch path because the restart guard is armed. Roll it back.
                     Log.w(
                             TAG,
-                            "installApk did not kick install — rolling back restart guard and"
-                                    + " reporting FAILED");
+                            "installApk did not kick install — rolling back restart guard and reporting FAILED");
                     if (sessionManager != null) {
                         sessionManager.clearRestartGuard();
                     }
@@ -1910,9 +1912,84 @@ public class OtaHelper {
                         + OtaConstants.ASG_UPDATE_APK_PATH);
         File otaApk = new File(OtaConstants.ASG_UPDATE_APK_PATH);
         if (otaApk.exists() && !isTestOnlyApk(pm, otaApk.getAbsolutePath())) {
-            return otaApk;
+            if (isValidAsgArchiveForBackup(pm, otaApk.getAbsolutePath(), installedInfo)) {
+                return otaApk;
+            }
+            Log.w(TAG, "Ignoring OTA APK fallback: package mismatch or unreadable archive");
         }
         return null;
+    }
+
+    private boolean isValidAsgArchiveForBackup(
+            PackageManager pm, String apkPath, PackageInfo installedInfo) {
+        PackageInfo archiveInfo =
+                pm.getPackageArchiveInfo(
+                        apkPath, PackageManager.GET_SIGNING_CERTIFICATES);
+        if (archiveInfo == null || !OtaConstants.ASG_PACKAGE.equals(archiveInfo.packageName)) {
+            return false;
+        }
+        Set<String> archiveSigners = getSignerDigests(archiveInfo);
+        if (archiveSigners.isEmpty()) {
+            return false;
+        }
+        Set<String> installedSigners = getSignerDigests(installedInfo);
+        return !installedSigners.isEmpty() && archiveSigners.equals(installedSigners);
+    }
+
+    private Set<String> getSignerDigests(PackageInfo info) {
+        Set<String> digests = new TreeSet<>();
+        try {
+            Signature[] signers = null;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && info.signingInfo != null) {
+                signers = info.signingInfo.getApkContentsSigners();
+            } else if (info.signatures != null) {
+                signers = info.signatures;
+            }
+            if (signers == null) {
+                return digests;
+            }
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            for (Signature signature : signers) {
+                if (signature == null) {
+                    continue;
+                }
+                byte[] hash = digest.digest(signature.toByteArray());
+                StringBuilder sb = new StringBuilder(hash.length * 2);
+                for (byte b : hash) {
+                    sb.append(String.format("%02x", b));
+                }
+                digests.add(sb.toString());
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to hash signer", e);
+        }
+        return digests;
+    }
+
+    private static boolean isAsgClientApk(PackageManager pm, String apkPath) {
+        PackageInfo archiveInfo =
+                pm.getPackageArchiveInfo(
+                        apkPath, PackageManager.GET_SIGNING_CERTIFICATES);
+        return archiveInfo != null
+                && OtaConstants.ASG_PACKAGE.equals(archiveInfo.packageName);
+    }
+
+    private static void notifyRecoveryInstallInProgress(Context context, String apkPath) {
+        PackageManager pm = context.getPackageManager();
+        if (!isAsgClientApk(pm, apkPath)) {
+            return;
+        }
+        Intent intent = new Intent(OtaConstants.RECOVERY_INSTALL_IN_PROGRESS);
+        intent.setPackage(OtaConstants.RECOVERY_PACKAGE);
+        context.sendBroadcast(intent, OtaConstants.RECOVERY_CONTROL_PERMISSION);
+        Log.d(TAG, "Notified recovery worker: install in progress");
+    }
+
+    public static void notifyRecoveryInstallCompleted(Context context) {
+        Intent intent = new Intent(OtaConstants.RECOVERY_INSTALL_COMPLETED);
+        intent.setPackage(OtaConstants.RECOVERY_PACKAGE);
+        context.sendBroadcast(intent, OtaConstants.RECOVERY_CONTROL_PERMISSION);
+        Log.d(TAG, "Notified recovery worker: install completed");
     }
 
     private boolean isTestOnlyApk(PackageManager pm, String apkPath) {
@@ -2135,6 +2212,7 @@ public class OtaHelper {
                                         InstallationProgressEvent.InstallationStatus.FAILED,
                                         apkPath,
                                         "APK file not found"));
+                notifyRecoveryInstallCompleted(context);
                 sendUpdateCompletedBroadcast(context);
                 return false;
             }
@@ -2147,10 +2225,12 @@ public class OtaHelper {
                                         InstallationProgressEvent.InstallationStatus.FAILED,
                                         apkPath,
                                         "Cannot read APK file"));
+                notifyRecoveryInstallCompleted(context);
                 sendUpdateCompletedBroadcast(context);
                 return false;
             }
 
+            notifyRecoveryInstallInProgress(context, apkPath);
             Log.d(TAG, "Sending install broadcast to system UI...");
             context.sendBroadcast(intent);
             Log.i(TAG, "Install broadcast sent successfully. System will handle installation.");
@@ -2163,6 +2243,7 @@ public class OtaHelper {
                                     InstallationProgressEvent.InstallationStatus.FAILED,
                                     apkPath,
                                     "Security exception: " + e.getMessage()));
+            notifyRecoveryInstallCompleted(context);
             sendUpdateCompletedBroadcast(context);
             return false;
         } catch (Exception e) {
@@ -2173,6 +2254,7 @@ public class OtaHelper {
                                     InstallationProgressEvent.InstallationStatus.FAILED,
                                     apkPath,
                                     "Installation failed: " + e.getMessage()));
+            notifyRecoveryInstallCompleted(context);
             sendUpdateCompletedBroadcast(context);
             return false;
         }

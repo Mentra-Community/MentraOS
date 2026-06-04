@@ -15,11 +15,10 @@ public class BootReceiver extends BroadcastReceiver {
       return;
     }
     String action = intent.getAction();
-    if (!Intent.ACTION_BOOT_COMPLETED.equals(action)
-        && !RecoveryConstants.ACTION_START_RECOVERY.equals(action)) {
+    if (!Intent.ACTION_BOOT_COMPLETED.equals(action)) {
       return;
     }
-    Log.i(RecoveryConstants.TAG, "Starting RecoveryService from action=" + action);
+    Log.i(RecoveryConstants.TAG, "Starting RecoveryService from BOOT_COMPLETED");
     startRecoveryService(context);
   }
 

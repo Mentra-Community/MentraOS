@@ -65,8 +65,16 @@ public class ResetController {
     int attempts = stateStore.getAttempts();
     String reason =
         RecoveryConstants.STATE_FAILED_NEEDS_MANUAL.equals(currentState)
-            ? "LATE_HEARTBEAT_AFTER_RECOVERY_TIMEOUT"
+            ? "LATE_HEARTBEAT_AFTER_FAILED_MANUAL"
             : "HEARTBEAT_OK";
+
+    // Worker already emitted mentra_recovery_recovered on success; avoid duplicate telemetry.
+    if (RecoveryConstants.STATE_COOLDOWN.equals(currentState)) {
+      stateStore.setState(RecoveryConstants.STATE_HEALTHY, reason);
+      stateStore.setAttempts(0);
+      stateStore.setWindowStartMs(0L);
+      return;
+    }
 
     // Heartbeat is authoritative: if ASG is alive, clear degraded state and reset retry window.
     stateStore.setState(RecoveryConstants.STATE_HEALTHY, reason);
