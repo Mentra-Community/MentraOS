@@ -667,6 +667,12 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             sendEvent("stream_status", status.values)
         case let .keepAliveAck(ack):
             sendEvent("keep_alive_ack", ack.values)
+        case let .otaUpdateAvailable(event):
+            sendEvent("ota_update_available", event.values)
+        case let .otaStartAck(event):
+            sendEvent("ota_start_ack", event.values)
+        case let .otaStatus(event):
+            sendEvent("ota_status", event.values)
         case let .localTranscription(transcription):
             sendEvent("local_transcription", transcription.values)
         case let .raw(name, values):
