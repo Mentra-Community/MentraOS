@@ -6,6 +6,7 @@ export const safeHeadingSearchPill = isAndroid ? "mt-4" : "mt-9.5"
 export const safeHeadingSearchResults = isAndroid ? "pt-24" : "pt-34"
 export const safeHeadingAddPlaces = isAndroid ? "pt-8" : "pt-16"
 export const safeHeadingManuverCard = isAndroid ? "mt-2" : "mt-11"
+export const safeSuggestionsTop = isAndroid ? "top-36" : "top-45"
 
 
 

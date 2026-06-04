@@ -776,6 +776,26 @@ class CrustModule : Module() {
       }
     }
 
+    // Dev-only: clear the cached "terms accepted" flags (SDK + on-disk
+    // pref + in-process) so the next requestNavigationPermission() call
+    // re-shows the dialog. Used by the dev-settings re-trigger button.
+    AsyncFunction("resetNavigationPermission") { promise: expo.modules.kotlin.Promise ->
+      val activity = appContext.currentActivity
+      if (activity == null) {
+        promise.resolve(mapOf("ok" to false, "error" to "no current activity"))
+        return@AsyncFunction
+      }
+      activity.runOnUiThread {
+        try {
+          NavigationManager.resetTermsAccepted(activity)
+          promise.resolve(mapOf("ok" to true))
+        } catch (e: Exception) {
+          android.util.Log.e("CrustModule", "resetNavigationPermission failed", e)
+          promise.resolve(mapOf("ok" to false, "error" to (e.message ?: "reset failed")))
+        }
+      }
+    }
+
     AsyncFunction("stopNavigation") {
       try {
         NavigationManager.stop()

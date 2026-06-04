@@ -270,6 +270,14 @@ class NavigationService {
     return await CrustModule.requestNavigationPermission()
   }
 
+  // Dev-only: clear the cached "terms accepted" flags so the next
+  // requestPermission() call re-shows Google's dialog. Android only;
+  // iOS bridge returns {ok: false, error: "not supported on iOS"}.
+  public async resetPermission(): Promise<{ok: boolean; error?: string}> {
+    console.log(`${LOG_TAG}: resetPermission`)
+    return await CrustModule.resetNavigationPermission()
+  }
+
   /**
    * Dev-only: nudge the simulator off-route to trigger an actual reroute
    * from the Nav SDK. Useful for verifying the rerouting pipeline (UI

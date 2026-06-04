@@ -13,7 +13,10 @@ import com.google.android.libraries.navigation.RoadSnappedLocationProvider
 import com.google.android.libraries.navigation.RoutingOptions
 import com.google.android.libraries.navigation.SimulationOptions
 import com.google.android.libraries.navigation.TermsAndConditionsCheckOption
+import com.google.android.libraries.navigation.TermsAndConditionsUIParams
 import com.google.android.libraries.navigation.Waypoint
+import android.graphics.Color
+import android.graphics.Typeface
 
 /**
  * NavigationManager
@@ -257,6 +260,43 @@ object NavigationManager {
     val speedMultiplier: Float = 5f,
   )
 
+  // Dev-only: clear every "terms accepted" cache so the next
+  // ensureTermsAccepted() re-shows Google's dialog. Clears the SDK's
+  // own flag, our SharedPreferences cache, and the in-process flag.
+  fun resetTermsAccepted(activity: Activity) {
+    NavigationApi.resetTermsAccepted(activity.application)
+    activity.applicationContext
+      .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      .edit()
+      .remove(PREF_TERMS_ACCEPTED)
+      .apply()
+    termsAcceptedThisProcess = false
+    Log.d(TAG, "resetTermsAccepted — all caches cleared")
+  }
+
+  // Mentra-themed chrome for Google's mandatory T&C dialog. The body
+  // copy / legal text is owned by Google and not configurable; only
+  // background, fonts, and colors are. Roughly mirrors the Paper "Let's
+  // navigate, safely" card — flat, no blur (the SDK doesn't expose
+  // backdrop-filter), dark accent button.
+  private fun mentraTermsDialogUIParams(): TermsAndConditionsUIParams {
+    val sans = Typeface.create("sans-serif", Typeface.NORMAL)
+    val sansSemibold = Typeface.create("sans-serif-medium", Typeface.BOLD)
+    return TermsAndConditionsUIParams.builder()
+      .setBackgroundColor(Color.parseColor("#F5F5F5"))
+      .setTitleColor(Color.parseColor("#1A1A1A"))
+      .setTitleTypeface(sansSemibold)
+      .setTitleTextSize(22)
+      .setMainTextColor(Color.parseColor("#8C000000"))
+      .setMainTextTypeface(sans)
+      .setMainTextTextSize(14)
+      .setButtonsTypeface(sansSemibold)
+      .setButtonsTextSize(16)
+      .setAcceptButtonTextColor(Color.parseColor("#1A1A1A"))
+      .setCancelButtonTextColor(Color.parseColor("#8C000000"))
+      .build()
+  }
+
   /**
    * Ensure the Google Nav SDK Terms & Conditions dialog has been accepted,
    * without starting a trip. Resolves immediately when acceptance is
@@ -285,6 +325,8 @@ object NavigationManager {
     NavigationApi.showTermsAndConditionsDialog(
       activity,
       "Mentra",
+      "Welcome to Mentra Maps",
+      mentraTermsDialogUIParams(),
       object : NavigationApi.OnTermsResponseListener {
         override fun onTermsResponse(accepted: Boolean) {
           Log.d(TAG, "T&C dialog response: accepted=$accepted")
@@ -295,6 +337,7 @@ object NavigationManager {
           onResult(accepted)
         }
       },
+      TermsAndConditionsCheckOption.ENABLED,
     )
   }
 

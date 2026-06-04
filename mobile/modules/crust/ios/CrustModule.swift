@@ -68,6 +68,13 @@ public class CrustModule: Module {
             }
         }
 
+        // iOS stub — Google's iOS Nav SDK has no equivalent to
+        // resetTermsAccepted, so this is a no-op for now. Returning ok:
+        // false lets the JS button surface the platform gap.
+        AsyncFunction("resetNavigationPermission") { () -> [String: Any] in
+            return ["ok": false, "error": "not supported on iOS"]
+        }
+
         AsyncFunction("startNavigation") { (lat: Double, lng: Double, options: [String: Any]?) -> [String: Any] in
             let simulate = options?["simulate"] as? Bool ?? false
             let speedMultiplier = options?["speedMultiplier"] as? Double ?? 1.0

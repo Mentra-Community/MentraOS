@@ -68,6 +68,7 @@ export interface Channels {
   // test channels
   "test:show-text-test": Rpc<{text: string; durationMs?: number}, void>
   "test:show-bitmap-test": Rpc<void, void>
+  "test:reset-nav-permission": Rpc<void, {ok: boolean; error?: string}>
 }
 
 // Convenience: the typed shape of `window.mentra` for this miniapp.

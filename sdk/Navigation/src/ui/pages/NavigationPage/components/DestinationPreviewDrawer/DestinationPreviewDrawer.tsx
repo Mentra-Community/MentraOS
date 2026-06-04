@@ -107,8 +107,8 @@ export function DestinationPreviewDrawer({
                         .then(() => toast("Address copied"))
                         .catch(() => toast("Couldn’t copy address"))
                     }}
-                    className="shrink-0 flex items-center justify-center size-8 rounded-full bg-[#0000000A] active:bg-[#0000001A] mt-1">
-                    <CopyIcon />
+                    className="shrink-0 flex items-center justify-center size-12 rounded-full bg-[#0000000A] active:bg-[#0000001A] mt-1">
+                    <CopyIcon size={22} />
                   </button>
                 </div>
               </>
