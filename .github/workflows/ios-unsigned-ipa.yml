@@ -23,10 +23,6 @@ jobs:
       - name: Xcode first launch setup
         run: sudo xcodebuild -runFirstLaunch
 
-
-      - name: Download iOS platform
-        run: xcodebuild -downloadPlatform iOS
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
@@ -57,23 +53,31 @@ jobs:
         working-directory: ./mobile/ios
         run: pod install
 
-      - name: Patch Pod xcconfigs
+      - name: Patch Pods project via xcodeproj
         working-directory: ./mobile/ios
         run: |
-          find Pods/Target\ Support\ Files -name "*.xcconfig" | while read f; do
-            sed -i '' \
-              -e 's/IPHONEOS_DEPLOYMENT_TARGET = 9\.0/IPHONEOS_DEPLOYMENT_TARGET = 13.0/g' \
-              -e 's/IPHONEOS_DEPLOYMENT_TARGET = 10\.0/IPHONEOS_DEPLOYMENT_TARGET = 13.0/g' \
-              -e 's/IPHONEOS_DEPLOYMENT_TARGET = 11\.0/IPHONEOS_DEPLOYMENT_TARGET = 13.0/g' \
-              "$f"
-          done
+          ruby << 'RUBY'
+          require 'xcodeproj'
 
-          SWIFTPB_DIR="Pods/Target Support Files/SwiftProtobuf"
-          if [ -d "$SWIFTPB_DIR" ]; then
-            find "$SWIFTPB_DIR" -name "*.xcconfig" | while read f; do
-              echo "SWIFT_COMPILATION_MODE = singlefile" >> "$f"
-            done
-          fi
+          project = Xcodeproj::Project.open('Pods/Pods.xcodeproj')
+
+          project.targets.each do |target|
+            target.build_configurations.each do |config|
+              # Fix deployment targets for all pods
+              if config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'].to_f < 13.0
+                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+              end
+              # Force singlefile compilation on SwiftProtobuf specifically
+              if target.name == 'SwiftProtobuf'
+                config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
+                puts "Patched SwiftProtobuf #{config.name}: SWIFT_COMPILATION_MODE=singlefile"
+              end
+            end
+          end
+
+          project.save
+          puts "Pods.xcodeproj saved successfully"
+          RUBY
 
       - name: List schemes
         working-directory: ./mobile/ios
@@ -104,10 +108,19 @@ jobs:
           BUILD_RESULT=${PIPESTATUS[0]}
 
           if [ "$BUILD_RESULT" -ne 0 ]; then
-            echo "========== ACTUAL COMPILER ERRORS =========="
-            grep ": error:" /tmp/xcodebuild.log | head -50
-            echo "========== FAILED TARGETS =========="
-            grep -E "FAILED|EmitSwift|CompileSwift" /tmp/xcodebuild.log | tail -20
+            echo "========== ALL ERROR LINES =========="
+            grep -E "error:|Killed|signal|crash|failed|cannot|unable" /tmp/xcodebuild.log \
+              | grep -v "^note:" | head -80
+            echo ""
+            echo "========== 50 LINES BEFORE SwiftProtobuf FAILURE =========="
+            grep -n "SwiftProtobuf" /tmp/xcodebuild.log \
+              | grep -i "error\|fail\|emit\|compile" \
+              | head -5 \
+              | awk -F: '{print $1}' \
+              | while read linenum; do
+                  start=$((linenum > 50 ? linenum - 50 : 1))
+                  sed -n "${start},${linenum}p" /tmp/xcodebuild.log
+                done
             exit "$BUILD_RESULT"
           fi
 
