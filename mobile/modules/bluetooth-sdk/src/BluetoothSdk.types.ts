@@ -4,8 +4,11 @@ export type GlassesNotReadyEvent = {
   message: string
 }
 
+// NOTE: unlike most events below, the native module does NOT include a `type`
+// field on the button_press payload — it sends only {buttonId, pressType,
+// timestamp} (see BluetoothSdkModule on both iOS and Android). Consumers must
+// filter on `pressType` / the "button_press" listener name, never `event.type`.
 export type ButtonPressEvent = {
-  type: "button_press"
   buttonId: string
   pressType: "long" | "short"
   timestamp: number
@@ -49,34 +52,34 @@ export type BatteryStatusEvent = {
 }
 
 export type GlassesConnectionStatus =
-  | {state: 'disconnected'}
-  | {state: 'scanning'}
-  | {state: 'connecting'}
-  | {state: 'bonding'}
-  | {state: 'connected'; fullyBooted: boolean}
+  | {state: "disconnected"}
+  | {state: "scanning"}
+  | {state: "connecting"}
+  | {state: "bonding"}
+  | {state: "connected"; fullyBooted: boolean}
 
-export type ConnectedGlassesConnectionStatus = Extract<GlassesConnectionStatus, {state: 'connected'}>
+export type ConnectedGlassesConnectionStatus = Extract<GlassesConnectionStatus, {state: "connected"}>
 
 export function isConnectedGlassesConnectionStatus(
   status: GlassesConnectionStatus,
 ): status is ConnectedGlassesConnectionStatus {
-  return status.state === 'connected'
+  return status.state === "connected"
 }
 
 export function isReadyGlassesConnectionStatus(status: GlassesConnectionStatus): boolean {
-  return status.state === 'connected' && status.fullyBooted
+  return status.state === "connected" && status.fullyBooted
 }
 
 export function isBusyGlassesConnectionStatus(status: GlassesConnectionStatus): boolean {
-  return status.state === 'scanning' || status.state === 'connecting' || status.state === 'bonding'
+  return status.state === "scanning" || status.state === "connecting" || status.state === "bonding"
 }
 
 export function createDisconnectedGlassesStatus(): Partial<GlassesStatus> {
   return {
-    connection: {state: 'disconnected'},
-    hotspot: {state: 'disabled'},
+    connection: {state: "disconnected"},
+    hotspot: {state: "disabled"},
     voiceActivityDetectionEnabled: true,
-    wifi: {state: 'disconnected'},
+    wifi: {state: "disconnected"},
   }
 }
 
@@ -101,24 +104,24 @@ export type LogEvent = {
   message: string
 }
 
-export type WifiStatus = {state: 'disconnected'} | {state: 'connected'; ssid: string; localIp?: string}
+export type WifiStatus = {state: "disconnected"} | {state: "connected"; ssid: string; localIp?: string}
 
-export type ConnectedWifiStatus = Extract<WifiStatus, {state: 'connected'}>
+export type ConnectedWifiStatus = Extract<WifiStatus, {state: "connected"}>
 
 export function isConnectedWifiStatus(status: WifiStatus): status is ConnectedWifiStatus {
-  return status.state === 'connected'
+  return status.state === "connected"
 }
 
 export type WifiStatusChangeEvent = WifiStatus & {
   type: "wifi_status_change"
 }
 
-export type HotspotStatus = {state: 'disabled'} | {state: 'enabled'; ssid: string; password: string; localIp: string}
+export type HotspotStatus = {state: "disabled"} | {state: "enabled"; ssid: string; password: string; localIp: string}
 
-export type EnabledHotspotStatus = Extract<HotspotStatus, {state: 'enabled'}>
+export type EnabledHotspotStatus = Extract<HotspotStatus, {state: "enabled"}>
 
 export function isEnabledHotspotStatus(status: HotspotStatus): status is EnabledHotspotStatus {
-  return status.state === 'enabled'
+  return status.state === "enabled"
 }
 
 export type HotspotStatusChangeEvent = HotspotStatus & {
@@ -147,6 +150,89 @@ export type PhotoResponseEvent =
       errorCode?: string
       errorMessage: string
     }
+
+export type PhotoStatusState =
+  | "accepted"
+  | "queued"
+  | "configuring"
+  | "capturing"
+  | "captured"
+  | "compressing"
+  | "ble_fallback_compression"
+  | "uploading"
+  | "uploaded"
+  | "ready_for_transfer"
+  | "transferring"
+  | "failed"
+
+export type PhotoResolvedConfig = {
+  format?: "jpeg" | string
+  width?: number
+  height?: number
+  quality?: number
+  requestedSize?: PhotoSize | string
+  source?: "sdk" | "button" | string
+  transferMethod?: "webhook" | "ble" | "local" | string
+  compression?: PhotoCompression | string
+  saveToGallery?: boolean
+  exposureTimeNs?: number
+  iso?: number
+}
+
+export type PhotoFpsRange = {
+  min?: number
+  max?: number
+}
+
+export type PhotoRequestedCaptureConfig = {
+  manual?: boolean
+  exposureTimeNs?: number
+  iso?: number
+  frameDurationNs?: number
+  aeMode?: number
+  aeLock?: boolean
+  aeExposureCompensation?: number
+  aeTargetFpsRange?: PhotoFpsRange
+  noiseReductionMode?: number
+  edgeMode?: number
+  afMode?: number
+  zsl?: boolean
+}
+
+export type PhotoMeteredPreview = {
+  exposureTimeNs?: number
+  iso?: number
+  totalLightProxy?: number
+}
+
+export type PhotoCaptureMetadata = {
+  manual?: boolean
+  exposureTimeNs?: number
+  iso?: number
+  frameDurationNs?: number
+  aeMode?: number
+  aeState?: number
+  aeStateName?: string
+  noiseReductionMode?: number
+  edgeMode?: number
+  zsl?: boolean
+  sensorTimestampNs?: number
+  totalLightProxy?: number
+  mfnrLikely?: boolean
+}
+
+export type PhotoStatusEvent = {
+  type: "photo_status"
+  requestId: string
+  status: PhotoStatusState | string
+  timestamp: number
+  resolvedConfig?: PhotoResolvedConfig
+  requestedCaptureConfig?: PhotoRequestedCaptureConfig
+  meteredPreview?: PhotoMeteredPreview
+  captureMetadata?: PhotoCaptureMetadata
+  errorCode?: string
+  errorMessage?: string
+}
 
 export type GalleryStatusEvent = {
   type: "gallery_status"
@@ -208,6 +294,17 @@ export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
 export type PhotoSize = "small" | "medium" | "large" | "full"
 export type ButtonPhotoSize = "small" | "medium" | "large"
 export type PhotoCompression = "none" | "medium" | "heavy"
+
+/**
+ * Optional per-recording video settings for {@link startVideoRecording}. When
+ * omitted, the glasses fall back to their saved button-video settings. Any
+ * field left undefined is omitted from the BLE command (glasses default applies).
+ */
+export interface VideoRecordingSettings {
+  width?: number
+  height?: number
+  fps?: number
+}
 export const DeviceModels = {
   Simulated: "Simulated Glasses",
   G1: "Even Realities G1",
@@ -229,16 +326,28 @@ export type DashboardMenuItem = {
   values?: Record<string, unknown>
 }
 
-export type CameraFov = "standard" | "wide"
+export const CAMERA_FOV_MIN = 62
+export const CAMERA_FOV_MAX = 118
+export const CAMERA_FOV_DEFAULT = 102
+
+export type CameraRoiPosition = 0 | 1 | 2
+export type CameraFovPreset = "narrow" | "standard" | "wide"
+
+export type CameraFovValue = {
+  fov: number
+  roiPosition?: CameraRoiPosition
+}
+
+export type CameraFov = CameraFovValue | CameraFovPreset
 
 export type CameraFovSetting = {
   fov: number
-  roiPosition: number
+  roiPosition: CameraRoiPosition
 }
 
 type NativeCameraFovSetting = {
   fov: number
-  roi_position: number
+  roi_position: CameraRoiPosition
 }
 
 export type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
@@ -254,6 +363,8 @@ export type PhotoRequestParams = {
   save?: boolean
   sound: boolean
   exposureTimeNs?: number | null
+  /** Sensor ISO for this capture only. Only used when exposureTimeNs enables manual exposure. */
+  iso?: number | null
 }
 
 export type StreamVideoConfig = {
@@ -349,58 +460,74 @@ export type StreamStatusLifecycleState = "initializing" | "streaming" | "stoppin
 export type StreamStatusReconnectState = "reconnecting" | "reconnected" | "reconnect_failed"
 export type StreamStatusState = StreamStatusLifecycleState | StreamStatusReconnectState | "error"
 
+/** Effective stream settings reported by the glasses after defaults and clamps. */
+export type StreamResolvedConfig = {
+  transport?: "rtmp" | "srt" | "whip"
+  video?: {
+    /** Encoded output width sent to the stream endpoint. */
+    width: number
+    /** Encoded output height sent to the stream endpoint. */
+    height: number
+    /** Native camera buffer width selected before crop/downscale. */
+    captureWidth?: number
+    /** Native camera buffer height selected before crop/downscale. */
+    captureHeight?: number
+    /** Encoded video bitrate in bits per second. */
+    bitrate: number
+    /** Resolved capture/encode frame rate. */
+    fps: number
+  }
+  audio?: {
+    /** Encoded audio bitrate in bits per second. */
+    bitrate?: number
+    /** Audio sample rate in Hz. */
+    sampleRate?: number
+    echoCancellation?: boolean
+    noiseSuppression?: boolean
+  }
+}
+
+type StreamStatusCommon = {
+  type: "stream_status"
+  streamId?: string
+  timestamp?: number
+  resolvedConfig?: StreamResolvedConfig
+}
+
 export type StreamStatusEvent =
-  | {
-      type: "stream_status"
+  | (StreamStatusCommon & {
       kind: "lifecycle"
       status: StreamStatusLifecycleState
-      streamId?: string
-      timestamp?: number
-    }
-  | {
-      type: "stream_status"
+    })
+  | (StreamStatusCommon & {
       kind: "reconnect"
       status: "reconnecting"
-      streamId?: string
       attempt: number
       maxAttempts: number
       reason: string
-      timestamp?: number
-    }
-  | {
-      type: "stream_status"
+    })
+  | (StreamStatusCommon & {
       kind: "reconnect"
       status: "reconnected"
-      streamId?: string
       attempt: number
-      timestamp?: number
-    }
-  | {
-      type: "stream_status"
+    })
+  | (StreamStatusCommon & {
       kind: "reconnect"
       status: "reconnect_failed"
-      streamId?: string
       maxAttempts: number
-      timestamp?: number
-    }
-  | {
-      type: "stream_status"
+    })
+  | (StreamStatusCommon & {
       kind: "error"
       status: "error"
-      streamId?: string
       errorDetails: string
-      timestamp?: number
-    }
-  | {
-      type: "stream_status"
+    })
+  | (StreamStatusCommon & {
       kind: "snapshot"
       status: "streaming" | "reconnecting" | "stopped"
       streaming: boolean
       reconnecting: boolean
-      streamId?: string
       attempt?: number
-      timestamp?: number
-    }
+    })
 
 export type KeepAliveAckEvent = {
   type: "keep_alive_ack"
@@ -446,11 +573,11 @@ export type OtaStatusEvent = {
   session_id: string
   total_steps: number
   current_step: number
-  step_type: 'apk' | 'mtk' | 'bes'
-  phase: 'download' | 'install'
+  step_type: "apk" | "mtk" | "bes"
+  phase: "download" | "install"
   step_percent: number
   overall_percent: number
-  status: 'in_progress' | 'step_complete' | 'complete' | 'failed' | 'idle'
+  status: "in_progress" | "step_complete" | "complete" | "failed" | "idle"
   error_message?: string
 }
 
@@ -489,6 +616,7 @@ export type BluetoothSdkModuleEvents = {
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
   hotspot_error: (event: HotspotErrorEvent) => void
   photo_response: (event: PhotoResponseEvent) => void
+  photo_status: (event: PhotoStatusEvent) => void
   gallery_status: (event: GalleryStatusEvent) => void
   compatible_glasses_search_stop: (event: CompatibleGlassesSearchStopEvent) => void
   heartbeat_sent: (event: HeartbeatSentEvent) => void
@@ -559,6 +687,7 @@ export type BluetoothSdkEventMap = {
   hotspot_status_change: HotspotStatusChangeEvent
   hotspot_error: HotspotErrorEvent
   photo_response: PhotoResponseEvent
+  photo_status: PhotoStatusEvent
   gallery_status: GalleryStatusEvent
   compatible_glasses_search_stop: CompatibleGlassesSearchStopEvent
   swipe_volume_status: SwipeVolumeStatusEvent
@@ -571,7 +700,9 @@ export type BluetoothSdkEventMap = {
   mic_pcm: MicPcmEvent
   mic_lc3: MicLc3Event
   stream_status: StreamStatusEvent
-  keep_alive_ack: KeepAliveAckEvent
+  ota_update_available: OtaUpdateAvailableEvent
+  ota_start_ack: OtaStartAckEvent
+  ota_status: OtaStatusEvent
   extraction_progress: ExtractionProgressEvent
 }
 
@@ -629,19 +760,18 @@ export interface BluetoothSdkPublicModule {
   setCameraFov(fov: CameraFov): Promise<void>
   queryGalleryStatus(): Promise<void>
   requestPhoto(params: PhotoRequestParams): Promise<void>
-  startVideoRecording(requestId: string, save: boolean, sound: boolean): Promise<void>
+  startVideoRecording(
+    requestId: string,
+    save: boolean,
+    sound: boolean,
+    settings?: VideoRecordingSettings,
+  ): Promise<void>
   stopVideoRecording(requestId: string): Promise<void>
 
   startStream(params: StreamStartRequest): Promise<void>
   stopStream(): Promise<void>
-  keepStreamAlive(params: StreamKeepAliveRequest): Promise<void>
 
-  setMicState(
-    enabled: boolean,
-    useGlassesMic?: boolean,
-    sendTranscript?: boolean,
-    sendLc3Data?: boolean,
-  ): Promise<void>
+  setMicState(enabled: boolean, useGlassesMic?: boolean, sendTranscript?: boolean, sendLc3Data?: boolean): Promise<void>
   setPreferredMic(preferredMic: MicPreference): Promise<void>
   setOwnAppAudioPlaying(playing: boolean): Promise<void>
   getGlassesMediaVolume(): Promise<GlassesMediaVolumeGetResult>
@@ -658,6 +788,12 @@ export interface BluetoothSdkPublicModule {
   ): Promise<void>
 
   requestVersionInfo(): Promise<void>
+  /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
+  checkForOtaUpdate(): Promise<void>
+  /** Start the OTA flow after your app has presented the available update to the user. */
+  startOtaUpdate(): Promise<void>
+  /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
+  retryOtaVersionCheck(): Promise<void>
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>
@@ -673,7 +809,7 @@ export interface BluetoothSdkPublicModule {
   // checkTtsModelAvailable(): Promise<boolean>
   // validateTtsModel(path: string): Promise<boolean>
   // generateTtsAudio(text: string, path: string, outputPath: string, speakerId: number, speed: number): Promise<boolean>
-  
+
   // STT Commands (TODO: MOVE TO CRUST)
   setSttModelDetails(path: string, languageCode: string): Promise<void>
   getSttModelPath(): Promise<string>
@@ -705,11 +841,11 @@ export interface OtaStatus {
   sessionId: string
   totalSteps: number
   currentStep: number
-  stepType: 'apk' | 'mtk' | 'bes'
-  phase: 'download' | 'install'
+  stepType: "apk" | "mtk" | "bes"
+  phase: "download" | "install"
   stepPercent: number
   overallPercent: number
-  status: 'in_progress' | 'step_complete' | 'complete' | 'failed' | 'idle'
+  status: "in_progress" | "step_complete" | "complete" | "failed" | "idle"
   error?: string
 }
 

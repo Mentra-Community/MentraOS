@@ -81,7 +81,13 @@ export type {
   VadData,
 } from "./modules/events"
 export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "./modules/speaker"
-export type {PhotoTaken, SetCameraFovOptions, TakePhotoOptions} from "./modules/camera"
+export type {
+  PhotoTaken,
+  SetCameraFovOptions,
+  StartVideoRecordingOptions,
+  TakePhotoOptions,
+  VideoRecordingStarted,
+} from "./modules/camera"
 export type {DashboardMode} from "./modules/dashboard"
 export type {LedColor, LedControlOptions} from "./modules/led"
 export type {StartUnmanagedOptions, StartManagedOptions, ManagedStreamResult, StreamStatus} from "./modules/stream"

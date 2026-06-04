@@ -271,7 +271,10 @@ export interface StreamingAdapter {
    * update) pair so the runtime can fan an EVENT into the right miniapp(s).
    */
   setStatusSubscriber: (
-    cb: (packageName: string, update: {streamId: string; status: string; data?: Record<string, unknown>; source: string}) => void,
+    cb: (
+      packageName: string,
+      update: {streamId: string; status: string; data?: Record<string, unknown>; source: string},
+    ) => void,
   ) => void
 }
 
@@ -317,8 +320,36 @@ export interface RuntimeHooks {
   setMicRequirements?: (requirements: MicRequirements) => Promise<void> | void
   /** Phone-orchestrated photo capture (session.camera.takePhoto). */
   photo?: PhotoAdapter
+  /** Phone-orchestrated video recording (session.camera.startVideoRecording). */
+  videoRecording?: VideoRecordingAdapter
   /** Phone-orchestrated RTMP/SRT/WHIP publishing. */
   streaming?: StreamingAdapter
+}
+
+/**
+ * Video recording adapter — start/stop a local video recording on the glasses.
+ * The runtime calls these from its handleVideoRecordingStart/Stop handlers; the
+ * host's PhoneVideoCoordinator implements them (drives the glasses over BLE via
+ * the bluetooth-sdk startVideoRecording/stopVideoRecording). Unlike photo, this
+ * is fire-and-forget start/stop — no uploaded URL is returned.
+ */
+export interface VideoRecordingAdapter {
+  startRecording: (
+    packageName: string,
+    opts: {
+      width?: number
+      height?: number
+      fps?: number
+      sound?: boolean
+      save?: boolean
+    },
+  ) => Promise<{recordingId: string}>
+  stopRecording: (packageName: string, recordingId?: string) => Promise<void>
+  /**
+   * Stop any recordings still owned by an app (e.g. on miniapp disconnect/crash)
+   * so the glasses don't keep recording until the max-recording timeout.
+   */
+  stopForApp?: (packageName: string) => Promise<void>
 }
 
 /**

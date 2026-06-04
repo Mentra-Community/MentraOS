@@ -107,6 +107,8 @@ export enum MiniappRequestType {
 
   // ----- Photos, streaming -----
   PHOTO = "miniapp_photo",
+  VIDEO_RECORDING_START = "miniapp_video_recording_start",
+  VIDEO_RECORDING_STOP = "miniapp_video_recording_stop",
   STREAM_START = "miniapp_stream_start",
   STREAM_STOP = "miniapp_stream_stop",
   MANAGED_STREAM_START = "miniapp_managed_stream_start",

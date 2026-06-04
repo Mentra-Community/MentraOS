@@ -1445,11 +1445,19 @@ class DeviceManager {
         sgc?.sendReboot()
     }
 
-    fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean) {
+    fun startVideoRecording(
+            requestId: String,
+            save: Boolean,
+            sound: Boolean,
+            width: Int = 0,
+            height: Int = 0,
+            fps: Int = 0,
+    ) {
         Bridge.log(
-                "MAN: onStartVideoRecording: requestId=$requestId, save=$save, flash=true, sound=$sound"
+                "MAN: onStartVideoRecording: requestId=$requestId, save=$save, flash=true, sound=$sound, " +
+                        "resolution=${width}x${height}@${fps}fps"
         )
-        sgc?.startVideoRecording(requestId, save, true, sound)
+        sgc?.startVideoRecording(requestId, save, true, sound, width, height, fps)
     }
 
     fun stopVideoRecording(requestId: String) {
@@ -1483,6 +1491,7 @@ class DeviceManager {
             save: Boolean,
             sound: Boolean,
             exposureTimeNs: Double? = null,
+            iso: Int? = null,
     ) {
         val exposureNs: Long? =
                 exposureTimeNs?.takeIf { it.isFinite() && it > 0 }?.let { v ->
@@ -1491,8 +1500,9 @@ class DeviceManager {
                         else -> v.toLong()
                     }
                 }
+        val manualIso = if (exposureNs != null) iso?.takeIf { it > 0 } else null
         Bridge.log(
-                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=$requestId appId=$appId size=$size compress=$compress flash=$flash save=$save sound=$sound exposureTimeNs=$exposureNs sgc=${sgc?.javaClass?.simpleName ?: "null"}"
+                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=$requestId appId=$appId size=$size compress=$compress flash=$flash save=$save sound=$sound exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
         val activeSgc = sgc
         if (activeSgc == null) {
@@ -1501,7 +1511,7 @@ class DeviceManager {
             )
             return
         }
-        activeSgc.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, save, sound, exposureNs)
+        activeSgc.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, save, sound, exposureNs, manualIso)
     }
 
     fun rgbLedControl(

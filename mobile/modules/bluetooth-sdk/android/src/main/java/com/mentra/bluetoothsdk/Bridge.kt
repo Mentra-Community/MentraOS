@@ -369,6 +369,11 @@ public class Bridge private constructor() {
             sendTypedMessage("photo_response", event as Map<String, Any>)
         }
 
+        @JvmStatic
+        fun sendPhotoStatus(statusJson: Map<String, Any>) {
+            sendTypedMessage("photo_status", statusJson)
+        }
+
         /** Send RGB LED control response */
         @JvmStatic
         fun sendRgbLedControlResponse(requestId: String, success: Boolean, error: String?) {
