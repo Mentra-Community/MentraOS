@@ -344,9 +344,17 @@ public class CameraNeoService extends LifecycleService {
      * @return true if the upcoming capture would reuse the open camera; false otherwise.
      */
     public static boolean isCameraWarm(String size, boolean isFromSdk, Long exposureTimeNs) {
-        return sInstance != null
-                && sInstance.cameraCoordinator.hasConfiguredCamera()
-                && sInstance.photoSession.willReuseConfiguredCamera(size, isFromSdk, exposureTimeNs);
+        // Read the open-session state under SERVICE_LOCK — the same lock enqueuePhotoRequest()
+        // holds — so this prediction is consistent with the state that request will actually see.
+        // Without it, a keep-alive expiry / closeCamera() on the background thread could tear down
+        // the HAL session between this read and the enqueue, making the short "hot" cue play for a
+        // capture that ends up cold-starting.
+        synchronized (SERVICE_LOCK) {
+            return sInstance != null
+                    && sInstance.cameraCoordinator.hasConfiguredCamera()
+                    && sInstance.photoSession.willReuseConfiguredCamera(
+                            size, isFromSdk, exposureTimeNs);
+        }
     }
 
     /**
