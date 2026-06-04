@@ -51,6 +51,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import org.json.JSONObject;
 
 public class CameraNeoService extends LifecycleService {
     private static final String TAG = "CameraNeo";
@@ -140,6 +141,14 @@ public class CameraNeoService extends LifecycleService {
 
     // Callback interface for photo capture
     public interface PhotoCaptureCallback {
+        default void onPhotoConfigured(JSONObject resolvedConfig) {}
+        default void onPhotoCapturing() {}
+        default void onPhotoCapturing(JSONObject requestedCaptureConfig, JSONObject meteredPreview) {
+            onPhotoCapturing();
+        }
+        default void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
+            onPhotoCaptured(filePath);
+        }
         void onPhotoCaptured(String filePath);
 
         void onPhotoError(String errorMessage);
@@ -434,11 +443,29 @@ public class CameraNeoService extends LifecycleService {
             boolean isFromSdk,
             Long exposureTimeNs,
             PhotoCaptureCallback callback) {
+        enqueuePhotoRequest(context, filePath, size, enableLed, isFromSdk, exposureTimeNs, null, callback);
+    }
+
+    /**
+     * Primary entry point for photo requests - uses global queue to prevent race conditions.
+     *
+     * @param iso optional sensor sensitivity for manual exposure captures only; {@code null} =
+     *     derive ISO from preview metering
+     */
+    public static void enqueuePhotoRequest(
+            Context context,
+            String filePath,
+            String size,
+            boolean enableLed,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            Integer iso,
+            PhotoCaptureCallback callback) {
         synchronized (SERVICE_LOCK) {
             // Create and queue the request immediately
             QueuedPhotoRequest request =
                     new QueuedPhotoRequest(
-                            filePath, size, enableLed, isFromSdk, exposureTimeNs, callback);
+                            filePath, size, enableLed, isFromSdk, exposureTimeNs, iso, callback);
             QueuedPhotoRequestQueue.getInstance().offer(request);
 
             Log.d(
@@ -798,6 +825,7 @@ public class CameraNeoService extends LifecycleService {
                 // auto-exposed
                 // preview frames in the same buffer queue.
                 photoSession.setJpegSize(chosenJpeg);
+                photoSession.notifyPhotoConfigured(chosenJpeg, photoSession.previewJpegQuality());
                 photoSession.prepareStillReaders(filePath, chosenJpeg, backgroundHandler);
             }
 

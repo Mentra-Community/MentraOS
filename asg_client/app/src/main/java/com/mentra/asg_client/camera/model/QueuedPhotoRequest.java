@@ -45,6 +45,12 @@ public final class QueuedPhotoRequest {
      */
     public final Long exposureTimeNs;
 
+    /**
+     * Optional ISO / Camera2 {@code SENSOR_SENSITIVITY} for manual exposure captures only.
+     * {@code null} means derive ISO from preview metering.
+     */
+    public final Integer iso;
+
     /** Wall-clock time when this entry was enqueued; copied to {@link ActivePhotoCapture#startTimeMs}. */
     public final long enqueuedAtMs;
 
@@ -61,12 +67,24 @@ public final class QueuedPhotoRequest {
             boolean isFromSdk,
             Long exposureTimeNs,
             CameraNeoService.PhotoCaptureCallback callback) {
+        this(filePath, size, enableLed, isFromSdk, exposureTimeNs, null, callback);
+    }
+
+    public QueuedPhotoRequest(
+            String filePath,
+            String size,
+            boolean enableLed,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            Integer iso,
+            CameraNeoService.PhotoCaptureCallback callback) {
         this.requestId = "photo_" + System.currentTimeMillis() + "_" + filePath.hashCode();
         this.filePath = filePath;
         this.size = size;
         this.enableLed = enableLed;
         this.isFromSdk = isFromSdk;
         this.exposureTimeNs = exposureTimeNs;
+        this.iso = iso;
         this.callback = callback;
         this.enqueuedAtMs = System.currentTimeMillis();
     }

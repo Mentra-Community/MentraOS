@@ -123,6 +123,7 @@ interface MentraBluetoothSdkListener {
     fun onHotspotError(event: HotspotErrorEvent) {}
     fun onGalleryStatus(event: GalleryStatusEvent) {}
     fun onPhotoResponse(event: PhotoResponseEvent) {}
+    fun onPhotoStatus(event: PhotoStatusEvent) {}
     fun onStreamStatus(event: StreamStatusEvent) {}
     fun onKeepAliveAck(event: KeepAliveAckEvent) {}
     fun onOtaUpdateAvailable(event: OtaUpdateAvailableEvent) {}

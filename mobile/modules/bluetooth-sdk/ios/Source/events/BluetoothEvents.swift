@@ -149,6 +149,7 @@ public enum BluetoothEvent: CustomStringConvertible {
     case hotspotStatus(HotspotStatusEvent)
     case hotspotError(HotspotErrorEvent)
     case photoResponse(PhotoResponseEvent)
+    case photoStatus(PhotoStatusEvent)
     case streamStatus(StreamStatusEvent)
     case keepAliveAck(KeepAliveAckEvent)
     case otaUpdateAvailable(OtaUpdateAvailableEvent)
@@ -174,6 +175,8 @@ public enum BluetoothEvent: CustomStringConvertible {
         case let .hotspotError(event):
             event.description
         case let .photoResponse(event):
+            event.description
+        case let .photoStatus(event):
             event.description
         case let .streamStatus(event):
             event.description

@@ -1616,11 +1616,10 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, save: Bool, sound: Bool,
-        exposureTimeNs: Double?
+        compress: String?, flash: Bool, save: Bool, sound: Bool, exposureTimeNs: Double?, iso: Int?
     ) {
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(requestId) appId=\(appId) flash=\(flash) save=\(save) sound=\(sound)"
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(requestId) appId=\(appId) flash=\(flash) save=\(save) sound=\(sound) iso=\(iso.map { String($0) } ?? "auto")"
         )
 
         var json: [String: Any] = [
@@ -1672,6 +1671,10 @@ class MentraLive: NSObject, SGCManager {
         if let e = exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
             Bridge.log("LIVE: Using manual exposure time for photo request \(requestId): \(Int64(e)) ns")
             json["exposureTimeNs"] = Int64(e)
+        }
+        if let iso, iso > 0 {
+            Bridge.log("LIVE: Using manual ISO for photo request \(requestId): ISO \(iso)")
+            json["iso"] = iso
         }
 
         Bridge.log("LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=auto")
@@ -2166,6 +2169,9 @@ class MentraLive: NSObject, SGCManager {
 
         case "stream_status":
             emitRtmpStreamStatus(json)
+
+        case "photo_status":
+            emitPhotoStatus(json)
 
         case "gallery_status":
             let photoCount = json["photos"] as? Int ?? 0
@@ -4240,6 +4246,10 @@ class MentraLive: NSObject, SGCManager {
 
     private func emitRtmpStreamStatus(_ json: [String: Any]) {
         Bridge.sendTypedMessage("stream_status", body: json)
+    }
+
+    private func emitPhotoStatus(_ json: [String: Any]) {
+        Bridge.sendPhotoStatus(json)
     }
 
     private func emitButtonPress(buttonId: String, pressType: String, timestamp: Int64) {
