@@ -55,22 +55,11 @@ jobs:
           injection = """
             installer.pods_project.targets.each do |target|
               target.build_configurations.each do |config|
-                # Fix low deployment targets
                 dt = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
                 if dt && dt.to_f < 13.0
                   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
                 end
-                # RNScreens gamma/ files ARE Swift 6 syntax - do NOT set SWIFT_VERSION=5
-                # Reduce concurrency strictness only via compiler flag
-                if target.name == 'RNScreens'
-                  config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'
-                  flags = config.build_settings['OTHER_SWIFT_FLAGS'] || '$(inherited)'
-                  unless flags.include?('-strict-concurrency')
-                    config.build_settings['OTHER_SWIFT_FLAGS'] = flags + ' -strict-concurrency=minimal'
-                  end
-                end
-                # SwiftProtobuf: WMO OOM-kills compiler on 80+ files
-                if target.name == 'SwiftProtobuf'
+                if ['SwiftProtobuf', 'RNScreens'].include?(target.name)
                   config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
                 end
               end
@@ -89,9 +78,9 @@ jobs:
               f.write(content)
           PYEOF
 
-      - name: Show patched Podfile post_install
+      - name: Show patched post_install
         working-directory: ./mobile/ios
-        run: grep -A 40 "post_install" Podfile | head -50
+        run: grep -A 20 "post_install" Podfile | head -30
 
       - name: Install pods
         working-directory: ./mobile/ios
@@ -126,32 +115,9 @@ jobs:
           BUILD_RESULT=${PIPESTATUS[0]}
 
           if [ "$BUILD_RESULT" -ne 0 ]; then
-            echo "========== REAL ERRORS FROM XCRESULT =========="
-            xcrun xcresulttool get --format json --path /tmp/build.xcresult 2>/dev/null | python3 -c "
-import json, sys
-try:
-    data = json.load(sys.stdin)
-    def walk(obj):
-        if isinstance(obj, dict):
-            t = obj.get('type', {}).get('_name', '')
-            if 'Issue' in t or 'Warning' in t or 'Error' in t:
-                msg = obj.get('message', {}).get('_value', '')
-                loc = obj.get('documentLocationInCreatingWorkspace', {})
-                url = loc.get('url', {}).get('_value', '') if isinstance(loc, dict) else ''
-                if msg:
-                    print(f'{url}: {msg}' if url else msg)
-            for v in obj.values():
-                walk(v)
-        elif isinstance(obj, list):
-            for i in obj:
-                walk(i)
-    walk(data)
-except Exception as e:
-    print(f'Parse error: {e}')
-" || true
-            echo ""
-            echo "========== GREP ERRORS =========="
-            grep -E "error:|warning:.*error" /tmp/xcodebuild.log | grep -v "^note:" | head -50
+            echo "========== ERRORS =========="
+            grep -E "error:|Killed|Signal|signal [0-9]" /tmp/xcodebuild.log \
+              | grep -v "^note:" | head -80
             exit "$BUILD_RESULT"
           fi
 
@@ -194,7 +160,7 @@ except Exception as e:
           path: /tmp/build.xcresult
           retention-days: 5
 
-      - name: Upload full build log
+      - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
