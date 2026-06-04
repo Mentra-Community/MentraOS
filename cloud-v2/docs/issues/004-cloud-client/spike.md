@@ -141,8 +141,9 @@ adapters via `configureRuntime`:
   the bundle, never the access token).
 - `AppRegistry` bundle fetches -> `cloud.core.miniapps.getBundle`.
 
-The adapter redesign (a typed v2 surface replacing `SocketCommsAdapter`) is a
-coordination point with the island team, since they own island.
+The adapter redesign (a typed v2 surface replacing `SocketCommsAdapter`) is
+settled against the island runtime during implementation, since island is a
+separate package.
 
 ## Open questions
 

@@ -1,7 +1,7 @@
 # Proposal: island runtime adapter for the Cloud Client
 
-**Status:** Proposal for the island / mobile team. How `@mentra/island` plugs into
-`@mentra/cloud-client` for v2 cloud, replacing the Cloud-1 transport adapter.
+**Status:** Design proposal. How `@mentra/island` plugs into `@mentra/cloud-client`
+for v2 cloud, replacing the Cloud-1 transport adapter.
 
 ## Why
 
@@ -84,8 +84,8 @@ configureRuntime({
 - island's internal services (LocalMiniappRuntime, display, mic, etc.) are
   untouched; they call the same hook surface, now typed.
 
-## Ownership
+## Open points
 
-We own `@mentra/cloud-client` and the protocol; the island team owns island and
-this adapter wiring. This doc proposes the adapter contract; the exact hook names
-and shapes are open for the island team to refine.
+This proposes the adapter contract that wires `@mentra/cloud-client` into island
+through `configureRuntime`. The exact hook names and shapes are open to refine
+during implementation.

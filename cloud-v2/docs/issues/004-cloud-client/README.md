@@ -9,7 +9,7 @@ library from Node/Bun.
 
 Docs: [`spec.md`](./spec.md) (the concrete API), [`spike.md`](./spike.md) (design
 rationale), [`island-adapter.md`](./island-adapter.md) (the proposed island
-wiring, for the client team).
+wiring).
 
 ## Design goals
 

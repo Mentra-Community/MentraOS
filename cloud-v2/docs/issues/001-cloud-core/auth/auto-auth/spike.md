@@ -124,7 +124,7 @@ Carry v1's Path B forward, issuing the v2 token.
   per-user verification path; this is only about whether any role remains.
 
 The on-device token injection is proposed in [`injection.md`](./injection.md); the
-exact bridge messages and SDK surface are for the island / mobile team to finalize.
+exact bridge messages and SDK surface are finalized during implementation.
 
 ## References
 

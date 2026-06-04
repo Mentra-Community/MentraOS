@@ -1,10 +1,10 @@
 # Proposal: miniapp token injection (on-device)
 
-**Status:** Proposal for the island / mobile team. How the on-device Mentra
-Runtime delivers the miniapp-scoped token to a running miniapp and refreshes it,
-so the miniapp can call its developer backend. The token, the mint endpoint, and
-JWKS are specced in [`../spec.md`](../spec.md); the end-to-end flow is in
-[`spike.md`](./spike.md). This doc is the client-side delivery half.
+**Status:** Design proposal. How the on-device Mentra Runtime delivers the
+miniapp-scoped token to a running miniapp and refreshes it, so the miniapp can
+call its developer backend. The token, the mint endpoint, and JWKS are specced in
+[`../spec.md`](../spec.md); the end-to-end flow is in [`spike.md`](./spike.md).
+This doc is the client-side delivery half.
 
 ## Principle
 
@@ -61,11 +61,9 @@ The developer backend verifies the token against Mentra's JWKS, checks
 `aud == its packageName`, and applies its trust policy on `oemId` (per oem-auth
 Q2). No call back to Mentra per request.
 
-## Ownership and open points
+## Open points
 
-We own the token, the mint endpoint, and JWKS; the island / mobile team owns the
-on-device bridges (the WebView channel and the Crust engine bridge) and the SDK
-surfaces. This doc proposes the delivery shape; the exact bridge messages and SDK
-API are for the island team to finalize. Open: the precise auth-update message
-format on each bridge, and whether `useMentraAuth()` and the local SDK share one
-implementation.
+The token, mint endpoint, and JWKS are specced; this doc proposes the on-device
+delivery shape. Still to finalize: the precise auth-update message format on each
+bridge (the WebView channel and the Crust engine bridge), and whether
+`useMentraAuth()` and the local SDK share one implementation.
