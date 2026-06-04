@@ -17,17 +17,18 @@ core code runs on the phone and on a server.
 
 ## Package layout
 
-The package is split so platform-only code never leaks into the shared core:
+The package is split so platform-only code never leaks into the shared logic:
 
-- `@mentra/cloud-client/core`: all the logic. No phone-only or browser-only
-  imports. Takes the platform pieces as inputs.
+- `@mentra/cloud-client`: the root import. All the logic, no phone-only or
+  browser-only imports. You pass the platform pieces in yourself.
 - `@mentra/cloud-client/react-native`: a thin wrapper that supplies the phone's
-  WebSocket, UDP socket, and secure storage, then re-exports `CloudClient`.
+  WebSocket, UDP socket, and secure storage, then re-exports `CloudClient`. This is
+  what the mobile app imports.
 - `@mentra/cloud-client/node`: the same wrapper for a server, a Node WebSocket, a
-  `dgram` UDP socket, and an in-memory or file-backed store. This build is what the
-  test harness uses.
+  `dgram` UDP socket, and an in-memory or file-backed store. This is what the test
+  harness imports.
 
-Everything below lives in the core unless it says otherwise.
+Everything below is shared logic unless it says otherwise.
 
 ## Files and signatures
 
@@ -36,9 +37,9 @@ to the protocol types and the test harness; the mobile app depends on it).
 
 ```
 cloud-v2/packages/cloud-client/
-  package.json                 # @mentra/cloud-client; exports ./core ./react-native ./node
+  package.json                 # @mentra/cloud-client; exports . ./react-native ./node
   tsconfig.json
-  src/                         # the platform-agnostic core (@mentra/cloud-client/core)
+  src/                         # the shared logic; the root import @mentra/cloud-client
     index.ts                   # public entry: re-exports CloudClient + the public types
     client.ts                  # the CloudClient class (wiring only)
     config.ts                  # CloudClientConfig + the public config types
@@ -68,9 +69,9 @@ cloud-v2/packages/cloud-client/
     transports.ts              # the ws-package, dgram, and memory/file adapters
 ```
 
-(The package's `/core` import path and the `cloud.core` module are different things:
-`/core` is the shared, platform-agnostic build; `cloud.core` is the module under
-`src/modules/core/`. The `modules/` prefix keeps them apart.)
+(There's no `/core` import path, on purpose: it would read like the cloud-core
+service. The root `@mentra/cloud-client` is the shared build, and `cloud.core` is just
+the module under `src/modules/core/`.)
 
 The signatures, file by file. The public ones (`AuthModule`, `RuntimeModule`,
 `CoreModule`, the transport types) come from [`spec.md`](./spec.md); the rest are the
@@ -322,9 +323,9 @@ pre-wired with them, so the caller just passes `{ endpoints, auth }`.
 
 ```ts
 // node/index.ts
-import { CloudClient as Core, CloudClientConfig } from "@mentra/cloud-client/core"
+import { CloudClient as Base, CloudClientConfig } from "@mentra/cloud-client"
 import { nodeTransports } from "./transports"
-export class CloudClient extends Core {
+export class CloudClient extends Base {
   constructor(config: Omit<CloudClientConfig, "transports">) {
     super({ ...config, transports: nodeTransports() })
   }

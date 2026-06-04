@@ -28,9 +28,9 @@ const cloud = new CloudClient({
 cloud.auth; cloud.runtime; cloud.core
 ```
 
-The shared core (`@mentra/cloud-client/core`) doesn't know what platform it's on; it
-takes the platform pieces as inputs, and the `react-native` and `node` builds are
-thin wrappers that supply them:
+The root import (`@mentra/cloud-client`) is the shared build; it doesn't know what
+platform it's on and takes the platform pieces as inputs. The `react-native` and
+`node` imports are thin wrappers that supply them:
 
 ```ts
 interface CloudClientTransports {
