@@ -1,19 +1,26 @@
-# Cloud Client and on-device transport: architecture and alignment
+# Cloud Client and the phone-to-cloud connection: architecture and alignment
 
 **Status:** Alignment doc for the on-device runtime and the cloud-v2 work. Read it
 to get the whole picture: how a local miniapp runs on the phone and reaches the
 cloud, what `@mentra/cloud-client` is and why it exists, how auth works for Mentra
-and for OEMs, and the decisions behind building the v2 transport once, typed, with
+and for OEMs, and the decisions behind building the new connection once, typed, with
 no tech debt.
+
+Throughout, **the transport** means the code on the phone that carries messages to
+and from the cloud: it opens the connection, sends requests up (like "stream me
+English transcripts"), and receives events back (like the transcripts themselves).
+Today there's one transport, for the v1 cloud; we're adding a second, for the v2
+cloud.
 
 **TL;DR:** Local miniapps never talk to the cloud directly. The phone is the hub: it
 runs the miniapp (a background JSContext plus an optional WebView UI), handles most
 things on the phone, and passes a few services through to the cloud on the miniapps'
-behalf. Today that pass-through is the v1 `SocketComms` / `RestComms`. We're adding a second transport,
-`@mentra/cloud-client`, injected the same way (the host's `configureRuntime` hook).
-On the v2 path the on-device runtime speaks the typed v2 protocol directly (typed
-values, not magic strings), using the same `@mentra/cloud-runtime/protocol` types as
-the cloud server and the test harness, so on-device and cloud can't drift.
+behalf. Today that pass-through goes through the v1 transport, `SocketComms` /
+`RestComms`. We're adding a second transport for v2, `@mentra/cloud-client`, plugged
+in the same way (the host's `configureRuntime` hook). On the v2 path the on-device
+runtime speaks the typed v2 protocol directly (typed values, not magic strings),
+using the same `@mentra/cloud-runtime/protocol` types as the cloud server and the
+test harness, so on-device and cloud can't drift.
 
 This doc spans three codebases at different stages; keep them straight:
 
@@ -103,10 +110,11 @@ That split is what keeps this change small: only the services that get passed th
 to the cloud are affected, so only those change when we swap v1 for v2. The local
 hardware path doesn't care which cloud exists.
 
-## 4. The transport today (v1)
+## 4. How the phone talks to the cloud today (v1)
 
 Only the passed-through services from section 3 reach the cloud, and they all go
-through one piece of phone code: the host's transport. The island runtime doesn't
+through one piece of phone code: the transport (again, the code that carries messages
+to and from the cloud). The island runtime doesn't
 reach for it directly; the host hands it in at startup through `configureRuntime`
 (the function the phone calls once at boot to give the runtime its transport, audio,
 settings, and so on). Today the host hands in the v1 `SocketComms` / `RestComms`:
