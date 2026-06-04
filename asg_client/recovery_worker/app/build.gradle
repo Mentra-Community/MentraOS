@@ -19,15 +19,17 @@ android {
     signingConfigs {
         release {
             storeFile file("../credentials/recovery-keystore.jks")
+            // Try dedicated recovery credentials, then shared OTA env vars, then ASG Gradle
+            // properties (for runners that use asg-keystore.jks as a shared signing keystore).
             storePassword System.getenv("RECOVERY_STORE_PASSWORD")
                 ?: System.getenv("OTA_STORE_PASSWORD")
-                ?: "android"
+                ?: (project.hasProperty("ASG_STORE_PASSWORD") ? project.property("ASG_STORE_PASSWORD") : "android")
             keyAlias System.getenv("RECOVERY_KEY_ALIAS")
                 ?: System.getenv("OTA_KEY_ALIAS")
-                ?: "recovery"
+                ?: (project.hasProperty("ASG_KEY_ALIAS") ? project.property("ASG_KEY_ALIAS") : "recovery")
             keyPassword System.getenv("RECOVERY_KEY_PASSWORD")
                 ?: System.getenv("OTA_KEY_PASSWORD")
-                ?: "android"
+                ?: (project.hasProperty("ASG_KEY_PASSWORD") ? project.property("ASG_KEY_PASSWORD") : "android")
         }
     }
 
