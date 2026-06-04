@@ -64,12 +64,12 @@ once, refer back as needed.
 - **Token Exchange (RFC 8693).** OAuth 2.0 standard for swapping one
   token for another. Used by the audio path indirectly: the phone has
   already done a token exchange (specified in 001-cloud-core/auth/oem-auth) and
-  presents a Mentra access token. See [`../../001-cloud-core/auth/oem-auth/design.md`](../../001-cloud-core/auth/oem-auth/design.md).
+  presents a Mentra access token. See [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md).
 - **Soniox.** The transcription provider currently used by v1. Has
   its own WebSocket protocol and per-stream lifecycle.
 
 Auth-specific jargon (JWT, JWK, jti, audience) is glossed in
-[`../../001-cloud-core/auth/oem-auth/design.md`](../../001-cloud-core/auth/oem-auth/design.md). Cross-reference
+[`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md). Cross-reference
 when needed.
 
 ## What we explored

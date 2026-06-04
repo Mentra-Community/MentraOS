@@ -6,7 +6,7 @@ team input before a spec can be written.
 ## Why this spike
 
 We're building OEM auth (specified in
-[`../../001-cloud-core/auth/oem-auth/`](../../001-cloud-core/auth/oem-auth/)) and OEMs need somewhere to:
+[`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md)) and OEMs need somewhere to:
 
 - Sign up and log in
 - Manage their account
@@ -44,7 +44,7 @@ designs, and decisions still pending before we can spec the portal.
 
 Cross-reference: auth jargon used in this spike that's also in 001
 (JWT, JWK, etc.) is glossed in
-[`../../001-cloud-core/auth/oem-auth/design.md`](../../001-cloud-core/auth/oem-auth/design.md).
+[`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md).
 
 ## What the portal needs to do
 
@@ -299,6 +299,6 @@ Once the open questions above land, the spec will cover:
 
 ## Related work
 
-- [`../../001-cloud-core/auth/oem-auth/`](../../001-cloud-core/auth/oem-auth/) — runtime OEM auth. The
+- [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md) — runtime OEM auth. The
   portal manages config consumed by 001.
 - Future audit / observability work — likely surfaces in the portal.

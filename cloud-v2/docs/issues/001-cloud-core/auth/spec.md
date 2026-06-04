@@ -1,15 +1,21 @@
 # Cloud Core Auth: v2 API spec
 
-**Status:** Spec. The concrete v2 auth endpoints and token shapes that the
-cloud-client and developer backends depend on. The mechanisms behind them live in
-the sibling docs and are referenced, not duplicated:
+**TL;DR:** The v2 auth contract: the endpoints and token shapes the cloud-client
+and developer backends build against. Every actor (OEM user, Mentra user, miniapp)
+converges on one Ed25519 access token via RFC 8693 token exchange; a miniapp gets a
+short-lived audience-pinned token derived from it. This doc is endpoints + token
+shapes only.
+
+New here? Read [`README.md`](./README.md) for the map and [`concepts.md`](./concepts.md)
+for the from-zero primer. The mechanisms behind these endpoints live in the sibling
+docs and are referenced, not duplicated:
 
 - OEM onboarding, key registration, subject-token verification, replay protection:
-  [`oem-auth/`](./oem-auth/).
+  [`oem-auth.md`](./oem-auth.md).
 - `mentraUserId`, the audiences, and the v1 to v2 migration bridge:
-  [`identity.md`](./identity.md).
+  [`design.md`](./design.md#identity-model).
 - The end-to-end miniapp auto-auth flow and dev-backend verification:
-  [`auto-auth.md`](./auto-auth.md).
+  [`design.md`](./design.md#miniapp-auto-auth).
 
 ## Path and caller convention
 
@@ -57,7 +63,7 @@ Mentra tokens. `subject_token_type` selects the verification path:
 Maps `(oemId, oemUserId)` to the user's `_id` (the `mentraUserId`), creating the
 record on first sight. Returns `{ access_token, refresh_token, token_type,
 expires_in }`. Verification details, supported algorithms, and `jti` replay
-protection are in [`oem-auth/design.md`](./oem-auth/design.md).
+protection are in [`oem-auth.md`](./oem-auth.md).
 
 ### `POST /api/client/auth/refresh`
 

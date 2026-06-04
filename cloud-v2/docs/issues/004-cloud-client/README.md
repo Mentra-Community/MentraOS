@@ -29,7 +29,7 @@ and exposes three modules:
 
 - [`auth`](./auth/): token lifecycle. Holds and refreshes the Mentra access
   token, mints miniapp-scoped tokens. This is the **client half** of
-  [`../001-cloud-core/auth/auto-auth/`](../001-cloud-core/auth/auto-auth.md); the
+  [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md#miniapp-auto-auth); the
   raw access token never leaves the client.
 - [`runtime`](./runtime/): the live session (the runtime transport). WS handshake,
   subscriptions, stream events, managed photo/stream, UDP audio coordination.
@@ -49,6 +49,6 @@ and exposes three modules:
 
 - [`../002-cloud-runtime/protocol.md`](../002-cloud-runtime/protocol.md): the wire
   contract `runtime` implements.
-- [`../001-cloud-core/auth/auto-auth/`](../001-cloud-core/auth/auto-auth.md): the token
+- [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md): the token
   design `auth` consumes.
 - [`../../mentra-overhaul-plan.md`](../../mentra-overhaul-plan.md)

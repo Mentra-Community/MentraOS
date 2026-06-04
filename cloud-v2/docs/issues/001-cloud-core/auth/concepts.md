@@ -277,14 +277,14 @@ asymmetric signing both directions (2, 7), JWKS + `kid` (7), audience pinning (4
 | Subject token | The incoming token you present to the exchange (e.g. the OEM's JWT). |
 
 For the multi-tenant / OEM research that led to choosing token exchange, see the
-deeper [`oem-auth/spike.md`](./oem-auth/spike.md).
+deeper [`oem-auth.md`](./oem-auth.md).
 
 ## 12. Where to go next
 
 - [`spec.md`](./spec.md): the concrete endpoints and token shapes. Every term in
   it is defined above.
 - [`design.md`](./design.md): how it is built across cloud-core, the cloud-client,
-  on-device, and the developer SDK.
-- [`identity.md`](./identity.md): who `mentraUserId` is and the v1 to v2 bridge.
-- [`auto-auth.md`](./auto-auth.md): the miniapp + dev-backend flow and on-device
-  injection in full.
+  on-device, and the developer SDK. Includes the identity model (who
+  `mentraUserId` is, the v1 to v2 bridge) and the miniapp auto-auth + on-device
+  injection flow.
+- [`oem-auth.md`](./oem-auth.md): the built OEM-exchange subsystem.

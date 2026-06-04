@@ -21,11 +21,9 @@ lands.
 | Issue / service | Status | What exists / what is left |
 | --- | --- | --- |
 | **[001-cloud-core](./001-cloud-core/)** | | proprietary cloud product |
-| [auth](./001-cloud-core/auth/) | Mixed | the auth system. The contract (`auth/spec.md`) and the e2e implementation design (`auth/design.md`) are written; oem-auth Implemented; identity + auto-auth Spiked |
-| [auth / spec + design](./001-cloud-core/auth/spec.md) | Specced | [spec.md](./001-cloud-core/auth/spec.md) (endpoints + tokens) and [design.md](./001-cloud-core/auth/design.md) (e2e code changes across cloud-core, cloud-client, on-device, dev SDK): exchange, refresh, miniapp-token mint, JWKS |
-| [auth / oem-auth](./001-cloud-core/auth/oem-auth/) | Implemented | the OEM-JWT exchange mechanics, built in v2, e2e verified with `test-oem`. Left: finalize doc review |
-| [auth / identity](./001-cloud-core/auth/identity.md) | Spiked | Mentra-direct identity (app + console + store) unifies on the access token, plus the core-token migration bridge |
-| [auth / auto-auth](./001-cloud-core/auth/auto-auth.md) | Decided | end-to-end miniapp dev-backend flow + on-device injection; mint + JWKS in `auth/spec.md`. Open: API key role |
+| [auth](./001-cloud-core/auth/) | Mixed | the auth system, in 5 docs: `concepts` (primer), `spec` + `design` (Specced), `oem-auth` (Implemented). See rows below |
+| [auth / spec + design](./001-cloud-core/auth/spec.md) | Specced | [spec.md](./001-cloud-core/auth/spec.md) (endpoints + tokens) and [design.md](./001-cloud-core/auth/design.md) (e2e code changes + the identity model, migration bridge, and miniapp auto-auth + injection): exchange, refresh, miniapp-token mint, JWKS. Open: API-key role |
+| [auth / oem-auth](./001-cloud-core/auth/oem-auth.md) | Implemented | the OEM-JWT exchange mechanics, built in v2, e2e verified with `test-oem`. Left: finalize doc review |
 | [oem-service](./001-cloud-core/oem-service/) | Stub | needs spec |
 | [miniapp-service](./001-cloud-core/miniapp-service/) | Stub | needs spec (stores bundles via storage-service) |
 | [dev-console-service](./001-cloud-core/dev-console-service/) | Stub | needs spec |

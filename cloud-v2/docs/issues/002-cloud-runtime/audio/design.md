@@ -428,7 +428,7 @@ Failover scenarios follow.
    it Pod B).
 2. Pod B accepts the WS handshake, validates the Mentra access token
    the phone presented in the connection (per
-   [`../../001-cloud-core/auth/oem-auth/design.md`](../../001-cloud-core/auth/oem-auth/design.md)). On
+   [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md)). On
    failure: close WS with auth error.
 3. Pod B reads the verified `mentraUserId` from the access token.
 4. Pod B claims ownership:
@@ -726,5 +726,5 @@ Per-user verbosity is bounded: log at INFO for state transitions
 
 - [`spike.md`](./spike.md) — research findings, decisions, prior art
 - [`spec.md`](./spec.md) — architectural commitments, fault model
-- [`../../001-cloud-core/auth/oem-auth/design.md`](../../001-cloud-core/auth/oem-auth/design.md) —
+- [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md) —
   Mentra access token format (verified at WS handshake)

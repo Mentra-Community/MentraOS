@@ -74,10 +74,10 @@ cloud.auth.onExpired(cb)
 transition the host hands the client the existing **core token**; the client
 exchanges it at Cloud Core for the v2 access + refresh tokens (Mentra-as-OEM, the
 core token is the subject token) and owns refresh thereafter. See
-[`../001-cloud-core/auth/identity.md`](../001-cloud-core/auth/identity.md)
+[`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md#migration-bridge-core-token-to-v2-access-token)
 ("Migration bridge"). End state: construct with a Supabase session instead of a
 core token, same endpoint. This is the client half of
-[`../001-cloud-core/auth/auto-auth/`](../001-cloud-core/auth/auto-auth.md).
+[`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md#miniapp-auto-auth).
 
 ## Module: `cloud.runtime`
 

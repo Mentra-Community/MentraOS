@@ -11,7 +11,7 @@ sessions, invite teammates, and handle other administrative tasks.
 This is a B2B admin surface, distinct from:
 
 - **The runtime OEM auth path** (specified in
-  [`../../001-cloud-core/auth/oem-auth/`](../../001-cloud-core/auth/oem-auth/)). That doc covers how an
+  [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md)). That doc covers how an
   OEM's backend authenticates its *users* to Mentra cloud. This doc
   is about how OEM employees log in to manage their company's
   Mentra integration.
@@ -42,10 +42,10 @@ The portal itself is a small web app with surfaces for:
 - Login (handled by WorkOS AuthKit)
 - Account info (the OEM's `oemId`, display name, etc.)
 - Public-key / JWK Set URL management (calls into
-  [`../../001-cloud-core/auth/oem-auth/`](../../001-cloud-core/auth/oem-auth/) endpoints under
+  [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md) endpoints under
   `/api/oem/jwks`)
 - Active sessions view (calls
-  [`../../001-cloud-core/auth/oem-auth/`](../../001-cloud-core/auth/oem-auth/) endpoints for listing /
+  [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md) endpoints for listing /
   revoking)
 - Team management (invite admins, role assignment)
 - Usage and observability surfaces (future)
@@ -73,7 +73,7 @@ What's not in 002:
 
 ## Cross-references
 
-- [`../../001-cloud-core/auth/oem-auth/`](../../001-cloud-core/auth/oem-auth/) — runtime OEM auth. The
+- [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md) — runtime OEM auth. The
   portal's "manage public key" UI calls 001's endpoints.
 - Future: audit logging, usage analytics, billing surfaces all
   attach to the portal eventually.

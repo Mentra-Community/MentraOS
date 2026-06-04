@@ -3,52 +3,48 @@
 The home for the whole MentraOS auth system: how every actor proves identity to
 Mentra, and how Mentra hands identity to the parties that need it.
 
-**New to auth?** Read [`spike.md`](./spike.md) first: a from-zero primer on the
-ideas this folder assumes (JWTs, asymmetric signing, JWKS, audiences, token
-exchange, refresh), built up from intuition and mapped onto our system. No crypto
-background needed.
+**New to auth?** Read [`concepts.md`](./concepts.md) first: a from-zero primer on
+the ideas the rest of this folder assumes (JWTs, asymmetric signing, JWKS,
+audiences, token exchange, refresh), built from intuition and mapped onto our
+system. No crypto background needed.
 
 **Reading order:** [`spec.md`](./spec.md) (the endpoint and token contract, the
-"what"), then [`design.md`](./design.md) (the end-to-end implementation design
-across cloud-core, cloud-client, on-device, and the dev SDK, the "how", every
-code change). Those two give the full v2 picture. The rest below (`oem-auth/`,
-`identity.md`, `auto-auth.md`) is supporting detail.
+"what"), then [`design.md`](./design.md) (the end-to-end implementation, the "how":
+the identity model, the v1 to v2 migration bridge, and the miniapp auto-auth +
+on-device injection flow). Those two give the full v2 picture.
+[`oem-auth.md`](./oem-auth.md) is the one built subsystem, kept separate.
 
-## Parts
+## The docs
 
-- **OEM auth** ([`oem-auth/`](./oem-auth/)): how an OEM proves who its user is to
-  Mentra (RFC 8693 exchange of an OEM-signed JWT for a Mentra access token), and
-  how Mentra hands user identity to miniapp backends (the `mentraUserId` +
-  `oemId` handoff and trust policy). Specced and implemented.
-- **User identity** ([`identity.md`](./identity.md)): the identity for "Mentra's own
-  users," which today spans the consumer app, the Dev Console website, and the
-  App/MiniApp Store website, all via the **same** Supabase sign-in plus core-token
-  exchange (not three separate systems). v2 unifies them on the Mentra access
-  token, with Mentra as "OEM zero" (reserved `oemId = "mentra"`). OEM users reach
-  the same token via oem-auth. Spike.
-- **Miniapp auto-auth** ([`auto-auth.md`](./auto-auth.md)): injecting Mentra auth
-  into a local miniapp so it can call the developer's own backend with no login
-  (the Phase 2 that oem-auth deferred). Spike.
+- [`concepts.md`](./concepts.md): the from-zero primer. Teach.
+- [`spec.md`](./spec.md): the v2 endpoint + token contract (exchange, refresh,
+  miniapp-token, JWKS). The contract the cloud-client implements against.
+- [`design.md`](./design.md): the end-to-end implementation design across
+  cloud-core, cloud-client, on-device, and the dev SDK. Includes the **identity
+  model** (Mentra's own users as "OEM zero", the `mentraUserId` model, the
+  core-token migration bridge) and **miniapp auto-auth** (the dev-backend flow and
+  on-device token injection).
+- [`oem-auth.md`](./oem-auth.md): the OEM-exchange subsystem (RFC 8693), the one
+  piece already **Implemented**. Carries the Q1/Q2 decisions and the full
+  implementation (endpoints, data model, token formats, lifecycles, security, the
+  miniapp identity handoff + trust policy, and the TEST OEM fixture).
 
 ## How the pieces relate
 
 All paths converge on one token: the **Ed25519 Mentra access token**
 (`sub = mentraUserId`, `oemId`, ...), verified by services with Mentra's public
-key. OEM users get it via the oem-auth exchange; Mentra-direct users get it via
-the same exchange with reserved `oemId = "mentra"`. The runtime transport
+key. OEM users get it via the oem-auth exchange; Mentra-direct users get it via the
+same exchange with reserved `oemId = "mentra"`. The runtime transport
 ([`../../002-cloud-runtime/protocol.md`](../../002-cloud-runtime/protocol.md))
 verifies it. Miniapp auto-auth derives a short-lived miniapp-scoped token from it.
 
 ## Status
 
-- `spec.md`: the v2 endpoint + token contract (exchange, refresh, miniapp-token,
-  JWKS). Specced; this is what the cloud-client implements against.
-- `design.md`: the end-to-end implementation design (the code changes across
-  cloud-core, cloud-client, on-device, and the dev SDK).
-- `oem-auth/`: Implemented (the OEM-JWT exchange mechanics; docs under review).
-- `identity.md`: Mentra-direct identity + the migration bridge (decided).
-- `auto-auth.md`: the miniapp dev-backend mechanism and the on-device injection
-  (decided).
+- `concepts.md`: written.
+- `spec.md` + `design.md`: Specced (contract + e2e implementation design).
+- `oem-auth.md`: Implemented (the OEM-JWT exchange mechanics; docs under review).
+- Identity model + migration bridge, and miniapp auto-auth + injection: decided
+  (in `design.md`). Open: the API-key role.
 
 ## Related
 

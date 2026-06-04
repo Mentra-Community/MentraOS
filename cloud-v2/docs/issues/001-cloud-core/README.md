@@ -8,7 +8,7 @@ app/developer ecosystem plus auth and bundle storage.
 ## Services (subfolders)
 
 - [`auth/`](./auth/): the whole auth system. OEM auth (the RFC 8693 token
-  exchange, [`auth/oem-auth/`](./auth/oem-auth/)), mobile-client-to-cloud identity
+  exchange, [`auth/oem-auth.md`](./auth/oem-auth.md)), mobile-client-to-cloud identity
   (Mentra-direct and OEM), miniapp auto-auth, and dev console / store sign-in.
 - [`oem-service/`](./oem-service/): OEM APIs (org and integration management) that
   back the OEM Portal.

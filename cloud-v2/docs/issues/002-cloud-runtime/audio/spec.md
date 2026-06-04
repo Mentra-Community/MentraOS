@@ -383,7 +383,7 @@ math in the spike. See [`design.md`](./design.md) for sizing notes.
 - **OEM auth (001).** A connecting phone has already obtained a
   Mentra access token via the OEM auth flow. The audio path verifies
   this token and uses `MentraUserId` from its claims. See
-  [`../../001-cloud-core/auth/oem-auth/design.md`](../../001-cloud-core/auth/oem-auth/design.md) for the
+  [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md) for the
   token format and verification logic.
 - **OEM portal (002).** Not directly assumed by the audio path. OEM
   registration happens through the portal; the audio path just sees
@@ -425,7 +425,7 @@ math in the spike. See [`design.md`](./design.md) for sizing notes.
 
 ## Related work
 
-- [`../../001-cloud-core/auth/oem-auth/`](../../001-cloud-core/auth/oem-auth/) — runtime OEM auth (issued
+- [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md) — runtime OEM auth (issued
   tokens; this spec consumes them)
 - [`../../005-websites/oem-portal/`](../../005-websites/oem-portal/) — OEM admin portal
   (independent of audio path)
