@@ -171,8 +171,9 @@ Why a dedicated library rather than more methods on `SocketComms`:
 
 `cloud.auth` is the single owner of credentials on the device. It is a module of the
 cloud-client, so the same code authenticates the phone for Mentra and for OEMs, and
-issues the per-miniapp tokens auto-auth needs. The raw access token never leaves the
-cloud-client.
+issues the per-miniapp tokens auto-auth needs. The access token is sent as the Bearer
+on every call to Mentra's own APIs (cloud-core and cloud-runtime), but it is **never
+handed to a miniapp**: a miniapp only ever holds its own scoped token (below).
 
 ### Device auth (the phone proves who the user is to v2 cloud)
 
@@ -227,8 +228,9 @@ Why this shape answers the questions Matt and others will have:
 - **"How does a miniapp know who the user is and call my backend safely?"** A
   per-miniapp token the backend verifies itself via JWKS, audience-pinned so a token
   for miniapp A cannot be replayed against miniapp B.
-- **"Where do tokens live?"** In `cloud.auth`. A miniapp only ever holds its own
-  scoped token; the access token stays in the cloud-client.
+- **"Where do tokens live?"** `cloud.auth` owns the access token and sends it only as
+  the Bearer to Mentra's own APIs; a miniapp only ever holds its own scoped token,
+  never the access token.
 
 For the from-zero version of these terms (JWT, asymmetric signing, JWKS, audience,
 exchange), see [`../001-cloud-core/auth/concepts.md`](../001-cloud-core/auth/concepts.md).

@@ -51,8 +51,9 @@ interface AuthModule {
   `POST /api/client/auth/exchange` for access + refresh, then owns refresh via
   `POST /api/client/auth/refresh`.
 - `getMiniappToken` calls `POST /api/client/auth/miniapp-token`, caches per
-  packageName, re-mints before expiry. The raw access token never leaves the
-  client; only the miniapp-scoped token is exposed.
+  packageName, re-mints before expiry. The access token is used only as the Bearer
+  to Mentra's own APIs and is never handed to a miniapp; only the miniapp-scoped
+  token is exposed to a miniapp.
 
 ## `cloud.runtime`
 

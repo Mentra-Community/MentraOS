@@ -56,7 +56,8 @@ and runtime, matching how Cloud Proxy fronts both products.
 
 ## Module: `cloud.auth`
 
-The single owner of credentials. The Mentra access token never leaves the client.
+The single owner of credentials. The Mentra access token is the Bearer to Mentra's
+own APIs (cloud-core and cloud-runtime) but is never handed to a miniapp.
 
 - Holds the access token and auto-refreshes it (rotating refresh token).
 - Mints and caches miniapp-scoped tokens per packageName.
