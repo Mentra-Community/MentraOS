@@ -20,6 +20,10 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - name: Xcode first launch setup
+        run: sudo xcodebuild -runFirstLaunch
+
+
       - name: Download iOS platform
         run: xcodebuild -downloadPlatform iOS
 
