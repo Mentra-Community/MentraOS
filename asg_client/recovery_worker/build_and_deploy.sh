@@ -11,6 +11,8 @@ if [ ! -f credentials/recovery-keystore.jks ] && [ -f "${CREDS}/recovery-keystor
   ln -sf "${CREDS}/recovery-keystore.jks" credentials/recovery-keystore.jks
 elif [ ! -f credentials/recovery-keystore.jks ] && [ -f "${CREDS}/asg-keystore.jks" ]; then
   ln -sf "${CREDS}/asg-keystore.jks" credentials/recovery-keystore.jks
+elif [ ! -f credentials/recovery-keystore.jks ] && [ -f "../../credentials/asg-keystore.jks" ]; then
+  ln -sf "../../credentials/asg-keystore.jks" credentials/recovery-keystore.jks
 fi
 
 if [ -f credentials/recovery-keystore.jks ]; then
