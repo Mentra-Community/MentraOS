@@ -209,8 +209,8 @@ android {
 
         minSdk 28
         targetSdk 33
-        versionCode 36
-        versionName "36.0"
+        versionCode 37
+        versionName "37.0"
 
         ndk {
             abiFilters "armeabi-v7a", "arm64-v8a"
@@ -331,6 +331,8 @@ dependencies {
     
     // AVIF encoding/decoding support
     implementation 'com.github.awxkee:avif-coder:1.7.3'
+    implementation 'androidx.heifwriter:heifwriter:1.1.0'
+    implementation "androidx.exifinterface:exifinterface:1.3.7"
 
     // Sentry SDK for error reporting
     implementation 'io.sentry:sentry-android:7.5.0'

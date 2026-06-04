@@ -358,14 +358,20 @@ public class Bridge private constructor() {
 
         @JvmStatic
         fun sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
+            val timestamp = System.currentTimeMillis()
             val event = HashMap<String, Any>()
             event["type"] = "photo_response"
             event["state"] = "error"
             event["requestId"] = requestId
             event["errorCode"] = errorCode
             event["errorMessage"] = errorMessage
-            event["timestamp"] = System.currentTimeMillis()
+            event["timestamp"] = timestamp
             sendTypedMessage("photo_response", event as Map<String, Any>)
+        }
+
+        @JvmStatic
+        fun sendPhotoStatus(statusJson: Map<String, Any>) {
+            sendTypedMessage("photo_status", statusJson)
         }
 
         /** Send RGB LED control response */

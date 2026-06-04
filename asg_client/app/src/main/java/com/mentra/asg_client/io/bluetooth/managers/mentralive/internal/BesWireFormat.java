@@ -28,7 +28,8 @@ public class BesWireFormat {
     public static final byte CMD_TYPE_DATA = 0x35; // Generic data type
 
     // File transfer constants
-    public static final int FILE_PACK_SIZE_DEFAULT = 400; // Default max data size per packet
+    public static final int FILE_PACK_SIZE_MAX = 221; // 256 MTU - 3 ATT bytes - 32 protocol overhead
+    public static final int FILE_PACK_SIZE_DEFAULT = FILE_PACK_SIZE_MAX; // Safe default before phone MTU config arrives
     public static final int FILE_PACK_SIZE_MIN = 100; // Minimum safe packet size
     private static int filePackSize = FILE_PACK_SIZE_DEFAULT; // Configurable packet size
     public static final int LENGTH_FILE_START = 2;
@@ -55,8 +56,8 @@ public class BesWireFormat {
         // Clamp to valid range
         if (newPackSize < FILE_PACK_SIZE_MIN) {
             newPackSize = FILE_PACK_SIZE_MIN;
-        } else if (newPackSize > FILE_PACK_SIZE_DEFAULT) {
-            newPackSize = FILE_PACK_SIZE_DEFAULT;
+        } else if (newPackSize > FILE_PACK_SIZE_MAX) {
+            newPackSize = FILE_PACK_SIZE_MAX;
         }
 
         filePackSize = newPackSize;
@@ -65,7 +66,9 @@ public class BesWireFormat {
                 "📦 File pack size set to " + filePackSize + " bytes (MTU=" + mtu + ")");
     }
 
-    /** Reset file pack size to default (400 bytes) */
+    /**
+     * Reset file pack size to default safe BLE payload size.
+     */
     public static void resetFilePackSize() {
         filePackSize = FILE_PACK_SIZE_DEFAULT;
         Log.i("BesWireFormat", "📦 File pack size reset to default: " + filePackSize + " bytes");
@@ -244,15 +247,7 @@ public class BesWireFormat {
         try {
             Log.d("BesWireFormat", "🔄 Formatting message: " + jsonData);
 
-            // Validate that input is proper JSON
-            new JSONObject(jsonData);
-
-            // First, create C wrapper: {"C": jsonData}
-            JSONObject wrapper = new JSONObject();
-            wrapper.put(FIELD_C, jsonData);
-            wrapper.put(FIELD_V, 1); // Optional version field
-            wrapper.put(FIELD_B, new JSONObject()); // Optional body field
-            String wrappedJson = wrapper.toString();
+            String wrappedJson = createTransmissionWrapperJson(jsonData);
             Log.d("BesWireFormat", "🔄 After C-wrapping: " + wrappedJson);
 
             // Now format with BES2700 protocol
@@ -274,6 +269,25 @@ public class BesWireFormat {
             // Fallback: if json is invalid, still try to pack it without validation
             return packJsonCommand(jsonData);
         }
+    }
+
+    }
+
+    /**
+     * Create the JSON envelope used by formatMessageForTransmission before BES2700 packing.
+     *
+     * @param jsonData The JSON string to wrap (must be valid JSON)
+     * @return Full K900 transmission wrapper: {"C": jsonData, "V": 1, "B": {}}
+     */
+    public static String createTransmissionWrapperJson(String jsonData) throws JSONException {
+        // Validate that input is proper JSON before embedding it as the C payload.
+        new JSONObject(jsonData);
+
+        JSONObject wrapper = new JSONObject();
+        wrapper.put(FIELD_C, jsonData);
+        wrapper.put(FIELD_V, 1); // Optional version field
+        wrapper.put(FIELD_B, new JSONObject()); // Optional body field
+        return wrapper.toString();
     }
 
     /**

@@ -2,7 +2,6 @@ package com.mentra.asg_client.service.core.processors;
 
 import android.util.Log;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -33,7 +32,14 @@ public class ChunkReassembler {
     public String addChunk(String chunkId, int chunkIndex, int totalChunks, String data) {
         // Clean up old sessions first
         cleanupTimedOutSessions();
-        
+
+        if (chunkId == null || chunkId.isEmpty() || totalChunks <= 0 || chunkIndex < 0
+                || chunkIndex >= totalChunks || data == null) {
+            Log.w(TAG, "Dropping invalid chunk metadata: id=" + chunkId + ", index=" + chunkIndex
+                    + ", total=" + totalChunks);
+            return null;
+        }
+
         // Check if we're at capacity
         if (activeSessions.size() >= MAX_CONCURRENT_SESSIONS && !activeSessions.containsKey(chunkId)) {
             Log.w(TAG, "Maximum concurrent chunk sessions reached, dropping oldest");
@@ -41,8 +47,17 @@ public class ChunkReassembler {
         }
         
         // Get or create session
-        ChunkSession session = activeSessions.computeIfAbsent(chunkId, 
-            k -> new ChunkSession(chunkId, totalChunks));
+        ChunkSession session = activeSessions.compute(chunkId, (ignored, existingSession) -> {
+            if (existingSession == null) {
+                return new ChunkSession(chunkId, totalChunks);
+            }
+            if (existingSession.totalChunks != totalChunks) {
+                Log.w(TAG, "totalChunks mismatch for " + chunkId + " (expected "
+                        + existingSession.totalChunks + ", got " + totalChunks + "), resetting session");
+                return new ChunkSession(chunkId, totalChunks);
+            }
+            return existingSession;
+        });
         
         // Add the chunk
         boolean added = session.addChunk(chunkIndex, data);
@@ -170,7 +185,7 @@ public class ChunkReassembler {
             this.chunkId = chunkId;
             this.totalChunks = totalChunks;
             this.createdTime = System.currentTimeMillis();
-            this.chunks = new HashMap<>();
+            this.chunks = new ConcurrentHashMap<>();
         }
         
         boolean addChunk(int index, String data) {

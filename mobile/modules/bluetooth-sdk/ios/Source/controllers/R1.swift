@@ -506,7 +506,7 @@ class R1: NSObject, ControllerManager {
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
     func requestPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, exposureTimeNs _: Double?
+        compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, exposureTimeNs _: Double?, iso _: Int?
     ) {}
     func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
     func stopVideoRecording(requestId _: String) {}
@@ -767,7 +767,7 @@ extension R1: CBPeripheralDelegate {
     ) {
         Bridge.log("R1: didUpdateValueFor1: \(characteristic.uuid)")
         guard let data = characteristic.value, !data.isEmpty, error == nil else { return }
-        Bridge.log("R1: didUpdateValueFor: \(characteristic.uuid) data: \(data.toHexString())")
+        Bridge.log("R1: didUpdateValueFor: \(characteristic.uuid) data: \(data.hexEncodedString())")
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }

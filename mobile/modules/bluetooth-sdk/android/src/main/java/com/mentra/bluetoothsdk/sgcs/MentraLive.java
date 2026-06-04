@@ -42,6 +42,7 @@ import com.mentra.bluetoothsdk.utils.BitmapJavaUtils;
 import com.mentra.bluetoothsdk.utils.SmartGlassesConnectionState;
 import com.mentra.bluetoothsdk.utils.K900ProtocolUtils;
 import com.mentra.bluetoothsdk.utils.MessageChunker;
+import com.mentra.bluetoothsdk.utils.MessageChunkReassembler;
 import com.mentra.bluetoothsdk.utils.audio.Lc3Player;
 import com.mentra.bluetoothsdk.utils.BlePhotoUploadService;
 import com.mentra.bluetoothsdk.utils.IncidentLogBleRelayNaming;
@@ -249,6 +250,7 @@ public class MentraLive extends SGCManager {
     private int filePacketBufferSize = 0;
     private final Object filePacketBufferLock = new Object();
     private int fileReadNotificationCount = 0; // Debug counter for FILE_READ notifications
+    private final MessageChunkReassembler incomingChunkReassembler = new MessageChunkReassembler();
 
     private final Object connectionLock = new Object();
 
@@ -682,6 +684,9 @@ public class MentraLive extends SGCManager {
     private void updateConnectionState(String state) {
         boolean isEqual = state.equals(getConnectionState());
         if (isEqual) {
+            if (state.equals(ConnTypes.DISCONNECTED)) {
+                incomingChunkReassembler.clear();
+            }
             return;
         }
 
@@ -708,6 +713,7 @@ public class MentraLive extends SGCManager {
             DeviceStore.INSTANCE.apply("glasses", "connected", false);
             DeviceStore.INSTANCE.apply("glasses", "signalStrength", -1);
             DeviceStore.INSTANCE.apply("glasses", "signalStrengthUpdatedAt", 0L);
+            incomingChunkReassembler.clear();
             // Drop OTA caches when fully disconnected — avoids leaking session/step state
             // from a previous pairing into the next one.
             resetOtaCache();
@@ -2262,6 +2268,11 @@ public class MentraLive extends SGCManager {
         }
         BleTraceLogger.logJson("glasses_to_phone", "sdk_ble_event", json, null);
 
+        if (MessageChunker.isChunkedMessage(json)) {
+            processChunkedJsonMessage(json);
+            return;
+        }
+
         // Check if this is an ACK response
         String type = json.optString("type", "");
         if ("msg_ack".equals(type)) {
@@ -2290,6 +2301,13 @@ public class MentraLive extends SGCManager {
                 break;
             case "ble_photo_ready":
                 processBlePhotoReady(json);
+                break;
+            case "photo_status":
+                try {
+                    Bridge.sendPhotoStatus(jsonObjectToMap(json));
+                } catch (JSONException e) {
+                    Log.e(TAG, "Error converting photo status to Map", e);
+                }
                 break;
             case "stream_status":
                 // Process streaming status update from ASG client
@@ -2325,13 +2343,7 @@ public class MentraLive extends SGCManager {
 
                 // Forward to websocket system via Bridge (matches iOS emitRtmpStreamStatus)
                 try {
-                    Map<String, Object> rtmpMap = new HashMap<>();
-                    Iterator<String> keys = json.keys();
-                    while (keys.hasNext()) {
-                        String key = keys.next();
-                        rtmpMap.put(key, json.get(key));
-                    }
-                    Bridge.sendStreamStatus(rtmpMap);
+                    Bridge.sendStreamStatus(jsonObjectToMap(json));
                 } catch (JSONException e) {
                     Log.e(TAG, "Error converting RTMP status to Map", e);
                 }
@@ -3005,6 +3017,69 @@ public class MentraLive extends SGCManager {
         }
     }
 
+    private Map<String, Object> jsonObjectToMap(JSONObject json) throws JSONException {
+        Map<String, Object> map = new HashMap<>();
+        Iterator<String> keys = json.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            Object value = json.get(key);
+            if (value == JSONObject.NULL) {
+                continue;
+            }
+            map.put(key, jsonValueToBridgeValue(value));
+        }
+        return map;
+    }
+
+    private Object jsonValueToBridgeValue(Object value) throws JSONException {
+        if (value instanceof JSONObject) {
+            return jsonObjectToMap((JSONObject) value);
+        }
+        if (value instanceof JSONArray) {
+            JSONArray array = (JSONArray) value;
+            List<Object> list = new ArrayList<>();
+            for (int i = 0; i < array.length(); i++) {
+                Object item = array.get(i);
+                if (item != JSONObject.NULL) {
+                    list.add(jsonValueToBridgeValue(item));
+                }
+            }
+            return list;
+        }
+        return value;
+    }
+
+    private void processChunkedJsonMessage(JSONObject json) {
+        try {
+            MessageChunker.ChunkInfo chunkInfo = MessageChunker.getChunkInfo(json);
+            if (chunkInfo == null) {
+                Log.w(TAG, "LIVE: Received malformed chunked message: " + json);
+                return;
+            }
+            if (chunkInfo.chunkId == null || chunkInfo.chunkId.isEmpty()
+                    || chunkInfo.totalChunks <= 0
+                    || chunkInfo.chunkIndex < 0
+                    || chunkInfo.chunkIndex >= chunkInfo.totalChunks
+                    || chunkInfo.data == null) {
+                Log.w(TAG, "LIVE: Received invalid chunk metadata: " + json);
+                return;
+            }
+
+            String reassembled = incomingChunkReassembler.addChunk(
+                    chunkInfo.chunkId,
+                    chunkInfo.chunkIndex,
+                    chunkInfo.totalChunks,
+                    chunkInfo.data);
+            if (reassembled == null) {
+                return;
+            }
+
+            JSONObject reassembledJson = new JSONObject(reassembled);
+            processJsonMessage(reassembledJson);
+        } catch (Exception e) {
+            Log.e(TAG, "Error processing chunked JSON message", e);
+        }
+    }
     /**
      * Process K900 command format JSON messages (messages with "C" field)
      */
@@ -3059,6 +3134,7 @@ public class MentraLive extends SGCManager {
                 BlePhotoTransfer photoTransfer = blePhotoTransfers.remove(bleImgId);
                 if (photoTransfer != null) {
                     Bridge.log("LIVE: 🧹 Cleaned up timed out BLE photo transfer for: " + bleImgId);
+                    Bridge.sendPhotoError(photoTransfer.requestId, "TRANSFER_TIMEOUT", "Transfer timed out for: " + fileName);
                 }
 
                 // Reset stale session on incident log relay so a retry starts fresh.
@@ -3091,8 +3167,19 @@ public class MentraLive extends SGCManager {
                 return;
             }
 
+            String bleImgId = fileName;
+            int dotIndex = bleImgId.lastIndexOf('.');
+            if (dotIndex > 0) {
+                bleImgId = bleImgId.substring(0, dotIndex);
+            }
+            BlePhotoTransfer photoTransfer = blePhotoTransfers.get(bleImgId);
+            String effectiveRequestId = requestId;
+            if (effectiveRequestId.isEmpty() && photoTransfer != null) {
+                effectiveRequestId = photoTransfer.requestId;
+            }
+
             Log.e(TAG, "❌ Transfer failed for: " + fileName + " (reason: " + reason + ")");
-            Bridge.sendPhotoError(requestId, "TRANSFER_FAILED", "Transfer failed for: " + fileName + " (reason: " + reason + ")");
+            Bridge.sendPhotoError(effectiveRequestId, "TRANSFER_FAILED", "Transfer failed for: " + fileName + " (reason: " + reason + ")");
 
             // Clean up any active transfer for this file
             FileTransferSession session = activeFileTransfers.remove(fileName);
@@ -3101,12 +3188,7 @@ public class MentraLive extends SGCManager {
             }
 
             // Clean up any BLE photo transfer
-            String bleImgId = fileName;
-            int dotIndex = bleImgId.lastIndexOf('.');
-            if (dotIndex > 0) {
-                bleImgId = bleImgId.substring(0, dotIndex);
-            }
-            BlePhotoTransfer photoTransfer = blePhotoTransfers.remove(bleImgId);
+            photoTransfer = blePhotoTransfers.remove(bleImgId);
             if (photoTransfer != null) {
                 Bridge.log("LIVE: 🧹 Cleaned up failed BLE photo transfer for: " + bleImgId + " (requestId: " + photoTransfer.requestId + ")");
             }
@@ -3363,8 +3445,8 @@ public class MentraLive extends SGCManager {
                     // Try to parse the "C" field as JSON
                     JSONObject innerJson = new JSONObject(command);
 
-                    // If it has a "type" field, it's a standard message that got C-wrapped
-                    if (innerJson.has("type")) {
+                    // If it has a "type" field or chunk envelope, it's a standard message that got C-wrapped
+                    if (innerJson.has("type") || MessageChunker.isChunkedMessage(innerJson)) {
                         String messageType = innerJson.optString("type", "");
                         Log.d(TAG, "📦 Detected C-wrapped standard JSON message with type: " + messageType);
                         Log.d(TAG, "🔓 Unwrapping and processing through standard message handler");
@@ -4184,9 +4266,9 @@ public class MentraLive extends SGCManager {
         }
     }
 
-    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean save, boolean sound, Long exposureTimeNs) {
+    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean save, boolean sound, Long exposureTimeNs, Integer iso) {
         boolean hasAuthToken = authToken != null && !authToken.isEmpty();
-        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", save=" + save + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs);
+        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", save=" + save + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs + ", iso=" + iso);
         Bridge.log("LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry — requestId=" + requestId + ", appId=" + appId);
 
         try {
@@ -4214,6 +4296,10 @@ public class MentraLive extends SGCManager {
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
                 Bridge.log("LIVE: Using manual exposure time for photo request " + requestId + ": " + exposureTimeNs + " ns");
                 json.put("exposureTimeNs", exposureTimeNs);
+            }
+            if (iso != null && iso > 0) {
+                Bridge.log("LIVE: Using manual ISO for photo request " + requestId + ": ISO " + iso);
+                json.put("iso", iso);
             }
 
             // Always generate BLE ID for potential fallback
@@ -4781,6 +4867,7 @@ public class MentraLive extends SGCManager {
 
         // Clean up message tracking
         pendingMessages.clear();
+        incomingChunkReassembler.clear();
         Bridge.log("LIVE: Cleared pending message tracking");
 
         // Release RGB LED control authority before disconnecting
@@ -5623,6 +5710,18 @@ public class MentraLive extends SGCManager {
         }
     }
 
+    private double[] jsonArrayToDoubleArray(JSONArray source, int expectedLength) {
+        if (source == null) {
+            return new double[0];
+        }
+        int length = Math.min(expectedLength, source.length());
+        double[] out = new double[length];
+        for (int i = 0; i < length; i++) {
+            out[i] = source.optDouble(i, 0.0);
+        }
+        return out;
+    }
+
     private void handleStreamImuData(JSONObject json) {
         try {
             JSONArray readings = json.getJSONArray("readings");
@@ -5696,7 +5795,7 @@ public class MentraLive extends SGCManager {
                 }
 
                 // Create chunks
-                List<JSONObject> chunks = MessageChunker.createChunks(data, messageId);
+                List<JSONObject> chunks = MessageChunker.createChunks(data, messageId, wakeup);
                 Bridge.log("LIVE: Sending " + chunks.size() + " chunks");
                 if (isPhotoRequest) {
                     Bridge.log("LIVE: PHOTO PIPELINE BLE handoff — created " + chunks.size() + " chunks for transmission");
@@ -5748,7 +5847,7 @@ public class MentraLive extends SGCManager {
 
     private String summarizeOutgoingMessage(String payload) {
         if (payload == null || payload.isEmpty()) {
-            return "type=unknown, requestId=none, appId=none, transferMethod=none, bleImgId=none, exposureTimeNs=none, mId=none";
+            return "type=unknown, requestId=none, appId=none, transferMethod=none, bleImgId=none, exposureTimeNs=none, iso=none, mId=none";
         }
         try {
             JSONObject obj = new JSONObject(payload);
@@ -5758,6 +5857,7 @@ public class MentraLive extends SGCManager {
             String transferMethod = obj.optString("transferMethod", "none");
             String bleImgId = obj.optString("bleImgId", "none");
             String exposure = obj.has("exposureTimeNs") ? String.valueOf(obj.optLong("exposureTimeNs")) : "none";
+            String iso = obj.has("iso") ? String.valueOf(obj.optInt("iso")) : "none";
             String mId = obj.has("mId") ? String.valueOf(obj.optLong("mId")) : "none";
             return "type=" + type
                     + ", requestId=" + requestId
@@ -5765,6 +5865,7 @@ public class MentraLive extends SGCManager {
                     + ", transferMethod=" + transferMethod
                     + ", bleImgId=" + bleImgId
                     + ", exposureTimeNs=" + exposure
+                    + ", iso=" + iso
                     + ", mId=" + mId;
         } catch (JSONException ignored) {
             return "type=non_json, payloadLen=" + payload.length();
@@ -6190,9 +6291,10 @@ public class MentraLive extends SGCManager {
                     Log.e(TAG, "❌ BLE photo transfer incomplete after final packet. Missing " + missingPackets.size() + " packets: " + missingPackets);
                     Log.e(TAG, "❌ Telling glasses to retry entire transfer");
 
-                    // Tell glasses transfer failed, they will retry
+                    // Tell glasses transfer failed, they will retry. Keep the photo transfer
+                    // entry so the retry still maps back to the original requestId.
                     sendTransferCompleteConfirmation(packetInfo.fileName, false);
-                    blePhotoTransfers.remove(bleImgId);
+                    photoTransfer.session = null;
                 }
             }
 
@@ -6764,6 +6866,7 @@ public class MentraLive extends SGCManager {
      * @param height Video height (0 for default)
      * @param fps Video frame rate (0 for default)
      */
+    @Override
     public void startVideoRecording(String requestId, boolean save, boolean flash, boolean sound, int width, int height, int fps) {
         Bridge.log("LIVE: Starting video recording: requestId=" + requestId + ", save=" + save +
                    ", flash=" + flash + ", sound=" + sound + ", resolution=" + width + "x" + height + "@" + fps + "fps");
@@ -6781,12 +6884,15 @@ public class MentraLive extends SGCManager {
             json.put("flash", flash);
             json.put("sound", sound);
 
-            // Add video settings if provided
-            if (width > 0 && height > 0) {
+            // Add video settings when any field is overridden. Each field is sent
+            // only when > 0; the glasses merge the missing fields onto their saved
+            // button-video defaults, so a partial override (e.g. fps-only) still
+            // takes effect instead of being dropped here.
+            if (width > 0 || height > 0 || fps > 0) {
                 JSONObject settings = new JSONObject();
-                settings.put("width", width);
-                settings.put("height", height);
-                settings.put("fps", fps > 0 ? fps : 30);
+                if (width > 0) settings.put("width", width);
+                if (height > 0) settings.put("height", height);
+                if (fps > 0) settings.put("fps", fps);
                 json.put("settings", settings);
             }
 
