@@ -7,6 +7,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import com.mentra.asg_client.RecoveryWorkerManager;
+import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.services.OtaService;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
@@ -57,6 +58,7 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
 
         // Schedule OTA service start
         scheduleOtaServiceStart();
+        scheduleRecoveryBackupRefresh();
         scheduleRecoveryWorkerStart();
 
         // Clean up system packages
@@ -132,6 +134,20 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
                     }
                 },
                 5000);
+    }
+
+    private void scheduleRecoveryBackupRefresh() {
+        mainHandler.postDelayed(
+                () -> {
+                    if (!isInitialized) {
+                        return;
+                    }
+                    new Thread(
+                                    () -> OtaHelper.ensureRecoveryBackupIfNeeded(context),
+                                    "recovery-backup-refresh")
+                            .start();
+                },
+                3000);
     }
 
     private void scheduleRecoveryWorkerStart() {
