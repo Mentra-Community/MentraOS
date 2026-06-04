@@ -15,6 +15,7 @@
 import Combine
 import CoreBluetooth
 import Foundation
+import ImageIO
 import UIKit
 
 // MARK: - Supporting Types
@@ -76,31 +77,10 @@ class BlePhotoUploadService {
                     "\(TAG): Processing BLE photo for upload. Image size: \(imageData.count) bytes"
                 )
 
-                // 1. Decode image (AVIF or JPEG) to UIImage
-                guard let image = decodeImage(imageData: imageData) else {
-                    throw NSError(
-                        domain: "BlePhotoUpload",
-                        code: -1,
-                        userInfo: [NSLocalizedDescriptionKey: "Failed to decode image data"]
-                    )
-                }
-
-                Bridge.log(
-                    "\(TAG): Decoded image to bitmap: \(Int(image.size.width))x\(Int(image.size.height))"
-                )
-
-                // 2. Convert to JPEG for upload (in case it was AVIF)
-                guard let jpegData = image.jpegData(compressionQuality: 0.9) else {
-                    throw NSError(
-                        domain: "BlePhotoUpload",
-                        code: -2,
-                        userInfo: [NSLocalizedDescriptionKey: "Failed to convert image to JPEG"]
-                    )
-                }
-
+                let jpegData = try convertToJpegPreservingExif(imageData: imageData)
                 Bridge.log("\(TAG): Converted to JPEG for upload. Size: \(jpegData.count) bytes")
 
-                // 3. Upload to webhook
+                // Upload to webhook
                 try await uploadToWebhook(
                     jpegData: jpegData,
                     requestId: requestId,
@@ -126,26 +106,302 @@ class BlePhotoUploadService {
         }
     }
 
+    private static func convertToJpegPreservingExif(imageData: Data) throws -> Data {
+        logIncomingImageDiagnostics(imageData: imageData)
+        let imuJson = readImuJsonFromImageData(imageData)
+
+        guard let image = decodeImage(imageData: imageData) else {
+            throw NSError(
+                domain: "BlePhotoUpload",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to decode image data"]
+            )
+        }
+
+        Bridge.log(
+            "\(TAG): Decoded image to bitmap: \(Int(image.size.width))x\(Int(image.size.height))"
+        )
+
+        guard var jpegData = image.jpegData(compressionQuality: 0.9) else {
+            throw NSError(
+                domain: "BlePhotoUpload",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to convert image to JPEG"]
+            )
+        }
+
+        if let imuJson, !imuJson.isEmpty {
+            jpegData = try writeImuJsonToJpegData(jpegData, imuJson: imuJson)
+            Bridge.log("\(TAG): Re-attached IMU EXIF UserComment on output JPEG (\(imuJson.count) chars)")
+        } else {
+            let rawHasExif = containsExifMarker(in: imageData)
+            Bridge.log(
+                "\(TAG): No IMU from ImageIO (container=\(describeContainer(imageData)), rawHasExifMarker=\(rawHasExif))"
+            )
+        }
+
+        return jpegData
+    }
+
+    private static func logIncomingImageDiagnostics(imageData: Data) {
+        Bridge.log(
+            "\(TAG): BLE image diagnostics: size=\(imageData.count) bytes, container=\(describeContainer(imageData)), rawHasExifMarker=\(containsExifMarker(in: imageData))"
+        )
+    }
+
+    private static func describeContainer(_ data: Data) -> String {
+        let bytes = [UInt8](data.prefix(12))
+        if bytes.count >= 2, bytes[0] == 0xFF, bytes[1] == 0xD8 { return "jpeg" }
+        if bytes.count >= 12, bytes[4] == 0x66, bytes[5] == 0x74, bytes[6] == 0x79, bytes[7] == 0x70 {
+            let brand = String(bytes: bytes[8..<12], encoding: .ascii) ?? "?"
+            return "iso_bmff/ftyp=\(brand)"
+        }
+        return "unknown"
+    }
+
+    private static func containsExifMarker(in data: Data) -> Bool {
+        let marker: [UInt8] = [0x45, 0x78, 0x69, 0x66, 0, 0]
+        let bytes = [UInt8](data)
+        guard bytes.count >= marker.count else { return false }
+        for i in 0...(bytes.count - marker.count) {
+            if Array(bytes[i..<(i + marker.count)]) == marker { return true }
+        }
+        return false
+    }
+
+    private static func readImuJsonFromImageData(_ imageData: Data) -> String? {
+        // Primary: ImageIO EXIF (works for JPEG and well-formed AVIF)
+        if let source = CGImageSourceCreateWithData(imageData as CFData, nil),
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any]
+        {
+            let exif = properties[kCGImagePropertyExifDictionary as String] as? [String: Any]
+            let userComment = exif?[kCGImagePropertyExifUserComment as String] as? String
+            let tiff = properties[kCGImagePropertyTIFFDictionary as String] as? [String: Any]
+            let description = tiff?[kCGImagePropertyTIFFImageDescription as String] as? String
+            Bridge.log(
+                "\(TAG): ImageIO EXIF UserComment=\(describeExifAttribute(userComment)), ImageDescription=\(describeExifAttribute(description))"
+            )
+            if let userComment, !userComment.isEmpty { return userComment }
+            if let description, !description.isEmpty { return description }
+        } else {
+            Bridge.log("\(TAG): ImageIO: could not read properties")
+        }
+
+        // Fallback: raw TIFF scan for AVIFs where ImageIO doesn't expose the embedded Exif block
+        if containsExifMarker(in: imageData) {
+            if let tiffResult = readImuJsonFromTiff(imageData) {
+                Bridge.log("\(TAG): Read IMU UserComment via TIFF scan (\(tiffResult.count) chars)")
+                return tiffResult
+            }
+        }
+        return nil
+    }
+
+    /// Scans raw bytes for the {@code Exif\0\0} TIFF header and reads UserComment (0x9286).
+    private static func readImuJsonFromTiff(_ data: Data) -> String? {
+        let bytes = [UInt8](data)
+        let marker: [UInt8] = [0x45, 0x78, 0x69, 0x66, 0, 0]
+        var searchFrom = 0
+        while searchFrom <= bytes.count - marker.count {
+            guard let exifOff = findBytes(marker, in: bytes, from: searchFrom) else { break }
+            let tiff = exifOff + 6
+            guard tiff + 8 <= bytes.count else { break }
+            let littleEndian = bytes[tiff] == 0x49 && bytes[tiff + 1] == 0x49
+            let bigEndian = bytes[tiff] == 0x4D && bytes[tiff + 1] == 0x4D
+            guard littleEndian || bigEndian else { searchFrom = exifOff + 1; continue }
+            let magic = readU16(bytes, at: tiff + 2, le: littleEndian)
+            guard magic == 0x002A else { searchFrom = exifOff + 1; continue }
+            let ifd0Off = Int(readU32(bytes, at: tiff + 4, le: littleEndian))
+            if let result = readTagFromIfd(
+                bytes, tiff: tiff, ifdOff: tiff + ifd0Off, tag: 0x9286, le: littleEndian)
+            {
+                return result
+            }
+            searchFrom = exifOff + 1
+        }
+        return nil
+    }
+
+    private static func readTagFromIfd(
+        _ bytes: [UInt8], tiff: Int, ifdOff: Int, tag: UInt16, le: Bool
+    ) -> String? {
+        guard ifdOff + 2 <= bytes.count else { return nil }
+        let count = Int(readU16(bytes, at: ifdOff, le: le))
+        var off = ifdOff + 2
+        for _ in 0..<count {
+            guard off + 12 <= bytes.count else { break }
+            let entryTag = readU16(bytes, at: off, le: le)
+            let type = readU16(bytes, at: off + 2, le: le)
+            let valueCount = Int(readU32(bytes, at: off + 4, le: le))
+            if entryTag == tag {
+                let byteLen = valueCount
+                let valueOff: Int
+                if byteLen > 4 {
+                    valueOff = tiff + Int(readU32(bytes, at: off + 8, le: le))
+                } else {
+                    valueOff = off + 8
+                }
+                // UserComment starts with 8-byte charset prefix
+                let startOff = (tag == 0x9286 && byteLen > 8) ? valueOff + 8 : valueOff
+                let len = (tag == 0x9286 && byteLen > 8) ? byteLen - 8 : byteLen
+                guard startOff + len <= bytes.count else { return nil }
+                return String(bytes: Array(bytes[startOff..<startOff + len]), encoding: .utf8)?
+                    .trimmingCharacters(in: .init(charactersIn: "\0"))
+            }
+            // Follow Exif IFD pointer
+            if entryTag == 0x8769, type == 4 {
+                let subOff = tiff + Int(readU32(bytes, at: off + 8, le: le))
+                if let r = readTagFromIfd(bytes, tiff: tiff, ifdOff: subOff, tag: tag, le: le) {
+                    return r
+                }
+            }
+            off += 12
+        }
+        return nil
+    }
+
+    private static func findBytes(_ needle: [UInt8], in haystack: [UInt8], from: Int) -> Int? {
+        guard haystack.count >= needle.count else { return nil }
+        for i in from...(haystack.count - needle.count) {
+            if Array(haystack[i..<i + needle.count]) == needle { return i }
+        }
+        return nil
+    }
+
+    private static func readU16(_ bytes: [UInt8], at off: Int, le: Bool) -> UInt16 {
+        let a = UInt16(bytes[off]), b = UInt16(bytes[off + 1])
+        return le ? a | (b << 8) : (a << 8) | b
+    }
+
+    private static func readU32(_ bytes: [UInt8], at off: Int, le: Bool) -> UInt32 {
+        let a = UInt32(bytes[off]), b = UInt32(bytes[off + 1]),
+            c = UInt32(bytes[off + 2]), d = UInt32(bytes[off + 3])
+        return le ? a | (b << 8) | (c << 16) | (d << 24) : (a << 24) | (b << 16) | (c << 8) | d
+    }
+
+    private static func describeExifAttribute(_ value: String?) -> String {
+        guard let value else { return "null" }
+        if value.isEmpty { return "empty" }
+        let preview = value.count > 80 ? String(value.prefix(80)) + "…" : value
+        return "len=\(value.count) preview=\"\(preview)\""
+    }
+
+    private static func writeImuJsonToJpegData(_ jpegData: Data, imuJson: String) throws -> Data {
+        guard let source = CGImageSourceCreateWithData(jpegData as CFData, nil),
+            let imageType = CGImageSourceGetType(source),
+            let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else {
+            throw PhotoUploadError.decodingFailed
+        }
+
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output, imageType, 1, nil
+        ) else {
+            throw PhotoUploadError.decodingFailed
+        }
+
+        var properties =
+            (CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any]) ?? [:]
+        var exif =
+            (properties[kCGImagePropertyExifDictionary as String] as? [String: Any]) ?? [:]
+        exif[kCGImagePropertyExifUserComment as String] = imuJson
+        properties[kCGImagePropertyExifDictionary as String] = exif
+
+        CGImageDestinationAddImage(destination, cgImage, properties as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            throw PhotoUploadError.decodingFailed
+        }
+        return output as Data
+    }
+
     /**
-     * Decode image data (AVIF or JPEG) to UIImage
+     * Decode image data (AVIF or JPEG) to UIImage.
+     * AVIF arriving from glasses has a TIFF EXIF block appended to {@code mdat}; iOS ImageIO
+     * rejects those bytes the same way Android does. Strip the Exif tail before decoding.
      */
     private static func decodeImage(imageData: Data) -> UIImage? {
-        // First try standard UIImage decoding (works for JPEG, PNG, etc)
-        if let image = UIImage(data: imageData) {
+        let isAvif = isAvifData(imageData)
+        var decodeData = imageData
+        if isAvif && containsExifMarker(in: imageData) {
+            let stripped = stripAvifExifTail(imageData)
+            if stripped.count < imageData.count {
+                Bridge.log(
+                    "\(TAG): Stripped Exif metadata item for decode: \(imageData.count) -> \(stripped.count) bytes"
+                )
+                decodeData = stripped
+            }
+        }
+
+        if let image = UIImage(data: decodeData) {
             return image
         }
 
-        // If that fails, try AVIF decoding
-        // Note: AVIF support requires iOS 16+ or a third-party library
-        if #available(iOS 16.0, *) {
-            // iOS 16+ has native AVIF support
-            return UIImage(data: imageData)
-        } else {
-            // For older iOS versions, you would need to integrate a third-party
-            // AVIF decoder library like libavif
-            Bridge.log("\(TAG): AVIF decoding not supported on this iOS version")
-            return nil
+        if isAvif {
+            if #available(iOS 16.0, *) {
+                return UIImage(data: decodeData)
+            } else {
+                Bridge.log("\(TAG): AVIF decoding not supported on iOS < 16")
+                return nil
+            }
         }
+        return nil
+    }
+
+    private static func isAvifData(_ data: Data) -> Bool {
+        let bytes = [UInt8](data.prefix(12))
+        return bytes.count >= 12
+            && bytes[4] == 0x66 && bytes[5] == 0x74 && bytes[6] == 0x79 && bytes[7] == 0x70
+            && bytes[8] == 0x61 && bytes[9] == 0x76 && bytes[10] == 0x69 && bytes[11] == 0x66
+    }
+
+    /// Truncates the {@code mdat} box at the {@code Exif\0\0} marker, removing the TIFF EXIF
+    /// block that the glasses encoder appends. Returns original data unchanged on any parse error.
+    private static func stripAvifExifTail(_ data: Data) -> Data {
+        let bytes = [UInt8](data)
+        let marker: [UInt8] = [0x45, 0x78, 0x69, 0x66, 0, 0]
+
+        // Find last Exif marker
+        var lastExif = -1
+        for i in 0...(bytes.count - marker.count) {
+            if Array(bytes[i..<i + marker.count]) == marker { lastExif = i }
+        }
+        guard lastExif >= 0 else { return data }
+
+        // Walk top-level boxes to find mdat
+        var off = 0
+        while off + 8 <= bytes.count {
+            let boxSize = Int(readU32BE(bytes, at: off))
+            guard boxSize >= 8, off + boxSize <= bytes.count else { break }
+            let boxType = String(bytes: Array(bytes[off + 4..<off + 8]), encoding: .ascii) ?? ""
+            if boxType == "mdat" {
+                let payloadStart = off + 8
+                let payloadEnd = off + boxSize
+                guard lastExif >= payloadStart, lastExif < payloadEnd else { break }
+                let newPayloadLen = lastExif - payloadStart
+                guard newPayloadLen > 0 else { break }
+
+                var result = Data()
+                // Everything up to mdat header
+                result.append(contentsOf: bytes[0..<off])
+                // New mdat box header with updated size
+                let newMdatSize = UInt32(8 + newPayloadLen)
+                result.append(UInt8((newMdatSize >> 24) & 0xFF))
+                result.append(UInt8((newMdatSize >> 16) & 0xFF))
+                result.append(UInt8((newMdatSize >> 8) & 0xFF))
+                result.append(UInt8(newMdatSize & 0xFF))
+                result.append(contentsOf: [0x6D, 0x64, 0x61, 0x74]) // "mdat"
+                result.append(contentsOf: bytes[payloadStart..<payloadStart + newPayloadLen])
+                return result
+            }
+            off += boxSize
+        }
+        return data
+    }
+
+    private static func readU32BE(_ bytes: [UInt8], at off: Int) -> UInt32 {
+        UInt32(bytes[off]) << 24 | UInt32(bytes[off + 1]) << 16
+            | UInt32(bytes[off + 2]) << 8 | UInt32(bytes[off + 3])
     }
 
     private static func uploadToWebhook(
@@ -1360,7 +1616,8 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, save: Bool, sound: Bool, exposureTimeNs: Double?
+        compress: String?, flash: Bool, save: Bool, sound: Bool,
+        exposureTimeNs: Double?
     ) {
         Bridge.log(
             "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(requestId) appId=\(appId) flash=\(flash) save=\(save) sound=\(sound)"
@@ -4874,13 +5131,16 @@ extension MentraLive {
             "sound": sound,
         ]
 
-        // Add video settings if provided
-        if width > 0, height > 0 {
-            json["settings"] = [
-                "width": width,
-                "height": height,
-                "fps": fps > 0 ? fps : 30,
-            ]
+        // Add video settings when any field is overridden. Each field is sent
+        // only when > 0; the glasses merge the missing fields onto their saved
+        // button-video defaults, so a partial override (e.g. fps-only) still
+        // takes effect instead of being dropped here.
+        if width > 0 || height > 0 || fps > 0 {
+            var settings: [String: Any] = [:]
+            if width > 0 { settings["width"] = width }
+            if height > 0 { settings["height"] = height }
+            if fps > 0 { settings["fps"] = fps }
+            json["settings"] = settings
         }
         sendJson(json)
     }

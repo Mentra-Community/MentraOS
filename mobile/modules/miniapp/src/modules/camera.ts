@@ -31,6 +31,28 @@ export interface PhotoTaken {
   size: number
 }
 
+export interface StartVideoRecordingOptions {
+  /** Video width in pixels. Omit to use the device's saved button-video default. */
+  width?: number
+  /** Video height in pixels. Omit to use the device's saved button-video default. */
+  height?: number
+  /**
+   * Frames per second. Lower frame rates keep the glasses cooler and produce
+   * smaller files — useful for long recordings where smooth motion isn't needed.
+   * Omit to use the device default.
+   */
+  fps?: number
+  /** Play start/stop capture sounds. Defaults to true. */
+  sound?: boolean
+  /** Keep the recording on the glasses after it finishes. Defaults to false. */
+  save?: boolean
+}
+
+export interface VideoRecordingStarted {
+  /** Identifier for this recording session; pass to {@link stopVideoRecording}. */
+  recordingId: string
+}
+
 export class CameraModule {
   constructor(private readonly session: MiniappSession) {}
 
@@ -65,6 +87,38 @@ export class CameraModule {
       sound: options.sound ?? true,
       saveToGallery: options.saveToGallery ?? false,
       exposureTimeNs: options.exposureTimeNs,
+    })
+  }
+
+  /**
+   * Start recording video on the glasses camera. Returns a `recordingId` to pass
+   * to {@link stopVideoRecording}. Requires CAMERA permission declared in
+   * miniapp.json. Check `session.capabilities.hasCamera` before calling.
+   *
+   * Resolution and frame rate are optional — omit them to use the device's saved
+   * button-video settings. Lowering `fps` (e.g. to 5) keeps the glasses cooler
+   * during long recordings.
+   */
+  async startVideoRecording(options: StartVideoRecordingOptions = {}): Promise<VideoRecordingStarted> {
+    return this.session.sendRequest<VideoRecordingStarted>({
+      type: MiniappRequestType.VIDEO_RECORDING_START,
+      width: options.width,
+      height: options.height,
+      fps: options.fps,
+      sound: options.sound ?? true,
+      save: options.save ?? false,
+    })
+  }
+
+  /**
+   * Stop an in-progress video recording started with {@link startVideoRecording}.
+   *
+   * @param recordingId The id returned from `startVideoRecording`.
+   */
+  async stopVideoRecording(recordingId: string): Promise<void> {
+    await this.session.sendRequest<void>({
+      type: MiniappRequestType.VIDEO_RECORDING_STOP,
+      recordingId,
     })
   }
 }

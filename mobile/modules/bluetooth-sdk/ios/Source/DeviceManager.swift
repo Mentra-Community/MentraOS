@@ -1202,11 +1202,17 @@ struct ViewState {
         sgc?.sendReboot()
     }
 
-    func startVideoRecording(_ requestId: String, _ save: Bool, _ sound: Bool) {
+    func startVideoRecording(
+        _ requestId: String, _ save: Bool, _ sound: Bool, _ width: Int = 0, _ height: Int = 0,
+        _ fps: Int = 0
+    ) {
         Bridge.log(
-            "MAN: onStartVideoRecording: requestId=\(requestId), save=\(save), flash=true, sound=\(sound)"
+            "MAN: onStartVideoRecording: requestId=\(requestId), save=\(save), flash=true, sound=\(sound), resolution=\(width)x\(height)@\(fps)fps"
         )
-        sgc?.startVideoRecording(requestId: requestId, save: save, flash: true, sound: sound)
+        sgc?.startVideoRecording(
+            requestId: requestId, save: save, flash: true, sound: sound, width: width, height: height,
+            fps: fps
+        )
     }
 
     func stopVideoRecording(_ requestId: String) {
@@ -1298,7 +1304,8 @@ struct ViewState {
         }
         sgc.requestPhoto(
             requestId, appId: appId, size: size, webhookUrl: webhookUrl, authToken: authToken,
-            compress: compress, flash: flash, save: save, sound: sound, exposureTimeNs: exposureTimeNs
+            compress: compress, flash: flash, save: save, sound: sound,
+            exposureTimeNs: exposureTimeNs
         )
     }
 

@@ -151,11 +151,20 @@ public struct VideoRecordingRequest {
     public let requestId: String
     public let save: Bool
     public let sound: Bool
+    // Optional per-recording overrides; 0 means "use the saved button-video default".
+    public let width: Int
+    public let height: Int
+    public let fps: Int
 
-    public init(requestId: String, save: Bool, sound: Bool) {
+    public init(
+        requestId: String, save: Bool, sound: Bool, width: Int = 0, height: Int = 0, fps: Int = 0
+    ) {
         self.requestId = requestId
         self.save = save
         self.sound = sound
+        self.width = width
+        self.height = height
+        self.fps = fps
     }
 }
 
@@ -264,3 +273,4 @@ public struct PhotoResponseEvent: CustomStringConvertible {
         "PhotoResponseEvent(requestId: \(requestId), state: \(response.state.rawValue))"
     }
 }
+

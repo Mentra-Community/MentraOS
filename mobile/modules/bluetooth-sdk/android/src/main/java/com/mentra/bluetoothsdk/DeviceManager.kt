@@ -1431,11 +1431,19 @@ class DeviceManager {
         sgc?.sendReboot()
     }
 
-    fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean) {
+    fun startVideoRecording(
+            requestId: String,
+            save: Boolean,
+            sound: Boolean,
+            width: Int = 0,
+            height: Int = 0,
+            fps: Int = 0,
+    ) {
         Bridge.log(
-                "MAN: onStartVideoRecording: requestId=$requestId, save=$save, flash=true, sound=$sound"
+                "MAN: onStartVideoRecording: requestId=$requestId, save=$save, flash=true, sound=$sound, " +
+                        "resolution=${width}x${height}@${fps}fps"
         )
-        sgc?.startVideoRecording(requestId, save, true, sound)
+        sgc?.startVideoRecording(requestId, save, true, sound, width, height, fps)
     }
 
     fun stopVideoRecording(requestId: String) {
