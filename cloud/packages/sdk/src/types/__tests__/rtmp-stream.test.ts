@@ -5,7 +5,7 @@ import { VIDEO_CONFIG_LIMITS, validateVideoConfig, type VideoConfig } from "../r
 const EXPECTED_LIMITS = {
   width: { min: 320, max: 1920, default: 854 },
   height: { min: 240, max: 1080, default: 480 },
-  frameRate: { min: 10, max: 60, default: 15 },
+  frameRate: { min: 5, max: 30, default: 15 },
   bitrate: { min: 100_000, max: 10_000_000, default: 1_000_000 },
 } as const;
 

@@ -22,6 +22,7 @@ import android.view.WindowManager;
 
 import androidx.annotation.NonNull;
 
+import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 
 import org.webrtc.CapturerObserver;
@@ -60,6 +61,7 @@ public class WhipCameraCapturer implements VideoCapturer {
   private SurfaceTextureHelper mSurfaceTextureHelper;
   private Context mContext;
   private CapturerObserver mObserver;
+  private CameraFpsListener mCameraFpsListener;
 
   private HandlerThread mCameraThread;
   private Handler mCameraHandler;
@@ -69,7 +71,9 @@ public class WhipCameraCapturer implements VideoCapturer {
 
   private int mWidth;
   private int mHeight;
-  private int mFps;
+  private int mRequestedFps;
+  private int mOutputFps;
+  private int mCameraFps;
   private int mCameraSurfaceWidth;
   private int mCameraSurfaceHeight;
   private int mCaptureWidth;
@@ -83,6 +87,13 @@ public class WhipCameraCapturer implements VideoCapturer {
   private int mFallbackDeviceRotation;
   private boolean mIsFrontCamera;
   private boolean mLoggedFrameSize = false;
+  private long mNextForwardFrameTimestampNs;
+  private long mOutputFrameIntervalNs;
+  private int mDroppedFrameCount;
+
+  public interface CameraFpsListener {
+    void onCameraFpsChanged(double fps);
+  }
 
   @Override
   public void initialize(SurfaceTextureHelper surfaceTextureHelper, Context context,
@@ -92,11 +103,20 @@ public class WhipCameraCapturer implements VideoCapturer {
     mObserver = observer;
   }
 
+  public void setCameraFpsListener(CameraFpsListener listener) {
+    mCameraFpsListener = listener;
+  }
+
   @Override
   public void startCapture(int width, int height, int fps) {
     mWidth = width;
     mHeight = height;
-    mFps = fps;
+    mRequestedFps = fps;
+    mOutputFps = clamp(fps, WhipStreamConfig.MIN_VIDEO_FPS, WhipStreamConfig.MAX_VIDEO_FPS);
+    mCameraFps = mOutputFps;
+    mOutputFrameIntervalNs = fpsToIntervalNs(mOutputFps);
+    mNextForwardFrameTimestampNs = 0L;
+    mDroppedFrameCount = 0;
     mLoggedFrameSize = false;
 
     // Low-priority camera thread (matches StreamPackLite CameraExecutorManager)
@@ -122,6 +142,7 @@ public class WhipCameraCapturer implements VideoCapturer {
       mSensorOrientation = sensorOrientation != null ? sensorOrientation : 90;
       Integer facing = chars.get(CameraCharacteristics.LENS_FACING);
       mIsFrontCamera = facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT;
+      mCameraFps = resolveCameraFps(chars, mOutputFps);
       WhipCameraFormatSelector.SelectionResult selection =
           WhipCameraFormatSelector.selectCaptureSize(chars, width, height);
       Size captureSize = selection.getRawCaptureSize();
@@ -146,6 +167,13 @@ public class WhipCameraCapturer implements VideoCapturer {
               + " cannot reach requested " + width + "x" + height + " without upscaling");
         }
       }
+
+      Log.i(TAG, "Resolved WHIP capture fps: requested=" + mRequestedFps
+          + ", output=" + mOutputFps + ", camera=" + mCameraFps);
+      // Report the effective transmitted rate: when the camera runs faster than the output
+      // target, frames are dropped to pace the track at mOutputFps; when it runs slower, the
+      // track is capped at mCameraFps. The resolved fps is the lower of the two.
+      notifyCameraFps(Math.min(mCameraFps, mOutputFps));
 
       cameraManager.openCamera(cameraId, new CameraDevice.StateCallback() {
         @Override
@@ -187,6 +215,9 @@ public class WhipCameraCapturer implements VideoCapturer {
     }
 
     Log.d(TAG, "Requested capture: " + mWidth + "x" + mHeight
+        + " @" + mRequestedFps + "fps"
+        + ", output fps: " + mOutputFps
+        + ", camera fps: " + mCameraFps
         + ", selected camera size: " + mCameraSurfaceWidth + "x" + mCameraSurfaceHeight
         + ", normalized capture size: " + mCaptureWidth + "x" + mCaptureHeight
         + ", crop window: " + mCropWidth + "x" + mCropHeight + " @ (" + mCropX + ", " + mCropY
@@ -233,9 +264,10 @@ public class WhipCameraCapturer implements VideoCapturer {
           mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
       builder.addTarget(surface);
 
-      // Fixed FPS range
+      // Fixed FPS range. On K900, values inside the advertised [5,30] range are honored
+      // even when they are not listed as standalone fixed ranges.
       builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
-          new Range<>(mFps, mFps));
+          new Range<>(mCameraFps, mCameraFps));
       builder.set(CaptureRequest.CONTROL_MODE,
           CaptureRequest.CONTROL_MODE_AUTO);
 
@@ -259,12 +291,19 @@ public class WhipCameraCapturer implements VideoCapturer {
       builder.set(CaptureRequest.HOT_PIXEL_MODE,
           CaptureRequest.HOT_PIXEL_MODE_OFF);
 
+      // Avoid per-frame metadata callbacks: SENSOR_FRAME_DURATION is instantaneous and can make
+      // resolvedConfig.video.fps jitter even though the requested camera FPS is stable.
       mCaptureSession.setRepeatingRequest(builder.build(), null, mCameraHandler);
 
       // Match the stock WebRTC Camera2 session semantics:
       // 1. Apply a texture transform for sensor/front-camera correction.
       // 2. Preserve frame rotation metadata so downstream width/height handling stays correct.
       mSurfaceTextureHelper.startListening(frame -> {
+        if (shouldDropFrame(frame.getTimestampNs())) {
+          // SurfaceTextureHelper owns and releases this input frame after onFrame returns.
+          return;
+        }
+
         TextureBufferImpl texBuffer = (TextureBufferImpl) frame.getBuffer();
         int frameRotation = getFrameOrientation();
 
@@ -274,28 +313,51 @@ public class WhipCameraCapturer implements VideoCapturer {
               + texBuffer.getHeight() + " (requested: " + mWidth + "x" + mHeight
               + ", selected camera size: " + mCameraSurfaceWidth + "x" + mCameraSurfaceHeight
               + ", normalized capture size: " + mCaptureWidth + "x" + mCaptureHeight
+              + ", output fps: " + mOutputFps
+              + ", camera fps: " + mCameraFps
               + ", crop window: " + mCropWidth + "x" + mCropHeight + " @ (" + mCropX + ", "
               + mCropY + ")"
               + ", sensor orientation: " + mSensorOrientation
               + ", frame rotation: " + frameRotation + ")");
         }
 
-        TextureBufferImpl modifiedBuffer = texBuffer.applyTransformMatrix(
-            createTextureTransformMatrix(), texBuffer.getWidth(), texBuffer.getHeight());
-        VideoFrame.Buffer outputBuffer = adaptOutputBuffer(modifiedBuffer);
-        if (outputBuffer != modifiedBuffer) {
-          modifiedBuffer.release();
-        }
+        TextureBufferImpl modifiedBuffer = null;
+        VideoFrame.Buffer outputBuffer = null;
+        VideoFrame modifiedFrame = null;
+        try {
+          modifiedBuffer = texBuffer.applyTransformMatrix(
+              createTextureTransformMatrix(), texBuffer.getWidth(), texBuffer.getHeight());
+          outputBuffer = adaptOutputBuffer(modifiedBuffer);
+          if (outputBuffer != modifiedBuffer) {
+            modifiedBuffer.release();
+            modifiedBuffer = null;
+          }
 
-        VideoFrame modifiedFrame = new VideoFrame(
-            outputBuffer, frameRotation, frame.getTimestampNs());
-        mObserver.onFrameCaptured(modifiedFrame);
-        modifiedFrame.release();
+          VideoFrame.Buffer frameBuffer = outputBuffer;
+          if (frameBuffer == modifiedBuffer) {
+            modifiedBuffer = null;
+          }
+          modifiedFrame = new VideoFrame(frameBuffer, frameRotation, frame.getTimestampNs());
+          outputBuffer = null;
+          mObserver.onFrameCaptured(modifiedFrame);
+        } finally {
+          if (modifiedFrame != null) {
+            modifiedFrame.release();
+          } else {
+            if (outputBuffer != null) {
+              outputBuffer.release();
+            }
+            if (modifiedBuffer != null) {
+              modifiedBuffer.release();
+            }
+          }
+        }
       });
 
       mObserver.onCapturerStarted(true);
       Log.d(TAG, "Camera capture started with power-saving optimizations: "
-          + mCaptureWidth + "x" + mCaptureHeight + " @" + mFps + "fps");
+          + mCaptureWidth + "x" + mCaptureHeight + " @ camera " + mCameraFps
+          + "fps, output " + mOutputFps + "fps");
 
     } catch (CameraAccessException e) {
       Log.e(TAG, "Failed to start repeating request", e);
@@ -356,6 +418,91 @@ public class WhipCameraCapturer implements VideoCapturer {
   @Override
   public boolean isScreencast() {
     return false;
+  }
+
+  private static int clamp(int value, int min, int max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  private static long fpsToIntervalNs(int fps) {
+    return Math.round(1_000_000_000.0 / Math.max(1, fps));
+  }
+
+  public static int resolveCameraFps(CameraCharacteristics chars, int outputFps) {
+    Range<Integer>[] ranges =
+        chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
+    if (ranges == null || ranges.length == 0) {
+      return clamp(outputFps, WhipStreamConfig.MIN_VIDEO_FPS, WhipStreamConfig.MAX_VIDEO_FPS);
+    }
+
+    int minSupportedFps = Integer.MAX_VALUE;
+    int maxSupportedFps = 0;
+    int closestFps = outputFps;
+    int closestDistance = Integer.MAX_VALUE;
+
+    for (Range<Integer> range : ranges) {
+      int lower = range.getLower();
+      int upper = range.getUpper();
+      minSupportedFps = Math.min(minSupportedFps, lower);
+      maxSupportedFps = Math.max(maxSupportedFps, upper);
+
+      if (range.contains(outputFps)) {
+        return outputFps;
+      }
+
+      int lowerDistance = Math.abs(outputFps - lower);
+      if (lowerDistance < closestDistance) {
+        closestDistance = lowerDistance;
+        closestFps = lower;
+      }
+
+      int upperDistance = Math.abs(outputFps - upper);
+      if (upperDistance < closestDistance) {
+        closestDistance = upperDistance;
+        closestFps = upper;
+      }
+    }
+
+    if (outputFps < minSupportedFps) {
+      return minSupportedFps;
+    }
+    if (outputFps > maxSupportedFps) {
+      return maxSupportedFps;
+    }
+    return closestFps;
+  }
+
+  private boolean shouldDropFrame(long frameTimestampNs) {
+    if (mCameraFps <= mOutputFps) {
+      return false;
+    }
+
+    long timestampNs = frameTimestampNs > 0 ? frameTimestampNs : System.nanoTime();
+    if (mNextForwardFrameTimestampNs <= 0L) {
+      mNextForwardFrameTimestampNs = timestampNs + mOutputFrameIntervalNs;
+      return false;
+    }
+
+    if (timestampNs < mNextForwardFrameTimestampNs) {
+      mDroppedFrameCount++;
+      if (mDroppedFrameCount % Math.max(1, mCameraFps) == 0) {
+        Log.d(TAG, "Dropped " + mDroppedFrameCount + " WHIP frames to keep output at "
+            + mOutputFps + "fps from camera " + mCameraFps + "fps");
+      }
+      return true;
+    }
+
+    while (mNextForwardFrameTimestampNs <= timestampNs) {
+      mNextForwardFrameTimestampNs += mOutputFrameIntervalNs;
+    }
+    return false;
+  }
+
+  private void notifyCameraFps(double fps) {
+    CameraFpsListener listener = mCameraFpsListener;
+    if (listener != null) {
+      listener.onCameraFpsChanged(fps);
+    }
   }
 
   private Matrix createTextureTransformMatrix() {

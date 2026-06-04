@@ -1616,11 +1616,10 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, save: Bool, sound: Bool,
-        exposureTimeNs: Double?
+        compress: String?, flash: Bool, save: Bool, sound: Bool, exposureTimeNs: Double?, iso: Int?
     ) {
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(requestId) appId=\(appId) flash=\(flash) save=\(save) sound=\(sound)"
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(requestId) appId=\(appId) flash=\(flash) save=\(save) sound=\(sound) iso=\(iso.map { String($0) } ?? "auto")"
         )
 
         var json: [String: Any] = [
@@ -1672,6 +1671,10 @@ class MentraLive: NSObject, SGCManager {
         if let e = exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
             Bridge.log("LIVE: Using manual exposure time for photo request \(requestId): \(Int64(e)) ns")
             json["exposureTimeNs"] = Int64(e)
+        }
+        if let iso, iso > 0 {
+            Bridge.log("LIVE: Using manual ISO for photo request \(requestId): ISO \(iso)")
+            json["iso"] = iso
         }
 
         Bridge.log("LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=auto")
@@ -2166,6 +2169,9 @@ class MentraLive: NSObject, SGCManager {
 
         case "stream_status":
             emitRtmpStreamStatus(json)
+
+        case "photo_status":
+            emitPhotoStatus(json)
 
         case "gallery_status":
             let photoCount = json["photos"] as? Int ?? 0
@@ -4242,6 +4248,10 @@ class MentraLive: NSObject, SGCManager {
         Bridge.sendTypedMessage("stream_status", body: json)
     }
 
+    private func emitPhotoStatus(_ json: [String: Any]) {
+        Bridge.sendPhotoStatus(json)
+    }
+
     private func emitButtonPress(buttonId: String, pressType: String, timestamp: Int64) {
         let eventBody: [String: Any] = [
             "device_model": "Mentra Live",
@@ -5131,13 +5141,16 @@ extension MentraLive {
             "sound": sound,
         ]
 
-        // Add video settings if provided
-        if width > 0, height > 0 {
-            json["settings"] = [
-                "width": width,
-                "height": height,
-                "fps": fps > 0 ? fps : 30,
-            ]
+        // Add video settings when any field is overridden. Each field is sent
+        // only when > 0; the glasses merge the missing fields onto their saved
+        // button-video defaults, so a partial override (e.g. fps-only) still
+        // takes effect instead of being dropped here.
+        if width > 0 || height > 0 || fps > 0 {
+            var settings: [String: Any] = [:]
+            if width > 0 { settings["width"] = width }
+            if height > 0 { settings["height"] = height }
+            if fps > 0 { settings["fps"] = fps }
+            json["settings"] = settings
         }
         sendJson(json)
     }
