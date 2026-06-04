@@ -7,6 +7,7 @@ import android.os.Looper
 import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
 import java.util.Collections
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 class MentraBluetoothSdk private constructor(
@@ -23,6 +24,8 @@ class MentraBluetoothSdk private constructor(
     private val bridgeEventSinkId: String
     private val storeListenerId: String
     private var suppressDefaultDeviceEvents = false
+    private val streamKeepAliveLock = Any()
+    private var activeStreamKeepAlive: ActiveStreamKeepAlive? = null
 
     init {
         listeners.add(listener)
@@ -36,6 +39,8 @@ class MentraBluetoothSdk private constructor(
         private val DEFAULT_DEVICE_KEYS = setOf("default_wearable", "device_name", "device_address")
         private val SCAN_STATE_KEYS = setOf("searching", "searchingController", "searchResults")
         private const val DEFAULT_SCAN_TIMEOUT_MS = 15_000L
+        private const val DEFAULT_STREAM_KEEP_ALIVE_INTERVAL_SECONDS = 5
+        private const val MAX_MISSED_STREAM_KEEP_ALIVE_ACKS = 3
 
         @JvmStatic
         fun create(
@@ -50,6 +55,18 @@ class MentraBluetoothSdk private constructor(
             listener: MentraBluetoothSdkListener,
         ): MentraBluetoothSdk = MentraBluetoothSdk(context, config, listener)
     }
+
+    private data class ActiveStreamKeepAlive(
+        val streamId: String,
+        val intervalMs: Long,
+        var pendingAckId: String? = null,
+        var missedAckCount: Int = 0,
+        var nextTick: Runnable? = null,
+        // Missed-ACK counting only begins once the stream is confirmed live/coming up, so a
+        // slow startup (glasses can't ACK until they reach starting/streaming) can't trip a
+        // false keep-alive timeout before the stream is ever up.
+        var armed: Boolean = false,
+    )
 
     fun addListener(listener: MentraBluetoothSdkListener) {
         listeners.add(listener)
@@ -440,6 +457,7 @@ class MentraBluetoothSdk private constructor(
             request.save,
             request.sound,
             request.exposureTimeNs,
+            request.iso,
         )
     }
 
@@ -448,10 +466,18 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun startStream(request: StreamRequest) {
-        deviceManager.startStream(request.toMap().toMutableMap())
+        val message = request.toMap().toMutableMap()
+        val streamId = (message["streamId"] as? String)?.takeIf { it.isNotBlank() }
+                ?: "sdk-${UUID.randomUUID()}"
+        message["streamId"] = streamId
+        stopStreamKeepAliveMonitor()
+        deviceManager.startStream(message)
+        if (request.keepAlive && !request.isExternallyManagedKeepAlive()) {
+            startStreamKeepAliveMonitor(streamId, request.keepAliveIntervalSeconds)
+        }
     }
 
-    fun keepStreamAlive(request: StreamKeepAliveRequest) {
+    internal fun sendExternallyManagedStreamKeepAlive(request: StreamKeepAliveRequest) {
         deviceManager.keepStreamAlive(request.toMap().toMutableMap())
     }
 
@@ -468,11 +494,19 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun stopStream() {
+        stopStreamKeepAliveMonitor()
         deviceManager.stopStream()
     }
 
     fun startVideoRecording(request: VideoRecordingRequest) {
-        deviceManager.startVideoRecording(request.requestId, request.save, request.sound)
+        deviceManager.startVideoRecording(
+                request.requestId,
+                request.save,
+                request.sound,
+                request.width,
+                request.height,
+                request.fps,
+        )
     }
 
     fun stopVideoRecording(requestId: String) {
@@ -483,16 +517,27 @@ class MentraBluetoothSdk private constructor(
         deviceManager.requestVersionInfo()
     }
 
+    /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
+    fun checkForOtaUpdate() {
+        deviceManager.sendOtaQueryStatus()
+    }
+
+    /** Start the OTA flow after your app has presented the available update to the user. */
+    fun startOtaUpdate() {
+        deviceManager.sendOtaStart()
+    }
+
+    /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
+    fun retryOtaVersionCheck() {
+        deviceManager.retryOtaVersionCheck()
+    }
+
     internal fun sendOtaStart() {
         deviceManager.sendOtaStart()
     }
 
     internal fun sendOtaQueryStatus() {
         deviceManager.sendOtaQueryStatus()
-    }
-
-    internal fun retryOtaVersionCheck() {
-        deviceManager.retryOtaVersionCheck()
     }
 
     internal fun sendShutdown() {
@@ -508,6 +553,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     override fun close() {
+        stopStreamKeepAliveMonitor()
         Bridge.removeEventSink(bridgeEventSinkId)
         DeviceStore.store.removeListener(storeListenerId)
         listeners.clear()
@@ -662,8 +708,22 @@ class MentraBluetoothSdk private constructor(
             "hotspot_error" -> dispatchToListeners { it.onHotspotError(HotspotErrorEvent(data)) }
             "gallery_status" -> dispatchToListeners { it.onGalleryStatus(GalleryStatusEvent(data)) }
             "photo_response" -> dispatchToListeners { it.onPhotoResponse(PhotoResponseEvent(data)) }
-            "stream_status" -> dispatchToListeners { it.onStreamStatus(StreamStatusEvent(data)) }
-            "keep_alive_ack" -> dispatchToListeners { it.onKeepAliveAck(KeepAliveAckEvent(data)) }
+            "photo_status" -> dispatchToListeners { it.onPhotoStatus(PhotoStatusEvent(data)) }
+            "stream_status" -> {
+                val event = StreamStatusEvent(data)
+                handleStreamStatusForKeepAlive(event.status)
+                dispatchToListeners { it.onStreamStatus(event) }
+            }
+            "keep_alive_ack" -> {
+                val event = KeepAliveAckEvent(data)
+                if (!handleStreamKeepAliveAck(event)) {
+                    dispatchToListeners { it.onKeepAliveAck(event) }
+                }
+            }
+            "ota_update_available" ->
+                dispatchToListeners { it.onOtaUpdateAvailable(OtaUpdateAvailableEvent.fromMap(data)) }
+            "ota_start_ack" -> dispatchToListeners { it.onOtaStartAck(OtaStartAckEvent.fromMap(data)) }
+            "ota_status" -> dispatchToListeners { it.onOtaStatus(OtaStatusEvent.fromMap(data)) }
             "mic_pcm" -> {
                 val event = MicPcmEvent(data)
                 if (event.pcm.isNotEmpty()) {
@@ -716,6 +776,117 @@ class MentraBluetoothSdk private constructor(
             mainHandler.post(deliver)
         } else {
             deliver()
+        }
+    }
+
+    private fun startStreamKeepAliveMonitor(streamId: String, requestedIntervalSeconds: Int) {
+        val intervalSeconds =
+                requestedIntervalSeconds.takeIf { it > 0 } ?: DEFAULT_STREAM_KEEP_ALIVE_INTERVAL_SECONDS
+        val tracker = ActiveStreamKeepAlive(
+                streamId = streamId,
+                intervalMs = intervalSeconds * 1_000L,
+        )
+        synchronized(streamKeepAliveLock) {
+            activeStreamKeepAlive = tracker
+        }
+        sendNextStreamKeepAlive(tracker)
+    }
+
+    private fun stopStreamKeepAliveMonitor() {
+        val tracker =
+                synchronized(streamKeepAliveLock) {
+                    val current = activeStreamKeepAlive
+                    activeStreamKeepAlive = null
+                    current
+                }
+        tracker?.nextTick?.let { mainHandler.removeCallbacks(it) }
+    }
+
+    private fun sendNextStreamKeepAlive(tracker: ActiveStreamKeepAlive) {
+        var timeoutEvent: StreamStatusEvent? = null
+        var request: StreamKeepAliveRequest? = null
+
+        synchronized(streamKeepAliveLock) {
+            if (activeStreamKeepAlive !== tracker) {
+                return
+            }
+
+            if (tracker.armed && tracker.pendingAckId != null) {
+                tracker.missedAckCount += 1
+                if (tracker.missedAckCount >= MAX_MISSED_STREAM_KEEP_ALIVE_ACKS) {
+                    activeStreamKeepAlive = null
+                    tracker.nextTick?.let { mainHandler.removeCallbacks(it) }
+                    timeoutEvent =
+                            StreamStatusEvent(
+                                    StreamStatus.Error(
+                                            streamId = tracker.streamId,
+                                            errorDetails =
+                                                    "Stream keep-alive timed out after ${tracker.missedAckCount} missed ACKs",
+                                            timestamp = System.currentTimeMillis(),
+                                            resolvedConfig = null,
+                                    )
+                            )
+                    return@synchronized
+                }
+            }
+
+            val ackId = "ack-${System.currentTimeMillis()}"
+            tracker.pendingAckId = ackId
+            request = StreamKeepAliveRequest(streamId = tracker.streamId, ackId = ackId)
+            val nextTick = Runnable { sendNextStreamKeepAlive(tracker) }
+            tracker.nextTick = nextTick
+            mainHandler.postDelayed(nextTick, tracker.intervalMs)
+        }
+
+        timeoutEvent?.let { event ->
+            dispatchToListeners { it.onStreamStatus(event) }
+            stopStream()
+            return
+        }
+
+        request?.let { keepAlive ->
+            deviceManager.keepStreamAlive(keepAlive.toMap().toMutableMap())
+        }
+    }
+
+    private fun handleStreamKeepAliveAck(event: KeepAliveAckEvent): Boolean {
+        synchronized(streamKeepAliveLock) {
+            val tracker = activeStreamKeepAlive ?: return false
+            if (event.streamId != tracker.streamId || event.ackId != tracker.pendingAckId) {
+                return false
+            }
+            tracker.pendingAckId = null
+            tracker.missedAckCount = 0
+            return true
+        }
+    }
+
+    private fun handleStreamStatusForKeepAlive(status: StreamStatus) {
+        val streamId = status.streamId
+        val activeStreamId = synchronized(streamKeepAliveLock) { activeStreamKeepAlive?.streamId }
+        if (streamId == null || activeStreamId != streamId) {
+            return
+        }
+        when (status.state) {
+            StreamState.STOPPED,
+            StreamState.STOPPING,
+            StreamState.ERROR,
+            StreamState.RECONNECT_FAILED -> stopStreamKeepAliveMonitor()
+            // A non-terminal status means the stream is live or coming up and the glasses can
+            // now ACK; arm the missed-ACK detector from here so a slow startup before the first
+            // ACK can't trip a false keep-alive timeout. On the arming transition, drop any
+            // pre-arm bookkeeping so a stale unacked id (sent before the glasses could ACK)
+            // can't immediately count as a miss.
+            else ->
+                    synchronized(streamKeepAliveLock) {
+                        activeStreamKeepAlive?.let {
+                            if (it.streamId == streamId && !it.armed) {
+                                it.armed = true
+                                it.pendingAckId = null
+                                it.missedAckCount = 0
+                            }
+                        }
+                    }
         }
     }
 }

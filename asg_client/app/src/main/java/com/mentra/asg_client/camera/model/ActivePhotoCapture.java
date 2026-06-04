@@ -26,6 +26,8 @@ public final class ActivePhotoCapture {
     public final boolean isFromSdk;
     /** {@code null} = auto exposure for this shot. */
     public final Long exposureTimeNs;
+    /** {@code null} = derive ISO from preview metering for manual exposure captures. */
+    public final Integer iso;
     public final boolean ledEnabled;
     public final long startTimeMs;
     public final CameraNeoService.PhotoCaptureCallback callback;
@@ -38,10 +40,23 @@ public final class ActivePhotoCapture {
             boolean ledEnabled,
             long startTimeMs,
             CameraNeoService.PhotoCaptureCallback callback) {
+        this(filePath, size, isFromSdk, exposureTimeNs, null, ledEnabled, startTimeMs, callback);
+    }
+
+    public ActivePhotoCapture(
+            String filePath,
+            String size,
+            boolean isFromSdk,
+            Long exposureTimeNs,
+            Integer iso,
+            boolean ledEnabled,
+            long startTimeMs,
+            CameraNeoService.PhotoCaptureCallback callback) {
         this.filePath = filePath;
         this.size = size;
         this.isFromSdk = isFromSdk;
         this.exposureTimeNs = exposureTimeNs;
+        this.iso = iso;
         this.ledEnabled = ledEnabled;
         this.startTimeMs = startTimeMs;
         this.callback = callback;
@@ -57,6 +72,7 @@ public final class ActivePhotoCapture {
                 queued.size,
                 queued.isFromSdk,
                 queued.exposureTimeNs,
+                queued.iso,
                 queued.enableLed,
                 queued.enqueuedAtMs,
                 queued.callback);
@@ -77,11 +93,12 @@ public final class ActivePhotoCapture {
                 && Objects.equals(filePath, that.filePath)
                 && Objects.equals(size, that.size)
                 && Objects.equals(exposureTimeNs, that.exposureTimeNs)
+                && Objects.equals(iso, that.iso)
                 && Objects.equals(callback, that.callback);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(filePath, size, isFromSdk, exposureTimeNs, ledEnabled, startTimeMs, callback);
+        return Objects.hash(filePath, size, isFromSdk, exposureTimeNs, iso, ledEnabled, startTimeMs, callback);
     }
 }

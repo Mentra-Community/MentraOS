@@ -53,7 +53,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     func requestPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, exposureTimeNs _: Double?
+        compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, exposureTimeNs _: Double?, iso _: Int?
     ) {}
 
     func startStream(_: [String: Any]) {}
@@ -236,7 +236,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     /// Device discovery cache (like MentraLive)
     private var discoveredPeripherals = [String: CBPeripheral]() // name -> peripheral
-    private var hasConnectedThisSession = false
     private var lastConnectionTimestamp: TimeInterval = 0
     private var lastReceivedLc3Sequence = -1
     private var currentImageChunks: [[UInt8]] = []
@@ -349,6 +348,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     private var deviceMaxMTU = 23 // Device's maximum capability
     private var maxChunkSize = 176 // Calculated optimal chunk size
     private var bmpChunkSize = 176 // Image chunk size (iOS-optimized)
+    private var protobufSeq: UInt8 = 0 // Rolling sequence for fragmented control messages
 
     // MARK: - Command Queue (modeled after ERG1Manager)
 
@@ -500,16 +500,51 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         ])
     }
 
+    /// Splits a serialized protobuf message into BLE-sized fragments, each prefixed with a
+    /// 4-byte transport header [packetType][seq][totalChunks][chunkIndex] so the firmware can
+    /// reassemble messages larger than one MTU. Single-fragment messages set totalChunks = 1
+    /// and are decoded directly by the firmware's fast path.
     private func queueDataWithOptimalChunking(
         _ data: Data, packetType: UInt8 = 0x02, waitTimeMs: Int = 0
     ) {
+        // Telemetry: report the full logical command (type byte + protobuf) before fragmenting.
         var packetData = Data([packetType])
         packetData.append(data)
-        if packetData.count > maxChunkSize {
-            Bridge.log("NEX: protobuf packet (\(packetData.count) bytes) exceeds maxChunkSize (\(maxChunkSize)); sending single write for protocol compatibility")
-        }
         emitBleCommandSent(packetData)
-        queueChunks([Array(packetData)], waitTimeMs: waitTimeMs, chunkDelayMs: Int(DELAY_BETWEEN_CHUNKS_SEND_MS))
+
+        let headerSize = 4 // [packetType][seq][totalChunks][chunkIndex]
+        let effectiveChunkSize = max(1, maxChunkSize - headerSize)
+        let totalChunks = data.isEmpty
+            ? 1 : Int(ceil(Double(data.count) / Double(effectiveChunkSize)))
+
+        guard totalChunks <= 255 else {
+            Bridge.log(
+                "NEX: ❌ Protobuf message too large to fragment (\(totalChunks) chunks) - dropping"
+            )
+            return
+        }
+
+        let seq = protobufSeq
+        protobufSeq = protobufSeq &+ 1
+
+        var chunks: [[UInt8]] = []
+        var offset = 0
+        var index = 0
+        while offset < data.count || (index == 0 && data.isEmpty) {
+            let end = min(offset + effectiveChunkSize, data.count)
+            var frame: [UInt8] = [packetType, seq, UInt8(totalChunks), UInt8(index)]
+            if end > offset {
+                frame.append(contentsOf: data.subdata(in: offset ..< end))
+            }
+            chunks.append(frame)
+            offset = end
+            index += 1
+        }
+
+        Bridge.log(
+            "NEX: 📦 Fragmented protobuf into \(chunks.count) chunk(s) (seq=\(seq), max payload \(effectiveChunkSize) bytes)"
+        )
+        queueChunks(chunks, waitTimeMs: waitTimeMs)
     }
 
     private func processCommand(_ command: BufferedCommand) async {
@@ -1933,6 +1968,38 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     @objc func disconnect() {
         Bridge.log("NEX: 🔌 User-initiated disconnect")
+        // Light teardown: drop the link but stay able to reconnect.
+        sendIntentionalDisconnectThen { [weak self] in self?.finalizeDisconnect() }
+    }
+
+    /// Best-effort: tell the glasses this disconnect is intentional so they return to
+    /// the welcome screen immediately rather than holding the last frame through the
+    /// firmware's unexpected-disconnect grace period, then run `teardown` after a short
+    /// window to let the write flush. Falls straight through if nothing is connected.
+    private func sendIntentionalDisconnectThen(_ teardown: @escaping () -> Void) {
+        isDisconnecting = true
+        stopReconnectionTimer()
+        guard peripheral != nil, servicesReady else {
+            teardown()
+            return
+        }
+        sendDisconnectRequest()
+        MentraNexSGC._bluetoothQueue.asyncAfter(deadline: .now() + 0.25, execute: teardown)
+    }
+
+    private func sendDisconnectRequest() {
+        let phoneToGlasses = Mentraos_Ble_PhoneToGlasses.with {
+            $0.disconnect = Mentraos_Ble_DisconnectRequest()
+        }
+        guard let protobufData = try? phoneToGlasses.serializedData() else {
+            Bridge.log("NEX: ⚠️ Failed to serialize DisconnectRequest")
+            return
+        }
+        Bridge.log("NEX: 📤 Sending DisconnectRequest before teardown")
+        queueDataWithOptimalChunking(protobufData, packetType: PACKET_TYPE_PROTOBUF)
+    }
+
+    private func finalizeDisconnect() {
         if let peripheral {
             // Save microphone state before disconnection (like Java implementation)
             saveMicrophoneStateBeforeDisconnection()
@@ -1940,7 +2007,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             // Stop mic beat system
             stopMicBeat()
 
-            isDisconnecting = true
             connectionState = ConnTypes.DISCONNECTED
             centralManager?.cancelPeripheralConnection(peripheral)
         }
@@ -1954,6 +2020,12 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     // MARK: - Lifecycle Management (ported from Java)
 
     @objc func destroy() {
+        // Route through the shared path so forget()/cleanup() also signal an
+        // intentional disconnect to the glasses before the link goes down.
+        sendIntentionalDisconnectThen { [weak self] in self?.performDestroy() }
+    }
+
+    private func performDestroy() {
         Bridge.log("NEX: 💥 Destroying MentraNexSGC instance")
 
         isKilled = true
@@ -1996,7 +2068,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // Reset initialization flags
         whiteListedAlready = false
         protobufVersionPosted = false
-        hasConnectedThisSession = false
         currentImageChunks.removeAll()
         isImageSendProgressing = false
         currentMTU = MTU_DEFAULT
@@ -2033,7 +2104,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         micBeatCount = 0
         shouldUseGlassesMic = true
         microphoneStateBeforeDisconnection = false
-        hasConnectedThisSession = false
         currentImageChunks.removeAll()
         isImageSendProgressing = false
         updateConnectedState(isConnected: false)
@@ -2317,7 +2387,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         bmpChunkSize = MTU_DEFAULT - 20
         currentImageChunks.removeAll()
         isImageSendProgressing = false
-        hasConnectedThisSession = false
         updateConnectedState(isConnected: false)
 
         // Clear command queue if needed
@@ -2465,17 +2534,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // 4. Show home screen to turn on the NexGlasses display (Java line 673)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { // 50ms delay
             self.showHomeScreen()
-        }
-
-        if hasConnectedThisSession {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                self.sendTextWall("// MentraOS Reconnected")
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.08) {
-                self.clearDisplay()
-            }
-        } else {
-            hasConnectedThisSession = true
         }
 
         // 5. Post protobuf schema version information (Java lines 684-687)

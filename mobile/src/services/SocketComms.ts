@@ -575,7 +575,7 @@ class SocketComms {
   private handle_start_stream(msg: any) {
     const streamUrl = msg.streamUrl
     if (streamUrl) {
-      BluetoothSdk.startStream(msg)
+      BluetoothSdk.startExternallyManagedStream(msg)
     } else {
       console.log("Invalid stream request: missing stream URL")
     }
@@ -587,7 +587,7 @@ class SocketComms {
 
   private handle_keep_stream_alive(msg: any) {
     console.log(`SOCKET: Received KEEP_STREAM_ALIVE: ${JSON.stringify(msg)}`)
-    BluetoothSdk.keepStreamAlive(msg)
+    BluetoothSdk.sendExternallyManagedStreamKeepAlive(msg)
   }
 
   private handle_start_video_recording(msg: any) {
@@ -595,7 +595,14 @@ class SocketComms {
     const videoRequestId = msg.requestId || `video_${Date.now()}`
     const save = msg.save !== false
     const sound = msg.sound ?? true
-    BluetoothSdk.startVideoRecording(videoRequestId, save, sound)
+    // Optional per-recording video settings; when absent the glasses use their
+    // saved button-video settings. Only forward fields that are present.
+    const s = msg.settings ?? {}
+    const settings =
+      s.width != null || s.height != null || s.fps != null
+        ? {width: s.width, height: s.height, fps: s.fps}
+        : undefined
+    BluetoothSdk.startVideoRecording(videoRequestId, save, sound, settings)
   }
 
   private handle_stop_video_recording(msg: any) {

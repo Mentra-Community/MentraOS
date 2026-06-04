@@ -20,6 +20,7 @@ The Mentra Bluetooth SDK exposes the same core glasses lifecycle across Android,
 | iOS | `MentraBluetoothSDK` Swift package | `import MentraBluetoothSDK` |
 | React Native / Expo | `@mentra/bluetooth-sdk` | `import BluetoothSdk, {DeviceModels} from '@mentra/bluetooth-sdk'` |
 | React Native hooks | `@mentra/bluetooth-sdk` | `import {useMentraBluetooth} from '@mentra/bluetooth-sdk/react'` |
+| React Native photo receiver | `@mentra/bluetooth-sdk` | `import MentraPhotoReceiver from '@mentra/bluetooth-sdk/photo-receiver'` |
 
 Only documented imports are part of the supported app developer API. Undocumented package subpaths or symbols with a leading underscore can change without notice.
 
@@ -238,9 +239,9 @@ These are the supported React Native app developer entrypoints:
 | Display | `displayText`, `clearDisplay`, `showDashboard`, `setDashboardPosition`, `setHeadUpAngle`, `setScreenDisabled` |
 | Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
 | Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setButtonPhotoSettings`, `setButtonVideoRecordingSettings`, `setButtonCameraLed`, `setButtonMaxRecordingTime`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
-| Streaming | `startStream`, `keepStreamAlive`, `stopStream` |
+| Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, `setVoiceActivityDetectionEnabled`, `setPreferredMic`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
-| LED and version | `rgbLedControl`, `requestVersionInfo` |
+| LED, version, and OTA | `rgbLedControl`, `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate`, `retryOtaVersionCheck` |
 
 React Native helper exports include `DeviceModels`, `isConnectedGlassesConnectionStatus`, `isReadyGlassesConnectionStatus`, `isBusyGlassesConnectionStatus`, `isConnectedWifiStatus`, and `isEnabledHotspotStatus`. The React subpath exports `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent`.
 
@@ -253,7 +254,10 @@ Important defaults:
 - `displayText(text, x, y, size)` defaults to `x = 0`, `y = 0`, and `size = 24`.
 - `setMicState(enabled)` defaults to glasses microphone on, transcript events off, and LC3 events off. Microphone audio events are continuous while capture is enabled. Use `setVoiceActivityDetectionEnabled(...)` for glasses-side Voice Activity Detection; `voice_activity_detection_status` reports whether it is enabled, and `speaking_status` reports speaking/not-speaking when supported. Microphone audio events include the latest `voiceActivityDetectionEnabled` value.
 - `requestPhoto({authToken, ...})` omits the `Authorization` header when `authToken` is `null` or empty.
-- `startStream` optional `video` and `audio` configs are omitted unless supplied, so the connected glasses use their model defaults.
+- `requestPhoto({exposureTimeNs, ...})` uses auto exposure when `exposureTimeNs` is omitted or `null`; pass a positive nanosecond value for one-shot manual exposure.
+- `requestPhoto({exposureTimeNs, iso, ...})` uses `iso` only when `exposureTimeNs` enables one-shot manual exposure. Omit `iso` / pass `null` for auto ISO selection.
+- `setCameraFov({fov, roiPosition})` clamps `fov` to 62-118 degrees and `roiPosition` to `0` center, `1` bottom, or `2` top. The `"narrow"` (82°), `"standard"` (102°), and `"wide"` (118°) presets are also accepted and map to center ROI. On Mentra Live this persists the setting and restarts the camera for about 5 seconds before the next capture should run. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
+- `startStream` optional `video` and `audio` configs are omitted unless supplied, so the connected glasses use their model defaults. The SDK sends stream keep-alives automatically and reports timeout/error state through `stream_status`.
 - Photo capture, video recording, and streaming always enable the camera light as a privacy indicator.
 
 ## Gallery Mode
@@ -278,13 +282,27 @@ Use `setGalleryModeEnabled(true)` to enable local button capture, and `setGaller
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `disconnect`, `forget` |
 | Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
 | Camera | `requestPhoto`, gallery mode, button photo settings, button video settings, camera field of view |
-| Streaming | `startStream`, `keepStreamAlive`, `stopStream` |
+| Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, Voice Activity Detection setting and events, audio callbacks, local transcription, media volume |
 | Settings | Brightness, dashboard position, head-up angle, screen disabled, gallery mode |
 | LEDs | `rgbLedControl` on supported glasses |
-| System | `requestVersionInfo` |
+| System | `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate`, `retryOtaVersionCheck` |
 
 Mentra Live has camera, microphone, and speaker hardware, but no display. G2 has display and microphone hardware, but no camera or speaker. Gate UI for display, camera, and speaker features by the connected model.
+
+## OTA Updates
+
+Mentra Live OTA is glasses-owned. The SDK exposes the same command and event semantics used by the MentraOS app:
+
+| API | Glasses command | Purpose |
+| --- | --- | --- |
+| `checkForOtaUpdate()` | `ota_query_status` | Ask the glasses to report update availability or current progress. |
+| `startOtaUpdate()` | `ota_start` | Start OTA after your app presents the update and the user accepts it. |
+| `retryOtaVersionCheck()` | `ota_retry_version_check` | Re-run the glasses-side version check after a known clock-skew/TLS failure. |
+
+React Native receives `ota_update_available`, `ota_start_ack`, and `ota_status` events. Android listeners receive `onOtaUpdateAvailable`, `onOtaStartAck`, and `onOtaStatus`. iOS delegates receive `.otaUpdateAvailable`, `.otaStartAck`, and `.otaStatus` through `BluetoothEvent`.
+
+OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until `ota_status.status` is `complete` or `failed`.
 
 ## Events
 
@@ -300,7 +318,9 @@ export function HardwareEventLogger() {
   useBluetoothEvent('button_press', (event) => console.log(event));
   useBluetoothEvent('touch_event', (event) => console.log(event));
   useBluetoothEvent('photo_response', (event) => console.log(event));
-  useBluetoothEvent('stream_status', (event) => console.log(event));
+  useBluetoothEvent('photo_status', (event) => console.log(event.status, event.resolvedConfig));
+  useBluetoothEvent('stream_status', (event) => console.log(event.resolvedConfig?.video?.fps));
+  useBluetoothEvent('ota_status', (event) => console.log(event.overall_percent));
   useBluetoothEvent('speaking_status', (event) => console.log(event.speaking));
   useBluetoothEvent('mic_pcm', (event) => {
     console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding);
@@ -327,6 +347,10 @@ class GlassesEvents : MentraBluetoothSdkCallback() {
     override fun onMicPcm(event: MicPcmEvent) {
         Log.d("Mentra", "${event.sampleRate} Hz ${event.bitsPerSample}-bit PCM")
     }
+
+    override fun onOtaStatus(event: OtaStatusEvent) {
+        Log.d("Mentra", "OTA ${event.status}: ${event.overallPercent}%")
+    }
 }
 ```
 
@@ -341,6 +365,8 @@ final class GlassesEvents: MentraBluetoothSDKDelegate {
             print("\(button.buttonId) \(button.pressType)")
         case let .photoResponse(photo):
             print("Photo request \(photo.requestId): \(photo.response.state.rawValue)")
+        case let .otaStatus(status):
+            print("OTA \(status.status): \(status.overallPercent)%")
         default:
             break
         }
@@ -376,6 +402,7 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `hotspot_status_change` | `HotspotStatusChangeEvent` | Glasses hotspot state changes. |
 | `hotspot_error` | `HotspotErrorEvent` | Hotspot operation fails. |
 | `photo_response` | `PhotoResponseEvent` | Photo request succeeds or fails. |
+| `photo_status` | `PhotoStatusEvent` | Photo capture progress changes. May include `resolvedConfig`, `requestedCaptureConfig`, `meteredPreview`, or `captureMetadata` depending on status. |
 | `gallery_status` | `GalleryStatusEvent` | Gallery content/camera-busy status changes. |
 | `compatible_glasses_search_stop` | `CompatibleGlassesSearchStopEvent` | Compatible-glasses search stops for a model. |
 | `swipe_volume_status` | `SwipeVolumeStatusEvent` | Swipe-volume setting changes. |
@@ -387,14 +414,31 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `audio_disconnected` | `AudioDisconnectedEvent` | Bluetooth audio disconnects. |
 | `mic_pcm` | `MicPcmEvent` | PCM microphone frame arrives. |
 | `mic_lc3` | `MicLc3Event` | LC3 microphone frame arrives. |
-| `stream_status` | `StreamStatusEvent` | Camera stream lifecycle, reconnect, or error state changes. |
-| `keep_alive_ack` | `KeepAliveAckEvent` | Glasses acknowledge a stream keep-alive request. |
+| `stream_status` | `StreamStatusEvent` | Camera stream lifecycle, reconnect, or error state changes. May include `resolvedConfig` with effective stream settings: encoded output size in `video.width` / `video.height`, native camera capture size in `video.captureWidth` / `video.captureHeight`, video bitrate and `fps`, plus audio bitrate, sample rate, echo cancellation, and noise suppression. |
+| `ota_update_available` | `OtaUpdateAvailableEvent` | Mentra Live reports an available OTA package. |
+| `ota_start_ack` | `OtaStartAckEvent` | Mentra Live acknowledges `startOtaUpdate()`. |
+| `ota_status` | `OtaStatusEvent` | OTA step, phase, status, progress, or error changes. |
 
 For example, `useBluetoothEvent('photo_response', ...)` receives a `PhotoResponseEvent`, while `useBluetoothEvent('mic_pcm', ...)` receives a `MicPcmEvent`. `MicPcmEvent` includes `sampleRate`, `bitsPerSample`, `channels`, `encoding`, and `voiceActivityDetectionEnabled`; `MicLc3Event` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, `packetizedFromGlasses`, and `voiceActivityDetectionEnabled`. `speaking_status` is separate from microphone audio frames so apps can use continuous audio while still reacting to speech activity.
 
-Public React Native event payload fields use camelCase. For example, touch events expose `deviceModel` and `gestureName`, successful photo responses expose `uploadUrl`, hotspot errors expose `errorMessage`, and gallery status exposes `hasContent` and `cameraBusy`.
+Public React Native event payload fields usually use camelCase. OTA events intentionally mirror the glasses firmware field names, such as `overall_percent` and `version_name`. For example, touch events expose `deviceModel` and `gestureName`, successful photo responses expose `uploadUrl`, hotspot errors expose `errorMessage`, and gallery status exposes `hasContent` and `cameraBusy`.
 
-Android and iOS expose typed callbacks/delegate methods instead of the React Native string event API. Android uses `MentraBluetoothSdkListener` methods such as `onStateChanged`, `onGlassesChanged`, `onSdkStateChanged`, `onScanChanged`, `onDeviceDiscovered`, `onButtonPress`, `onSpeakingStatus`, `onPhotoResponse`, `onMicPcm`, and `onStreamStatus`. iOS uses `MentraBluetoothSDKDelegate` methods such as `mentraBluetoothSDK(_:didUpdate:)`, `mentraBluetoothSDK(_:didUpdateGlasses:)`, `mentraBluetoothSDK(_:didUpdateSdkState:)`, `mentraBluetoothSDK(_:didUpdateScan:)`, `mentraBluetoothSDK(_:didDiscover:)`, `mentraBluetoothSDK(_:didReceive:)`, `mentraBluetoothSDK(_:didReceiveMicPcm:)`, and `mentraBluetoothSDK(_:didReceiveMicLc3:)`. Microphone audio callbacks use `MicPcmEvent` and `MicLc3Event` objects with the same metadata as React Native.
+### Photo Status Metadata
+
+`PhotoStatusEvent` reports progress through capture and transfer. Capture metadata is attached to the stage where the glasses know that data:
+
+| Status | Optional field | Description |
+| --- | --- | --- |
+| `configuring` | `resolvedConfig` | Effective JPEG dimensions, quality, requested size, source (`sdk` or `button`), transfer method, compression, and manual exposure fields when present. |
+| `capturing` | `requestedCaptureConfig` | Camera2 still request values submitted to the HAL, such as exposure time, ISO, frame duration, AE mode, AE lock, exposure compensation, target FPS range, AF mode, and ZSL. |
+| `capturing` | `meteredPreview` | Latest preview auto-exposure estimate before the still capture, including exposure time, ISO, and a light proxy when available. |
+| `captured` | `captureMetadata` | Actual still capture result returned by the HAL, including applied exposure time, ISO, frame duration, AE state/name, noise reduction mode, edge mode, sensor timestamp, and MFNR hint when available. |
+
+Transport statuses such as `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring` describe upload or BLE progress only and do not carry capture metadata. `ble_fallback_compression` means the direct Wi-Fi/webhook upload failed and the glasses are compressing the already-captured photo for Bluetooth fallback delivery. Apps should read actual capture values from `event.captureMetadata` on the `captured` status, not from upload statuses.
+
+Local action-button photos emitted by the glasses use the same `photo_status` shape when the phone SDK is connected. Those local captures set `resolvedConfig.source` to `button` and `resolvedConfig.transferMethod` to `local`.
+
+Android and iOS expose typed callbacks/delegate methods instead of the React Native string event API. Android uses `MentraBluetoothSdkListener` methods such as `onStateChanged`, `onGlassesChanged`, `onSdkStateChanged`, `onScanChanged`, `onDeviceDiscovered`, `onButtonPress`, `onSpeakingStatus`, `onPhotoResponse`, `onPhotoStatus`, `onMicPcm`, `onStreamStatus`, and `onOtaStatus`. iOS uses `MentraBluetoothSDKDelegate` methods such as `mentraBluetoothSDK(_:didUpdate:)`, `mentraBluetoothSDK(_:didUpdateGlasses:)`, `mentraBluetoothSDK(_:didUpdateSdkState:)`, `mentraBluetoothSDK(_:didUpdateScan:)`, `mentraBluetoothSDK(_:didDiscover:)`, `mentraBluetoothSDK(_:didReceive:)`, `mentraBluetoothSDK(_:didReceiveMicPcm:)`, and `mentraBluetoothSDK(_:didReceiveMicLc3:)`; OTA arrives through `didReceive` as `.otaUpdateAvailable`, `.otaStartAck`, or `.otaStatus`. Microphone audio callbacks use `MicPcmEvent` and `MicLc3Event` objects with the same metadata as React Native.
 
 | Event area | Examples |
 | --- | --- |
@@ -402,6 +446,7 @@ Android and iOS expose typed callbacks/delegate methods instead of the React Nat
 | Device state | Battery, case, Wi-Fi, hotspot, connection, RSSI |
 | Camera | Photo request result, gallery state, camera settings |
 | Streaming | Stream initializing, active, stopped, error |
+| OTA | Update available, start acknowledged, step/progress status |
 | Audio | Microphone PCM, LC3, local transcription, audio route state |
 | Diagnostics | SDK log events |
 

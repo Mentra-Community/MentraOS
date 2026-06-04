@@ -46,6 +46,8 @@ interface PhotoRequestOptions {
   size?: "small" | "medium" | "large" | "full";
   /** Image compression level for upload optimization */
   compress?: "none" | "medium" | "heavy";
+  /** Sensor exposure time in nanoseconds for this photo only. Omit for auto exposure. */
+  exposureTimeNs?: number;
 }
 ```
 
@@ -129,6 +131,12 @@ const photoWithSave = await session.camera.requestPhoto({
 const compressedPhoto = await session.camera.requestPhoto({
   size: 'large',
   compress: 'medium'
+});
+
+// Manual exposure for this photo only
+const manualPhoto = await session.camera.requestPhoto({
+  size: 'full',
+  exposureTimeNs: 8_333_333
 });
 
 // Custom webhook with authentication and compression
@@ -293,6 +301,7 @@ interface ManagedStreamStatus {
   webrtcUrl?: string;
   message?: string;
   streamId?: string;
+  resolvedConfig?: StreamResolvedConfig;
   timestamp: Date;
 }
 ```
@@ -445,7 +454,33 @@ interface StreamStatus {
     droppedFrames: number;
     duration: number;
   };
+  resolvedConfig?: StreamResolvedConfig;
   timestamp: Date;
+}
+```
+
+```typescript
+interface StreamResolvedConfig {
+  transport?: 'rtmp' | 'srt' | 'whip';
+  video?: {
+    // Encoded output dimensions sent to the stream endpoint.
+    width: number;
+    height: number;
+    // Native camera buffer dimensions selected before crop/downscale.
+    captureWidth?: number;
+    captureHeight?: number;
+    // Encoded video bitrate in bits per second.
+    bitrate: number;
+    // Resolved capture/encode frame rate.
+    fps: number;
+  };
+  audio?: {
+    // Encoded audio bitrate in bits per second.
+    bitrate?: number;
+    sampleRate?: number;
+    echoCancellation?: boolean;
+    noiseSuppression?: boolean;
+  };
 }
 ```
 

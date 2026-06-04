@@ -72,7 +72,6 @@ public final class MentraBluetoothSDK {
     public func requestPhoto(_ request: MentraPhotoRequest)
     public func queryGalleryStatus()
     public func startStream(_ request: MentraStreamRequest)
-    public func keepStreamAlive(_ request: MentraStreamKeepAliveRequest)
     public func stopStream()
     public func startVideoRecording(_ request: MentraVideoRecordingRequest)
     public func stopVideoRecording(requestId: String)
@@ -142,7 +141,7 @@ Add typed public models before exposing the facade:
 - `MentraDiscoveredDevice`: `model`, `name`, optional `identifier`, optional `rssi`.
 - `MentraGlassesStatus`: current snapshot of connected, fully booted, battery, charging, model, firmware, serial, Wi-Fi, hotspot, head-up, controller, and signal state.
 - `MentraBluetoothStatus`: current snapshot of searching, mic, current mic, search results, Wi-Fi scan results, permission availability, and audio availability.
-- `MentraDisplayTextRequest`, `MentraDisplayEventRequest`, `MentraDashboardPositionRequest`, `MentraDashboardMenuItem`, `MentraPhotoRequest`, `MentraStreamRequest`, `MentraStreamKeepAliveRequest`, `MentraVideoRecordingRequest`, `MentraMicConfiguration`, `MentraBluetoothError`.
+- `MentraDisplayTextRequest`, `MentraDisplayEventRequest`, `MentraDashboardPositionRequest`, `MentraDashboardMenuItem`, `MentraPhotoRequest`, `MentraStreamRequest`, `MentraVideoRecordingRequest`, `MentraMicConfiguration`, `MentraBluetoothError`.
 - Settings models/enums for values currently routed through `DeviceStore.apply()`: `MentraButtonPhotoSettings`, `MentraButtonPhotoSize`, `MentraButtonVideoRecordingSettings`, `MentraCameraFov`, and `MentraMicPreference`.
 - Typed value enums should reflect device-specific capability boundaries rather than raw string payloads: `MentraPhotoSize` includes `full` for app-requested uploads, `MentraButtonPhotoSize` intentionally does not; `MentraPhotoCompression` is `none` / `medium` / `heavy`; `MentraRgbLedAction` and `MentraRgbLedColor` represent the Mentra Live/K900 RGB ring surface; stream request fields are typed while the actual streaming protocol is selected from the URL prefix.
 
