@@ -3,7 +3,9 @@ import Foundation
 func intValue(_ value: Any?) -> Int? {
     if let int = value as? Int { return int }
     if let double = value as? Double { return Int(double) }
-    if let number = value as? NSNumber { return number.intValue }
+    // Read the 64-bit value: NSNumber.intValue is Int32 and would truncate large
+    // values (e.g. millisecond timestamps or byte counts, which bridge in as Int64).
+    if let number = value as? NSNumber { return Int(truncatingIfNeeded: number.int64Value) }
     return nil
 }
 
