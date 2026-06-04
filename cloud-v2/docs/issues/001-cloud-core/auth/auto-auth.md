@@ -1,11 +1,11 @@
 # Miniapp auto-auth: spike
 
 **Status:** The mechanism is decided. The server side (mint endpoint, JWKS, token)
-is specced in [`./spec.md`](./spec.md); the on-device injection is proposed in
-[`injection.md`](./injection.md). This is the "Miniapp to developer-server auth
-(Phase 2)" that oem-auth deferred: how Mentra injects auth into a local miniapp so
-it can call the developer's own backend with no login. The user identity it
-carries is the sibling spike, [`./identity.md`](./identity.md).
+is specced in [`./spec.md`](./spec.md); the on-device injection is the "On-device
+injection" section below. This is the "Miniapp to developer-server auth (Phase 2)"
+that oem-auth deferred: how Mentra injects auth into a local miniapp so it can call
+the developer's own backend with no login. The user identity it carries is the
+sibling spike, [`./identity.md`](./identity.md).
 
 ## Scope
 
@@ -79,7 +79,7 @@ The v2 mechanism:
    Minting is server-side so it can be revoked and audited.
 3. The runtime injects this token into the bundle's two JS contexts (the webview
    and the Crust engine), not via a URL param; `useMentraAuth()` reads it from the
-   bridge. See [`injection.md`](./injection.md).
+   bridge. See "On-device injection" below.
 4. The webview calls the developer's backend with
    `Authorization: Bearer <miniapp-scoped-token>`.
 5. The developer's backend verifies the token against **Mentra's published public
@@ -108,6 +108,43 @@ The browser path (a webview opened outside the app, or a companion web app) stil
 needs a "Sign in with Mentra" OAuth flow that ends in the same miniapp-scoped token.
 Carry v1's Path B forward, issuing the v2 token.
 
+## On-device injection
+
+The miniapp receives only the **miniapp-scoped token**; the user's access token
+stays in the cloud-client and is never handed to a bundle. The on-device Runtime
+obtains the scoped token from `cloud.auth.getMiniappToken(packageName)` and
+delivers it into the bundle.
+
+**Two JS contexts.** The Runtime runs a bundle in a WebView (UI) and the Crust
+engine (JavaScriptCore / QuickJS, headless logic). A call to the developer backend
+can come from either, so the token must be available in both; both receive the
+same token from the same Runtime-held source.
+
+**Delivery.**
+
+- *Identity + initial token on connect.* The SDK's `session.connect()` handshake
+  returns `mentraUserId` and the initial miniapp token alongside the session info,
+  so the developer code has both as soon as the session is ready.
+- *WebView.* Delivered through the runtime bridge (the channel that pushes events
+  to the page); `@mentra/react` `useMentraAuth()` reads `{ mentraUserId, token }`
+  from it. On the web fallback, the "Sign in with Mentra" OAuth flow ends with the
+  same token, so `useMentraAuth()` is identical either way.
+- *Crust engine.* The local SDK in the headless context receives the token from
+  the Runtime host via the engine bridge and exposes the same
+  `{ mentraUserId, token }` plus an authed-fetch helper.
+
+**Refresh.** The Runtime re-mints before expiry (via `cloud.auth.getMiniappToken`,
+which caches and refreshes per packageName) and pushes the new token to both
+contexts through a dedicated auth-update message; the SDK swaps it in transparently.
+
+```ts
+// developer's miniapp (web or headless), via the SDK
+const { mentraUserId, token } = useMentraAuth()
+await fetch("https://api.theirapp.com/...", {
+  headers: { Authorization: `Bearer ${token}` },
+})
+```
+
 ## Decided (in [`./spec.md`](./spec.md))
 
 - **Mint endpoint:** `POST /api/client/auth/miniapp-token` (cloud-core, Bearer
@@ -122,9 +159,9 @@ Carry v1's Path B forward, issuing the v2 token.
 - **API key role.** Keep API keys strictly for dev-backend-to-Mentra
   server-to-server calls, or retire them entirely? They are already out of the
   per-user verification path; this is only about whether any role remains.
-
-The on-device token injection is proposed in [`injection.md`](./injection.md); the
-exact bridge messages and SDK surface are finalized during implementation.
+- **Injection details.** The precise auth-update message format on each bridge
+  (the WebView channel and the Crust engine bridge), and whether `useMentraAuth()`
+  and the local SDK share one implementation. Finalized during implementation.
 
 ## References
 

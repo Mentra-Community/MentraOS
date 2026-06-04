@@ -25,7 +25,7 @@ lands.
 | [auth / spec + design](./001-cloud-core/auth/spec.md) | Specced | [spec.md](./001-cloud-core/auth/spec.md) (endpoints + tokens) and [design.md](./001-cloud-core/auth/design.md) (e2e code changes across cloud-core, cloud-client, on-device, dev SDK): exchange, refresh, miniapp-token mint, JWKS |
 | [auth / oem-auth](./001-cloud-core/auth/oem-auth/) | Implemented | the OEM-JWT exchange mechanics, built in v2, e2e verified with `test-oem`. Left: finalize doc review |
 | [auth / identity](./001-cloud-core/auth/identity.md) | Spiked | Mentra-direct identity (app + console + store) unifies on the access token, plus the core-token migration bridge |
-| [auth / auto-auth](./001-cloud-core/auth/auto-auth.md) | Spiked + proposal | end-to-end miniapp dev-backend flow; mint + JWKS in `auth/spec.md`; [injection.md](./001-cloud-core/auth/injection.md) proposal. Open: API key role |
+| [auth / auto-auth](./001-cloud-core/auth/auto-auth.md) | Decided | end-to-end miniapp dev-backend flow + on-device injection; mint + JWKS in `auth/spec.md`. Open: API key role |
 | [oem-service](./001-cloud-core/oem-service/) | Stub | needs spec |
 | [miniapp-service](./001-cloud-core/miniapp-service/) | Stub | needs spec (stores bundles via storage-service) |
 | [dev-console-service](./001-cloud-core/dev-console-service/) | Stub | needs spec |

@@ -7,7 +7,7 @@ Mentra, and how Mentra hands identity to the parties that need it.
 "what"), then [`design.md`](./design.md) (the end-to-end implementation design
 across cloud-core, cloud-client, on-device, and the dev SDK, the "how", every
 code change). Those two give the full v2 picture. The rest below (`oem-auth/`,
-`identity.md`, `auto-auth.md`, `injection.md`) is supporting detail.
+`identity.md`, `auto-auth.md`) is supporting detail.
 
 ## Parts
 
@@ -42,8 +42,8 @@ verifies it. Miniapp auto-auth derives a short-lived miniapp-scoped token from i
   cloud-core, cloud-client, on-device, and the dev SDK).
 - `oem-auth/`: Implemented (the OEM-JWT exchange mechanics; docs under review).
 - `identity.md`: Mentra-direct identity + the migration bridge (decided).
-- `auto-auth.md` + `injection.md`: the miniapp dev-backend mechanism (decided) and
-  the on-device injection proposal.
+- `auto-auth.md`: the miniapp dev-backend mechanism and the on-device injection
+  (decided).
 
 ## Related
 

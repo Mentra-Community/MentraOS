@@ -75,7 +75,7 @@ configureRuntime({
   the cloud-client owning endpoints + auth. island no longer reads a raw token for
   transport; it calls `getMiniappToken(packageName)` when it needs the
   miniapp-scoped token to hand a bundle (see
-  [`../001-cloud-core/auth/injection.md`](../001-cloud-core/auth/injection.md)).
+  [`../001-cloud-core/auth/auto-auth.md`](../001-cloud-core/auth/auto-auth.md)).
 
 ## What does not change
 
