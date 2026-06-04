@@ -594,8 +594,13 @@ public final class MentraBluetoothSDK {
         default:
             // A non-terminal status means the stream is live or coming up and the glasses can
             // now ACK; arm the missed-ACK detector from here so a slow startup before the first
-            // ACK can't trip a false keep-alive timeout.
-            activeStreamKeepAlive?.armed = true
+            // ACK can't trip a false keep-alive timeout. On the arming transition, drop any
+            // pre-arm bookkeeping so a stale unacked id can't immediately count as a miss.
+            if let tracker = activeStreamKeepAlive, !tracker.armed {
+                tracker.armed = true
+                tracker.pendingAckId = nil
+                tracker.missedAckCount = 0
+            }
         }
     }
 

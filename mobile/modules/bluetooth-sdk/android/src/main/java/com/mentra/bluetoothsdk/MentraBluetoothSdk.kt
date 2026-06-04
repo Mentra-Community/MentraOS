@@ -858,10 +858,18 @@ class MentraBluetoothSdk private constructor(
             StreamState.RECONNECT_FAILED -> stopStreamKeepAliveMonitor()
             // A non-terminal status means the stream is live or coming up and the glasses can
             // now ACK; arm the missed-ACK detector from here so a slow startup before the first
-            // ACK can't trip a false keep-alive timeout.
+            // ACK can't trip a false keep-alive timeout. On the arming transition, drop any
+            // pre-arm bookkeeping so a stale unacked id (sent before the glasses could ACK)
+            // can't immediately count as a miss.
             else ->
                     synchronized(streamKeepAliveLock) {
-                        activeStreamKeepAlive?.let { if (it.streamId == streamId) it.armed = true }
+                        activeStreamKeepAlive?.let {
+                            if (it.streamId == streamId && !it.armed) {
+                                it.armed = true
+                                it.pendingAckId = null
+                                it.missedAckCount = 0
+                            }
+                        }
                     }
         }
     }
