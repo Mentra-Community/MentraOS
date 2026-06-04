@@ -29,6 +29,308 @@ The package is split so platform-only code never leaks into the shared core:
 
 Everything below lives in the core unless it says otherwise.
 
+## Files and signatures
+
+Proposed home: `cloud-v2/packages/cloud-client/` (a cloud-v2 workspace package, next
+to the protocol types and the test harness; the mobile app depends on it).
+
+```
+cloud-v2/packages/cloud-client/
+  package.json                 # @mentra/cloud-client; exports ./core ./react-native ./node
+  tsconfig.json
+  src/                         # the platform-agnostic core (@mentra/cloud-client/core)
+    index.ts                   # public entry: re-exports CloudClient + the public types
+    client.ts                  # the CloudClient class (wiring only)
+    config.ts                  # CloudClientConfig + the public config types
+    transports.ts              # the injected-transport interfaces (ws / udp / storage)
+    http.ts                    # the shared REST helper
+    logger.ts                  # Logger interface + a no-op default
+    errors.ts                  # the client-side error types
+    modules/
+      auth/
+        auth.ts                # cloud.auth: the AuthModule implementation
+        token-store.ts         # token state + the single-flight refresh
+        jwt.ts                 # read JWT claims (no signature check)
+      runtime/
+        runtime.ts             # cloud.runtime: the RuntimeModule, orchestrates the rest
+        connection.ts          # the WebSocket: handshake, reconnect, liveness ping
+        emitter.ts             # the one typed event emitter
+        subscriptions.ts       # setSubscriptions over REST, with the version counter
+        managed-media.ts       # managed photo + stream (REST request, await the push)
+        audio-udp.ts           # UDP audio: encrypt each frame, hand bytes to the socket
+      core/
+        core.ts                # cloud.core: the CoreModule implementation
+  react-native/
+    index.ts                   # supplies the phone's ws/udp/storage, re-exports CloudClient
+    transports.ts              # the RN WebSocket, native UDP, and secure-store adapters
+  node/
+    index.ts                   # supplies node ws/udp/storage, re-exports CloudClient
+    transports.ts              # the ws-package, dgram, and memory/file adapters
+```
+
+(The package's `/core` import path and the `cloud.core` module are different things:
+`/core` is the shared, platform-agnostic build; `cloud.core` is the module under
+`src/modules/core/`. The `modules/` prefix keeps them apart.)
+
+The signatures, file by file. The public ones (`AuthModule`, `RuntimeModule`,
+`CoreModule`, the transport types) come from [`spec.md`](./spec.md); the rest are the
+internal pieces behind them. Wire types (`AudioSubscription`, `TranscriptionData`,
+the message unions) are imported from `@mentra/cloud-runtime/protocol`.
+
+**`src/client.ts`**: the top-level object. It only wires things together: resolves
+the addresses (proxy-aware), builds the HTTP helper, then builds the three modules in
+order.
+
+```ts
+export class CloudClient {
+  readonly auth: AuthModule
+  readonly runtime: RuntimeModule
+  readonly core: CoreModule
+  constructor(config: CloudClientConfig)
+}
+```
+
+**`src/config.ts`**: the shape you pass to the constructor.
+
+```ts
+export interface CloudClientConfig {
+  endpoints: { core: string; runtime: string; proxy?: string }   // proxy rewrites both
+  auth: AuthConfig
+  transports: CloudClientTransports
+  logger?: Logger
+  reconnect?: { baseMs: number; maxMs: number; jitter: boolean }
+}
+export type SubjectTokenType = "oem-jwt" | "mentra-core" | "supabase"
+export type AuthConfig =
+  | { subjectToken: string; subjectTokenType: SubjectTokenType }   // exchanged once
+  | { getSubjectToken: () => Promise<{ token: string; type: SubjectTokenType }> }
+  | { accessToken: string; refreshToken: string }                  // already exchanged
+```
+
+**`src/transports.ts`**: the three things each platform supplies. The core only ever
+touches these interfaces, never a real socket.
+
+```ts
+export interface WebSocketLike {
+  send(data: string): void
+  close(): void
+  onOpen(cb: () => void): void
+  onMessage(cb: (data: string) => void): void
+  onClose(cb: (info: { code: number; reason: string }) => void): void
+  onError(cb: (err: unknown) => void): void
+}
+export interface UdpSocketLike {
+  send(bytes: Uint8Array, host: string, port: number): void
+  onMessage(cb: (bytes: Uint8Array) => void): void
+  close(): void
+}
+export interface KeyValueStore {
+  get(key: string): Promise<string | null>
+  set(key: string, value: string): Promise<void>
+  delete(key: string): Promise<void>
+}
+export interface CloudClientTransports {
+  ws: (url: string) => WebSocketLike
+  udp: () => UdpSocketLike
+  storage: KeyValueStore
+}
+```
+
+**`src/http.ts`**: one REST helper used by every module: builds the URL, adds the
+Bearer header, parses JSON, maps a non-2xx to a typed error, and retries safe calls.
+
+```ts
+export interface HttpClient {
+  get<T>(path: string, opts?: ReqOpts): Promise<T>
+  post<T>(path: string, body?: unknown, opts?: ReqOpts): Promise<T>
+  put<T>(path: string, body: unknown, opts?: ReqOpts): Promise<T>
+}
+export interface ReqOpts { bearer?: string; idempotent?: boolean }  // bearer overrides the default
+export function createHttpClient(deps: {
+  baseUrl: string
+  getToken?: () => Promise<string>   // default Bearer source (cloud.auth)
+  logger: Logger
+}): HttpClient
+```
+
+**`src/modules/auth/auth.ts`**: `cloud.auth`. The public methods plus the wiring.
+
+```ts
+export class Auth implements AuthModule {
+  constructor(deps: { http: HttpClient; store: TokenStore; config: AuthConfig; logger: Logger })
+  getAccessToken(): Promise<string>                                   // refreshes when near expiry
+  getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>
+  get identity(): { mentraUserId: string; oemId: string }
+  onExpired(handler: () => void): () => void
+}
+```
+
+**`src/modules/auth/token-store.ts`**: the token state and the single-flight lock.
+
+```ts
+export class TokenStore {
+  constructor(deps: { storage: KeyValueStore })
+  current(): { accessToken: string; exp: number } | null            // in-memory
+  save(tokens: { accessToken: string; refreshToken: string }): Promise<void>  // persists refresh
+  refreshToken(): Promise<string | null>
+  singleFlight<T>(key: string, fn: () => Promise<T>): Promise<T>     // de-dupes concurrent refresh/mint
+}
+```
+
+**`src/modules/auth/jwt.ts`**: read the claims out of a token (no verification; the
+cloud verifies).
+
+```ts
+export function decodeClaims(jwt: string): {
+  sub: string; oemId: string; exp: number; [k: string]: unknown
+}
+```
+
+**`src/modules/runtime/runtime.ts`**: `cloud.runtime`. Implements the public
+`RuntimeModule` by delegating to the four pieces below.
+
+```ts
+export class Runtime implements RuntimeModule {
+  constructor(deps: {
+    connection: Connection; emitter: RuntimeEmitter;
+    subscriptions: Subscriptions; media: ManagedMedia; audio: UdpAudio; logger: Logger
+  })
+  connect(): Promise<void>
+  close(): void
+  setSubscriptions(subs: AudioSubscription[]): Promise<void>
+  onTranscript(cb: (d: TranscriptionData) => void): () => void
+  onTranslation(cb: (d: TranslationData) => void): () => void
+  requestManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; readUrl: string }>
+  startManagedStream(opts: StreamOptions): Promise<ManagedStream>
+  stopManagedStream(streamId: string): Promise<void>
+  onConnected(cb: () => void): () => void
+  onDisconnected(cb: (info: { reason: string }) => void): () => void
+  onError(cb: (err: ProtocolError) => void): () => void
+  on<K extends keyof RuntimeEvents>(event: K, cb: (d: RuntimeEvents[K]) => void): () => void
+  off<K extends keyof RuntimeEvents>(event: K, cb: (d: RuntimeEvents[K]) => void): void
+  onAny(cb: (event: keyof RuntimeEvents, data: unknown) => void): () => void
+}
+```
+
+**`src/modules/runtime/connection.ts`**: owns the socket, the handshake, reconnect,
+and the liveness ping. Hands validated messages up; the rest of runtime never sees a
+raw socket.
+
+```ts
+export class Connection {
+  constructor(deps: {
+    ws: (url: string) => WebSocketLike; url: string
+    getToken: () => Promise<string>; initPayload: () => ConnectionInit
+    reconnect: { baseMs: number; maxMs: number; jitter: boolean }; logger: Logger
+  })
+  open(): Promise<ConnectionAck>                              // connect + init + await ack
+  close(): void
+  send(msg: ClientToCloudMessage): void
+  onMessage(cb: (msg: CloudToClientMessage) => void): void    // already validated by the protocol types
+  onState(cb: (s: "connecting" | "open" | "closed") => void): void
+  get ack(): ConnectionAck | null                            // sessionId, audio config
+}
+```
+
+**`src/modules/runtime/emitter.ts`**: the single typed emitter the public `on*`
+methods wrap.
+
+```ts
+export interface RuntimeEvents {
+  transcript: TranscriptionData
+  translation: TranslationData
+  connected: void
+  disconnected: { reason: string }
+  error: ProtocolError
+}
+export class RuntimeEmitter {
+  on<K extends keyof RuntimeEvents>(e: K, cb: (d: RuntimeEvents[K]) => void): () => void
+  off<K extends keyof RuntimeEvents>(e: K, cb: (d: RuntimeEvents[K]) => void): void
+  onAny(cb: (e: keyof RuntimeEvents, d: unknown) => void): () => void
+  emit<K extends keyof RuntimeEvents>(e: K, d: RuntimeEvents[K]): void
+}
+```
+
+**`src/modules/runtime/subscriptions.ts`**: the REST full-replace with the version
+counter, plus the re-send on reconnect.
+
+```ts
+export class Subscriptions {
+  constructor(deps: { http: HttpClient })
+  set(subs: AudioSubscription[], sessionId: string): Promise<void>   // PUT, bumps version
+  resend(sessionId: string): Promise<void>                           // re-PUT the current set
+}
+```
+
+**`src/modules/runtime/managed-media.ts`**: managed photo and stream: send a REST
+request, then resolve when the matching push arrives.
+
+```ts
+export class ManagedMedia {
+  constructor(deps: { http: HttpClient })
+  requestPhoto(opts: PhotoOptions): Promise<{ requestId: string; readUrl: string }>
+  startStream(opts: StreamOptions): Promise<ManagedStream>
+  stopStream(streamId: string): Promise<void>
+  handlePush(msg: CloudToClientMessage): void   // resolves/rejects a pending request by requestId
+}
+```
+
+**`src/modules/runtime/audio-udp.ts`**: the UDP audio path: encrypt in the core,
+send through the injected socket.
+
+```ts
+export class UdpAudio {
+  constructor(deps: { udp: () => UdpSocketLike })
+  configure(audio: NonNullable<ConnectionAck["audio"]>): void   // sessionTag, host/port, key
+  sendFrame(lc3: Uint8Array): void                              // secretbox + frame + udp.send
+  close(): void
+}
+```
+
+**`src/modules/core/core.ts`**: `cloud.core`. Stateless REST.
+
+```ts
+export class Core implements CoreModule {
+  constructor(deps: { http: HttpClient })
+  miniapps: {
+    list(): Promise<MiniappListing[]>
+    getBundle(packageName: string, version?: string):
+      Promise<{ downloadUrl: string; version: string; manifest: MiniappManifest }>
+  }
+}
+```
+
+**`src/logger.ts`** / **`src/errors.ts`**: small shared bits.
+
+```ts
+export interface Logger {
+  debug(msg: string, meta?: object): void
+  info(msg: string, meta?: object): void
+  warn(msg: string, meta?: object): void
+  error(msg: string, meta?: object): void
+}
+export const noopLogger: Logger
+
+export class CloudClientError extends Error {}
+export class HttpError extends CloudClientError { status!: number; code?: string }
+export class AuthExpiredError extends CloudClientError {}
+```
+
+**`react-native/index.ts`** and **`node/index.ts`**: the only platform-specific
+files. Each builds the three transports and re-exports a `CloudClient` that's
+pre-wired with them, so the caller just passes `{ endpoints, auth }`.
+
+```ts
+// node/index.ts
+import { CloudClient as Core, CloudClientConfig } from "@mentra/cloud-client/core"
+import { nodeTransports } from "./transports"
+export class CloudClient extends Core {
+  constructor(config: Omit<CloudClientConfig, "transports">) {
+    super({ ...config, transports: nodeTransports() })
+  }
+}
+```
+
 ## The pieces passed in per platform
 
 Three things differ between a phone and a server, so the core takes them as inputs
