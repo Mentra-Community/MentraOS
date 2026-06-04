@@ -39,6 +39,8 @@ export class NavigationController {
   private lastHudKey = ""
   private lastMinimapPng: string | null = null
   private showMinimap = false
+  private lastCoordsAt = 0
+  private gettingFix = false
 
   // Canonical state (mirrored to UI).
   private coords: Coords | null = null
@@ -99,6 +101,7 @@ export class NavigationController {
           accuracy: d.accuracy,
           ts: d.timestamp ?? Date.now(),
         }
+        this.lastCoordsAt = Date.now()
         this.ui.send("nav:coords", this.coords)
         this.refreshHUD()
       }),
@@ -171,6 +174,7 @@ export class NavigationController {
               maneuver: u,
               offRouteAt: null,
             }
+            this.heartbeatLocationIfStale()
             break
           case "off_route":
             this.trip = {...this.trip, offRouteAt: Date.now()}
@@ -519,10 +523,38 @@ export class NavigationController {
       .then((d) => {
         if (this.coords) return
         this.coords = {lat: d.lat, lng: d.lng, accuracy: d.accuracy, ts: d.timestamp ?? Date.now()}
+        this.lastCoordsAt = Date.now()
         this.ui.send("nav:coords", this.coords)
       })
       .catch(() => {
         /* streaming updates will arrive when location stabilises */
+      })
+  }
+
+  // Recovery for the "dot frozen while distance keeps ticking" bug. The Nav
+  // SDK's onNavManeuver and onNavLocation streams emit independently — when
+  // the road-snapped location stream goes quiet but maneuvers keep firing,
+  // the dot freezes on the map even though we're moving. Use the maneuver
+  // tick as a heartbeat: if our coords haven't refreshed in STALE_MS, force
+  // a one-shot CoreLocation fix. The existing onUpdate listener handles the
+  // result; this just primes the pump.
+  private heartbeatLocationIfStale(): void {
+    const STALE_MS = 5_000
+    if (this.gettingFix) return
+    if (Date.now() - this.lastCoordsAt < STALE_MS) return
+    this.gettingFix = true
+    this.location
+      .getOnce()
+      .then((d) => {
+        this.coords = {lat: d.lat, lng: d.lng, accuracy: d.accuracy, ts: d.timestamp ?? Date.now()}
+        this.lastCoordsAt = Date.now()
+        this.ui.send("nav:coords", this.coords)
+      })
+      .catch(() => {
+        /* next maneuver tick will retry */
+      })
+      .finally(() => {
+        this.gettingFix = false
       })
   }
 
