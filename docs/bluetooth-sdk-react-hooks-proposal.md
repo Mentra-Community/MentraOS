@@ -287,11 +287,11 @@ SDK response event lifecycle.
 
 Not implemented yet.
 
-Owns stream start/stop state and keep-alive timer cleanup.
+Owns stream start/stop state and stream status cleanup. The Bluetooth SDK
+itself owns stream keep-alives for direct app streams.
 
 ```ts
 function useStreamSession(options?: {
-  keepAliveIntervalSeconds?: number;
   onStatus?: (event: StreamStatusEvent) => void;
   onError?: (error: unknown) => void;
 }): {
@@ -300,18 +300,18 @@ function useStreamSession(options?: {
   starting: boolean;
   status: StreamStatusEvent | null;
   error: unknown | null;
-  startStream: (request: Omit<StreamStartRequest, 'streamId' | 'keepAliveIntervalSeconds'> & {
+  startStream: (request: Omit<StreamStartRequest, 'streamId'> & {
     streamId?: string;
-    keepAliveIntervalSeconds?: number;
   }) => Promise<string>;
   stopStream: () => Promise<void>;
 }
 ```
 
-This hook should call `keepStreamAlive(...)` every interval while active and
-stop the timer on `stopStream()` or unmount. Preview readiness, MediaMTX status
-queries, and direct in-phone WebRTC receiver setup should stay in the starter
-kit because they are demo infrastructure, not Bluetooth SDK behavior.
+This hook should not call `keepStreamAlive(...)`; that is SDK-owned now. The
+hook should reset local stream UI state on `stopStream()`, unmount, or terminal
+`stream_status` events. Preview readiness, MediaMTX status queries, and direct
+in-phone WebRTC receiver setup should stay in the starter kit because they are
+demo infrastructure, not Bluetooth SDK behavior.
 
 ### `useMicPcmRecorder`
 

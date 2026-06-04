@@ -928,7 +928,7 @@ struct ViewState {
         )
 #else
         let rawDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 1
-        let d = min(max(rawDepth, 1), 3)
+        let d = min(max(rawDepth, 1), 4)
 #endif
         sgc.setDashboardPosition(h, d)
     }
@@ -1202,11 +1202,17 @@ struct ViewState {
         sgc?.sendReboot()
     }
 
-    func startVideoRecording(_ requestId: String, _ save: Bool, _ sound: Bool) {
+    func startVideoRecording(
+        _ requestId: String, _ save: Bool, _ sound: Bool, _ width: Int = 0, _ height: Int = 0,
+        _ fps: Int = 0
+    ) {
         Bridge.log(
-            "MAN: onStartVideoRecording: requestId=\(requestId), save=\(save), flash=true, sound=\(sound)"
+            "MAN: onStartVideoRecording: requestId=\(requestId), save=\(save), flash=true, sound=\(sound), resolution=\(width)x\(height)@\(fps)fps"
         )
-        sgc?.startVideoRecording(requestId: requestId, save: save, flash: true, sound: sound)
+        sgc?.startVideoRecording(
+            requestId: requestId, save: save, flash: true, sound: sound, width: width, height: height,
+            fps: fps
+        )
     }
 
     func stopVideoRecording(_ requestId: String) {
@@ -1285,10 +1291,15 @@ struct ViewState {
         _ flash: Bool,
         _ save: Bool,
         _ sound: Bool,
-        exposureTimeNs: Double? = nil
+        exposureTimeNs: Double? = nil,
+        iso: Int? = nil
     ) {
+        // Only honor manual exposure when it is a usable value; manual ISO is a one-shot
+        // companion to manual exposure and must be dropped when exposure is invalid.
+        let manualExposureNs = exposureTimeNs.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+        let manualIso = manualExposureNs != nil ? iso.flatMap { $0 > 0 ? $0 : nil } : nil
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(requestId) appId=\(appId) webhookUrl=\(webhookUrl ?? "nil") size=\(size) compress=\(compress ?? "none") flash=\(flash) save=\(save) sound=\(sound) exposureTimeNs=\(exposureTimeNs.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(requestId) appId=\(appId) webhookUrl=\(webhookUrl ?? "nil") size=\(size) compress=\(compress ?? "none") flash=\(flash) save=\(save) sound=\(sound) exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
         )
         guard let sgc else {
             Bridge.log(
@@ -1298,7 +1309,7 @@ struct ViewState {
         }
         sgc.requestPhoto(
             requestId, appId: appId, size: size, webhookUrl: webhookUrl, authToken: authToken,
-            compress: compress, flash: flash, save: save, sound: sound, exposureTimeNs: exposureTimeNs
+            compress: compress, flash: flash, save: save, sound: sound, exposureTimeNs: manualExposureNs, iso: manualIso
         )
     }
 

@@ -45,11 +45,12 @@ signing.gnupg.keyName=...
 signing.gnupg.passphrase=...
 ```
 
-Set the release version explicitly so a local default cannot publish the wrong
-version:
+The Gradle publications read `mobile/modules/bluetooth-sdk/package.json` by
+default, matching the React Native package version. Capture it once so the
+manual verification commands use the same version string:
 
 ```bash
-version=0.1.8
+version=$(node -p "require('./mobile/modules/bluetooth-sdk/package.json').version")
 ```
 
 ## Publish to Maven Local
@@ -67,6 +68,10 @@ MENTRA_MAVEN_VERSION="${version}" ./gradlew \
 
 Use this only as a local smoke check. Consumer validation for a Central release
 should not rely on stale `mavenLocal()` artifacts.
+
+`MENTRA_MAVEN_VERSION` is passed explicitly in the commands below to keep the
+shell's `version` variable and Gradle's publication version locked together. If
+it is omitted, Gradle falls back to the same package metadata version.
 
 ## Publish to Sonatype Central
 

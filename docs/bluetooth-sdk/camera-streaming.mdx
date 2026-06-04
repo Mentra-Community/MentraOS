@@ -22,6 +22,8 @@ await BluetoothSdk.requestPhoto({
   authToken: 'optional-token',
   compress: 'medium',
   sound: true,
+  exposureTimeNs: null,
+  iso: null,
 });
 ```
 
@@ -38,6 +40,8 @@ sdk.requestPhoto(
         authToken = "optional-token",
         compress = PhotoCompression.MEDIUM,
         sound = true,
+        exposureTimeNs = null,
+        iso = null,
     )
 )
 ```
@@ -54,7 +58,9 @@ sdk.requestPhoto(
         webhookUrl: "https://api.example.com/mentra/photo",
         authToken: "optional-token",
         compress: .medium,
-        sound: true
+        sound: true,
+        exposureTimeNs: nil,
+        iso: nil
     )
 )
 ```
@@ -63,6 +69,37 @@ sdk.requestPhoto(
 </Tabs>
 
 The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
+
+For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null` / `nil`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
+
+Listen for `photo_status` to render progress and inspect the effective settings the glasses used:
+
+```ts
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+useBluetoothEvent('photo_status', (event) => {
+  if (event.status === 'configuring') {
+    console.log('effective JPEG config', event.resolvedConfig);
+  }
+  if (event.status === 'capturing') {
+    console.log('requested still config', event.requestedCaptureConfig);
+    console.log('latest metered preview', event.meteredPreview);
+  }
+  if (event.status === 'captured') {
+    console.log('actual still capture', event.captureMetadata);
+  }
+});
+```
+
+`photo_status` metadata is stage-specific:
+
+| Status | Optional metadata | When to use it |
+| --- | --- | --- |
+| `configuring` | `resolvedConfig` | Show the effective JPEG dimensions, quality, requested size, source, transfer method, compression, and manual exposure fields when present. |
+| `capturing` | `requestedCaptureConfig`, `meteredPreview` | Compare the Camera2 still request with the latest auto-exposure preview estimate before the capture is fired. |
+| `captured` | `captureMetadata` | Read the actual HAL-applied still capture values, including exposure time, ISO, frame duration, AE state/name, noise reduction mode, edge mode, sensor timestamp, and MFNR hint when available. |
+
+Upload and BLE transfer statuses such as `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring` are transport progress only. They do not carry capture metadata, so use the `captured` event when you need the actual exposure/ISO/frame data for debugging or UI. `ble_fallback_compression` means the direct Wi-Fi/webhook upload failed and the glasses are compressing the already-captured photo for Bluetooth fallback delivery.
 
 ## Gallery Mode
 
@@ -76,7 +113,7 @@ await BluetoothSdk.setGalleryModeEnabled(true);
 await BluetoothSdk.setButtonPhotoSettings('medium');
 await BluetoothSdk.setButtonVideoRecordingSettings(1280, 720, 30);
 await BluetoothSdk.setButtonMaxRecordingTime(3);
-await BluetoothSdk.setCameraFov('wide');
+await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 0});
 ```
 
   </Tab>
@@ -87,7 +124,7 @@ sdk.setGalleryModeEnabled(true)
 sdk.setButtonPhotoSettings(size = ButtonPhotoSize.MEDIUM)
 sdk.setButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
 sdk.setButtonMaxRecordingTime(minutes = 3)
-sdk.setCameraFov(CameraFov.WIDE)
+sdk.setCameraFov(CameraFov(fov = 102, roiPosition = 0))
 ```
 
   </Tab>
@@ -98,13 +135,17 @@ try await sdk.setGalleryModeEnabled(true)
 try await sdk.setButtonPhotoSettings(size: .medium)
 try await sdk.setButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30)
 try await sdk.setButtonMaxRecordingTime(minutes: 3)
-try await sdk.setCameraFov(.wide)
+try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: 0))
 ```
 
   </Tab>
 </Tabs>
 
 Use `setGalleryModeEnabled(false)` when you want the action button to report events without triggering local gallery capture while the glasses are connected.
+
+Action-button photos emitted by the glasses use the same `photo_status` metadata shape when the phone SDK is connected. These local captures report `resolvedConfig.source: "button"` and `resolvedConfig.transferMethod: "local"`, then expose `requestedCaptureConfig` / `meteredPreview` on `capturing` and `captureMetadata` on `captured`.
+
+`setCameraFov` accepts FOV degrees from 62 to 118 and ROI position `0` center, `1` bottom, or `2` top. The `"narrow"` (82°), `"standard"` (102°), and `"wide"` (118°) presets are also accepted and map to center ROI. On Mentra Live, applying FOV/ROI restarts the camera for about 5 seconds; wait for that restart before requesting a photo. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
 
 ## Streaming
 
@@ -122,12 +163,6 @@ await BluetoothSdk.startStream({
   streamId,
 });
 
-await BluetoothSdk.keepStreamAlive({
-  type: 'keep_stream_alive',
-  streamId,
-  ackId: `ack-${Date.now()}`,
-});
-
 await BluetoothSdk.stopStream();
 ```
 
@@ -141,13 +176,6 @@ sdk.startStream(
     StreamRequest(
         streamUrl = "http://192.168.1.42:8889/mentra-live/whip",
         streamId = streamId,
-    )
-)
-
-sdk.keepStreamAlive(
-    StreamKeepAliveRequest(
-        streamId = streamId,
-        ackId = "ack-${System.currentTimeMillis()}",
     )
 )
 
@@ -167,20 +195,13 @@ sdk.startStream(
     )
 )
 
-sdk.keepStreamAlive(
-    StreamKeepAliveRequest(
-        streamId: streamId,
-        ackId: "ack-\(Date().timeIntervalSince1970)"
-    )
-)
-
 sdk.stopStream()
 ```
 
   </Tab>
 </Tabs>
 
-Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https://` for WHIP/WebRTC ingest. Send keep-alives about every 15 seconds while streaming. The camera light is always enabled while streaming.
+Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https://` for WHIP/WebRTC ingest. The SDK sends stream keep-alives automatically while streaming and reports keep-alive failures through `stream_status`. The camera light is always enabled while streaming.
 
 ## Optional Local Demo Helper
 
@@ -208,6 +229,39 @@ The starter kit examples also include direct phone photo and WebRTC receive flow
 
 Use real hardware for these flows. Keep the glasses Wi-Fi active and make sure the phone and glasses are on a reachable local network.
 
+For direct phone photo upload in React Native, start the phone receiver first and pass its `uploadUrl` as the photo webhook:
+
+```ts
+import BluetoothSdk from '@mentra/bluetooth-sdk';
+import MentraPhotoReceiver from '@mentra/bluetooth-sdk/photo-receiver';
+
+const receiver = await MentraPhotoReceiver.startPhotoReceiver();
+
+const uploadSubscription = MentraPhotoReceiver.addListener('photoUpload', (event) => {
+  console.log(event.requestId, event.fileUri, event.byteCount);
+});
+
+try {
+  await BluetoothSdk.requestPhoto({
+    requestId: `photo-${Date.now()}`,
+    appId: 'com.example.app',
+    size: 'medium',
+    webhookUrl: receiver.uploadUrl,
+    authToken: null,
+    compress: 'medium',
+    sound: true,
+  });
+} catch (error) {
+  uploadSubscription.remove();
+  await MentraPhotoReceiver.stopPhotoReceiver();
+  throw error;
+}
+
+// Later:
+uploadSubscription.remove();
+await MentraPhotoReceiver.stopPhotoReceiver();
+```
+
 ## Stream Status
 
 Subscribe to stream status before starting a stream. Treat stream start as accepted, then drive UI from status events:
@@ -221,6 +275,7 @@ import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
 export function StreamStatusLogger() {
   useBluetoothEvent('stream_status', (event) => {
     console.log(event);
+    console.log(event.resolvedConfig?.video?.fps);
   });
 
   return null;
@@ -233,6 +288,7 @@ export function StreamStatusLogger() {
 ```kotlin
 override fun onStreamStatus(event: StreamStatusEvent) {
     Log.d("Mentra", "Stream status: ${event.status}")
+    Log.d("Mentra", "Resolved FPS: ${event.resolvedConfig?.video?.fps}")
 }
 ```
 
@@ -243,6 +299,7 @@ override fun onStreamStatus(event: StreamStatusEvent) {
 func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
     if case let .streamStatus(status) = event {
         print("Stream status: \(status)")
+        print("Resolved FPS: \(status.resolvedConfig?.video?.fps ?? -1)")
     }
 }
 ```
@@ -251,3 +308,11 @@ func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEv
 </Tabs>
 
 Status values include initializing, streaming, stopped, reconnecting, and error states.
+When a status event includes `resolvedConfig`, it contains the effective settings
+used by the glasses after defaults, clamps, and camera-mode selection. In
+`resolvedConfig.video`, `width` and `height` are the encoded output dimensions,
+`captureWidth` and `captureHeight` are the native camera buffer dimensions before
+crop or downscale, `bitrate` is the encoded video bitrate in bits per second, and
+`fps` is the resolved capture/encode frame rate. `resolvedConfig.audio` reports
+the audio bitrate, sample rate, echo cancellation, and noise suppression settings
+when audio is active.
