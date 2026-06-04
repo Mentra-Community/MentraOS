@@ -4,8 +4,10 @@
 // src/background/controllers/GlassesController.ts.
 
 import {useNavigate} from "react-router-dom"
-import {MiniappHeader, useCapabilities} from "@mentra/miniapp/ui"
+import {MiniappHeader} from "@mentra/miniapp/ui"
 
+import "../../../shared/channels"
+import {useChannel} from "../../hooks/useChannel"
 import {Shell} from "../Shell"
 
 interface Row {
@@ -75,8 +77,11 @@ function Badge({badge}: {badge?: Row["badge"]}) {
 
 export default function TesterMenu() {
   const navigate = useNavigate()
-  const caps = useCapabilities() as Record<string, unknown> | null
-  const modelName = (caps?.modelName as string | undefined) ?? ""
+  // Glasses capabilities are background-only state; they reach the WebView via
+  // the GlassesController's `captions:snapshot` push (see CaptionsPage), not a
+  // WebView-side session. Read modelName from that channel.
+  const snapshot = useChannel("captions:snapshot")
+  const modelName = snapshot?.capabilities?.modelName ?? ""
   const isMentraLive = modelName.toLowerCase().includes("live")
 
   return (

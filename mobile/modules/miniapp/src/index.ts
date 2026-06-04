@@ -3,8 +3,8 @@
  *
  * Public entry point. Consumers do:
  *
- *   import {MiniappSession} from "@mentra/miniapp"
- *   import {useSession} from "@mentra/miniapp/react"
+ *   import {MiniappSession} from "@mentra/miniapp"            // background JSContext
+ *   import {useColorScheme} from "@mentra/miniapp/react"      // UI WebView hooks
  *   import {MiniappRequestType} from "@mentra/miniapp/protocol"
  */
 

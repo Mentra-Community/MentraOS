@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState} from "react"
 import {useNavigate} from "react-router-dom"
-import {MiniappHeader, useVisibility} from "@mentra/miniapp/ui"
+import {MiniappHeader} from "@mentra/miniapp/ui"
 
 import "../../shared/channels"
 import {useChannel} from "../hooks/useChannel"
@@ -24,7 +24,6 @@ import {Shell} from "./Shell"
  *   - "Clear"        → "captions:clear"
  */
 export default function CaptionsPage() {
-  const visibility = useVisibility()
   const navigate = useNavigate()
 
   const snapshot = useChannel("captions:snapshot")
@@ -145,7 +144,6 @@ export default function CaptionsPage() {
         <span>
           {history.length} sentence{history.length !== 1 ? "s" : ""}
         </span>
-        <span>{visibility}</span>
       </footer>
     </Shell>
   )
