@@ -307,7 +307,7 @@ interface SocketCommsAdapter {
 }
 
 // v2 (typed against @mentra/cloud-runtime/protocol)
-interface RuntimeCloudAdapter {
+interface CloudRuntimeAdapter {
   setSubscriptions: (subs: AudioSubscription[]) => Promise<void>
   onTranscript: (cb: (d: TranscriptionData) => void) => () => void
   onTranslation: (cb: (d: TranslationData) => void) => () => void
