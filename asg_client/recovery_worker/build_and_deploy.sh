@@ -3,10 +3,14 @@
 set -e
 
 # Link keystore from shared credentials directory if not already present.
+# ASG and recovery are signed with the same production cert, so asg-keystore.jks
+# is accepted as a fallback when a dedicated recovery-keystore.jks is absent.
 CREDS="${HOME}/.mentra/credentials"
 mkdir -p credentials
 if [ ! -f credentials/recovery-keystore.jks ] && [ -f "${CREDS}/recovery-keystore.jks" ]; then
   ln -sf "${CREDS}/recovery-keystore.jks" credentials/recovery-keystore.jks
+elif [ ! -f credentials/recovery-keystore.jks ] && [ -f "${CREDS}/asg-keystore.jks" ]; then
+  ln -sf "${CREDS}/asg-keystore.jks" credentials/recovery-keystore.jks
 fi
 
 if [ -f credentials/recovery-keystore.jks ]; then
