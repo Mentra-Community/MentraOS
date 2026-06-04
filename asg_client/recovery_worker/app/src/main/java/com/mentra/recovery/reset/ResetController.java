@@ -26,7 +26,8 @@ public class ResetController {
     String currentState = stateStore.getState();
     if (RecoveryConstants.STATE_RESTARTING.equals(currentState)
         || RecoveryConstants.STATE_REINSTALLING_BACKUP.equals(currentState)
-        || RecoveryConstants.STATE_FAILED_NEEDS_MANUAL.equals(currentState)) {
+        || RecoveryConstants.STATE_FAILED_NEEDS_MANUAL.equals(currentState)
+        || RecoveryConstants.STATE_COOLDOWN.equals(currentState)) {
       return;
     }
     long now = System.currentTimeMillis();
