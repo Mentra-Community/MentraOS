@@ -8,8 +8,8 @@ no tech debt.
 
 **TL;DR:** Local miniapps never talk to the cloud directly. The phone is the hub: it
 runs the miniapp (a background JSContext plus an optional WebView UI), handles most
-things on the phone, and proxies a few services to the cloud. Today that proxy is
-the v1 `SocketComms` / `RestComms`. We're adding a second transport,
+things on the phone, and passes a few services through to the cloud on the miniapps'
+behalf. Today that pass-through is the v1 `SocketComms` / `RestComms`. We're adding a second transport,
 `@mentra/cloud-client`, injected the same way (the host's `configureRuntime` hook).
 On the v2 path the on-device runtime speaks the typed v2 protocol directly (typed
 values, not magic strings), using the same `@mentra/cloud-runtime/protocol` types as
@@ -51,13 +51,14 @@ A local miniapp bundle (a ZIP) ships two entry points
 (`mobile/modules/island/src/services/AppRegistry.ts`, "Two-layer bundles ship
 `entry.background` and optional `entry.ui`"):
 
-- **Background layer:** `src/background/index.ts`, runs in an **always-on
-  JSContext** (JavaScriptCore on iOS). It's the miniapp's logic: headless, no DOM,
-  and it stays alive when the UI is closed.
+- **Background layer:** `src/background/index.ts`, the miniapp's logic. It runs in a
+  small JavaScript engine on the phone (a "JSContext", JavaScriptCore on iOS) with no
+  screen and no web page, and it keeps running even when the UI is closed.
   `mobile/modules/miniapp/src/background/index.ts`: "the always-running JSContext
   side of a two-layer miniapp."
-- **UI layer:** `src/ui/`, runs in a **WebView** (React, DOM). Optional, mounted and
-  torn down as the user opens and closes the screen.
+- **UI layer:** `src/ui/`, the miniapp's screen, an ordinary web page running in a
+  **WebView** (the phone's embedded browser). Optional, and it's mounted and torn
+  down as the user opens and closes the screen.
 
 Both layers use the same SDK object, `MiniappSession`
 (`mobile/modules/miniapp/src/session.ts`): `session.display`,
@@ -73,8 +74,9 @@ Three bridges wire it together (all `mobile/modules/island/src/services/`):
 
 Then the lifecycle pieces: `MentraJSCrashController` (respawn on crash),
 `MentraJSLogPipeline` (logs out of the JSContext), `MiniappRunningRegistry`
-("running" means the background JSContext is alive). Native spawn/kill is a binding
-(`MentraJSCrustBinding`); the iOS engine is `JSContext`.
+("running" means the background JSContext is alive). Starting and killing those
+JSContexts is done by native code the runtime calls (`MentraJSCrustBinding`); on iOS
+the engine is `JSContext`.
 
 So the "two JS contexts" the auth docs talk about are real here: a background
 JSContext and a UI WebView. (The engine is JSContext, not Crust. Crust is native
@@ -82,29 +84,32 @@ image/video/navigation utilities.)
 
 ## 3. What crosses to the cloud, and what doesn't
 
-`LocalMiniappRuntime` gets every `session.*` call (through `MentraJSRouter`) and
-either handles it on the phone or proxies it to the cloud. From
-`agents/local-app-runtime-plan.md`:
+Every call a miniapp makes through its session (`session.display`,
+`session.transcription.on(...)`, and so on) arrives at `LocalMiniappRuntime` on the
+phone. It either handles the call right there on the phone, or forwards it to the
+cloud on the miniapp's behalf. From `agents/local-app-runtime-plan.md`:
 
-- **Local, no cloud:** display (to glasses over BLE), LED, audio playback, button /
-  touch, head position / IMU, battery, connection state, VAD, raw mic chunks,
-  location, phone notifications, calendar, simple storage. This is most of the
-  surface.
-- **Cloud-proxied through the phone:** speech-to-text (`transcription:*`),
-  translation (`translation:*`), TTS, managed photo / managed stream, telemetry. The
-  phone subscribes to the cloud on behalf of all local miniapps, **aggregated**
-  (three miniapps wanting `transcription:en-US` is one cloud subscription).
+- **Handled on the phone (never reaches the cloud):** display (to glasses over BLE),
+  LED, audio playback, button / touch, head position / IMU, battery, connection
+  state, VAD, raw mic chunks, location, phone notifications, calendar, simple
+  storage. This is most of what a miniapp does.
+- **Passed through to the cloud:** speech-to-text (`transcription:*`), translation
+  (`translation:*`), TTS, managed photo / managed stream, telemetry. The phone
+  subscribes to the cloud once on behalf of all the local miniapps, combining their
+  requests (three miniapps wanting `transcription:en-US` is one subscription to the
+  cloud).
 
-That split is what keeps this change small: only the cloud-proxied bucket touches
-the cloud, so only that bucket changes when we swap v1 for v2. The local hardware
-path doesn't care which cloud exists.
+That split is what keeps this change small: only the services that get passed through
+to the cloud are affected, so only those change when we swap v1 for v2. The local
+hardware path doesn't care which cloud exists.
 
 ## 4. The transport today (v1)
 
-The cloud-proxied traffic goes out through the host's transport, injected into the
-island runtime at the `configureRuntime` hook
-(`mobile/modules/island/src/runtime/config.ts`, the `socketComms` entry), wired up in
-`mobile/src/services/MantleManager.ts`:
+Only the passed-through services from section 3 reach the cloud, and they all go
+through one piece of phone code: the host's transport. The island runtime doesn't
+reach for it directly; the host hands it in at startup through `configureRuntime`
+(the function the phone calls once at boot to give the runtime its transport, audio,
+settings, and so on). Today the host hands in the v1 `SocketComms` / `RestComms`:
 
 ```ts
 // mobile/src/services/MantleManager.ts (today)
@@ -118,30 +123,44 @@ configureRuntime({
 })
 ```
 
-- **Subscriptions out:** `LocalMiniappRuntime.updateCloudSubscriptions()` aggregates
-  `transcription:*` / `translation:*` into a **`string[]`** and calls
-  `socketComms.updatePhoneSubscriptions([...])`. `mobile/src/services/SocketComms.ts`
-  sends `{ type: "phone_subscription_update", subscriptions, timestamp }` over the WS.
-- **Commands out:** managed stream/photo go through
-  `socketComms.sendMessage({ type: "managed_stream_request", ... })` or a REST hook
-  (`requestMiniappSdkPhoto` -> `mobile/src/services/RestComms.ts`).
-- **The WS:** `mobile/src/services/WebSocketManager.ts` connects with the v1 auth
-  token in the query string and v1 negotiation flags.
-- **Inbound:** `SocketComms.handle_message()` switches on `type`: `data_stream` ->
-  `LocalMiniappRuntime.forwardEvent(streamType, data)` (delivers a transcript to the
-  subscribed miniapps); `phone_photo_ready` / `phone_stream_status` ->
-  `LocalMiniappRuntime.handleCloudMessage()`.
+Here's what actually travels over it:
 
-Two things to call out, because v2 drops both: the subscriptions are just strings
-(`"transcription:en-US"`), and the messages are untyped objects tagged with a `type`.
+- **Telling the cloud what to stream down.** The runtime keeps track of what each
+  miniapp has subscribed to (a transcript in English, a translation, and so on). When
+  that set changes, `updateCloudSubscriptions()` combines it across every running
+  miniapp and sends the list up to the cloud
+  (`updatePhoneSubscriptions([...])`, which `SocketComms` puts on the WebSocket as
+  `{ type: "phone_subscription_update", subscriptions }`). That's how the cloud knows
+  which audio to process for this phone and which events to stream back. Today the
+  list is just strings like `"transcription:en-US"`.
+- **One-off requests (a photo, a live stream).** When a miniapp asks for a managed
+  photo or a stream, the runtime sends a single message up, e.g.
+  `sendMessage({ type: "managed_stream_request", ... })`, or for photos a REST call
+  (`requestMiniappSdkPhoto` -> `mobile/src/services/RestComms.ts`). These are plain
+  objects with a `type` field and no type-checking.
+- **Opening the connection.** `mobile/src/services/WebSocketManager.ts` opens the
+  WebSocket and logs it in with the v1 token (passed in the URL).
+- **Events coming back from the cloud.** Everything the cloud sends lands in
+  `SocketComms.handle_message()`, which reads each message's `type` field and decides
+  where it goes. A transcript arrives as a `data_stream` message and is handed to
+  `LocalMiniappRuntime.forwardEvent()`, which delivers it to the miniapps that
+  subscribed. A finished photo arrives as `phone_photo_ready` and goes to
+  `handleCloudMessage()`.
+
+v2 changes two things here: those subscription strings (`"transcription:en-US"`) and
+those untyped `type`-tagged objects both become typed values.
 
 ## 5. What `@mentra/cloud-client` is, and why it exists
 
-`@mentra/cloud-client` is a headless, isomorphic TypeScript library: the device's
-single connection to **Cloud v2**. It owns auth, the runtime transport, and the
-device-facing core calls, behind three modules (`cloud.auth`, `cloud.runtime`,
-`cloud.core`). The platform pieces (WebSocket, UDP, secure storage) are injected, so
-the same core runs on the phone and in Node. Full API in [`spec.md`](./spec.md).
+`@mentra/cloud-client` is a TypeScript library, just code, no screen or UI, that
+handles the phone's whole connection to Cloud v2. The same library also runs on a
+server (in Node), and that's the trick: our backend test harness drives the exact
+same client the phone runs, so anything the tests prove also holds on the phone. It
+exposes three areas: `cloud.auth` (login and tokens), `cloud.runtime` (the live
+audio and event session), and `cloud.core` (the other v2 REST calls). The parts that
+differ by platform (the WebSocket, the UDP socket, secure storage) are passed in from
+outside, so the one library runs unchanged on the phone and on a server. Full API in
+[`spec.md`](./spec.md).
 
 Why a separate library instead of more methods on `SocketComms`:
 
@@ -149,10 +168,10 @@ Why a separate library instead of more methods on `SocketComms`:
   wire. v2 has a clean message format, REST for commands, WebSocket for push, and v2
   auth. Bolting that onto the same class just rebuilds the tech debt we're trying to
   leave behind.
-- **One contract, shared by everyone.** The cloud-client speaks only
-  `@mentra/cloud-runtime/protocol`: the zod types the **cloud server** validates
-  against and the **test harness** drives. The same library with Node transports is
-  the test client. So:
+- **One contract, shared by everyone.** The cloud-client speaks only the shared type
+  definitions in `@mentra/cloud-runtime/protocol`: the same types the **cloud server**
+  checks every message against, and the ones the **test harness** builds its requests
+  from. (That test harness is just this same library running on a server.) So:
 
   > the on-device runtime, the cloud server, and the test harness all validate the
   > same types. On-device can't silently diverge from what the cloud accepts,
@@ -240,8 +259,9 @@ The calls we've made, so this gets built once.
 **D1. The cloud-client is the v2 transport, injected at the existing
 `configureRuntime` hook.** It's not a rewrite of the island runtime. The host
 constructs `new CloudClient(...)` and injects its surface where v1 `socketComms`
-goes today. The island runtime stays the owner of subscription aggregation and
-fan-out.
+goes today. The island runtime still owns the logic that tracks each miniapp's
+subscriptions, combines them, and delivers each incoming event to the miniapps that
+asked for it.
 
 **D2. Change the island runtime and kill the string shapes (typed hook).** The
 `socketComms` hook (`sendMessage(object)`, `updatePhoneSubscriptions(string[])`) is
@@ -257,10 +277,10 @@ point, so we're not doing that.
 `RestComms` stays for the v1 cloud. The cloud-client is the v2 path. A device or
 session picks one. We're adding a path, not ripping one out.
 
-**D4. Scope is the cloud-proxied bucket only.** Subscriptions, transcript /
-translation push, managed photo / stream, TTS, telemetry. The local hardware path
-(display, BLE, mic, storage, IMU, notifications) is untouched. That keeps the change
-small and reviewable.
+**D4. Only the services that go to the cloud change.** Subscriptions, transcript /
+translation coming back, managed photo / stream, TTS, telemetry. The local hardware
+path (display, BLE, mic, storage, IMU, notifications) is untouched. That keeps the
+change small and reviewable.
 
 **D5. Auth moves into `cloud.auth`.** The v2 access token and miniapp-scoped tokens
 are owned by the cloud-client; miniapps receive only the scoped token. See
@@ -369,11 +389,11 @@ here's the direction we'd take for each.
   `configureRuntime` runs today and pick v1 vs v2 there with a single flag,
   defaulting to v2 for the v2 cloud. Keep the choice in one place so the rest of the
   runtime never branches on cloud version.
-- **UDP audio: encrypt in the isomorphic core, send native.** Do the NaCl secretbox
-  encryption in the cloud-client core (tweetnacl) and inject only a thin native
-  socket for sending bytes. The crypto stays testable in Node (the harness) and
-  identical on device; the native layer just does I/O. (Detail in
-  [`spike.md`](./spike.md).)
+- **UDP audio: encrypt in the shared cloud-client code, send from native.** Do the
+  NaCl secretbox encryption inside the cloud-client itself (the code that runs the
+  same on phone and server, using tweetnacl), and pass in only a thin native socket to
+  send the bytes. That keeps the encryption testable on a server and identical on the
+  phone; the native side just sends and receives. (Detail in [`spike.md`](./spike.md).)
 
 ## References
 
