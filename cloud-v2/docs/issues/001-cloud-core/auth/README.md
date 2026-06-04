@@ -3,6 +3,11 @@
 The home for the whole MentraOS auth system: how every actor proves identity to
 Mentra, and how Mentra hands identity to the parties that need it.
 
+**New to auth?** Read [`spike.md`](./spike.md) first: a from-zero primer on the
+ideas this folder assumes (JWTs, asymmetric signing, JWKS, audiences, token
+exchange, refresh), built up from intuition and mapped onto our system. No crypto
+background needed.
+
 **Reading order:** [`spec.md`](./spec.md) (the endpoint and token contract, the
 "what"), then [`design.md`](./design.md) (the end-to-end implementation design
 across cloud-core, cloud-client, on-device, and the dev SDK, the "how", every
