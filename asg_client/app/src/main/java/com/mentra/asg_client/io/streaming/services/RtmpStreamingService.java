@@ -1545,10 +1545,11 @@ public class RtmpStreamingService extends Service {
      * @return true if streaming, false if not or if service is not running
      */
     public static boolean isStreaming() {
-        if (sInstance != null) {
-            synchronized (sInstance.mStateLock) {
-                return sInstance.mStreamState == StreamState.STREAMING ||
-                       sInstance.mStreamState == StreamState.STARTING;
+        RtmpStreamingService instance = sInstance;
+        if (instance != null) {
+            synchronized (instance.mStateLock) {
+                return instance.mStreamState == StreamState.STREAMING ||
+                       instance.mStreamState == StreamState.STARTING;
             }
         }
         return false;
@@ -1556,9 +1557,10 @@ public class RtmpStreamingService extends Service {
 
     /** @return true only after the RTMP connection is live. */
     public static boolean isActivelyStreaming() {
-        if (sInstance != null) {
-            synchronized (sInstance.mStateLock) {
-                return sInstance.mStreamState == StreamState.STREAMING;
+        RtmpStreamingService instance = sInstance;
+        if (instance != null) {
+            synchronized (instance.mStateLock) {
+                return instance.mStreamState == StreamState.STREAMING;
             }
         }
         return false;
@@ -1566,9 +1568,10 @@ public class RtmpStreamingService extends Service {
 
     /** @return true while RTMP startup is in progress before the connection is live. */
     public static boolean isStarting() {
-        if (sInstance != null) {
-            synchronized (sInstance.mStateLock) {
-                return sInstance.mStreamState == StreamState.STARTING;
+        RtmpStreamingService instance = sInstance;
+        if (instance != null) {
+            synchronized (instance.mStateLock) {
+                return instance.mStreamState == StreamState.STARTING;
             }
         }
         return false;

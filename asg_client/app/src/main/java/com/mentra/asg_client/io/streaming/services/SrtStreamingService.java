@@ -898,27 +898,30 @@ public class SrtStreamingService extends Service {
   }
 
   public static boolean isStreaming() {
-    if (sInstance != null) {
-      synchronized (sInstance.mStateLock) {
-        return sInstance.mStreamState == StreamState.STREAMING || sInstance.mStreamState == StreamState.STARTING;
+    SrtStreamingService instance = sInstance;
+    if (instance != null) {
+      synchronized (instance.mStateLock) {
+        return instance.mStreamState == StreamState.STREAMING || instance.mStreamState == StreamState.STARTING;
       }
     }
     return false;
   }
 
   public static boolean isActivelyStreaming() {
-    if (sInstance != null) {
-      synchronized (sInstance.mStateLock) {
-        return sInstance.mStreamState == StreamState.STREAMING;
+    SrtStreamingService instance = sInstance;
+    if (instance != null) {
+      synchronized (instance.mStateLock) {
+        return instance.mStreamState == StreamState.STREAMING;
       }
     }
     return false;
   }
 
   public static boolean isStarting() {
-    if (sInstance != null) {
-      synchronized (sInstance.mStateLock) {
-        return sInstance.mStreamState == StreamState.STARTING;
+    SrtStreamingService instance = sInstance;
+    if (instance != null) {
+      synchronized (instance.mStateLock) {
+        return instance.mStreamState == StreamState.STARTING;
       }
     }
     return false;

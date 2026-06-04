@@ -1030,26 +1030,29 @@ public class WhipStreamingService extends Service {
 
   /** @return true if a WHIP stream is currently active */
   public static boolean isStreaming() {
-    if (sInstance == null) return false;
-    synchronized (sInstance.mStateLock) {
-      return sInstance.mStreamState == StreamState.STREAMING
-          || sInstance.mStreamState == StreamState.STARTING;
+    WhipStreamingService instance = sInstance;
+    if (instance == null) return false;
+    synchronized (instance.mStateLock) {
+      return instance.mStreamState == StreamState.STREAMING
+          || instance.mStreamState == StreamState.STARTING;
     }
   }
 
   /** @return true only after WHIP negotiation has reached a live streaming state. */
   public static boolean isActivelyStreaming() {
-    if (sInstance == null) return false;
-    synchronized (sInstance.mStateLock) {
-      return sInstance.mStreamState == StreamState.STREAMING;
+    WhipStreamingService instance = sInstance;
+    if (instance == null) return false;
+    synchronized (instance.mStateLock) {
+      return instance.mStreamState == StreamState.STREAMING;
     }
   }
 
   /** @return true while WHIP startup is in progress before ingest is live. */
   public static boolean isStarting() {
-    if (sInstance == null) return false;
-    synchronized (sInstance.mStateLock) {
-      return sInstance.mStreamState == StreamState.STARTING;
+    WhipStreamingService instance = sInstance;
+    if (instance == null) return false;
+    synchronized (instance.mStateLock) {
+      return instance.mStreamState == StreamState.STARTING;
     }
   }
 
