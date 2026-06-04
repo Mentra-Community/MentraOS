@@ -53,17 +53,23 @@ jobs:
               content = f.read()
 
           injection = """
-            # CI patch: fix Swift 6 / Xcode 16.4 incompatibilities
             installer.pods_project.targets.each do |target|
               target.build_configurations.each do |config|
+                # Fix low deployment targets
                 dt = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
                 if dt && dt.to_f < 13.0
                   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
                 end
+                # RNScreens gamma/ files ARE Swift 6 syntax - do NOT set SWIFT_VERSION=5
+                # Reduce concurrency strictness only via compiler flag
                 if target.name == 'RNScreens'
-                  config.build_settings['SWIFT_VERSION'] = '5.0'
                   config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'
+                  flags = config.build_settings['OTHER_SWIFT_FLAGS'] || '$(inherited)'
+                  unless flags.include?('-strict-concurrency')
+                    config.build_settings['OTHER_SWIFT_FLAGS'] = flags + ' -strict-concurrency=minimal'
+                  end
                 end
+                # SwiftProtobuf: WMO OOM-kills compiler on 80+ files
                 if target.name == 'SwiftProtobuf'
                   config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
                 end
@@ -81,13 +87,11 @@ jobs:
 
           with open('Podfile', 'w') as f:
               f.write(content)
-
-          print("Podfile patched successfully")
           PYEOF
 
       - name: Show patched Podfile post_install
         working-directory: ./mobile/ios
-        run: grep -A 30 "post_install" Podfile | head -40
+        run: grep -A 40 "post_install" Podfile | head -50
 
       - name: Install pods
         working-directory: ./mobile/ios
@@ -110,6 +114,7 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$GITHUB_WORKSPACE/Mentra.xcarchive" \
+            -resultBundlePath /tmp/build.xcresult \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
@@ -121,10 +126,32 @@ jobs:
           BUILD_RESULT=${PIPESTATUS[0]}
 
           if [ "$BUILD_RESULT" -ne 0 ]; then
-            echo "========== ACTUAL ERRORS =========="
-            grep ": error:" /tmp/xcodebuild.log | grep -v "^note:" | head -80
-            echo "========== FAILED TARGETS =========="
-            grep -E "FAILED|EmitSwift|CompileSwift" /tmp/xcodebuild.log | tail -20
+            echo "========== REAL ERRORS FROM XCRESULT =========="
+            xcrun xcresulttool get --format json --path /tmp/build.xcresult 2>/dev/null | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    def walk(obj):
+        if isinstance(obj, dict):
+            t = obj.get('type', {}).get('_name', '')
+            if 'Issue' in t or 'Warning' in t or 'Error' in t:
+                msg = obj.get('message', {}).get('_value', '')
+                loc = obj.get('documentLocationInCreatingWorkspace', {})
+                url = loc.get('url', {}).get('_value', '') if isinstance(loc, dict) else ''
+                if msg:
+                    print(f'{url}: {msg}' if url else msg)
+            for v in obj.values():
+                walk(v)
+        elif isinstance(obj, list):
+            for i in obj:
+                walk(i)
+    walk(data)
+except Exception as e:
+    print(f'Parse error: {e}')
+" || true
+            echo ""
+            echo "========== GREP ERRORS =========="
+            grep -E "error:|warning:.*error" /tmp/xcodebuild.log | grep -v "^note:" | head -50
             exit "$BUILD_RESULT"
           fi
 
@@ -135,7 +162,6 @@ jobs:
           APP_PATH=$(find "$GITHUB_WORKSPACE" -name "Mentra.app" -type d | head -1)
           if [ -z "$APP_PATH" ]; then
             echo "❌ Mentra.app not found"
-            find "$GITHUB_WORKSPACE/Mentra.xcarchive" -maxdepth 5 2>/dev/null || echo "No xcarchive found"
             exit 1
           fi
           echo "✅ Found: $APP_PATH"
@@ -159,6 +185,14 @@ jobs:
           name: Mentra-SideStore-IPA
           path: Mentra.ipa
           retention-days: 14
+
+      - name: Upload xcresult bundle
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-xcresult
+          path: /tmp/build.xcresult
+          retention-days: 5
 
       - name: Upload full build log
         if: always()
