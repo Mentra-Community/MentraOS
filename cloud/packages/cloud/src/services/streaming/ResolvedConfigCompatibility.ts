@@ -13,8 +13,13 @@ type CompatibleStreamResolvedConfig = Omit<StreamResolvedConfig, "video"> & {
 export function normalizeStreamResolvedConfig(
   resolvedConfig?: StreamResolvedConfig | CompatibleStreamResolvedConfig,
 ): StreamStatus["resolvedConfig"] {
-  if (!resolvedConfig?.video) {
-    return resolvedConfig;
+  if (!resolvedConfig) {
+    return undefined;
+  }
+
+  if (!resolvedConfig.video) {
+    const { video: _video, ...withoutVideo } = resolvedConfig;
+    return withoutVideo;
   }
 
   const video = resolvedConfig.video as CompatibleStreamResolvedVideoConfig;
