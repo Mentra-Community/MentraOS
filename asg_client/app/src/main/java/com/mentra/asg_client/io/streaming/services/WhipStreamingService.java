@@ -552,11 +552,11 @@ public class WhipStreamingService extends Service {
         }
 
         String location = response.header("Location");
+        String resourceUrl = null;
         if (location != null) {
-          mWhipResourceUrl = location.startsWith("http")
+          resourceUrl = location.startsWith("http")
               ? location
               : buildAbsoluteUrl(mWhipUrl, location);
-          Log.d(TAG, "WHIP resource URL: " + mWhipResourceUrl);
         }
 
         String answerSdp = response.body() != null ? response.body().string() : "";
@@ -565,13 +565,39 @@ public class WhipStreamingService extends Service {
           return;
         }
 
+        // A late WHIP answer can arrive after the stream was stopped or its startup failed
+        // and WebRTC was torn down (releaseWebRtc nulls mPeerConnection on another thread).
+        // Don't dereference a released peer connection or revive a torn-down session.
+        PeerConnection peerConnection;
+        synchronized (mStateLock) {
+          if (mPeerConnection == null || mStreamState == StreamState.STOPPING
+              || mStreamState == StreamState.IDLE) {
+            Log.w(TAG, "WHIP answer received but stream already stopping/stopped, ignoring");
+            if (resourceUrl != null) {
+              deleteWhipResource(resourceUrl);
+            }
+            return;
+          }
+          peerConnection = mPeerConnection;
+          mWhipResourceUrl = resourceUrl;
+        }
+        if (resourceUrl != null) {
+          Log.d(TAG, "WHIP resource URL: " + mWhipResourceUrl);
+        }
+
         SessionDescription answer = new SessionDescription(
             SessionDescription.Type.ANSWER, answerSdp);
 
-        mPeerConnection.setRemoteDescription(new SdpObserver() {
+        peerConnection.setRemoteDescription(new SdpObserver() {
           @Override
           public void onSetSuccess() {
             synchronized (mStateLock) {
+              // Teardown may have happened between the guard above and this callback.
+              if (mPeerConnection == null || mStreamState == StreamState.STOPPING
+                  || mStreamState == StreamState.IDLE) {
+                Log.w(TAG, "WHIP remote description set but stream already stopping/stopped, ignoring");
+                return;
+              }
               mStreamState = StreamState.STREAMING;
             }
             mLastVideoBytesSent = 0;
@@ -1004,26 +1030,29 @@ public class WhipStreamingService extends Service {
 
   /** @return true if a WHIP stream is currently active */
   public static boolean isStreaming() {
-    if (sInstance == null) return false;
-    synchronized (sInstance.mStateLock) {
-      return sInstance.mStreamState == StreamState.STREAMING
-          || sInstance.mStreamState == StreamState.STARTING;
+    WhipStreamingService instance = sInstance;
+    if (instance == null) return false;
+    synchronized (instance.mStateLock) {
+      return instance.mStreamState == StreamState.STREAMING
+          || instance.mStreamState == StreamState.STARTING;
     }
   }
 
   /** @return true only after WHIP negotiation has reached a live streaming state. */
   public static boolean isActivelyStreaming() {
-    if (sInstance == null) return false;
-    synchronized (sInstance.mStateLock) {
-      return sInstance.mStreamState == StreamState.STREAMING;
+    WhipStreamingService instance = sInstance;
+    if (instance == null) return false;
+    synchronized (instance.mStateLock) {
+      return instance.mStreamState == StreamState.STREAMING;
     }
   }
 
   /** @return true while WHIP startup is in progress before ingest is live. */
   public static boolean isStarting() {
-    if (sInstance == null) return false;
-    synchronized (sInstance.mStateLock) {
-      return sInstance.mStreamState == StreamState.STARTING;
+    WhipStreamingService instance = sInstance;
+    if (instance == null) return false;
+    synchronized (instance.mStateLock) {
+      return instance.mStreamState == StreamState.STARTING;
     }
   }
 

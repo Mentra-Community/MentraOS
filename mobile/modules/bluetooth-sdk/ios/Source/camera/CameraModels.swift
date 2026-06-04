@@ -39,17 +39,37 @@ public struct ButtonVideoRecordingSettings {
     }
 }
 
-public enum CameraFov {
-    case standard
-    case wide
+public struct CameraFov {
+    public static let minFov = 62
+    public static let maxFov = 118
+    public static let defaultFov = 102
+    public static let narrowFov = 82
+    public static let minRoiPosition = 0
+    public static let maxRoiPosition = 2
+    public static let defaultRoiPosition = 0
+    public static let narrow = CameraFov(
+        fov: CameraFov.narrowFov,
+        roiPosition: CameraFov.defaultRoiPosition
+    )
+    public static let standard = CameraFov(
+        fov: CameraFov.defaultFov,
+        roiPosition: CameraFov.defaultRoiPosition
+    )
+    public static let wide = CameraFov(
+        fov: CameraFov.maxFov,
+        roiPosition: CameraFov.defaultRoiPosition
+    )
+
+    public let fov: Int
+    public let roiPosition: Int
+
+    public init(fov: Int = CameraFov.defaultFov, roiPosition: Int = CameraFov.defaultRoiPosition) {
+        self.fov = min(max(fov, CameraFov.minFov), CameraFov.maxFov)
+        self.roiPosition = min(max(roiPosition, CameraFov.minRoiPosition), CameraFov.maxRoiPosition)
+    }
 
     var value: [String: Int] {
-        switch self {
-        case .standard:
-            ["fov": 118, "roi_position": 0]
-        case .wide:
-            ["fov": 118, "roi_position": 0]
-        }
+        ["fov": fov, "roi_position": roiPosition]
     }
 }
 
@@ -65,6 +85,8 @@ public struct PhotoRequest {
     public let sound: Bool
     /// Sensor exposure time for this capture only (ns), or nil for auto exposure
     public let exposureTimeNs: Double?
+    /// Sensor ISO for this capture only. Only used when exposureTimeNs enables manual exposure.
+    public let iso: Int?
 
     public init(
         requestId: String,
@@ -76,7 +98,8 @@ public struct PhotoRequest {
         flash: Bool = true,
         save: Bool = false,
         sound: Bool,
-        exposureTimeNs: Double? = nil
+        exposureTimeNs: Double? = nil,
+        iso: Int? = nil
     ) {
         self.requestId = requestId
         self.appId = appId
@@ -88,6 +111,7 @@ public struct PhotoRequest {
         self.save = save
         self.sound = sound
         self.exposureTimeNs = exposureTimeNs
+        self.iso = iso
     }
 }
 
@@ -136,11 +160,20 @@ public struct VideoRecordingRequest {
     public let requestId: String
     public let save: Bool
     public let sound: Bool
+    // Optional per-recording overrides; 0 means "use the saved button-video default".
+    public let width: Int
+    public let height: Int
+    public let fps: Int
 
-    public init(requestId: String, save: Bool, sound: Bool) {
+    public init(
+        requestId: String, save: Bool, sound: Bool, width: Int = 0, height: Int = 0, fps: Int = 0
+    ) {
         self.requestId = requestId
         self.save = save
         self.sound = sound
+        self.width = width
+        self.height = height
+        self.fps = fps
     }
 }
 
@@ -247,5 +280,59 @@ public struct PhotoResponseEvent: CustomStringConvertible {
 
     public var description: String {
         "PhotoResponseEvent(requestId: \(requestId), state: \(response.state.rawValue))"
+    }
+}
+
+public struct PhotoStatusEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        var values = values
+        values["type"] = "photo_status"
+        self.values = values
+    }
+
+    public var requestId: String {
+        stringValue(values, "requestId") ?? ""
+    }
+
+    public var status: String {
+        stringValue(values, "status") ?? ""
+    }
+
+    public var timestamp: Int64 {
+        if let value = values["timestamp"] as? Int64 { return value }
+        if let value = values["timestamp"] as? Int { return Int64(value) }
+        if let value = values["timestamp"] as? Double { return Int64(value) }
+        if let value = values["timestamp"] as? NSNumber { return value.int64Value }
+        return Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    public var resolvedConfig: [String: Any]? {
+        values["resolvedConfig"] as? [String: Any]
+    }
+
+    public var requestedCaptureConfig: [String: Any]? {
+        values["requestedCaptureConfig"] as? [String: Any]
+    }
+
+    public var meteredPreview: [String: Any]? {
+        values["meteredPreview"] as? [String: Any]
+    }
+
+    public var captureMetadata: [String: Any]? {
+        values["captureMetadata"] as? [String: Any]
+    }
+
+    public var errorCode: String? {
+        stringValue(values, "errorCode")
+    }
+
+    public var errorMessage: String? {
+        stringValue(values, "errorMessage")
+    }
+
+    public var description: String {
+        "PhotoStatusEvent(requestId: \(requestId), status: \(status))"
     }
 }

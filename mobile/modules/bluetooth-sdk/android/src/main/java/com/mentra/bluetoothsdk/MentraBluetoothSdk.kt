@@ -62,6 +62,10 @@ class MentraBluetoothSdk private constructor(
         var pendingAckId: String? = null,
         var missedAckCount: Int = 0,
         var nextTick: Runnable? = null,
+        // Missed-ACK counting only begins once the stream is confirmed live/coming up, so a
+        // slow startup (glasses can't ACK until they reach starting/streaming) can't trip a
+        // false keep-alive timeout before the stream is ever up.
+        var armed: Boolean = false,
     )
 
     fun addListener(listener: MentraBluetoothSdkListener) {
@@ -453,6 +457,7 @@ class MentraBluetoothSdk private constructor(
             request.save,
             request.sound,
             request.exposureTimeNs,
+            request.iso,
         )
     }
 
@@ -494,7 +499,14 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun startVideoRecording(request: VideoRecordingRequest) {
-        deviceManager.startVideoRecording(request.requestId, request.save, request.sound)
+        deviceManager.startVideoRecording(
+                request.requestId,
+                request.save,
+                request.sound,
+                request.width,
+                request.height,
+                request.fps,
+        )
     }
 
     fun stopVideoRecording(requestId: String) {
@@ -505,16 +517,27 @@ class MentraBluetoothSdk private constructor(
         deviceManager.requestVersionInfo()
     }
 
+    /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
+    fun checkForOtaUpdate() {
+        deviceManager.sendOtaQueryStatus()
+    }
+
+    /** Start the OTA flow after your app has presented the available update to the user. */
+    fun startOtaUpdate() {
+        deviceManager.sendOtaStart()
+    }
+
+    /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
+    fun retryOtaVersionCheck() {
+        deviceManager.retryOtaVersionCheck()
+    }
+
     internal fun sendOtaStart() {
         deviceManager.sendOtaStart()
     }
 
     internal fun sendOtaQueryStatus() {
         deviceManager.sendOtaQueryStatus()
-    }
-
-    internal fun retryOtaVersionCheck() {
-        deviceManager.retryOtaVersionCheck()
     }
 
     internal fun sendShutdown() {
@@ -684,6 +707,7 @@ class MentraBluetoothSdk private constructor(
             "hotspot_error" -> dispatchToListeners { it.onHotspotError(HotspotErrorEvent(data)) }
             "gallery_status" -> dispatchToListeners { it.onGalleryStatus(GalleryStatusEvent(data)) }
             "photo_response" -> dispatchToListeners { it.onPhotoResponse(PhotoResponseEvent(data)) }
+            "photo_status" -> dispatchToListeners { it.onPhotoStatus(PhotoStatusEvent(data)) }
             "stream_status" -> {
                 val event = StreamStatusEvent(data)
                 handleStreamStatusForKeepAlive(event.status)
@@ -695,6 +719,10 @@ class MentraBluetoothSdk private constructor(
                     dispatchToListeners { it.onKeepAliveAck(event) }
                 }
             }
+            "ota_update_available" ->
+                dispatchToListeners { it.onOtaUpdateAvailable(OtaUpdateAvailableEvent.fromMap(data)) }
+            "ota_start_ack" -> dispatchToListeners { it.onOtaStartAck(OtaStartAckEvent.fromMap(data)) }
+            "ota_status" -> dispatchToListeners { it.onOtaStatus(OtaStatusEvent.fromMap(data)) }
             "mic_pcm" -> {
                 val event = MicPcmEvent(data)
                 if (event.pcm.isNotEmpty()) {
@@ -782,7 +810,7 @@ class MentraBluetoothSdk private constructor(
                 return
             }
 
-            if (tracker.pendingAckId != null) {
+            if (tracker.armed && tracker.pendingAckId != null) {
                 tracker.missedAckCount += 1
                 if (tracker.missedAckCount >= MAX_MISSED_STREAM_KEEP_ALIVE_ACKS) {
                     activeStreamKeepAlive = null
@@ -843,7 +871,21 @@ class MentraBluetoothSdk private constructor(
             StreamState.STOPPING,
             StreamState.ERROR,
             StreamState.RECONNECT_FAILED -> stopStreamKeepAliveMonitor()
-            else -> Unit
+            // A non-terminal status means the stream is live or coming up and the glasses can
+            // now ACK; arm the missed-ACK detector from here so a slow startup before the first
+            // ACK can't trip a false keep-alive timeout. On the arming transition, drop any
+            // pre-arm bookkeeping so a stale unacked id (sent before the glasses could ACK)
+            // can't immediately count as a miss.
+            else ->
+                    synchronized(streamKeepAliveLock) {
+                        activeStreamKeepAlive?.let {
+                            if (it.streamId == streamId && !it.armed) {
+                                it.armed = true
+                                it.pendingAckId = null
+                                it.missedAckCount = 0
+                            }
+                        }
+                    }
         }
     }
 }

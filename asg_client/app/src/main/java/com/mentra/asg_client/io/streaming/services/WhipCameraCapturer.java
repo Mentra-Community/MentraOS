@@ -170,7 +170,10 @@ public class WhipCameraCapturer implements VideoCapturer {
 
       Log.i(TAG, "Resolved WHIP capture fps: requested=" + mRequestedFps
           + ", output=" + mOutputFps + ", camera=" + mCameraFps);
-      notifyCameraFps(mCameraFps);
+      // Report the effective transmitted rate: when the camera runs faster than the output
+      // target, frames are dropped to pace the track at mOutputFps; when it runs slower, the
+      // track is capped at mCameraFps. The resolved fps is the lower of the two.
+      notifyCameraFps(Math.min(mCameraFps, mOutputFps));
 
       cameraManager.openCamera(cameraId, new CameraDevice.StateCallback() {
         @Override
