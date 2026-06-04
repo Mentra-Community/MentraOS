@@ -424,7 +424,8 @@ public final class MentraBluetoothSDK {
             request.flash,
             request.save,
             request.sound,
-            exposureTimeNs: request.exposureTimeNs
+            exposureTimeNs: request.exposureTimeNs,
+            iso: request.iso
         )
     }
 
@@ -468,7 +469,10 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.startVideoRecording(
             request.requestId,
             request.save,
-            request.sound
+            request.sound,
+            request.width,
+            request.height,
+            request.fps
         )
     }
 
@@ -723,6 +727,8 @@ public final class MentraBluetoothSDK {
             delegate?.mentraBluetoothSDK(self, didReceive: .hotspotError(HotspotErrorEvent(values: data)))
         case "photo_response":
             delegate?.mentraBluetoothSDK(self, didReceive: .photoResponse(PhotoResponseEvent(values: data)))
+        case "photo_status":
+            delegate?.mentraBluetoothSDK(self, didReceive: .photoStatus(PhotoStatusEvent(values: data)))
         case "stream_status":
             let event = StreamStatusEvent(values: data)
             handleStreamStatusForKeepAlive(event.status)

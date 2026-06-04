@@ -595,7 +595,14 @@ class SocketComms {
     const videoRequestId = msg.requestId || `video_${Date.now()}`
     const save = msg.save !== false
     const sound = msg.sound ?? true
-    BluetoothSdk.startVideoRecording(videoRequestId, save, sound)
+    // Optional per-recording video settings; when absent the glasses use their
+    // saved button-video settings. Only forward fields that are present.
+    const s = msg.settings ?? {}
+    const settings =
+      s.width != null || s.height != null || s.fps != null
+        ? {width: s.width, height: s.height, fps: s.fps}
+        : undefined
+    BluetoothSdk.startVideoRecording(videoRequestId, save, sound, settings)
   }
 
   private handle_stop_video_recording(msg: any) {

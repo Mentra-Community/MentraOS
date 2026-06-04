@@ -457,6 +457,7 @@ class MentraBluetoothSdk private constructor(
             request.save,
             request.sound,
             request.exposureTimeNs,
+            request.iso,
         )
     }
 
@@ -498,7 +499,14 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun startVideoRecording(request: VideoRecordingRequest) {
-        deviceManager.startVideoRecording(request.requestId, request.save, request.sound)
+        deviceManager.startVideoRecording(
+                request.requestId,
+                request.save,
+                request.sound,
+                request.width,
+                request.height,
+                request.fps,
+        )
     }
 
     fun stopVideoRecording(requestId: String) {
@@ -688,6 +696,7 @@ class MentraBluetoothSdk private constructor(
             "hotspot_error" -> dispatchToListeners { it.onHotspotError(HotspotErrorEvent(data)) }
             "gallery_status" -> dispatchToListeners { it.onGalleryStatus(GalleryStatusEvent(data)) }
             "photo_response" -> dispatchToListeners { it.onPhotoResponse(PhotoResponseEvent(data)) }
+            "photo_status" -> dispatchToListeners { it.onPhotoStatus(PhotoStatusEvent(data)) }
             "stream_status" -> {
                 val event = StreamStatusEvent(data)
                 handleStreamStatusForKeepAlive(event.status)

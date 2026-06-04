@@ -26,6 +26,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
+            "photo_status",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",
@@ -350,6 +351,19 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             default:
                 exposureTimeNs = nil
             }
+            let iso: Int?
+            switch params["iso"] {
+            case let value as Int:
+                iso = value > 0 ? value : nil
+            case let value as Double:
+                // Guard against Int(Double) trapping on out-of-range values.
+                iso = (value.isFinite && value > 0 && value < Double(Int.max)) ? Int(value) : nil
+            case let value as NSNumber:
+                let intValue = value.intValue
+                iso = intValue > 0 ? intValue : nil
+            default:
+                iso = nil
+            }
 
             await MainActor.run {
                 self.bluetoothSdk().requestPhoto(
@@ -363,7 +377,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                         flash: flash,
                         save: save,
                         sound: sound,
-                        exposureTimeNs: exposureTimeNs
+                        exposureTimeNs: exposureTimeNs,
+                        iso: iso
                     )
                 )
             }
@@ -413,10 +428,20 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - Video Recording Commands
 
-        AsyncFunction("startVideoRecording") { (requestId: String, save: Bool, sound: Bool) in
+        AsyncFunction("startVideoRecording") {
+            (requestId: String, save: Bool, sound: Bool, settings: [String: Any]?) in
+            // Optional per-recording {width,height,fps}. Absent fields stay 0, which
+            // the glasses treat as "use the saved button-video default". JS numbers
+            // arrive as Double across the bridge, so coerce to Int.
+            func dim(_ key: String) -> Int {
+                (settings?[key] as? NSNumber)?.intValue ?? 0
+            }
             await MainActor.run {
                 self.bluetoothSdk().startVideoRecording(
-                    VideoRecordingRequest(requestId: requestId, save: save, sound: sound)
+                    VideoRecordingRequest(
+                        requestId: requestId, save: save, sound: sound,
+                        width: dim("width"), height: dim("height"), fps: dim("fps")
+                    )
                 )
             }
         }
@@ -653,6 +678,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             sendEvent("hotspot_error", error.values)
         case let .photoResponse(response):
             sendEvent("photo_response", response.values)
+        case let .photoStatus(status):
+            sendEvent("photo_status", status.values)
         case let .streamStatus(status):
             sendEvent("stream_status", status.values)
         case let .keepAliveAck(ack):

@@ -46,6 +46,8 @@ interface PhotoRequestOptions {
   size?: "small" | "medium" | "large" | "full";
   /** Image compression level for upload optimization */
   compress?: "none" | "medium" | "heavy";
+  /** Sensor exposure time in nanoseconds for this photo only. Omit for auto exposure. */
+  exposureTimeNs?: number;
 }
 ```
 
@@ -129,6 +131,12 @@ const photoWithSave = await session.camera.requestPhoto({
 const compressedPhoto = await session.camera.requestPhoto({
   size: 'large',
   compress: 'medium'
+});
+
+// Manual exposure for this photo only
+const manualPhoto = await session.camera.requestPhoto({
+  size: 'full',
+  exposureTimeNs: 8_333_333
 });
 
 // Custom webhook with authentication and compression

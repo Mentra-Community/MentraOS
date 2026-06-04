@@ -109,6 +109,10 @@ class BluetoothSdkModule : Module() {
                     sendEvent("photo_response", event.values)
                 }
 
+                override fun onPhotoStatus(event: PhotoStatusEvent) {
+                    sendEvent("photo_status", event.values)
+                }
+
                 override fun onStreamStatus(event: StreamStatusEvent) {
                     sendEvent("stream_status", event.values)
                 }
@@ -165,6 +169,7 @@ class BluetoothSdkModule : Module() {
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
+            "photo_status",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",
@@ -388,7 +393,7 @@ class BluetoothSdkModule : Module() {
                     }.toMap()
             val req = PhotoRequest.fromMap(sanitized)
             Bridge.log(
-                    "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} appId=${req.appId} size=${req.size} compress=${req.compress} flash=${req.flash} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs}"
+                    "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} appId=${req.appId} size=${req.size} compress=${req.compress} flash=${req.flash} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs} iso=${req.iso}"
             )
             val activeSdk = sdk
             if (activeSdk == null) {
@@ -420,8 +425,25 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - Video Recording Commands
 
-        AsyncFunction("startVideoRecording") { requestId: String, save: Boolean, sound: Boolean ->
-            sdk?.startVideoRecording(VideoRecordingRequest(requestId, save, sound))
+        AsyncFunction("startVideoRecording") {
+                requestId: String,
+                save: Boolean,
+                sound: Boolean,
+                settings: Map<String, Any?>? ->
+            // Optional per-recording {width,height,fps}. Absent fields stay 0, which
+            // the glasses treat as "use the saved button-video default". JS numbers
+            // arrive as Double across the bridge, so coerce to Int.
+            fun dim(key: String): Int = (settings?.get(key) as? Number)?.toInt() ?: 0
+            sdk?.startVideoRecording(
+                    VideoRecordingRequest(
+                            requestId,
+                            save,
+                            sound,
+                            dim("width"),
+                            dim("height"),
+                            dim("fps"),
+                    )
+            )
         }
 
         AsyncFunction("stopVideoRecording") { requestId: String ->
