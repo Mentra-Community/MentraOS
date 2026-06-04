@@ -22,6 +22,7 @@ import android.view.WindowManager;
 
 import androidx.annotation.NonNull;
 
+import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 
 import org.webrtc.CapturerObserver;
@@ -111,7 +112,7 @@ public class WhipCameraCapturer implements VideoCapturer {
     mWidth = width;
     mHeight = height;
     mRequestedFps = fps;
-    mOutputFps = clamp(fps, 1, 30);
+    mOutputFps = clamp(fps, WhipStreamConfig.MIN_VIDEO_FPS, WhipStreamConfig.MAX_VIDEO_FPS);
     mCameraFps = mOutputFps;
     mOutputFrameIntervalNs = fpsToIntervalNs(mOutputFps);
     mNextForwardFrameTimestampNs = 0L;
@@ -428,7 +429,7 @@ public class WhipCameraCapturer implements VideoCapturer {
     Range<Integer>[] ranges =
         chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
     if (ranges == null || ranges.length == 0) {
-      return clamp(outputFps, 5, 30);
+      return clamp(outputFps, WhipStreamConfig.MIN_VIDEO_FPS, WhipStreamConfig.MAX_VIDEO_FPS);
     }
 
     int minSupportedFps = Integer.MAX_VALUE;

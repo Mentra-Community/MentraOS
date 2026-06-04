@@ -13,6 +13,8 @@ public class RtmpStreamConfig {
     public static final int DEFAULT_VIDEO_HEIGHT = 480;
     public static final int DEFAULT_VIDEO_BITRATE = 1000000; // 1 Mbps
     public static final int DEFAULT_VIDEO_FPS = 15;
+    public static final int MIN_VIDEO_FPS = 5;
+    public static final int MAX_VIDEO_FPS = 30;
 
     public static final int DEFAULT_AUDIO_BITRATE = 64000; // 64 kbps
     public static final int DEFAULT_AUDIO_SAMPLE_RATE = 44100;
@@ -64,7 +66,7 @@ public class RtmpStreamConfig {
             config.videoWidth = clamp(config.videoWidth, 320, 1920);
             config.videoHeight = clamp(config.videoHeight, 240, 1080);
             config.videoBitrate = clamp(config.videoBitrate, 100000, 10000000); // 100 kbps to 10 Mbps
-            config.videoFps = clamp(config.videoFps, 1, 30);
+            config.videoFps = clamp(config.videoFps, MIN_VIDEO_FPS, MAX_VIDEO_FPS);
         }
 
         // Parse audio config (supports both full and compact keys)
@@ -140,7 +142,7 @@ public class RtmpStreamConfig {
     }
 
     public RtmpStreamConfig setVideoFps(int fps) {
-        this.videoFps = clamp(fps, 1, 30);
+        this.videoFps = clamp(fps, MIN_VIDEO_FPS, MAX_VIDEO_FPS);
         return this;
     }
 
