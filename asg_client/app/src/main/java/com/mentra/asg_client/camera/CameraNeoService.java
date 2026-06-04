@@ -1210,8 +1210,16 @@ public class CameraNeoService extends LifecycleService {
                 CAMERA_KEEP_ALIVE_MS,
                 () -> photoSession.shotState() != AeStateMachine.ShotState.IDLE,
                 () -> {
-                    closeCamera();
-                    stopSelf();
+                    // Tear down under SERVICE_LOCK so this background-thread close is atomic with
+                    // respect to isCameraWarm() and enqueuePhotoRequest(), which both take the same
+                    // lock. Otherwise the close could land between a warm read and the enqueue,
+                    // making the short "hot" cue play for a capture that actually cold-starts.
+                    // Lock order is SERVICE_LOCK -> openCloseLock (closeCamera takes openCloseLock
+                    // internally), matching every other path, so this cannot deadlock.
+                    synchronized (SERVICE_LOCK) {
+                        closeCamera();
+                        stopSelf();
+                    }
                 });
     }
 
