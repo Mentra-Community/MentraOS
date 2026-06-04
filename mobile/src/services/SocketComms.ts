@@ -443,7 +443,7 @@ class SocketComms {
     // bypass it from the cloud side. The cloud's bypassVad hint is ignored.
     const bypassVad = false
     const requiredDataStrings = msg.requiredData || []
-    console.log(`SOCKET: mic_state_change: requiredData = [${requiredDataStrings}]`)
+    // console.log(`SOCKET: mic_state_change: requiredData = [${requiredDataStrings}]`)
     let shouldSendPcmData = false
     let shouldSendTranscript = false
     if (requiredDataStrings.includes("pcm")) {
