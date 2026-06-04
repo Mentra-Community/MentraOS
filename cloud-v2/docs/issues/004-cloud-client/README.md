@@ -7,9 +7,10 @@ client uses, not the mobile client app itself. The on-device Mentra Runtime
 hosts embed the same library; and the backend test harness drives the **same**
 library from Node/Bun.
 
-Docs: [`spec.md`](./spec.md) (the concrete API), [`spike.md`](./spike.md) (design
-rationale), [`island-adapter.md`](./island-adapter.md) (the proposed island
-wiring).
+Docs: [`architecture.md`](./architecture.md) (the e2e on-device + transport
+architecture and the cloud-client decisions, the alignment doc), [`spec.md`](./spec.md)
+(the concrete API), [`spike.md`](./spike.md) (design rationale),
+[`island-adapter.md`](./island-adapter.md) (the proposed island wiring).
 
 ## Design goals
 
