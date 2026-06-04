@@ -470,8 +470,8 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("stopStream") { sdk?.stopStream() }
 
-        AsyncFunction("keepStreamAlive") { params: Map<String, Any> ->
-            sdk?.keepStreamAlive(StreamKeepAliveRequest.fromMap(params))
+        AsyncFunction("sendExternallyManagedStreamKeepAlive") { params: Map<String, Any> ->
+            sdk?.sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest.fromMap(params))
         }
 
         // MARK: - Microphone Commands

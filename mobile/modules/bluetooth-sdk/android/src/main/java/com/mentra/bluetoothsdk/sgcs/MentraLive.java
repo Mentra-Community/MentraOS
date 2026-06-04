@@ -2774,13 +2774,7 @@ public class MentraLive extends SGCManager {
 
                 // Forward to websocket system via Bridge (matches iOS emitKeepAliveAck)
                 try {
-                    Map<String, Object> ackMap = new HashMap<>();
-                    Iterator<String> keys = json.keys();
-                    while (keys.hasNext()) {
-                        String key = keys.next();
-                        ackMap.put(key, json.get(key));
-                    }
-                    Bridge.sendKeepAliveAck(ackMap);
+                    Bridge.sendKeepAliveAck(jsonObjectToMap(json));
                 } catch (JSONException e) {
                     Log.e(TAG, "Error converting keep_alive_ack to Map", e);
                 }

@@ -54,7 +54,7 @@ public class WhipStreamConfigTest {
         assertEquals(320, c.getVideoWidth());
         assertEquals(240, c.getVideoHeight());
         assertEquals(100_000, c.getVideoBitrate());
-        assertEquals(10, c.getVideoFps());
+        assertEquals(5, c.getVideoFps());
 
         JSONObject high = new JSONObject();
         high.put("width", 4000);
@@ -65,7 +65,7 @@ public class WhipStreamConfigTest {
         assertEquals(1920, c.getVideoWidth());
         assertEquals(1080, c.getVideoHeight());
         assertEquals(10_000_000, c.getVideoBitrate());
-        assertEquals(60, c.getVideoFps());
+        assertEquals(30, c.getVideoFps());
     }
 
     @Test

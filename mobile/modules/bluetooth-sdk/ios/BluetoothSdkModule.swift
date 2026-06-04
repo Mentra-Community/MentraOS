@@ -466,9 +466,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
-        AsyncFunction("keepStreamAlive") { (params: [String: Any]) in
+        AsyncFunction("sendExternallyManagedStreamKeepAlive") { (params: [String: Any]) in
             await MainActor.run {
-                self.bluetoothSdk().keepStreamAlive(StreamKeepAliveRequest(values: params))
+                self.bluetoothSdk().sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest(values: params))
             }
         }
 

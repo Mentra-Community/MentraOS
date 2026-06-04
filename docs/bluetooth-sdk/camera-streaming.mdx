@@ -163,12 +163,6 @@ await BluetoothSdk.startStream({
   streamId,
 });
 
-await BluetoothSdk.keepStreamAlive({
-  type: 'keep_stream_alive',
-  streamId,
-  ackId: `ack-${Date.now()}`,
-});
-
 await BluetoothSdk.stopStream();
 ```
 
@@ -182,13 +176,6 @@ sdk.startStream(
     StreamRequest(
         streamUrl = "http://192.168.1.42:8889/mentra-live/whip",
         streamId = streamId,
-    )
-)
-
-sdk.keepStreamAlive(
-    StreamKeepAliveRequest(
-        streamId = streamId,
-        ackId = "ack-${System.currentTimeMillis()}",
     )
 )
 
@@ -208,20 +195,13 @@ sdk.startStream(
     )
 )
 
-sdk.keepStreamAlive(
-    StreamKeepAliveRequest(
-        streamId: streamId,
-        ackId: "ack-\(Date().timeIntervalSince1970)"
-    )
-)
-
 sdk.stopStream()
 ```
 
   </Tab>
 </Tabs>
 
-Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https://` for WHIP/WebRTC ingest. Send keep-alives about every 15 seconds while streaming. The camera light is always enabled while streaming.
+Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https://` for WHIP/WebRTC ingest. The SDK sends stream keep-alives automatically while streaming and reports keep-alive failures through `stream_status`. The camera light is always enabled while streaming.
 
 ## Optional Local Demo Helper
 
@@ -295,6 +275,7 @@ import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
 export function StreamStatusLogger() {
   useBluetoothEvent('stream_status', (event) => {
     console.log(event);
+    console.log(event.resolvedConfig?.video?.fps);
   });
 
   return null;
@@ -307,6 +288,7 @@ export function StreamStatusLogger() {
 ```kotlin
 override fun onStreamStatus(event: StreamStatusEvent) {
     Log.d("Mentra", "Stream status: ${event.status}")
+    Log.d("Mentra", "Resolved FPS: ${event.resolvedConfig?.video?.fps}")
 }
 ```
 
@@ -317,6 +299,7 @@ override fun onStreamStatus(event: StreamStatusEvent) {
 func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
     if case let .streamStatus(status) = event {
         print("Stream status: \(status)")
+        print("Resolved FPS: \(status.resolvedConfig?.video?.fps ?? -1)")
     }
 }
 ```
@@ -325,3 +308,11 @@ func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEv
 </Tabs>
 
 Status values include initializing, streaming, stopped, reconnecting, and error states.
+When a status event includes `resolvedConfig`, it contains the effective settings
+used by the glasses after defaults, clamps, and camera-mode selection. In
+`resolvedConfig.video`, `width` and `height` are the encoded output dimensions,
+`captureWidth` and `captureHeight` are the native camera buffer dimensions before
+crop or downscale, `bitrate` is the encoded video bitrate in bits per second, and
+`fps` is the resolved capture/encode frame rate. `resolvedConfig.audio` reports
+the audio bitrate, sample rate, echo cancellation, and noise suppression settings
+when audio is active.

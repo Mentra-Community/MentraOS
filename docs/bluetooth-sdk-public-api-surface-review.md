@@ -137,7 +137,6 @@ stopVideoRecording(requestId: string): Promise<void>
 
 startStream(params: StreamStartRequest): Promise<void>
 stopStream(): Promise<void>
-keepStreamAlive(params: StreamKeepAliveRequest): Promise<void>
 
 setMicState(
   enabled: boolean,
@@ -300,7 +299,6 @@ fun setHotspotState(enabled: Boolean)
 fun requestPhoto(request: PhotoRequest)
 fun queryGalleryStatus()
 fun startStream(request: StreamRequest)
-fun keepStreamAlive(request: StreamKeepAliveRequest)
 fun rgbLedControl(request: RgbLedRequest)
 fun stopStream()
 fun startVideoRecording(request: VideoRecordingRequest)
@@ -429,7 +427,6 @@ public func setHotspotState(enabled: Bool)
 public func requestPhoto(_ request: PhotoRequest)
 public func queryGalleryStatus()
 public func startStream(_ request: StreamRequest)
-public func keepStreamAlive(_ request: StreamKeepAliveRequest)
 public func rgbLedControl(_ request: RgbLedRequest)
 public func stopStream()
 public func startVideoRecording(_ request: VideoRecordingRequest)

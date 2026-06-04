@@ -2,6 +2,24 @@ import CoreBluetooth
 import Foundation
 
 @MainActor
+private final class ActiveStreamKeepAlive {
+    let streamId: String
+    let intervalSeconds: Int
+    var pendingAckId: String?
+    var missedAckCount = 0
+    var task: Task<Void, Never>?
+    // Missed-ACK counting only begins once the stream is confirmed live/coming up, so a slow
+    // startup (glasses can't ACK until they reach starting/streaming) can't trip a false
+    // keep-alive timeout before the stream is ever up.
+    var armed = false
+
+    init(streamId: String, intervalSeconds: Int) {
+        self.streamId = streamId
+        self.intervalSeconds = intervalSeconds
+    }
+}
+
+@MainActor
 private final class ActiveScanSession {
     let model: DeviceModel
     let onResults: ([Device]) -> Void
@@ -33,6 +51,7 @@ public final class MentraBluetoothSDK {
     private var suppressDefaultDeviceEvents = false
     private var defaultDeviceApplyGeneration = 0
     private var activeScanSessions: [UUID: ActiveScanSession] = [:]
+    private var activeStreamKeepAlive: ActiveStreamKeepAlive?
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
         self.configuration = configuration
@@ -415,10 +434,17 @@ public final class MentraBluetoothSDK {
     }
 
     public func startStream(_ request: StreamRequest) {
-        DeviceManager.shared.startStream(request.values)
+        var values = request.values
+        let streamId = stringValue(values, "streamId").flatMap { $0.isEmpty ? nil : $0 } ?? "sdk-\(UUID().uuidString)"
+        values["streamId"] = streamId
+        stopStreamKeepAliveMonitor()
+        DeviceManager.shared.startStream(values)
+        if request.keepAlive, !request.isExternallyManagedKeepAlive {
+            startStreamKeepAliveMonitor(streamId: streamId, intervalSeconds: request.keepAliveIntervalSeconds)
+        }
     }
 
-    public func keepStreamAlive(_ request: StreamKeepAliveRequest) {
+    func sendExternallyManagedStreamKeepAlive(_ request: StreamKeepAliveRequest) {
         DeviceManager.shared.keepStreamAlive(request.values)
     }
 
@@ -435,6 +461,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func stopStream() {
+        stopStreamKeepAliveMonitor()
         DeviceManager.shared.stopStream()
     }
 
@@ -493,6 +520,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func invalidate() {
+        stopStreamKeepAliveMonitor()
         if let bridgeEventSinkId {
             Bridge.removeEventSink(bridgeEventSinkId)
             self.bridgeEventSinkId = nil
@@ -502,6 +530,89 @@ public final class MentraBluetoothSDK {
             self.storeListenerId = nil
         }
         delegate = nil
+    }
+
+    private func startStreamKeepAliveMonitor(streamId: String, intervalSeconds requestedIntervalSeconds: Int) {
+        let intervalSeconds = requestedIntervalSeconds > 0 ? requestedIntervalSeconds : 5
+        let tracker = ActiveStreamKeepAlive(streamId: streamId, intervalSeconds: intervalSeconds)
+        activeStreamKeepAlive = tracker
+        sendNextStreamKeepAlive(for: tracker)
+    }
+
+    private func stopStreamKeepAliveMonitor() {
+        activeStreamKeepAlive?.task?.cancel()
+        activeStreamKeepAlive = nil
+    }
+
+    private func sendNextStreamKeepAlive(for tracker: ActiveStreamKeepAlive) {
+        guard activeStreamKeepAlive === tracker else { return }
+
+        if tracker.armed, tracker.pendingAckId != nil {
+            tracker.missedAckCount += 1
+            if tracker.missedAckCount >= 3 {
+                activeStreamKeepAlive = nil
+                tracker.task?.cancel()
+                let event = StreamStatusEvent(
+                    status: .error(
+                        streamId: tracker.streamId,
+                        errorDetails: "Stream keep-alive timed out after \(tracker.missedAckCount) missed ACKs",
+                        timestamp: Int(Date().timeIntervalSince1970 * 1000),
+                        resolvedConfig: nil
+                    )
+                )
+                delegate?.mentraBluetoothSDK(self, didReceive: .streamStatus(event))
+                stopStream()
+                return
+            }
+        }
+
+        let ackId = "ack-\(Int(Date().timeIntervalSince1970 * 1000))"
+        tracker.pendingAckId = ackId
+        DeviceManager.shared.keepStreamAlive(
+            StreamKeepAliveRequest(streamId: tracker.streamId, ackId: ackId).values
+        )
+
+        tracker.task?.cancel()
+        tracker.task = Task { @MainActor [weak self, weak tracker] in
+            guard let tracker else { return }
+            try? await Task.sleep(nanoseconds: UInt64(tracker.intervalSeconds) * 1_000_000_000)
+            self?.sendNextStreamKeepAlive(for: tracker)
+        }
+    }
+
+    private func handleStreamKeepAliveAck(_ event: KeepAliveAckEvent) -> Bool {
+        guard let tracker = activeStreamKeepAlive,
+              event.streamId == tracker.streamId,
+              event.ackId == tracker.pendingAckId
+        else {
+            return false
+        }
+        tracker.pendingAckId = nil
+        tracker.missedAckCount = 0
+        return true
+    }
+
+    private func handleStreamStatusForKeepAlive(_ status: StreamStatus) {
+        guard let streamId = status.streamId,
+              activeStreamKeepAlive?.streamId == streamId
+        else {
+            return
+        }
+
+        switch status.state {
+        case .stopped, .stopping, .error, .reconnectFailed:
+            stopStreamKeepAliveMonitor()
+        default:
+            // A non-terminal status means the stream is live or coming up and the glasses can
+            // now ACK; arm the missed-ACK detector from here so a slow startup before the first
+            // ACK can't trip a false keep-alive timeout. On the arming transition, drop any
+            // pre-arm bookkeeping so a stale unacked id can't immediately count as a miss.
+            if let tracker = activeStreamKeepAlive, !tracker.armed {
+                tracker.armed = true
+                tracker.pendingAckId = nil
+                tracker.missedAckCount = 0
+            }
+        }
     }
 
     private func dispatchStoreUpdate(_ category: String, _ changes: [String: Any]) {
@@ -635,9 +746,14 @@ public final class MentraBluetoothSDK {
         case "photo_status":
             delegate?.mentraBluetoothSDK(self, didReceive: .photoStatus(PhotoStatusEvent(values: data)))
         case "stream_status":
-            delegate?.mentraBluetoothSDK(self, didReceive: .streamStatus(StreamStatusEvent(values: data)))
+            let event = StreamStatusEvent(values: data)
+            handleStreamStatusForKeepAlive(event.status)
+            delegate?.mentraBluetoothSDK(self, didReceive: .streamStatus(event))
         case "keep_alive_ack":
-            delegate?.mentraBluetoothSDK(self, didReceive: .keepAliveAck(KeepAliveAckEvent(values: data)))
+            let event = KeepAliveAckEvent(values: data)
+            if !handleStreamKeepAliveAck(event) {
+                delegate?.mentraBluetoothSDK(self, didReceive: .keepAliveAck(event))
+            }
         case "ota_update_available":
             delegate?.mentraBluetoothSDK(self, didReceive: .otaUpdateAvailable(OtaUpdateAvailableEvent(values: data)))
         case "ota_start_ack":

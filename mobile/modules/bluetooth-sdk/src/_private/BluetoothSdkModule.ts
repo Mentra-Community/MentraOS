@@ -136,8 +136,9 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // Stream Commands
   startStream(params: StreamStartRequest): Promise<void>
+  startExternallyManagedStream(params: StreamStartRequest): Promise<void>
   stopStream(): Promise<void>
-  keepStreamAlive(params: StreamKeepAliveRequest): Promise<void>
+  sendExternallyManagedStreamKeepAlive(params: StreamKeepAliveRequest): Promise<void>
 
   // Microphone Commands
   setMicState(enabled: boolean, useGlassesMic?: boolean, sendTranscript?: boolean, sendLc3Data?: boolean): Promise<void>
@@ -545,6 +546,10 @@ NativeBluetoothSdkModule.requestPhoto = function (params: PhotoRequestParams) {
   return nativeRequestPhoto(photoRequestParamsForNative(params) as unknown as PhotoRequestParams)
 }
 
+const nativeStartStream = NativeBluetoothSdkModule.startStream.bind(NativeBluetoothSdkModule)
+NativeBluetoothSdkModule.startExternallyManagedStream = function (params: StreamStartRequest) {
+  return nativeStartStream({...params, keepAliveMode: "external"} as StreamStartRequest)
+}
 NativeBluetoothSdkModule.checkForOtaUpdate = NativeBluetoothSdkModule.sendOtaQueryStatus.bind(NativeBluetoothSdkModule)
 NativeBluetoothSdkModule.startOtaUpdate = NativeBluetoothSdkModule.sendOtaStart.bind(NativeBluetoothSdkModule)
 
