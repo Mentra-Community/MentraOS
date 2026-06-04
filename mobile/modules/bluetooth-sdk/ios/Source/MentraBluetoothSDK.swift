@@ -457,16 +457,27 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.requestVersionInfo()
     }
 
+    /// Ask connected Mentra Live glasses to check/report OTA availability and status.
+    public func checkForOtaUpdate() {
+        DeviceManager.shared.sendOtaQueryStatus()
+    }
+
+    /// Start the OTA flow after your app has presented the available update to the user.
+    public func startOtaUpdate() {
+        DeviceManager.shared.sendOtaStart()
+    }
+
+    /// Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures.
+    public func retryOtaVersionCheck() {
+        DeviceManager.shared.retryOtaVersionCheck()
+    }
+
     func sendOtaStart() {
         DeviceManager.shared.sendOtaStart()
     }
 
     func sendOtaQueryStatus() {
         DeviceManager.shared.sendOtaQueryStatus()
-    }
-
-    func retryOtaVersionCheck() {
-        DeviceManager.shared.retryOtaVersionCheck()
     }
 
     func sendShutdown() {
@@ -627,6 +638,12 @@ public final class MentraBluetoothSDK {
             delegate?.mentraBluetoothSDK(self, didReceive: .streamStatus(StreamStatusEvent(values: data)))
         case "keep_alive_ack":
             delegate?.mentraBluetoothSDK(self, didReceive: .keepAliveAck(KeepAliveAckEvent(values: data)))
+        case "ota_update_available":
+            delegate?.mentraBluetoothSDK(self, didReceive: .otaUpdateAvailable(OtaUpdateAvailableEvent(values: data)))
+        case "ota_start_ack":
+            delegate?.mentraBluetoothSDK(self, didReceive: .otaStartAck(OtaStartAckEvent(values: data)))
+        case "ota_status":
+            delegate?.mentraBluetoothSDK(self, didReceive: .otaStatus(OtaStatusEvent(values: data)))
         case "compatible_glasses_search_stop":
             delegate?.mentraBluetoothSDK(self, didStopScan: .completed)
         case "pair_failure":

@@ -119,6 +119,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   sendOtaQueryStatus(): Promise<void>
   /** Re-run glasses-side OTA version check (called after a clock fix invalidates a TLS failure). */
   retryOtaVersionCheck(): Promise<void>
+  checkForOtaUpdate(): Promise<void>
+  startOtaUpdate(): Promise<void>
 
   // Version Info Commands
   requestVersionInfo(): Promise<void>
@@ -542,6 +544,9 @@ const nativeRequestPhoto = NativeBluetoothSdkModule.requestPhoto.bind(NativeBlue
 NativeBluetoothSdkModule.requestPhoto = function (params: PhotoRequestParams) {
   return nativeRequestPhoto(photoRequestParamsForNative(params) as unknown as PhotoRequestParams)
 }
+
+NativeBluetoothSdkModule.checkForOtaUpdate = NativeBluetoothSdkModule.sendOtaQueryStatus.bind(NativeBluetoothSdkModule)
+NativeBluetoothSdkModule.startOtaUpdate = NativeBluetoothSdkModule.sendOtaStart.bind(NativeBluetoothSdkModule)
 
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkPublicModule
