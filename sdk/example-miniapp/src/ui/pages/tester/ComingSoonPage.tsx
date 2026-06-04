@@ -17,7 +17,7 @@ export default function ComingSoonPage() {
   const navigate = useNavigate()
   return (
     <Shell>
-      <MiniappHeader title="Coming Soon" onBack={() => navigate("/tester")} />
+      <MiniappHeader title="Coming Soon" onBack={() => navigate("/")} />
 
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">

@@ -35,7 +35,7 @@ export default function LocationPage() {
 
   return (
     <Shell>
-      <MiniappHeader title="session.location" onBack={() => navigate("/tester")} />
+      <MiniappHeader title="session.location" onBack={() => navigate("/")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
           GPS coordinates streamed from the phone.

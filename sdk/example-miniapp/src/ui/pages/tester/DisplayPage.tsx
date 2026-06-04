@@ -144,7 +144,7 @@ export default function DisplayPage() {
 
   return (
     <Shell>
-      <MiniappHeader title="session.display" onBack={() => navigate("/tester")} />
+      <MiniappHeader title="session.display" onBack={() => navigate("/")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
           Render text on the glasses display. Tap a button to invoke the corresponding `session.display.*` method in

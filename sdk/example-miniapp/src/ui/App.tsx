@@ -23,8 +23,8 @@ export default function App() {
   return (
     <HashRouter>
       <Routes>
-        <Route path="/" element={<CaptionsPage />} />
-        <Route path="/tester" element={<TesterMenu />} />
+        <Route path="/" element={<TesterMenu />} />
+        <Route path="/captions" element={<CaptionsPage />} />
         <Route path="/tester/display" element={<DisplayPage />} />
         <Route path="/tester/speaker" element={<SpeakerPage />} />
         <Route path="/tester/mic" element={<MicrophonePage />} />
