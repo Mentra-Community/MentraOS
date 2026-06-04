@@ -14,7 +14,7 @@ Photo upload sends a JPEG from supported glasses to a webhook URL. In the starte
   <Tab title="React Native">
 
 ```ts
-await BluetoothSdk.requestPhoto({
+const photo = await BluetoothSdk.requestPhoto({
   requestId: `photo-${Date.now()}`,
   appId: 'com.example.app',
   size: 'medium',
@@ -25,13 +25,16 @@ await BluetoothSdk.requestPhoto({
   exposureTimeNs: null,
   iso: null,
 });
+if (photo.state === 'error') {
+  throw new Error(photo.errorMessage);
+}
 ```
 
   </Tab>
   <Tab title="Android">
 
 ```kotlin
-sdk.requestPhoto(
+val photo = sdk.requestPhoto(
     PhotoRequest(
         requestId = "photo-${System.currentTimeMillis()}",
         appId = "com.example.app",
@@ -44,13 +47,14 @@ sdk.requestPhoto(
         iso = null,
     )
 )
+check(photo.response.state == "success") { "Photo request failed" }
 ```
 
   </Tab>
   <Tab title="iOS">
 
 ```swift
-sdk.requestPhoto(
+let photo = try await sdk.requestPhoto(
     PhotoRequest(
         requestId: "photo-\(Date().timeIntervalSince1970)",
         appId: "com.example.app",
@@ -63,6 +67,9 @@ sdk.requestPhoto(
         iso: nil
     )
 )
+guard photo.response.state == .success else {
+    throw PhotoError.requestRejected
+}
 ```
 
   </Tab>
@@ -113,7 +120,8 @@ await BluetoothSdk.setGalleryModeEnabled(true);
 await BluetoothSdk.setButtonPhotoSettings('medium');
 await BluetoothSdk.setButtonVideoRecordingSettings(1280, 720, 30);
 await BluetoothSdk.setButtonMaxRecordingTime(3);
-await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 0});
+const cameraAck = await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 0});
+if (!cameraAck.ready) throw new Error(cameraAck.errorMessage ?? 'Camera FOV was not ready');
 ```
 
   </Tab>
@@ -124,7 +132,8 @@ sdk.setGalleryModeEnabled(true)
 sdk.setButtonPhotoSettings(size = ButtonPhotoSize.MEDIUM)
 sdk.setButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
 sdk.setButtonMaxRecordingTime(minutes = 3)
-sdk.setCameraFov(CameraFov(fov = 102, roiPosition = 0))
+val cameraAck = sdk.setCameraFov(CameraFov(fov = 102, roiPosition = 0))
+check(cameraAck.ready) { cameraAck.errorMessage ?: "Camera FOV was not ready" }
 ```
 
   </Tab>
@@ -135,7 +144,8 @@ try await sdk.setGalleryModeEnabled(true)
 try await sdk.setButtonPhotoSettings(size: .medium)
 try await sdk.setButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30)
 try await sdk.setButtonMaxRecordingTime(minutes: 3)
-try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: 0))
+let cameraAck = try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: 0))
+guard cameraAck.ready else { throw CameraError.notReady }
 ```
 
   </Tab>
@@ -145,7 +155,7 @@ Use `setGalleryModeEnabled(false)` when you want the action button to report eve
 
 Action-button photos emitted by the glasses use the same `photo_status` metadata shape when the phone SDK is connected. These local captures report `resolvedConfig.source: "button"` and `resolvedConfig.transferMethod: "local"`, then expose `requestedCaptureConfig` / `meteredPreview` on `capturing` and `captureMetadata` on `captured`.
 
-`setCameraFov` accepts FOV degrees from 62 to 118 and ROI position `0` center, `1` bottom, or `2` top. The `"narrow"` (82°), `"standard"` (102°), and `"wide"` (118°) presets are also accepted and map to center ROI. On Mentra Live, applying FOV/ROI restarts the camera for about 5 seconds; wait for that restart before requesting a photo. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
+`setCameraFov` accepts FOV degrees from 62 to 118 and ROI position `0` center, `1` bottom, or `2` top. The `"narrow"` (82°), `"standard"` (102°), and `"wide"` (118°) presets are also accepted and map to center ROI. On Mentra Live, applying FOV/ROI restarts the camera; the returned `SettingsAckEvent` resolves from the ASG client when the camera is ready again. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
 
 ## Streaming
 
@@ -242,7 +252,7 @@ const uploadSubscription = MentraPhotoReceiver.addListener('photoUpload', (event
 });
 
 try {
-  await BluetoothSdk.requestPhoto({
+  const photo = await BluetoothSdk.requestPhoto({
     requestId: `photo-${Date.now()}`,
     appId: 'com.example.app',
     size: 'medium',
@@ -251,6 +261,9 @@ try {
     compress: 'medium',
     sound: true,
   });
+  if (photo.state === 'error') {
+    throw new Error(photo.errorMessage);
+  }
 } catch (error) {
   uploadSubscription.remove();
   await MentraPhotoReceiver.stopPhotoReceiver();

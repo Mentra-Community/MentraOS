@@ -404,7 +404,7 @@ public class CommandProcessor {
 
             commandHandlerRegistry.registerHandler(
                     new com.mentra.asg_client.service.core.handlers.GalleryModeCommandHandler(
-                            serviceManager));
+                            serviceManager, communicationManager));
             Log.d(TAG, "✅ Registered GalleryModeCommandHandler");
 
             commandHandlerRegistry.registerHandler(

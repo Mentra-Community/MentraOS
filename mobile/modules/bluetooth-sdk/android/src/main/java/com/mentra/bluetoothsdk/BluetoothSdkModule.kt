@@ -113,6 +113,14 @@ class BluetoothSdkModule : Module() {
                     sendEvent("photo_status", event.values)
                 }
 
+                override fun onVideoRecordingStatus(event: VideoRecordingStatusEvent) {
+                    sendEvent("video_recording_status", event.values)
+                }
+
+                override fun onRgbLedControlResponse(event: RgbLedControlResponseEvent) {
+                    sendEvent("rgb_led_control_response", event.values)
+                }
+
                 override fun onStreamStatus(event: StreamStatusEvent) {
                     sendEvent("stream_status", event.values)
                 }
@@ -131,6 +139,10 @@ class BluetoothSdkModule : Module() {
 
                 override fun onOtaStatus(event: OtaStatusEvent) {
                     sendEvent("ota_status", event.values)
+                }
+
+                override fun onSettingsAck(event: SettingsAckEvent) {
+                    sendEvent("settings_ack", event.values)
                 }
 
                 override fun onMicPcm(event: MicPcmEvent) {
@@ -182,6 +194,7 @@ class BluetoothSdkModule : Module() {
             "hotspot_error",
             "photo_response",
             "photo_status",
+            "video_recording_status",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",
@@ -191,6 +204,7 @@ class BluetoothSdkModule : Module() {
             "swipe_volume_status",
             "switch_status",
             "rgb_led_control_response",
+            "settings_ack",
             "pair_failure",
             "audio_pairing_needed",
             "audio_connected",
@@ -388,14 +402,38 @@ class BluetoothSdkModule : Module() {
         // MARK: - Gallery Commands
 
         AsyncFunction("setGalleryModeEnabled") { enabled: Boolean ->
-            sdk?.setGalleryModeEnabled(enabled)
+            sdk?.setGalleryModeEnabled(enabled)?.values
         }
 
         AsyncFunction("setVoiceActivityDetectionEnabled") { enabled: Boolean ->
             sdk?.setVoiceActivityDetectionEnabled(enabled)
         }
 
-        AsyncFunction("queryGalleryStatus") { sdk?.queryGalleryStatus() }
+        AsyncFunction("setButtonPhotoSettings") { size: String ->
+            sdk?.setButtonPhotoSettings(ButtonPhotoSize.fromValue(size))?.values
+        }
+
+        AsyncFunction("setButtonVideoRecordingSettings") { width: Int, height: Int, fps: Int ->
+            sdk?.setButtonVideoRecordingSettings(width, height, fps)?.values
+        }
+
+        AsyncFunction("setButtonCameraLed") { enabled: Boolean ->
+            sdk?.setButtonCameraLed(enabled)?.values
+        }
+
+        AsyncFunction("setButtonMaxRecordingTime") { minutes: Int ->
+            sdk?.setButtonMaxRecordingTime(minutes)?.values
+        }
+
+        AsyncFunction("setCameraFov") { fov: Map<String, Any> ->
+            val value = (fov["fov"] as? Number)?.toInt() ?: CameraFov.DEFAULT_FOV
+            val roiPosition = (fov["roiPosition"] as? Number)?.toInt()
+                    ?: (fov["roi_position"] as? Number)?.toInt()
+                    ?: CameraFov.DEFAULT_ROI_POSITION
+            sdk?.setCameraFov(CameraFov(value, roiPosition))?.values
+        }
+
+        AsyncFunction("queryGalleryStatus") { sdk?.queryGalleryStatus()?.values }
 
         AsyncFunction("requestPhoto") { params: Map<String, Any?> ->
             // JS may pass null for optional fields; Map<String, Any> rejects null values at the bridge.
@@ -412,16 +450,17 @@ class BluetoothSdkModule : Module() {
                 Bridge.log(
                         "NATIVE: PHOTO PIPELINE — sdk is null; requestPhoto dropped requestId=${req.requestId}"
                 )
+                null
             } else {
-                activeSdk.requestPhoto(req)
+                activeSdk.requestPhoto(req).values
             }
         }
 
         // MARK: - OTA Commands
 
-        AsyncFunction("sendOtaStart") { sdk?.sendOtaStart() }
+        AsyncFunction("sendOtaStart") { sdk?.sendOtaStart()?.values }
 
-        AsyncFunction("sendOtaQueryStatus") { sdk?.sendOtaQueryStatus() }
+        AsyncFunction("sendOtaQueryStatus") { sdk?.sendOtaQueryStatus()?.values }
 
         AsyncFunction("retryOtaVersionCheck") { sdk?.retryOtaVersionCheck() }
 
@@ -455,11 +494,11 @@ class BluetoothSdkModule : Module() {
                             dim("height"),
                             dim("fps"),
                     )
-            )
+            )?.values
         }
 
         AsyncFunction("stopVideoRecording") { requestId: String ->
-            sdk?.stopVideoRecording(requestId)
+            sdk?.stopVideoRecording(requestId)?.values
         }
 
         // MARK: - Stream Commands
@@ -527,7 +566,7 @@ class BluetoothSdkModule : Module() {
                             offDurationMs = offDurationMs,
                             count = count,
                     )
-            )
+            )?.values
         }
 
         // MARK: - STT Commands

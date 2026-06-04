@@ -392,6 +392,26 @@ public class Bridge private constructor() {
             }
         }
 
+        @JvmStatic
+        fun sendSettingsAck(values: Map<String, Any>) {
+            val body = HashMap<String, Any>()
+            body["type"] = "settings_ack"
+            values.forEach { (key, value) ->
+                body[key] = value
+            }
+            sendTypedMessage("settings_ack", body)
+        }
+
+        @JvmStatic
+        fun sendVideoRecordingStatus(values: Map<String, Any>) {
+            val body = HashMap<String, Any>()
+            body["type"] = "video_recording_status"
+            values.forEach { (key, value) ->
+                body[key] = value
+            }
+            sendTypedMessage("video_recording_status", body)
+        }
+
         /**
          * Send transcription result to server Used by AOSManager to send pre-formatted
          * transcription results Matches the Swift structure exactly
@@ -482,11 +502,13 @@ public class Bridge private constructor() {
                 hasContent: Boolean
         ) {
             val galleryData = HashMap<String, Any>()
+            galleryData["type"] = "gallery_status"
             galleryData["photos"] = photoCount
             galleryData["videos"] = videoCount
             galleryData["total"] = totalCount
             galleryData["totalSize"] = totalSize
             galleryData["hasContent"] = hasContent
+            galleryData["cameraBusy"] = false
 
             sendTypedMessage("gallery_status", galleryData as Map<String, Any>)
         }

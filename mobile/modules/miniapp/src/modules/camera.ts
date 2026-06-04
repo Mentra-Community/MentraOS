@@ -92,8 +92,9 @@ export class CameraModule {
 
   /**
    * Start recording video on the glasses camera. Returns a `recordingId` to pass
-   * to {@link stopVideoRecording}. Requires CAMERA permission declared in
-   * miniapp.json. Check `session.capabilities.hasCamera` before calling.
+   * to {@link stopVideoRecording} after the glasses report that recording
+   * started. Requires CAMERA permission declared in miniapp.json. Check
+   * `session.capabilities.hasCamera` before calling.
    *
    * Resolution and frame rate are optional — omit them to use the device's saved
    * button-video settings. Lowering `fps` (e.g. to 5) keeps the glasses cooler

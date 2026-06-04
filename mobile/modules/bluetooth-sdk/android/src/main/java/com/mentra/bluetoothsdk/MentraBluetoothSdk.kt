@@ -8,6 +8,9 @@ import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
 import java.util.Collections
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class MentraBluetoothSdk private constructor(
@@ -26,6 +29,15 @@ class MentraBluetoothSdk private constructor(
     private var suppressDefaultDeviceEvents = false
     private val streamKeepAliveLock = Any()
     private var activeStreamKeepAlive: ActiveStreamKeepAlive? = null
+    private val pendingPhotoRequests = ConcurrentHashMap<String, PendingResponse<PhotoResponseEvent>>()
+    private val pendingVideoRecordingRequests =
+        ConcurrentHashMap<String, PendingResponse<VideoRecordingStatusEvent>>()
+    private val pendingRgbLedRequests = ConcurrentHashMap<String, PendingResponse<RgbLedControlResponseEvent>>()
+    private val pendingSettingsRequests = ConcurrentHashMap<String, PendingResponse<SettingsAckEvent>>()
+    private val oneShotLock = Any()
+    private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>? = null
+    private var pendingOtaQuery: PendingResponse<OtaQueryResult>? = null
+    private var pendingOtaStart: PendingResponse<OtaStartAckEvent>? = null
 
     init {
         listeners.add(listener)
@@ -39,6 +51,7 @@ class MentraBluetoothSdk private constructor(
         private val DEFAULT_DEVICE_KEYS = setOf("default_wearable", "device_name", "device_address")
         private val SCAN_STATE_KEYS = setOf("searching", "searchingController", "searchResults")
         private const val DEFAULT_SCAN_TIMEOUT_MS = 15_000L
+        private const val DEFAULT_REQUEST_TIMEOUT_MS = 15_000L
         private const val DEFAULT_STREAM_KEEP_ALIVE_INTERVAL_SECONDS = 5
         private const val MAX_MISSED_STREAM_KEEP_ALIVE_ACKS = 3
 
@@ -67,6 +80,43 @@ class MentraBluetoothSdk private constructor(
         // false keep-alive timeout before the stream is ever up.
         var armed: Boolean = false,
     )
+
+    private class PendingResponse<T>(
+        private val operation: String,
+    ) {
+        private val latch = CountDownLatch(1)
+        private val completed = AtomicBoolean(false)
+        @Volatile private var result: T? = null
+        @Volatile private var error: Throwable? = null
+
+        fun resolve(value: T) {
+            if (completed.compareAndSet(false, true)) {
+                result = value
+                latch.countDown()
+            }
+        }
+
+        fun reject(error: Throwable) {
+            if (completed.compareAndSet(false, true)) {
+                this.error = error
+                latch.countDown()
+            }
+        }
+
+        fun await(timeoutMs: Long = DEFAULT_REQUEST_TIMEOUT_MS): T {
+            if (!latch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
+                throw BluetoothException(
+                    "request_timeout",
+                    "$operation timed out waiting for glasses response.",
+                )
+            }
+            error?.let { throw it }
+            return result ?: throw BluetoothException(
+                "empty_response",
+                "$operation completed without a response payload.",
+            )
+        }
+    }
 
     fun addListener(listener: MentraBluetoothSdkListener) {
         listeners.add(listener)
@@ -333,47 +383,86 @@ class MentraBluetoothSdk private constructor(
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "screen_disabled", disabled)
     }
 
-    fun setGalleryModeEnabled(enabled: Boolean) {
-        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "gallery_mode", enabled)
+    fun setGalleryModeEnabled(enabled: Boolean): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "gallery_mode",
+            updateStore = { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "gallery_mode", enabled) },
+            send = { requestId -> deviceManager.sendGalleryMode(requestId, enabled) },
+        )
+
+    private fun performSettingsCommand(
+        setting: String,
+        updateStore: () -> Unit,
+        send: (String) -> Unit,
+    ): SettingsAckEvent {
+        val requestId = "settings-$setting-${UUID.randomUUID()}"
+        val pending = PendingResponse<SettingsAckEvent>("set $setting")
+        pendingSettingsRequests[requestId] = pending
+        try {
+            updateStore()
+            send(requestId)
+            return pending.await()
+        } finally {
+            pendingSettingsRequests.remove(requestId, pending)
+        }
     }
 
     fun setVoiceActivityDetectionEnabled(enabled: Boolean) {
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "voice_activity_detection_enabled", enabled)
     }
 
-    fun setButtonPhotoSettings(size: ButtonPhotoSize) {
-        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", size.value)
-    }
-
-    fun setButtonPhotoSettings(settings: ButtonPhotoSettings) {
-        setButtonPhotoSettings(size = settings.size)
-    }
-
-    fun setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int) {
-        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "button_video_width", width)
-        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "button_video_height", height)
-        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "button_video_fps", fps)
-    }
-
-    fun setButtonVideoRecordingSettings(settings: ButtonVideoRecordingSettings) {
-        setButtonVideoRecordingSettings(width = settings.width, height = settings.height, fps = settings.fps)
-    }
-
-    fun setButtonCameraLed(enabled: Boolean) {
-        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "button_camera_led", enabled)
-    }
-
-    fun setButtonMaxRecordingTime(minutes: Int) {
-        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "button_max_recording_time", minutes)
-    }
-
-    fun setCameraFov(fov: CameraFov) {
-        DeviceStore.apply(
-            ObservableStore.BLUETOOTH_CATEGORY,
-            "camera_fov",
-            mapOf("fov" to fov.fov, "roi_position" to fov.roiPosition),
+    fun setButtonPhotoSettings(size: ButtonPhotoSize): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "button_photo",
+            updateStore = { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", size.value) },
+            send = { requestId -> deviceManager.sendButtonPhotoSettings(requestId, size.value) },
         )
-    }
+
+    fun setButtonPhotoSettings(settings: ButtonPhotoSettings): SettingsAckEvent =
+        setButtonPhotoSettings(size = settings.size)
+
+    fun setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "button_video_recording",
+            updateStore = {
+                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_width", width)
+                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_height", height)
+                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_fps", fps)
+            },
+            send = { requestId ->
+                deviceManager.sendButtonVideoRecordingSettings(requestId, width, height, fps)
+            },
+        )
+
+    fun setButtonVideoRecordingSettings(settings: ButtonVideoRecordingSettings): SettingsAckEvent =
+        setButtonVideoRecordingSettings(width = settings.width, height = settings.height, fps = settings.fps)
+
+    fun setButtonCameraLed(enabled: Boolean): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "button_camera_led",
+            updateStore = { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_camera_led", enabled) },
+            send = { requestId -> deviceManager.sendButtonCameraLedSetting(requestId, enabled) },
+        )
+
+    fun setButtonMaxRecordingTime(minutes: Int): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "button_max_recording_time",
+            updateStore = { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_max_recording_time", minutes) },
+            send = { requestId -> deviceManager.sendButtonMaxRecordingTime(requestId, minutes) },
+        )
+
+    fun setCameraFov(fov: CameraFov): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "camera_fov",
+            updateStore = {
+                DeviceStore.set(
+                    ObservableStore.BLUETOOTH_CATEGORY,
+                    "camera_fov",
+                    mapOf("fov" to fov.fov, "roi_position" to fov.roiPosition),
+                )
+            },
+            send = { requestId -> deviceManager.sendCameraFovSetting(requestId, fov.fov, fov.roiPosition) },
+        )
 
     fun setMicState(
         enabled: Boolean,
@@ -442,27 +531,53 @@ class MentraBluetoothSdk private constructor(
         deviceManager.setSystemTime(timestampMs)
     }
 
-    fun requestPhoto(request: PhotoRequest) {
+    fun requestPhoto(request: PhotoRequest): PhotoResponseEvent {
         Bridge.log(
             "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=${request.requestId} appId=${request.appId}"
         )
-        deviceManager.requestPhoto(
-            request.requestId,
-            request.appId,
-            request.size.value,
-            request.webhookUrl,
-            request.authToken,
-            request.compress.value,
-            request.flash,
-            request.save,
-            request.sound,
-            request.exposureTimeNs,
-            request.iso,
-        )
+        val pending = PendingResponse<PhotoResponseEvent>("photo request ${request.requestId}")
+        pendingPhotoRequests[request.requestId] = pending
+        try {
+            deviceManager.requestPhoto(
+                request.requestId,
+                request.appId,
+                request.size.value,
+                request.webhookUrl,
+                request.authToken,
+                request.compress.value,
+                request.flash,
+                request.save,
+                request.sound,
+                request.exposureTimeNs,
+                request.iso,
+            )
+            return pending.await()
+        } finally {
+            pendingPhotoRequests.remove(request.requestId, pending)
+        }
     }
 
-    fun queryGalleryStatus() {
-        deviceManager.queryGalleryStatus()
+    fun queryGalleryStatus(): GalleryStatusEvent {
+        val pending = PendingResponse<GalleryStatusEvent>("gallery status query")
+        synchronized(oneShotLock) {
+            if (pendingGalleryStatus != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "A gallery status query is already waiting for a glasses response.",
+                )
+            }
+            pendingGalleryStatus = pending
+        }
+        try {
+            deviceManager.queryGalleryStatus()
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingGalleryStatus === pending) {
+                    pendingGalleryStatus = null
+                }
+            }
+        }
     }
 
     fun startStream(request: StreamRequest) {
@@ -481,16 +596,23 @@ class MentraBluetoothSdk private constructor(
         deviceManager.keepStreamAlive(request.toMap().toMutableMap())
     }
 
-    fun rgbLedControl(request: RgbLedRequest) {
-        deviceManager.rgbLedControl(
-            request.requestId,
-            request.packageName,
-            request.action.value,
-            request.color?.value,
-            request.onDurationMs,
-            request.offDurationMs,
-            request.count,
-        )
+    fun rgbLedControl(request: RgbLedRequest): RgbLedControlResponseEvent {
+        val pending = PendingResponse<RgbLedControlResponseEvent>("RGB LED command ${request.requestId}")
+        pendingRgbLedRequests[request.requestId] = pending
+        try {
+            deviceManager.rgbLedControl(
+                request.requestId,
+                request.packageName,
+                request.action.value,
+                request.color?.value,
+                request.onDurationMs,
+                request.offDurationMs,
+                request.count,
+            )
+            return pending.await()
+        } finally {
+            pendingRgbLedRequests.remove(request.requestId, pending)
+        }
     }
 
     fun stopStream() {
@@ -498,19 +620,35 @@ class MentraBluetoothSdk private constructor(
         deviceManager.stopStream()
     }
 
-    fun startVideoRecording(request: VideoRecordingRequest) {
-        deviceManager.startVideoRecording(
-                request.requestId,
-                request.save,
-                request.sound,
-                request.width,
-                request.height,
-                request.fps,
-        )
+    fun startVideoRecording(request: VideoRecordingRequest): VideoRecordingStatusEvent {
+        require(request.requestId.isNotBlank()) { "requestId is required to start video recording." }
+        val pending = PendingResponse<VideoRecordingStatusEvent>("start video recording")
+        pendingVideoRecordingRequests[request.requestId] = pending
+        try {
+            deviceManager.startVideoRecording(
+                    request.requestId,
+                    request.save,
+                    request.sound,
+                    request.width,
+                    request.height,
+                    request.fps,
+            )
+            return pending.await()
+        } finally {
+            pendingVideoRecordingRequests.remove(request.requestId, pending)
+        }
     }
 
-    fun stopVideoRecording(requestId: String) {
-        deviceManager.stopVideoRecording(requestId)
+    fun stopVideoRecording(requestId: String): VideoRecordingStatusEvent {
+        require(requestId.isNotBlank()) { "requestId is required to stop video recording." }
+        val pending = PendingResponse<VideoRecordingStatusEvent>("stop video recording")
+        pendingVideoRecordingRequests[requestId] = pending
+        try {
+            deviceManager.stopVideoRecording(requestId)
+            return pending.await()
+        } finally {
+            pendingVideoRecordingRequests.remove(requestId, pending)
+        }
     }
 
     fun requestVersionInfo() {
@@ -518,13 +656,51 @@ class MentraBluetoothSdk private constructor(
     }
 
     /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
-    fun checkForOtaUpdate() {
-        deviceManager.sendOtaQueryStatus()
+    fun checkForOtaUpdate(): OtaQueryResult {
+        val pending = PendingResponse<OtaQueryResult>("OTA status query")
+        synchronized(oneShotLock) {
+            if (pendingOtaQuery != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "An OTA status query is already waiting for a glasses response.",
+                )
+            }
+            pendingOtaQuery = pending
+        }
+        try {
+            deviceManager.sendOtaQueryStatus()
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingOtaQuery === pending) {
+                    pendingOtaQuery = null
+                }
+            }
+        }
     }
 
     /** Start the OTA flow after your app has presented the available update to the user. */
-    fun startOtaUpdate() {
-        deviceManager.sendOtaStart()
+    fun startOtaUpdate(): OtaStartAckEvent {
+        val pending = PendingResponse<OtaStartAckEvent>("OTA start command")
+        synchronized(oneShotLock) {
+            if (pendingOtaStart != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "An OTA start command is already waiting for a glasses response.",
+                )
+            }
+            pendingOtaStart = pending
+        }
+        try {
+            deviceManager.sendOtaStart()
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingOtaStart === pending) {
+                    pendingOtaStart = null
+                }
+            }
+        }
     }
 
     /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
@@ -532,13 +708,9 @@ class MentraBluetoothSdk private constructor(
         deviceManager.retryOtaVersionCheck()
     }
 
-    internal fun sendOtaStart() {
-        deviceManager.sendOtaStart()
-    }
+    internal fun sendOtaStart(): OtaStartAckEvent = startOtaUpdate()
 
-    internal fun sendOtaQueryStatus() {
-        deviceManager.sendOtaQueryStatus()
-    }
+    internal fun sendOtaQueryStatus(): OtaQueryResult = checkForOtaUpdate()
 
     internal fun sendShutdown() {
         deviceManager.sendShutdown()
@@ -705,9 +877,29 @@ class MentraBluetoothSdk private constructor(
             "wifi_status_change" -> dispatchToListeners { it.onWifiStatusChanged(WifiStatusEvent(data)) }
             "hotspot_status_change" -> dispatchToListeners { it.onHotspotStatusChanged(HotspotStatusEvent(data)) }
             "hotspot_error" -> dispatchToListeners { it.onHotspotError(HotspotErrorEvent(data)) }
-            "gallery_status" -> dispatchToListeners { it.onGalleryStatus(GalleryStatusEvent(data)) }
-            "photo_response" -> dispatchToListeners { it.onPhotoResponse(PhotoResponseEvent(data)) }
+            "gallery_status" -> {
+                val event = GalleryStatusEvent(data)
+                synchronized(oneShotLock) {
+                    pendingGalleryStatus?.resolve(event)
+                }
+                dispatchToListeners { it.onGalleryStatus(event) }
+            }
+            "photo_response" -> {
+                val event = PhotoResponseEvent(data)
+                pendingPhotoRequests[event.requestId]?.resolve(event)
+                dispatchToListeners { it.onPhotoResponse(event) }
+            }
             "photo_status" -> dispatchToListeners { it.onPhotoStatus(PhotoStatusEvent(data)) }
+            "video_recording_status" -> {
+                val event = VideoRecordingStatusEvent(data)
+                pendingVideoRecordingRequests[event.requestId]?.resolve(event)
+                dispatchToListeners { it.onVideoRecordingStatus(event) }
+            }
+            "rgb_led_control_response" -> {
+                val event = RgbLedControlResponseEvent(data)
+                pendingRgbLedRequests[event.requestId]?.resolve(event)
+                dispatchToListeners { it.onRgbLedControlResponse(event) }
+            }
             "stream_status" -> {
                 val event = StreamStatusEvent(data)
                 handleStreamStatusForKeepAlive(event.status)
@@ -719,10 +911,32 @@ class MentraBluetoothSdk private constructor(
                     dispatchToListeners { it.onKeepAliveAck(event) }
                 }
             }
-            "ota_update_available" ->
-                dispatchToListeners { it.onOtaUpdateAvailable(OtaUpdateAvailableEvent.fromMap(data)) }
-            "ota_start_ack" -> dispatchToListeners { it.onOtaStartAck(OtaStartAckEvent.fromMap(data)) }
-            "ota_status" -> dispatchToListeners { it.onOtaStatus(OtaStatusEvent.fromMap(data)) }
+            "ota_update_available" -> {
+                val resultValues = data + mapOf("type" to "ota_update_available")
+                synchronized(oneShotLock) {
+                    pendingOtaQuery?.resolve(OtaQueryResult(resultValues))
+                }
+                dispatchToListeners { it.onOtaUpdateAvailable(OtaUpdateAvailableEvent.fromMap(resultValues)) }
+            }
+            "ota_start_ack" -> {
+                val event = OtaStartAckEvent.fromMap(data + mapOf("type" to "ota_start_ack"))
+                synchronized(oneShotLock) {
+                    pendingOtaStart?.resolve(event)
+                }
+                dispatchToListeners { it.onOtaStartAck(event) }
+            }
+            "ota_status" -> {
+                val resultValues = data + mapOf("type" to "ota_status")
+                synchronized(oneShotLock) {
+                    pendingOtaQuery?.resolve(OtaQueryResult(resultValues))
+                }
+                dispatchToListeners { it.onOtaStatus(OtaStatusEvent.fromMap(resultValues)) }
+            }
+            "settings_ack" -> {
+                val event = SettingsAckEvent(data)
+                pendingSettingsRequests[event.requestId]?.resolve(event)
+                dispatchToListeners { it.onSettingsAck(event) }
+            }
             "mic_pcm" -> {
                 val event = MicPcmEvent(data)
                 if (event.pcm.isNotEmpty()) {

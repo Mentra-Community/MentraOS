@@ -116,13 +116,13 @@ sendWifiCredentials(ssid: string, password: string): Promise<void>
 forgetWifiNetwork(ssid: string): Promise<void>
 setHotspotState(enabled: boolean): Promise<void>
 
-setGalleryModeEnabled(enabled: boolean): Promise<void>
-setButtonPhotoSettings(size: ButtonPhotoSize): Promise<void>
-setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<void>
-setButtonCameraLed(enabled: boolean): Promise<void>
-setButtonMaxRecordingTime(minutes: number): Promise<void>
-setCameraFov(fov: CameraFov): Promise<void>
-queryGalleryStatus(): Promise<void>
+setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckEvent>
+setButtonPhotoSettings(size: ButtonPhotoSize): Promise<SettingsAckEvent>
+setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckEvent>
+setButtonCameraLed(enabled: boolean): Promise<SettingsAckEvent>
+setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckEvent>
+setCameraFov(fov: CameraFov): Promise<SettingsAckEvent>
+queryGalleryStatus(): Promise<GalleryStatusEvent>
 requestPhoto(
   requestId: string,
   appId: string,
@@ -131,9 +131,9 @@ requestPhoto(
   authToken: string | null,
   compress: PhotoCompression,
   sound: boolean,
-): Promise<void>
-startVideoRecording(requestId: string, save: boolean, sound: boolean): Promise<void>
-stopVideoRecording(requestId: string): Promise<void>
+): Promise<PhotoResponseEvent>
+startVideoRecording(requestId: string, save: boolean, sound: boolean): Promise<VideoRecordingStatusEvent>
+stopVideoRecording(requestId: string): Promise<VideoRecordingStatusEvent>
 
 startStream(params: StreamStartRequest): Promise<void>
 stopStream(): Promise<void>
@@ -158,9 +158,11 @@ rgbLedControl(
   onDurationMs: number,
   offDurationMs: number,
   count: number,
-): Promise<void>
+): Promise<RgbLedControlResponseEvent>
 
 requestVersionInfo(): Promise<void>
+checkForOtaUpdate(): Promise<OtaQueryResult>
+startOtaUpdate(): Promise<OtaStartAckEvent>
 ```
 
 React hook signatures:
@@ -271,13 +273,13 @@ fun setDashboardPosition(request: DashboardPositionRequest)
 fun setHeadUpAngle(angleDegrees: Int)
 fun setScreenDisabled(disabled: Boolean)
 
-fun setGalleryModeEnabled(enabled: Boolean)
-fun setButtonPhotoSettings(size: ButtonPhotoSize)
-fun setButtonPhotoSettings(settings: ButtonPhotoSettings)
-fun setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int)
-fun setButtonCameraLed(enabled: Boolean)
-fun setButtonMaxRecordingTime(minutes: Int)
-fun setCameraFov(fov: CameraFov)
+fun setGalleryModeEnabled(enabled: Boolean): SettingsAckEvent
+fun setButtonPhotoSettings(size: ButtonPhotoSize): SettingsAckEvent
+fun setButtonPhotoSettings(settings: ButtonPhotoSettings): SettingsAckEvent
+fun setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int): SettingsAckEvent
+fun setButtonCameraLed(enabled: Boolean): SettingsAckEvent
+fun setButtonMaxRecordingTime(minutes: Int): SettingsAckEvent
+fun setCameraFov(fov: CameraFov): SettingsAckEvent
 
 fun setMicState(
   enabled: Boolean,
@@ -296,14 +298,16 @@ fun sendWifiCredentials(ssid: String, password: String)
 fun forgetWifiNetwork(ssid: String)
 fun setHotspotState(enabled: Boolean)
 
-fun requestPhoto(request: PhotoRequest)
-fun queryGalleryStatus()
+fun requestPhoto(request: PhotoRequest): PhotoResponseEvent
+fun queryGalleryStatus(): GalleryStatusEvent
 fun startStream(request: StreamRequest)
-fun rgbLedControl(request: RgbLedRequest)
+fun rgbLedControl(request: RgbLedRequest): RgbLedControlResponseEvent
 fun stopStream()
-fun startVideoRecording(request: VideoRecordingRequest)
-fun stopVideoRecording(requestId: String)
+fun startVideoRecording(request: VideoRecordingRequest): VideoRecordingStatusEvent
+fun stopVideoRecording(requestId: String): VideoRecordingStatusEvent
 fun requestVersionInfo()
+fun checkForOtaUpdate(): OtaQueryResult
+fun startOtaUpdate(): OtaStartAckEvent
 
 override fun close()
 ```
@@ -398,14 +402,14 @@ public func setDashboardPosition(_ request: DashboardPositionRequest) async thro
 public func setHeadUpAngle(_ angleDegrees: Int) async throws
 public func setScreenDisabled(_ disabled: Bool) async throws
 
-public func setGalleryModeEnabled(_ enabled: Bool) async throws
-public func setButtonPhotoSettings(size: ButtonPhotoSize) async throws
-public func setButtonPhotoSettings(_ settings: ButtonPhotoSettings) async throws
-public func setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int) async throws
-public func setButtonVideoRecordingSettings(_ settings: ButtonVideoRecordingSettings) async throws
-public func setButtonCameraLed(enabled: Bool) async throws
-public func setButtonMaxRecordingTime(minutes: Int) async throws
-public func setCameraFov(_ fov: CameraFov) async throws
+public func setGalleryModeEnabled(_ enabled: Bool) async throws -> SettingsAckEvent
+public func setButtonPhotoSettings(size: ButtonPhotoSize) async throws -> SettingsAckEvent
+public func setButtonPhotoSettings(_ settings: ButtonPhotoSettings) async throws -> SettingsAckEvent
+public func setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int) async throws -> SettingsAckEvent
+public func setButtonVideoRecordingSettings(_ settings: ButtonVideoRecordingSettings) async throws -> SettingsAckEvent
+public func setButtonCameraLed(enabled: Bool) async throws -> SettingsAckEvent
+public func setButtonMaxRecordingTime(minutes: Int) async throws -> SettingsAckEvent
+public func setCameraFov(_ fov: CameraFov) async throws -> SettingsAckEvent
 
 public func setMicState(
   enabled: Bool,
@@ -424,14 +428,16 @@ public func sendWifiCredentials(ssid: String, password: String)
 public func forgetWifiNetwork(ssid: String)
 public func setHotspotState(enabled: Bool)
 
-public func requestPhoto(_ request: PhotoRequest)
-public func queryGalleryStatus()
+public func requestPhoto(_ request: PhotoRequest) async throws -> PhotoResponseEvent
+public func queryGalleryStatus() async throws -> GalleryStatusEvent
 public func startStream(_ request: StreamRequest)
-public func rgbLedControl(_ request: RgbLedRequest)
+public func rgbLedControl(_ request: RgbLedRequest) async throws -> RgbLedControlResponseEvent
 public func stopStream()
-public func startVideoRecording(_ request: VideoRecordingRequest)
-public func stopVideoRecording(requestId: String)
+public func startVideoRecording(_ request: VideoRecordingRequest) async throws -> VideoRecordingStatusEvent
+public func stopVideoRecording(requestId: String) async throws -> VideoRecordingStatusEvent
 public func requestVersionInfo()
+public func checkForOtaUpdate() async throws -> OtaQueryResult
+public func startOtaUpdate() async throws -> OtaStartAckEvent
 
 public func invalidate()
 ```

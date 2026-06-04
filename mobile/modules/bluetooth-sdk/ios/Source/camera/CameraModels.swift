@@ -177,6 +177,44 @@ public struct VideoRecordingRequest {
     }
 }
 
+public struct VideoRecordingStatusEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        var values = values
+        values["type"] = "video_recording_status"
+        self.values = values
+    }
+
+    public var requestId: String {
+        stringValue(values, "requestId") ?? ""
+    }
+
+    public var success: Bool {
+        boolValue(values, "success") ?? false
+    }
+
+    public var status: String {
+        stringValue(values, "status") ?? ""
+    }
+
+    public var details: String? {
+        stringValue(values, "details")
+    }
+
+    public var timestamp: Int {
+        intValue(values["timestamp"]) ?? Int(Date().timeIntervalSince1970 * 1000)
+    }
+
+    public var data: [String: Any]? {
+        values["data"] as? [String: Any]
+    }
+
+    public var description: String {
+        "VideoRecordingStatusEvent(requestId: \(requestId), status: \(status), success: \(success))"
+    }
+}
+
 public enum PhotoResponse: CustomStringConvertible, Equatable {
     public enum State: String {
         case success
@@ -334,5 +372,43 @@ public struct PhotoStatusEvent: CustomStringConvertible {
 
     public var description: String {
         "PhotoStatusEvent(requestId: \(requestId), status: \(status))"
+    }
+}
+
+public struct GalleryStatusEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        var values = values
+        values["type"] = "gallery_status"
+        self.values = values
+    }
+
+    public var photos: Int {
+        intValue(values["photos"]) ?? 0
+    }
+
+    public var videos: Int {
+        intValue(values["videos"]) ?? 0
+    }
+
+    public var total: Int {
+        intValue(values["total"]) ?? 0
+    }
+
+    public var totalSize: Int? {
+        intValue(values["totalSize"]) ?? intValue(values["total_size"])
+    }
+
+    public var hasContent: Bool {
+        boolValue(values, "hasContent", "has_content") ?? false
+    }
+
+    public var cameraBusy: Bool {
+        boolValue(values, "cameraBusy", "camera_busy") ?? false
+    }
+
+    public var description: String {
+        "GalleryStatusEvent(total: \(total), photos: \(photos), videos: \(videos))"
     }
 }

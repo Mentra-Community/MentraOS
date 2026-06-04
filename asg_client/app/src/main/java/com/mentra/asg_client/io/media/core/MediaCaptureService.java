@@ -650,6 +650,12 @@ public class MediaCaptureService {
         // Check storage availability before recording
         if (!isExternalStorageAvailable()) {
             Log.e(TAG, "External storage is not available for video capture");
+            if (mMediaCaptureListener != null) {
+                mMediaCaptureListener.onMediaError(
+                        requestId,
+                        "External storage is not available",
+                        MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+            }
             return;
         }
 
@@ -3777,6 +3783,30 @@ public class MediaCaptureService {
             }
         } catch (JSONException e) {
             Log.e(TAG, "❌ Error creating photo error response", e);
+        }
+    }
+
+    /** Send a one-shot success acknowledgment once a photo capture request is accepted. */
+    public void sendPhotoSuccessResponse(String requestId, String uploadUrl) {
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "photo_response");
+            json.put("requestId", requestId);
+            json.put("state", "success");
+            json.put("success", true);
+            json.put("uploadUrl", uploadUrl != null ? uploadUrl : "");
+            json.put("timestamp", System.currentTimeMillis());
+
+            Log.i(TAG, "📸 SENDING PHOTO ACCEPTED: requestId=" + requestId);
+
+            if (mServiceCallback != null) {
+                mServiceCallback.sendThroughBluetooth(json.toString().getBytes());
+                Log.i(TAG, "📸 SENT VIA BLE: " + json.toString());
+            } else {
+                Log.e(TAG, "❌ Service callback not available for photo success response");
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "❌ Error creating photo success response", e);
         }
     }
 

@@ -319,7 +319,7 @@ export interface RuntimeHooks {
  * The runtime calls these from its handleVideoRecordingStart/Stop handlers; the
  * host's PhoneVideoCoordinator implements them (drives the glasses over BLE via
  * the bluetooth-sdk startVideoRecording/stopVideoRecording). Unlike photo, this
- * is fire-and-forget start/stop — no uploaded URL is returned.
+ * returns recording control status only — no uploaded URL is returned.
  */
 export interface VideoRecordingAdapter {
   startRecording: (

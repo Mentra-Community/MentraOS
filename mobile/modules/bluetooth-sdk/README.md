@@ -235,14 +235,15 @@ await BluetoothSdk.sendWifiCredentials('Office WiFi', 'secret')
 await BluetoothSdk.forgetWifiNetwork('Office WiFi')
 await BluetoothSdk.setHotspotState(true)
 
-await BluetoothSdk.setGalleryModeEnabled(true)
+const galleryAck = await BluetoothSdk.setGalleryModeEnabled(true)
+console.log(galleryAck.status)
 await BluetoothSdk.setGalleryModeEnabled(false)
 
 await BluetoothSdk.setPreferredMic('auto')
 await BluetoothSdk.setMicState(true)
 await BluetoothSdk.setOwnAppAudioPlaying(false)
 
-await BluetoothSdk.rgbLedControl(
+const ledAck = await BluetoothSdk.rgbLedControl(
   `led-${Date.now()}`,
   'com.example.app',
   'on',
@@ -251,6 +252,7 @@ await BluetoothSdk.rgbLedControl(
   500,
   3,
 )
+console.log(ledAck.state)
 ```
 
 `setMicState(true)` defaults to continuous microphone PCM from the glasses. The SDK does not apply phone-side Voice Activity Detection gating to microphone audio events. Use `setVoiceActivityDetectionEnabled(false)` when you want glasses-side Voice Activity Detection disabled for continuous external STT, recording, or playback. `voice_activity_detection_status` reports whether glasses-side Voice Activity Detection is enabled, and `speaking_status` reports speaking/not-speaking when supported. Microphone events include the latest `voiceActivityDetectionEnabled` value.
@@ -259,28 +261,25 @@ await BluetoothSdk.rgbLedControl(
 
 Mentra Live firmware owns the OTA flow. The SDK mirrors the MentraOS app commands and events:
 
-- `checkForOtaUpdate()` sends `ota_query_status` to ask the glasses to report availability or current progress.
-- `startOtaUpdate()` sends `ota_start` after your app presents the update and the user accepts it.
+- `checkForOtaUpdate()` sends `ota_query_status` and resolves with the ASG response (`ota_update_available` or the current `ota_status`).
+- `startOtaUpdate()` sends `ota_start` and resolves with the ASG start ack after your app presents the update and the user accepts it.
 - `retryOtaVersionCheck()` sends `ota_retry_version_check`; use it only after fixing a known clock-skew/TLS failure.
 
 ```ts
 import BluetoothSdk from '@mentra/bluetooth-sdk'
 
-// Start OTA only after the glasses report an update and the user accepts it.
-BluetoothSdk.addListener('ota_update_available', async (event) => {
-  console.log('Update available', event.version_name, event.updates)
-  const userAccepted = await promptUserToInstallUpdate(event) // your app's UI
-  if (userAccepted) {
-    await BluetoothSdk.startOtaUpdate()
-  }
-})
-
 BluetoothSdk.addListener('ota_status', (event) => {
   console.log(`OTA ${event.status}: ${event.overall_percent}%`)
 })
 
-// Ask the glasses to report availability; the answer arrives as `ota_update_available`.
-await BluetoothSdk.checkForOtaUpdate()
+const ota = await BluetoothSdk.checkForOtaUpdate()
+if (ota.type === 'ota_update_available') {
+  const userAccepted = await promptUserToInstallUpdate(ota) // your app's UI
+  if (userAccepted) {
+    const startAck = await BluetoothSdk.startOtaUpdate()
+    console.log('OTA start acknowledged', startAck.timestamp)
+  }
+}
 ```
 
 OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until `ota_status.status` is `complete` or `failed`.
@@ -288,7 +287,7 @@ OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and
 ## Photo Upload
 
 ```ts
-await BluetoothSdk.requestPhoto({
+const photo = await BluetoothSdk.requestPhoto({
   requestId: `photo-${Date.now()}`,
   appId: 'com.example.app',
   size: 'medium',
@@ -299,13 +298,18 @@ await BluetoothSdk.requestPhoto({
   exposureTimeNs: null, // auto exposure; pass a positive nanosecond value for manual exposure
   iso: null, // auto ISO; pass a positive ISO only with manual exposureTimeNs
 })
+if (photo.state === 'error') {
+  throw new Error(photo.errorMessage)
+}
 ```
 
-The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
+`requestPhoto(...)` resolves from the ASG `photo_response`, which means the glasses accepted or rejected the request. The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
 
 For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
 
-Use `setCameraFov({fov, roiPosition})` to configure Mentra Live camera field of view and crop position. FOV is clamped to 62-118 degrees; ROI position is `0` center, `1` bottom, or `2` top. The `"narrow"` (82°), `"standard"` (102°), and `"wide"` (118°) presets are also accepted and map to center ROI. Applying FOV/ROI restarts the camera for about 5 seconds, so wait before requesting the next photo. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
+Use `setCameraFov({fov, roiPosition})` to configure Mentra Live camera field of view and crop position. FOV is clamped to 62-118 degrees; ROI position is `0` center, `1` bottom, or `2` top. The `"narrow"` (82°), `"standard"` (102°), and `"wide"` (118°) presets are also accepted and map to center ROI. The returned `SettingsAckEvent` resolves from the ASG client after the camera restart/cooldown completes; wait for `ack.ready` before requesting the next photo. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
+
+`startVideoRecording(...)` and `stopVideoRecording(...)` resolve from the ASG `video_recording_status` event. Check `status.success` and `status.status` (`recording_started`, `recording_stopped`, or an error/status string) before updating UI or local recording state.
 
 ## Streaming
 
@@ -336,7 +340,6 @@ export function HardwareEventLogger() {
   useBluetoothEvent('button_press', (event) => console.log(event))
   useBluetoothEvent('touch_event', (event) => console.log(event))
   useBluetoothEvent('photo_status', (event) => console.log(event.status, event.resolvedConfig, event.captureMetadata))
-  useBluetoothEvent('photo_response', (event) => console.log(event))
   useBluetoothEvent('stream_status', (event) => console.log(event))
   useBluetoothEvent('speaking_status', (event) => console.log(event.speaking))
   useBluetoothEvent('mic_pcm', (event) => {
@@ -350,7 +353,7 @@ export function HardwareEventLogger() {
 
 For non-React modules, `BluetoothSdk.addListener(...)` is the low-level subscription API. Keep the returned subscription and call `remove()` when the listener is no longer needed.
 
-Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `hotspot_status_change`, `photo_status`, `photo_response`, `gallery_status`, `stream_status`, `ota_update_available`, `ota_start_ack`, `ota_status`, `mic_pcm`, `mic_lc3`, `local_transcription`, `rgb_led_control_response`, `audio_connected`, `audio_disconnected`, and `log`.
+Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `hotspot_status_change`, `photo_status`, `photo_response`, `gallery_status`, `settings_ack`, `stream_status`, `ota_update_available`, `ota_start_ack`, `ota_status`, `mic_pcm`, `mic_lc3`, `local_transcription`, `rgb_led_control_response`, `audio_connected`, `audio_disconnected`, and `log`.
 
 React Native event payload fields usually use camelCase. OTA events intentionally mirror the glasses firmware field names, such as `overall_percent` and `version_name`. For example, `touch_event` includes `gestureName`, `photo_response` success includes `uploadUrl`, and `gallery_status` includes `hasContent` and `cameraBusy`. `photo_status` reports intermediate photo states such as `accepted`, `queued`, `configuring`, `capturing`, `captured`, `compressing`, `ble_fallback_compression`, `uploading`, `ready_for_transfer`, `transferring`, and `failed`; the `configuring` event includes `resolvedConfig` with the effective JPEG dimensions, quality, requested size, transfer method, compression, and manual exposure fields when present. The `capturing` event may include `requestedCaptureConfig` and `meteredPreview`; the `captured` event may include `captureMetadata` with the HAL-applied exposure, ISO, frame duration, and AE state. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
 

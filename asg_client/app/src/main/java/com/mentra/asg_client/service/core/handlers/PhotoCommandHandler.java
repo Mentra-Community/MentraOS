@@ -210,6 +210,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             logCommandResult("take_photo", success, success ? null : "Photo capture failed");
             if (success) {
                 Log.i(TAG, "PHOTO PIPELINE [ASG 3/3] Capture accepted requestId=" + requestId);
+                captureService.sendPhotoSuccessResponse(requestId, webhookUrl);
             }
             return success;
 

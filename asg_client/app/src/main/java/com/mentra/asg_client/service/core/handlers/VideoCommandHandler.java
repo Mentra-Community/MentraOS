@@ -52,7 +52,7 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
                 case "stop_video_recording":
                     return handleStopCommand(data);
                 case "get_video_recording_status":
-                    return handleStatusCommand();
+                    return handleStatusCommand(data);
                 default:
                     Log.e(TAG, "Unsupported video command: " + commandType);
                     return false;
@@ -69,11 +69,12 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
             // Resolve package name using base class functionality
             String packageName = resolvePackageName(data);
             logCommandStart("start_video_recording", packageName);
+            String requestId = data.optString("requestId", "");
 
             // Validate requestId using base class functionality
             if (!validateRequestId(data)) {
                 streamingManager.sendVideoRecordingStatusResponse(
-                        false, "missing_request_id", null);
+                        requestId, false, "missing_request_id", null);
                 return false;
             }
 
@@ -82,7 +83,7 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
                 logCommandResult(
                         "start_video_recording", false, "Media capture service is not initialized");
                 streamingManager.sendVideoRecordingStatusResponse(
-                        false, "service_unavailable", null);
+                        requestId, false, "service_unavailable", null);
                 return false;
             }
 
@@ -105,6 +106,7 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
 
                     // Send error response to phone
                     streamingManager.sendVideoRecordingStatusResponse(
+                            requestId,
                             false,
                             "battery_low",
                             "Battery level too low ("
@@ -121,7 +123,8 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
 
             if (captureService.isRecordingVideo()) {
                 logCommandResult("start_video_recording", true, "Already recording video");
-                streamingManager.sendVideoRecordingStatusResponse(true, "already_recording", null);
+                streamingManager.sendVideoRecordingStatusResponse(
+                        requestId, true, "already_recording", null);
                 return true;
             }
 
@@ -184,7 +187,6 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
             boolean save = data.optBoolean("save", false);
             boolean flash = data.optBoolean("flash", true);
             boolean sound = data.optBoolean("sound", true);
-            String requestId = data.optString("requestId", "video_" + System.currentTimeMillis());
 
             if (videoSettings != null) {
                 captureService.handleStartVideoCommand(
@@ -195,12 +197,13 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
             }
 
             logCommandResult("start_video_recording", true, null);
-            streamingManager.sendVideoRecordingStatusResponse(true, "recording_started", null);
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Error handling start video recording command", e);
             logCommandResult("start_video_recording", false, "Exception: " + e.getMessage());
-            streamingManager.sendVideoRecordingStatusResponse(false, "error", e.getMessage());
+            String requestId = data.optString("requestId", "");
+            streamingManager.sendVideoRecordingStatusResponse(
+                    requestId, false, "error", e.getMessage());
             return false;
         }
     }
@@ -210,24 +213,20 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
         Log.d(TAG, "handleStopCommand called with data: " + data);
 
         try {
+            String requestId = data != null ? data.optString("requestId", "") : "";
             MediaCaptureService captureService = serviceManager.getMediaCaptureService();
             if (captureService == null) {
                 Log.e(TAG, "Media capture service is not initialized");
                 streamingManager.sendVideoRecordingStatusResponse(
-                        false, "service_unavailable", null);
+                        requestId, false, "service_unavailable", null);
                 return false;
             }
 
             if (!captureService.isRecordingVideo()) {
                 Log.d(TAG, "Not currently recording, ignoring stop command");
-                streamingManager.sendVideoRecordingStatusResponse(false, "not_recording", null);
+                streamingManager.sendVideoRecordingStatusResponse(
+                        requestId, false, "not_recording", null);
                 return false;
-            }
-
-            // Extract requestId from command data if provided
-            String requestId = null;
-            if (data != null) {
-                requestId = data.optString("requestId", null);
             }
 
             // If requestId provided, use handleStopVideoCommand for validation
@@ -240,23 +239,25 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
                 captureService.stopVideoRecording();
             }
 
-            streamingManager.sendVideoRecordingStatusResponse(true, "recording_stopped", null);
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Error handling stop video command", e);
-            streamingManager.sendVideoRecordingStatusResponse(false, "error", e.getMessage());
+            String requestId = data != null ? data.optString("requestId", "") : "";
+            streamingManager.sendVideoRecordingStatusResponse(
+                    requestId, false, "error", e.getMessage());
             return false;
         }
     }
 
     /** Handle get video recording status command */
-    public boolean handleStatusCommand() {
+    public boolean handleStatusCommand(JSONObject data) {
         try {
+            String requestId = data != null ? data.optString("requestId", "") : "";
             MediaCaptureService captureService = serviceManager.getMediaCaptureService();
             if (captureService == null) {
                 Log.e(TAG, "Media capture service is not initialized");
                 streamingManager.sendVideoRecordingStatusResponse(
-                        false, "service_unavailable", null);
+                        requestId, false, "service_unavailable", null);
                 return false;
             }
 
@@ -271,17 +272,19 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
                     status.put("duration_formatted", formatDuration(durationMs));
                 }
 
-                streamingManager.sendVideoRecordingStatusResponse(true, status);
+                streamingManager.sendVideoRecordingStatusResponse(requestId, true, status);
                 return true;
             } catch (JSONException e) {
                 Log.e(TAG, "Error creating video recording status response", e);
                 streamingManager.sendVideoRecordingStatusResponse(
-                        false, "json_error", e.getMessage());
+                        requestId, false, "json_error", e.getMessage());
                 return false;
             }
         } catch (Exception e) {
             Log.e(TAG, "Error handling video status command", e);
-            streamingManager.sendVideoRecordingStatusResponse(false, "error", e.getMessage());
+            String requestId = data != null ? data.optString("requestId", "") : "";
+            streamingManager.sendVideoRecordingStatusResponse(
+                    requestId, false, "error", e.getMessage());
             return false;
         }
     }

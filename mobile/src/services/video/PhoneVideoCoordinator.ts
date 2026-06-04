@@ -8,11 +8,10 @@
  *            ├── (precheck) glasses connected
  *            └── BluetoothSdk.startVideoRecording(requestId, save, sound, settings)
  *
- * Unlike photo, this is fire-and-forget: there's no cloud upload/long-poll.
- * `startRecording` resolves once the BLE command has been dispatched, returning
- * the `recordingId` the miniapp passes back to `stopRecording`. The active
- * recordings map enforces single-recording (rejecting overlapping starts so we
- * never hand back a phantom id), validates stop ownership, and lets a
+ * Unlike photo, this has no cloud upload/long-poll; the promise resolves once
+ * the glasses report a correlated video_recording_status for the request. The
+ * active recordings map enforces single-recording (rejecting overlapping starts
+ * so we never hand back a phantom id), validates stop ownership, and lets a
  * closed/crashed miniapp be cleaned up on unregister.
  */
 
@@ -86,7 +85,18 @@ export class PhoneVideoCoordinator {
           : undefined
 
       try {
-        await BluetoothSdk.startVideoRecording(recordingId, opts.save ?? false, opts.sound ?? true, settings)
+        const status = await BluetoothSdk.startVideoRecording(
+          recordingId,
+          opts.save ?? false,
+          opts.sound ?? true,
+          settings,
+        )
+        if (!status.success || status.status !== "recording_started") {
+          throw new VideoError(
+            status.status || "VIDEO_RECORDING_FAILED",
+            status.details || "Glasses did not start recording",
+          )
+        }
       } catch (err) {
         throw this.toVideoError(err, "BLE_SEND_FAILED")
       }
@@ -111,10 +121,13 @@ export class PhoneVideoCoordinator {
     }
 
     try {
-      await BluetoothSdk.stopVideoRecording(recordingId)
+      const status = await BluetoothSdk.stopVideoRecording(recordingId)
+      if (!status.success || status.status !== "recording_stopped") {
+        throw new VideoError(status.status || "VIDEO_STOP_FAILED", status.details || "Glasses did not stop recording")
+      }
     } catch (err) {
       // Leave the recording tracked so a retry (or unregister cleanup) can stop
-      // it — only drop it once the BLE command actually dispatched.
+      // it — only drop it once the glasses report a successful stop.
       throw this.toVideoError(err, "BLE_SEND_FAILED")
     }
     this.activeRecordings.delete(recordingId)
@@ -130,12 +143,14 @@ export class PhoneVideoCoordinator {
     const owned = [...this.activeRecordings.values()].filter((r) => r.packageName === packageName)
     for (const rec of owned) {
       try {
-        await BluetoothSdk.stopVideoRecording(rec.recordingId)
-        // Only drop tracking once the BLE stop actually dispatched (mirrors
+        const status = await BluetoothSdk.stopVideoRecording(rec.recordingId)
+        // Only drop tracking once the glasses report a successful stop (mirrors
         // stopRecording). If we deleted on failure the glasses could still be
         // recording while the single-recording guard reads "idle", letting the
         // next start hand back a phantom id that can't stop the real recording.
-        this.activeRecordings.delete(rec.recordingId)
+        if (status.success && status.status === "recording_stopped") {
+          this.activeRecordings.delete(rec.recordingId)
+        }
       } catch (err) {
         console.warn(`[PhoneVideoCoordinator] failed to stop ${rec.recordingId} for ${packageName} on cleanup`, err)
       }

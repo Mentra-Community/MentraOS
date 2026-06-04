@@ -256,7 +256,8 @@ Important defaults:
 - `requestPhoto({authToken, ...})` omits the `Authorization` header when `authToken` is `null` or empty.
 - `requestPhoto({exposureTimeNs, ...})` uses auto exposure when `exposureTimeNs` is omitted or `null`; pass a positive nanosecond value for one-shot manual exposure.
 - `requestPhoto({exposureTimeNs, iso, ...})` uses `iso` only when `exposureTimeNs` enables one-shot manual exposure. Omit `iso` / pass `null` for auto ISO selection.
-- `setCameraFov({fov, roiPosition})` clamps `fov` to 62-118 degrees and `roiPosition` to `0` center, `1` bottom, or `2` top. The `"narrow"` (82°), `"standard"` (102°), and `"wide"` (118°) presets are also accepted and map to center ROI. On Mentra Live this persists the setting and restarts the camera for about 5 seconds before the next capture should run. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
+- Request/response commands now resolve from the glasses response rather than only updating local SDK state. `requestPhoto(...)` returns a `PhotoResponseEvent`; `startVideoRecording(...)` and `stopVideoRecording(...)` return `VideoRecordingStatusEvent`; `rgbLedControl(...)` returns an `RgbLedControlResponseEvent`; OTA query/start return ASG OTA results; gallery/button/FOV settings return `SettingsAckEvent`.
+- `setCameraFov({fov, roiPosition})` clamps `fov` to 62-118 degrees and `roiPosition` to `0` center, `1` bottom, or `2` top. The `"narrow"` (82°), `"standard"` (102°), and `"wide"` (118°) presets are also accepted and map to center ROI. On Mentra Live this persists the setting, restarts the camera, and resolves only after the ASG client reports the camera is ready again. Wait for `ack.ready` before requesting the next photo. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
 - `startStream` optional `video` and `audio` configs are omitted unless supplied, so the connected glasses use their model defaults. The SDK sends stream keep-alives automatically and reports timeout/error state through `stream_status`.
 - Photo capture, video recording, and streaming always enable the camera light as a privacy indicator.
 
@@ -264,7 +265,7 @@ Important defaults:
 
 Mentra Live has a gallery mode for the right action button. When gallery mode is enabled, a short press takes a photo, a long press starts video recording, and a short press stops the active video recording. Button and touch events are still reported to the SDK.
 
-Use `setGalleryModeEnabled(true)` to enable local button capture, and `setGalleryModeEnabled(false)` to report button events without triggering local gallery capture while the glasses are connected. The SDK can also configure the capture settings used by gallery mode:
+Use `setGalleryModeEnabled(true)` to enable local button capture, and `setGalleryModeEnabled(false)` to report button events without triggering local gallery capture while the glasses are connected. These setting calls return `SettingsAckEvent` from the ASG client. The SDK can also configure the capture settings used by gallery mode:
 
 | Setting | API |
 | --- | --- |
@@ -296,11 +297,11 @@ Mentra Live OTA is glasses-owned. The SDK exposes the same command and event sem
 
 | API | Glasses command | Purpose |
 | --- | --- | --- |
-| `checkForOtaUpdate()` | `ota_query_status` | Ask the glasses to report update availability or current progress. |
-| `startOtaUpdate()` | `ota_start` | Start OTA after your app presents the update and the user accepts it. |
+| `checkForOtaUpdate()` | `ota_query_status` | Ask the glasses to report update availability or current progress. Resolves with `OtaQueryResult` from the ASG client. |
+| `startOtaUpdate()` | `ota_start` | Start OTA after your app presents the update and the user accepts it. Resolves with `OtaStartAckEvent` from the ASG client. |
 | `retryOtaVersionCheck()` | `ota_retry_version_check` | Re-run the glasses-side version check after a known clock-skew/TLS failure. |
 
-React Native receives `ota_update_available`, `ota_start_ack`, and `ota_status` events. Android listeners receive `onOtaUpdateAvailable`, `onOtaStartAck`, and `onOtaStatus`. iOS delegates receive `.otaUpdateAvailable`, `.otaStartAck`, and `.otaStatus` through `BluetoothEvent`.
+Use the returned query/start values for one-shot UI. Keep `ota_status` listeners/delegates for install progress and terminal `complete` / `failed` state. React Native still receives `ota_update_available`, `ota_start_ack`, and `ota_status` events for low-level integrations; Android listeners receive `onOtaUpdateAvailable`, `onOtaStartAck`, and `onOtaStatus`; iOS delegates receive `.otaUpdateAvailable`, `.otaStartAck`, and `.otaStatus` through `BluetoothEvent`.
 
 OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until `ota_status.status` is `complete` or `failed`.
 
@@ -317,7 +318,6 @@ import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
 export function HardwareEventLogger() {
   useBluetoothEvent('button_press', (event) => console.log(event));
   useBluetoothEvent('touch_event', (event) => console.log(event));
-  useBluetoothEvent('photo_response', (event) => console.log(event));
   useBluetoothEvent('photo_status', (event) => console.log(event.status, event.resolvedConfig));
   useBluetoothEvent('stream_status', (event) => console.log(event.resolvedConfig?.video?.fps));
   useBluetoothEvent('ota_status', (event) => console.log(event.overall_percent));
@@ -401,13 +401,15 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `wifi_status_change` | `WifiStatusChangeEvent` | Glasses Wi-Fi connection state changes. |
 | `hotspot_status_change` | `HotspotStatusChangeEvent` | Glasses hotspot state changes. |
 | `hotspot_error` | `HotspotErrorEvent` | Hotspot operation fails. |
-| `photo_response` | `PhotoResponseEvent` | Photo request succeeds or fails. |
+| `photo_response` | `PhotoResponseEvent` | Photo request succeeds or fails. Also returned by `requestPhoto(...)`. |
 | `photo_status` | `PhotoStatusEvent` | Photo capture progress changes. May include `resolvedConfig`, `requestedCaptureConfig`, `meteredPreview`, or `captureMetadata` depending on status. |
+| `video_recording_status` | `VideoRecordingStatusEvent` | Video recording start/stop succeeds or fails. Also returned by `startVideoRecording(...)` and `stopVideoRecording(...)`. |
 | `gallery_status` | `GalleryStatusEvent` | Gallery content/camera-busy status changes. |
+| `settings_ack` | `SettingsAckEvent` | Gallery/button/FOV setting command applied, ready, or failed. Also returned by settings methods such as `setCameraFov(...)`. |
 | `compatible_glasses_search_stop` | `CompatibleGlassesSearchStopEvent` | Compatible-glasses search stops for a model. |
 | `swipe_volume_status` | `SwipeVolumeStatusEvent` | Swipe-volume setting changes. |
 | `switch_status` | `SwitchStatusEvent` | Glasses switch status changes. |
-| `rgb_led_control_response` | `RgbLedControlResponseEvent` | RGB LED command succeeds or fails. |
+| `rgb_led_control_response` | `RgbLedControlResponseEvent` | RGB LED command succeeds or fails. Also returned by `rgbLedControl(...)`. |
 | `pair_failure` | `PairFailureEvent` | Bluetooth pairing fails. |
 | `audio_pairing_needed` | `AudioPairingNeededEvent` | The phone needs Bluetooth audio pairing for the device. |
 | `audio_connected` | `AudioConnectedEvent` | Bluetooth audio connects. |
@@ -415,11 +417,11 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `mic_pcm` | `MicPcmEvent` | PCM microphone frame arrives. |
 | `mic_lc3` | `MicLc3Event` | LC3 microphone frame arrives. |
 | `stream_status` | `StreamStatusEvent` | Camera stream lifecycle, reconnect, or error state changes. May include `resolvedConfig` with effective stream settings: encoded output size in `video.width` / `video.height`, native camera capture size in `video.captureWidth` / `video.captureHeight`, video bitrate and `fps`, plus audio bitrate, sample rate, echo cancellation, and noise suppression. |
-| `ota_update_available` | `OtaUpdateAvailableEvent` | Mentra Live reports an available OTA package. |
-| `ota_start_ack` | `OtaStartAckEvent` | Mentra Live acknowledges `startOtaUpdate()`. |
+| `ota_update_available` | `OtaUpdateAvailableEvent` | Mentra Live reports an available OTA package. Also returned by `checkForOtaUpdate()` when an update is available. |
+| `ota_start_ack` | `OtaStartAckEvent` | Mentra Live acknowledges `startOtaUpdate()`. Also returned by `startOtaUpdate()`. |
 | `ota_status` | `OtaStatusEvent` | OTA step, phase, status, progress, or error changes. |
 
-For example, `useBluetoothEvent('photo_response', ...)` receives a `PhotoResponseEvent`, while `useBluetoothEvent('mic_pcm', ...)` receives a `MicPcmEvent`. `MicPcmEvent` includes `sampleRate`, `bitsPerSample`, `channels`, `encoding`, and `voiceActivityDetectionEnabled`; `MicLc3Event` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, `packetizedFromGlasses`, and `voiceActivityDetectionEnabled`. `speaking_status` is separate from microphone audio frames so apps can use continuous audio while still reacting to speech activity.
+For request/response commands, prefer the returned value from the method, such as the `PhotoResponseEvent` returned by `requestPhoto(...)` or the `VideoRecordingStatusEvent` returned by `startVideoRecording(...)`. Use event listeners for ongoing hardware streams and status updates: for example, `useBluetoothEvent('mic_pcm', ...)` receives a `MicPcmEvent`. `MicPcmEvent` includes `sampleRate`, `bitsPerSample`, `channels`, `encoding`, and `voiceActivityDetectionEnabled`; `MicLc3Event` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, `packetizedFromGlasses`, and `voiceActivityDetectionEnabled`. `speaking_status` is separate from microphone audio frames so apps can use continuous audio while still reacting to speech activity.
 
 Public React Native event payload fields usually use camelCase. OTA events intentionally mirror the glasses firmware field names, such as `overall_percent` and `version_name`. For example, touch events expose `deviceModel` and `gestureName`, successful photo responses expose `uploadUrl`, hotspot errors expose `errorMessage`, and gallery status exposes `hasContent` and `cameraBusy`.
 

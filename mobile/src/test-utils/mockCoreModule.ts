@@ -101,8 +101,24 @@ export const coreModuleMock = {
   sendOtaStart: jest.fn(() => Promise.resolve()),
   sendOtaQueryStatus: jest.fn(() => Promise.resolve()),
   requestVersionInfo: jest.fn(() => Promise.resolve()),
-  startVideoRecording: jest.fn(() => Promise.resolve()),
-  stopVideoRecording: jest.fn(() => Promise.resolve()),
+  startVideoRecording: jest.fn(() =>
+    Promise.resolve({
+      type: "video_recording_status",
+      requestId: "mock-video",
+      success: true,
+      status: "recording_started",
+      timestamp: Date.now(),
+    }),
+  ),
+  stopVideoRecording: jest.fn(() =>
+    Promise.resolve({
+      type: "video_recording_status",
+      requestId: "mock-video",
+      success: true,
+      status: "recording_stopped",
+      timestamp: Date.now(),
+    }),
+  ),
   startStream: jest.fn(() => Promise.resolve()),
   startExternallyManagedStream: jest.fn(() => Promise.resolve()),
   stopStream: jest.fn(() => Promise.resolve()),

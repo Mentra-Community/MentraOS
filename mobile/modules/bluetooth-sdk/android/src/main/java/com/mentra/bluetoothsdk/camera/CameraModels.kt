@@ -169,6 +169,17 @@ data class VideoRecordingRequest(
     val fps: Int = 0,
 )
 
+data class VideoRecordingStatusEvent(
+    val values: Map<String, Any>,
+) {
+    val requestId: String get() = stringValue(values, "requestId").orEmpty()
+    val success: Boolean get() = boolValue(values, "success") ?: false
+    val status: String get() = stringValue(values, "status").orEmpty()
+    val details: String? get() = stringValue(values, "details")
+    val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()
+    val data: Map<String, Any>? get() = stringMapValue(values["data"])
+}
+
 data class GalleryStatusEvent(
     val values: Map<String, Any>,
 )

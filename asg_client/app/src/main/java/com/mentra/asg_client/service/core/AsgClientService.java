@@ -44,6 +44,7 @@ import com.mentra.asg_client.service.system.managers.AsgNotificationManager;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 import com.mentra.asg_client.service.utils.SysProp;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.Objects;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
@@ -1271,11 +1272,19 @@ public class AsgClientService extends Service
             @Override
             public void onVideoRecordingStarted(String requestId, String filePath) {
                 Log.i(TAG, "🎥 Video recording started - ID: " + requestId + ", Path: " + filePath);
+                if (streamingManager != null) {
+                    streamingManager.sendVideoRecordingStatusResponse(
+                            requestId, true, "recording_started", null);
+                }
             }
 
             @Override
             public void onVideoRecordingStopped(String requestId, String filePath) {
                 Log.i(TAG, "⏹️ Video recording stopped - ID: " + requestId + ", Path: " + filePath);
+                if (streamingManager != null) {
+                    streamingManager.sendVideoRecordingStatusResponse(
+                            requestId, true, "recording_stopped", null);
+                }
             }
 
             @Override
@@ -1295,8 +1304,28 @@ public class AsgClientService extends Service
                 Log.e(
                         TAG,
                         "❌ " + mediaTypeName + " error - ID: " + requestId + ", Error: " + error);
+                if (streamingManager != null
+                        && mediaType == MediaUploadQueueManager.MEDIA_TYPE_VIDEO) {
+                    streamingManager.sendVideoRecordingStatusResponse(
+                            requestId, false, videoStatusFromError(error), error);
+                }
             }
         };
+    }
+
+    private String videoStatusFromError(String error) {
+        if (error == null || error.isEmpty()) {
+            return "error";
+        }
+        String lower = error.toLowerCase(Locale.US);
+        if (lower.contains("already recording")) return "already_recording";
+        if (lower.contains("not recording")) return "not_recording";
+        if (lower.contains("request id mismatch")) return "request_id_mismatch";
+        if (lower.contains("battery")) return "battery_low";
+        if (lower.contains("camera busy") || lower.contains("streaming")) return "camera_busy";
+        if (lower.contains("storage")) return "storage_unavailable";
+        if (lower.contains("integrity")) return "integrity_failed";
+        return "error";
     }
 
     /**

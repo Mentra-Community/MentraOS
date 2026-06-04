@@ -279,6 +279,18 @@ class Bridge {
         Bridge.sendTypedMessage("rgb_led_control_response", body: body)
     }
 
+    static func sendSettingsAck(_ values: [String: Any]) {
+        var body = values
+        body["type"] = "settings_ack"
+        Bridge.sendTypedMessage("settings_ack", body: body)
+    }
+
+    static func sendVideoRecordingStatus(_ values: [String: Any]) {
+        var body = values
+        body["type"] = "video_recording_status"
+        Bridge.sendTypedMessage("video_recording_status", body: body)
+    }
+
     static func sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
         let timestamp = Int(Date().timeIntervalSince1970 * 1000)
         var event: [String: Any] = [

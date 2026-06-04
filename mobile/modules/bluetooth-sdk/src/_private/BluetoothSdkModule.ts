@@ -20,16 +20,23 @@ import {
   GlassesMediaVolumeGetResult,
   GlassesMediaVolumeSetResult,
   GlassesStatus,
+  GalleryStatusEvent,
   MicPreference,
   ObservableStoreCategory,
+  OtaQueryResult,
+  OtaStartAckEvent,
   PhotoRequestParams,
+  PhotoResponseEvent,
   PublicBluetoothStatus,
   RgbLedAction,
   RgbLedColor,
+  RgbLedControlResponseEvent,
   ScanModelOptions,
   ScanOptions,
+  SettingsAckEvent,
   StreamKeepAliveRequest,
   StreamStartRequest,
+  VideoRecordingStatusEvent,
   VideoRecordingSettings,
 } from "../BluetoothSdk.types"
 import {photoRequestParamsForNative} from "./photoRequestPayload"
@@ -104,23 +111,23 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   logCurrentWifiFrequency(): Promise<void>
 
   // Gallery Commands
-  setGalleryModeEnabled(enabled: boolean): Promise<void>
+  setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
-  setButtonPhotoSettings(size: ButtonPhotoSize): Promise<void>
-  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<void>
-  setButtonCameraLed(enabled: boolean): Promise<void>
-  setButtonMaxRecordingTime(minutes: number): Promise<void>
-  setCameraFov(fov: CameraFov): Promise<void>
-  queryGalleryStatus(): Promise<void>
-  requestPhoto(params: PhotoRequestParams): Promise<void>
+  setButtonPhotoSettings(size: ButtonPhotoSize): Promise<SettingsAckEvent>
+  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckEvent>
+  setButtonCameraLed(enabled: boolean): Promise<SettingsAckEvent>
+  setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckEvent>
+  setCameraFov(fov: CameraFovSetting): Promise<SettingsAckEvent>
+  queryGalleryStatus(): Promise<GalleryStatusEvent>
+  requestPhoto(params: PhotoRequestParams): Promise<PhotoResponseEvent>
 
   // OTA Commands
-  sendOtaStart(): Promise<void>
-  sendOtaQueryStatus(): Promise<void>
+  sendOtaStart(): Promise<OtaStartAckEvent>
+  sendOtaQueryStatus(): Promise<OtaQueryResult>
   /** Re-run glasses-side OTA version check (called after a clock fix invalidates a TLS failure). */
   retryOtaVersionCheck(): Promise<void>
-  checkForOtaUpdate(): Promise<void>
-  startOtaUpdate(): Promise<void>
+  checkForOtaUpdate(): Promise<OtaQueryResult>
+  startOtaUpdate(): Promise<OtaStartAckEvent>
 
   // Version Info Commands
   requestVersionInfo(): Promise<void>
@@ -131,8 +138,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     save: boolean,
     sound: boolean,
     settings?: VideoRecordingSettings,
-  ): Promise<void>
-  stopVideoRecording(requestId: string): Promise<void>
+  ): Promise<VideoRecordingStatusEvent>
+  stopVideoRecording(requestId: string): Promise<VideoRecordingStatusEvent>
 
   // Stream Commands
   startStream(params: StreamStartRequest): Promise<void>
@@ -164,7 +171,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     onDurationMs: number,
     offDurationMs: number,
     count: number,
-  ): Promise<void>
+  ): Promise<RgbLedControlResponseEvent>
 
   // STT Commands
   setSttModelDetails(path: string, languageCode: string): Promise<void>
@@ -408,39 +415,14 @@ NativeBluetoothSdkModule.setScreenDisabled = function (disabled: boolean) {
   return this.updateBluetoothSettings({screen_disabled: disabled})
 }
 
-NativeBluetoothSdkModule.setGalleryModeEnabled = function (enabled: boolean) {
-  return this.updateBluetoothSettings({gallery_mode: enabled})
-}
-
 NativeBluetoothSdkModule.setVoiceActivityDetectionEnabled = function (enabled: boolean) {
   return this.updateBluetoothSettings({voice_activity_detection_enabled: enabled})
 }
 
-NativeBluetoothSdkModule.setButtonPhotoSettings = function (size: ButtonPhotoSize) {
-  return this.updateBluetoothSettings({button_photo_size: size})
-}
-
-NativeBluetoothSdkModule.setButtonVideoRecordingSettings = function (width: number, height: number, fps: number) {
-  return this.updateBluetoothSettings({
-    button_video_width: width,
-    button_video_height: height,
-    button_video_fps: fps,
-  })
-}
-
-NativeBluetoothSdkModule.setButtonCameraLed = function (enabled: boolean) {
-  return this.updateBluetoothSettings({button_camera_led: enabled})
-}
-
-NativeBluetoothSdkModule.setButtonMaxRecordingTime = function (minutes: number) {
-  return this.updateBluetoothSettings({button_max_recording_time: minutes})
-}
-
+const nativeSetCameraFov = NativeBluetoothSdkModule.setCameraFov.bind(NativeBluetoothSdkModule)
 NativeBluetoothSdkModule.setCameraFov = function (fov: CameraFov) {
   const setting = normalizeCameraFov(fov)
-  return this.updateBluetoothSettings({
-    camera_fov: {fov: setting.fov, roi_position: setting.roiPosition},
-  })
+  return nativeSetCameraFov(setting)
 }
 
 NativeBluetoothSdkModule.setMicState = function (
