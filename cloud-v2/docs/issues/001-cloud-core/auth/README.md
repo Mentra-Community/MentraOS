@@ -16,7 +16,7 @@ on-device injection flow). Those two give the full v2 picture.
 
 ## The docs
 
-- [`concepts.md`](./concepts.md): the from-zero primer. Teach.
+- [`concepts.md`](./concepts.md): the from-zero primer, for anyone new to auth.
 - [`spec.md`](./spec.md): the v2 endpoint + token contract (exchange, refresh,
   miniapp-token, JWKS). The contract the cloud-client implements against.
 - [`design.md`](./design.md): the end-to-end implementation design across

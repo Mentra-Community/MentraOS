@@ -93,8 +93,9 @@ fetch it to verify miniapp tokens; services verify access tokens the same way.
 ## Signing keys
 
 **Two Ed25519 keys**, each with its own `kid`: one for access tokens, one for
-miniapp tokens. Separate keys isolate blast radius (a miniapp-token key issue does
-not touch access tokens). Both public halves are published in the JWKS.
+miniapp tokens. Keeping them separate limits the damage if one leaks: a problem with
+the miniapp-token key can't touch access tokens. Both public halves are published in
+the JWKS.
 
 **Rotation** (from day one): to rotate a key, publish the new key in the JWKS
 alongside the old one and keep the old until every token signed with it has

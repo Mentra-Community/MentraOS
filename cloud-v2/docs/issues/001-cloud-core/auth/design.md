@@ -22,8 +22,9 @@ for the from-zero primer (JWTs, asymmetric signing, JWKS, audiences, exchange).
 3. For each running miniapp, the cloud-client mints a **miniapp-scoped token**
    (`POST /api/client/auth/miniapp-token`, `aud = <packageName>`), caches it, and
    refreshes before expiry.
-4. The on-device runtime injects the miniapp token into the bundle (webview +
-   Crust engine). The raw access token never reaches a bundle.
+4. The on-device runtime injects the miniapp token into the miniapp's two contexts
+   (its WebView UI and its background JSContext). The access token never reaches the
+   miniapp.
 5. The bundle calls its developer backend with the miniapp token. The backend
    verifies it against Mentra's **JWKS**, checks `aud`, and applies its `oemId`
    trust policy. No per-request call to Mentra.
@@ -75,15 +76,15 @@ Context for the migration bridge below. In v1:
 - The same flow backs every Mentra-direct surface: the Store exchanges at
   `POST /api/store/auth/exchange-token`, the Dev Console verifies the same core
   token in `console.middleware.ts`, both keyed on email. One identity system across
-  consumer app, Dev Console, and Store, with a symmetric secret (only cloud can
-  verify) and no asymmetric/JWKS story.
+  consumer app, Dev Console, and Store, with a shared secret only the cloud can
+  verify, and no public-key (JWKS) verification anywhere.
 
 ### Migration bridge: core token to v2 access token
 
 During the v1 to v2 transition the client authenticates to both clouds: the legacy
 v1 path (existing miniapps, the v1 WS/REST) still wants the core token, and the v2
-path (cloud-runtime, the cloud-client) wants the Mentra access token. The low-debt
-bridge keeps the existing login unchanged and derives the v2 token from the core
+path (cloud-runtime, the cloud-client) wants the Mentra access token. The simplest
+bridge leaves the existing login untouched and derives the v2 token from the core
 token:
 
 1. The client logs in exactly as today (Supabase to core token at v1) and uses the
@@ -146,10 +147,10 @@ API key (symmetric) and a hardcoded Mentra public key; `userId` is the email.
 
 ### v2 (local miniapps)
 
-Two shifts force the redesign: miniapps are now **local** (a bundle running
-on-device in the Runtime, no remote webview URL to inject into), and v2 has a
-**real asymmetric token** (the Ed25519 access token, verifiable via JWKS). The
-mechanism:
+Two things changed, and together they force the redesign: miniapps are now **local**
+(a bundle running on-device in the Runtime, with no remote webview URL to inject
+into), and v2 has a **real public-key token** (the Ed25519 access token, which
+anyone can verify with Mentra's public key via JWKS). The mechanism:
 
 1. The miniapp declares it has a backend (in `miniapp.json`), with the
    audience/key id it expects.
@@ -158,9 +159,9 @@ mechanism:
    `sub = mentraUserId`, `oemId`, `aud = <packageName>`, short expiry. Minted by
    `POST /api/client/auth/miniapp-token` (see [`spec.md`](./spec.md)). Minting is
    server-side so it can be revoked and audited.
-3. The runtime injects the token into the bundle's two JS contexts (the webview and
-   the Crust engine), not via a URL param; `useMentraAuth()` reads it from the
-   bridge. See "On-device injection" below.
+3. The runtime injects the token into the miniapp's two contexts (its WebView UI and
+   its background JSContext), not through a URL parameter; `useMentraAuth()` reads it
+   from the bridge. See "On-device injection" below.
 4. The webview calls the developer's backend with
    `Authorization: Bearer <miniapp-scoped-token>`.
 5. The developer's backend verifies the token against Mentra's **JWKS**, checks
@@ -168,9 +169,9 @@ mechanism:
    per-request call to Mentra, no symmetric `frontendToken`, no API-key hash.
 6. The runtime refreshes and re-injects before expiry.
 
-What this buys over v1: standard asymmetric verification (JWKS) with key rotation
-that needs no SDK reship; audience pinning so a token for miniapp A cannot be
-replayed against miniapp B's backend; `mentraUserId` instead of email. Miniapps
+What v2 gains over v1: standard public-key verification (JWKS) with key rotation that
+needs no SDK reship; audience pinning, so a token for miniapp A can't be replayed
+against miniapp B's backend; and `mentraUserId` instead of email. Miniapps
 with **no backend** need none of this; the local SDK already hands them
 `mentraUserId` on-device. The browser path (a webview outside the app, or a
 companion web app) still needs a "Sign in with Mentra" OAuth flow that ends in the
@@ -182,15 +183,15 @@ The miniapp receives only the **miniapp-scoped token**; the access token stays i
 the cloud-client and is never handed to a bundle. The on-device Runtime obtains the
 scoped token from `cloud.auth.getMiniappToken(packageName)` and delivers it.
 
-- **Two JS contexts.** The Runtime runs a bundle in a WebView (UI) and the Crust
-  engine (JavaScriptCore / QuickJS, headless logic). A call to the developer
-  backend can come from either, so both receive the same token from the same
-  Runtime-held source.
+- **Two contexts.** The Runtime runs a miniapp in a WebView (its UI) and a
+  background JSContext (a headless JavaScript engine, JavaScriptCore on iOS, for its
+  logic). A call to the developer backend can come from either, so both get the same
+  token from the same Runtime-held source.
 - **Delivery.** The SDK's `session.connect()` handshake returns `mentraUserId` and
   the initial miniapp token alongside the session info. The WebView gets it through
   the runtime bridge; `@mentra/react` `useMentraAuth()` reads `{ mentraUserId,
-  token }`. The Crust engine gets it from the host via the engine bridge and
-  exposes the same shape plus an authed-fetch helper. On the web fallback, the
+  token }`. The background JSContext gets it from the host through the engine bridge
+  and exposes the same shape plus an authed-fetch helper. On the web fallback, the
   "Sign in with Mentra" OAuth flow ends with the same token, so `useMentraAuth()`
   is identical either way.
 - **Refresh.** The Runtime re-mints before expiry (via `getMiniappToken`, which
@@ -237,16 +238,17 @@ await fetch("https://api.theirapp.com/...", {
 
 - The miniapp connect handshake returns `mentraUserId` + the initial miniapp token
   (from `cloud.auth.getMiniappToken`).
-- Inject the miniapp token into the bundle's two JS contexts (webview + Crust), and
-  refresh/re-inject before expiry (mechanism in "On-device injection" above).
+- Inject the miniapp token into the miniapp's two contexts (WebView UI + background
+  JSContext), and refresh/re-inject before expiry (mechanism in "On-device
+  injection" above).
 - The cloud-client is wired in at the runtime's `configureRuntime` hook
   ([`../../004-cloud-client/architecture.md`](../../004-cloud-client/architecture.md)).
 
 ### 4. Developer SDK and backend verifier
 
 - The frontend SDK (`@mentra/react` `useMentraAuth()`, and the local SDK in the
-  Crust context) reads `{ mentraUserId, token }` from the bridge on device, or from
-  the "Sign in with Mentra" OAuth redirect on the web.
+  background JSContext) reads `{ mentraUserId, token }` from the bridge on device, or
+  from the "Sign in with Mentra" OAuth redirect on the web.
 - The backend verifier (replacing the v1 `createMentraAuthRoutes` temp-token
   exchange): fetch the JWKS, verify the signature and `aud == packageName`, apply
   the `oemId` trust policy. No per-request call to Mentra, no API-key hash.
@@ -265,8 +267,8 @@ await fetch("https://api.theirapp.com/...", {
   server-to-server calls, or retire them entirely? They are already out of the
   per-user verification path; this is only about whether any role remains.
 - **Injection details.** The precise auth-update message format on each bridge (the
-  WebView channel and the Crust engine bridge), and whether `useMentraAuth()` and
-  the local SDK share one implementation. Finalized during implementation.
+  WebView channel and the background JSContext bridge), and whether `useMentraAuth()`
+  and the local SDK share one implementation. Finalized during implementation.
 
 ## References
 

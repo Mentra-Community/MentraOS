@@ -58,10 +58,11 @@ shape with no per-request resolution.
 
 ## Q2: Mentra to miniapp identity
 
-Today Mentra auto-auths miniapp backends with a stable user identity, a major DX
-win. Under v2, if OEM-attested users use that same handoff, a miniapp developer
-implicitly trusts every OEM Mentra has approved: a compromised OEM could mint a JWT
-for any of its users and reach that user's data on every miniapp they have used.
+Today Mentra auto-auths miniapp backends with a stable user identity, which
+developers love because their backend just knows who the user is. Under v2, if
+users vouched for by an OEM use that same handoff, a miniapp developer is implicitly
+trusting every OEM Mentra has approved: a compromised OEM could mint a JWT for any of
+its users and reach that user's data on every miniapp they have used.
 There is no cryptographic move that lets a miniapp distinguish a real user from an
 OEM impersonating its own user, because the OEM is the source of truth for who its
 users are.
@@ -71,14 +72,15 @@ users are.
 payload carries `oemId` alongside `mentraUserId`. Miniapps that ignore it work
 exactly as today; miniapps that care apply a policy:
 
-- `trust-all` (default): accept any verified payload. Preserves today's DX.
+- `trust-all` (default): accept any verified payload. Keeps today's behavior, where
+  miniapps just work.
 - `mentra-direct-only`: accept only `oemId == "mentra"`.
 - `whitelist`: accept only a configured set of `oemId`s.
 
 A per-miniapp pseudonymous `sub = H(mentraUserId, packageName)` (so no two miniapps
 see the same id for the same user) is available as a future opt-in for
-privacy-sensitive miniapps; it is not the default because it breaks the
-stable-identifier DX.
+privacy-sensitive miniapps; it is not the default because it would break the thing
+developers rely on, a stable id for each user.
 
 ## OEM onboarding
 
