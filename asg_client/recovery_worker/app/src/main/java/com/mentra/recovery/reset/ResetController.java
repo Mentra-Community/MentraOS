@@ -58,6 +58,8 @@ public class ResetController {
   }
 
   public void onAsgHealthy() {
+    WorkManager.getInstance(context).cancelUniqueWork(RecoveryConstants.UNIQUE_RECOVERY_WORK);
+
     String currentState = stateStore.getState();
     if (RecoveryConstants.STATE_HEALTHY.equals(currentState)) {
       return;
