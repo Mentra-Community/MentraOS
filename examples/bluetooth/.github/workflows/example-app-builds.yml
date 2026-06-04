@@ -1,0 +1,206 @@
+name: Example App Builds
+
+"on":
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: true
+  GSTREAMER_VERSION: 1.28.2
+
+jobs:
+  android:
+    name: Native Android example
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.1.12297006"
+
+      - name: Cache GStreamer Android SDK
+        uses: actions/cache@v4
+        with:
+          path: examples/android/.gstreamer/Android.sdk
+          key: gstreamer-android-${{ env.GSTREAMER_VERSION }}
+
+      - name: Type check Kotlin
+        working-directory: examples/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:compileDebugKotlin --no-daemon
+
+      - name: Build
+        working-directory: examples/android
+        run: |
+          ./gradlew :app:assembleDebug --no-daemon
+
+  ios:
+    name: Native iOS example
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: examples/ios/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('examples/ios/MentraExample.xcodeproj/project.pbxproj') }}
+          restore-keys: |
+            spm-${{ runner.os }}-
+
+      - name: Cache GStreamer iOS SDK
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/GStreamer/iPhone.sdk
+          key: gstreamer-ios-${{ env.GSTREAMER_VERSION }}
+
+      - name: Install GStreamer iOS SDK
+        working-directory: examples/ios
+        run: bash scripts/setup-gstreamer-ios.sh
+
+      - name: Type check Swift
+        working-directory: examples/ios
+        run: |
+          xcodebuild \
+            -project MentraExample.xcodeproj \
+            -scheme MentraExample \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -clonedSourcePackagesDirPath SourcePackages \
+            CODE_SIGNING_ALLOWED=NO \
+            analyze
+
+      - name: Build
+        working-directory: examples/ios
+        run: |
+          xcodebuild \
+            -project MentraExample.xcodeproj \
+            -scheme MentraExample \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -clonedSourcePackagesDirPath SourcePackages \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+  react-native:
+    name: React Native example
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.1.12297006"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Cache GStreamer Android SDK
+        uses: actions/cache@v4
+        with:
+          path: examples/react-native/.gstreamer/Android.sdk
+          key: gstreamer-android-${{ env.GSTREAMER_VERSION }}
+
+      - name: Install dependencies
+        working-directory: examples/react-native
+        run: bun install --frozen-lockfile
+
+      - name: Type check TypeScript
+        working-directory: examples/react-native
+        run: bunx tsc --noEmit
+
+      - name: Generate Android project
+        working-directory: examples/react-native
+        run: bunx expo prebuild --platform android --no-install
+
+      - name: Type check generated Android project
+        working-directory: examples/react-native/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:compileDebugKotlin --no-daemon
+
+      - name: Build Android app
+        working-directory: examples/react-native/android
+        run: |
+          ./gradlew :app:assembleDebug --no-daemon
+
+  react-native-elevenlabs-audio:
+    name: React Native ElevenLabs audio example
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.1.12297006"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Install dependencies
+        working-directory: examples/react-native-elevenlabs-audio
+        run: bun install --frozen-lockfile
+
+      - name: Type check TypeScript
+        working-directory: examples/react-native-elevenlabs-audio
+        run: bun run typecheck
+
+      - name: Generate Android project
+        working-directory: examples/react-native-elevenlabs-audio
+        run: bunx expo prebuild --platform android --no-install
+
+      - name: Type check generated Android project
+        working-directory: examples/react-native-elevenlabs-audio/android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:compileDebugKotlin --no-daemon
+
+      - name: Build Android app
+        working-directory: examples/react-native-elevenlabs-audio/android
+        run: |
+          ./gradlew :app:assembleDebug --no-daemon
