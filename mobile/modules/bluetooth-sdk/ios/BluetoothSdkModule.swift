@@ -356,7 +356,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             case let value as Int:
                 iso = value > 0 ? value : nil
             case let value as Double:
-                iso = value.isFinite && value > 0 ? Int(value) : nil
+                // Guard against Int(Double) trapping on out-of-range values.
+                iso = (value.isFinite && value > 0 && value < Double(Int.max)) ? Int(value) : nil
             case let value as NSNumber:
                 let intValue = value.intValue
                 iso = intValue > 0 ? intValue : nil
