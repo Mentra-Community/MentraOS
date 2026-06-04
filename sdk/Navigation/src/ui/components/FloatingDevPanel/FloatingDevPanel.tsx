@@ -124,9 +124,9 @@ export function FloatingDevPanel({
           setCollapsed(false)
         }}
         style={{position: "fixed", left: pos.x, top: pos.y, touchAction: "none"}}
-        className="z-50 w-12 h-12 rounded-full bg-neutral-900 text-white shadow-lg flex items-center justify-center text-xl select-none cursor-grab active:cursor-grabbing"
+        className="z-9999 w-11 h-11 rounded-full bg-[#1A1A1A] text-white shadow-[#FFFFFF14_0px_1px_0px_inset,#00000073_0px_12px_30px] flex items-center justify-center select-none cursor-grab active:cursor-grabbing"
         aria-label={`Open ${title} panel`}>
-        🛠️
+        <WrenchIcon />
       </button>
     )
   }
@@ -137,25 +137,40 @@ export function FloatingDevPanel({
         rootRef.current = el
       }}
       style={{position: "fixed", left: pos.x, top: pos.y}}
-      className="z-50 w-[22rem] max-w-[calc(100vw-1rem)] max-h-[calc(100vh-1rem)] bg-white border border-neutral-300 rounded-xl shadow-2xl flex flex-col overflow-hidden">
+      className="[font-synthesis:none] antialiased z-9999 w-88 max-w-[calc(100vw-1rem)] max-h-[50vh] rounded-[22px] overflow-clip [backdrop-filter:blur(40px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#00000073_0px_18px_50px] bg-[#FFFFFFA8] border border-solid border-[#FFFFFF99] flex flex-col">
       <div
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         style={{touchAction: "none"}}
-        className="flex items-center gap-2 px-3 py-2 bg-neutral-900 text-white cursor-grab active:cursor-grabbing select-none">
-        <span className="text-base leading-none">🛠️</span>
-        <span className="text-[13px] font-semibold tracking-wide flex-1">{title}</span>
+        className="flex items-center h-11.5 pr-2.5 pl-3.5 gap-2.25 shrink-0 [box-shadow:#FFFFFF14_0px_1px_0px_inset] bg-[#1A1A1A] cursor-grab active:cursor-grabbing select-none">
+        <div className="flex items-center justify-center w-5.5 h-5.5 shrink-0">
+          <WrenchIcon />
+        </div>
+        <span className="grow tracking-[-0.01em] font-sans font-semibold text-white text-[15px]/5">{title}</span>
         <button
           onPointerDown={(e) => e.stopPropagation()}
           onClick={() => setCollapsed(true)}
-          className="text-white/80 hover:text-white text-lg leading-none px-1"
+          className="flex items-center justify-center w-7.5 h-7.5 rounded-[15px] shrink-0 bg-[#FFFFFF1F] hover:bg-[#FFFFFF2E] transition-colors"
           aria-label="Collapse">
-          –
+          <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M5 12H19" fill="none" stroke="#FFFFFF" strokeWidth="2.4" strokeLinecap="round" />
+          </svg>
         </button>
       </div>
-      <div className="overflow-y-auto p-3 max-h-75">{children}</div>
+      <div className="overflow-y-auto p-3 grow">{children}</div>
     </div>
+  )
+}
+
+function WrenchIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path
+        d="M14.7 6.3a3.5 3.5 0 0 1 4.6 4.4l-2-2-1.8.5-.5 1.8 2 2a3.5 3.5 0 0 1-4.4-4.6L7.8 16.9a1.6 1.6 0 1 1-2.2-2.2l5.8-5.8a3.5 3.5 0 0 1 3.3-2.6Z"
+        fill="#FFFFFF"
+      />
+    </svg>
   )
 }
 

@@ -22,6 +22,7 @@ import {SimpleStorageManager} from "./managers/SimpleStorageManager"
 import {formatDistance} from "./lib/formatDistance"
 import {haversineMeters} from "./lib/geometry"
 import {renderMinimap} from "./lib/MinimapRenderer"
+import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
 
 export class NavigationController {
   private readonly ui: UIModule<Channels>
@@ -37,6 +38,15 @@ export class NavigationController {
   private logSeq = 0
   private lastHudKey = ""
   private lastMinimapPng: string | null = null
+  private showMinimap = false
+  private lastCoordsAt = 0
+  private gettingFix = false
+  // Tracks whether a trip has completed (arrived or stopped) in this
+  // session. Used to suppress the "Welcome to Mentra Maps!" message
+  // after the first arrival — the welcome line should only show at
+  // the very start of the session, not every time the user finishes
+  // and returns to idle.
+  private hasCompletedTrip = false
 
   // Canonical state (mirrored to UI).
   private coords: Coords | null = null
@@ -97,6 +107,7 @@ export class NavigationController {
           accuracy: d.accuracy,
           ts: d.timestamp ?? Date.now(),
         }
+        this.lastCoordsAt = Date.now()
         this.ui.send("nav:coords", this.coords)
         this.refreshHUD()
       }),
@@ -169,6 +180,7 @@ export class NavigationController {
               maneuver: u,
               offRouteAt: null,
             }
+            this.heartbeatLocationIfStale()
             break
           case "off_route":
             this.trip = {...this.trip, offRouteAt: Date.now()}
@@ -187,6 +199,7 @@ export class NavigationController {
               routeSteps: null,
               offRouteAt: null,
             }
+            this.hasCompletedTrip = true
             break
           case "error":
             this.trip = {...this.trip, status: "idle", running: false}
@@ -324,6 +337,7 @@ export class NavigationController {
           routeSteps: null,
           offRouteAt: null,
         }
+        this.hasCompletedTrip = true
         this.ui.send("nav:trip-state", this.trip)
         this.refreshHUD()
       }),
@@ -367,8 +381,32 @@ export class NavigationController {
     )
 
     this.unsubs.push(
+      this.ui.on("nav:set-show-minimap", (show) => {
+        if (show === this.showMinimap) return
+        this.showMinimap = show
+        if (!show) {
+          // Wipe whatever bitmap is on the glasses and reset the dedup
+          // cache so toggling back on re-pushes the next frame.
+          this.display.clear()
+          this.lastMinimapPng = null
+          this.lastHudKey = ""
+        } else {
+          // Force the next HUD pump to repush.
+          this.lastMinimapPng = null
+          this.refreshHUD()
+        }
+      }),
+    )
+
+    this.unsubs.push(
       this.ui.handle("test:show-text-test", ({text, durationMs}) => {
         this.display.showText(text, durationMs)
+      }),
+    )
+
+    this.unsubs.push(
+      this.ui.handle("test:show-bitmap-test", () => {
+        this.display.showBitmapTest(TEST_BITMAP_288_B64)
       }),
     )
 
@@ -414,7 +452,7 @@ export class NavigationController {
       const at = activeDestinationName ? ` at ${activeDestinationName}` : ""
       next = `You have arrived${at}`
       durationMs = 10_000
-    } else if (!running) {
+    } else if (!running && !this.hasCompletedTrip) {
       next = "Welcome to Mentra Maps!\nPick a destination to get started."
       durationMs = 5_000
     } else if (status === "rerouting") {
@@ -459,6 +497,7 @@ export class NavigationController {
    * encoded PNG so we don't re-send identical frames while idle.
    */
   private refreshMinimap(): void {
+    if (!this.showMinimap) return
     if (!this.trip.running || !this.coords) return
     const png = renderMinimap({
       coords: {lat: this.coords.lat, lng: this.coords.lng},
@@ -492,10 +531,38 @@ export class NavigationController {
       .then((d) => {
         if (this.coords) return
         this.coords = {lat: d.lat, lng: d.lng, accuracy: d.accuracy, ts: d.timestamp ?? Date.now()}
+        this.lastCoordsAt = Date.now()
         this.ui.send("nav:coords", this.coords)
       })
       .catch(() => {
         /* streaming updates will arrive when location stabilises */
+      })
+  }
+
+  // Recovery for the "dot frozen while distance keeps ticking" bug. The Nav
+  // SDK's onNavManeuver and onNavLocation streams emit independently — when
+  // the road-snapped location stream goes quiet but maneuvers keep firing,
+  // the dot freezes on the map even though we're moving. Use the maneuver
+  // tick as a heartbeat: if our coords haven't refreshed in STALE_MS, force
+  // a one-shot CoreLocation fix. The existing onUpdate listener handles the
+  // result; this just primes the pump.
+  private heartbeatLocationIfStale(): void {
+    const STALE_MS = 5_000
+    if (this.gettingFix) return
+    if (Date.now() - this.lastCoordsAt < STALE_MS) return
+    this.gettingFix = true
+    this.location
+      .getOnce()
+      .then((d) => {
+        this.coords = {lat: d.lat, lng: d.lng, accuracy: d.accuracy, ts: d.timestamp ?? Date.now()}
+        this.lastCoordsAt = Date.now()
+        this.ui.send("nav:coords", this.coords)
+      })
+      .catch(() => {
+        /* next maneuver tick will retry */
+      })
+      .finally(() => {
+        this.gettingFix = false
       })
   }
 

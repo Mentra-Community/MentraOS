@@ -270,6 +270,14 @@ class NavigationService {
     return await CrustModule.requestNavigationPermission()
   }
 
+  // Dev-only: clear the cached "terms accepted" flags so the next
+  // requestPermission() call re-shows Google's dialog. Android only;
+  // iOS bridge returns {ok: false, error: "not supported on iOS"}.
+  public async resetPermission(): Promise<{ok: boolean; error?: string}> {
+    console.log(`${LOG_TAG}: resetPermission`)
+    return await CrustModule.resetNavigationPermission()
+  }
+
   /**
    * Dev-only: nudge the simulator off-route to trigger an actual reroute
    * from the Nav SDK. Useful for verifying the rerouting pipeline (UI
@@ -490,6 +498,11 @@ async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promi
       avoidTolls: avoid.tolls === true,
       avoidFerries: avoid.ferries === true,
     },
+    // Without this Google defaults to OVERVIEW — sparse polyline with
+    // vertices that drift 10-20m from actual road centerlines at
+    // intersections, putting our turn-pivot dots off the visible roads.
+    // HIGH_QUALITY traces the road tightly.
+    polylineQuality: "HIGH_QUALITY",
   }
   if (intermediates.length > 0) body.intermediates = intermediates
 

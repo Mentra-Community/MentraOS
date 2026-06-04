@@ -113,10 +113,35 @@ final class NavigationManager: NSObject {
     DispatchQueue.main.async {
       NavigationManager.ensureApiKeyRegistered()
       let options = GMSNavigationTermsAndConditionsOptions(companyName: "Mentra")
+      options.title = "Welcome to Mentra Maps"
+      options.uiParams = NavigationManager.mentraTermsDialogUIParams()
       GMSNavigationServices.showTermsAndConditionsDialogIfNeeded(with: options) { accepted in
         completion(accepted)
       }
     }
+  }
+
+  // Mentra-themed chrome for Google's mandatory T&C dialog. Mirrors the
+  // Android `TermsAndConditionsUIParams` in NavigationManager.kt — same
+  // palette, same type scale. Google owns the body copy and frame; only
+  // background, fonts, and colors are configurable.
+  private static func mentraTermsDialogUIParams() -> GMSNavigationTermsDialogUIParams {
+    let titleFont = UIFont.systemFont(ofSize: 22, weight: .semibold)
+    let bodyFont = UIFont.systemFont(ofSize: 14, weight: .regular)
+    let buttonFont = UIFont.systemFont(ofSize: 16, weight: .semibold)
+    let background = UIColor(red: 0xF5 / 255, green: 0xF5 / 255, blue: 0xF5 / 255, alpha: 1)
+    let nearBlack = UIColor(red: 0x1A / 255, green: 0x1A / 255, blue: 0x1A / 255, alpha: 1)
+    let mutedText = UIColor(red: 0, green: 0, blue: 0, alpha: 0x8C / 255.0)
+    return GMSNavigationTermsDialogUIParams(
+      backgroundColor: background,
+      titleFont: titleFont,
+      titleColor: nearBlack,
+      mainTextFont: bodyFont,
+      mainTextColor: mutedText,
+      buttonsFont: buttonFont,
+      cancelButtonTextColor: mutedText,
+      acceptButtonTextColor: nearBlack
+    )
   }
 
   // MARK: - Start

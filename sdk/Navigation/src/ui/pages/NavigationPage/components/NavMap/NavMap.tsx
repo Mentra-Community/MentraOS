@@ -21,6 +21,7 @@ export function NavMap({
   destination,
   routePoints,
   previewTurns,
+  showPivots = true,
   savedPlaces = [],
   autoFollow = true,
   hideControls = false,
@@ -43,6 +44,9 @@ export function NavMap({
     /** Coarse turn direction ("Turn left"/"Turn right") metadata. */
     direction?: "Turn left" | "Turn right" | null
   }> | null
+  /** Dev-toggle: when false, suppress the red turn-pivot dots + labels even
+   *  if dev mode is on. Default true. */
+  showPivots?: boolean
   /** Stars / home / work pins to drop while the map is idle. Empty while
    *  a trip is running so the route stays uncluttered. */
   savedPlaces?: Array<{lat: number; lng: number; placeId: string; type?: "home" | "work"; savedName?: string}>
@@ -613,7 +617,7 @@ export function NavMap({
   // Refetch whenever the route or preview turns change. `cancelled`
   // guards against an async RPC resolve landing after teardown.
   useEffect(() => {
-    if (!devEnabled) return
+    if (!devEnabled || !showPivots) return
     if (!ready || !mapRef.current) return
 
     function teardown() {
@@ -779,7 +783,7 @@ export function NavMap({
       clearTimeout(refetchHandle)
       teardown()
     }
-  }, [ready, routePoints, previewTurns, devEnabled])
+  }, [ready, routePoints, previewTurns, devEnabled, showPivots])
 
   if (error) {
     return <div className="p-3 text-red-700 text-[13px]">Map failed to load: {error}</div>
