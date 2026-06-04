@@ -2,6 +2,7 @@
 
 set -e
 
+# Link keystore from shared credentials directory if not already present.
 CREDS="${HOME}/.mentra/credentials"
 mkdir -p credentials
 if [ ! -f credentials/recovery-keystore.jks ] && [ -f "${CREDS}/recovery-keystore.jks" ]; then
@@ -12,10 +13,15 @@ if [ -f credentials/recovery-keystore.jks ]; then
   echo "Building recovery worker (release)..."
   ./gradlew assembleRelease
   APK=app/build/outputs/apk/release/app-release.apk
-else
-  echo "No release keystore; building debug APK for asset bundle..."
+elif [ "${BUILD_DEBUG:-0}" = "1" ]; then
+  echo "BUILD_DEBUG=1: building debug recovery worker (local dev only — NOT for release)..."
   ./gradlew assembleDebug
   APK=app/build/outputs/apk/debug/app-debug.apk
+else
+  echo "ERROR: Release keystore not found at credentials/recovery-keystore.jks" >&2
+  echo "  Place the keystore there, or link it from ${CREDS}/recovery-keystore.jks" >&2
+  echo "  For local dev without a keystore, set BUILD_DEBUG=1." >&2
+  exit 1
 fi
 
 echo "Copying to ASG client assets..."

@@ -1846,7 +1846,8 @@ public class OtaHelper {
 
         try {
             PackageManager pm = context.getPackageManager();
-            PackageInfo info = pm.getPackageInfo(packageName, 0);
+            PackageInfo info =
+                    pm.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES);
             File backupSource = resolveInstallableBackupSource(pm, info);
             if (backupSource == null) {
                 Log.e(

@@ -400,6 +400,8 @@ public class OtaService extends Service {
                 Log.d(
                         TAG,
                         "ASG version unchanged (" + currentVersion + ") - no auto-resume needed");
+                // Safety net: clear any recovery heartbeat pause from a same-version reinstall.
+                OtaHelper.notifyRecoveryInstallCompleted(this);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error checking for APK update auto-resume", e);

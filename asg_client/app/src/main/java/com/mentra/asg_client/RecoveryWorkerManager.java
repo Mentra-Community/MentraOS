@@ -76,6 +76,7 @@ public class RecoveryWorkerManager {
             return;
         }
         if (getInstalledVersion(LEGACY_UPDATER_PACKAGE) == -1) {
+            // Already gone — record success so we never check again.
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit()
                     .putBoolean(KEY_PURGED_LEGACY, true)
@@ -90,13 +91,11 @@ public class RecoveryWorkerManager {
             intent.putExtra("pkname", LEGACY_UPDATER_PACKAGE);
             context.sendBroadcast(intent);
             Log.i(TAG, "Requested uninstall of legacy OTA updater package");
+            // Do NOT set KEY_PURGED_LEGACY here. The uninstall is asynchronous and the
+            // broadcast may be silently dropped. On the next ASG startup the version check
+            // above will confirm the package is gone and then permanently latch the flag.
         } catch (Exception e) {
             Log.w(TAG, "Failed to purge legacy OTA updater package", e);
-        } finally {
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit()
-                    .putBoolean(KEY_PURGED_LEGACY, true)
-                    .apply();
         }
     }
 
