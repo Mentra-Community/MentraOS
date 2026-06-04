@@ -35,6 +35,21 @@ public final class AudioAssets {
     public static final String CAMERA_SOUND = "camera_sound.wav";
 
     /**
+     * Shutter sound for a "cold" photo capture — the camera was not already running, so it must
+     * spin up (1–2s on Mentra Live due to slow ISP startup) before the shot lands. This is a
+     * longer clip whose duration spans the warmup so the user keeps their head still until the
+     * photo is actually taken.
+     */
+    public static final String TAKE_PHOTO_COLD = "take_photo_cold.wav";
+
+    /**
+     * Shutter sound for a "hot" photo capture — the camera was already running (kept alive after a
+     * recent shot), so the capture is near-instant. This is a short clip for snappy, responsive
+     * feedback on rapid-fire shots.
+     */
+    public static final String TAKE_PHOTO_HOT = "take_photo_hot.wav";
+
+    /**
      * UI click or button press sound
      */
     public static final String CLICK_SOUND = "click_sound.wav";

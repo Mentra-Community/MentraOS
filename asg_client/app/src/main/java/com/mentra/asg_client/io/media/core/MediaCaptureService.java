@@ -321,7 +321,17 @@ public class MediaCaptureService {
             return;
         }
 
-        hardwareManager.playAudioAsset(AudioAssets.CAMERA_SOUND);
+        // Pick the feedback sound based on whether this capture will reuse an already-running
+        // camera (warm) or trigger a cold camera/ISP startup (1–2s on Mentra Live). We decide at
+        // button-press time, synchronously before enqueuing the request: a warm camera is reused
+        // immediately by enqueuePhotoRequest, so a short "hot" sound matches the quick capture; a
+        // cold camera needs a longer "cold" sound that spans the warmup so the user keeps still
+        // until the photo actually lands.
+        boolean cameraWarm = CameraNeoService.isCameraWarm();
+        String shutterAsset =
+                cameraWarm ? AudioAssets.TAKE_PHOTO_HOT : AudioAssets.TAKE_PHOTO_COLD;
+        Log.d(TAG, "📸 Playing " + (cameraWarm ? "HOT (short)" : "COLD (long)") + " shutter sound");
+        hardwareManager.playAudioAsset(shutterAsset);
     }
 
     /** Flash privacy LED synchronized with shutter sound for photo capture */

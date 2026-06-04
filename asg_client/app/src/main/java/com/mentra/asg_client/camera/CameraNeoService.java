@@ -321,6 +321,23 @@ public class CameraNeoService extends LifecycleService {
     }
 
     /**
+     * Check whether the camera is currently "warm" — open and kept alive after a recent photo,
+     * sitting idle and ready to capture the next shot almost instantly.
+     *
+     * <p>This is the inverse of a cold start: when warm, a new photo request reuses the open
+     * camera session instead of paying the 1–2s cold camera/ISP startup cost. Callers use this
+     * to decide between a short feedback sound (warm, capture is quick) and a long one (cold,
+     * capture lags behind the button press while the camera spins up).
+     *
+     * @return true if the camera is open, kept alive, and idle; false otherwise.
+     */
+    public static boolean isCameraWarm() {
+        return sInstance != null
+                && sInstance.cameraCoordinator.isCameraKeptAlive()
+                && sInstance.photoSession.shotState() == AeStateMachine.ShotState.IDLE;
+    }
+
+    /**
      * Force close the camera if it's only kept alive (not actively in use). This is called when
      * other operations like video/streaming need the camera.
      *
