@@ -91,7 +91,7 @@ data class StreamResolvedVideoConfig @JvmOverloads constructor(
                 captureWidth = numberValue(values, "captureWidth"),
                 captureHeight = numberValue(values, "captureHeight"),
                 bitrate = numberValue(values, "bitrate") ?: return null,
-                frameRate = doubleValue(values, "frameRate") ?: return null,
+                frameRate = doubleValue(values, "frameRate", "fps") ?: return null,
             )
         }
     }

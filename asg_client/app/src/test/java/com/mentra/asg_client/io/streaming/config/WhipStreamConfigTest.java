@@ -86,11 +86,11 @@ public class WhipStreamConfigTest {
     }
 
     @Test
-    public void toStatusJson_reportsResolvedFrameRate() throws JSONException {
+    public void toStatusJson_reportsResolvedFps() throws JSONException {
         WhipStreamConfig c = new WhipStreamConfig().setStatusVideoFps(29.7);
 
         JSONObject video = c.toStatusJson("whip").getJSONObject("video");
-        assertEquals(29.7, video.getDouble("frameRate"), 0.001);
-        assertFalse(video.has("fps"));
+        assertEquals(29.7, video.getDouble("fps"), 0.001);
+        assertFalse(video.has("frameRate"));
     }
 }

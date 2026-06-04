@@ -112,7 +112,7 @@ public struct StreamResolvedVideoConfig: Equatable {
               let width = intValue(values["width"]),
               let height = intValue(values["height"]),
               let bitrate = intValue(values["bitrate"]),
-              let frameRate = doubleValue(values["frameRate"])
+              let frameRate = doubleValue(values["frameRate"]) ?? doubleValue(values["fps"])
         else {
             return nil
         }

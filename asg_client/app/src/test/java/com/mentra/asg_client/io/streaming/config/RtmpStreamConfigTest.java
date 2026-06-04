@@ -130,11 +130,11 @@ public class RtmpStreamConfigTest {
     }
 
     @Test
-    public void toStatusJson_reportsResolvedFrameRate() throws JSONException {
+    public void toStatusJson_reportsResolvedFps() throws JSONException {
         RtmpStreamConfig c = new RtmpStreamConfig().setVideoFps(24);
 
         JSONObject video = c.toStatusJson("rtmp").getJSONObject("video");
-        assertEquals(24, video.getInt("frameRate"));
-        assertFalse(video.has("fps"));
+        assertEquals(24, video.getInt("fps"));
+        assertFalse(video.has("frameRate"));
     }
 }
