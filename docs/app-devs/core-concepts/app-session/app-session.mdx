@@ -30,7 +30,6 @@ AppSession is your interface to everything happening on the user's glasses:
 | `session.events` | Subscribe to data streams (voice, buttons, sensors) |
 | `session.layouts` | Update what displays on glasses |
 | `session.audio` | Play audio, text-to-speech, capture voice |
-| `session.camera` | Take photos, stream video |
 | `session.led` | Control LED lights |
 | `session.location` | Access GPS location |
 | `session.dashboard` | Show persistent status info |
@@ -290,11 +289,6 @@ protected async onSession(session: AppSession, sessionId: string, userId: string
   // Settings
   const setting = session.settings.get('settingKey', 'default');
 
-  // Capabilities
-  if (session.capabilities?.hasCamera) {
-    await session.camera.requestPhoto();
-  }
-
   // Logging
   session.logger.info('Message', { extra: 'data' });
 
@@ -313,7 +307,7 @@ protected async onSession(session: AppSession, sessionId: string, userId: string
     Subscribe to real-time streams
   </Card>
   <Card title="Device Control" icon="microchip" href="/app-devs/core-concepts/app-session/device-control">
-    Use audio, camera, LED, location
+    Use audio, LED, and location
   </Card>
   <Card title="API Reference" icon="book" href="/app-devs/reference/app-session">
     Complete AppSession documentation

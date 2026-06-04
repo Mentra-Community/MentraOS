@@ -1,9 +1,9 @@
 ---
 title: "Device Control"
-description: "Control audio, camera, LED, and location on smart glasses"
+description: "Control audio, LED, and location on smart glasses"
 ---
 
-Control device hardware using `session.audio`, `session.camera`, `session.led`, and `session.location`. Each manager provides methods for specific hardware features.
+Control device hardware using `session.audio`, `session.led`, and `session.location`. Each manager provides methods for specific hardware features.
 
 ## Audio Control
 
@@ -72,115 +72,11 @@ session.audio.stopAudio();
 
 ## Camera Control
 
-Capture photos and stream video from camera-equipped glasses.
+Camera capture, photo upload, and camera streaming are documented in the standalone Mentra Bluetooth SDK docs.
 
-### Check Camera Availability
-
-```typescript
-if (session.capabilities?.hasCamera) {
-  // Camera available
-  await session.camera.requestPhoto();
-} else {
-  session.logger.warn('Camera not available on this device');
-}
-```
-
-### Take Photos
-
-**Basic photo capture:**
-
-```typescript
-const photo = await session.camera.requestPhoto();
-session.logger.info('Photo captured:', photo.filename);
-```
-
-**With options:**
-
-```typescript
-const photo = await session.camera.requestPhoto({
-  saveToGallery: true,
-  size: 'large',
-  compress: 'medium'
-});
-```
-
-**Photo data returned:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `filename` | string | Photo filename |
-| `url` | string | Photo URL |
-| `timestamp` | Date | When photo was taken |
-
-### Photo Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `saveToGallery` | boolean | false | Save to device gallery |
-| `size` | string | 'medium' | 'small', 'medium', or 'large' |
-| `compress` | string | 'none' | 'none', 'medium', or 'heavy' |
-| `customWebhookUrl` | string | - | Override default webhook URL |
-| `authToken` | string | - | Auth token for custom webhook |
-
-### RTMP Streaming
-
-**Start streaming:**
-
-```typescript
-await session.camera.startLocalLivestream({
-  streamUrl: 'srt://live.example.com:4201?streamid=key',
-  video: {
-    resolution: '1280x720',
-    framerate: 30,
-    bitrate: 2500000
-  },
-  audio: {
-    enabled: true,
-    bitrate: 128000
-  }
-});
-
-session.logger.info('Stream started');
-```
-
-**Monitor stream status:**
-
-```typescript
-session.camera.onLocalLivestreamStatus((status) => {
-  session.logger.info('Stream status:', status.status);
-  // status values: 'starting', 'streaming', 'stopped', 'error'
-
-  if (status.status === 'error') {
-    session.logger.error('Stream error:', status.error);
-  }
-});
-```
-
-**Stop streaming:**
-
-```typescript
-await session.camera.stopLocalLivestream();
-```
-
-### Managed Streaming
-
-**Zero-infrastructure streaming (MentraOS handles RTMP):**
-
-```typescript
-// Start managed stream
-const result = await session.camera.startLivestream({
-  video: {
-    resolution: '1920x1080',
-    framerate: 30
-  }
-});
-
-session.logger.info('Streaming at:', result.streamUrl);
-session.logger.info('Watch at:', result.viewerUrl);
-
-// Stop managed stream
-await session.camera.stopLivestream();
-```
+<Card title="Camera And Streaming" icon="camera" href="https://bluetooth-sdk-docs.mentra.glass/camera-streaming/">
+  Request photos and start camera streams from supported smart glasses.
+</Card>
 
 ## LED Control
 
@@ -324,35 +220,6 @@ protected async onSession(session: AppSession, sessionId: string, userId: string
 }
 ```
 
-### Photo on Button Press
-
-```typescript
-protected async onSession(session: AppSession, sessionId: string, userId: string) {
-  if (!session.capabilities?.hasCamera) {
-    session.layouts.showTextWall('No camera available');
-    return;
-  }
-
-  session.events.onButtonPress(async (data) => {
-    if (data.button === 'select') {
-      session.layouts.showTextWall('Capturing photo...');
-
-      try {
-        const photo = await session.camera.requestPhoto({
-          saveToGallery: true
-        });
-
-        session.layouts.showTextWall('Photo saved!');
-        await session.audio.speak('Photo captured successfully');
-      } catch (error) {
-        session.logger.error('Photo failed:', error);
-        session.layouts.showTextWall('Photo failed');
-      }
-    }
-  });
-}
-```
-
 ### LED Notifications
 
 ```typescript
@@ -424,65 +291,6 @@ private calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number
 }
 ```
 
-### Streaming Control
-
-```typescript
-class StreamingApp extends AppServer {
-  private isRecording = false;
-
-  protected async onSession(session: AppSession, sessionId: string, userId: string) {
-    if (!session.capabilities?.hasCamera) {
-      session.layouts.showTextWall('Camera not available');
-      return;
-    }
-
-    session.layouts.showTextWall('Say "start" or "stop"');
-
-    session.events.onTranscription(async (data) => {
-      if (!data.isFinal) return;
-
-      const text = data.text.toLowerCase();
-
-      if (text.includes('start') && !this.isRecording) {
-        await this.startRecording(session);
-      } else if (text.includes('stop') && this.isRecording) {
-        await this.stopRecording(session);
-      }
-    });
-
-    // Monitor stream status
-    session.camera.onLocalLivestreamStatus((status) => {
-      session.dashboard.content.writeToMain(`Stream: ${status.status}`);
-    });
-  }
-
-  private async startRecording(session: AppSession) {
-    try {
-      const result = await session.camera.startLivestream({
-        video: { resolution: '1280x720', framerate: 30 }
-      });
-
-      this.isRecording = true;
-      session.layouts.showTextWall('Recording started');
-      await session.audio.speak('Recording');
-
-      session.logger.info('Stream URL:', result.viewerUrl);
-    } catch (error) {
-      session.logger.error('Failed to start stream:', error);
-      await session.audio.speak('Failed to start recording');
-    }
-  }
-
-  private async stopRecording(session: AppSession) {
-    await session.camera.stopLivestream();
-    this.isRecording = false;
-
-    session.layouts.showTextWall('Recording stopped');
-    await session.audio.speak('Recording stopped');
-  }
-}
-```
-
 ## Best Practices
 
 <AccordionGroup>
@@ -491,12 +299,12 @@ class StreamingApp extends AppServer {
 
     ```typescript
     // ✅ Good
-    if (session.capabilities?.hasCamera) {
-      await session.camera.requestPhoto();
+    if (session.capabilities?.hasLight) {
+      await session.led.turnOn({ color: 'green', ontime: 1000 });
     }
 
-    // ❌ Avoid - may crash on devices without camera
-    await session.camera.requestPhoto();
+    // ❌ Avoid - may fail on devices without LEDs
+    await session.led.turnOn({ color: 'green', ontime: 1000 });
     ```
   </Accordion>
 
@@ -506,11 +314,11 @@ class StreamingApp extends AppServer {
     ```typescript
     // ✅ Good
     try {
-      const photo = await session.camera.requestPhoto();
-      session.layouts.showTextWall('Success!');
+      const location = await session.location.getLatestLocation();
+      session.logger.info('Location:', location);
     } catch (error) {
-      session.logger.error('Photo failed:', error);
-      session.layouts.showTextWall('Photo failed');
+      session.logger.error('Location failed:', error);
+      session.layouts.showTextWall('Location unavailable');
     }
     ```
   </Accordion>
@@ -520,13 +328,13 @@ class StreamingApp extends AppServer {
 
     ```typescript
     // ✅ Good
-    session.layouts.showTextWall('Taking photo...');
-    const photo = await session.camera.requestPhoto();
-    session.layouts.showTextWall('Photo captured!');
-    await session.audio.speak('Photo saved');
+    session.layouts.showTextWall('Finding location...');
+    const location = await session.location.getLatestLocation();
+    session.layouts.showTextWall('Location updated');
+    await session.audio.speak('Location updated');
 
     // ❌ Avoid - silent operations confuse users
-    await session.camera.requestPhoto();
+    await session.location.getLatestLocation();
     ```
   </Accordion>
 
@@ -550,7 +358,6 @@ Device features require specific permissions:
 | Feature | Permission | Notes |
 |---------|------------|-------|
 | Audio playback | None | Always available |
-| Camera (photo/video) | CAMERA | Set in dev console |
 | LED control | None | If hardware available |
 | Location | LOCATION | Set in dev console |
 
@@ -570,7 +377,7 @@ Set permissions in the [Developer Console](https://console.mentra.glass/apps). U
   <Card title="Audio Manager" icon="book" href="/app-devs/reference/managers/audio-manager">
     Complete audio API reference
   </Card>
-  <Card title="Camera Manager" icon="book" href="/app-devs/reference/managers/camera">
-    Complete camera API reference
+  <Card title="Bluetooth SDK Camera Docs" icon="bluetooth" href="https://bluetooth-sdk-docs.mentra.glass/camera-streaming/">
+    Camera, photo, and streaming docs
   </Card>
 </CardGroup>

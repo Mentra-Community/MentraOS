@@ -11,7 +11,6 @@ icon: "lock"
 | **MICROPHONE** | Voice input, audio processing | Transcription, audio chunks |
 | **LOCATION** | GPS coordinates | Location tracking |
 | **BACKGROUND_LOCATION** | Location when app inactive | Background tracking |
-| **CAMERA** | Photos, video streaming | Photo capture, RTMP streaming |
 | **CALENDAR** | Calendar events | Event notifications |
 | **READ_NOTIFICATIONS** | Phone notifications | Notification filtering |
 | **POST_NOTIFICATIONS** | Send notifications | Push notifications |
@@ -74,14 +73,6 @@ session.location.subscribeToStream({ accuracy: 'high' }, (data) => {});
 const location = await session.location.getLatestLocation();
 ```
 
-### CAMERA
-
-```typescript
-// These require CAMERA permission:
-const photo = await session.camera.requestPhoto();
-await session.camera.startLocalLivestream({ streamUrl: 'srt://...' });
-```
-
 ### READ_NOTIFICATIONS
 
 ```typescript
@@ -129,8 +120,8 @@ session.events.on(StreamType.CALENDAR_EVENT, (data) => {});
 {
   "permissions": [
     { "type": "MICROPHONE", ... },
-    { "type": "CAMERA", ... },
-    { "type": "LOCATION", ... }
+    { "type": "LOCATION", ... },
+    { "type": "READ_NOTIFICATIONS", ... }
     // User less likely to install
   ]
 }

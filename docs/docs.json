@@ -76,11 +76,7 @@
               {
                 "group": "Camera",
                 "icon": "camera",
-                "pages": [
-                  "app-devs/core-concepts/camera/README",
-                  "app-devs/core-concepts/camera/photo-capture",
-                  "app-devs/core-concepts/camera/streaming"
-                ]
+                "pages": ["app-devs/core-concepts/camera/README"]
               },
               {
                 "group": "Webviews",
@@ -122,7 +118,6 @@
                   "app-devs/reference/managers/settings-manager",
                   "app-devs/reference/managers/audio-manager",
                   "app-devs/reference/managers/led-manager",
-                  "app-devs/reference/managers/camera",
                   "app-devs/reference/managers/location-manager"
                 ]
               },

@@ -1,55 +1,17 @@
 ---
-title: Camera Module
-description: Capture photos and stream video from MentraOS smart glasses. Managed streaming uses WebRTC by default (or SRT + HLS/DASH with restream destinations). Unmanaged streaming sends directly to your endpoint via SRT, RTMP, or WHIP.
+title: "Camera, Photos, And Streaming"
+description: "Use the Mentra Bluetooth SDK for camera, photo, and streaming features."
 ---
 
-The Camera Module provides photo capture and video streaming for MentraOS apps.
+The MentraOS Cloud SDK (`@mentraos/sdk`) is for cloud apps that run through MentraOS sessions. Camera capture, photo upload, video streaming, and direct phone-to-glasses camera flows are documented in the standalone Mentra Bluetooth SDK docs.
 
-## Available Features
+<CardGroup cols={2}>
+  <Card title="Bluetooth SDK Docs" icon="bluetooth" href="https://bluetooth-sdk-docs.mentra.glass">
+    Build mobile apps that connect directly to smart glasses.
+  </Card>
+  <Card title="Camera And Streaming" icon="camera" href="https://bluetooth-sdk-docs.mentra.glass/camera-streaming/">
+    Request photos and start camera streams from supported smart glasses.
+  </Card>
+</CardGroup>
 
-### [Photo Capture](./photo-capture.md)
-Take high-quality photos from smart glasses with options for gallery saving and raw buffer access.
-
-### [Video Streaming](./streaming.md)
-Stream live video from smart glasses:
-
-- **Livestream** (`startLivestream`) — Zero infrastructure. Low-latency WebRTC by default. Add `restreamDestinations` to go live on YouTube, Twitch, etc. Multiple apps can share the same stream.
-- **Local Livestream** (`startLocalLivestream`) — Stream directly to your own endpoint via SRT, RTMP, or WHIP. Exclusive camera access.
-
-See the [Video Streaming guide](./streaming.md) for details and API reference.
-
-## Quick Start
-
-### Taking a Photo
-```typescript
-const photo = await session.camera.requestPhoto({ saveToGallery: true });
-console.log(`Photo captured: ${photo.mimeType}, ${photo.size} bytes`);
-```
-
-### Starting a Livestream
-```typescript
-const result = await session.camera.startLivestream();
-console.log('WebRTC playback URL:', result.webrtcUrl);
-```
-
-### Streaming to Your Own Server
-```typescript
-// SRT
-await session.camera.startLocalLivestream({ streamUrl: 'srt://your-server.com:4201?streamid=key' });
-
-// RTMP
-await session.camera.startLocalLivestream({ streamUrl: 'rtmp://your-server.com/live/key' });
-```
-
-## Important Notes
-
-- **Permissions**: Camera access requires the `CAMERA` permission. See [Permissions Guide](/app-devs/core-concepts/permissions).
-- **Hardware**: Only available on camera-equipped glasses (e.g., Mentra Live)
-- **Battery**: Extended streaming drains battery quickly
-- **Privacy**: Always notify users when camera is active
-
-## See Also
-
-- [Video Streaming Guide](./streaming.md) — Livestream vs local, protocol details, re-streaming
-- [Photo Capture Guide](./photo-capture.md) — Taking and processing photos
-- [API Reference](/app-devs/reference/managers/camera) — Complete API documentation
+If you are building a cloud app, continue with the App Devs docs for server-side sessions, transcription, display output, permissions, storage, phone events, location, and dashboard UI.

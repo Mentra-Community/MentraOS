@@ -1,10 +1,9 @@
 ---
 title: "Camera Glasses"
-description: "Build apps for camera-equipped glasses - Mentra Live"
+description: "Understand camera-equipped glasses such as Mentra Live"
 ---
 
-Camera glasses have cameras for photo/video but no displays.
-Example: Mentra Live. These devices are ideal for visual capture, streaming, and audio-based interactions.
+Camera glasses have cameras for photo and video capture, but may not have displays. Mentra Live is the primary example.
 
 ## Mentra Live
 
@@ -32,7 +31,7 @@ Example: Mentra Live. These devices are ideal for visual capture, streaming, and
 
 ## Building for Camera Glasses
 
-### Check Camera Capabilities
+Use capabilities to detect camera-equipped hardware and adapt the rest of your app experience.
 
 ```typescript
 protected async onSession(session: AppSession, sessionId: string, userId: string) {
@@ -52,90 +51,30 @@ protected async onSession(session: AppSession, sessionId: string, userId: string
 }
 ```
 
-### Photo Capture
+Camera capture, photo upload, and camera streaming are documented in the standalone Mentra Bluetooth SDK docs.
 
-```typescript
-if (caps.hasCamera) {
-  const photo = await session.camera.requestPhoto({
-    saveToGallery: true,
-    size: 'large'
-  });
-
-  session.logger.info('Photo captured:', photo.filename);
-  await session.audio.speak('Photo captured');
-}
-```
-
-### Video Streaming
-
-```typescript
-if (caps.camera?.video.canStream) {
-  await session.camera.startLocalLivestream({
-    streamUrl: 'srt://live.example.com:4201?streamid=key',
-    video: {
-      resolution: '1280x720',
-      framerate: 30
-    }
-  });
-
-  await session.audio.speak('Streaming started');
-}
-```
+<Card title="Camera And Streaming" icon="camera" href="https://bluetooth-sdk-docs.mentra.glass/camera-streaming/">
+  Request photos and start camera streams from supported smart glasses.
+</Card>
 
 ## Audio-First Interactions
 
-**Without displays, use voice for feedback:**
+Without displays, use voice, buttons, and LEDs for feedback.
 
 ```typescript
-protected async onSession(session: AppSession, sessionId: string, userId: userId: string) {
-  // Speak instead of showing text
-  await session.audio.speak('Camera ready. Say "photo" to capture.');
+protected async onSession(session: AppSession, sessionId: string, userId: string) {
+  await session.audio.speak('Ready');
 
   session.events.onTranscription(async (data) => {
     if (!data.isFinal) return;
-
-    if (data.text.toLowerCase().includes('photo')) {
-      await this.takePhoto(session);
-    }
+    await this.handleCommand(data.text);
   });
-}
 
-private async takePhoto(session: AppSession) {
-  await session.audio.speak('Taking photo');
-
-  const photo = await session.camera.requestPhoto();
-
-  await session.audio.speak('Photo saved');
-}
-```
-
-## Using Buttons
-
-```typescript
-if (caps.hasButton) {
   session.events.onButtonPress(async (data) => {
     if (data.button === 'select') {
-      await session.camera.requestPhoto();
-      await session.audio.speak('Photo captured');
+      await session.audio.speak('Button pressed');
     }
   });
-}
-```
-
-## Using LEDs
-
-```typescript
-if (caps.hasLight && caps.light) {
-  // Check for RGB LED
-  const hasRGB = caps.light.lights?.some(led => led.isFullColor);
-
-  if (hasRGB) {
-    // Show colored feedback
-    await session.led.turnOn({
-      color: 'green',
-      ontime: 1000
-    });
-  }
 }
 ```
 
@@ -144,122 +83,15 @@ if (caps.hasLight && caps.light) {
 ```typescript
 if (caps.hasWifi) {
   session.logger.info('Device has WiFi');
-  // Can stream without phone tethering
 }
 ```
 
-## Camera Glass Best Practices
+## Best Practices
 
-**Provide audio feedback:**
-
-```typescript
-// ✅ Good - user knows what's happening
-await session.audio.speak('Processing');
-await processData();
-await session.audio.speak('Complete');
-
-// ❌ Avoid - silent operation confuses users
-await processData();
-```
-
-**Use speaker for output:**
-
-```typescript
-if (caps.hasSpeaker) {
-  // Audio plays directly on glasses
-  await session.audio.speak('Hello!');
-} else {
-  // Fallback to phone
-  await session.audio.speak('Hello!');
-}
-```
-
-**Combine buttons and voice:**
-
-```typescript
-// Button for quick actions
-session.events.onButtonPress(async (data) => {
-  await session.camera.requestPhoto();
-});
-
-// Voice for complex commands
-session.events.onTranscription(async (data) => {
-  if (data.isFinal) {
-    await this.handleCommand(data.text);
-  }
-});
-```
-
-## Example App
-
-```typescript
-class CameraGlassesApp extends AppServer {
-  protected async onSession(session: AppSession, sessionId: string, userId: string) {
-    const caps = session.capabilities;
-
-    if (!caps?.hasCamera) {
-      await session.audio.speak('Camera not available');
-      return;
-    }
-
-    // Audio welcome
-    await session.audio.speak('Camera app ready');
-
-    // Button to capture
-    session.events.onButtonPress(async (data) => {
-      if (data.button === 'select') {
-        await this.capturePhoto(session);
-      }
-    });
-
-    // Voice commands
-    session.events.onTranscription(async (data) => {
-      if (!data.isFinal) return;
-
-      const text = data.text.toLowerCase();
-
-      if (text.includes('photo')) {
-        await this.capturePhoto(session);
-      } else if (text.includes('stream')) {
-        await this.startStreaming(session);
-      }
-    });
-  }
-
-  private async capturePhoto(session: AppSession) {
-    await session.audio.speak('Capturing');
-
-    // LED feedback
-    if (session.capabilities?.hasLight) {
-      await session.led.blink({
-        color: 'white',
-        ontime: 100,
-        offtime: 100,
-        count: 2
-      });
-    }
-
-    const photo = await session.camera.requestPhoto({
-      saveToGallery: true
-    });
-
-    await session.audio.speak('Photo saved');
-  }
-
-  private async startStreaming(session: AppSession) {
-    await session.audio.speak('Starting stream');
-
-    await session.camera.startLivestream({
-      video: {
-        resolution: '1280x720',
-        framerate: 30
-      }
-    });
-
-    await session.audio.speak('Streaming');
-  }
-}
-```
+- Provide clear audio feedback because camera glasses may not have displays.
+- Use button shortcuts for quick actions.
+- Use LEDs for brief status indicators when available.
+- Always check capabilities before enabling hardware-specific flows.
 
 ## Next Steps
 
@@ -267,8 +99,8 @@ class CameraGlassesApp extends AppServer {
   <Card title="Display Glasses" icon="display" href="/app-devs/core-concepts/hardware-capabilities/display-glasses">
     G1, Vuzix - display features
   </Card>
-  <Card title="Camera Control" icon="camera" href="/app-devs/core-concepts/app-session/device-control">
-    Photo and streaming APIs
+  <Card title="Bluetooth SDK Camera Docs" icon="bluetooth" href="https://bluetooth-sdk-docs.mentra.glass/camera-streaming/">
+    Camera, photo, and streaming docs
   </Card>
   <Card title="Audio" icon="volume" href="/app-devs/core-concepts/speakers/text-to-speech">
     Audio features
