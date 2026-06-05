@@ -4,7 +4,7 @@ import {ActivityIndicator, Image, Platform, View} from "react-native"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
 import {WebView, type WebViewMessageEvent} from "react-native-webview"
 
-import {Button, Text} from "@/components/ignite"
+import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {useStressTestStore} from "@/stores/stressTest"
@@ -42,6 +42,10 @@ import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
  * Compositor only arms its edge-swipe once the WebView is at page 0.
  */
 
+// Reload-retry tuning for the miniapp `ready` handshake (see readyTimerRef).
+const READY_TIMEOUT_MS = 5000
+const MAX_LOAD_ATTEMPTS = 5
+
 interface LocalMiniappViewProps {
   packageName: string
   appName?: string
@@ -77,7 +81,19 @@ function LocalMiniappView({
   const [uiUri, setUiUri] = useState<string | null>(null)
   const [uiBaseDir, setUiBaseDir] = useState<string | null>(null)
   const [isLoaded, setIsLoaded] = useState(false)
+  const [miniappConnected, setMiniappConnected] = useState(false)
   const [androidGatePassed, setAndroidGatePassed] = useState(false)
+
+  // Reload-retry state for the "ready" handshake. `onLoadEnd` only means the
+  // WebView painted — not that the miniapp UI JS actually mounted and called
+  // mentra.ready(). After each load we start a timer; if no `ready` envelope
+  // arrives within READY_TIMEOUT_MS we reload, up to MAX_LOAD_ATTEMPTS total
+  // loads, then give up with an error.
+  const miniappConnectedRef = useRef(false)
+  const readyTimerRef = useRef<number | null>(null)
+  // State (not a ref) so the "Connecting… (N of 5)" splash label re-renders
+  // as attempts increment. Counts completed load attempts; initial load is 1.
+  const [loadAttempts, setLoadAttempts] = useState(0)
 
   // Phase machine for the pre-WebView affordance. "ready" means we have a
   // uiUri and the WebView is mounted; the loading card is rendered for
@@ -147,6 +163,13 @@ function LocalMiniappView({
     if (!packageName) return
     let cancelled = false
 
+    // Fresh attempt budget per (re)launch — a re-foreground / new package
+    // restarts the ready handshake and reload-retry loop from scratch.
+    miniappConnectedRef.current = false
+    setLoadAttempts(0)
+    setMiniappConnected(false)
+    setIsLoaded(false)
+
     const fail = (msg: string) => {
       if (cancelled) return
       console.warn(`LocalMiniappView: ${packageName} ${msg}`)
@@ -163,7 +186,7 @@ function LocalMiniappView({
       let uiEntry: string | null = null
       let declaredPermissions: string[] = []
       let installedManifest: InstalledMiniappManifest | undefined
-      
+
       if (devUrl) {
         // Dev miniapps load directly off the local dev server over HTTP — the
         // normal web-dev-server model. No zip download / file:// snapshot, so
@@ -283,14 +306,6 @@ function LocalMiniappView({
       }
       if (!cancelled) {
         setPhase("ready")
-        
-        if (Platform.OS === "android") {
-          BgTimer.setTimeout(() => {
-            if (webViewRef.current) {
-              webViewRef.current.reload()
-            }
-          }, 1000)
-        }
       }
     }
 
@@ -298,6 +313,10 @@ function LocalMiniappView({
 
     return () => {
       cancelled = true
+      if (readyTimerRef.current) {
+        BgTimer.clearTimeout(readyTimerRef.current)
+        readyTimerRef.current = null
+      }
       const mj = getMentraJS()
       mj?.uiRouter.unbindWebView(packageName)
     }
@@ -329,6 +348,19 @@ function LocalMiniappView({
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
       if (!packageName) return
+      // Observe the miniapp's `ready` envelope (posted by mentra.ready() in
+      // the WebView shim). This is the real "UI mounted and bridge wired up"
+      // signal — gate isLoaded on it instead of onLoadEnd. We only observe;
+      // the envelope still flows on to routeFromWebView below (which fires
+      // UI_OPEN to the background), so we must NOT early-return here.
+      if (!miniappConnectedRef.current && isReadyEnvelope(event.nativeEvent.data)) {
+        miniappConnectedRef.current = true
+        setMiniappConnected(true)
+        if (readyTimerRef.current) {
+          BgTimer.clearTimeout(readyTimerRef.current)
+          readyTimerRef.current = null
+        }
+      }
       // Intercept `dev_log` envelopes from the WebView's console-tap shim
       // (miniappGlobals.ts wraps console.log/warn/error to post these).
       // MentraUIRouter does NOT handle dev_log — it drops unknown
@@ -349,9 +381,49 @@ function LocalMiniappView({
     setWebViewCanGoBack(canGoBack)
   }, [])
 
+  // onLoadEnd means the WebView painted, not that the miniapp is ready. Arm a
+  // timer; if the `ready` envelope hasn't arrived by READY_TIMEOUT_MS we count
+  // it as a failed attempt and reload, up to MAX_LOAD_ATTEMPTS, then error.
+  //
+  // The attempt counter is bumped only when a timer actually fires without
+  // `ready` — NOT on every onLoadEnd. A single page load can fire onLoadEnd
+  // several times (redirects, SPA history changes, sub-frame loads); each of
+  // those just re-arms the timer. Counting per-onLoadEnd would inflate the
+  // number (you'd see ~4 attempts on a normal load before `ready` lands).
   const handleLoadEnd = useCallback(() => {
-    setIsLoaded(true)
-  }, [])
+    if (miniappConnectedRef.current) return
+    if (readyTimerRef.current) {
+      BgTimer.clearTimeout(readyTimerRef.current)
+      readyTimerRef.current = null
+    }
+    readyTimerRef.current = BgTimer.setTimeout(() => {
+      readyTimerRef.current = null
+      if (miniappConnectedRef.current) return
+      // A real "ready never arrived" timeout — this counts as one attempt.
+      setLoadAttempts((n) => {
+        const attempt = n + 1
+        if (attempt >= MAX_LOAD_ATTEMPTS) {
+          console.warn(`LocalMiniappView: ${packageName} never sent ready after ${MAX_LOAD_ATTEMPTS} attempts`)
+          setErrorMessage("miniapp failed to load")
+          setPhase("error")
+        } else {
+          console.log(`LocalMiniappView: reloading, attempt ${attempt} of ${MAX_LOAD_ATTEMPTS}`)
+          try {
+            webViewRef.current?.reload()
+          } catch (e) {
+            console.warn(`LocalMiniappView: reload(${packageName}) failed:`, e)
+          }
+        }
+        return attempt
+      })
+    }, READY_TIMEOUT_MS)
+  }, [packageName])
+
+  // Dismiss the splash once the miniapp UI has connected (sent `ready`).
+  // miniappConnected is the source of truth; isLoaded drives MiniappSplash.
+  useEffect(() => {
+    if (miniappConnected) setIsLoaded(true)
+  }, [miniappConnected])
 
   const handleTerminate = useCallback(() => {
     if (!packageName) return
@@ -383,6 +455,13 @@ function LocalMiniappView({
     if (!packageName || !devUrl) return
     devServerBridge.onReload((pkg) => {
       if (pkg !== packageName) return
+      // Fresh content → fresh ready handshake + reload-retry budget.
+      miniappConnectedRef.current = false
+      setLoadAttempts(0)
+      if (readyTimerRef.current) {
+        BgTimer.clearTimeout(readyTimerRef.current)
+        readyTimerRef.current = null
+      }
       try {
         webViewRef.current?.reload()
       } catch (e) {
@@ -427,10 +506,17 @@ function LocalMiniappView({
         label = "Couldn't open"
         break
     }
-    let error = phase === "error" ? errorMessage ?? "Couldn't open" : undefined
+    let error = phase === "error" ? (errorMessage ?? "Couldn't open") : undefined
     return (
       <View className="flex-1">
-        <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={false} name={appName} error={error} label={label} />
+        <MiniappSplash
+          iconUrl={iconUrl}
+          bgColor={theme.colors.background}
+          isLoaded={false}
+          name={appName}
+          error={error}
+          label={label}
+        />
       </View>
     )
   }
@@ -498,15 +584,15 @@ function LocalMiniappView({
     )
   }
 
+  // While the WebView is mounted but the miniapp hasn't sent `ready` yet,
+  // show retry progress on the splash. Once connected, isLoaded hides it.
+  let connectingLabel = undefined
+  if (loadAttempts > 0) {
+    connectingLabel = `Connecting… attempt (${Math.max(loadAttempts, 1)} of ${MAX_LOAD_ATTEMPTS})`
+  }
+
   return (
     <View className="flex-1 bg-black" style={{borderRadius: theme.spacing.s12}}>
-      <View className="w-full h-30 bg-transparent items-center justify-end">
-        <Button text="Test Reload" onPress={() => {
-          if (webViewRef.current) {
-            webViewRef.current.reload()
-          }
-        }} />
-      </View>
       <WebView
         ref={handleRef}
         source={{uri: uiUri}}
@@ -545,7 +631,7 @@ function LocalMiniappView({
         webviewDebuggingEnabled={__DEV__}
         style={{flex: 1, borderRadius: theme.spacing.s12}}
       />
-      <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={isLoaded} />
+      <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={isLoaded} label={connectingLabel} />
       {/* <View className="flex-1 bg-red-500"/> */}
       <CapsuleMenu forceShow={true} />
     </View>
@@ -562,6 +648,20 @@ function resolveDevPort(searchParam: string | undefined, packageName: string): n
   const stored = storage.load<number>(`${packageName}_dev_port`)
   if (stored.is_ok()) return stored.value
   return null
+}
+
+/**
+ * True iff `raw` is the WebView shim's `{type:"ready"}` envelope, posted by
+ * `mentra.ready()` (mentraUiShim.ts) once the miniapp UI has mounted and
+ * wired up its `window.mentra` bridge. LocalMiniappView uses this as the
+ * real "loaded" signal — onLoadEnd only means the WebView painted.
+ */
+function isReadyEnvelope(raw: string): boolean {
+  try {
+    return (JSON.parse(raw) as {type?: string}).type === "ready"
+  } catch {
+    return false
+  }
 }
 
 /**
