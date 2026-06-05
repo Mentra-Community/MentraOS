@@ -92,7 +92,7 @@ export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <StatCard label="WI-FI" value={wifiLabel(sdk.glasses)} sub={wifiSubLabel(sdk.glasses)} subColor={colors.muted} bold />
             <StatCard label="RSSI" value={rssiLabel(sdk.glasses)} sub={rssiUpdatedLabel(sdk.glasses)} subColor={colors.greenAccent} bold />
           </View>
-          <OtaCard sdk={sdk} />
+          {(sdk.otaStatus || sdk.otaUpdateAvailable) ? <OtaCard sdk={sdk} /> : null}
         </>
       ) : null}
 
@@ -277,6 +277,9 @@ function otaStatusLine(sdk: BluetoothSdkExampleModel) {
   if (sdk.otaUpdateAvailable) {
     return `Update ${sdk.otaUpdateAvailable.version_name ?? 'available'}`;
   }
+  if (sdk.otaStatusMessage) {
+    return sdk.otaStatusMessage;
+  }
   return isGlassesConnected(sdk.glasses) ? 'Check not run' : 'Connect glasses';
 }
 
@@ -321,6 +324,9 @@ function formatBytes(bytes: number) {
 }
 
 function OtaCard({ sdk }: { sdk: BluetoothSdkExampleModel }) {
+  if (!sdk.otaStatus && !sdk.otaUpdateAvailable) {
+    return null;
+  }
   const percent = sdk.otaStatus?.overall_percent ?? 0;
   return (
     <View style={styles.otaCard}>
@@ -329,11 +335,13 @@ function OtaCard({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           <Text style={styles.otaEyebrow}>OTA</Text>
           <Text style={styles.otaTitle}>{otaCardTitle(sdk)}</Text>
         </View>
-        <Text style={styles.otaPercent}>{percent}%</Text>
+        {sdk.otaStatus ? <Text style={styles.otaPercent}>{percent}%</Text> : null}
       </View>
-      <View style={styles.otaTrack}>
-        <View style={[styles.otaFill, { width: `${Math.max(0, Math.min(percent, 100))}%` }]} />
-      </View>
+      {sdk.otaStatus ? (
+        <View style={styles.otaTrack}>
+          <View style={[styles.otaFill, { width: `${Math.max(0, Math.min(percent, 100))}%` }]} />
+        </View>
+      ) : null}
       <Text style={styles.otaDetail}>{otaCardDetail(sdk)}</Text>
     </View>
   );

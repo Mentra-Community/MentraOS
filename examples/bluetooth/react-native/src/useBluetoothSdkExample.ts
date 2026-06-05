@@ -67,6 +67,11 @@ export type StreamPreviewTarget = {
   kind: 'hls' | 'web';
   url: string;
 };
+
+function isDisplayableOtaStatus(payload: OtaStatusEvent) {
+  return payload.status !== 'idle' || Boolean(payload.error_message);
+}
+
 export type StreamResolvedConfig = {
   transport?: 'rtmp' | 'srt' | 'whip';
   video?: {
@@ -238,6 +243,7 @@ export type BluetoothSdkExampleState = {
   micPlaying: boolean;
   micRecording: boolean;
   otaStatus: OtaStatusEvent | null;
+  otaStatusMessage: string | null;
   otaUpdateAvailable: OtaUpdateAvailableEvent | null;
   pcmBytes: number;
   pcmFrames: number;
@@ -418,6 +424,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [lastMicDurationSeconds, setLastMicDurationSeconds] = useState<number | null>(null);
   const [micPlaybackHint, setMicPlaybackHint] = useState<string | null>(null);
   const [otaStatus, setOtaStatus] = useState<OtaStatusEvent | null>(null);
+  const [otaStatusMessage, setOtaStatusMessage] = useState<string | null>(null);
   const [otaUpdateAvailable, setOtaUpdateAvailable] =
     useState<OtaUpdateAvailableEvent | null>(null);
   const [micAudioRouteStatus, setMicAudioRouteStatus] = useState(
@@ -548,13 +555,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         }
         addEvent('LIVE', `stream status ${summarizeMap(payload)}`);
       }),
-      BluetoothSdk.addListener('ota_status', (payload: OtaStatusEvent) => {
-        setOtaStatus(payload);
-        if (payload.status === 'complete' || payload.status === 'failed') {
-          setOtaUpdateAvailable(null);
-        }
-        addEvent('LIVE', `OTA ${payload.status} ${payload.overall_percent ?? 0}%`);
-      }),
+      BluetoothSdk.addListener('ota_status', applyOtaStatus),
       BluetoothSdk.addListener('mic_pcm', (payload: MicPcmEvent) => {
         if (!micRecordingRef.current) {
           return;
@@ -787,15 +788,13 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   async function checkForOtaUpdateResult(): Promise<OtaQueryResult> {
     const result = await BluetoothSdk.checkForOtaUpdate();
     if (result.type === 'ota_update_available') {
+      setOtaStatus(null);
+      setOtaStatusMessage(null);
       setOtaUpdateAvailable(result);
       addEvent('LIVE', `OTA available ${result.version_name ?? 'unknown'} (${(result.updates ?? []).join(', ') || 'update'})`);
       return result;
     }
-    setOtaStatus(result);
-    if (result.status === 'complete' || result.status === 'failed') {
-      setOtaUpdateAvailable(null);
-    }
-    addEvent('LIVE', `OTA ${result.status} ${result.overall_percent ?? 0}%`);
+    applyOtaStatus(result);
     return result;
   }
 
@@ -2181,10 +2180,30 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setStreamStatus(status);
     setGalleryServerReachable(null);
     setGalleryServerStatus('Gallery server: connect glasses first');
+    setOtaStatus(null);
+    setOtaStatusMessage(null);
+    setOtaUpdateAvailable(null);
     setMicRecording(false);
     micRecordingRef.current = false;
     stopMicElapsedTimer();
     void stopMicPlayback();
+  }
+
+  function applyOtaStatus(payload: OtaStatusEvent) {
+    if (!isDisplayableOtaStatus(payload)) {
+      setOtaStatus(null);
+      setOtaStatusMessage('No active OTA');
+      setOtaUpdateAvailable(null);
+      addEvent('LIVE', 'OTA idle');
+      return;
+    }
+
+    setOtaStatus(payload);
+    setOtaStatusMessage(null);
+    if (payload.status === 'complete' || payload.status === 'failed') {
+      setOtaUpdateAvailable(null);
+    }
+    addEvent('LIVE', `OTA ${payload.status} ${payload.overall_percent ?? 0}%`);
   }
 
   function applyStreamStatus(payload: StreamStatusEvent) {
@@ -2284,6 +2303,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     micPlaying,
     micRecording,
     otaStatus,
+    otaStatusMessage,
     otaUpdateAvailable,
     openBluetoothSettings,
     openGalleryServer,
