@@ -22,8 +22,6 @@ env:
   CLOUDFLARE_PAGES_PROJECT: mentraos-docs-dev
   CLOUDFLARE_PAGES_BRANCH: dev
   DOCS_DEV_URL: https://docs-dev.mentraglass.com
-  EXPORT_ZIP: ${{ runner.temp }}/mentraos-docs-dev.zip
-  EXPORT_DIR: ${{ runner.temp }}/mentraos-docs-dev
 
 jobs:
   deploy:
@@ -42,10 +40,12 @@ jobs:
 
       - name: Export Mintlify docs
         working-directory: docs
-        run: bunx --bun mint export --output "$EXPORT_ZIP"
+        run: bunx --bun mint export --output "$RUNNER_TEMP/mentraos-docs-dev.zip"
 
       - name: Prepare Cloudflare Pages artifact
         run: |
+          EXPORT_ZIP="$RUNNER_TEMP/mentraos-docs-dev.zip"
+          EXPORT_DIR="$RUNNER_TEMP/mentraos-docs-dev"
           rm -rf "$EXPORT_DIR"
           mkdir -p "$EXPORT_DIR"
           unzip -q "$EXPORT_ZIP" -d "$EXPORT_DIR"
@@ -59,6 +59,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
+          EXPORT_DIR="$RUNNER_TEMP/mentraos-docs-dev"
           npx wrangler@4.86.0 pages deploy "$EXPORT_DIR" \
             --project-name "$CLOUDFLARE_PAGES_PROJECT" \
             --branch "$CLOUDFLARE_PAGES_BRANCH" \
