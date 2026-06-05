@@ -67,9 +67,12 @@ A local miniapp bundle (a ZIP) ships two entry points
   **WebView** (the phone's embedded browser). Optional, and it's mounted and torn
   down as the user opens and closes the screen.
 
-Both layers use the same SDK object, `MiniappSession`
-(`mobile/modules/miniapp/src/session.ts`): `session.display`,
-`session.transcription.on(...)`, `session.storage`, etc.
+The **`MiniappSession`** (`mobile/modules/miniapp/src/session.ts`, the
+`session.display` / `session.transcription.on(...)` / `session.storage` API) lives
+**only in the background JSContext**. The UI has no session of its own; it talks to
+the background over an **RPC bridge** (`window.mentra` / the `ui` module) and the
+background does the actual session work. So all the cloud-facing calls come from one
+place, the background.
 
 Three bridges wire it together (all `mobile/modules/island/src/services/`):
 
@@ -230,10 +233,11 @@ to all of Mentra). Instead:
    `cloud.auth.getMiniappToken(packageName)`. cloud-core mints an Ed25519 JWT with
    `sub = mentraUserId`, `oemId`, and `aud = <packageName>`, short-lived, scoped to
    that one miniapp.
-2. The runtime **injects** that token into the miniapp's two contexts: the background
-   JSContext (via `MentraJSRouter`) and, if present, the UI WebView (via
-   `MentraUIRouter` / the `window.mentra` shim). `useMentraAuth()` reads
-   `{ mentraUserId, token }` from the bridge; both contexts see the same token.
+2. The runtime hands that token to the **background JSContext** (via
+   `MentraJSRouter`), which owns the session. The background's `useMentraAuth()`
+   exposes `{ mentraUserId, token }`. If the UI needs them too, it gets them from the
+   background over the RPC bridge (`window.mentra`), since the UI has no session of
+   its own.
 3. The miniapp calls its developer backend with
    `Authorization: Bearer <miniapp-scoped-token>`. The backend verifies it against
    Mentra's published public keys (JWKS), checks `aud == its packageName`, and applies
@@ -281,9 +285,11 @@ construction. The alternative (keep the v1 signatures and translate on the host 
 would keep the magic-string surface alive inside the runtime and reintroduce a drift
 point, so we're not doing that.
 
-**D3. v1 and v2 coexist as separate transport paths.** The v1 `SocketComms` /
-`RestComms` stays for the v1 cloud. The cloud-client is the v2 path. A device or
-session picks one. We're adding a path, not ripping one out.
+**D3. The local SDK runs on cloud-client. There's no v1/v2 toggle.** The on-device
+local-miniapp path uses cloud-client (v2); that's the only path it has. The v1
+`SocketComms` / `RestComms` stays only for the legacy mobile stack on the v1 cloud,
+and the runtime never branches on "which cloud version". The move to cloud-client is
+a rollout sequence, not a runtime flag (see "Rollout" below).
 
 **D4. Only the services that go to the cloud change.** Subscriptions, transcript /
 translation coming back, managed photo / stream, TTS, telemetry. The local hardware
@@ -392,15 +398,29 @@ here's the direction we'd take for each.
   `onTranscript`, `onTranslation`, `requestManagedPhoto`, `startManagedStream`, the
   connection lifecycle), and they're typed against the shared protocol. One surface,
   no mapping layer to drift.
-- **One transport-selection point at boot.** Construct `CloudClient` where
-  `configureRuntime` runs today and pick v1 vs v2 there with a single flag,
-  defaulting to v2 for the v2 cloud. Keep the choice in one place so the rest of the
-  runtime never branches on cloud version.
 - **UDP audio: encrypt in the shared cloud-client code, send from native.** Do the
   NaCl secretbox encryption inside the cloud-client itself (the code that runs the
   same on phone and server, using tweetnacl), and pass in only a thin native socket to
   send the bytes. That keeps the encryption testable on a server and identical on the
   phone; the native side just sends and receives.
+
+## 11. Rollout
+
+Moving the local SDK onto cloud-client is a sequence, not a switch you flip:
+
+1. Build the **cloud-runtime** (the v2 cloud, issue 002) until the audio path works
+   end to end.
+2. Build **`@mentra/cloud-client`**.
+3. Use cloud-client as the **integration-test harness** for the runtime: the node
+   build drives the real connection (auth, connect, subscribe, send audio, receive
+   transcripts) against the runtime, so the runtime gets exercised by the exact client
+   the phone will use. This is where we get confident the client and its dependencies
+   work.
+4. Once that's proven, **wire the rest of the mobile app's local-SDK path onto
+   cloud-client**.
+
+There's no per-session v1/v2 flag anywhere in this. The local SDK targets cloud-client
+from the start; the legacy v1 stack stays on its own separate path until it's retired.
 
 ## References
 

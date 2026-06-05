@@ -22,9 +22,9 @@ for the from-zero primer (JWTs, asymmetric signing, JWKS, audiences, exchange).
 3. For each running miniapp, the cloud-client mints a **miniapp-scoped token**
    (`POST /api/client/auth/miniapp-token`, `aud = <packageName>`), caches it, and
    refreshes before expiry.
-4. The on-device runtime injects the miniapp token into the miniapp's two contexts
-   (its WebView UI and its background JSContext). The access token never reaches the
-   miniapp.
+4. The on-device runtime delivers the miniapp token to the miniapp's background
+   JSContext (which owns the session); the UI gets it over RPC if it needs it. The
+   access token never reaches the miniapp.
 5. The bundle calls its developer backend with the miniapp token. The backend
    verifies it against Mentra's **JWKS**, checks `aud`, and applies its `oemId`
    trust policy. No per-request call to Mentra.
@@ -159,9 +159,9 @@ anyone can verify with Mentra's public key via JWKS). The mechanism:
    `sub = mentraUserId`, `oemId`, `aud = <packageName>`, short expiry. Minted by
    `POST /api/client/auth/miniapp-token` (see [`spec.md`](./spec.md)). Minting is
    server-side so it can be revoked and audited.
-3. The runtime injects the token into the miniapp's two contexts (its WebView UI and
-   its background JSContext), not through a URL parameter; `useMentraAuth()` reads it
-   from the bridge. See "On-device injection" below.
+3. The runtime delivers the token to the miniapp's background JSContext (which owns
+   the session), not through a URL parameter; `useMentraAuth()` reads it from the
+   bridge. See "On-device injection" below.
 4. The webview calls the developer's backend with
    `Authorization: Bearer <miniapp-scoped-token>`.
 5. The developer's backend verifies the token against Mentra's **JWKS**, checks
@@ -183,19 +183,20 @@ The miniapp receives only the **miniapp-scoped token**; the access token stays i
 the cloud-client and is never handed to a bundle. The on-device Runtime obtains the
 scoped token from `cloud.auth.getMiniappToken(packageName)` and delivers it.
 
-- **Two contexts.** The Runtime runs a miniapp in a WebView (its UI) and a
-  background JSContext (a headless JavaScript engine, JavaScriptCore on iOS, for its
-  logic). A call to the developer backend can come from either, so both get the same
-  token from the same Runtime-held source.
-- **Delivery.** The SDK's `session.connect()` handshake returns `mentraUserId` and
-  the initial miniapp token alongside the session info. The WebView gets it through
-  the runtime bridge; `@mentra/react` `useMentraAuth()` reads `{ mentraUserId,
-  token }`. The background JSContext gets it from the host through the engine bridge
-  and exposes the same shape plus an authed-fetch helper. On the web fallback, the
-  "Sign in with Mentra" OAuth flow ends with the same token, so `useMentraAuth()`
-  is identical either way.
+- **The session is background-only.** The miniapp's `session` (and so its
+  authed-fetch helper) lives in the background JSContext (a headless JavaScript
+  engine, JavaScriptCore on iOS). The WebView UI has no session; it talks to the
+  background over an RPC bridge. So the call to the developer backend is made from
+  the background.
+- **Delivery.** The SDK's `session.connect()` handshake (in the background) returns
+  `mentraUserId` and the initial miniapp token alongside the session info. The
+  background's `useMentraAuth()` exposes `{ mentraUserId, token }` plus the
+  authed-fetch helper. The UI, if it needs the identity or token, gets it from the
+  background over the RPC bridge. On the web fallback (a standalone web page with no
+  background context), the "Sign in with Mentra" OAuth flow ends with the same token,
+  so `useMentraAuth()` is identical either way.
 - **Refresh.** The Runtime re-mints before expiry (via `getMiniappToken`, which
-  caches and refreshes per packageName) and pushes the new token to both contexts
+  caches and refreshes per packageName) and pushes the new token to the background
   through a dedicated auth-update message; the SDK swaps it in transparently.
 
 ```ts
@@ -238,9 +239,9 @@ await fetch("https://api.theirapp.com/...", {
 
 - The miniapp connect handshake returns `mentraUserId` + the initial miniapp token
   (from `cloud.auth.getMiniappToken`).
-- Inject the miniapp token into the miniapp's two contexts (WebView UI + background
-  JSContext), and refresh/re-inject before expiry (mechanism in "On-device
-  injection" above).
+- Deliver the miniapp token to the miniapp's background JSContext (which owns the
+  session), and refresh/re-deliver before expiry (mechanism in "On-device injection"
+  above).
 - The cloud-client is wired in at the runtime's `configureRuntime` hook
   ([`../../004-cloud-client/architecture.md`](../../004-cloud-client/architecture.md)).
 

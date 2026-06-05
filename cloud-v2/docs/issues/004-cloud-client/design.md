@@ -533,6 +533,10 @@ These are the still-open choices, with the proposed direction (full reasoning in
 
 - Inject `cloud.runtime` directly as the on-device runtime's `cloud` hook, with no
   separate adapter layer to keep in sync.
-- Pick the v1-vs-v2 transport in one place at boot, defaulting to v2 for the v2 cloud.
 - Do the UDP encryption in the shared core (above), with the native side doing only
   the send/receive.
+
+The local SDK runs on cloud-client, with no v1/v2 toggle; the move to it is a rollout
+sequence (build the runtime, build the client, integration-test the runtime through
+the client, then wire the mobile app onto it). See
+[`architecture.md`](./architecture.md) section 11.
