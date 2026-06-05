@@ -11,5 +11,7 @@
   "scripts": {
     "dev": "bun --watch src/index.ts"
   },
-  "dependencies": {}
+  "dependencies": {
+    "tweetnacl": "^1.0.3"
+  }
 }

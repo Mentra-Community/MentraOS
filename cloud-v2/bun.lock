@@ -66,6 +66,9 @@
     "test/test-client": {
       "name": "@mentra/test-client",
       "version": "0.0.0",
+      "dependencies": {
+        "tweetnacl": "^1.0.3",
+      },
     },
     "test/test-oem": {
       "name": "@mentra/test-oem",

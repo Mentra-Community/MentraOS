@@ -1,9 +1,11 @@
 /**
  * @fileoverview UDP audio ingress.
  *
- * Listens on `AUDIO_UDP_PORT`. Every packet starts with a 6-byte header —
- * `[sessionTag:u32 BE][sequence:u16 BE]` — followed by audio payload (LC3
- * frames or PCM). Stateless: any pod can receive any packet.
+ * Listens on `AUDIO_UDP_PORT`. Every packet is
+ * `[sessionTag:u32 BE][sequence:u16 BE][nonce:24][ciphertext]`: the 6-byte header
+ * stays in the clear so the stateless ingress can route it and pick the session
+ * key; the audio payload is secretbox-encrypted and decrypted at ingest. Any pod
+ * can receive any packet.
  *
  * Per-packet flow:
  *   1. Validate header.
@@ -81,6 +83,7 @@ function localLookup(tag: number) {
   return {
     mentraUserId: e.data.mentraUserId,
     audioSessionId: e.data.audioSessionId,
+    encryptionKeyB64: e.data.encryptionKeyB64,
   };
 }
 
@@ -94,7 +97,8 @@ async function handlePacket(data: Buffer | Uint8Array): Promise<void> {
 
   let result;
   try {
-    result = await ingestAudioPacket(parsed, localLookup);
+    // UDP frames are secretbox-encrypted; ingest decrypts with the session key.
+    result = await ingestAudioPacket(parsed, localLookup, { encrypted: true });
   } catch (err) {
     logger.error({ err, sessionTag, sequence }, "audio ingest failed");
     return;
@@ -129,7 +133,9 @@ async function handlePacket(data: Buffer | Uint8Array): Promise<void> {
         JSON.stringify({
           type: "UDP_PACKET_RECEIVED",
           sequence,
-          payloadLen: payload.byteLength,
+          // The decrypted audio length (what the worker will see), not the
+          // larger encrypted frame, so tests assert against the bytes they sent.
+          payloadLen: result.payloadLen ?? payload.byteLength,
         }),
       );
     } catch (err) {

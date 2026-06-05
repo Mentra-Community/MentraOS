@@ -18,6 +18,7 @@
 
 import type { udp } from "bun";
 import { Buffer } from "node:buffer";
+import nacl from "tweetnacl";
 
 // Subscription types duplicated from `packages/runtime/src/protocol/audio.ts`.
 // Kept local to the client to preserve the test-client tsconfig's `rootDir`
@@ -173,6 +174,8 @@ export class TestClient {
   private initialSubscriptions: AudioSubscription[] = [];
   /** Monotonic version for REST subscription writes (seed at connect is 0). */
   private subVersion = 0;
+  /** Per-session UDP secretbox key (32 bytes), from connection.ack. */
+  private encryptionKey: Uint8Array | null = null;
 
   /** Liveness state. Populated only when `opts.liveness` is set. */
   private pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -263,11 +266,20 @@ export class TestClient {
    */
   sendAudioTo(target: { host: string; port: number }, payload: Uint8Array): void {
     if (!this.ack || !this.udpSocket) throw new Error("not connected");
-    const packet = Buffer.alloc(UDP_HEADER_SIZE + payload.byteLength);
+    if (!this.encryptionKey) throw new Error("no session encryption key");
+    // UDP frames are secretbox-encrypted with a fresh per-packet nonce:
+    // [sessionTag:u32 BE][seq:u16 BE][nonce:24][ciphertext]. The header stays in
+    // the clear so the stateless ingress can route + select the key.
+    const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+    const ciphertext = nacl.secretbox(payload, nonce, this.encryptionKey);
+    const packet = Buffer.alloc(
+      UDP_HEADER_SIZE + nonce.length + ciphertext.length,
+    );
     packet.writeUInt32BE(this.sessionTag, 0);
     packet.writeUInt16BE(this.udpSeq & 0xffff, 4);
     this.udpSeq = (this.udpSeq + 1) & 0xffff;
-    packet.set(payload, UDP_HEADER_SIZE);
+    packet.set(nonce, UDP_HEADER_SIZE);
+    packet.set(ciphertext, UDP_HEADER_SIZE + nonce.length);
     this.udpSocket.send(packet, target.port, target.host);
   }
 
@@ -341,6 +353,7 @@ export class TestClient {
     this.receivedMessages = [];
     this.livenessClosedCallback = null;
     this.initialSubscriptions = [];
+    this.encryptionKey = null;
   }
 
   // === Internals ===
@@ -445,6 +458,10 @@ export class TestClient {
 
         if (parsed.type === "connection.ack") {
           this.ack = parsed as ConnectionAck;
+          const keyB64 = this.ack.payload.audio?.encryption.key;
+          if (keyB64) {
+            this.encryptionKey = new Uint8Array(Buffer.from(keyB64, "base64"));
+          }
           clearTimeout(timer);
           resolve();
         }

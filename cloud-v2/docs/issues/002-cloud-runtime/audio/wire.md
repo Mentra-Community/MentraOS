@@ -114,9 +114,11 @@ forward from v1 (`cloud/issues/027-udp-audio-encryption`,
 - The cloud decrypts with the same key, authenticating the tag (tampered or
   forged packets are rejected).
 
-Implementation note: the runtime package (`cloud-v2/packages/runtime`) does not
-decrypt UDP yet; wiring this scheme into the ingress is part of building the v2 audio
-path.
+The runtime decrypts at ingress (`services/session/stream.ts`): the per-session key
+is fetched by `sessionTag` (the in-process session map on the same pod, or the Redis
+sessionTag registry for a cross-pod packet) and used to open the secretbox. A frame
+that fails the Poly1305 tag is dropped, not stored. The WS-binary fallback carries
+plaintext, since it rides the TLS WebSocket.
 
 ## What this replaces
 

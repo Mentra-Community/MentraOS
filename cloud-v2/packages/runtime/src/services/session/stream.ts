@@ -16,6 +16,7 @@
  * Wire-format and lifecycle decisions live in `docs/issues/003-audio/`.
  */
 
+import nacl from "tweetnacl";
 import { getRedis } from "../../clients/redis.client";
 
 // === Stream constants ===
@@ -55,12 +56,52 @@ export function parseAudioPacket(buf: Uint8Array): ParsedAudioPacket | null {
 export interface LocalSessionLookup {
   mentraUserId: string;
   audioSessionId: string;
+  /**
+   * The session's UDP frame key (base64). Needed to decrypt UDP frames on the
+   * same-pod fast path. Omitted by the WS-binary fallback path, whose frames
+   * are not secretbox-encrypted (they ride the TLS WebSocket).
+   */
+  encryptionKeyB64?: string;
 }
 
 export interface IngestResult {
   ok: boolean;
   origin?: "local" | "redis";
   mentraUserId?: string;
+  /** Bytes written to the stream (the decrypted length for UDP frames). */
+  payloadLen?: number;
+}
+
+export interface IngestOptions {
+  /**
+   * Whether the payload is secretbox-encrypted. UDP frames are (the payload is
+   * `[nonce(24)|ciphertext]`); the WS-binary fallback is not. When true we
+   * decrypt with the session key and write plaintext to the stream, so the
+   * worker only ever sees decode-ready audio.
+   */
+  encrypted?: boolean;
+}
+
+/** secretbox (XSalsa20-Poly1305) nonce length, 24 bytes. */
+const UDP_NONCE_BYTES = nacl.secretbox.nonceLength;
+
+/**
+ * Decrypt a UDP frame payload `[nonce(24)|ciphertext]` with the session key.
+ * Returns the plaintext audio bytes, or null if the key is missing/wrong size,
+ * the frame is too short, or the Poly1305 tag does not verify (forged or
+ * corrupted packet).
+ */
+function decryptUdpPayload(
+  payload: Uint8Array,
+  keyB64: string | undefined,
+): Uint8Array | null {
+  if (!keyB64) return null;
+  if (payload.byteLength <= UDP_NONCE_BYTES) return null;
+  const key = Buffer.from(keyB64, "base64");
+  if (key.byteLength !== nacl.secretbox.keyLength) return null;
+  const nonce = payload.subarray(0, UDP_NONCE_BYTES);
+  const ciphertext = payload.subarray(UDP_NONCE_BYTES);
+  return nacl.secretbox.open(ciphertext, nonce, key);
 }
 
 /**
@@ -81,32 +122,46 @@ export interface IngestResult {
 export async function ingestAudioPacket(
   packet: ParsedAudioPacket,
   localLookup: (tag: number) => LocalSessionLookup | undefined,
+  opts: IngestOptions = {},
 ): Promise<IngestResult> {
   let mentraUserId: string;
   let audioSessionId: string;
+  let encryptionKeyB64: string | undefined;
   let origin: "local" | "redis";
 
   const local = localLookup(packet.sessionTag);
   if (local) {
     mentraUserId = local.mentraUserId;
     audioSessionId = local.audioSessionId;
+    encryptionKeyB64 = local.encryptionKeyB64;
     origin = "local";
   } else {
     const remote = await lookupSessionTagInRedis(packet.sessionTag);
     if (!remote) return { ok: false };
     mentraUserId = remote.mentraUserId;
     audioSessionId = remote.audioSessionId;
+    encryptionKeyB64 = remote.encryptionKeyB64;
     origin = "redis";
+  }
+
+  // UDP frames are encrypted; decrypt before the stream so the worker only sees
+  // plaintext. A frame that fails the Poly1305 tag check (forged, corrupted, or
+  // wrong key) is dropped rather than stored.
+  let payload = packet.payload;
+  if (opts.encrypted) {
+    const plaintext = decryptUdpPayload(payload, encryptionKeyB64);
+    if (!plaintext) return { ok: false, origin, mentraUserId };
+    payload = plaintext;
   }
 
   await appendAudioPacket(mentraUserId, {
     seq: packet.sequence,
-    payload: packet.payload,
+    payload,
     sessionTag: packet.sessionTag,
     audioSessionId,
   });
 
-  return { ok: true, origin, mentraUserId };
+  return { ok: true, origin, mentraUserId, payloadLen: payload.byteLength };
 }
 
 /**
