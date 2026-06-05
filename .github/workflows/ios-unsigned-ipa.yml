@@ -60,15 +60,22 @@ jobs:
                 if dt && dt.to_f < 14.5
                   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.5'
                 end
-                # Apply Swift 6 actor isolation fix to ALL Swift pods
-                # Prevents whack-a-mole across RNScreens, ExpoModulesCore, etc.
+                # Add actor race checks disable flag to all Swift pods
                 if config.build_settings['SWIFT_VERSION']
                   existing = config.build_settings['OTHER_SWIFT_FLAGS'] || '$(inherited)'
                   unless existing.include?('-disable-actor-data-race-checks')
                     config.build_settings['OTHER_SWIFT_FLAGS'] = existing + ' -Xfrontend -disable-actor-data-race-checks'
                   end
                 end
-                # SwiftProtobuf WMO causes OOM on 80+ files
+                # ExpoModulesCore is compiled in Swift 6 mode by CocoaPods
+                # Swift 6 strict concurrency causes compile-time errors that
+                # -disable-actor-data-race-checks does not suppress
+                # Downgrade to Swift 5 mode with minimal concurrency checking
+                if target.name == 'ExpoModulesCore'
+                  config.build_settings['SWIFT_VERSION'] = '5'
+                  config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'
+                end
+                # SwiftProtobuf WMO OOM-kills compiler on 80+ files
                 if target.name == 'SwiftProtobuf'
                   config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
                 end
@@ -90,7 +97,7 @@ jobs:
 
       - name: Show patched post_install
         working-directory: ./mobile/ios
-        run: grep -A 30 "post_install" Podfile | head -40
+        run: grep -A 35 "post_install" Podfile | head -45
 
       - name: Install pods
         working-directory: ./mobile/ios
