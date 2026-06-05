@@ -1,18 +1,19 @@
 # Mentra Cloud Runtime: package build map
 
-**Status:** Design, tracking the real package. This is the `@mentra/cloud-runtime`
-file structure: what each file owns and its key signatures, plus the data flow that
-ties them together. The big picture is in [`architecture.md`](./architecture.md); the
-audio architecture and the Redis/worker detail are in [`audio/spec.md`](./audio/spec.md)
-and [`audio/design.md`](./audio/design.md). Some of this is built and some is still in
-progress; the "Current state" section at the end says which.
+**Status:** Design, the target structure. This is the `@mentra/cloud-runtime` file
+layout we're refactoring toward: what each file owns and its key signatures, plus the
+data flow that ties them together. The big picture is in
+[`architecture.md`](./architecture.md); the audio architecture and the Redis/worker
+detail are in [`audio/spec.md`](./audio/spec.md) and [`audio/design.md`](./audio/design.md).
+The "Current state" section at the end says what's built and what's still moving.
 
 **TL;DR:** One package, `@mentra/cloud-runtime`, with a pure `/protocol` subpath the
-client also imports. The server boots from `index.ts` (`startAudio()`), which wires
-the network services (UDP ingress, the WebSocket session layer, Redis ownership) on
-the main thread and a pool of workers that do the decode + transcription. Audio packets
-travel main thread, to a Redis stream, to a worker, to a provider, and the transcript
-travels back out the WebSocket.
+client also imports. The folders tell the story: **`net/`** is the connection edge
+(UDP + WebSocket), **`services/session/`** is the per-user cross-pod state in Redis
+(ownership, the audio stream, subscriptions), **`services/audio/`** is the
+transcription work built on top (the pipeline + the workers + the providers), and
+**`clients/`** holds the Redis connection. `index.ts` only boots; `audio.service.ts`
+owns the audio pipeline.
 
 ## Package layout
 
@@ -20,38 +21,49 @@ travels back out the WebSocket.
 cloud-v2/packages/runtime/        # @mentra/cloud-runtime
   package.json                    # exports: "." (server) and "./protocol" (pure, client-safe types)
   src/
-    index.ts                      # boot: startAudio(), wires everything, owns the transcript-out path
-    audio.types.ts                # re-exports the protocol audio types + subscriptionKey()
-    connections/
-      redis.connection.ts         # the ioredis clients (one normal, one for blocking stream reads)
-    services/                     # the main-thread services
-      udp-ingress.service.ts      # the UDP socket: receive packets, hand to the stream
-      session.service.ts          # the WebSocket layer: auth, sessionTag, ownership claim, send-to-user
-      ownership.service.ts        # the "one pod owns a user" claim + TTL refresh
-      audio-stream.service.ts     # the Redis audio stream + the sessionTag registry
-      worker-pool.service.ts      # spawn N workers, assign users, route transcripts back
-    workers/                      # the worker thread + what runs in it
-      audio.worker.ts             # per-core worker: read the stream, decode, transcribe, emit
-      lc3/lc3.decoder.ts          # LC3 to PCM, via the liblc3 WASM build
-      providers/
-        provider.types.ts         # the transcription-provider interface
-        soniox.provider.ts        # the production provider (Soniox)
-        mock.provider.ts          # the deterministic test provider
-    wire/
-      phone-protocol.ts           # the v1 phone wire adapter (subscriptions in, data_stream out)
+    index.ts                      # boot only: parse config, connect, start the services, serve
+
+    clients/
+      redis.client.ts             # the ioredis clients (one normal, one for blocking stream reads)
+
+    net/                          # the connection edge: what a client connects to
+      udp.ts                      # UDP ingress socket: receive packets, hand to the stream
+      ws.ts                       # WebSocket transport: upgrade/auth, the per-tag registry, send-to-user
+
+    services/
+      session/                    # the per-user state in Redis that makes scaling + failover work
+        ownership.ts              # the "one pod owns this user" lock + TTL refresh
+        stream.ts                 # the per-user audio bus + the sessionTag -> user lookup
+        subscriptions.ts          # what audio the user wants + subscriptionKey() canonicalization
+      audio/                      # the transcription work, built on the session state
+        audio.service.ts          # the pipeline + per-session lifecycle (claim, assign, route out, release)
+        workers/
+          pool.ts                 # the worker pool, main-thread side
+          worker.ts               # the worker thread: read the stream, decode, transcribe, emit
+          lc3.ts                  # LC3 -> PCM, via the liblc3 WASM build
+          liblc3.wasm
+        providers/
+          provider.ts             # the transcription-provider interface
+          soniox.ts               # the production provider (Soniox)
+          mock.ts                 # the deterministic test provider
+      camera/                     # (later) managed photo + stream REST; no session state
+
     protocol/                     # the pure, isomorphic v2 types (also @mentra/cloud-runtime/protocol)
       envelope.ts handshake.ts control.ts errors.ts audio.ts messages.ts index.ts
 ```
 
+Two ground rules the structure keeps: `protocol/` has **zero server imports** (the
+client imports the same files), and the worker thread does all the CPU work so the
+main thread stays free for the network. And the v1 phone-wire adapter is **gone** from
+this layout (see "Current state").
+
 ## Files and signatures
 
-Two ground rules the structure enforces: `protocol/` has **zero server imports** (the
-client imports the same files), and the worker thread does all the CPU work so the main
-thread stays free for the network.
+The signatures don't change in the refactor, only where they live. The public ones
+(`AudioSubscription`, the message unions) come from `protocol/`.
 
-**`src/index.ts`**: the boot harness. `startAudio()` connects Redis, starts the worker
-pool, starts UDP ingress and the WebSocket/HTTP server, and wires the worker pool's
-transcript output to the right user's socket.
+**`src/index.ts`**: boot only. Parses config from options/env, connects Redis, starts
+the UDP and WebSocket listeners, hands off to `audio.service`, and serves HTTP health.
 
 ```ts
 export interface StartAudioOptions {
@@ -62,8 +74,8 @@ export interface AudioHandle { httpPort: number; udpPort: number; wsUrl: string;
 export function startAudio(opts?: StartAudioOptions): Promise<AudioHandle>
 ```
 
-**`src/connections/redis.connection.ts`**: the Redis clients. Two of them, because a
-blocking stream read would otherwise tie up the connection other commands need.
+**`src/clients/redis.client.ts`**: the Redis clients. Two of them, because a blocking
+stream read would otherwise tie up the connection other commands need.
 
 ```ts
 export function connectRedis(url: string): Promise<void>
@@ -73,17 +85,18 @@ export function disconnectRedis(): Promise<void>
 export const redisReadinessCheck: ReadinessCheck
 ```
 
-**`src/services/udp-ingress.service.ts`**: the UDP socket. Receives `[header | LC3]`
-packets and hands each to the audio stream; it doesn't decode or own anything.
+**`src/net/udp.ts`**: the UDP socket. Receives `[header | LC3]` packets and hands each
+to the stream; it doesn't decode or own anything.
 
 ```ts
 export function startUdpIngress(port: number): Promise<void>
 export function stopUdpIngress(): Promise<void>
 ```
 
-**`src/services/session.service.ts`**: the WebSocket layer. Validates the token on
-upgrade, mints the `sessionTag`, claims ownership, keeps the per-tag session registry,
-and sends messages down to a user's socket.
+**`src/net/ws.ts`**: the WebSocket transport. Validates the token on upgrade, mints the
+`sessionTag`, keeps the per-tag session registry, and sends messages down to a user's
+socket. (The audio-specific lifecycle, claim ownership / assign a worker on connect,
+lives in `audio.service.ts`, which the connect handler calls into.)
 
 ```ts
 export interface WsData { sessionTag: number; audioSessionId: string; mentraUserId: string; oemId: string; authSessionId: string }
@@ -97,9 +110,10 @@ export function tryWsUpgrade(req: Request, server: Bun.Server<WsData>): Promise<
 export const wsHandlers: WebSocketHandler<WsData>
 ```
 
-**`src/services/ownership.service.ts`**: the "exactly one pod owns this user" claim,
-backed by a Redis key with a TTL. The refresh loop is what keeps ownership alive;
-stopping it (or dying) releases the user.
+**`src/services/session/ownership.ts`**: the "exactly one pod owns this user" lock,
+backed by a Redis key with a TTL. The refresh loop keeps it alive; stopping it (or
+dying) releases the user. See the file's own header comment for the full plain-English
+explanation of the lock.
 
 ```ts
 export const OWNERSHIP_TTL_SEC = 5
@@ -114,9 +128,10 @@ export function startOwnershipRefreshLoop(opts: { podId: string; getOwnedUserIds
 export function stopOwnershipRefreshLoop(): void
 ```
 
-**`src/services/audio-stream.service.ts`**: the Redis audio stream plus the `sessionTag`
-to user registry. Parses the packet header, appends packets to `audio:{userId}`, and
-resolves a tag to a user (local first, Redis as the cross-pod fallback).
+**`src/services/session/stream.ts`**: the per-user audio Redis stream plus the
+`sessionTag` to user lookup. Parses the packet header, appends packets to
+`audio:{userId}`, and resolves a tag to a user (local first, Redis as the cross-pod
+fallback).
 
 ```ts
 export const AUDIO_PACKET_HEADER_SIZE = 6
@@ -134,7 +149,26 @@ export function unregisterSessionTag(tag: number): Promise<void>
 export function lookupSessionTagInRedis(tag: number): Promise<SessionTagRecord | null>
 ```
 
-**`src/services/worker-pool.service.ts`**: owns the workers on the main thread. Spawns
+**`src/services/session/subscriptions.ts`**: what audio the user wants. Holds the
+`subscriptionKey()` canonicalization today; the REST endpoint that writes the desired
+set to Redis and nudges the worker (the marker in the stream) lands here as it's built.
+
+```ts
+export function subscriptionKey(sub: AudioSubscription): string   // canonical string, for dedup + equality
+// (coming) the PUT /api/audio/subscriptions handler + the stream-marker reconcile
+```
+
+**`src/services/audio/audio.service.ts`**: the audio pipeline. Wires the parts into one
+feature and owns the per-session lifecycle: on connect, claim ownership + register the
+sessionTag + assign the user to a worker; per transcript, route it back out the WS; on
+disconnect, release. (This orchestration lives in `index.ts` today and moves here.)
+
+```ts
+export function startAudioService(opts: { podId: string; workerCount: number }): void
+export function stopAudioService(): Promise<void>
+```
+
+**`src/services/audio/workers/pool.ts`**: owns the workers on the main thread. Spawns
 them, assigns each user to the least-loaded one, pushes subscription changes down, and
 surfaces transcripts coming back up.
 
@@ -148,9 +182,9 @@ export function releaseUser(mentraUserId: string): void
 export function getPoolStats(): { workerCount: number; perWorker: Array<{ id: string; sessionCount: number; ready: boolean }> }
 ```
 
-**`src/workers/audio.worker.ts`**: the worker thread. Reads its assigned users' streams
-with `XREADGROUP`, decodes LC3, feeds the providers, and posts transcripts back to the
-main thread. The message types in and out are the worker's contract.
+**`src/services/audio/workers/worker.ts`**: the worker thread. Reads its assigned
+users' streams with `XREADGROUP`, decodes LC3, feeds the providers, and posts
+transcripts back. The message types in and out are the worker's contract.
 
 ```ts
 export type WorkerInMessage =
@@ -166,7 +200,8 @@ export interface TranscriptMessage {
 }
 ```
 
-**`src/workers/lc3/lc3.decoder.ts`**: the LC3-to-PCM decoder, on the liblc3 WASM build.
+**`src/services/audio/workers/lc3.ts`**: the LC3-to-PCM decoder, on the liblc3 WASM
+build.
 
 ```ts
 export const SUPPORTED_FRAME_BYTES: Set<number>   // 20, 40, 60
@@ -177,7 +212,7 @@ export class LC3Decoder {
 }
 ```
 
-**`src/workers/providers/provider.types.ts`**: the one interface every transcription
+**`src/services/audio/providers/provider.ts`**: the one interface every transcription
 backend implements, so the worker is provider-agnostic.
 
 ```ts
@@ -186,23 +221,12 @@ export interface ProviderOptions { scope: string; language: string; onTranscript
 export interface TranscriptionProvider { writeAudio(pcm: Int16Array): void; close(): Promise<void>; readonly name: string }
 ```
 
-**`src/workers/providers/soniox.provider.ts`** / **`mock.provider.ts`**: the production
-backend and the deterministic test one, both behind that interface.
+**`src/services/audio/providers/soniox.ts`** / **`mock.ts`**: the production backend and
+the deterministic test one, both behind that interface.
 
 ```ts
 export function createSonioxProvider(opts: CreateSonioxProviderOptions): Promise<TranscriptionProvider>
 export function createMockProvider(opts: CreateMockProviderOptions): Promise<TranscriptionProvider>
-```
-
-**`src/wire/phone-protocol.ts`**: the adapter to the **v1** phone wire. It turns the
-phone's stringly `phone_subscription_update` into typed `AudioSubscription[]`, and turns
-a worker transcript into the v1 `data_stream` message the current mobile client expects.
-(See "Current state" for why this still exists.)
-
-```ts
-export function parsePhoneSubscriptions(subscriptions: string[]): AudioSubscription[]
-export function formatPhoneSubscription(sub: AudioSubscription): string
-export function transcriptToDataStream(t: TranscriptMessage): DataStreamMessage
 ```
 
 **`src/protocol/`**: the pure v2 types, also published as `@mentra/cloud-runtime/protocol`
@@ -217,25 +241,25 @@ bundle. `envelope.ts` (the `{ v, type, timestamp, payload }` wrapper), `handshak
 
 The handoffs, in order:
 
-1. **Receive.** `udp-ingress.service` gets a UDP packet and calls
-   `parseAudioPacket()` to split the header (`sessionTag`, `sequence`) from the LC3
-   payload.
+1. **Receive.** `net/udp` gets a UDP packet and calls `parseAudioPacket()`
+   (`services/session/stream`) to split the header (`sessionTag`, `sequence`) from the
+   LC3 payload.
 2. **Route.** `ingestAudioPacket()` resolves the `sessionTag` to a user (the local
-   `session.service` map first, then `lookupSessionTagInRedis()` for a packet that
-   landed on a non-owner pod) and appends it with `appendAudioPacket()` to
-   `audio:{userId}`.
-3. **Read.** On the owner pod, `audio.worker` is blocked on `XREADGROUP` over its
-   assigned users' streams (consumer group `audio-workers`, consumer `pod:worker`). It
-   wakes with the new entries.
+   `net/ws` registry first, then `lookupSessionTagInRedis()` for a packet that landed
+   on a non-owner pod) and appends it with `appendAudioPacket()` to `audio:{userId}`.
+3. **Read.** On the owner pod, the worker (`services/audio/workers/worker`) is blocked
+   on `XREADGROUP` over its assigned users' streams (consumer group `audio-workers`,
+   consumer `pod:worker`). It wakes with the new entries.
 4. **Decode.** The worker base64-decodes the payload and runs `LC3Decoder.decode()` to
    get PCM.
 5. **Transcribe.** It calls `provider.writeAudio(pcm)` for each of the user's
    subscriptions; the provider streams back `TranscriptEvent`s.
 6. **Emit.** The worker wraps each into a `TranscriptMessage` and `postMessage`s it to
    the main thread, then `XACK`s the entry so it isn't reprocessed.
-7. **Deliver.** `worker-pool.service` surfaces the message through its `onTranscript`
-   handler; `index.ts` formats it and calls `forwardToUserSessions()` in
-   `session.service`, which sends it down the user's WebSocket.
+7. **Deliver.** `services/audio/workers/pool` surfaces the message through its
+   `onTranscript` handler; `audio.service` turns it into the v2 `stream.transcript`
+   message and calls `forwardToUserSessions()` (`net/ws`) to send it down the user's
+   WebSocket.
 
 Subscriptions ride the same path sideways: a REST `PUT` writes the set to Redis and
 appends a "changed" marker to `audio:{userId}`, the worker picks it up in order with
@@ -243,28 +267,33 @@ the audio, and reconciles what it's transcribing.
 
 ## Current state
 
-What's built versus what's still in progress, so the map isn't mistaken for "done":
+What's built versus what's still moving, so the map isn't mistaken for "done". Note
+this doc shows the **target** structure; the package is being refactored into it.
 
-- **Built:** the protocol types; the UDP ingress, session/WebSocket layer, ownership
-  claim+refresh, the audio stream + sessionTag registry, the worker pool, the worker's
-  stream-read + LC3 decode + provider plumbing, the Soniox and mock providers.
-- **The outbound path is still v1.** Today the worker emits an internal
-  `TranscriptMessage` and `index.ts` sends it to the client as the v1 `data_stream`
-  message via `wire/phone-protocol.ts`. The v2 `stream.transcript` / `stream.translation`
-  messages exist in `protocol/` but aren't the live outbound yet. Moving the live path
-  to the v2 messages (and to the full `TranscriptionData` result shape) is the planned
-  step.
+- **Built (at the old paths):** the protocol types; UDP ingress, the WebSocket layer,
+  ownership claim+refresh, the audio stream + sessionTag registry, the worker pool, the
+  worker's stream-read + LC3 decode + provider plumbing, the Soniox and mock providers.
+- **The folder refactor** (this layout: `net/`, `clients/`, `services/session/`,
+  `services/audio/`, the `index` -> `audio.service` split) is the next step.
+- **The outbound is being moved to v2 and the v1 adapter removed.** Today the worker
+  emits an internal `TranscriptMessage` and the boot path sends it to the client as the
+  v1 `data_stream` message through a v1 phone-wire adapter. The v2 `stream.transcript` /
+  `stream.translation` messages exist in `protocol/`. The plan is to emit those (and the
+  full `TranscriptionData` shape) and **delete the v1 adapter**; the legacy mobile stays
+  on the v1 cloud over its own connection, so the v2 runtime never needs the v1 wire.
 - **UDP frames aren't decrypted yet.** The protocol defines per-session secretbox
-  encryption ([`audio/wire.md`](./audio/wire.md)); the ingress path has this
-  flagged as a to-do.
+  encryption ([`audio/wire.md`](./audio/wire.md)); the ingress path has this flagged.
+- **Subscriptions over REST** (the `PUT` + stream-marker reconcile) isn't wired end to
+  end yet; `subscriptionKey()` exists, the endpoint doesn't.
 - **Replay on failover** (`XAUTOCLAIM` of unacked entries) is specced in
-  [`audio/design.md`](./audio/design.md); confirm it against the worker as that lands.
+  [`audio/design.md`](./audio/design.md); confirm it against the worker as it lands.
 
 ## Build order from here
 
-1. Move the outbound path to the v2 `stream.transcript` / `stream.translation` messages
-   and the full `TranscriptionData` shape (keep the v1 `data_stream` adapter only while
-   the v1 client is around).
-2. Wire the subscription REST endpoint to the stream-marker reconcile path end to end.
-3. Add UDP frame decryption at ingress.
-4. Confirm the failover replay (`XAUTOCLAIM`) path against the worker.
+1. **Refactor to this layout** (move/rename files, split `index` into boot +
+   `audio.service`, split `session.service` into `net/ws` transport + lifecycle).
+2. **Move the outbound to the v2 `stream.transcript` / `stream.translation` messages**
+   and delete the v1 phone-wire adapter.
+3. **Wire the subscription REST endpoint** to the stream-marker reconcile path.
+4. **Add UDP frame decryption** at ingress.
+5. **Confirm the failover replay** (`XAUTOCLAIM`) path against the worker.
