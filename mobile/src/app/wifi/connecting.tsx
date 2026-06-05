@@ -8,11 +8,11 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
-import {translate} from "@/i18n"
+import {translate, type TxKeyPath} from "@/i18n"
 
 type WifiConnectionErrorCopy = {
-  title: string
-  description: string
+  titleTx: TxKeyPath
+  descriptionTx: TxKeyPath
 }
 
 function wifiConnectionErrorCopy(error: unknown): WifiConnectionErrorCopy {
@@ -21,38 +21,38 @@ function wifiConnectionErrorCopy(error: unknown): WifiConnectionErrorCopy {
 
   if (code === "bluetooth_powered_off") {
     return {
-      title: "Bluetooth is turned off.",
-      description: "Turn on phone Bluetooth, then try again.",
+      titleTx: "wifi:errors.bluetoothPoweredOffTitle",
+      descriptionTx: "wifi:errors.bluetoothPoweredOffDescription",
     }
   }
   if (code === "bluetooth_permission_denied") {
     return {
-      title: "Bluetooth permission is needed.",
-      description: "Allow Bluetooth permission, then try again.",
+      titleTx: "wifi:errors.bluetoothPermissionTitle",
+      descriptionTx: "wifi:errors.bluetoothPermissionDescription",
     }
   }
   if (code === "bluetooth_unsupported") {
     return {
-      title: "Bluetooth is not supported.",
-      description: "This phone does not support Bluetooth.",
+      titleTx: "wifi:errors.bluetoothUnsupportedTitle",
+      descriptionTx: "wifi:errors.bluetoothUnsupportedDescription",
     }
   }
   if (code === "request_in_flight") {
     return {
-      title: "Connection already in progress.",
-      description: "Wait for the current Wi-Fi connection attempt to finish.",
+      titleTx: "wifi:errors.connectionInProgressTitle",
+      descriptionTx: "wifi:errors.connectionInProgressDescription",
     }
   }
   if (code === "request_timeout" || message.includes("timed out")) {
     return {
-      title: "The glasses did not respond.",
-      description: "Make sure they are nearby, then try again.",
+      titleTx: "wifi:errors.glassesNoResponseTitle",
+      descriptionTx: "wifi:errors.glassesNoResponseDescription",
     }
   }
 
   return {
-    title: "Failed to connect to the network.",
-    description: "Please check your password and try again.",
+    titleTx: "wifi:errors.connectionFailedTitle",
+    descriptionTx: "wifi:errors.connectionFailedDescription",
   }
 }
 
@@ -95,8 +95,8 @@ export default function WifiConnectingScreen() {
       console.error("Error connecting WiFi:", error)
       const copy = wifiConnectionErrorCopy(error)
       setConnectionStatus("failed")
-      setErrorMessage(copy.title)
-      setErrorDescription(copy.description)
+      setErrorMessage(translate(copy.titleTx))
+      setErrorDescription(translate(copy.descriptionTx))
     }
   }
 
@@ -172,7 +172,7 @@ export default function WifiConnectingScreen() {
               <Text className="text-2xl font-semibold text-text text-center mb-6">{errorMessage}</Text>
               <Text className="text-base text-muted-foreground text-center mb-8 px-8" text={errorDescription} />
             </View>
-            <Button text="Try Again" onPress={handleTryAgain} />
+            <Button tx="common:tryAgain" onPress={handleTryAgain} />
           </View>
         )
     }
