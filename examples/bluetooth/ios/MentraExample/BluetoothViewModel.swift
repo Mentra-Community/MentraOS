@@ -447,9 +447,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAsyncAction(enabled ? "Save in gallery mode" : "Report button events") { [self] in
             try requireConnected("change gallery mode")
             let ack = try await mentraBluetoothSdk.setGalleryModeEnabled(enabled)
-            if ack.status == "error" {
-                throw ExampleActionError(message: ack.errorMessage ?? ack.errorCode ?? "Gallery mode failed")
-            }
             append(tag: "LIVE", text: "settings_ack \(describeSettingsAck(ack))")
             galleryModeEnabled = enabled
         }
@@ -558,9 +555,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 )
             )
             handlePhotoResponse(responseEvent.response)
-            if case let .error(_, errorCode, errorMessage, _) = responseEvent.response {
-                throw ExampleActionError(message: errorMessage.isEmpty ? (errorCode ?? "Photo request failed") : errorMessage)
-            }
             pollPhotoPreview(requestId: requestId, statusUrl: statusUrl.deletingLastPathComponent().appendingPathComponent("\(requestId).json"), generation: generation)
         }
     }
@@ -597,10 +591,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             )
         )
         handlePhotoResponse(responseEvent.response)
-        if case let .error(_, errorCode, errorMessage, _) = responseEvent.response {
-            directPhotoTimeoutTask?.cancel()
-            throw ExampleActionError(message: errorMessage.isEmpty ? (errorCode ?? "Photo request failed") : errorMessage)
-        }
         append(tag: "TX", text: "requestPhoto requestId=\(requestId) webhookUrl=\(uploadUrl)")
     }
 
@@ -722,13 +712,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func toggleStream() {
         if streamRequested || streamStartedAt != nil {
-            runAction("Stop stream") {
+            runAsyncAction("Stop stream") { [self] in
                 stopPreviewHealthPoll()
                 if isDirectPhoneWebRtcSelected {
                     directStreamStartTask?.cancel()
                     directStreamStartTask = nil
                     if glassesConnected {
-                        mentraBluetoothSdk.stopStream()
+                        let status = try await mentraBluetoothSdk.stopStream()
+                        append(tag: "LIVE", text: "stream \(summarize(status.values))")
                         streamStatus = "Stopping WebRTC direct phone stream"
                         directStreamStopTask?.cancel()
                         directStreamStopTask = Task { [weak self] in
@@ -759,7 +750,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                     return
                 }
                 if glassesConnected {
-                    mentraBluetoothSdk.stopStream()
+                    let status = try await mentraBluetoothSdk.stopStream()
+                    append(tag: "LIVE", text: "stream \(summarize(status.values))")
                 }
                 activeStreamId = nil
                 streamRequested = false
@@ -771,7 +763,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             return
         }
 
-        runAction("Start stream") {
+        runAsyncAction("Start stream") { [self] in
             try requireConnected("start streaming")
             try requireGlassesWifi("start streaming")
             if isDirectPhoneWebRtcSelected {
@@ -801,7 +793,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                               !streamRequested,
                               streamStartedAt == nil
                         else { return }
-                        startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
+                        try await startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
                     } catch {
                         let message = error.localizedDescription
                         streamStatus = message
@@ -810,7 +802,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 }
                 return
             }
-            startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
+            try await startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
         }
     }
 
@@ -843,17 +835,20 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 streamStatus = "WebRTC phone receiver ready; starting stream"
                 append(tag: "STREAM", text: "phone WHIP receiver \(url) -> GStreamer \(ports.backendPort)")
                 directStreamStartTask?.cancel()
-                directStreamStartTask = Task { [weak self] in
+                directStreamStartTask = Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
-                    await MainActor.run {
-                        guard let self,
-                              self.activeStreamId == streamId,
-                              self.directStreamReceiverRunning,
-                              self.streamRequested
-                        else {
-                            return
-                        }
-                        self.sendDirectPhoneStartStream(streamUrl: url, streamId: streamId)
+                    guard let self,
+                          self.activeStreamId == streamId,
+                          self.directStreamReceiverRunning,
+                          self.streamRequested
+                    else {
+                        return
+                    }
+                    do {
+                        try await self.sendDirectPhoneStartStream(streamUrl: url, streamId: streamId)
+                    } catch {
+                        self.streamStatus = "WebRTC stream failed: \(error.localizedDescription)"
+                        self.append(tag: "TX", text: "direct phone stream failed: \(error.localizedDescription)")
                     }
                 }
                 return
@@ -875,14 +870,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         throw ExampleActionError(message: "WebRTC phone receiver failed: \(message)")
     }
 
-    private func sendDirectPhoneStartStream(streamUrl: String, streamId: String) {
-        mentraBluetoothSdk.startStream(
+    private func sendDirectPhoneStartStream(streamUrl: String, streamId: String) async throws {
+        let status = try await mentraBluetoothSdk.startStream(
             StreamRequest(
                 streamUrl: streamUrl,
                 streamId: streamId,
                 video: StreamVideoConfig(fps: streamFps)
             )
         )
+        append(tag: "LIVE", text: "stream \(summarize(status.values))")
         streamRequested = true
         streamStartedAt = streamStartedAt ?? Date()
         streamStatus = "WebRTC stream requested; waiting for phone preview"
@@ -931,14 +927,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         lastDirectStreamFrameStatusRefresh = now
     }
 
-    private func startStream(streamUrl: String, streamId: String, protocol selectedProtocol: ExampleStreamProtocol) {
-        mentraBluetoothSdk.startStream(
+    private func startStream(streamUrl: String, streamId: String, protocol selectedProtocol: ExampleStreamProtocol) async throws {
+        let status = try await mentraBluetoothSdk.startStream(
             StreamRequest(
                 streamUrl: streamUrl,
                 streamId: streamId,
                 video: StreamVideoConfig(fps: streamFps)
             )
         )
+        append(tag: "LIVE", text: "stream \(summarize(status.values))")
         activeStreamId = streamId
         streamRequested = true
         streamPreviewReady = false
@@ -1004,7 +1001,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         directStreamStopTask?.cancel()
         directStreamStopTask = nil
         if glassesConnected {
-            mentraBluetoothSdk.stopStream()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let status = try await self.mentraBluetoothSdk.stopStream()
+                    self.append(tag: "LIVE", text: "stream \(summarize(status.values))")
+                } catch {
+                    self.append(tag: "TX", text: "stopStream before configuration change failed: \(error.localizedDescription)")
+                }
+            }
             append(tag: "TX", text: "stopStream before stream configuration change")
         }
         activeStreamId = nil
@@ -1076,38 +1081,42 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func requestWifiScan() {
-        runAction("Scan Wi-Fi") {
+        runAsyncAction("Scan Wi-Fi") { [self] in
             try requireConnected("scan Wi-Fi")
-            mentraBluetoothSdk.requestWifiScan()
+            let networks = try await mentraBluetoothSdk.requestWifiScan()
+            append(tag: "LIVE", text: "Wi-Fi scan returned \(networks.count) network\(networks.count == 1 ? "" : "s")")
         }
     }
 
     func sendWifiCredentials(ssid: String, password: String, requiresPassword: Bool) {
-        runAction("Connect Wi-Fi \(ssid)") {
+        runAsyncAction("Connect Wi-Fi \(ssid)") { [self] in
             try requireConnected("send Wi-Fi credentials")
             if requiresPassword, password.isEmpty {
                 throw ExampleActionError(message: "Enter the Wi-Fi password before connecting to \(ssid).")
             }
-            mentraBluetoothSdk.sendWifiCredentials(ssid: ssid, password: requiresPassword ? password : "")
+            let status = try await mentraBluetoothSdk.sendWifiCredentials(ssid: ssid, password: requiresPassword ? password : "")
+            append(tag: "LIVE", text: "Wi-Fi \(summarize(status.values))")
         }
     }
 
     func forgetCurrentWifiNetwork() {
-        runAction("Forget current Wi-Fi") {
+        runAsyncAction("Forget current Wi-Fi") { [self] in
             try requireConnected("forget Wi-Fi network")
             guard let wifi = connectedWifiStatus(glassesValues) else {
                 throw ExampleActionError(message: "No connected Wi-Fi network to forget.")
             }
-            mentraBluetoothSdk.forgetWifiNetwork(ssid: wifi.ssid)
+            let status = try await mentraBluetoothSdk.forgetWifiNetwork(ssid: wifi.ssid)
+            append(tag: "LIVE", text: "Wi-Fi \(summarize(status.values))")
         }
     }
 
     func toggleHotspot() {
-        runAction(hotspotEnabled ? "Disable hotspot" : "Enable hotspot") {
+        runAsyncAction(hotspotEnabled ? "Disable hotspot" : "Enable hotspot") { [self] in
             try requireConnected("toggle hotspot")
             let current = enabledHotspotStatus(glassesValues) != nil || (glassesValues == nil && hotspotEnabled)
             let next = !current
-            mentraBluetoothSdk.setHotspotState(enabled: next)
+            let status = try await mentraBluetoothSdk.setHotspotState(enabled: next)
+            append(tag: "LIVE", text: "hotspot \(summarize(status.values))")
         }
     }
 
@@ -1221,9 +1230,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 count: request.count
             )
         )
-        if response.state == "error" {
-            throw ExampleActionError(message: "RGB LED failed: \(response.errorCode ?? "unknown error")")
-        }
         append(tag: "LIVE", text: "RGB LED ack \(response.requestId)")
     }
 

@@ -58,7 +58,7 @@ const photo = await BluetoothSdk.requestPhoto({
 ${exposureLine}
 ${isoLine}
 })
-if (photo.state === "error") throw new Error(photo.errorMessage)`;
+console.log("Photo accepted", photo.uploadUrl)`;
   }
   return `${prefix}const photo = await BluetoothSdk.requestPhoto({
   requestId,
@@ -71,7 +71,7 @@ if (photo.state === "error") throw new Error(photo.errorMessage)`;
 ${exposureLine}
 ${isoLine}
 })
-if (photo.state === "error") throw new Error(photo.errorMessage)`;
+console.log("Photo accepted", photo.uploadUrl)`;
 }
 
 export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {

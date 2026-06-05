@@ -26,7 +26,7 @@ private func cameraSdkCall(
         CameraFov(fov: \(cameraFov), roiPosition: CameraRoiPosition.from(rawValue: \(cameraRoiPosition)))
     )
     print("Camera ready at \\(cameraFovResult.fov)°")
-    try await mentraBluetoothSdk.requestPhoto(
+    let photo = try await mentraBluetoothSdk.requestPhoto(
         PhotoRequest(
           requestId: requestId,
           appId: "com.mentra.examples.ios",
@@ -38,6 +38,7 @@ private func cameraSdkCall(
     \(isoLine)
         )
     )
+    print("Photo accepted: \\(photo.requestId)")
     """
 }
 

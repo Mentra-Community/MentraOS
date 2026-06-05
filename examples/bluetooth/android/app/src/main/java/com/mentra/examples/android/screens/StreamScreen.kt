@@ -77,13 +77,14 @@ import kotlin.math.roundToInt
 private val barHeights = listOf(18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40)
 private fun streamSdkCall(fps: Int) = """
 	val streamId = "android-${'$'}{System.currentTimeMillis()}"
-	mentraBluetoothSdk.startStream(
+	val started = mentraBluetoothSdk.startStream(
 	  StreamRequest(
 	    streamUrl = streamUrl,
 	    streamId = streamId,
 	    video = StreamVideoConfig(fps = $fps),
 	  )
 	)
+	println("Stream started: ${'$'}{started.status}")
 	""".trimIndent()
 
 @Composable

@@ -914,9 +914,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
           iso: photoExposureManual ? photoIso : null,
         });
         handlePhotoResponse(response);
-        if (response.state === 'error') {
-          throw new Error(response.errorMessage || response.errorCode || 'Photo request failed');
-        }
       } catch (error) {
         markPhotoRequestFailed(requestId, 'REQUEST_FAILED', formatError(error));
         throw error;
@@ -959,10 +956,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         iso: photoExposureManual ? photoIso : null,
       });
       handlePhotoResponse(response);
-      if (response.state === 'error') {
-        clearPhotoUploadTimeout();
-        throw new Error(response.errorMessage || response.errorCode || 'Photo request failed');
-      }
     } catch (error) {
       clearPhotoUploadTimeout();
       markPhotoRequestFailed(requestId, 'REQUEST_FAILED', formatError(error));
@@ -1640,7 +1633,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       type: 'start_stream',
       video: {fps: streamFps},
     } satisfies StreamStartRequest;
-    await BluetoothSdk.startStream(params);
+    const status = await BluetoothSdk.startStream(params);
+    addEvent('LIVE', `stream ${status.status}`);
     activeStreamIdRef.current = streamId;
     setStreamRequested(true);
     setStreamPreviewReady(false);
@@ -1664,7 +1658,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       video: {fps: streamFps},
     } satisfies StreamStartRequest;
     try {
-      await BluetoothSdk.startStream(params);
+      const status = await BluetoothSdk.startStream(params);
+      addEvent('LIVE', `stream ${status.status}`);
       activeStreamIdRef.current = streamId;
       setStreamRequested(true);
       setStreamPreviewReady(false);
@@ -1682,7 +1677,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     stopDirectStreamFrameWatchdog();
     activeStreamIdRef.current = null;
     if (isGlassesConnected(glasses)) {
-      await BluetoothSdk.stopStream();
+      const status = await BluetoothSdk.stopStream();
+      addEvent('LIVE', `stream ${status.status}`);
     }
     await MentraVideoStreamReceiver.stopWebRtcReceiver().catch(() => undefined);
     setDirectStreamReceiverRunning(false);
@@ -1774,7 +1770,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   async function requestWifiScan() {
     await runAction('Scan Wi-Fi', async () => {
       requireConnected('scan Wi-Fi');
-      await BluetoothSdk.requestWifiScan();
+      const networks = await BluetoothSdk.requestWifiScan();
+      addEvent('LIVE', `Wi-Fi scan returned ${networks.length} network${networks.length === 1 ? '' : 's'}`);
     });
   }
 
@@ -1784,7 +1781,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       if (requiresPassword && !password) {
         throw new Error(`Enter the Wi-Fi password before connecting to ${ssid}.`);
       }
-      await BluetoothSdk.sendWifiCredentials(ssid, requiresPassword ? password : '');
+      const status = await BluetoothSdk.sendWifiCredentials(ssid, requiresPassword ? password : '');
+      addEvent('LIVE', `Wi-Fi ${status.state === 'connected' ? status.ssid : status.state}`);
     });
   }
 
@@ -1795,7 +1793,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       if (!wifi) {
         throw new Error('No connected Wi-Fi network to forget.');
       }
-      await BluetoothSdk.forgetWifiNetwork(wifi.ssid);
+      const status = await BluetoothSdk.forgetWifiNetwork(wifi.ssid);
+      addEvent('LIVE', `Wi-Fi ${status.state === 'connected' ? status.ssid : status.state}`);
     });
   }
 
@@ -1803,7 +1802,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     await runAction(hotspotEnabled ? 'Disable hotspot' : 'Enable hotspot', async () => {
       requireConnected('toggle hotspot');
       const next = !hotspotEnabled;
-      await BluetoothSdk.setHotspotState(next);
+      const status = await BluetoothSdk.setHotspotState(next);
+      addEvent('LIVE', `hotspot ${status.state}`);
     });
   }
 
@@ -2099,9 +2099,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       request.offtime,
       request.count,
     );
-    if (response.state === 'error') {
-      throw new Error(`RGB LED failed: ${response.errorCode}`);
-    }
     addEvent('LIVE', `RGB LED ack ${response.requestId}`);
   }
 

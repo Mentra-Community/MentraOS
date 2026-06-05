@@ -6,13 +6,14 @@ import WebKit
 private func streamSdkCall(fps: Int) -> String {
     """
 let streamId = "ios-..."
-mentraBluetoothSdk.startStream(
+let started = try await mentraBluetoothSdk.startStream(
   StreamRequest(
     streamUrl: streamUrl,
     streamId: streamId,
     video: StreamVideoConfig(fps: \(fps))
   )
 )
+print("Stream started: \\(started.status)")
 """
 }
 
