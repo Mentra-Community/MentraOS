@@ -141,5 +141,5 @@ app.onSession((session: MentraSession) => {
 | Vuzix Z100 | No | N/A |
 
 <Info>
-LED commands are fire-and-forget. They resolve immediately after the command is sent to the device.
+LED commands resolve after the connected glasses acknowledge the RGB command. If the device does not support RGB LEDs or rejects the command, the promise rejects so your app can fall back to a display or audio cue.
 </Info>

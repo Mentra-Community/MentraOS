@@ -684,7 +684,7 @@ class LocalMiniappRuntime {
         this.handleSpeak(packageName, payload, requestId)
         break
       case MiniappRequestType.RGB_LED:
-        this.handleRgbLed(packageName, payload, requestId)
+        void this.handleRgbLed(packageName, payload, requestId)
         break
       case MiniappRequestType.LOCATION_POLL:
         this.handleLocationPoll(packageName, requestId)
@@ -1251,7 +1251,7 @@ class LocalMiniappRuntime {
     }
   }
 
-  private handleRgbLed(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+  private async handleRgbLed(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     const coerceNumber = (value: unknown, fallback: number): number => {
       const coerced = Number(value)
       return Number.isFinite(coerced) ? coerced : fallback
@@ -1261,17 +1261,30 @@ class LocalMiniappRuntime {
     const action = normalizeRgbLedAction(payload.action)
     const color = normalizeRgbLedColor(payload.color)
 
-    BluetoothSdk.rgbLedControl(
-      ledRequestId,
-      packageName,
-      action,
-      color,
-      coerceNumber(payload.ontime, 1000),
-      coerceNumber(payload.offtime, 0),
-      coerceNumber(payload.count, 1),
-    )
-
-    this.sendResult(packageName, requestId, true)
+    try {
+      const result = await BluetoothSdk.rgbLedControl(
+        ledRequestId,
+        packageName,
+        action,
+        color,
+        coerceNumber(payload.ontime, 1000),
+        coerceNumber(payload.offtime, 0),
+        coerceNumber(payload.count, 1),
+      )
+      if (result.state === "error") {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: result.errorCode || MiniappErrorCode.INTERNAL,
+          message: result.errorCode || "RGB LED command failed",
+        })
+        return
+      }
+      this.sendResult(packageName, requestId, true, result)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "RGB LED command failed",
+      })
+    }
   }
 
   private async handleLocationPoll(packageName: string, requestId?: string): Promise<void> {

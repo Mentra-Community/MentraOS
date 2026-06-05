@@ -120,7 +120,7 @@ All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: 
 | `session.phone`               | `onBattery(handler)`                                                                                                                     |
 | `session.system`              | `share(opts)`, `openUrl(url)`, `copyToClipboard(text)`, `download(opts)`                                                                 |
 | `session.camera`              | `takePhoto({size?, compress?, sound?, saveToGallery?})`, `setFov({fov, roiPosition?} \| {preset})`, `hasPermission`                     |
-| `session.led`                 | `turnOn({color?, ontime?, offtime?, count?})`, `turnOff()`, `blink(color, ontime, offtime, count)`, `solid(color, duration)`             |
+| `session.led`                 | `turnOn({color?, ontime?, offtime?, count?})`, `turnOff()`, `blink(color, ontime, offtime, count)`, `solid(color, duration)` — resolve after the glasses acknowledge the RGB command |
 | `session.permissions`         | `has(type)`, `getAll()`, `onUpdate(handler)`, `onPermissionError(handler)`                                                               |
 | `session.storage`             | `get(key)`, `set(key, value)`, `delete(key)`, `list()` — strings only, scoped to `(userId, packageName)`                                 |
 | `session.stream`              | `startUnmanaged({streamUrl})`, `startManaged({restreamDestinations?})`, `stop(streamId?)`                                                |

@@ -210,6 +210,9 @@ function syntheticDataFor(requestId: string, requestType: string, requestPayload
         requestId: "mock-photo",
       }
 
+    case MiniappRequestType.RGB_LED:
+      return {type: "rgb_led_control_response", state: "success", requestId}
+
     case MiniappRequestType.LOCATION_POLL:
       // San Francisco fallback — using 0,0 puts dev sessions in the
       // Atlantic, which makes maps/navigation unusable in the WebView.
