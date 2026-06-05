@@ -50,6 +50,14 @@ export interface RuntimeModule {
 
   setSubscriptions(subs: AudioSubscription[]): Promise<void>;
 
+  /**
+   * Encrypt and send one captured audio frame over UDP. On the phone the native
+   * audio bridge calls this per frame (mic -> codec -> here); the bytes are
+   * encrypted in the shared core and handed to the injected UDP socket. A frame
+   * sent before the session is configured is dropped, not thrown on.
+   */
+  sendAudioFrame(frame: Uint8Array): void;
+
   onTranscript(handler: (data: TranscriptionData) => void): () => void;
   onTranslation(handler: (data: TranslationData) => void): () => void;
 
@@ -260,6 +268,11 @@ export class Runtime implements RuntimeModule {
       throw new Error("Cannot set subscriptions before the session is connected");
     }
     await this.subscriptions.set(subs, ack.sessionId);
+  }
+
+  /** Encrypt and send one audio frame over the UDP path (see RuntimeModule). */
+  sendAudioFrame(frame: Uint8Array): void {
+    this.audio.sendFrame(frame);
   }
 
   // --- Managed media (delegated) --------------------------------------------

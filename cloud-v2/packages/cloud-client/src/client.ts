@@ -78,6 +78,22 @@ function rewriteThroughProxy(target: string, proxy: string): string {
   return targetUrl.toString();
 }
 
+/**
+ * Derive the runtime WebSocket URL from its HTTP base.
+ *
+ * `endpoints.runtime` is the HTTP origin the REST calls use; the live session
+ * rides a WebSocket at the runtime's `/ws/session` path. So we swap the scheme
+ * (http -> ws, https -> wss) and append that path. Keeping this here (not in the
+ * Connection) means the Connection stays transport-URL-agnostic and the one
+ * place that knows the runtime's HTTP shape also derives its socket URL.
+ */
+function toRuntimeWsUrl(httpBase: string): string {
+  const u = new URL(httpBase);
+  u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+  u.pathname = `${u.pathname.replace(/\/$/, "")}/ws/session`;
+  return u.toString();
+}
+
 export class CloudClient {
   // Typed as the concrete module classes rather than separate `AuthModule` /
   // `RuntimeModule` / `CoreModule` interfaces: each class IS the implementation
@@ -154,7 +170,7 @@ export class CloudClient {
     // Build the runtime's five pieces, then the runtime that orchestrates them.
     const connection = new Connection({
       ws: config.transports.ws,
-      url: runtimeUrl,
+      url: toRuntimeWsUrl(runtimeUrl),
       getToken: getAccessToken,
       initPayload,
       reconnect,
