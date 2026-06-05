@@ -106,7 +106,8 @@ class MentraNex : SGCManager() {
 
     // Off by default; toggled from Nex Developer Settings via the nex_audio_playback flag.
     private val isLc3AudioEnabled: Boolean
-        get() = DeviceStore.get("bluetooth", "nex_audio_playback") as? Boolean ?: false
+        // get() = DeviceStore.get("bluetooth", "nex_audio_playback") as? Boolean ?: false
+        get() = false
     private var lc3AudioPlayer: Lc3Player? = null
 
     private var lc3DecoderPtr: Long = 0
