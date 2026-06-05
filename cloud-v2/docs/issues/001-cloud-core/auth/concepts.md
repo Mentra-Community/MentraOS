@@ -257,34 +257,39 @@ Every idea in this primer is in that trace: signed tokens (3), JWT claims (5),
 asymmetric signing both directions (2, 7), JWKS + `kid` (7), audience pinning (4,
 7), expiry + refresh (3), token exchange (2).
 
-The same flow as a diagram (the numbers match the steps above):
+The same flow as a diagram, top to bottom, in three phases (the step numbers match
+the prose):
 
 ```mermaid
-sequenceDiagram
-    participant U as User
-    participant OEM as OEM backend
-    participant Dev as Device (cloud-client)
-    participant Mentra as Mentra Cloud
-    participant App as Weather miniapp
-    participant Backend as Developer backend
+flowchart TD
+    subgraph P1["Phase 1: vouch for the user (token exchange)"]
+        direction TB
+        A["1 - User is already signed in to the OEM app (no Mentra login)"]
+        B["2 - OEM backend signs a short-lived subject JWT for this user"]
+        C["2 - cloud-client POSTs it to /api/client/auth/exchange"]
+        D["2 - Mentra verifies it with the OEM's public key, finds or creates the user"]
+        E["2 - Mentra returns an access token (sub = mentraUserId, ~1h) plus a refresh token"]
+        A --> B --> C --> D --> E
+    end
 
-    Note over U,OEM: 1. User already signed in to the OEM app, no Mentra login
-    OEM->>OEM: 2. Sign a short-lived subject JWT for this user
-    Dev->>Mentra: 2. POST /api/client/auth/exchange with the subject JWT
-    Mentra->>Mentra: Verify with the OEM public key, find or create the user
-    Mentra-->>Dev: access token (sub=mentraUserId, ~1h) and refresh token
-    Note over Dev: 3. Device holds the access token, renews via /refresh, never gives it to a miniapp
+    subgraph P2["Phase 2: get a token for the miniapp"]
+        direction TB
+        F["3 - Device holds the access token (renews via /refresh), never gives it to a miniapp"]
+        G["4 - Weather miniapp launches; cloud-client POSTs /miniapp-token with the packageName"]
+        H["4 - Mentra returns a miniapp-scoped token (aud = com.dev.weather)"]
+        I["5 - The runtime injects that token into the miniapp; useMentraAuth exposes it"]
+        F --> G --> H --> I
+    end
 
-    App->>Dev: 4. Weather miniapp launches
-    Dev->>Mentra: 4. POST /api/client/auth/miniapp-token with the packageName
-    Mentra-->>Dev: 5. miniapp-scoped token, aud=com.dev.weather
-    Dev->>App: 5. Inject the scoped token, read via useMentraAuth
+    subgraph P3["Phase 3: the miniapp uses it"]
+        direction TB
+        J["6 - Miniapp calls its developer backend with the token as Bearer"]
+        K["7 - Backend verifies via JWKS (signature + aud), reads mentraUserId + oemId, no call to Mentra"]
+        J --> K
+    end
 
-    App->>Backend: 6. Call the backend with the miniapp token as Bearer
-    Backend->>Mentra: GET /.well-known/jwks.json (once, then cached)
-    Mentra-->>Backend: public keys, selected by kid
-    Backend->>Backend: 7. Verify signature, check aud=com.dev.weather, read mentraUserId and oemId
-    Backend-->>App: response, with no per-request call to Mentra
+    E --> F
+    I --> J
 ```
 
 ## 11. Quick reference
