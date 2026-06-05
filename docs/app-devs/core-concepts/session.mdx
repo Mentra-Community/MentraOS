@@ -33,7 +33,6 @@ Every capability on the glasses is accessed through a manager on the session obj
 | Transcription | `session.transcription` | Real-time speech-to-text. Subscribe to all languages or filter by language. Configure diarization and language hints. |
 | Translation | `session.translation` | Real-time translation. Subscribe to all translations or filter by target language. |
 | Mic | `session.mic` | Raw audio chunks from the microphone and voice activity detection. Independent from transcription - subscribing to one does not give you the other. |
-| Camera | `session.camera` | Take photos, start/stop video streams. Supports both display glasses (no camera) and camera glasses (Mentra Live). |
 | Location | `session.location` | GPS coordinates. Get the latest location or subscribe to updates. |
 
 ### Output
@@ -149,8 +148,8 @@ Each session has its own subscriptions, its own managers, its own state. Nothing
   <Card title="Display" icon="display" href="/app-devs/core-concepts/display/layouts">
     Show text and graphics on the glasses
   </Card>
-  <Card title="Camera" icon="camera" href="/app-devs/core-concepts/camera/README">
-    Take photos and stream video
+  <Card title="Camera, Photos, And Streaming" icon="camera" href="/app-devs/core-concepts/camera/README">
+    Use the standalone Bluetooth SDK for camera workflows
   </Card>
   <Card title="Device" icon="microchip" href="/app-devs/core-concepts/hardware-capabilities/overview">
     Hardware state, capabilities, and events

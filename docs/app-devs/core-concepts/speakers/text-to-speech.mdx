@@ -229,16 +229,16 @@ app.onSession((session) => {
 });
 ```
 
-### Play a sound effect on an action
+### Confirm an action
 
 ```typescript
 app.onSession((session) => {
   session.transcription.on((data) => {
     if (!data.isFinal) return;
 
-    if (data.text.toLowerCase().includes("take photo")) {
-      session.camera.takePhoto();
-      session.speaker.play({ url: "https://example.com/shutter.mp3" });
+    if (data.text.toLowerCase().includes("save note")) {
+      session.storage.set("last-note", data.text);
+      session.speaker.speak("Saved");
     }
   });
 });
