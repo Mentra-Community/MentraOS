@@ -38,12 +38,12 @@ function cameraSdkCall(
   exposureTimeNs: number,
   iso: number,
   cameraFov: number,
-  cameraRoiPosition: number,
+  cameraRoiPosition: (typeof CAMERA_ROI_POSITIONS)[number]['value'],
 ) {
   const exposureLine = exposureManual ? `  exposureTimeNs: ${exposureTimeNs},` : '  exposureTimeNs: null, // auto exposure';
   const isoLine = exposureManual ? `  iso: ${iso},` : '  iso: null, // auto ISO';
-  const prefix = `const cameraAck = await BluetoothSdk.setCameraFov({ fov: ${cameraFov}, roiPosition: ${cameraRoiPosition} });
-if (!cameraAck.ready) throw new Error(cameraAck.errorMessage ?? "Camera FOV was not ready");
+  const prefix = `const cameraFov = await BluetoothSdk.setCameraFov({ fov: ${cameraFov}, roiPosition: "${cameraRoiPosition}" });
+console.log(\`Camera ready at \${cameraFov.fov}°\`);
 `;
   if (!useCloudServer) {
     return `${prefix}const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();

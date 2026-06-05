@@ -22,12 +22,10 @@ private func cameraSdkCall(
         ? "      iso: \(iso)"
         : "      iso: nil // auto ISO"
     return """
-    let cameraAck = try await mentraBluetoothSdk.setCameraFov(
-        CameraFov(fov: \(cameraFov), roiPosition: \(cameraRoiPosition))
+    let cameraFovResult = try await mentraBluetoothSdk.setCameraFov(
+        CameraFov(fov: \(cameraFov), roiPosition: CameraRoiPosition.from(rawValue: \(cameraRoiPosition)))
     )
-    guard cameraAck.ready else {
-        throw ExampleActionError(message: cameraAck.errorMessage ?? "Camera FOV was not ready")
-    }
+    print("Camera ready at \\(cameraFovResult.fov)°")
     try await mentraBluetoothSdk.requestPhoto(
         PhotoRequest(
           requestId: requestId,

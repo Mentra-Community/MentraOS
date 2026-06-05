@@ -315,8 +315,8 @@ sdk.setButtonPhotoSettings(size = ButtonPhotoSize.MEDIUM)
 sdk.setButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
 sdk.setButtonCameraLed(enabled = true)
 sdk.setButtonMaxRecordingTime(minutes = 3)
-val cameraAck = sdk.setCameraFov(CameraFov(fov = 102, roiPosition = 0))
-check(cameraAck.ready) { cameraAck.errorMessage ?: "Camera FOV was not ready" }
+val cameraFov = sdk.setCameraFov(CameraFov(fov = 102, roiPosition = CameraRoiPosition.CENTER))
+println("Camera ready at ${cameraFov.fov}°")
 ```
 
 iOS:
@@ -333,8 +333,8 @@ try await sdk.setButtonPhotoSettings(size: .medium)
 try await sdk.setButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30)
 try await sdk.setButtonCameraLed(enabled: true)
 try await sdk.setButtonMaxRecordingTime(minutes: 3)
-let cameraAck = try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: 0))
-guard cameraAck.ready else { throw CameraError.notReady }
+let cameraFov = try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: .center))
+print("Camera ready at \(cameraFov.fov)°")
 ```
 
 React Native:
@@ -351,13 +351,13 @@ await BluetoothSdk.setButtonPhotoSettings('medium');
 await BluetoothSdk.setButtonVideoRecordingSettings(1280, 720, 30);
 await BluetoothSdk.setButtonCameraLed(true);
 await BluetoothSdk.setButtonMaxRecordingTime(3);
-const cameraAck = await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 0});
-if (!cameraAck.ready) throw new Error(cameraAck.errorMessage ?? 'Camera FOV was not ready');
+const cameraFov = await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 'center'});
+console.log(`Camera ready at ${cameraFov.fov}°`);
 ```
 
 Mentra Live gallery mode controls right-action-button capture. When gallery mode is enabled, a short press takes a photo, a long press starts video recording, and a short press stops the active video recording. `setGalleryModeEnabled(true)` enables local button capture; `setGalleryModeEnabled(false)` reports button and touch events to the host app without triggering local gallery capture while the glasses are connected. Button presses are always reported as SDK events.
 
-`setCameraFov` accepts FOV degrees from 62 to 118 and ROI position `0` center, `1` bottom, or `2` top. On Mentra Live, applying FOV/ROI restarts the camera; the returned settings ack resolves from the ASG client when the camera is ready again.
+`setCameraFov` accepts FOV degrees from 62 to 118 and ROI position `"center"`, `"bottom"`, or `"top"` on React Native, `CameraRoiPosition` on Android, and `CameraRoiPosition` on iOS. React Native also accepts `{preset: "narrow" | "standard" | "wide"}`. On Mentra Live, applying FOV/ROI restarts the camera; the returned `CameraFovResult` resolves from the ASG client only when the camera is ready again, and the promise rejects on glasses-side error or missing readiness. Raw `settings_ack` events are still available for listeners.
 
 ## RGB LED
 
@@ -704,7 +704,7 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `photo_response` | `PhotoResponseEvent` | Photo request succeeds or fails. Also returned by `requestPhoto(...)`. |
 | `video_recording_status` | `VideoRecordingStatusEvent` | Video recording start/stop succeeds or fails. Also returned by `startVideoRecording(...)` and `stopVideoRecording(...)`. |
 | `gallery_status` | `GalleryStatusEvent` | Gallery content/camera-busy status changes. |
-| `settings_ack` | `SettingsAckEvent` | Gallery/button/FOV setting command applied, ready, or failed. Also returned by settings methods. |
+| `settings_ack` | `SettingsAckEvent` | Raw gallery/button/FOV setting acknowledgements from the glasses. Gallery and button settings return this shape; `setCameraFov(...)` returns `CameraFovResult` after the raw ack reports camera readiness. |
 | `compatible_glasses_search_stop` | `CompatibleGlassesSearchStopEvent` | Compatible-glasses search stops for a model. |
 | `swipe_volume_status` | `SwipeVolumeStatusEvent` | Swipe-volume setting changes. |
 | `switch_status` | `SwitchStatusEvent` | Glasses switch status changes. |

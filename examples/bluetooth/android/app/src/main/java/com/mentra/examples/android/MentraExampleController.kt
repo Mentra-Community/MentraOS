@@ -35,6 +35,8 @@ import com.mentra.bluetoothsdk.OtaStatusEvent
 import com.mentra.bluetoothsdk.OtaUpdateAvailableEvent
 import com.mentra.bluetoothsdk.ButtonPressEvent
 import com.mentra.bluetoothsdk.CameraFov
+import com.mentra.bluetoothsdk.CameraFovResult
+import com.mentra.bluetoothsdk.CameraRoiPosition
 import com.mentra.bluetoothsdk.GlassesBatteryState
 import com.mentra.bluetoothsdk.Device
 import com.mentra.bluetoothsdk.DeviceModel
@@ -479,13 +481,12 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         val fov = state.cameraFov.coerceIn(CAMERA_FOV_MIN, CAMERA_FOV_MAX)
         val roiPosition = if (fov == CAMERA_FOV_MAX) 0 else state.cameraRoiPosition.coerceIn(0, 2)
         state = state.copy(cameraSettingsStatus = "Camera settings: waiting for glasses camera-ready ack")
-        val ack = withContext(Dispatchers.IO) { mentraBluetoothSdk.setCameraFov(CameraFov(fov, roiPosition)) }
-        addEvent("LIVE", "settings_ack ${describeSettingsAck(ack)}")
-        if (ack.status == "error") {
-            throw IllegalStateException(ack.errorMessage ?: ack.errorCode ?: "Camera settings failed")
+        val result = withContext(Dispatchers.IO) {
+            mentraBluetoothSdk.setCameraFov(CameraFov(fov, CameraRoiPosition.fromValue(roiPosition)))
         }
+        addEvent("LIVE", "camera_fov ${describeCameraFovResult(result)}")
         state = state.copy(
-            cameraSettingsStatus = "Camera settings: ${if (ack.ready) "camera ready" else "applied on glasses"}; field of view ${fov}°, ${roiPositionLabel(roiPosition)} crop",
+            cameraSettingsStatus = "Camera settings: camera ready; field of view ${result.fov}°, ${roiPositionLabel(result.roiPosition.value)} crop",
         )
     }
 
@@ -2284,8 +2285,10 @@ fun cameraSdkCall(
     cameraFov: Int,
     cameraRoiPosition: Int,
 ): String = """
-val cameraAck = mentraBluetoothSdk.setCameraFov(CameraFov(fov = $cameraFov, roiPosition = $cameraRoiPosition))
-check(cameraAck.ready) { cameraAck.errorMessage ?: "Camera FOV was not ready" }
+val cameraFovResult = mentraBluetoothSdk.setCameraFov(
+    CameraFov(fov = $cameraFov, roiPosition = CameraRoiPosition.fromValue($cameraRoiPosition))
+)
+println("Camera ready at ${'$'}{cameraFovResult.fov}°")
 mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
       requestId = requestId,
@@ -2560,6 +2563,9 @@ fun describeSettingsAck(ack: SettingsAckEvent): String =
         ack.values.intValue("roiPosition")?.let { "roi=$it" },
         ack.errorCode,
     ).joinToString(" ")
+
+fun describeCameraFovResult(result: CameraFovResult): String =
+    "ready fov=${result.fov} roi=${result.roiPosition.label} request=${result.requestId}"
 
 private fun Map<String, Any>.stringValue(key: String): String? =
     this[key] as? String

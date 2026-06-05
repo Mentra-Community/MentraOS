@@ -6,6 +6,8 @@ import BluetoothSdk, {
   DeviceModels,
   type AudioConnectedEvent,
   type ButtonPressEvent,
+  type CameraFovResult,
+  type CameraRoiPosition,
   type CompatibleGlassesSearchStopEvent,
   type LogEvent,
   type Device,
@@ -151,7 +153,6 @@ type RgbLedAction = 'on' | 'off';
 export type LedColor = 'red' | 'green' | 'blue' | 'orange' | 'white';
 export type PhotoSize = 'small' | 'medium' | 'large' | 'full';
 export type PhotoCompression = 'none' | 'medium' | 'heavy';
-export type CameraRoiPosition = 0 | 1 | 2;
 export const SCAN_MODELS = [DeviceModels.MentraLive, DeviceModels.G2] as const;
 export type ScanModel = (typeof SCAN_MODELS)[number];
 type StreamStartRequest = {
@@ -184,9 +185,9 @@ export const CAMERA_FOV_MIN = 62;
 export const CAMERA_FOV_MAX = 118;
 export const CAMERA_FOV_DEFAULT = 102;
 export const CAMERA_ROI_POSITIONS = [
-  {label: 'Center', value: 0},
-  {label: 'Bottom', value: 1},
-  {label: 'Top', value: 2},
+  {label: 'Center', value: 'center'},
+  {label: 'Bottom', value: 'bottom'},
+  {label: 'Top', value: 'top'},
 ] as const satisfies ReadonlyArray<{label: string; value: CameraRoiPosition}>;
 
 export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
@@ -389,7 +390,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [photoExposureTimeNs, setPhotoExposureTimeNsState] = useState(PHOTO_EXPOSURE_DEFAULT_NS);
   const [photoIso, setPhotoIsoState] = useState(PHOTO_ISO_DEFAULT);
   const [cameraFov, setCameraFovState] = useState(CAMERA_FOV_DEFAULT);
-  const [cameraRoiPosition, setCameraRoiPositionState] = useState<CameraRoiPosition>(0);
+  const [cameraRoiPosition, setCameraRoiPositionState] = useState<CameraRoiPosition>('center');
   const [cameraSettingsStatus, setCameraSettingsStatus] = useState('Camera settings: default');
   const [streamCloudServerEnabled, setStreamCloudServerEnabledState] = useState(false);
   const [directStreamReceiverRunning, setDirectStreamReceiverRunning] = useState(false);
@@ -1507,27 +1508,24 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     const nextFov = clampRounded(fov, CAMERA_FOV_MIN, CAMERA_FOV_MAX);
     setCameraFovState(nextFov);
     if (nextFov === CAMERA_FOV_MAX) {
-      setCameraRoiPositionState(0);
+      setCameraRoiPositionState('center');
     }
   }
 
   function setCameraRoiPositionAction(roiPosition: CameraRoiPosition) {
-    setCameraRoiPositionState(cameraFov === CAMERA_FOV_MAX ? 0 : roiPosition);
+    setCameraRoiPositionState(cameraFov === CAMERA_FOV_MAX ? 'center' : roiPosition);
   }
 
   async function applyCameraSettings() {
     await runAction('Apply camera settings', async () => {
       requireConnected('apply camera settings');
       const fov = clampRounded(cameraFov, CAMERA_FOV_MIN, CAMERA_FOV_MAX);
-      const roiPosition = fov === CAMERA_FOV_MAX ? 0 : cameraRoiPosition;
+      const roiPosition = fov === CAMERA_FOV_MAX ? 'center' : cameraRoiPosition;
       setCameraSettingsStatus('Camera settings: waiting for glasses camera-ready ack');
-      const ack = await BluetoothSdk.setCameraFov({fov, roiPosition});
-      addEvent('LIVE', `settings_ack ${describeSettingsAck(ack)}`);
-      if (ack.status === 'error') {
-        throw new Error(ack.errorMessage || ack.errorCode || 'Camera settings failed');
-      }
+      const result = await BluetoothSdk.setCameraFov({fov, roiPosition});
+      addEvent('LIVE', `camera_fov ${describeCameraFovResult(result)}`);
       setCameraSettingsStatus(
-        `Camera settings: ${ack.ready || ack.status === 'ready' ? 'camera ready' : 'applied on glasses'}; field of view ${fov}°, ${roiPositionLabel(roiPosition)} crop`,
+        `Camera settings: camera ready; field of view ${result.fov}°, ${roiPositionLabel(result.roiPosition)} crop`,
       );
     });
   }
@@ -3111,6 +3109,10 @@ function describeSettingsAck(ack: SettingsAckEvent) {
     parts.push(ack.errorCode);
   }
   return parts.join(' ');
+}
+
+function describeCameraFovResult(result: CameraFovResult) {
+  return `ready fov=${result.fov} roi=${result.roiPosition} request=${result.requestId}`;
 }
 
 function delay(ms: number) {

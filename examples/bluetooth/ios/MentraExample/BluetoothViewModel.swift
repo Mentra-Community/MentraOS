@@ -38,6 +38,10 @@ private func describeSettingsAck(_ ack: SettingsAckEvent) -> String {
     return parts.joined(separator: " ")
 }
 
+private func describeCameraFovResult(_ result: CameraFovResult) -> String {
+    "ready fov=\(result.fov) roi=\(result.roiPosition.label) request=\(result.requestId)"
+}
+
 private let defaultPhotoUploadUrl = "http://<computer-ip>:8787/upload"
 let scanModelOptions: [DeviceModel] = [.mentraLive, .g2]
 let photoExposureMinNs = 1_000_000
@@ -507,12 +511,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             let fov = cameraFov
             let roiPosition = fov == cameraFovMax ? 0 : cameraRoiPosition
             cameraSettingsStatus = "Camera settings: waiting for glasses camera-ready ack"
-            let ack = try await mentraBluetoothSdk.setCameraFov(CameraFov(fov: fov, roiPosition: roiPosition))
-            append(tag: "LIVE", text: "settings_ack \(describeSettingsAck(ack))")
-            if ack.status == "error" {
-                throw ExampleActionError(message: ack.errorMessage ?? ack.errorCode ?? "Camera settings failed")
-            }
-            cameraSettingsStatus = "Camera settings: \(ack.ready ? "camera ready" : "applied on glasses"); field of view \(fov)°, \(roiPositionLabel(roiPosition)) crop"
+            let result = try await mentraBluetoothSdk.setCameraFov(
+                CameraFov(fov: fov, roiPosition: CameraRoiPosition.from(rawValue: roiPosition))
+            )
+            append(tag: "LIVE", text: "camera_fov \(describeCameraFovResult(result))")
+            cameraSettingsStatus = "Camera settings: camera ready; field of view \(result.fov)°, \(roiPositionLabel(result.roiPosition.rawValue)) crop"
         }
     }
 
