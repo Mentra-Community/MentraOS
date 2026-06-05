@@ -257,6 +257,36 @@ Every idea in this primer is in that trace: signed tokens (3), JWT claims (5),
 asymmetric signing both directions (2, 7), JWKS + `kid` (7), audience pinning (4,
 7), expiry + refresh (3), token exchange (2).
 
+The same flow as a diagram (the numbers match the steps above):
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant OEM as OEM backend
+    participant Dev as Device (cloud-client)
+    participant Mentra as Mentra Cloud
+    participant App as Weather miniapp
+    participant Backend as Developer backend
+
+    Note over U,OEM: 1. User already signed in to the OEM app, no Mentra login
+    OEM->>OEM: 2. Sign a short-lived subject JWT for this user
+    Dev->>Mentra: 2. POST /api/client/auth/exchange with the subject JWT
+    Mentra->>Mentra: Verify with the OEM public key, find or create the user
+    Mentra-->>Dev: access token (sub=mentraUserId, ~1h) and refresh token
+    Note over Dev: 3. Device holds the access token, renews via /refresh, never gives it to a miniapp
+
+    App->>Dev: 4. Weather miniapp launches
+    Dev->>Mentra: 4. POST /api/client/auth/miniapp-token with the packageName
+    Mentra-->>Dev: 5. miniapp-scoped token, aud=com.dev.weather
+    Dev->>App: 5. Inject the scoped token, read via useMentraAuth
+
+    App->>Backend: 6. Call the backend with the miniapp token as Bearer
+    Backend->>Mentra: GET /.well-known/jwks.json (once, then cached)
+    Mentra-->>Backend: public keys, selected by kid
+    Backend->>Backend: 7. Verify signature, check aud=com.dev.weather, read mentraUserId and oemId
+    Backend-->>App: response, with no per-request call to Mentra
+```
+
 ## 11. Quick reference
 
 | Term | One line |
