@@ -2551,20 +2551,17 @@ class G2: NSObject, SGCManager {
 
     private func createPageWithContainers() {
         // build the page's text containers from the live tracked list.
-        let textContainerProps: [Data] = textContainers.map { c in
-            EvenHubProto.textContainerProperty(
+        // iterate by index not using map:
+        var textContainerProps: [Data] = []
+        for (index, c) in textContainers.enumerated() {
+            textContainerProps.append(EvenHubProto.textContainerProperty(
                 x: c.x, y: c.y, width: c.width, height: c.height,
                 borderWidth: c.borderWidth, borderColor: c.borderColor, borderRadius: c.borderRadius,
                 paddingLength: c.paddingLength, containerID: c.id,
-                containerName: c.name, isEventCapture: c.id == 0,
+                containerName: c.name, isEventCapture: index == 0,
                 content: c.content
-            )
+            ))
         }
-
-        // // remove any image containers that are empty:
-        // imageContainers = imageContainers.filter { c in
-        //     c.bmpData.count > 0
-        // }
 
         // iterate all image containers, remove any entrys with duplicate id's, and ensure the ids in the imageContainerIDPool is up-to-date:
         var seenIDs = Set<Int32>()

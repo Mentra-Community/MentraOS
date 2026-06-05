@@ -2369,23 +2369,28 @@ class G2 : SGCManager() {
 
     private fun createPageWithContainers() {
         // build the page's text containers from the live tracked list.
-        val textContainerProps: List<ByteArray> =
-                textContainers.map { c ->
+        val textContainerProps: List<ByteArray> = ArrayList<ByteArray>(textContainers.size).apply {
+            for (i in textContainers.indices) {
+                val c = textContainers[i]
+                add(
                     EvenHubProto.textContainerProperty(
-                            x = c.x,
-                            y = c.y,
-                            width = c.width,
-                            height = c.height,
-                            borderWidth = c.borderWidth,
-                            borderColor = c.borderColor,
-                            borderRadius = c.borderRadius,
-                            paddingLength = c.paddingLength,
-                            containerID = c.id,
-                            containerName = c.name,
-                            isEventCapture = c.id == 0,
-                            content = c.content
+                        x = c.x,
+                        y = c.y,
+                        width = c.width,
+                        height = c.height,
+                        borderWidth = c.borderWidth,
+                        borderColor = c.borderColor,
+                        borderRadius = c.borderRadius,
+                        paddingLength = c.paddingLength,
+                        containerID = c.id,
+                        containerName = c.name,
+                        isEventCapture = i == 0,
+                        content = c.content
                     )
-                }
+                )
+            }
+        }
+           
 
         // iterate all image containers, remove any entries with duplicate ids or empty data,
         // and ensure the ids are still in the imageContainerIDPool:

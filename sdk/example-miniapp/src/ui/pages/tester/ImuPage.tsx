@@ -19,10 +19,9 @@ export default function ImuPage() {
   const accel = latestByKind("accel")
 
   // Explicit IMU control via session.imu.setEnabled(). The accel stream also
-  // auto-enables on subscribe, so this toggle is an override / diagnostic.
+  // auto-enables on subscribe, so these are an override / diagnostic.
   const [imuEnabled, setImuEnabled] = useState(true)
-  const toggleImu = async () => {
-    const next = !imuEnabled
+  const setEnabled = async (next: boolean) => {
     await invoke("setEnabled", [next])
     setImuEnabled(next)
   }
@@ -44,13 +43,21 @@ export default function ImuPage() {
           label=".onAccel() — x/y/z (g)"
           data={accel ? ((accel.payload as unknown) as Record<string, unknown>) : null}
         />
-        <Button
-          className="mt-3"
-          variant={imuEnabled ? "secondary" : "default"}
-          onClick={toggleImu}
-        >
-          {imuEnabled ? "Disable IMU" : "Enable IMU"} · setEnabled({String(!imuEnabled)})
-        </Button>
+        <div className="mt-3 flex flex-row gap-2">
+          <Button
+            disabled={imuEnabled}
+            onClick={() => setEnabled(true)}
+          >
+            Enable IMU
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={!imuEnabled}
+            onClick={() => setEnabled(false)}
+          >
+            Disable IMU
+          </Button>
+        </div>
         <ErrorRow event={lastError} />
         <p className="mt-3 text-[12px] text-muted-foreground">{log.length} event(s) seen</p>
       </div>
