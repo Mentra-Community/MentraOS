@@ -17,10 +17,22 @@ import {ErrorRow, TableRow} from "./_TesterRow"
 
 export default function StoragePage() {
   const navigate = useNavigate()
-  const {log, invoke, lastError} = useTester("storage")
+  const {invoke, lastError} = useTester("storage")
   const [key, setKey] = useState("test-key")
   const [value, setValue] = useState("hello")
-  const lastResult = [...log].reverse().find((e) => e.kind === "result")
+  const [result, setResult] = useState<{method: string; args: unknown[]; value: unknown} | null>(null)
+
+  // invoke() routes errors to lastError (and re-throws), so the catch just
+  // keeps the last successful result visible while <ErrorRow> shows the error.
+  const run = async (method: "set" | "get" | "delete", args: unknown[]) => {
+    try {
+      const value = await invoke(method, args)
+      setResult({method, args, value})
+    } catch {
+      /* surfaced via lastError */
+    }
+  }
+
   return (
     <Shell>
       <MiniappHeader title="session.storage" onBack={() => navigate("/")} />
@@ -35,15 +47,15 @@ export default function StoragePage() {
         <Label htmlFor="storage-value">value</Label>
         <Input id="storage-value" value={value} onChange={(e) => setValue(e.target.value)} />
         <div className="mt-3 flex gap-2">
-          <Button onClick={() => invoke("set", [key, value])}>set(key, value)</Button>
-          <Button onClick={() => invoke("get", [key])}>get(key)</Button>
-          <Button onClick={() => invoke("delete", [key])}>delete(key)</Button>
+          <Button onClick={() => run("set", [key, value])}>set(key, value)</Button>
+          <Button onClick={() => run("get", [key])}>get(key)</Button>
+          <Button onClick={() => run("delete", [key])}>delete(key)</Button>
         </div>
         <div className="mt-4">
           <TableRow
             emoji="🗄️"
             label="last result"
-            data={lastResult ? ((lastResult.payload as unknown) as Record<string, unknown>) : null}
+            data={result ? {method: result.method, args: result.args, value: result.value} : null}
           />
           <ErrorRow event={lastError} />
         </div>

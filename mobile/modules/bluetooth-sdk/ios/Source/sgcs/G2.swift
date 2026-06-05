@@ -2934,7 +2934,9 @@ class G2: NSObject, SGCManager {
     }
 
     func setImuEnabled(_ enabled: Bool) {
-        setImuEnabled(enabled, reportFrq: EvenHubProto.imuPaceP100)
+        Task {
+            await setImuEnabled(enabled, reportFrq: EvenHubProto.imuPaceP100)
+        }
     }
 
     /// Enable or disable IMU motion reporting on the glasses.
