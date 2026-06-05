@@ -256,10 +256,35 @@ Important defaults:
 - `requestPhoto({authToken, ...})` omits the `Authorization` header when `authToken` is `null` or empty.
 - `requestPhoto({exposureTimeNs, ...})` uses auto exposure when `exposureTimeNs` is omitted or `null`; pass a positive nanosecond value for one-shot manual exposure.
 - `requestPhoto({exposureTimeNs, iso, ...})` uses `iso` only when `exposureTimeNs` enables one-shot manual exposure. Omit `iso` / pass `null` for auto ISO selection.
-- Request/response commands now resolve from the glasses response rather than only updating local SDK state. `requestPhoto(...)` returns a `PhotoResponseEvent`; `requestWifiScan()` resolves when the final `wifi_scan_result` arrives with `scanComplete: true`; `startVideoRecording(...)` and `stopVideoRecording(...)` return `VideoRecordingStatusEvent`; `rgbLedControl(...)` returns an `RgbLedControlResponseEvent`; OTA query/start return ASG OTA results; gallery/button settings return `SettingsAckEvent`; FOV settings return `CameraFovResult`.
+- Request/response commands now resolve from the glasses response rather than only updating local SDK state. React Native returns success-only values for commands whose raw events can also carry errors: `requestPhoto(...)` returns `PhotoSuccessResponseEvent`, `startVideoRecording(...)` and `stopVideoRecording(...)` return `VideoRecordingSuccessStatusEvent`, and `rgbLedControl(...)` returns `RgbLedControlSuccessResponseEvent`. The corresponding raw events still include error variants for listeners.
 - `setCameraFov({fov, roiPosition})` clamps `fov` to 62-118 degrees and accepts `roiPosition` as `"center"`, `"bottom"`, or `"top"`. You can also call `setCameraFov({preset: "narrow" | "standard" | "wide"})`; presets map to 82, 102, and 118 degrees with center ROI. On Mentra Live this persists the setting, restarts the camera, and resolves with `CameraFovResult` only after the ASG client reports the camera is ready again. The promise rejects if the glasses report an error or never report readiness. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
 - `startStream` optional `video` and `audio` configs are omitted unless supplied, so the connected glasses use their model defaults. The SDK sends stream keep-alives automatically and reports timeout/error state through `stream_status`.
 - Photo capture, video recording, and streaming always enable the camera light as a privacy indicator.
+
+## Promise Results And Errors
+
+One-shot commands resolve only after the matching ASG client response arrives. They reject/throw when the ASG response is an error, when the SDK cannot send the command, when an incompatible command is already in flight, or when the matching response times out. Keep listeners for streaming progress and status; use the returned value for the one-shot decision.
+
+React Native exposes the narrowest return types for clear branching after `await`. Android and iOS async APIs throw `BluetoothException` / `BluetoothError` for the same error cases, so successful calls return the success payload even when the native event struct can also represent raw listener errors.
+
+| API | Resolves With | Rejection / Throw Criteria |
+| --- | --- | --- |
+| `requestWifiScan()` | Final `WifiSearchResult[]` from `wifi_scan_result` where `scanComplete: true`, including `[]` when no networks are found. | Scan response timeout, send failure, or another Wi-Fi scan already in flight. |
+| `sendWifiCredentials(ssid, password)` | `WifiStatusChangeEvent` whose state is `connected` for the requested SSID. | Wi-Fi disconnect/error state, timeout, send failure, or another Wi-Fi status command in flight. |
+| `forgetWifiNetwork(ssid)` | `WifiStatusChangeEvent` once the requested SSID is no longer connected. | Timeout, send failure, or another Wi-Fi status command in flight. |
+| `setHotspotState(enabled)` | `HotspotStatusChangeEvent` matching the requested enabled/disabled state. | `hotspot_error`, timeout, send failure, or another hotspot command in flight. |
+| `requestVersionInfo()` | `VersionInfoResult` from the ASG `version_info` response. | Timeout, send failure, or another version query in flight. |
+| Gallery/button settings | `SettingsAckEvent` with a non-failure status such as `applied` or `ready`. | `settings_ack.status` of `error`, `failed`, `failure`, or `rejected`; timeout; send failure; or duplicate request ID. |
+| `setCameraFov(...)` | `CameraFovResult` with `ready: true`, `hardwareApplied: true`, `fov`, `roiPosition`, and `requestId` after the restarted camera is ready. | Glasses-side FOV/settings error, missing readiness after camera restart, timeout, send failure, or duplicate request ID. |
+| `queryGalleryStatus()` | `GalleryStatusEvent`, including `cameraBusy` and optional `cameraBusyReason`. | Timeout, send failure, or another gallery status query in flight. |
+| `requestPhoto(...)` | React Native `PhotoSuccessResponseEvent`; Android/iOS successful `PhotoResponseEvent`. | Raw `photo_response.state === "error"`, timeout, send failure, or duplicate request ID. |
+| `startVideoRecording(...)` | React Native `VideoRecordingSuccessStatusEvent` with `status: "recording_started"`; Android/iOS successful `VideoRecordingStatusEvent`. | `success: false` statuses such as `already_recording`, timeout, send failure, or duplicate request ID. |
+| `stopVideoRecording(requestId)` | React Native `VideoRecordingSuccessStatusEvent` with `status: "recording_stopped"`; Android/iOS successful `VideoRecordingStatusEvent`. | `success: false` statuses such as `not_recording`, timeout, send failure, or duplicate request ID. |
+| `startStream(...)` | `StreamStatusEvent` for the requested stream once `status` is `streaming`. | `stream_status` error/reconnect failure, timeout, send failure, or duplicate stream start. |
+| `stopStream()` | `StreamStatusEvent` once `status` is `stopped`. | `stream_status` error, timeout, send failure, or another stream stop in flight. |
+| `rgbLedControl(...)` | React Native `RgbLedControlSuccessResponseEvent`; Android/iOS successful `RgbLedControlResponseEvent`. | Raw `rgb_led_control_response.state === "error"`, timeout, send failure, or duplicate request ID. |
+| `checkForOtaUpdate()` / `retryOtaVersionCheck()` | `OtaQueryResult`: either `ota_update_available` or the current `ota_status`. | Command response timeout, send failure, or another OTA query in flight. A returned `ota_status.status === "failed"` is a glasses OTA state to show in UI, not a command transport rejection. |
+| `startOtaUpdate()` | `OtaStartAckEvent` from `ota_start_ack`. | Start-ack timeout, send failure, or another OTA start in flight. |
 
 ## Gallery Mode
 
@@ -402,15 +427,15 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `wifi_scan_result` | `WifiScanResultEvent` | Wi-Fi scan results. Intermediate events can have `scanComplete: false`; the final event has `scanComplete: true` and is what `requestWifiScan()` awaits. |
 | `hotspot_status_change` | `HotspotStatusChangeEvent` | Glasses hotspot state changes. |
 | `hotspot_error` | `HotspotErrorEvent` | Hotspot operation fails. |
-| `photo_response` | `PhotoResponseEvent` | Photo request succeeds or fails. Also returned by `requestPhoto(...)`. |
+| `photo_response` | `PhotoResponseEvent` | Photo request succeeds or fails. `requestPhoto(...)` resolves with the success case and rejects on the error case. |
 | `photo_status` | `PhotoStatusEvent` | Photo capture progress changes. May include `resolvedConfig`, `requestedCaptureConfig`, `meteredPreview`, or `captureMetadata` depending on status. |
-| `video_recording_status` | `VideoRecordingStatusEvent` | Video recording start/stop succeeds or fails. Also returned by `startVideoRecording(...)` and `stopVideoRecording(...)`; unsuccessful statuses such as `already_recording` reject the promise. |
+| `video_recording_status` | `VideoRecordingStatusEvent` | Video recording start/stop succeeds or fails. `startVideoRecording(...)` and `stopVideoRecording(...)` resolve with `success: true`; unsuccessful statuses such as `already_recording` reject the promise. |
 | `gallery_status` | `GalleryStatusEvent` | Gallery content/camera-busy status changes. `cameraBusyReason` is included when the glasses report a busy camera reason such as `video` or `stream`. |
 | `settings_ack` | `SettingsAckEvent` | Raw gallery/button/FOV setting acknowledgements from the glasses. Gallery and button setting methods return this shape; `setCameraFov(...)` resolves a friendlier `CameraFovResult` after the raw ack reports camera readiness. |
 | `compatible_glasses_search_stop` | `CompatibleGlassesSearchStopEvent` | Compatible-glasses search stops for a model. |
 | `swipe_volume_status` | `SwipeVolumeStatusEvent` | Swipe-volume setting changes. |
 | `switch_status` | `SwitchStatusEvent` | Glasses switch status changes. |
-| `rgb_led_control_response` | `RgbLedControlResponseEvent` | RGB LED command succeeds or fails. Also returned by `rgbLedControl(...)`. |
+| `rgb_led_control_response` | `RgbLedControlResponseEvent` | RGB LED command succeeds or fails. `rgbLedControl(...)` resolves with the success case and rejects on the error case. |
 | `pair_failure` | `PairFailureEvent` | Bluetooth pairing fails. |
 | `audio_pairing_needed` | `AudioPairingNeededEvent` | The phone needs Bluetooth audio pairing for the device. |
 | `audio_connected` | `AudioConnectedEvent` | Bluetooth audio connects. |
@@ -422,7 +447,7 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `ota_start_ack` | `OtaStartAckEvent` | Mentra Live acknowledges `startOtaUpdate()`. Also returned by `startOtaUpdate()`. |
 | `ota_status` | `OtaStatusEvent` | OTA step, phase, status, progress, or error changes. |
 
-For request/response commands, prefer the returned value from the method, such as the `PhotoResponseEvent` returned by `requestPhoto(...)` or the `VideoRecordingStatusEvent` returned by `startVideoRecording(...)`. Use event listeners for ongoing hardware streams and status updates: for example, `useBluetoothEvent('mic_pcm', ...)` receives a `MicPcmEvent`. `MicPcmEvent` includes `sampleRate`, `bitsPerSample`, `channels`, `encoding`, and `voiceActivityDetectionEnabled`; `MicLc3Event` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, `packetizedFromGlasses`, and `voiceActivityDetectionEnabled`. `speaking_status` is separate from microphone audio frames so apps can use continuous audio while still reacting to speech activity.
+For request/response commands, prefer the returned value from the method, such as the `PhotoSuccessResponseEvent` returned by React Native `requestPhoto(...)` or the `VideoRecordingSuccessStatusEvent` returned by React Native `startVideoRecording(...)`. Use event listeners for ongoing hardware streams and status updates: for example, `useBluetoothEvent('mic_pcm', ...)` receives a `MicPcmEvent`. `MicPcmEvent` includes `sampleRate`, `bitsPerSample`, `channels`, `encoding`, and `voiceActivityDetectionEnabled`; `MicLc3Event` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, `packetizedFromGlasses`, and `voiceActivityDetectionEnabled`. `speaking_status` is separate from microphone audio frames so apps can use continuous audio while still reacting to speech activity.
 
 Public React Native event payload fields usually use camelCase. OTA events intentionally mirror the glasses firmware field names, such as `overall_percent` and `version_name`. For example, touch events expose `deviceModel` and `gestureName`, successful photo responses expose `uploadUrl`, hotspot errors expose `errorMessage`, Wi-Fi scan events expose `scanComplete`, and gallery status exposes `hasContent`, `cameraBusy`, and optional `cameraBusyReason`.
 

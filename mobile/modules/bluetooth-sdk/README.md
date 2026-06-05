@@ -268,6 +268,18 @@ Settings commands that return `SettingsAckEvent` reject when the ASG reports an 
 WiFi, hotspot, and version-info commands resolve from the ASG response path, not local dispatch:
 `requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` resolves when that SSID is no longer connected, `setHotspotState()` resolves when the requested hotspot state is reported, and `requestVersionInfo()` resolves from the ASG `version_info` response instead of local store changes.
 
+React Native narrows returned values to success shapes where the raw listener event can also report errors:
+
+| API | Returned Value After `await` | Error Path |
+| --- | --- | --- |
+| `requestPhoto(...)` | `PhotoSuccessResponseEvent` with `state: "success"` and `uploadUrl`. | Rejects when raw `photo_response.state === "error"` or the ASG response times out. |
+| `startVideoRecording(...)` | `VideoRecordingSuccessStatusEvent` with `success: true` and `status: "recording_started"`. | Rejects on `success: false` statuses such as `already_recording`, send failure, or timeout. |
+| `stopVideoRecording(...)` | `VideoRecordingSuccessStatusEvent` with `success: true` and `status: "recording_stopped"`. | Rejects on `success: false` statuses such as `not_recording`, send failure, or timeout. |
+| `rgbLedControl(...)` | `RgbLedControlSuccessResponseEvent` with `state: "success"`. | Rejects when raw `rgb_led_control_response.state === "error"` or the response times out. |
+| `checkForOtaUpdate()` / `retryOtaVersionCheck()` | `OtaQueryResult`, either `ota_update_available` or current `ota_status`. | Rejects on command transport timeout/failure. A returned `ota_status.status === "failed"` is glasses OTA state, not a command rejection. |
+
+Android and iOS async APIs use `BluetoothException` / `BluetoothError` for the same error paths. Their returned event structs are the successful response in normal `try`/`await` code, while raw listener/delegate events still include both success and error payloads.
+
 `setMicState(true)` defaults to continuous microphone PCM from the glasses. The SDK does not apply phone-side Voice Activity Detection gating to microphone audio events. Glasses-side Voice Activity Detection is disabled by default for public SDK consumers; use `setVoiceActivityDetectionEnabled(true)` when you want supported glasses to gate microphone audio and emit live speaking status. `voice_activity_detection_status` reports whether glasses-side Voice Activity Detection is enabled, and `speaking_status` reports speaking/not-speaking when supported. Microphone events include the latest `voiceActivityDetectionEnabled` value.
 
 ## OTA Updates
