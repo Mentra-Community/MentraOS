@@ -187,6 +187,7 @@ data class MentraExampleState(
     val micPlaying: Boolean = false,
     val micRecording: Boolean = false,
     val otaStatus: OtaStatusEvent? = null,
+    val otaStatusMessage: String? = null,
     val otaUpdateAvailable: OtaUpdateAvailableEvent? = null,
     val pcmBytes: Int = 0,
     val pcmFrames: Int = 0,
@@ -1285,13 +1286,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             applyDisconnectedState("Disconnected")
         } else if (!wasConnected && isGlassesConnected()) {
             refreshGlassesMediaVolume()
-            scope.launch {
-                try {
-                    handleOtaQueryResult(withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() })
-                } catch (error: Throwable) {
-                    addEvent("TX", "OTA check failed: ${error.message ?: error::class.java.simpleName}")
-                }
-            }
         }
         addEvent("STORE", summarize(glasses))
     }
@@ -1447,13 +1441,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onOtaStatus(event: OtaStatusEvent) {
-        state = state.copy(
-            otaStatus = event,
-            otaUpdateAvailable = state.otaUpdateAvailable.takeUnless {
-                event.status == "complete" || event.status == "failed"
-            },
-        )
-        addEvent("LIVE", "OTA ${event.status} ${event.overallPercent}%")
+        applyOtaStatus(event)
     }
 
     private fun handleOtaQueryResult(result: OtaQueryResult) {
@@ -1466,7 +1454,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 cacheReady = result.values["cache_ready"] as? Boolean,
                 values = result.values,
             )
-            state = state.copy(otaUpdateAvailable = event)
+            state = state.copy(
+                otaStatus = null,
+                otaStatusMessage = null,
+                otaUpdateAvailable = event,
+            )
             addEvent("LIVE", "OTA available ${event.versionName ?: "unknown"} (${event.updates.joinToString().ifBlank { "update" }})")
             return
         }
@@ -1484,13 +1476,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             glassesTimeMs = result.values.longValue("glasses_time_ms"),
             values = result.values,
         )
-        state = state.copy(
-            otaStatus = event,
-            otaUpdateAvailable = state.otaUpdateAvailable.takeUnless {
-                event.status == "complete" || event.status == "failed"
-            },
-        )
-        addEvent("LIVE", "OTA ${event.status.ifBlank { "status" }} ${event.overallPercent}%")
+        applyOtaStatus(event)
     }
 
     override fun onMicPcm(event: MicPcmEvent) {
@@ -1539,11 +1525,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun checkForOtaUpdate() = runAction("Check OTA") {
         requireConnected("check OTA")
+        requireGlassesWifi("check for OTA updates")
         handleOtaQueryResult(withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() })
     }
 
     fun startOtaUpdate() = runAction("Start OTA") {
         requireConnected("start OTA")
+        requireGlassesWifi("start OTA updates")
         withContext(Dispatchers.IO) { mentraBluetoothSdk.startOtaUpdate() }
         addEvent("LIVE", "OTA start acknowledged")
     }
@@ -1874,6 +1862,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             streamStartedAt = null,
             streamStatus = status,
             hotspotEnabled = false,
+            otaStatus = null,
+            otaStatusMessage = null,
+            otaUpdateAvailable = null,
             micRecording = false,
             phoneAudioRoute = currentAudioOutputRouteLabel(),
             phonePhotoServerRunning = false,
@@ -1883,6 +1874,27 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         )
         stopMicElapsedTimer()
         stopMicPlayback()
+    }
+
+    private fun applyOtaStatus(event: OtaStatusEvent) {
+        if (!isDisplayableOtaStatus(event)) {
+            state = state.copy(
+                otaStatus = null,
+                otaStatusMessage = "No active OTA",
+                otaUpdateAvailable = null,
+            )
+            addEvent("LIVE", "OTA idle")
+            return
+        }
+
+        state = state.copy(
+            otaStatus = event,
+            otaStatusMessage = null,
+            otaUpdateAvailable = state.otaUpdateAvailable.takeUnless {
+                event.status == "complete" || event.status == "failed"
+            },
+        )
+        addEvent("LIVE", "OTA ${event.status.ifBlank { "status" }} ${event.overallPercent}%")
     }
 
     private fun applyStreamStatus(status: StreamStatus) {
@@ -2699,6 +2711,9 @@ fun hotspotSummary(hotspot: HotspotStatus): String =
 
 fun isGlassesWifiConnected(status: GlassesRuntimeState?): Boolean =
     connectedWifiStatus(status) != null
+
+fun isDisplayableOtaStatus(status: OtaStatusEvent): Boolean =
+    status.status != "idle" || !status.errorMessage.isNullOrBlank()
 
 fun connectedWifiStatus(status: GlassesRuntimeState?): WifiStatus.Connected? =
     status?.wifi as? WifiStatus.Connected

@@ -638,11 +638,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   useEffect(() => {
     if (glassesConnected) {
-      if (!wasConnectedRef.current) {
-        void checkForOtaUpdateResult().catch((error) => {
-          addEvent('TX', `OTA check failed: ${formatError(error)}`);
-        });
-      }
       wasConnectedRef.current = true;
       return;
     }
@@ -781,6 +776,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       if (!glassesConnected) {
         throw new Error('Connect glasses first.');
       }
+      requireGlassesWifi('check for OTA updates');
       await checkForOtaUpdateResult();
     });
   }
@@ -803,6 +799,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       if (!glassesConnected) {
         throw new Error('Connect glasses first.');
       }
+      requireGlassesWifi('start OTA updates');
       await BluetoothSdk.startOtaUpdate();
       addEvent('LIVE', 'OTA start acknowledged');
     });

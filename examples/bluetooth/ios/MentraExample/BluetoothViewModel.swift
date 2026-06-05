@@ -230,6 +230,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var lastMicBytes = 0
     @Published private(set) var micPlaybackHint: String?
     @Published private(set) var otaStatus: OtaStatusEvent?
+    @Published private(set) var otaStatusMessage: String?
     @Published private(set) var otaUpdateAvailable: OtaUpdateAvailableEvent?
     @Published private(set) var ledColor = "green"
     @Published private(set) var ledMode = "Off"
@@ -431,6 +432,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func checkForOtaUpdate() {
         runAsyncAction("Check OTA") { [self] in
             try requireConnected("check OTA")
+            try requireGlassesWifi("check for OTA updates")
             handleOtaQueryResult(try await mentraBluetoothSdk.checkForOtaUpdate())
         }
     }
@@ -438,6 +440,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func startOtaUpdate() {
         runAsyncAction("Start OTA") { [self] in
             try requireConnected("start OTA")
+            try requireGlassesWifi("start OTA updates")
             _ = try await mentraBluetoothSdk.startOtaUpdate()
             append(tag: "LIVE", text: "OTA start acknowledged")
         }
@@ -1248,21 +1251,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlasses glasses: GlassesRuntimeState) {
-        let wasConnected = glassesConnected
         glassesValues = glasses
         hotspotEnabled = enabledHotspotStatus(glasses) != nil
         if !glasses.connected {
             applyDisconnectedState(status: "Disconnected")
-        } else if !wasConnected {
-            Task { @MainActor [weak self] in
-                do {
-                    guard let self else { return }
-                    let result = try await self.mentraBluetoothSdk.checkForOtaUpdate()
-                    self.handleOtaQueryResult(result)
-                } catch {
-                    self?.append(tag: "TX", text: "OTA check failed: \(error.localizedDescription)")
-                }
-            }
         }
         refreshGalleryServerStatusForCurrentHotspot(defaultStatus: hotspotEnabled ? galleryServerStatus : "Gallery server: hotspot off")
         append(tag: "STORE", text: summarize(glasses))
@@ -1313,11 +1305,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         case .otaUpdateAvailable, .otaStartAck, .settingsAck, .rgbLedControlResponse:
             break
         case let .otaStatus(event):
-            otaStatus = event
-            if event.status == "complete" || event.status == "failed" {
-                otaUpdateAvailable = nil
-            }
-            append(tag: "LIVE", text: "OTA \(event.status) \(event.overallPercent)%")
+            applyOtaStatus(event)
         case let .raw(name, values):
             handleRawEvent(name: name, values: values)
         default:
@@ -1328,13 +1316,28 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private func handleOtaQueryResult(_ result: OtaQueryResult) {
         if result.type == "ota_update_available" {
             let event = OtaUpdateAvailableEvent(values: result.values)
+            otaStatus = nil
+            otaStatusMessage = nil
             otaUpdateAvailable = event
             append(tag: "LIVE", text: "OTA available \(event.versionName ?? "unknown") (\(event.updates.joined(separator: ", ")))")
             return
         }
 
         let event = OtaStatusEvent(values: result.values)
+        applyOtaStatus(event)
+    }
+
+    private func applyOtaStatus(_ event: OtaStatusEvent) {
+        guard isDisplayableOtaStatus(event) else {
+            otaStatus = nil
+            otaStatusMessage = "No active OTA"
+            otaUpdateAvailable = nil
+            append(tag: "LIVE", text: "OTA idle")
+            return
+        }
+
         otaStatus = event
+        otaStatusMessage = nil
         if event.status == "complete" || event.status == "failed" {
             otaUpdateAvailable = nil
         }
@@ -1572,6 +1575,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         hotspotEnabled = false
         galleryServerReachable = nil
         galleryServerStatus = "Gallery server: connect glasses first"
+        otaStatus = nil
+        otaStatusMessage = nil
+        otaUpdateAvailable = nil
         if activePhotoRequestId != nil {
             activePhotoRequestId = nil
             pollGeneration += 1
@@ -2044,6 +2050,10 @@ func connectedWifiStatus(_ status: GlassesRuntimeState?) -> (ssid: String, local
         return nil
     }
     return (ssid, localIp)
+}
+
+func isDisplayableOtaStatus(_ status: OtaStatusEvent) -> Bool {
+    status.status != "idle" || !(status.errorMessage ?? "").isEmpty
 }
 
 func enabledHotspotStatus(_ hotspot: HotspotStatus) -> (ssid: String, password: String, localIp: String)? {

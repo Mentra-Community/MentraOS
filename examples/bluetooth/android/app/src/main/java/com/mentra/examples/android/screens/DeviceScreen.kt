@@ -46,6 +46,7 @@ import com.mentra.examples.android.firmwareLabel
 import com.mentra.examples.android.firmwareSubLabel
 import com.mentra.examples.android.hasSavedConnectionTarget
 import com.mentra.examples.android.isGlassesConnected
+import com.mentra.examples.android.isGlassesWifiConnected
 import com.mentra.examples.android.modelLabel
 import com.mentra.examples.android.rssiLabel
 import com.mentra.examples.android.rssiUpdatedLabel
@@ -58,6 +59,7 @@ import com.mentra.examples.android.wifiLabel
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.Eyebrow
 import com.mentra.examples.android.ui.GlassCard
+import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
 import com.mentra.examples.android.ui.scrollBottomPadding
 import java.util.Locale
@@ -70,6 +72,8 @@ fun DeviceScreen(controller: MentraExampleController) {
     val canConnect = !connected && canConnectTarget(state)
     val hasDefaultTarget = hasSavedConnectionTarget(state.bluetoothStatus)
     val displaySupported = connected && supportsDisplay(glasses)
+    val glassesWifiConnected = isGlassesWifiConnected(glasses)
+    val otaWifiRequired = connected && !glassesWifiConnected
     val currentDeviceName = if (connected) connectionTargetLabel(state, glasses) else deviceLabel(glasses)
     val level = batteryLevel(glasses)
     val latestEvent = state.events.firstOrNull()
@@ -126,7 +130,15 @@ fun DeviceScreen(controller: MentraExampleController) {
                 StatTile("WI-FI", wifiLabel(glasses), currentWifi?.localIp ?: "unknown", AppColor.muted, Modifier.weight(1f), bold = true)
                 StatTile("RSSI", rssiLabel(glasses), rssiUpdatedLabel(glasses), AppColor.greenAccent, Modifier.weight(1f), bold = true)
             }
-            OtaCard(controller, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp))
+            if (state.otaStatus != null || state.otaUpdateAvailable != null) {
+                OtaCard(controller, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp))
+            }
+            if (otaWifiRequired) {
+                OfflineNotice(
+                    message = "Connect the glasses to Wi-Fi from the System tab before checking or starting OTA updates. OTA downloads run over the glasses network connection.",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+            }
         }
 
         // Quick actions
@@ -150,7 +162,7 @@ fun DeviceScreen(controller: MentraExampleController) {
                     LightBtn("Clear Display", Icons.Outlined.Tv, Modifier.weight(1f), enabled = displaySupported, onClick = controller::clearDisplay)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LightBtn("Check OTA", Icons.Outlined.Refresh, Modifier.weight(1f), enabled = connected, onClick = controller::checkForOtaUpdate)
+                    LightBtn(if (connected && !glassesWifiConnected) "Connect Wi-Fi" else "Check OTA", Icons.Outlined.Refresh, Modifier.weight(1f), enabled = connected && glassesWifiConnected, onClick = controller::checkForOtaUpdate)
                     LightBtn("Start OTA", Icons.Outlined.FileDownload, Modifier.weight(1f), enabled = canStartOta(state), onClick = controller::startOtaUpdate)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -277,7 +289,7 @@ private fun glassesImageRes(values: GlassesRuntimeState?): Int {
 }
 
 private fun canStartOta(state: com.mentra.examples.android.MentraExampleState): Boolean =
-    isGlassesConnected(state.glassesStatus) && state.otaUpdateAvailable != null && !isOtaInProgress(state)
+    isGlassesConnected(state.glassesStatus) && isGlassesWifiConnected(state.glassesStatus) && state.otaUpdateAvailable != null && !isOtaInProgress(state)
 
 private fun isOtaInProgress(state: com.mentra.examples.android.MentraExampleState): Boolean =
     state.otaStatus?.status == "in_progress" || state.otaStatus?.status == "step_complete"
@@ -285,6 +297,7 @@ private fun isOtaInProgress(state: com.mentra.examples.android.MentraExampleStat
 private fun otaStatusLine(state: com.mentra.examples.android.MentraExampleState): String =
     state.otaStatus?.let { "${it.status.replace('_', ' ')} · ${it.overallPercent}%" }
         ?: state.otaUpdateAvailable?.let { "Update ${it.versionName ?: "available"}" }
+        ?: state.otaStatusMessage
         ?: if (isGlassesConnected(state.glassesStatus)) "Check not run" else "Connect glasses"
 
 private fun otaCardTitle(state: com.mentra.examples.android.MentraExampleState): String =
@@ -318,6 +331,7 @@ private fun formatBytes(bytes: Long): String =
 @Composable
 private fun OtaCard(controller: MentraExampleController, modifier: Modifier = Modifier) {
     val state = controller.state
+    if (state.otaStatus == null && state.otaUpdateAvailable == null) return
     val percent = state.otaStatus?.overallPercent ?: 0
     Column(
         modifier = modifier
@@ -333,16 +347,20 @@ private fun OtaCard(controller: MentraExampleController, modifier: Modifier = Mo
                 Eyebrow("OTA")
                 Text(otaCardTitle(state), color = AppColor.ink, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }
-            Text("$percent%", color = AppColor.greenInk, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+            if (state.otaStatus != null) {
+                Text("$percent%", color = AppColor.greenInk, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+            }
         }
-        Box(modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(999.dp)).background(AppColor.greenInk.copy(alpha = 0.08f))) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth((percent.coerceIn(0, 100) / 100f))
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(AppColor.greenPrimary)
-            )
+        if (state.otaStatus != null) {
+            Box(modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(999.dp)).background(AppColor.greenInk.copy(alpha = 0.08f))) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth((percent.coerceIn(0, 100) / 100f))
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(AppColor.greenPrimary)
+                )
+            }
         }
         Text(otaCardDetail(state), color = AppColor.muted, fontSize = 12.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium)
     }

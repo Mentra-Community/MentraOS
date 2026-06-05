@@ -3,6 +3,7 @@ import { View, Text, ScrollView, Pressable, StyleSheet, Image } from 'react-nati
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Line, Path, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
+import { OfflineNotice } from '../components/OfflineNotice';
 import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { colors } from '../components/theme';
 import {
@@ -15,6 +16,7 @@ import {
   firmwareLabel,
   firmwareSubLabel,
   isGlassesConnected,
+  isGlassesWifiConnected,
   latestEventLabel,
   modelLabel,
   rssiLabel,
@@ -42,6 +44,8 @@ export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const canConnect = !connected && hasConnectionTarget(sdk);
   const hasDefaultTarget = Boolean(sdk.defaultDevice);
   const displaySupported = connected && supportsDisplay(sdk.glasses);
+  const glassesWifiConnected = isGlassesWifiConnected(sdk.glasses);
+  const otaWifiRequired = connected && !glassesWifiConnected;
   const connection = connectionLabel(sdk.glasses);
   const latestEvent = sdk.events[0];
 
@@ -93,6 +97,9 @@ export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <StatCard label="RSSI" value={rssiLabel(sdk.glasses)} sub={rssiUpdatedLabel(sdk.glasses)} subColor={colors.greenAccent} bold />
           </View>
           {(sdk.otaStatus || sdk.otaUpdateAvailable) ? <OtaCard sdk={sdk} /> : null}
+          {otaWifiRequired ? (
+            <OfflineNotice message="Connect the glasses to Wi-Fi from the System tab before checking or starting OTA updates. OTA downloads run over the glasses network connection." />
+          ) : null}
         </>
       ) : null}
 
@@ -134,11 +141,11 @@ export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             </Pressable>
           </View>
           <View style={styles.btnRow}>
-            <Pressable disabled={!connected} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !connected && styles.disabled]} onPress={sdk.checkForOtaUpdate}>
+            <Pressable disabled={!connected || !glassesWifiConnected} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, (!connected || !glassesWifiConnected) && styles.disabled]} onPress={sdk.checkForOtaUpdate}>
               <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                 <Path d="M21 12a9 9 0 0 1-15.5 6.2" /><Path d="M3 12a9 9 0 0 1 15.5-6.2" /><Path d="M18 2v4h-4" /><Path d="M6 22v-4h4" />
               </Svg>
-              <Text style={styles.btnTextDark}>Check OTA</Text>
+              <Text style={styles.btnTextDark}>{connected && !glassesWifiConnected ? 'Connect Wi-Fi' : 'Check OTA'}</Text>
             </Pressable>
             <Pressable disabled={!canStartOta(sdk)} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !canStartOta(sdk) && styles.disabled]} onPress={sdk.startOtaUpdate}>
               <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
@@ -260,7 +267,7 @@ function glassesImageFor(status: BluetoothSdkExampleModel['glasses']) {
 }
 
 function canStartOta(sdk: BluetoothSdkExampleModel) {
-  if (!isGlassesConnected(sdk.glasses) || !sdk.otaUpdateAvailable) {
+  if (!isGlassesConnected(sdk.glasses) || !isGlassesWifiConnected(sdk.glasses) || !sdk.otaUpdateAvailable) {
     return false;
   }
   return !isOtaInProgress(sdk);
