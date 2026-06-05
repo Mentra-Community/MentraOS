@@ -15,7 +15,7 @@
  * Spec + design: cloud-v2/docs/issues/003-audio/.
  */
 
-import { createHealthApp, createLogger } from "@mentra/cloud-shared";
+import { createLogger } from "@mentra/cloud-shared";
 import {
   connectRedis,
   disconnectRedis,
@@ -34,7 +34,7 @@ import {
   startUdpIngress,
   stopUdpIngress,
 } from "./net/udp";
-import { tryAudioRest } from "./net/http";
+import { createApiApp } from "./api";
 import {
   startOwnershipRefreshLoop,
   stopOwnershipRefreshLoop,
@@ -120,19 +120,16 @@ export async function startAudio(opts: StartAudioOptions = {}): Promise<AudioHan
   // twice in a test.
   startOwnershipRefreshLoop({ podId, getOwnedUserIds });
 
-  const healthApp = createHealthApp({
-    packageName: "audio",
-    readinessChecks: [redisReadinessCheck],
-  });
+  // The REST surface (Hono): subscriptions today, health, camera later. The WS
+  // upgrade is tried first; everything else falls through to this app.
+  const apiApp = createApiApp({ readinessChecks: [redisReadinessCheck] });
 
   const server = Bun.serve({
     port: httpPort,
     async fetch(req, srv) {
       const wsResult = await tryWsUpgrade(req, srv);
       if (wsResult !== HTTP_FALLTHROUGH) return wsResult;
-      const restResult = await tryAudioRest(req);
-      if (restResult) return restResult;
-      return healthApp.fetch(req);
+      return apiApp.fetch(req);
     },
     websocket: wsHandlers,
   });

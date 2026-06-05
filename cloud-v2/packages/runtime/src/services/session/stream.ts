@@ -187,6 +187,12 @@ export interface SessionTagRecord {
   authSessionId: string;
   /** Which pod's WebSocket owns this session. Used by dispatch later. */
   podId: string;
+  /**
+   * The session's audio frame encryption key (base64). Carried so a UDP packet
+   * that lands on any pod can fetch this session's key by sessionTag and
+   * decrypt the frame.
+   */
+  encryptionKeyB64: string;
 }
 
 function sessionTagKey(tag: number): string {

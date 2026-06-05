@@ -30,6 +30,11 @@ cloud-v2/packages/runtime/        # @mentra/cloud-runtime
       udp.ts                      # UDP ingress socket: receive packets, hand to the stream
       ws.ts                       # WebSocket transport: upgrade/auth, the per-tag registry, send-to-user
 
+    api/                          # the REST surface (Hono): client-initiated commands, pod-agnostic
+      index.ts                    # the Hono app: mounts the service routes + health
+      audio.api.ts                # PUT /api/audio/subscriptions (full-replace, sessionId + version guarded)
+      camera.api.ts               # (later) managed photo + stream REST
+
     services/
       session/                    # the per-user state in Redis that makes scaling + failover work
         ownership.ts              # the "one pod owns this user" lock + TTL refresh
@@ -63,7 +68,8 @@ The signatures don't change in the refactor, only where they live. The public on
 (`AudioSubscription`, the message unions) come from `protocol/`.
 
 **`src/index.ts`**: boot only. Parses config from options/env, connects Redis, starts
-the UDP and WebSocket listeners, hands off to `audio.service`, and serves HTTP health.
+the UDP and WebSocket listeners, hands off to `audio.service`, and serves the Hono
+`api/` app (health + the REST surface).
 
 ```ts
 export interface StartAudioOptions {

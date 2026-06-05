@@ -4,6 +4,7 @@
     { "path": "./packages/shared" },
     { "path": "./packages/core" },
     { "path": "./packages/runtime" },
+    { "path": "./packages/cloud-client" },
     { "path": "./packages/proxy" },
     { "path": "./test/test-oem" },
     { "path": "./test/test-client" }

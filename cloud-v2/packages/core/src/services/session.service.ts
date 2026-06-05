@@ -51,6 +51,22 @@ const MENTRA_ISSUER = "mentra-cloud";
 const MENTRA_AUDIENCE = "mentra-cloud";
 const MENTRA_ALG = "EdDSA";
 
+// Miniapp-scoped tokens use "mentra" as the issuer (per auth/spec.md "Miniapp-
+// scoped token") rather than "mentra-cloud", because developer backends key
+// their trust policy on this value and the spec pins it.
+const MINIAPP_ISSUER = "mentra";
+
+// Default miniapp-token lifetime. Env-overridable (MENTRA_MINIAPP_TOKEN_TTL_SEC)
+// so tests can shorten it without touching code.
+const MINIAPP_TOKEN_DEFAULT_TTL_SEC = 60 * 60; // 1 hour
+
+// JWKS key ids. Each published public key carries a stable `kid` so verifiers
+// (developer backends, internal services) select the right key by header,
+// which is what makes key rotation a no-coordination change. Access tokens and
+// miniapp tokens are signed with separate keys, so they get separate kids.
+const ACCESS_TOKEN_KID = "mentra-access-1";
+const MINIAPP_TOKEN_KID = "mentra-miniapp-1";
+
 // === Public API ===
 
 /**
@@ -214,14 +230,79 @@ export async function verifyAccessToken(token: string): Promise<VerifiedAccessTo
   return verified;
 }
 
+/**
+ * Mint a miniapp-scoped token for one packageName.
+ *
+ * The caller has already verified the device's access token and read the
+ * identity from it (mentraUserId + oemId). This token is audience-pinned to a
+ * single miniapp (`aud = packageName`) and signed with the separate
+ * miniapp-token key, so it is only ever valid against that one miniapp's
+ * developer backend. It is the only token a miniapp ever holds; the access
+ * token never leaves the device.
+ *
+ * No install or entitlement check happens here: per auth/spec.md, a valid
+ * access token plus the requested packageName is sufficient, and the on-device
+ * Runtime enforces that a bundle can only request its own packageName.
+ *
+ * TTL defaults to 1h and is env-overridable via MENTRA_MINIAPP_TOKEN_TTL_SEC
+ * so tests can shorten it. Returns the token and its absolute expiry as Unix
+ * seconds (what the client caches against).
+ */
+export async function issueMiniappToken(args: {
+  mentraUserId: string;
+  oemId: string;
+  packageName: string;
+}): Promise<{ token: string; expiresAt: number }> {
+  const { privateKey } = await getMiniappKeys();
+  const ttlSec = miniappTokenTtlSec();
+  const expiresAt = Math.floor(Date.now() / 1000) + ttlSec;
+
+  const token = await new jose.SignJWT({ oemId: args.oemId })
+    // The `kid` points the developer backend at the miniapp-token public key.
+    .setProtectedHeader({ alg: MENTRA_ALG, kid: MINIAPP_TOKEN_KID })
+    .setIssuer(MINIAPP_ISSUER)
+    .setAudience(args.packageName)
+    .setSubject(args.mentraUserId)
+    .setJti(ulid())
+    .setIssuedAt()
+    .setExpirationTime(expiresAt)
+    .sign(privateKey);
+
+  return { token, expiresAt };
+}
+
+/**
+ * Resolve the miniapp-token TTL: the env override if a positive integer is
+ * set, otherwise the 1h default. Parsed per call (not cached) so tests can
+ * flip it between cases.
+ */
+function miniappTokenTtlSec(): number {
+  const raw = process.env.MENTRA_MINIAPP_TOKEN_TTL_SEC;
+  if (!raw) return MINIAPP_TOKEN_DEFAULT_TTL_SEC;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return MINIAPP_TOKEN_DEFAULT_TTL_SEC;
+  }
+  return Math.floor(parsed);
+}
+
 // === Internals: Mentra signing keys ===
 
 /**
- * Lazy-loaded Mentra signing keypair. We hold both halves on `core` so we
- * can sign and verify in this same process. Audio/proxy will receive only
- * the public half.
+ * Lazy-loaded Mentra signing keypair for **access tokens**. We hold both
+ * halves on `core` so we can sign and verify in this same process. Audio/proxy
+ * will receive only the public half.
  */
 let mentraKeys: Promise<{ privateKey: jose.KeyLike; publicKey: jose.KeyLike }> | null = null;
+
+/**
+ * Lazy-loaded Mentra signing keypair for **miniapp tokens**. Kept separate
+ * from the access-token key on purpose: per auth/spec.md "Signing keys", two
+ * keys limit blast radius, a leak of the miniapp key can't forge access
+ * tokens, and vice versa. The public half is published in the JWKS so
+ * developer backends can verify miniapp tokens.
+ */
+let miniappKeys: Promise<{ privateKey: jose.KeyLike; publicKey: jose.KeyLike }> | null = null;
 
 async function getMentraKeys() {
   if (!mentraKeys) {
@@ -230,15 +311,23 @@ async function getMentraKeys() {
   return mentraKeys;
 }
 
+async function getMiniappKeys() {
+  if (!miniappKeys) {
+    miniappKeys = loadMiniappKeys();
+  }
+  return miniappKeys;
+}
+
 /**
- * Reset the lazy-loaded signing keypair cache. **Test-only.** Production
+ * Reset the lazy-loaded signing keypair caches. **Test-only.** Production
  * has no reason to rotate keys mid-process; tests that mutate
- * `MENTRA_JWT_*` env vars (e.g. running multiple test files in the same
- * Bun process) need to discard the cached import so the next call reads
- * the new env.
+ * `MENTRA_JWT_*` / `MENTRA_MINIAPP_JWT_*` env vars (e.g. running multiple test
+ * files in the same Bun process) need to discard the cached imports so the
+ * next call reads the new env.
  */
 export function resetSigningKeyCache(): void {
   mentraKeys = null;
+  miniappKeys = null;
 }
 
 async function loadMentraKeys() {
@@ -247,11 +336,57 @@ async function loadMentraKeys() {
   const privatePem = toPem(privB64, "PRIVATE KEY");
   const publicPem = toPem(pubB64, "PUBLIC KEY");
   const [privateKey, publicKey] = await Promise.all([
+    // Public key stays extractable so we can export it to JWK form for the
+    // /.well-known/jwks.json endpoint.
     jose.importPKCS8(privatePem, MENTRA_ALG, { extractable: false }),
-    jose.importSPKI(publicPem, MENTRA_ALG, { extractable: false }),
+    jose.importSPKI(publicPem, MENTRA_ALG, { extractable: true }),
   ]);
-  logger.info("loaded Mentra JWT signing keypair");
+  logger.info("loaded Mentra access-token signing keypair");
   return { privateKey, publicKey };
+}
+
+/**
+ * Load the miniapp-token signing keypair from env. Falls back to the
+ * access-token key env vars is intentionally NOT done: the keys must be
+ * distinct for the blast-radius guarantee, so the miniapp env vars are
+ * required in their own right.
+ */
+async function loadMiniappKeys() {
+  const privB64 = requireEnv("MENTRA_MINIAPP_JWT_PRIVATE_KEY");
+  const pubB64 = requireEnv("MENTRA_MINIAPP_JWT_PUBLIC_KEY");
+  const privatePem = toPem(privB64, "PRIVATE KEY");
+  const publicPem = toPem(pubB64, "PUBLIC KEY");
+  const [privateKey, publicKey] = await Promise.all([
+    jose.importPKCS8(privatePem, MENTRA_ALG, { extractable: false }),
+    jose.importSPKI(publicPem, MENTRA_ALG, { extractable: true }),
+  ]);
+  logger.info("loaded Mentra miniapp-token signing keypair");
+  return { privateKey, publicKey };
+}
+
+/**
+ * Build the public JWKS document Mentra publishes at /.well-known/jwks.json.
+ *
+ * Contains both public keys, each tagged with its `kid` (and `alg`/`use`), so
+ * a verifier picks the right key by the JWT header's `kid`:
+ *   - the access-token key, used by internal services to verify access tokens
+ *   - the miniapp-token key, used by developer backends to verify miniapp tokens
+ *
+ * Publishing both from day one is what makes key rotation a no-coordination
+ * change: a new key is added here alongside the old until old tokens expire.
+ */
+export async function getPublicJwks(): Promise<{ keys: jose.JWK[] }> {
+  const [access, miniapp] = await Promise.all([getMentraKeys(), getMiniappKeys()]);
+  const [accessJwk, miniappJwk] = await Promise.all([
+    jose.exportJWK(access.publicKey),
+    jose.exportJWK(miniapp.publicKey),
+  ]);
+  return {
+    keys: [
+      { ...accessJwk, alg: MENTRA_ALG, use: "sig", kid: ACCESS_TOKEN_KID },
+      { ...miniappJwk, alg: MENTRA_ALG, use: "sig", kid: MINIAPP_TOKEN_KID },
+    ],
+  };
 }
 
 /**
@@ -282,7 +417,8 @@ async function issueAccessToken(args: {
     oem_id: args.oemId,
     session_id: args.sessionId,
   })
-    .setProtectedHeader({ alg: MENTRA_ALG })
+    // The `kid` points verifiers at the access-token public key in the JWKS.
+    .setProtectedHeader({ alg: MENTRA_ALG, kid: ACCESS_TOKEN_KID })
     .setIssuer(MENTRA_ISSUER)
     .setAudience(MENTRA_AUDIENCE)
     .setSubject(args.mentraUserId)

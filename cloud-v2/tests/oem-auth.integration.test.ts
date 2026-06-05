@@ -4,7 +4,7 @@
  * Wires:
  *   TEST OEM (in-process)
  *     ↓ signs JWT with its private key
- *   core's POST /api/oem/oauth/token (in-process via app.fetch)
+ *   core's POST /api/client/auth/exchange (in-process via app.fetch)
  *     ↓ verifies, mints Mentra access + refresh
  *   assertions on response shape + downstream rejection paths
  *
@@ -298,7 +298,7 @@ async function exchange(jwt: string): Promise<Response> {
     subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
   });
   return coreApp.fetch(
-    new Request("http://localhost/api/oem/oauth/token", {
+    new Request("http://localhost/api/client/auth/exchange", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
@@ -312,7 +312,7 @@ async function refresh(refreshToken: string): Promise<Response> {
     refresh_token: refreshToken,
   });
   return coreApp.fetch(
-    new Request("http://localhost/api/oem/oauth/refresh", {
+    new Request("http://localhost/api/client/auth/refresh", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,

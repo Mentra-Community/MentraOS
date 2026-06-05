@@ -1,12 +1,12 @@
 /**
  * @fileoverview OAuth 2.0 / RFC 8693 protocol types.
  *
- * The Token Exchange flow (`POST /api/oem/oauth/token`) and the Refresh flow
- * (`POST /api/oem/oauth/refresh`) both return responses and errors in
+ * The Token Exchange flow (`POST /api/client/auth/exchange`) and the Refresh
+ * flow (`POST /api/client/auth/refresh`) both return responses and errors in
  * RFC-defined shapes. Services throw `OauthError` subtypes; the API layer
  * catches them and renders the wire response.
  *
- * Spec: docs/issues/001-oem-auth/design.md ("Endpoints" / "Errors")
+ * Spec: docs/issues/001-cloud-core/auth/spec.md ("Endpoints")
  *       RFC 6749 §5.2 (token endpoint error response)
  *       RFC 8693 §2.2.2 (token-exchange error response — same shape)
  */

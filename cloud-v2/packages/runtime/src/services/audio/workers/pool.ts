@@ -33,7 +33,6 @@ import type {
   WorkerInMessage,
   WorkerOutMessage,
 } from "./worker";
-import type { AudioSubscription } from "../../session/subscriptions";
 
 const logger = createLogger("audio").child({ service: "worker-pool" });
 
@@ -48,8 +47,13 @@ interface WorkerSlot {
   ownedUsers: Set<string>;
   /** ATTACH_USER messages queued while waiting for WORKER_READY. */
   pendingAttaches: string[];
-  /** UPDATE_SUBSCRIPTIONS messages queued while waiting for WORKER_READY. */
-  pendingSubscriptions: Map<string, AudioSubscription[]>;
+  /**
+   * Users with a pending reconcile nudge (UPDATE_SUBSCRIPTIONS) queued while
+   * waiting for WORKER_READY. A Set, not a list of snapshots: the nudge carries
+   * no subs (the worker reads the subscription key), so duplicate nudges
+   * collapse to one.
+   */
+  pendingSubscriptions: Set<string>;
   /** SET_CODEC messages queued while waiting for WORKER_READY. */
   pendingCodecs: Map<string, AudioCodec>;
 }
@@ -161,27 +165,27 @@ export function assignUser(mentraUserId: string): void {
 }
 
 /**
- * Push a new subscription set for `mentraUserId` to whichever worker holds
- * them. Idempotent — reissuing the same subscriptions is a no-op for the
- * worker (it diffs against its current state). No-op if the user isn't
- * currently assigned to a worker.
+ * Nudge the worker holding `mentraUserId` to reconcile its subscriptions from
+ * the Redis subscription key (the source of truth). Called by the main thread
+ * after it seeds the key at `connection.init`. Cross-pod REST writes reach the
+ * owning worker through the control stream instead; this IPC path is only for
+ * the local same-pod seed. No-op if the user isn't assigned to a worker here.
+ *
+ * Idempotent: the worker re-reads the key and diffs against its current state,
+ * so reissuing the nudge is harmless.
  */
-export function updateSubscriptions(
-  mentraUserId: string,
-  subs: AudioSubscription[],
-): void {
+export function reconcileSubscriptions(mentraUserId: string): void {
   if (!pool) return;
   const slot = pool.userToWorker.get(mentraUserId);
   if (!slot) return;
   const msg: WorkerInMessage = {
     type: "UPDATE_SUBSCRIPTIONS",
     mentraUserId,
-    subs,
   };
   if (slot.ready) {
     slot.worker.postMessage(msg);
   } else {
-    slot.pendingSubscriptions.set(mentraUserId, subs);
+    slot.pendingSubscriptions.add(mentraUserId);
   }
 }
 
@@ -269,7 +273,7 @@ function spawnWorkerSlot(id: string): WorkerSlot {
     ready: false,
     ownedUsers: new Set(),
     pendingAttaches: [],
-    pendingSubscriptions: new Map(),
+    pendingSubscriptions: new Set(),
     pendingCodecs: new Map(),
   };
 
@@ -291,11 +295,10 @@ function spawnWorkerSlot(id: string): WorkerSlot {
         } satisfies WorkerInMessage);
       }
       slot.pendingCodecs.clear();
-      for (const [userId, subs] of slot.pendingSubscriptions) {
+      for (const userId of slot.pendingSubscriptions) {
         worker.postMessage({
           type: "UPDATE_SUBSCRIPTIONS",
           mentraUserId: userId,
-          subs,
         } satisfies WorkerInMessage);
       }
       slot.pendingSubscriptions.clear();

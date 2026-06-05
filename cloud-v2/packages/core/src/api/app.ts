@@ -2,9 +2,16 @@
  * @fileoverview Root Hono app for cloud-core.
  *
  * Layout:
- *   /healthz, /ready          — health, no middleware (kept lightweight)
- *   /api/* + request-context  — per-request reqId + logger
- *   /api/oem/oauth/*          — OEM token exchange + refresh
+ *   /healthz, /ready            — health, no middleware (kept lightweight)
+ *   /.well-known/jwks.json      — public signing keys (JWKS), unauthenticated
+ *   /api/* + request-context    — per-request reqId + logger
+ *   /api/client/auth/*          — device-called auth: exchange, refresh,
+ *                                 miniapp-token
+ *
+ * Caller convention (auth/spec.md): /api/client/* is device-called and
+ * /api/oem/* is reserved for the OEM's backend. The token exchange + refresh
+ * routes are device-called, so they live under /api/client/auth, not
+ * /api/oem/*.
  *
  * The global error handler translates `OauthError` subtypes to the RFC 8693
  * error body shape `{ error, error_description }`. Anything else becomes a
@@ -16,7 +23,8 @@ import { createHealthApp, createLogger, type ReadinessCheck } from "@mentra/clou
 import type { AppEnv } from "../types/hono.types";
 import { OauthError } from "../types/oauth.types";
 import { requestContext } from "./middleware/context.middleware";
-import oemTokens from "./oem/tokens.api";
+import clientAuth from "./client/auth.api";
+import wellKnown from "./well-known.api";
 
 const logger = createLogger("core").child({ service: "app" });
 
@@ -37,11 +45,16 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
     }),
   );
 
+  // Public key discovery. Mounted at the root (not under /api/*) so it lives
+  // at the standard /.well-known/jwks.json. Unauthenticated by design: it only
+  // exposes public keys.
+  app.route("/", wellKnown);
+
   // Per-request context (reqId, logger) for everything under /api/*.
   app.use("/api/*", requestContext);
 
-  // Audience mounts.
-  app.route("/api/oem/oauth", oemTokens);
+  // Audience mounts. Device-called auth lives under /api/client/*.
+  app.route("/api/client/auth", clientAuth);
 
   // Global error translator.
   app.onError((err, c) => {

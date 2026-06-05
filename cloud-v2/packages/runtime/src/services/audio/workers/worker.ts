@@ -25,6 +25,8 @@
 
 import {Redis} from "ioredis"
 import {AUDIO_STREAM_GROUP, audioStreamKey} from "../../session/stream"
+import {CONTROL_STREAM_GROUP, controlStreamKey} from "../../session/control-stream"
+import type {SubscriptionRecord} from "../../session/subscriptions-store"
 import {LC3Decoder} from "./lc3"
 import {createMockProvider} from "../providers/mock"
 import {createSonioxProvider} from "../providers/soniox"
@@ -41,10 +43,18 @@ export interface DetachUserMessage {
   type: "DETACH_USER"
   mentraUserId: string
 }
+/**
+ * Tell the worker to reconcile a user's subscriptions. This is a NUDGE, not a
+ * payload: the worker re-reads the `{user:X}:subscriptions` Redis key (the
+ * source of truth) and reconciles its provider set from that. The main thread
+ * sends this after seeding the key at `connection.init`; the same reconcile
+ * also fires when the worker reads a control-stream entry. Keeping the subs out
+ * of the message is deliberate: there is exactly one source of truth (the key),
+ * so no path can hand the worker a snapshot that disagrees with it.
+ */
 export interface UpdateSubscriptionsMessage {
   type: "UPDATE_SUBSCRIPTIONS"
   mentraUserId: string
-  subs: AudioSubscription[]
 }
 /** Audio codec for a user's stream. Set from the client's connection.init. */
 export type AudioCodec = "lc3" | "pcm"
@@ -177,6 +187,13 @@ const mainClient = new Redis(REDIS_URL, {
   maxRetriesPerRequest: 3,
 })
 
+// Dedicated client for the blocking control-stream read. A blocking
+// XREADGROUP holds its connection for the whole BLOCK window; sharing it with
+// the audio read or the control XACKs would serialize them behind each other.
+const controlClient = new Redis(REDIS_URL, {
+  maxRetriesPerRequest: 3,
+})
+
 // === Receive assignments from main thread ===
 
 declare const self: Worker
@@ -189,11 +206,14 @@ declare const self: Worker
  */
 const readyUsers = new Set<string>()
 
+/** Users whose control-stream consumer group has been ensured. */
+const controlReadyUsers = new Set<string>()
+
 async function handleAttach(mentraUserId: string): Promise<void> {
   ownedUsers.add(mentraUserId)
   // Decoder is needed for any audio activity; create it eagerly so the very
   // first packet has somewhere to land. Providers are NOT created until the
-  // phone sends a SUBSCRIBE (or never, if they only want raw audio
+  // subscription set names one (or never, if the session only wants raw audio
   // routing).
   if (!decoders.has(mentraUserId)) {
     try {
@@ -203,9 +223,44 @@ async function handleAttach(mentraUserId: string): Promise<void> {
     }
   }
   const ok = await ensureConsumerGroup(mentraUserId)
+  // Control-stream group too, so subscription-change nudges for this user land
+  // in our consumer once we own them. Independent of the audio group result;
+  // we still want to read control even if the audio stream isn't ready yet.
+  await ensureControlConsumerGroup(mentraUserId)
   if (ok && ownedUsers.has(mentraUserId)) {
     readyUsers.add(mentraUserId)
   }
+  // Reconcile from the subscription key on attach/ownership-acquire. A takeover
+  // worker inherits the live subscription set from the key, so providers come
+  // back up without waiting for the next REST write. The key is the source of
+  // truth; a missing key means "no subscriptions yet" (empty set).
+  await reconcileFromKey(mentraUserId)
+}
+
+/**
+ * Read the user's authoritative subscription set from the Redis key and
+ * reconcile providers against it. The key is the single source of truth; this
+ * runs on attach, on a control-stream nudge, and on the main thread's
+ * post-seed nudge. A missing key reconciles to an empty set.
+ */
+async function reconcileFromKey(mentraUserId: string): Promise<void> {
+  let subs: AudioSubscription[] = []
+  try {
+    const raw = await mainClient.get(subscriptionsKey(mentraUserId))
+    if (raw) {
+      const record = JSON.parse(raw) as SubscriptionRecord
+      subs = record.subscriptions ?? []
+    }
+  } catch (err) {
+    console.error("[audio-worker] reconcileFromKey read failed:", err)
+    return
+  }
+  await reconcileProviders(mentraUserId, subs)
+}
+
+/** Subscription key, mirrored from `subscriptions-store.ts` (hash-tagged per user). */
+function subscriptionsKey(mentraUserId: string): string {
+  return `{user:${mentraUserId}}:subscriptions`
 }
 
 /**
@@ -213,7 +268,7 @@ async function handleAttach(mentraUserId: string): Promise<void> {
  * Closes providers whose subscriptions disappeared; opens providers for
  * new subs. Idempotent for unchanged subs (no recreation).
  */
-async function handleUpdateSubscriptions(mentraUserId: string, subs: AudioSubscription[]): Promise<void> {
+async function reconcileProviders(mentraUserId: string, subs: AudioSubscription[]): Promise<void> {
   userSubs.set(mentraUserId, subs)
 
   const existing = userProviders.get(mentraUserId) ?? new Map<string, TranscriptionProvider>()
@@ -336,6 +391,7 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
     case "DETACH_USER": {
       ownedUsers.delete(msg.mentraUserId)
       readyUsers.delete(msg.mentraUserId)
+      controlReadyUsers.delete(msg.mentraUserId)
       decoders.delete(msg.mentraUserId)
       userSubs.delete(msg.mentraUserId)
       userCodecs.delete(msg.mentraUserId)
@@ -351,7 +407,9 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
       break
     }
     case "UPDATE_SUBSCRIPTIONS":
-      void handleUpdateSubscriptions(msg.mentraUserId, msg.subs)
+      // Nudge: re-read the subscription key and reconcile. The message carries
+      // no subs on purpose; the key is the source of truth.
+      void reconcileFromKey(msg.mentraUserId)
       break
     case "SHUTDOWN":
       running = false
@@ -381,7 +439,94 @@ async function ensureConsumerGroup(mentraUserId: string): Promise<boolean> {
   }
 }
 
+async function ensureControlConsumerGroup(mentraUserId: string): Promise<boolean> {
+  try {
+    // Start at `$` (new entries only): the control stream is a nudge bus, and
+    // any change that happened before we took ownership is already reflected in
+    // the subscription key, which we read directly on attach. So we only need
+    // entries that arrive AFTER we start owning the user. `MKSTREAM` creates
+    // the stream if no REST write has touched it yet.
+    await controlClient.xgroup("CREATE", controlStreamKey(mentraUserId), CONTROL_STREAM_GROUP, "$", "MKSTREAM")
+    controlReadyUsers.add(mentraUserId)
+    return true
+  } catch (err) {
+    const msg = (err as Error).message ?? ""
+    if (msg.includes("BUSYGROUP")) {
+      controlReadyUsers.add(mentraUserId)
+      return true
+    }
+    console.error("[audio-worker] control xgroup create failed:", err)
+    return false
+  }
+}
+
 // === Main loops ===
+
+/**
+ * Read the control stream for owned users and reconcile on each nudge. Separate
+ * from the audio loop (and on its own Redis client) so subscription changes are
+ * never stuck behind the blocking audio read, and the audio hot path never has
+ * to branch on control entries.
+ */
+async function controlReadLoop(): Promise<void> {
+  while (running) {
+    const users = [...controlReadyUsers]
+    if (users.length === 0) {
+      await Bun.sleep(100)
+      continue
+    }
+
+    const streams = users.map(controlStreamKey)
+    const ids = users.map(() => ">")
+
+    try {
+      const result = (await controlClient.xreadgroup(
+        "GROUP",
+        CONTROL_STREAM_GROUP,
+        CONSUMER_NAME,
+        "COUNT",
+        100,
+        "BLOCK",
+        XREAD_BLOCK_MS,
+        "STREAMS",
+        ...streams,
+        ...ids,
+      )) as Array<[string, Array<[string, string[]]>]> | null
+
+      if (!result) continue
+
+      for (const [streamKey, entries] of result) {
+        const mentraUserId = controlUserFromKey(streamKey)
+        // Reconcile once per batch (not once per entry): every entry is the
+        // same "re-read the key" nudge, so collapsing a burst of writes into a
+        // single reconcile is correct and cheaper. We still XACK every entry.
+        if (entries.length > 0) await reconcileFromKey(mentraUserId)
+        for (const [entryId] of entries) {
+          try {
+            await controlClient.xack(streamKey, CONTROL_STREAM_GROUP, entryId)
+          } catch (err) {
+            console.error("[audio-worker] control xack failed:", err)
+          }
+        }
+      }
+    } catch (err) {
+      const msg = (err as Error).message ?? ""
+      if (msg.includes("NOGROUP")) {
+        for (const userId of [...controlReadyUsers]) {
+          await ensureControlConsumerGroup(userId)
+        }
+        continue
+      }
+      console.error("[audio-worker] control xreadgroup failed:", err)
+      await Bun.sleep(500)
+    }
+  }
+}
+
+/** Recover the user id from a `{user:X}:control` stream key. */
+function controlUserFromKey(streamKey: string): string {
+  return streamKey.replace(/^\{user:/, "").replace(/\}:control$/, "")
+}
 
 async function freshReadLoop(): Promise<void> {
   while (running) {
@@ -569,7 +714,11 @@ function fieldArrayToMap(fields: string[]): Record<string, string> {
 
 async function shutdown(): Promise<void> {
   try {
-    await Promise.all([streamsClient.quit().catch(() => undefined), mainClient.quit().catch(() => undefined)])
+    await Promise.all([
+      streamsClient.quit().catch(() => undefined),
+      mainClient.quit().catch(() => undefined),
+      controlClient.quit().catch(() => undefined),
+    ])
   } catch {
     /* ignore */
   }
@@ -580,10 +729,11 @@ async function shutdown(): Promise<void> {
 // during the connecting phase, so any ATTACH_USER that arrives before the
 // clients are up would hit "Stream isn't writeable."
 async function bootstrap(): Promise<void> {
-  await Promise.all([waitForReady(streamsClient), waitForReady(mainClient)])
+  await Promise.all([waitForReady(streamsClient), waitForReady(mainClient), waitForReady(controlClient)])
   self.postMessage({type: "WORKER_READY"} satisfies WorkerReadyMessage)
   void freshReadLoop()
   void autoclaimLoop()
+  void controlReadLoop()
 }
 
 function waitForReady(client: Redis): Promise<void> {

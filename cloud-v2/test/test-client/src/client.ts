@@ -171,6 +171,8 @@ export class TestClient {
   private receivedMessages: AnyServerMessage[] = [];
   /** Subscriptions queued before connect — seeded into `connection.init`. */
   private initialSubscriptions: AudioSubscription[] = [];
+  /** Monotonic version for REST subscription writes (seed at connect is 0). */
+  private subVersion = 0;
 
   /** Liveness state. Populated only when `opts.liveness` is set. */
   private pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -360,8 +362,8 @@ export class TestClient {
     }
     const { jwt: oemJwt } = (await mintRes.json()) as { jwt: string };
 
-    // 2. Exchange via core's token endpoint.
-    const exchangeRes = await fetch(`${this.opts.coreUrl}/api/oem/oauth/token`, {
+    // 2. Exchange via core's device-called token endpoint.
+    const exchangeRes = await fetch(`${this.opts.coreUrl}/api/client/auth/exchange`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -457,17 +459,29 @@ export class TestClient {
     });
   }
 
-  /** PUT the subscription set to the audio REST endpoint (mid-session change). */
+  /**
+   * PUT the subscription set to the audio REST endpoint (mid-session change).
+   * Echoes the session id from connection.ack and bumps a monotonic version so
+   * the cloud can reject a stale or out-of-order write (the guarded-write
+   * contract in subscriptions-store.ts). The seed at connection.init is
+   * version 0, so the first REST write starts at 1.
+   */
   private async putSubscriptions(subs: AudioSubscription[]): Promise<void> {
+    const sessionId = this.ack?.payload.sessionId;
+    if (!sessionId) throw new Error("not connected");
     const res = await fetch(`${this.audioHttpBase()}/api/audio/subscriptions`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.token}`,
       },
-      body: JSON.stringify({ subscriptions: subs }),
+      body: JSON.stringify({
+        subscriptions: subs,
+        sessionId,
+        version: ++this.subVersion,
+      }),
     });
-    if (!res.ok && res.status !== 204) {
+    if (!res.ok) {
       throw new Error(
         `subscriptions PUT failed: ${res.status} ${await res.text()}`,
       );

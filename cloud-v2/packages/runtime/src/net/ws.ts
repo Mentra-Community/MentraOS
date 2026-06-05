@@ -47,12 +47,19 @@ import {
 } from "../services/session/ownership";
 import {
   assignUser,
+  reconcileSubscriptions,
   releaseUser,
   setUserCodec,
-  updateSubscriptions,
 } from "../services/audio/workers/pool";
+import {
+  deleteSubscriptions,
+  refreshSubscriptions,
+  seedSubscriptions,
+} from "../services/session/subscriptions-store";
 import { clientToCloudMessage } from "../protocol/messages";
-import { PROTOCOL_MAJOR } from "../protocol/envelope";
+import { envelopeSchema, PROTOCOL_MAJOR } from "../protocol/envelope";
+import type { ProtocolError, ProtocolErrorCode } from "../protocol/errors";
+import { PROTOCOL_ERROR_CODES } from "../protocol/errors";
 import type { ConnectionInit } from "../protocol/handshake";
 
 const logger = createLogger("audio").child({ service: "session.service" });
@@ -97,6 +104,14 @@ export interface WsData {
   oemId: string;
   /** The auth-session id (from the access token's `session_id` claim). */
   authSessionId: string;
+  /**
+   * Per-session 32-byte UDP secretbox key, base64. Minted at upgrade so it is
+   * available when we register the sessionTag at `open` (ingress on any pod
+   * fetches it by sessionTag to decrypt). Delivered to the client in
+   * `connection.ack.audio.encryption.key` over the TLS WebSocket, so the key
+   * itself never travels over UDP. A fresh connection means a fresh key.
+   */
+  encryptionKeyB64: string;
 }
 
 export interface SessionEntry {
@@ -185,12 +200,17 @@ export async function tryWsUpgrade(
   // param. The mobile authenticates its WS via query param (React Native's
   // WebSocket can't reliably set headers), matching the v1 glasses-ws
   // pattern. Native test clients use the header.
+  //
+  // Auth failures at upgrade are fatal: the socket never opens. We return the
+  // documented ProtocolError shape as the HTTP body (the WS isn't up yet, so we
+  // cannot send an enveloped error frame). AUTH_EXPIRED vs AUTH_FAILED tells the
+  // client whether refreshing the token and reopening is worth trying.
   const authHeader = req.headers.get("authorization");
   const token = authHeader?.startsWith("Bearer ")
     ? authHeader.slice("Bearer ".length).trim()
     : url.searchParams.get("token");
   if (!token) {
-    return new Response("missing or malformed Authorization", { status: 401 });
+    return protocolErrorResponse("AUTH_FAILED", "missing or malformed Authorization");
   }
 
   let verified: Awaited<ReturnType<typeof verifyAccessTokenSignature>>;
@@ -198,7 +218,8 @@ export async function tryWsUpgrade(
     verified = await verifyAccessTokenSignature(token);
   } catch (err) {
     if (err instanceof AccessTokenError) {
-      return new Response(err.message, { status: 401 });
+      const code = isExpiredTokenError(err) ? "AUTH_EXPIRED" : "AUTH_FAILED";
+      return protocolErrorResponse(code, err.message);
     }
     throw err;
   }
@@ -220,6 +241,10 @@ export async function tryWsUpgrade(
     mentraUserId: verified.mentraUserId,
     oemId: verified.oemId,
     authSessionId: verified.sessionId,
+    // 32-byte secretbox key for this session. Minted here so it is in `ws.data`
+    // when the `open` handler registers the sessionTag (which carries the key
+    // to Redis so any ingress pod can decrypt). Sent to the client at ack.
+    encryptionKeyB64: crypto.randomBytes(32).toString("base64"),
   };
 
   const upgraded = server.upgrade(req, { data });
@@ -276,6 +301,9 @@ export const wsHandlers: WebSocketHandler<WsData> = {
       audioSessionId: ws.data.audioSessionId,
       authSessionId: ws.data.authSessionId,
       podId: getPodId(),
+      // Carried so a UDP packet that lands on any pod can fetch this session's
+      // key by sessionTag and decrypt the frame.
+      encryptionKeyB64: ws.data.encryptionKeyB64,
     }).catch((err) => {
       logger.error(
         { err, sessionTag: ws.data.sessionTag },
@@ -283,12 +311,20 @@ export const wsHandlers: WebSocketHandler<WsData> = {
       );
     });
 
-    // Refresh loop: keep the Redis registration alive while the WS is open.
+    // Refresh loop: keep the Redis registration AND the subscription key alive
+    // while the WS is open. Both are TTL'd so an abandoned session (crashed pod)
+    // cleans itself up; the owner refreshes them well inside the TTL.
     const interval = setInterval(() => {
       refreshSessionTag(ws.data.sessionTag).catch((err) => {
         logger.warn(
           { err, sessionTag: ws.data.sessionTag },
           "sessionTag refresh failed",
+        );
+      });
+      refreshSubscriptions(ws.data.mentraUserId).catch((err) => {
+        logger.warn(
+          { err, mentraUserId: ws.data.mentraUserId },
+          "subscription key refresh failed",
         );
       });
     }, SESSION_TAG_REFRESH_INTERVAL_MS);
@@ -310,17 +346,56 @@ export const wsHandlers: WebSocketHandler<WsData> = {
       try {
         json = JSON.parse(msg);
       } catch {
-        return; // not JSON; ignore
+        // Not JSON at all. Treat as a malformed request rather than dropping
+        // silently, so the client learns its frame was rejected.
+        sendProtocolError(ws, "BAD_REQUEST", "control frame is not valid JSON");
+        return;
       }
 
-      // Validate against the client-to-cloud union. Anything that doesn't
-      // parse (wrong version, unknown type, malformed payload) is dropped
-      // with a debug log rather than crashing the connection.
+      // Read the envelope shape first so we can classify failures per the error
+      // model: a wrong protocol major is fatal, an unknown type is a non-fatal
+      // nudge, and a known type with a bad payload is a non-fatal BAD_REQUEST.
+      const major = (json as { v?: unknown })?.v;
+      if (major !== PROTOCOL_MAJOR) {
+        // Fatal: the client speaks a different protocol major. Tell it, then
+        // close (sendProtocolError closes on a fatal code).
+        sendProtocolError(
+          ws,
+          "UNSUPPORTED_VERSION",
+          `unsupported protocol major: ${String(major)}`,
+        );
+        return;
+      }
+
+      const envParsed = envelopeSchema.safeParse(json);
+      if (!envParsed.success) {
+        sendProtocolError(ws, "BAD_REQUEST", "malformed message envelope");
+        return;
+      }
+
+      // Known client-to-cloud types. An unrecognized type stays non-fatal so
+      // new message types can be added within a major version (forward compat).
+      if (!CLIENT_TO_CLOUD_TYPES.has(envParsed.data.type)) {
+        sendProtocolError(
+          ws,
+          "UNKNOWN_TYPE",
+          `unrecognized type: ${envParsed.data.type}`,
+        );
+        return;
+      }
+
+      // Type is known; now validate its payload. A failure here means the
+      // payload is malformed for a known type: BAD_REQUEST, non-fatal.
       const parsed = clientToCloudMessage.safeParse(json);
       if (!parsed.success) {
         logger.debug(
-          { sessionTag: ws.data.sessionTag, issues: parsed.error.issues },
-          "ws control message failed v2 validation — ignoring",
+          { sessionTag: ws.data.sessionTag, type: envParsed.data.type, issues: parsed.error.issues },
+          "ws control message failed payload validation",
+        );
+        sendProtocolError(
+          ws,
+          "BAD_REQUEST",
+          `malformed payload for ${envParsed.data.type}`,
         );
         return;
       }
@@ -328,7 +403,7 @@ export const wsHandlers: WebSocketHandler<WsData> = {
       const m = parsed.data;
       switch (m.type) {
         case "connection.init":
-          handleConnectionInit(ws, m.payload);
+          void handleConnectionInit(ws, m.payload);
           return;
         case "control.ping":
           // App-level liveness. **The client owns the heartbeat.** We answer
@@ -388,6 +463,15 @@ export const wsHandlers: WebSocketHandler<WsData> = {
           "ownership release failed (will TTL out)",
         );
       });
+      // Drop the subscription key on a clean last-session close so the next
+      // session for this user starts from its own seed, not stale subs. If this
+      // fails the key TTLs out shortly anyway.
+      deleteSubscriptions(ws.data.mentraUserId).catch((err) => {
+        logger.warn(
+          { err, mentraUserId: ws.data.mentraUserId },
+          "subscription key delete failed (will TTL out)",
+        );
+      });
     } else {
       sessionsPerUser.set(ws.data.mentraUserId, remaining);
     }
@@ -416,28 +500,38 @@ export const wsHandlers: WebSocketHandler<WsData> = {
  * subscriptions, and gets back the sessionTag and UDP coordinates it needs to
  * start streaming audio.
  */
-function handleConnectionInit(
+async function handleConnectionInit(
   ws: ServerWebSocket<WsData>,
   init: ConnectionInit,
-): void {
+): Promise<void> {
   // Tell the worker this session's codec before any audio is processed, so it
   // knows whether to LC3-decode the stream entries or treat them as raw PCM.
   setUserCodec(ws.data.mentraUserId, init.audio?.codec ?? "lc3");
 
-  // Seed the initial subscription set atomically with the session, so audio
-  // that starts flowing right after the ack is transcribed against the right
-  // subscriptions instead of an empty set. Mid-session changes arrive later
-  // via the REST subscriptions endpoint.
+  // Seed the subscription source-of-truth key atomically with session creation,
+  // so audio that starts flowing right after the ack is transcribed against the
+  // right subscriptions instead of an empty set. We seed at version 0 with this
+  // session's id (the same id the client echoes in REST writes); subsequent REST
+  // writes are guarded against this baseline. We seed even an empty set so the
+  // key exists and carries the session's baseline version. Mid-session changes
+  // arrive later via the REST subscriptions endpoint.
   const subs = init.audio?.initialSubscriptions ?? [];
-  if (subs.length > 0) {
-    updateSubscriptions(ws.data.mentraUserId, subs);
+  try {
+    await seedSubscriptions(ws.data.mentraUserId, {
+      subscriptions: subs,
+      sessionId: ws.data.audioSessionId,
+      version: 0,
+    });
+    // Nudge the local worker to reconcile from the freshly seeded key. The key
+    // is the source of truth; the worker re-reads it rather than trusting any
+    // passed snapshot. Cross-pod writes use the control stream instead.
+    reconcileSubscriptions(ws.data.mentraUserId);
+  } catch (err) {
+    logger.error(
+      { err, mentraUserId: ws.data.mentraUserId },
+      "failed to seed subscriptions on connection.init",
+    );
   }
-
-  // Per-session key for encrypting UDP audio, delivered over the TLS
-  // WebSocket. NOTE: ingress does not decrypt yet (that lands with the
-  // UDP-decrypt step); the key is minted and advertised now so the wire
-  // contract is stable and clients can adopt it without a later ack change.
-  const encryptionKey = crypto.randomBytes(32).toString("base64");
 
   ws.send(
     JSON.stringify({
@@ -450,7 +544,12 @@ function handleConnectionInit(
         audio: {
           sessionTag: ws.data.sessionTag,
           udp: { host: udpAdvertise.host, port: udpAdvertise.port },
-          encryption: { algorithm: "xsalsa20-poly1305", key: encryptionKey },
+          // The per-session key was minted at upgrade and registered to Redis;
+          // we deliver it here over the TLS WebSocket so it never rides UDP.
+          encryption: {
+            algorithm: "xsalsa20-poly1305",
+            key: ws.data.encryptionKeyB64,
+          },
         },
       },
     }),
@@ -513,6 +612,84 @@ async function handleWsBinaryAudio(
       "ws binary audio ingest failed",
     );
   }
+}
+
+// === Error model helpers ===
+
+/**
+ * The message types the client may send to the cloud. Kept as a name set so an
+ * unrecognized type can be answered with UNKNOWN_TYPE without paying for a full
+ * union parse first. Mirrors the `clientToCloudMessage` discriminated union.
+ */
+const CLIENT_TO_CLOUD_TYPES = new Set<string>([
+  "connection.init",
+  "control.ping",
+  "control.pong",
+]);
+
+/**
+ * Send an enveloped `error` message on the WebSocket and, if the code is fatal,
+ * close the socket after sending. This is the in-band error channel for frames
+ * that arrive after the WS is open (auth failures happen at upgrade, before the
+ * socket exists, and use `protocolErrorResponse` instead).
+ */
+function sendProtocolError(
+  ws: ServerWebSocket<WsData>,
+  code: ProtocolErrorCode,
+  message: string,
+): void {
+  const fatal = PROTOCOL_ERROR_CODES[code].fatal;
+  const payload: ProtocolError = { code, message, fatal };
+  try {
+    ws.send(
+      JSON.stringify({
+        v: PROTOCOL_MAJOR,
+        type: "error",
+        timestamp: Date.now(),
+        payload,
+      }),
+    );
+  } catch (err) {
+    logger.warn({ err, code }, "failed to send protocol error frame");
+  }
+  if (fatal) {
+    // Close after the error so the client sees why before the socket drops.
+    // 1008 = policy violation, the closest standard code for a protocol error.
+    try {
+      ws.close(1008, code);
+    } catch {
+      /* already closing */
+    }
+  }
+}
+
+/**
+ * Build the HTTP response body for an auth error at upgrade. The WS isn't open
+ * yet, so we cannot send an enveloped frame; we return the ProtocolError shape
+ * as JSON with a 401 so the client gets the documented contract either way.
+ */
+function protocolErrorResponse(
+  code: ProtocolErrorCode,
+  message: string,
+): Response {
+  const payload: ProtocolError = {
+    code,
+    message,
+    fatal: PROTOCOL_ERROR_CODES[code].fatal,
+  };
+  return new Response(JSON.stringify(payload), {
+    status: 401,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+/**
+ * Classify an access-token verification failure as expiry vs everything else.
+ * jose reports an expired token with an `exp`-claim message; the client uses
+ * AUTH_EXPIRED as the signal to refresh and reopen rather than give up.
+ */
+function isExpiredTokenError(err: AccessTokenError): boolean {
+  return /exp.*claim|expired/i.test(err.message);
 }
 
 /** Mint a u32 sessionTag with a collision check against this pod's registry. */
