@@ -382,8 +382,11 @@ export default function NexDeveloperSettings() {
     setChineseCaptionsEnabled(enabled)
   }
 
-  const onVadToggle = (enabled: boolean) => {
-    setVadEnabled(enabled)
+  const onVadToggle = async (enabled: boolean) => {
+    const result = await setVadEnabled(enabled)
+    if (result.is_error()) {
+      showAlert("VAD setting failed", result.error.message || "Please try again.", [{text: "OK"}])
+    }
   }
 
   return (
