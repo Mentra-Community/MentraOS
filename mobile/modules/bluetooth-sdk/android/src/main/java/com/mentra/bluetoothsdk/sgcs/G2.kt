@@ -2851,6 +2851,10 @@ class G2 : SGCManager() {
         sendNavigationCommand(w.toByteArray())
     }
 
+    override fun setImuEnabled(enabled: Boolean) {
+        setImuEnabled(enabled, reportFrq = EvenHubProto.IMU_PACE_P100)
+    }
+
     /**
      * Enable or disable IMU motion reporting on the glasses.
      *
@@ -2860,13 +2864,12 @@ class G2 : SGCManager() {
      * `Bridge.sendAccelEvent` (a single accelerometer reading; a richer combined IMU event
      * covering gyro + magnetometer is future work).
      */
-    override fun setImuEnabled(enabled: Boolean) {
-        val reportFrq = EvenHubProto.IMU_PACE_P100
+    fun setImuEnabled(enabled: Boolean, reportFrq: Int) {
         Bridge.log("G2: setImuEnabled($enabled, frq=$reportFrq)")
 
         // IMU requires an active EvenHub page (same prerequisite as the mic).
         if (enabled && !pageCreated) {
-            DeviceManager.getInstance().sendCurrentState() // re-creates the page if needed
+            rebuildState() // re-creates the page if needed
         }
 
         val send = Runnable {

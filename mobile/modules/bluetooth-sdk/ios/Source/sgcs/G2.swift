@@ -2933,6 +2933,10 @@ class G2: NSObject, SGCManager {
         sendNavigationCommand(w.data)
     }
 
+    func setImuEnabled(_ enabled: Bool) {
+        setImuEnabled(enabled, reportFrq: EvenHubProto.imuPaceP100)
+    }
+
     /// Enable or disable IMU motion reporting on the glasses.
     ///
     /// When enabled, the glasses continuously push `IMU_Report_Data { x, y, z }` (32-bit
@@ -2945,12 +2949,12 @@ class G2: NSObject, SGCManager {
     ///   - enabled: `true` to start streaming, `false` to stop.
     ///   - reportFrq: ImuReportPace pacing code (100…1000, step 100 — protocol codes, not
     ///     Hz). Ignored when disabling.
-    func setImuEnabled(_ enabled: Bool, reportFrq: Int32 = EvenHubProto.imuPaceP100) {
+    func setImuEnabled(_ enabled: Bool, reportFrq: Int32 = EvenHubProto.imuPaceP100) async -> Void {
         Bridge.log("G2: setImuEnabled(\(enabled), frq=\(reportFrq))")
 
         // IMU requires an active EvenHub page (same prerequisite as the mic).
-        if enabled, !pageCreated {
-            DeviceManager.shared.sendCurrentState() // re-creates the page if needed
+        if enabled && !pageCreated {
+            await rebuildState()
         }
 
         let send = { [weak self] in

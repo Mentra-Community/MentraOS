@@ -1,7 +1,8 @@
 // Tester page — diagnostic surface, ephemeral by design.
-// session.storage doesn't have an event surface, so background's
-// TesterController serves the "tester:invoke" requests directly and
-// surfaces results via the "tester:event" channel with kind="result".
+// session.storage has no event surface; it's an imperative tester. Each
+// button issues a "tester:invoke" RPC that background dispatches to
+// session.storage.*, and the call's return value (e.g. get → the stored
+// string) is the RPC resolution we render below.
 
 import {useState} from "react"
 import {useNavigate} from "react-router-dom"
