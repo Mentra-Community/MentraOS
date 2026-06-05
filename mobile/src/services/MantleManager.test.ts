@@ -204,6 +204,7 @@ describe("MantleManager", () => {
         core_token: "server-token",
         auth_email: "from-server@example.com",
         power_saving_mode: false,
+        voice_activity_detection_enabled: true,
       }),
     )
     expect(coreModuleMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
@@ -302,6 +303,14 @@ describe("MantleManager", () => {
         core_token: "new-token",
       }),
     )
+
+    ;(coreModuleMock.updateBluetoothSettings as jest.Mock).mockClear()
+    await useSettingsStore.getState().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, false)
+    expect(coreModuleMock.updateBluetoothSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        voice_activity_detection_enabled: false,
+      }),
+    )
   })
 
   it("syncs notification enablement and blocklist settings to Crust only", async () => {
@@ -350,6 +359,7 @@ describe("MantleManager", () => {
     expect(coreModuleMock.updateBluetoothSettings).not.toHaveBeenCalled()
 
     expect(useSettingsStore.getState().getCoreSettings()).toHaveProperty("power_saving_mode")
+    expect(useSettingsStore.getState().getCoreSettings()).toHaveProperty("voice_activity_detection_enabled", true)
     expect(useSettingsStore.getState().getCoreSettings()).toHaveProperty("metric_system")
     expect(useSettingsStore.getState().getCoreSettings()).toHaveProperty("twelve_hour_time")
     await useSettingsStore.getState().setSetting(SETTINGS.power_saving_mode.key, true, false)

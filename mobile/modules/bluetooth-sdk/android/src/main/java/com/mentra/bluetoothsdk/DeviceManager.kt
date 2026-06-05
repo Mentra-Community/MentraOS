@@ -1171,7 +1171,7 @@ class DeviceManager {
         Bridge.log("MAN: Device disconnected")
         lastSystemTimeSyncConnectionKey = ""
         DeviceStore.apply("glasses", "headUp", false)
-        DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", true)
+        DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
     }
 
     fun handleControllerReady() {
@@ -1628,7 +1628,7 @@ class DeviceManager {
         DeviceStore.apply("glasses", "deviceModel", "")
         DeviceStore.apply("glasses", "fullyBooted", false)
         DeviceStore.apply("glasses", "connected", false)
-        DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", true)
+        DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
         // disconnect the controller as well:
         searchingController = false
         DeviceStore.apply("glasses", "controllerConnected", false)

@@ -296,6 +296,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  voice_activity_detection_enabled: {
+    key: "voice_activity_detection_enabled",
+    defaultValue: () => true,
+    writable: true,
+    saveOnServer: false,
+    persist: false,
+  },
   always_on_status_bar: {
     key: "always_on_status_bar",
     defaultValue: () => false,
@@ -608,6 +615,7 @@ const CORE_SETTINGS_KEYS: string[] = [
   // core settings:
   SETTINGS.sensing_enabled.key,
   SETTINGS.power_saving_mode.key,
+  SETTINGS.voice_activity_detection_enabled.key,
   SETTINGS.lc3_frame_size.key,
   SETTINGS.preferred_mic.key,
   SETTINGS.screen_disabled.key,

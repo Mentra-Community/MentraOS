@@ -49,7 +49,8 @@ public struct VoiceActivityDetectionStatusEvent: CustomStringConvertible {
     public let values: [String: Any]
 
     public init(values: [String: Any]) {
-        voiceActivityDetectionEnabled = boolValue(values, "voiceActivityDetectionEnabled") ?? true
+        voiceActivityDetectionEnabled =
+            boolValue(values, "voiceActivityDetectionEnabled") ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
         self.values = values
     }
 

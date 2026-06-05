@@ -993,7 +993,7 @@ struct ViewState {
         Bridge.log("MAN: Device disconnected")
         lastSystemTimeSyncConnectionKey = ""
         DeviceStore.shared.apply("glasses", "headUp", false)
-        DeviceStore.shared.apply("glasses", "voiceActivityDetectionEnabled", true)
+        DeviceStore.shared.apply("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.voiceActivityDetectionEnabled)
         // shouldSendBootingMessage = true  // Reset for next first connect
     }
 
@@ -1416,7 +1416,7 @@ struct ViewState {
         DeviceStore.shared.apply("glasses", "deviceModel", "")
         DeviceStore.shared.apply("glasses", "fullyBooted", false)
         DeviceStore.shared.apply("glasses", "connected", false)
-        DeviceStore.shared.apply("glasses", "voiceActivityDetectionEnabled", true)
+        DeviceStore.shared.apply("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.voiceActivityDetectionEnabled)
         // disconnect the controller as well:
         searchingController = false
         DeviceStore.shared.apply("glasses", "controllerConnected", false)

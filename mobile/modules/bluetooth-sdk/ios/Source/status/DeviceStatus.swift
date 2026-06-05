@@ -139,7 +139,7 @@ struct GlassesStatus: CustomStringConvertible {
     }
 
     var voiceActivityDetectionEnabled: Bool {
-        boolValue(values, "voiceActivityDetectionEnabled") ?? true
+        boolValue(values, "voiceActivityDetectionEnabled") ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
     }
 
     var connectionState: GlassesConnectionState {

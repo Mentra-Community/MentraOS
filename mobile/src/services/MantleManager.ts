@@ -314,8 +314,7 @@ class MantleManager {
 
     // give the core some time to boot before sending all the initial settings:
     BgTimer.setTimeout(() => {
-      const initialCoreSettings = useSettingsStore.getState().getCoreSettings()
-      BluetoothSdk.updateBluetoothSettings(initialCoreSettings) // send settings to core
+      BluetoothSdk.updateBluetoothSettings(useSettingsStore.getState().getCoreSettings()) // send settings to core
       console.log("MANTLE: Settings sent to core")
       // settings are now in native; safe to attempt auto-connect
       attemptReconnectToDefaultWearable()
