@@ -1054,15 +1054,27 @@ class DeviceManager {
         } else if (wearable.contains(DeviceTypes.NEX)) {
             sgc = MentraNex()
         } else if (wearable.contains(DeviceTypes.MACH1)) {
-            sgc = Mach1()
+            sgc = createOptionalMach1Sgc(DeviceTypes.MACH1)
         } else if (wearable.contains(DeviceTypes.Z100)) {
-            sgc = Mach1() // Z100 uses same hardware/SDK as Mach1
-            sgc?.type = DeviceTypes.Z100 // Override type to Z100
+            sgc = createOptionalMach1Sgc(DeviceTypes.Z100)
         } else if (wearable.contains(DeviceTypes.FRAME)) {
             // sgc = FrameManager()
         }
         // update device model:
         DeviceStore.apply("glasses", "deviceModel", sgc?.type ?: "")
+    }
+
+    private fun createOptionalMach1Sgc(deviceType: String): SGCManager? {
+        return try {
+            Mach1().also { sgc ->
+                if (deviceType == DeviceTypes.Z100) {
+                    sgc.type = DeviceTypes.Z100
+                }
+            }
+        } catch (e: LinkageError) {
+            Bridge.log("Failed to initialize $deviceType support: ${e.message}")
+            null
+        }
     }
 
     fun initController(controllerType: String) {
