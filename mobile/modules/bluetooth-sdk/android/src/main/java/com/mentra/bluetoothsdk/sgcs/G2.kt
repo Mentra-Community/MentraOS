@@ -2013,6 +2013,12 @@ class G2 : SGCManager() {
         val ry = y ?: defaultImgY
         val rw = width ?: defaultImgWidth
         val rh = height ?: defaultImgHeight
+        
+        // ignore events while the ER dashboard is open:
+        val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
+        if (useNativeDashboard && dashboardShowing > 0) {
+            return false
+        }
 
         val rawData =
                 Base64.decode(base64ImageData, Base64.DEFAULT)

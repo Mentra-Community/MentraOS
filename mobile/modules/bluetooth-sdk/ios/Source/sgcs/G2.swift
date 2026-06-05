@@ -2050,6 +2050,12 @@ class G2: NSObject, SGCManager {
         let ry = y ?? G2.defaultImgContainer.y
         let rw = width ?? G2.defaultImgContainer.width
         let rh = height ?? G2.defaultImgContainer.height
+        
+        // ignore events while the ER dashboard is open:
+        let useNativeDashboard = DeviceStore.shared.get("bluetooth", "use_native_dashboard") as? Bool ?? false
+        if useNativeDashboard && dashboardShowing > 0 {
+            return false
+        }
 
         guard let rawData = Data(base64Encoded: base64ImageData) else {
             Bridge.log("G2: failed to decode base64")
