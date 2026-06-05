@@ -56,8 +56,8 @@ jobs:
             installer.pods_project.targets.each do |target|
               target.build_configurations.each do |config|
                 dt = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
-                if dt && dt.to_f < 14.0
-                  config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
+                if dt && dt.to_f < 14.5
+                  config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.5'
                 end
                 if target.name == 'RNScreens'
                   config.build_settings['OTHER_SWIFT_FLAGS'] = '$(inherited) -Xfrontend -disable-actor-data-race-checks'
@@ -112,7 +112,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             DEVELOPMENT_TEAM="" \
-            IPHONEOS_DEPLOYMENT_TARGET=14.0 \
+            IPHONEOS_DEPLOYMENT_TARGET=14.5 \
             2>&1 | tee /tmp/xcodebuild.log
 
           BUILD_RESULT=${PIPESTATUS[0]}
