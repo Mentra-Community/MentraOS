@@ -1,23 +1,37 @@
 /**
- * @fileoverview User-ownership claim primitives.
+ * @fileoverview Ownership: deciding which server instance is in charge of a user.
  *
- * Exactly one pod is the "owner" of any given user at any given time. The
- * owner is the pod that holds the user's WebSocket and is therefore the
- * pod responsible for sending transcripts back. All other pods may receive
- * UDP packets (stateless ingress) and write them to the user's Redis Stream,
- * but only the owner reads from the stream and dispatches to workers.
+ * Background. This service is the cloud side of live transcription: a user's
+ * glasses stream audio up, and we stream transcripts back down. To handle many
+ * users and to survive a machine dying, the service runs as many identical
+ * copies at once. Each copy is a "pod" (one running container), and a load
+ * balancer spreads incoming traffic across them.
  *
- * Ownership is recorded in Redis at `{user:X}:owner = podId` with a short
- * TTL. The owner refreshes the TTL on a timer well inside its expiry. The
- * universal failure signal is "TTL expires" — works for crashes, hangs,
- * partitions, all the same way.
+ * The problem this file solves. A user's audio packets can land on ANY pod (the
+ * load balancer doesn't care which), but the actual transcription for that user
+ * has to run on exactly ONE pod at a time: the one holding that user's WebSocket
+ * connection. We call that pod the user's "owner". So the pods need a way to
+ * agree on who owns each user, and to hand a user off automatically when the
+ * owner crashes.
  *
- * **Atomicity matters here.** Refresh ("extend TTL only if I still own it")
- * and release ("delete only if I still own it") are Lua scripts so they
- * don't race against another pod's claim arriving between the GET and the
- * EXPIRE/DEL.
+ * How it works. There is one Redis key per user that acts as a claim ticket:
+ * `{user:<id>}:owner` holds the owning pod's id. Two rules make it safe:
  *
- * Spec: docs/issues/003-audio/spec.md ("Fault tolerance model" / "TTL'd claims")
+ *   1. A pod can only take the key if nobody else holds it (Redis `SET ... NX`),
+ *      so at most one pod owns a user at a time. This is a "distributed lock":
+ *      a single shared flag that only one party can hold.
+ *
+ *   2. The key is set to expire after a few seconds (Redis `SET ... EX 5`). While
+ *      a pod is alive it resets that timer every 1.5s. If it crashes, hangs, or
+ *      loses its network, it stops resetting the timer, the key expires on its
+ *      own, and another pod is free to claim the user. A missing refresh is the
+ *      single signal for "the owner is gone", so we need no separate health check.
+ *
+ * Why the Lua scripts at the bottom. "Refresh" and "release" both mean "do
+ * something only if I'm still the owner". They run as Redis Lua scripts so the
+ * check and the action happen as one atomic step, otherwise another pod's claim
+ * could slip in between reading the key and acting on it, and we'd extend or
+ * delete a claim that is no longer ours.
  */
 
 import { createLogger } from "@mentra/cloud-shared";
@@ -38,11 +52,13 @@ function ownerKey(mentraUserId: string): string {
 export type ClaimResult = "claimed" | "already-ours" | "owned-by-other";
 
 /**
- * Attempt a single claim. Returns:
- *   - "claimed"        — we got it (SET NX succeeded)
- *   - "already-ours"   — the key was already set to our podId (idempotent)
- *   - "owned-by-other" — a different pod owns the user; the caller decides
- *                        whether to retry, wait for TTL, or surface conflict
+ * Try once to become this user's owner. Returns one of:
+ *   - "claimed":        we just took ownership (the key was free, our SET won).
+ *   - "already-ours":   the key was already set to our own pod id, so we still
+ *                       effectively own it. Calling this twice in a row is safe.
+ *   - "owned-by-other": a different pod currently owns this user. The caller
+ *                       decides what to do next: retry and wait for that claim
+ *                       to expire, or give up and report the conflict.
  */
 export async function tryClaimOwnership(
   mentraUserId: string,
@@ -65,9 +81,11 @@ export async function tryClaimOwnership(
 }
 
 /**
- * Try to claim; if blocked by another pod, retry briefly to let a dying
- * owner's TTL expire. Default deadline is `2 × TTL` so a crashed pod's
- * claim always expires inside this window.
+ * Like `tryClaimOwnership`, but if another pod currently owns the user, keep
+ * retrying for a short while. This gives a crashed owner's claim time to expire
+ * on its own so we can then take over. The default deadline is twice the key's
+ * expiry, which is long enough that a dead owner's claim is always gone before
+ * we give up.
  */
 export async function claimOwnershipWithRetry(
   mentraUserId: string,
@@ -85,10 +103,11 @@ export async function claimOwnershipWithRetry(
 }
 
 /**
- * Lua-atomic refresh: extend the TTL iff we're still the owner. Returns
- * true on successful refresh, false if some other pod took it over (which
- * means we crashed/hung past the TTL and should treat this user as
- * forfeited).
+ * Reset the expiry timer on our claim, but only if we still own it. The owner
+ * pod calls this on a timer so its claim never expires while it is healthy.
+ * Returns true if the refresh worked. Returns false if some other pod has
+ * already taken the user over, which means we were too slow (our claim expired
+ * and someone grabbed it), and we should stop treating this user as ours.
  */
 export async function refreshOwnership(
   mentraUserId: string,
@@ -106,9 +125,11 @@ export async function refreshOwnership(
 }
 
 /**
- * Lua-atomic release: delete the key iff we're still the owner. No-op if
- * someone else has it (means our claim already expired and got grabbed —
- * stomping their claim would be wrong).
+ * Give up ownership of a user, but only if we still own it. Called on a clean
+ * disconnect so the user can be claimed elsewhere right away instead of waiting
+ * for the timer to expire. If some other pod already holds the claim (ours
+ * expired and got grabbed), this does nothing, deleting their claim would be
+ * wrong.
  */
 export async function releaseOwnership(
   mentraUserId: string,
@@ -124,12 +145,18 @@ export async function releaseOwnership(
   return result === 1;
 }
 
-/** Pure read. Useful for tests and diagnostics. */
+/** Read which pod currently owns this user, or null if nobody does. A plain
+ * read with no claiming; handy for tests and diagnostics. */
 export async function getOwner(mentraUserId: string): Promise<string | null> {
   return getRedis().get(ownerKey(mentraUserId));
 }
 
 // === Lua scripts ===
+//
+// These run inside Redis as a single atomic step. Each one reads the owner key
+// and only acts if the stored pod id matches ours (KEYS[1] is the key, ARGV[1]
+// is our pod id). Doing the read and the action together is what stops two pods
+// from racing on the same claim.
 
 const REFRESH_SCRIPT = `
 if redis.call("GET", KEYS[1]) == ARGV[1] then
@@ -154,11 +181,11 @@ end
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
- * Start the periodic refresh loop. The provided `getOwnedUserIds()` is
- * invoked on each tick — typically returns the keys of session.service's
- * `Map<userId, ...>` tracking owned sessions.
- *
- * Idempotent: calling twice is a no-op (the second call is ignored).
+ * Start a background timer that keeps all of this pod's claims alive. On each
+ * tick it asks the caller which users this pod currently owns (via the
+ * `getOwnedUserIds` callback, normally the set of live WebSocket sessions) and
+ * refreshes each one's claim. Call this once at startup; calling it again does
+ * nothing, so a second call cannot create a duplicate timer.
  */
 export function startOwnershipRefreshLoop(opts: {
   podId: string;
@@ -176,7 +203,7 @@ export function startOwnershipRefreshLoop(opts: {
           // hand off the affected sessions cleanly.
           logger.warn(
             { mentraUserId: userId, podId: opts.podId },
-            "ownership refresh failed — claim no longer ours",
+            "ownership refresh failed, claim no longer ours",
           );
         }
       }
