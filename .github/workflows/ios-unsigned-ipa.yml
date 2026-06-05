@@ -59,7 +59,10 @@ jobs:
                 if dt && dt.to_f < 13.0
                   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
                 end
-                if ['SwiftProtobuf', 'RNScreens'].include?(target.name)
+                if target.name == 'RNScreens'
+                  config.build_settings['OTHER_SWIFT_FLAGS'] = '$(inherited) -Xfrontend -disable-actor-data-race-checks'
+                end
+                if target.name == 'SwiftProtobuf'
                   config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
                 end
               end
@@ -80,7 +83,7 @@ jobs:
 
       - name: Show patched post_install
         working-directory: ./mobile/ios
-        run: grep -A 20 "post_install" Podfile | head -30
+        run: grep -A 25 "post_install" Podfile | head -35
 
       - name: Install pods
         working-directory: ./mobile/ios
@@ -116,8 +119,7 @@ jobs:
 
           if [ "$BUILD_RESULT" -ne 0 ]; then
             echo "========== ERRORS =========="
-            grep -E "error:|Killed|Signal|signal [0-9]" /tmp/xcodebuild.log \
-              | grep -v "^note:" | head -80
+            grep ": error:" /tmp/xcodebuild.log | grep -v "^note:" | head -80
             exit "$BUILD_RESULT"
           fi
 
