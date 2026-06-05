@@ -24,7 +24,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import CapsuleMenu, {captureScreenshot} from "@/effects/CapsuleMenu"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
-import { useSetting } from "@/stores/settings"
+import { SETTINGS, useSetting } from "@/stores/settings"
 
 /**
  * LocalMiniappView — the UI half of a local (or dev) miniapp.
@@ -84,7 +84,7 @@ function LocalMiniappView({
   const [isLoaded, setIsLoaded] = useState(false)
   const [miniappConnected, setMiniappConnected] = useState(false)
   const [androidGatePassed, setAndroidGatePassed] = useState(false)
-  const [devMode, setDevMode] = useSetting(SETTINGS.dev_mode.key)
+  const [devMode] = useSetting(SETTINGS.dev_mode.key)
 
   // Reload-retry state for the "ready" handshake. `onLoadEnd` only means the
   // WebView painted — not that the miniapp UI JS actually mounted and called
