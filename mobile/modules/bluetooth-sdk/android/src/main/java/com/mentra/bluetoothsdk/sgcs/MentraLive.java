@@ -2479,7 +2479,8 @@ public class MentraLive extends SGCManager {
                         }
                 }
                 
-                Bridge.updateWifiScanResults(networks);
+                boolean scanComplete = json.optBoolean("scan_complete", json.optBoolean("scanComplete", false));
+                Bridge.updateWifiScanResults(networks, scanComplete);
                 break;
 
             case "token_status":
@@ -2605,12 +2606,25 @@ public class MentraLive extends SGCManager {
                 int totalCount = json.optInt("total", 0);
                 long totalSize = json.optLong("total_size", 0);
                 boolean hasContent = json.optBoolean("has_content", false);
+                Object cameraBusyValue = json.opt("camera_busy");
+                boolean cameraBusy = json.optBoolean("cameraBusy", false);
+                String cameraBusyReason = json.optString("cameraBusyReason", null);
+                if (cameraBusyValue instanceof Boolean) {
+                    cameraBusy = cameraBusy || (Boolean) cameraBusyValue;
+                } else if (cameraBusyValue instanceof String) {
+                    String busyReason = ((String) cameraBusyValue).trim();
+                    if (!busyReason.isEmpty() && !"false".equalsIgnoreCase(busyReason)) {
+                        cameraBusy = true;
+                        cameraBusyReason = busyReason;
+                    }
+                }
 
                 Bridge.log("LIVE: 📸 Received gallery status: " + photoCount + " photos, " +
                       videoCount + " videos, total size: " + totalSize + " bytes");
 
                 // Send gallery status to React Native frontend (matches iOS pattern)
-                Bridge.sendGalleryStatus(photoCount, videoCount, totalCount, totalSize, hasContent);
+                Bridge.sendGalleryStatus(photoCount, videoCount, totalCount, totalSize, hasContent,
+                        cameraBusy, cameraBusyReason);
                 break;
 
             case "settings_ack":

@@ -2183,10 +2183,14 @@ class MentraLive: NSObject, SGCManager {
             let totalCount = json["total"] as? Int ?? 0
             let totalSize = json["total_size"] as? Int64 ?? 0
             let hasContent = json["has_content"] as? Bool ?? false
+            let cameraBusy = Self.galleryCameraBusy(json)
+            let cameraBusyReason = Self.galleryCameraBusyReason(json)
             handleGalleryStatus(
                 photoCount: photoCount, videoCount: videoCount,
                 totalCount: totalCount, totalSize: totalSize,
-                hasContent: hasContent
+                hasContent: hasContent,
+                cameraBusy: cameraBusy,
+                cameraBusyReason: cameraBusyReason
             )
 
         case "settings_ack":
@@ -2981,7 +2985,8 @@ class MentraLive: NSObject, SGCManager {
             networks = networksNeoArray
         }
 
-        Bridge.updateWifiScanResults(networks)
+        let scanComplete = json["scan_complete"] as? Bool ?? json["scanComplete"] as? Bool ?? false
+        Bridge.updateWifiScanResults(networks, scanComplete: scanComplete)
     }
 
     private func handleButtonPress(_ json: [String: Any]) {
@@ -4002,14 +4007,15 @@ class MentraLive: NSObject, SGCManager {
 
     private func handleGalleryStatus(
         photoCount: Int, videoCount: Int, totalCount: Int,
-        totalSize: Int64, hasContent: Bool
+        totalSize: Int64, hasContent: Bool, cameraBusy: Bool,
+        cameraBusyReason: String?
     ) {
         Bridge.log(
             "LIVE: 📸 Received gallery status - photos: \(photoCount), videos: \(videoCount), total size: \(totalSize) bytes"
         )
 
         // Emit gallery status event like other status events
-        let eventBody =
+        var eventBody =
             [
                 "type": "gallery_status",
                 "photos": photoCount,
@@ -4017,9 +4023,37 @@ class MentraLive: NSObject, SGCManager {
                 "total": totalCount,
                 "totalSize": totalSize,
                 "hasContent": hasContent,
-                "cameraBusy": false,
+                "cameraBusy": cameraBusy,
             ] as [String: Any]
+        if let cameraBusyReason, !cameraBusyReason.isEmpty {
+            eventBody["cameraBusyReason"] = cameraBusyReason
+        }
         Bridge.sendTypedMessage("gallery_status", body: eventBody)
+    }
+
+    private static func galleryCameraBusy(_ json: [String: Any]) -> Bool {
+        if let busy = json["cameraBusy"] as? Bool {
+            return busy
+        }
+        if let busy = json["camera_busy"] as? Bool {
+            return busy
+        }
+        if let reason = json["camera_busy"] as? String {
+            let normalized = reason.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return !normalized.isEmpty && normalized != "false"
+        }
+        return false
+    }
+
+    private static func galleryCameraBusyReason(_ json: [String: Any]) -> String? {
+        if let reason = json["cameraBusyReason"] as? String, !reason.isEmpty {
+            return reason
+        }
+        if let reason = json["camera_busy"] as? String {
+            let normalized = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+            return normalized.isEmpty || normalized.lowercased() == "false" ? nil : normalized
+        }
+        return nil
     }
 
     // MARK: - Timers

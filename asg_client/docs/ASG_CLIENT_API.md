@@ -215,7 +215,7 @@ Wire response type for all video commands: `video_recording_status`.
 | `flash`           | boolean | `true`         | Privacy LED during recording |
 | `sound`           | boolean | `true`         | Start/stop tones             |
 
-Same battery constraint as photo. Status values emitted: `recording_started`, `already_recording`, `battery_low`, `service_unavailable`, `missing_request_id`, `error`.
+Same battery constraint as photo. `recording_started` is the successful start status. `already_recording`, `battery_low`, `service_unavailable`, `missing_request_id`, and `error` are emitted with `success: false`.
 
 ```json
 {"type": "video_recording_status", "success": true, "status": "recording_started", "timestamp": 1708963201234}
@@ -348,12 +348,21 @@ Response:
 {"type": "request_wifi_scan"}
 ```
 
-Streams results back over BLE as they're discovered:
+Streams results back over BLE as they're discovered. Intermediate payloads use `scan_complete: false`; a final payload with `scan_complete: true` is sent when the scan finishes, including an empty list when no networks are found.
 
 ```json
 {
   "type": "wifi_scan_result",
+  "scan_complete": false,
   "networks_neo": [{"ssid": "MyNetwork", "signal_strength": -45, "security": "WPA2"}]
+}
+```
+
+```json
+{
+  "type": "wifi_scan_result",
+  "scan_complete": true,
+  "networks_neo": []
 }
 ```
 
@@ -597,7 +606,7 @@ Returns counts via `FileManager`. If the camera is busy (recording or streaming)
 }
 ```
 
-When the camera is busy, an additional context field appears (`camera_busy`: `"video"` or `"stream"`).
+When the camera is busy, an additional context field appears (`camera_busy`: `"video"` or `"stream"`). The phone SDK exposes this as `cameraBusy: true` and `cameraBusyReason`.
 
 ---
 

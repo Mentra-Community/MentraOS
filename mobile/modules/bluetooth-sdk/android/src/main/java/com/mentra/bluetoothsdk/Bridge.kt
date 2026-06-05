@@ -497,7 +497,7 @@ public class Bridge private constructor() {
 
         /** Send WiFi scan results */
         @JvmStatic
-        fun updateWifiScanResults(networks: List<Map<String, Any>>) {
+        fun updateWifiScanResults(networks: List<Map<String, Any>>, scanComplete: Boolean) {
             var storedNetworks: List<Map<String, Any>> =
                     DeviceStore.get("bluetooth", "wifiScanResults") as? List<Map<String, Any>>
                             ?: emptyList()
@@ -511,6 +511,7 @@ public class Bridge private constructor() {
             DeviceStore.apply("bluetooth", "wifiScanResults", updatedNetworks)
             val body = HashMap<String, Any>()
             body["networks"] = updatedNetworks
+            body["scanComplete"] = scanComplete
             sendTypedMessage("wifi_scan_result", body)
         }
 
@@ -521,7 +522,9 @@ public class Bridge private constructor() {
                 videoCount: Int,
                 totalCount: Int,
                 totalSize: Long,
-                hasContent: Boolean
+                hasContent: Boolean,
+                cameraBusy: Boolean,
+                cameraBusyReason: String?
         ) {
             val galleryData = HashMap<String, Any>()
             galleryData["type"] = "gallery_status"
@@ -530,7 +533,10 @@ public class Bridge private constructor() {
             galleryData["total"] = totalCount
             galleryData["totalSize"] = totalSize
             galleryData["hasContent"] = hasContent
-            galleryData["cameraBusy"] = false
+            galleryData["cameraBusy"] = cameraBusy
+            if (!cameraBusyReason.isNullOrBlank()) {
+                galleryData["cameraBusyReason"] = cameraBusyReason
+            }
 
             sendTypedMessage("gallery_status", galleryData as Map<String, Any>)
         }

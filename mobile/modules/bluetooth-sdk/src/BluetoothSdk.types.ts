@@ -146,6 +146,7 @@ export type VersionInfoEvent = VersionInfoResult & {
 export type WifiScanResultEvent = {
   type: "wifi_scan_result"
   networks: WifiSearchResult[]
+  scanComplete?: boolean
 }
 
 export type PhotoResponseEvent =
@@ -283,6 +284,7 @@ export type GalleryStatusEvent = {
   totalSize?: number
   hasContent: boolean
   cameraBusy: boolean
+  cameraBusyReason?: "video" | "stream" | (string & {})
 }
 
 export type CompatibleGlassesSearchStopEvent = {

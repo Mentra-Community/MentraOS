@@ -478,6 +478,10 @@ public struct GalleryStatusEvent: CustomStringConvertible {
         boolValue(values, "cameraBusy", "camera_busy") ?? false
     }
 
+    public var cameraBusyReason: String? {
+        stringValue(values, "cameraBusyReason", "camera_busy")
+    }
+
     public var description: String {
         "GalleryStatusEvent(total: \(total), photos: \(photos), videos: \(videos))"
     }

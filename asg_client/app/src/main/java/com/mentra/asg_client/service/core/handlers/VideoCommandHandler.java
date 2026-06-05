@@ -122,10 +122,10 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
             }
 
             if (captureService.isRecordingVideo()) {
-                logCommandResult("start_video_recording", true, "Already recording video");
+                logCommandResult("start_video_recording", false, "Already recording video");
                 streamingManager.sendVideoRecordingStatusResponse(
-                        requestId, true, "already_recording", null);
-                return true;
+                        requestId, false, "already_recording", "Already recording video");
+                return false;
             }
 
             // Parse video settings if provided. Any field that is missing or <= 0

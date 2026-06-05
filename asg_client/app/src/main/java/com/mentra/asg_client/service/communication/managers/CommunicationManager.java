@@ -154,12 +154,8 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
                 // Send networks in chunks of 4 to avoid BLE message size issues
                 int CHUNK_SIZE = 4;
                 
-                if (networks == null || networks.isEmpty()) {
-                    return;
-                }
-                
                 // Split and send in chunks
-                for (int i = 0; i < networks.size(); i += CHUNK_SIZE) {
+                for (int i = 0; i < (networks != null ? networks.size() : 0); i += CHUNK_SIZE) {
                     int endIdx = Math.min(i + CHUNK_SIZE, networks.size());
                     List<String> chunk = networks.subList(i, endIdx);
                     
@@ -190,6 +186,18 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
                         }
                     }
                 }
+                if (networks == null || networks.isEmpty()) {
+                    JSONObject response = new JSONObject();
+                    response.put("type", "wifi_scan_result");
+                    response.put("timestamp", System.currentTimeMillis());
+                    response.put("networks", new org.json.JSONArray());
+                    response.put("scan_complete", true);
+
+                    String jsonString = response.toString();
+                    Log.d(TAG, "📡 📤 Sending empty WiFi scan result: " + jsonString);
+                    boolean sent = serviceManager.getBluetoothManager().sendData(jsonString.getBytes(StandardCharsets.UTF_8));
+                    Log.d(TAG, "📡 " + (sent ? "✅ Empty WiFi scan result sent successfully" : "❌ Failed to send empty WiFi scan result"));
+                }
 
             } catch (JSONException e) {
                 Log.e(TAG, "📡 💥 Error creating WiFi scan results response", e);
@@ -205,7 +213,7 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
     }
     
     @Override
-    public void sendWifiScanResultsOverBleEnhanced(List<NetworkInfo> networks) {
+    public void sendWifiScanResultsOverBleEnhanced(List<NetworkInfo> networks, boolean scanComplete) {
         Log.d(TAG, "📡 =========================================");
         Log.d(TAG, "📡 SEND ENHANCED WIFI SCAN RESULTS OVER BLE");
         Log.d(TAG, "📡 =========================================");
@@ -216,15 +224,12 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
             Log.d(TAG, "📡 ✅ Service manager and Bluetooth manager available");
             
             try {
-                if (networks == null || networks.isEmpty()) {
-                    return;
-                }
-                
                 // Send one network at a time to keep message size minimal
-                for (NetworkInfo network : networks) {
+                for (NetworkInfo network : networks != null ? networks : java.util.Collections.<NetworkInfo>emptyList()) {
                     JSONObject response = new JSONObject();
                     response.put("type", "wifi_scan_result");
                     response.put("timestamp", System.currentTimeMillis());
+                    response.put("scan_complete", false);
                     
                     // Legacy format for backwards compatibility
                     org.json.JSONArray legacyArray = new org.json.JSONArray();
@@ -252,6 +257,19 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
                             Log.e(TAG, "Interrupted while sending individual networks", e);
                         }
                     }
+                }
+                if (networks == null || networks.isEmpty()) {
+                    JSONObject response = new JSONObject();
+                    response.put("type", "wifi_scan_result");
+                    response.put("timestamp", System.currentTimeMillis());
+                    response.put("scan_complete", scanComplete);
+                    response.put("networks", new org.json.JSONArray());
+                    response.put("networks_neo", new org.json.JSONArray());
+
+                    String jsonString = response.toString();
+                    Log.d(TAG, "📡 📤 Sending empty enhanced WiFi scan result: " + jsonString);
+                    boolean sent = serviceManager.getBluetoothManager().sendData(jsonString.getBytes(StandardCharsets.UTF_8));
+                    Log.d(TAG, "📡 " + (sent ? "✅ Empty enhanced WiFi scan result sent successfully" : "❌ Failed to send empty enhanced WiFi scan result"));
                 }
 
             } catch (JSONException e) {
@@ -591,4 +609,4 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
             Log.e(TAG, "📱 Error sending OTA status", e);
         }
     }
-} 
+}

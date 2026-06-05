@@ -376,7 +376,7 @@ class Bridge {
         Bridge.sendTypedMessage("wifi_status_change", body: status.values)
     }
 
-    static func updateWifiScanResults(_ networks: [[String: Any]]) {
+    static func updateWifiScanResults(_ networks: [[String: Any]], scanComplete: Bool) {
         Task {
             await MainActor.run {
                 var storedNetworks: [[String: Any]] =
@@ -390,7 +390,10 @@ class Bridge {
                     }
                 }
                 DeviceStore.shared.apply("bluetooth", "wifiScanResults", storedNetworks)
-                Bridge.sendTypedMessage("wifi_scan_result", body: ["networks": storedNetworks])
+                Bridge.sendTypedMessage(
+                    "wifi_scan_result",
+                    body: ["networks": storedNetworks, "scanComplete": scanComplete]
+                )
             }
         }
     }

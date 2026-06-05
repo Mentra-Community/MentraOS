@@ -42,7 +42,6 @@ private final class ActiveScanSession {
 @MainActor
 private final class PendingWifiScan {
     let pending: PendingResponse<[WifiScanResult]>
-    var sawInitialClear = false
 
     init(pending: PendingResponse<[WifiScanResult]>) {
         self.pending = pending
@@ -1167,10 +1166,6 @@ public final class MentraBluetoothSDK {
 
     private func handleWifiScanResultsForRequests(_ results: [WifiScanResult]) {
         guard let request = pendingWifiScan else { return }
-        if results.isEmpty, !request.sawInitialClear {
-            request.sawInitialClear = true
-            return
-        }
         if pendingWifiScan === request {
             pendingWifiScan = nil
         }
@@ -1240,9 +1235,6 @@ public final class MentraBluetoothSDK {
             delegate?.mentraBluetoothSDK(self, didUpdateGlasses: nextState.glasses)
         case ObservableStore.bluetoothCategory:
             let nextState = state
-            if changes.keys.contains("wifiScanResults") {
-                handleWifiScanResultsForRequests(nextState.sdk.wifiScanResults)
-            }
             delegate?.mentraBluetoothSDK(self, didUpdate: nextState)
             delegate?.mentraBluetoothSDK(self, didUpdateSdkState: nextState.sdk)
             delegate?.mentraBluetoothSDK(self, didUpdateScan: nextState.scan)
@@ -1365,7 +1357,11 @@ public final class MentraBluetoothSDK {
             delegate?.mentraBluetoothSDK(self, didReceive: .wifiStatus(event))
         case "wifi_scan_result":
             let networks = (data["networks"] as? [[String: Any]])?.map(WifiScanResult.init(values:)) ?? []
-            handleWifiScanResultsForRequests(networks)
+            let hasCompletionFlag = data.keys.contains("scanComplete") || data.keys.contains("scan_complete")
+            let scanComplete = data["scanComplete"] as? Bool ?? data["scan_complete"] as? Bool ?? false
+            if scanComplete || !hasCompletionFlag {
+                handleWifiScanResultsForRequests(networks)
+            }
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "wifi_scan_result", values: data))
         case "hotspot_error":
             let event = HotspotErrorEvent(values: data)

@@ -96,7 +96,6 @@ class MentraBluetoothSdk private constructor(
 
     private data class PendingWifiScan(
         val pending: PendingResponse<List<WifiScanResult>>,
-        var sawInitialClear: Boolean = false,
     )
 
     private data class PendingWifiStatusRequest(
@@ -923,9 +922,6 @@ class MentraBluetoothSdk private constructor(
             ObservableStore.BLUETOOTH_CATEGORY -> {
                 val state = getState()
                 val scanChanged = changes.keys.any { it in SCAN_STATE_KEYS }
-                if (changes.containsKey("wifiScanResults")) {
-                    handleWifiScanResultsForRequests(state.sdk.wifiScanResults)
-                }
                 dispatchToListeners {
                     it.onStateChanged(state)
                     it.onSdkStateChanged(state.sdk)
@@ -1069,7 +1065,13 @@ class MentraBluetoothSdk private constructor(
                         ?.mapNotNull { (it as? Map<*, *>)?.stringKeyedMap() }
                         ?.map(WifiScanResult::fromMap)
                         ?: emptyList()
-                handleWifiScanResultsForRequests(networks)
+                val hasCompletionFlag =
+                    data.containsKey("scanComplete") || data.containsKey("scan_complete")
+                val scanComplete =
+                    (data["scanComplete"] as? Boolean) ?: (data["scan_complete"] as? Boolean) ?: false
+                if (scanComplete || !hasCompletionFlag) {
+                    handleWifiScanResultsForRequests(networks)
+                }
                 dispatchToListeners { it.onRawEvent(eventName, data) }
             }
             "hotspot_status_change" -> {
@@ -1355,10 +1357,6 @@ class MentraBluetoothSdk private constructor(
 
     private fun handleWifiScanResultsForRequests(results: List<WifiScanResult>) {
         val request = synchronized(oneShotLock) { pendingWifiScan } ?: return
-        if (results.isEmpty() && !request.sawInitialClear) {
-            request.sawInitialClear = true
-            return
-        }
         synchronized(oneShotLock) {
             if (pendingWifiScan === request) {
                 pendingWifiScan = null
