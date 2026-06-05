@@ -23,6 +23,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "speaking_status",
             "battery_status",
             "wifi_status_change",
+            "wifi_scan_result",
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
@@ -36,6 +37,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "switch_status",
             "rgb_led_control_response",
             "settings_ack",
+            "version_info",
             "pair_failure",
             "audio_pairing_needed",
             "audio_connected",
@@ -712,6 +714,10 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             sendEvent("ota_status", event.values)
         case let .settingsAck(event):
             sendEvent("settings_ack", event.values)
+        case let .versionInfo(event):
+            var values = event.dictionary
+            values["type"] = "version_info"
+            sendEvent("version_info", values)
         case let .localTranscription(transcription):
             sendEvent("local_transcription", transcription.values)
         case let .raw(name, values):

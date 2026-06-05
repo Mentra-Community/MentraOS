@@ -196,6 +196,18 @@ data class VersionInfoResult(
                 otaVersionUrl = status.otaVersionUrl,
                 appVersion = status.appVersion,
             )
+
+        internal fun fromMap(values: Map<String, Any>): VersionInfoResult =
+            VersionInfoResult(
+                androidVersion = stringValue(values, "androidVersion", "android_version") ?: "",
+                firmwareVersion = stringValue(values, "firmwareVersion", "firmware_version") ?: "",
+                besFirmwareVersion = stringValue(values, "besFirmwareVersion", "bes_fw_version") ?: "",
+                mtkFirmwareVersion = stringValue(values, "mtkFirmwareVersion", "mtk_fw_version") ?: "",
+                buildNumber = stringValue(values, "buildNumber", "build_number") ?: "",
+                systemTimeMs = longValue(values, "systemTimeMs", "system_time_ms"),
+                otaVersionUrl = stringValue(values, "otaVersionUrl", "ota_version_url") ?: "",
+                appVersion = stringValue(values, "appVersion", "app_version") ?: "",
+            )
     }
 }
 

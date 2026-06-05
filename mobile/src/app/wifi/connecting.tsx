@@ -10,6 +10,52 @@ import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {translate} from "@/i18n"
 
+type WifiConnectionErrorCopy = {
+  title: string
+  description: string
+}
+
+function wifiConnectionErrorCopy(error: unknown): WifiConnectionErrorCopy {
+  const code = typeof (error as {code?: unknown})?.code === "string" ? (error as {code: string}).code : undefined
+  const message = error instanceof Error ? error.message : String(error)
+
+  if (code === "bluetooth_powered_off") {
+    return {
+      title: "Bluetooth is turned off.",
+      description: "Turn on phone Bluetooth, then try again.",
+    }
+  }
+  if (code === "bluetooth_permission_denied") {
+    return {
+      title: "Bluetooth permission is needed.",
+      description: "Allow Bluetooth permission, then try again.",
+    }
+  }
+  if (code === "bluetooth_unsupported") {
+    return {
+      title: "Bluetooth is not supported.",
+      description: "This phone does not support Bluetooth.",
+    }
+  }
+  if (code === "request_in_flight") {
+    return {
+      title: "Connection already in progress.",
+      description: "Wait for the current Wi-Fi connection attempt to finish.",
+    }
+  }
+  if (code === "request_timeout" || message.includes("timed out")) {
+    return {
+      title: "The glasses did not respond.",
+      description: "Make sure they are nearby, then try again.",
+    }
+  }
+
+  return {
+    title: "Failed to connect to the network.",
+    description: "Please check your password and try again.",
+  }
+}
+
 export default function WifiConnectingScreen() {
   const params = useLocalSearchParams()
   const _deviceModel = (params.deviceModel as string) || "Glasses"
@@ -22,6 +68,7 @@ export default function WifiConnectingScreen() {
   const {theme} = useAppTheme()
   const [connectionStatus, setConnectionStatus] = useState<"connecting" | "success" | "failed">("connecting")
   const [errorMessage, setErrorMessage] = useState("")
+  const [errorDescription, setErrorDescription] = useState("")
 
   const {goBack, push} = useNavigationStore.getState()
   const pushPrevious = usePushPrevious()
@@ -46,14 +93,17 @@ export default function WifiConnectingScreen() {
       setConnectionStatus("success")
     } catch (error) {
       console.error("Error connecting WiFi:", error)
+      const copy = wifiConnectionErrorCopy(error)
       setConnectionStatus("failed")
-      setErrorMessage("Failed to connect to the network. Please check your password and try again.")
+      setErrorMessage(copy.title)
+      setErrorDescription(copy.description)
     }
   }
 
   const handleTryAgain = () => {
     setConnectionStatus("connecting")
     setErrorMessage("")
+    setErrorDescription("")
     attemptConnection()
   }
 
@@ -120,7 +170,7 @@ export default function WifiConnectingScreen() {
                 <Icon name="wifi-off" size={64} color={theme.colors.destructive} />
               </View>
               <Text className="text-2xl font-semibold text-text text-center mb-6">{errorMessage}</Text>
-              <Text className="text-base text-muted-foreground text-center mb-8 px-8" tx="wifi:failedDescription" />
+              <Text className="text-base text-muted-foreground text-center mb-8 px-8" text={errorDescription} />
             </View>
             <Button text="Try Again" onPress={handleTryAgain} />
           </View>

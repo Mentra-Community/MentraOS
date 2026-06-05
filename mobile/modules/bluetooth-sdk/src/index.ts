@@ -1,9 +1,5 @@
 import PrivateBluetoothSdkModule from "./_private/BluetoothSdkModule"
-import type {
-  BluetoothSdkEventListener,
-  BluetoothSdkEventName,
-  BluetoothSdkPublicModule,
-} from "./BluetoothSdk.types"
+import type {BluetoothSdkEventListener, BluetoothSdkEventName, BluetoothSdkPublicModule} from "./BluetoothSdk.types"
 
 const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "log",
@@ -18,6 +14,7 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "battery_status",
   "local_transcription",
   "wifi_status_change",
+  "wifi_scan_result",
   "hotspot_status_change",
   "hotspot_error",
   "photo_response",
@@ -39,19 +36,15 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "ota_update_available",
   "ota_start_ack",
   "ota_status",
+  "version_info",
   "extraction_progress",
 ])
 
 const addListener: BluetoothSdkPublicModule["addListener"] = (eventName, listener) => {
   if (!PUBLIC_EVENT_NAMES.has(eventName)) {
-    throw new Error(
-      `Unsupported BluetoothSdk event "${eventName}". Use @mentra/bluetooth-sdk/react for status state.`,
-    )
+    throw new Error(`Unsupported BluetoothSdk event "${eventName}". Use @mentra/bluetooth-sdk/react for status state.`)
   }
-  return PrivateBluetoothSdkModule.addListener(
-    eventName,
-    listener as BluetoothSdkEventListener<BluetoothSdkEventName>,
-  )
+  return PrivateBluetoothSdkModule.addListener(eventName, listener as BluetoothSdkEventListener<BluetoothSdkEventName>)
 }
 
 export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
@@ -78,9 +71,11 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   forgetWifiNetwork: PrivateBluetoothSdkModule.forgetWifiNetwork.bind(PrivateBluetoothSdkModule),
   setHotspotState: PrivateBluetoothSdkModule.setHotspotState.bind(PrivateBluetoothSdkModule),
   setGalleryModeEnabled: PrivateBluetoothSdkModule.setGalleryModeEnabled.bind(PrivateBluetoothSdkModule),
-  setVoiceActivityDetectionEnabled: PrivateBluetoothSdkModule.setVoiceActivityDetectionEnabled.bind(PrivateBluetoothSdkModule),
+  setVoiceActivityDetectionEnabled:
+    PrivateBluetoothSdkModule.setVoiceActivityDetectionEnabled.bind(PrivateBluetoothSdkModule),
   setButtonPhotoSettings: PrivateBluetoothSdkModule.setButtonPhotoSettings.bind(PrivateBluetoothSdkModule),
-  setButtonVideoRecordingSettings: PrivateBluetoothSdkModule.setButtonVideoRecordingSettings.bind(PrivateBluetoothSdkModule),
+  setButtonVideoRecordingSettings:
+    PrivateBluetoothSdkModule.setButtonVideoRecordingSettings.bind(PrivateBluetoothSdkModule),
   setButtonCameraLed: PrivateBluetoothSdkModule.setButtonCameraLed.bind(PrivateBluetoothSdkModule),
   setButtonMaxRecordingTime: PrivateBluetoothSdkModule.setButtonMaxRecordingTime.bind(PrivateBluetoothSdkModule),
   setCameraFov: PrivateBluetoothSdkModule.setCameraFov.bind(PrivateBluetoothSdkModule),
@@ -194,6 +189,7 @@ export type {
   ScanResultsCallback,
   SpeakingStatusEvent,
   SettingsAckEvent,
+  SettingsAckSetting,
   SettingsAckStatus,
   StreamAudioConfig,
   StreamResolvedConfig,
@@ -207,8 +203,11 @@ export type {
   SwitchStatusEvent,
   TouchEvent,
   VideoRecordingStatusEvent,
+  VideoRecordingStatusState,
   VideoRecordingSuccessStatusEvent,
+  VersionInfoEvent,
   VersionInfoResult,
+  WifiScanResultEvent,
   VoiceActivityDetectionStatusEvent,
   WifiSearchResult,
   WifiStatus,

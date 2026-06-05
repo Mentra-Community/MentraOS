@@ -2437,11 +2437,7 @@ class MentraLive: NSObject, SGCManager {
                     DeviceStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
                 }
 
-                // Send fields immediately to RN - no waiting for other chunks
-                // All fields including mtk_fw_version are forwarded to RN
-                // Bridge.sendTypedMessage("version_info", body: fields)
-
-                // Bridge.log("LIVE: Processed version_info fields and sent to RN")
+                Bridge.sendVersionInfo(fields)
             } else {
                 Bridge.log("Unhandled message type: \(type)")
             }
@@ -4292,7 +4288,7 @@ class MentraLive: NSObject, SGCManager {
             "bt_mac_address": bluetoothMacAddress,
         ]
 
-        Bridge.sendTypedMessage("version_info", body: eventBody)
+        Bridge.sendVersionInfo(eventBody)
     }
 
     private func emitKeepAliveAck(_ json: [String: Any]) {

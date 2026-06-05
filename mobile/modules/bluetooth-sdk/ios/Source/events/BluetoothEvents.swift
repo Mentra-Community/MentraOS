@@ -254,6 +254,7 @@ public enum BluetoothEvent: CustomStringConvertible {
     case otaStartAck(OtaStartAckEvent)
     case otaStatus(OtaStatusEvent)
     case settingsAck(SettingsAckEvent)
+    case versionInfo(VersionInfoResult)
     case localTranscription(LocalTranscriptionEvent)
     case raw(name: String, values: [String: Any])
 
@@ -292,6 +293,8 @@ public enum BluetoothEvent: CustomStringConvertible {
         case let .otaStatus(event):
             event.description
         case let .settingsAck(event):
+            event.description
+        case let .versionInfo(event):
             event.description
         case let .localTranscription(event):
             event.description

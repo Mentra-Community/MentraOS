@@ -196,6 +196,18 @@ interface LedControlOptions {
 }
 ```
 
+### LedControlResult
+
+Command acknowledgement returned after the connected glasses apply the RGB LED command.
+
+```typescript
+interface LedControlResult {
+  type?: "rgb_led_control_response";
+  state: "success";
+  requestId: string;
+}
+```
+
 ### LedColor
 
 Available LED colors.

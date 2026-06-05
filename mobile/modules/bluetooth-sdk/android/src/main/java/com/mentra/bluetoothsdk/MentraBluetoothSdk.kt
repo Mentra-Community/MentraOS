@@ -56,17 +56,6 @@ class MentraBluetoothSdk private constructor(
     companion object {
         private val DEFAULT_DEVICE_KEYS = setOf("default_wearable", "device_name", "device_address")
         private val SCAN_STATE_KEYS = setOf("searching", "searchingController", "searchResults")
-        private val VERSION_INFO_KEYS =
-            setOf(
-                "androidVersion",
-                "firmwareVersion",
-                "besFirmwareVersion",
-                "mtkFirmwareVersion",
-                "buildNumber",
-                "otaVersionUrl",
-                "appVersion",
-                "systemTimeMs",
-            )
         private const val DEFAULT_SCAN_TIMEOUT_MS = 15_000L
         private const val DEFAULT_REQUEST_TIMEOUT_MS = 15_000L
         private const val STREAM_START_TIMEOUT_MS = 30_000L
@@ -776,7 +765,12 @@ class MentraBluetoothSdk private constructor(
     fun startVideoRecording(request: VideoRecordingRequest): VideoRecordingStatusEvent {
         require(request.requestId.isNotBlank()) { "requestId is required to start video recording." }
         val pending = PendingResponse<VideoRecordingStatusEvent>("start video recording")
-        pendingVideoRecordingRequests[request.requestId] = pending
+        if (pendingVideoRecordingRequests.putIfAbsent(request.requestId, pending) != null) {
+            throw BluetoothException(
+                "request_in_flight",
+                "A video recording command is already waiting for requestId ${request.requestId}.",
+            )
+        }
         try {
             deviceManager.startVideoRecording(
                     request.requestId,
@@ -795,7 +789,12 @@ class MentraBluetoothSdk private constructor(
     fun stopVideoRecording(requestId: String): VideoRecordingStatusEvent {
         require(requestId.isNotBlank()) { "requestId is required to stop video recording." }
         val pending = PendingResponse<VideoRecordingStatusEvent>("stop video recording")
-        pendingVideoRecordingRequests[requestId] = pending
+        if (pendingVideoRecordingRequests.putIfAbsent(requestId, pending) != null) {
+            throw BluetoothException(
+                "request_in_flight",
+                "A video recording command is already waiting for requestId $requestId.",
+            )
+        }
         try {
             deviceManager.stopVideoRecording(requestId)
             return pending.await()
@@ -916,11 +915,6 @@ class MentraBluetoothSdk private constructor(
         when (ObservableStore.normalizeCategory(category)) {
             "glasses" -> {
                 val state = getState()
-                if (changes.keys.any { it in VERSION_INFO_KEYS }) {
-                    synchronized(oneShotLock) {
-                        pendingVersionInfo?.resolve(VersionInfoResult.from(getRawGlassesStatus()))
-                    }
-                }
                 dispatchToListeners {
                     it.onStateChanged(state)
                     it.onGlassesChanged(state.glasses)
@@ -1068,6 +1062,15 @@ class MentraBluetoothSdk private constructor(
                 handleWifiStatusForRequests(event)
                 dispatchToListeners { it.onWifiStatusChanged(event) }
             }
+            "wifi_scan_result" -> {
+                val networks =
+                    (data["networks"] as? List<*>)
+                        ?.mapNotNull { (it as? Map<*, *>)?.stringKeyedMap() }
+                        ?.map(WifiScanResult::fromMap)
+                        ?: emptyList()
+                handleWifiScanResultsForRequests(networks)
+                dispatchToListeners { it.onRawEvent(eventName, data) }
+            }
             "hotspot_status_change" -> {
                 val event = HotspotStatusEvent(data)
                 handleHotspotStatusForRequests(event)
@@ -1138,6 +1141,13 @@ class MentraBluetoothSdk private constructor(
                 val event = SettingsAckEvent(data)
                 handleSettingsAckForRequests(event)
                 dispatchToListeners { it.onSettingsAck(event) }
+            }
+            "version_info" -> {
+                val event = VersionInfoResult.fromMap(data)
+                synchronized(oneShotLock) {
+                    pendingVersionInfo?.resolve(event)
+                }
+                dispatchToListeners { it.onVersionInfo(event) }
             }
             "mic_pcm" -> {
                 val event = MicPcmEvent(data)

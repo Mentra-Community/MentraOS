@@ -371,6 +371,17 @@ public struct VersionInfoResult: CustomStringConvertible {
         appVersion = status.appVersion
     }
 
+    init(values: [String: Any]) {
+        androidVersion = stringValue(values, "androidVersion", "android_version") ?? ""
+        firmwareVersion = stringValue(values, "firmwareVersion", "firmware_version") ?? ""
+        besFirmwareVersion = stringValue(values, "besFirmwareVersion", "bes_fw_version") ?? ""
+        mtkFirmwareVersion = stringValue(values, "mtkFirmwareVersion", "mtk_fw_version") ?? ""
+        buildNumber = stringValue(values, "buildNumber", "build_number") ?? ""
+        systemTimeMs = intValue(values["systemTimeMs"]) ?? intValue(values["system_time_ms"])
+        otaVersionUrl = stringValue(values, "otaVersionUrl", "ota_version_url") ?? ""
+        appVersion = stringValue(values, "appVersion", "app_version") ?? ""
+    }
+
     public var dictionary: [String: Any] {
         var values: [String: Any] = [
             "androidVersion": androidVersion,

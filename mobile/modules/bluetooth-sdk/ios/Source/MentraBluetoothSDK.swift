@@ -157,16 +157,6 @@ public final class MentraBluetoothSDK {
     private var pendingWifiStatus: PendingWifiStatusRequest?
     private var pendingHotspotStatus: PendingHotspotStatusRequest?
     private var pendingVersionInfo: PendingResponse<VersionInfoResult>?
-    private let versionInfoKeys: Set<String> = [
-        "androidVersion",
-        "firmwareVersion",
-        "besFirmwareVersion",
-        "mtkFirmwareVersion",
-        "buildNumber",
-        "otaVersionUrl",
-        "appVersion",
-        "systemTimeMs",
-    ]
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
         self.configuration = configuration
@@ -803,6 +793,12 @@ public final class MentraBluetoothSDK {
         let pending = PendingResponse<VideoRecordingStatusEvent>(
             operation: "start video recording \(request.requestId)"
         )
+        guard pendingVideoRecordingRequests[request.requestId] == nil else {
+            throw BluetoothError(
+                code: "request_in_flight",
+                message: "A video recording command is already waiting for requestId \(request.requestId)."
+            )
+        }
         pendingVideoRecordingRequests[request.requestId] = pending
         DeviceManager.shared.startVideoRecording(
             request.requestId,
@@ -827,6 +823,12 @@ public final class MentraBluetoothSDK {
             throw BluetoothError(code: "missing_request_id", message: "requestId is required to stop video recording.")
         }
         let pending = PendingResponse<VideoRecordingStatusEvent>(operation: "stop video recording \(requestId)")
+        guard pendingVideoRecordingRequests[requestId] == nil else {
+            throw BluetoothError(
+                code: "request_in_flight",
+                message: "A video recording command is already waiting for requestId \(requestId)."
+            )
+        }
         pendingVideoRecordingRequests[requestId] = pending
         DeviceManager.shared.stopVideoRecording(requestId)
         do {
@@ -1234,9 +1236,6 @@ public final class MentraBluetoothSDK {
         switch ObservableStore.normalizeCategory(category) {
         case "glasses":
             let nextState = state
-            if changes.keys.contains(where: { versionInfoKeys.contains($0) }) {
-                pendingVersionInfo?.resolve(VersionInfoResult(status: glassesStatus))
-            }
             delegate?.mentraBluetoothSDK(self, didUpdate: nextState)
             delegate?.mentraBluetoothSDK(self, didUpdateGlasses: nextState.glasses)
         case ObservableStore.bluetoothCategory:
@@ -1364,6 +1363,10 @@ public final class MentraBluetoothSDK {
             let event = WifiStatusEvent(values: data)
             handleWifiStatusForRequests(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .wifiStatus(event))
+        case "wifi_scan_result":
+            let networks = (data["networks"] as? [[String: Any]])?.map(WifiScanResult.init(values:)) ?? []
+            handleWifiScanResultsForRequests(networks)
+            delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "wifi_scan_result", values: data))
         case "hotspot_error":
             let event = HotspotErrorEvent(values: data)
             handleHotspotErrorForRequests(event)
@@ -1416,6 +1419,10 @@ public final class MentraBluetoothSDK {
             let event = SettingsAckEvent(values: data)
             handleSettingsAckForRequests(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .settingsAck(event))
+        case "version_info":
+            let event = VersionInfoResult(values: data)
+            pendingVersionInfo?.resolve(event)
+            delegate?.mentraBluetoothSDK(self, didReceive: .versionInfo(event))
         case "compatible_glasses_search_stop":
             delegate?.mentraBluetoothSDK(self, didStopScan: .completed)
         case "pair_failure":

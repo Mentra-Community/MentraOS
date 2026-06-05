@@ -2813,6 +2813,15 @@ public class MentraLive extends SGCManager {
                 DeviceStore.INSTANCE.apply("glasses", "firmwareVersion", firmwareVersionLegacy);
                 DeviceStore.INSTANCE.apply("glasses", "bluetoothMacAddress", btMacAddressLegacy);
 
+                Map<String, Object> versionInfoLegacy = new HashMap<>();
+                versionInfoLegacy.put("appVersion", appVersionLegacy);
+                versionInfoLegacy.put("buildNumber", buildNumberLegacy);
+                versionInfoLegacy.put("deviceModel", deviceModelLegacy);
+                versionInfoLegacy.put("androidVersion", androidVersionLegacy);
+                versionInfoLegacy.put("otaVersionUrl", otaVersionUrlLegacy != null ? otaVersionUrlLegacy : "");
+                versionInfoLegacy.put("firmwareVersion", firmwareVersionLegacy);
+                Bridge.sendVersionInfo(versionInfoLegacy);
+
                 // Parse build number as integer for version checks (local field)
                 try {
                     buildNumberInt = Integer.parseInt(buildNumberLegacy);
@@ -3012,6 +3021,7 @@ public class MentraLive extends SGCManager {
                     }
 
                     Bridge.log("LIVE: Processed version_info fields and sent to RN");
+                    Bridge.sendVersionInfo(fields);
                 } else {
                     Log.d(TAG, "📦 Unknown message type: " + type);
                 }

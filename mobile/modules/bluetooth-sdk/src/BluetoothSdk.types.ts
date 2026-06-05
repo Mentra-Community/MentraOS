@@ -137,6 +137,15 @@ export type VersionInfoResult = {
   appVersion: string
 }
 
+export type VersionInfoEvent = VersionInfoResult & {
+  type: "version_info"
+}
+
+export type WifiScanResultEvent = {
+  type: "wifi_scan_result"
+  networks: WifiSearchResult[]
+}
+
 export type PhotoResponseEvent =
   | {
       type: "photo_response"
@@ -243,7 +252,7 @@ export type VideoRecordingStatusEvent = {
   type: "video_recording_status"
   requestId?: string
   success: boolean
-  status: "recording_started" | "already_recording" | "recording_stopped" | "not_recording" | string
+  status: VideoRecordingStatusState
   details?: string | null
   timestamp: number
   data?: {
@@ -253,6 +262,12 @@ export type VideoRecordingStatusEvent = {
     [key: string]: unknown
   }
 }
+
+export type VideoRecordingStatusState =
+  | "recording_started"
+  | "already_recording"
+  | "recording_stopped"
+  | "not_recording"
 
 export type VideoRecordingSuccessStatusEvent = Omit<VideoRecordingStatusEvent, "success"> & {
   success: true
@@ -315,19 +330,20 @@ export type RgbLedControlResponseEvent =
 
 export type RgbLedControlSuccessResponseEvent = Extract<RgbLedControlResponseEvent, {state: "success"}>
 
-export type SettingsAckStatus = "applied" | "ready" | "error" | string
+export type SettingsAckStatus = "applied" | "ready" | "error" | "failed" | "failure" | "rejected"
+
+export type SettingsAckSetting =
+  | "gallery_mode"
+  | "button_photo"
+  | "button_video_recording"
+  | "button_camera_led"
+  | "button_max_recording_time"
+  | "camera_fov"
 
 export type SettingsAckEvent = {
   type: "settings_ack"
   requestId: string
-  setting:
-    | "gallery_mode"
-    | "button_photo"
-    | "button_video_recording"
-    | "button_camera_led"
-    | "button_max_recording_time"
-    | "camera_fov"
-    | string
+  setting: SettingsAckSetting
   status: SettingsAckStatus
   ready?: boolean
   timestamp: number
@@ -682,6 +698,7 @@ export type BluetoothSdkModuleEvents = {
   battery_status: (event: BatteryStatusEvent) => void
   local_transcription: (event: LocalTranscriptionEvent) => void
   wifi_status_change: (event: WifiStatusChangeEvent) => void
+  wifi_scan_result: (event: WifiScanResultEvent) => void
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
   hotspot_error: (event: HotspotErrorEvent) => void
   photo_response: (event: PhotoResponseEvent) => void
@@ -710,6 +727,7 @@ export type BluetoothSdkModuleEvents = {
   ota_update_available: (event: OtaUpdateAvailableEvent) => void
   ota_start_ack: (event: OtaStartAckEvent) => void
   ota_status: (event: OtaStatusEvent) => void
+  version_info: (event: VersionInfoEvent) => void
   send_command_to_ble: (event: BleCommandTraceEvent) => void
   receive_command_from_ble: (event: BleCommandTraceEvent) => void
   miniapp_selected: (event: MiniappSelectedEvent) => void
@@ -754,6 +772,7 @@ export type BluetoothSdkEventMap = {
   battery_status: BatteryStatusEvent
   local_transcription: LocalTranscriptionEvent
   wifi_status_change: WifiStatusChangeEvent
+  wifi_scan_result: WifiScanResultEvent
   hotspot_status_change: HotspotStatusChangeEvent
   hotspot_error: HotspotErrorEvent
   photo_response: PhotoResponseEvent
@@ -775,6 +794,7 @@ export type BluetoothSdkEventMap = {
   ota_update_available: OtaUpdateAvailableEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
+  version_info: VersionInfoEvent
   extraction_progress: ExtractionProgressEvent
 }
 

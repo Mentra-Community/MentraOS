@@ -412,6 +412,25 @@ public class Bridge private constructor() {
             sendTypedMessage("video_recording_status", body)
         }
 
+        @JvmStatic
+        fun sendVersionInfo(values: Map<String, Any>) {
+            fun stringField(vararg keys: String): String =
+                    keys.firstNotNullOfOrNull { key -> values[key] as? String } ?: ""
+            val body = HashMap<String, Any>()
+            body["type"] = "version_info"
+            body["androidVersion"] = stringField("androidVersion", "android_version")
+            body["firmwareVersion"] = stringField("firmwareVersion", "firmware_version")
+            body["besFirmwareVersion"] = stringField("besFirmwareVersion", "bes_fw_version")
+            body["mtkFirmwareVersion"] = stringField("mtkFirmwareVersion", "mtk_fw_version")
+            body["buildNumber"] = stringField("buildNumber", "build_number")
+            (values["systemTimeMs"] as? Number ?: values["system_time_ms"] as? Number)?.let {
+                body["systemTimeMs"] = it.toLong()
+            }
+            body["otaVersionUrl"] = stringField("otaVersionUrl", "ota_version_url")
+            body["appVersion"] = stringField("appVersion", "app_version")
+            sendTypedMessage("version_info", body)
+        }
+
         /**
          * Send transcription result to server Used by AOSManager to send pre-formatted
          * transcription results Matches the Swift structure exactly
@@ -490,6 +509,9 @@ public class Bridge private constructor() {
                 }
             }
             DeviceStore.apply("bluetooth", "wifiScanResults", updatedNetworks)
+            val body = HashMap<String, Any>()
+            body["networks"] = updatedNetworks
+            sendTypedMessage("wifi_scan_result", body)
         }
 
         /** Send gallery status - matches iOS MentraLive.swift handleGalleryStatus pattern */

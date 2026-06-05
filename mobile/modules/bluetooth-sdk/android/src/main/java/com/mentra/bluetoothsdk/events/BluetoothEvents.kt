@@ -162,6 +162,7 @@ interface MentraBluetoothSdkListener {
     fun onOtaStartAck(event: OtaStartAckEvent) {}
     fun onOtaStatus(event: OtaStatusEvent) {}
     fun onSettingsAck(event: SettingsAckEvent) {}
+    fun onVersionInfo(event: VersionInfoResult) {}
     fun onMicPcm(event: MicPcmEvent) {}
     fun onMicLc3(event: MicLc3Event) {}
     fun onLocalTranscription(event: LocalTranscriptionEvent) {}

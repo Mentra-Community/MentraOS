@@ -145,6 +145,10 @@ class BluetoothSdkModule : Module() {
                     sendEvent("settings_ack", event.values)
                 }
 
+                override fun onVersionInfo(event: VersionInfoResult) {
+                    sendEvent("version_info", event.toMap() + mapOf("type" to "version_info"))
+                }
+
                 override fun onMicPcm(event: MicPcmEvent) {
                     sendEvent("mic_pcm", event.toMap())
                 }
@@ -190,6 +194,7 @@ class BluetoothSdkModule : Module() {
             "battery_status",
             "local_transcription",
             "wifi_status_change",
+            "wifi_scan_result",
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
@@ -205,6 +210,7 @@ class BluetoothSdkModule : Module() {
             "switch_status",
             "rgb_led_control_response",
             "settings_ack",
+            "version_info",
             "pair_failure",
             "audio_pairing_needed",
             "audio_connected",
