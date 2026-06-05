@@ -55,13 +55,20 @@ jobs:
           injection = """
             installer.pods_project.targets.each do |target|
               target.build_configurations.each do |config|
+                # Raise all pods to iOS 14.5 minimum
                 dt = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
                 if dt && dt.to_f < 14.5
                   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.5'
                 end
-                if target.name == 'RNScreens'
-                  config.build_settings['OTHER_SWIFT_FLAGS'] = '$(inherited) -Xfrontend -disable-actor-data-race-checks'
+                # Apply Swift 6 actor isolation fix to ALL Swift pods
+                # Prevents whack-a-mole across RNScreens, ExpoModulesCore, etc.
+                if config.build_settings['SWIFT_VERSION']
+                  existing = config.build_settings['OTHER_SWIFT_FLAGS'] || '$(inherited)'
+                  unless existing.include?('-disable-actor-data-race-checks')
+                    config.build_settings['OTHER_SWIFT_FLAGS'] = existing + ' -Xfrontend -disable-actor-data-race-checks'
+                  end
                 end
+                # SwiftProtobuf WMO causes OOM on 80+ files
                 if target.name == 'SwiftProtobuf'
                   config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
                 end
@@ -83,7 +90,7 @@ jobs:
 
       - name: Show patched post_install
         working-directory: ./mobile/ios
-        run: grep -A 25 "post_install" Podfile | head -35
+        run: grep -A 30 "post_install" Podfile | head -40
 
       - name: Install pods
         working-directory: ./mobile/ios
