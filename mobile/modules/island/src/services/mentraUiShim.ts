@@ -46,12 +46,25 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
   if (typeof window === 'undefined') return;
   if (window.mentra && window.__mentra) return;
   var packageName = ${packageNameJson};
-  var rnPost = null;
-  try {
-    rnPost = window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function'
-      ? window.ReactNativeWebView.postMessage.bind(window.ReactNativeWebView)
-      : null;
-  } catch (e) { rnPost = null; }
+  // Resolve window.ReactNativeWebView.postMessage LAZILY, not once at shim-eval.
+  // On Android the shim is injected as a WebViewCompat document-start script
+  // (so it beats the page bundle and the ready handshake can't be raced — see
+  // the react-native-webview patch). But the order in which that document-start
+  // script runs vs. the WebMessageListener that installs
+  // window.ReactNativeWebView is not contractually fixed on Android the way it
+  // is on iOS (postMessageScript is registered before atStartScript there). If
+  // we captured rnPost once and the bridge object wasn't installed yet, every
+  // postMessage — including {type:'ready'} — would be silently dropped and the
+  // splash would hang forever. Resolving per-call means we always pick up the
+  // bridge once it exists, which it reliably does by the time the bundle mounts
+  // and calls mentra.ready().
+  function getRnPost() {
+    try {
+      return window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function'
+        ? window.ReactNativeWebView.postMessage.bind(window.ReactNativeWebView)
+        : null;
+    } catch (e) { return null; }
+  }
 
   // Outbound seq number — purely a log-correlation aid (the host's
   // router doesn't dedup anymore since reconnect can't happen: one
@@ -86,6 +99,7 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
   var PENDING_CAP_PER_CHANNEL = 32;
 
   function postEnvelope(envelope) {
+    var rnPost = getRnPost();
     if (!rnPost) return;
     try { rnPost(JSON.stringify(envelope)); } catch (_) {}
   }
