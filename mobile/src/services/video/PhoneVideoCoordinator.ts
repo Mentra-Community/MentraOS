@@ -91,7 +91,7 @@ export class PhoneVideoCoordinator {
           opts.sound ?? true,
           settings,
         )
-        if (!status.success || status.status !== "recording_started") {
+        if (status.status !== "recording_started") {
           throw new VideoError(
             status.status || "VIDEO_RECORDING_FAILED",
             status.details || "Glasses did not start recording",
@@ -122,7 +122,7 @@ export class PhoneVideoCoordinator {
 
     try {
       const status = await BluetoothSdk.stopVideoRecording(recordingId)
-      if (!status.success || status.status !== "recording_stopped") {
+      if (status.status !== "recording_stopped") {
         throw new VideoError(status.status || "VIDEO_STOP_FAILED", status.details || "Glasses did not stop recording")
       }
     } catch (err) {
@@ -148,7 +148,7 @@ export class PhoneVideoCoordinator {
         // stopRecording). If we deleted on failure the glasses could still be
         // recording while the single-recording guard reads "idle", letting the
         // next start hand back a phantom id that can't stop the real recording.
-        if (status.success && status.status === "recording_stopped") {
+        if (status.status === "recording_stopped") {
           this.activeRecordings.delete(rec.recordingId)
         }
       } catch (err) {

@@ -1088,18 +1088,18 @@ class MentraBluetoothSdk private constructor(
             }
             "photo_response" -> {
                 val event = PhotoResponseEvent(data)
-                pendingPhotoRequests[event.requestId]?.resolve(event)
+                handlePhotoResponseForRequests(event)
                 dispatchToListeners { it.onPhotoResponse(event) }
             }
             "photo_status" -> dispatchToListeners { it.onPhotoStatus(PhotoStatusEvent(data)) }
             "video_recording_status" -> {
                 val event = VideoRecordingStatusEvent(data)
-                pendingVideoRecordingRequests[event.requestId]?.resolve(event)
+                handleVideoRecordingStatusForRequests(event)
                 dispatchToListeners { it.onVideoRecordingStatus(event) }
             }
             "rgb_led_control_response" -> {
                 val event = RgbLedControlResponseEvent(data)
-                pendingRgbLedRequests[event.requestId]?.resolve(event)
+                handleRgbLedResponseForRequests(event)
                 dispatchToListeners { it.onRgbLedControlResponse(event) }
             }
             "stream_status" -> {
@@ -1137,7 +1137,7 @@ class MentraBluetoothSdk private constructor(
             }
             "settings_ack" -> {
                 val event = SettingsAckEvent(data)
-                pendingSettingsRequests[event.requestId]?.resolve(event)
+                handleSettingsAckForRequests(event)
                 dispatchToListeners { it.onSettingsAck(event) }
             }
             "mic_pcm" -> {
@@ -1283,6 +1283,65 @@ class MentraBluetoothSdk private constructor(
             ?: "Stream status ${event.state.value}"
         return BluetoothException(code, details)
     }
+
+    private fun handlePhotoResponseForRequests(event: PhotoResponseEvent) {
+        val pending = pendingPhotoRequests[event.requestId] ?: return
+        when (val response = event.response) {
+            is PhotoResponse.Success -> pending.resolve(event)
+            is PhotoResponse.Error ->
+                pending.reject(
+                    BluetoothException(
+                        response.errorCode ?: "photo_request_failed",
+                        response.errorMessage,
+                    )
+                )
+        }
+    }
+
+    private fun handleVideoRecordingStatusForRequests(event: VideoRecordingStatusEvent) {
+        val pending = pendingVideoRecordingRequests[event.requestId] ?: return
+        if (event.success) {
+            pending.resolve(event)
+        } else {
+            pending.reject(
+                BluetoothException(
+                    event.status.ifBlank { "video_recording_failed" },
+                    event.details ?: "Video recording command failed.",
+                )
+            )
+        }
+    }
+
+    private fun handleRgbLedResponseForRequests(event: RgbLedControlResponseEvent) {
+        val pending = pendingRgbLedRequests[event.requestId] ?: return
+        if (event.state == "success") {
+            pending.resolve(event)
+        } else {
+            pending.reject(
+                BluetoothException(
+                    event.errorCode ?: "rgb_led_control_failed",
+                    event.errorCode ?: "RGB LED command failed.",
+                )
+            )
+        }
+    }
+
+    private fun handleSettingsAckForRequests(event: SettingsAckEvent) {
+        val pending = pendingSettingsRequests[event.requestId] ?: return
+        if (isFailureStatus(event.status)) {
+            pending.reject(
+                BluetoothException(
+                    event.errorCode ?: "${event.setting.ifBlank { "settings" }}_failed",
+                    event.errorMessage ?: "Settings command ${event.setting.ifBlank { event.requestId }} failed.",
+                )
+            )
+        } else {
+            pending.resolve(event)
+        }
+    }
+
+    private fun isFailureStatus(status: String): Boolean =
+        status.lowercase() in setOf("error", "failed", "failure", "rejected")
 
     private fun handleWifiScanResultsForRequests(results: List<WifiScanResult>) {
         val request = synchronized(oneShotLock) { pendingWifiScan } ?: return

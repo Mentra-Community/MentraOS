@@ -263,6 +263,8 @@ const ledAck = await BluetoothSdk.rgbLedControl(
 console.log(ledAck.state)
 ```
 
+Settings commands that return `SettingsAckEvent` reject when the ASG reports an error ack. `rgbLedControl(...)` resolves from a successful ASG `rgb_led_control_response` and rejects when the ASG reports `state: "error"`; raw `settings_ack` and `rgb_led_control_response` events remain available through listeners.
+
 WiFi, hotspot, and version-info commands resolve from the ASG response path, not local dispatch:
 `requestWifiScan()` resolves with the updated scan list, `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` resolves when that SSID is no longer connected, `setHotspotState()` resolves when the requested hotspot state is reported, and `requestVersionInfo()` resolves with the updated version fields.
 
@@ -309,18 +311,16 @@ const photo = await BluetoothSdk.requestPhoto({
   exposureTimeNs: null, // auto exposure; pass a positive nanosecond value for manual exposure
   iso: null, // auto ISO; pass a positive ISO only with manual exposureTimeNs
 })
-if (photo.state === 'error') {
-  throw new Error(photo.errorMessage)
-}
+console.log('photo accepted', photo.uploadUrl)
 ```
 
-`requestPhoto(...)` resolves from the ASG `photo_response`, which means the glasses accepted or rejected the request. The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
+`requestPhoto(...)` resolves from a successful ASG `photo_response` and rejects if the ASG reports `state: "error"` or no response arrives. The raw `photo_response` event stream still includes both success and error events for subscribers. The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
 
 For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
 
 Use `setCameraFov({fov, roiPosition})` to configure Mentra Live camera field of view and crop position. FOV is clamped to 62-118 degrees; ROI position is `"center"`, `"bottom"`, or `"top"`. You can also call `setCameraFov({preset: "narrow" | "standard" | "wide"})`; presets map to 82, 102, and 118 degrees with center ROI. The returned `CameraFovResult` resolves only after the ASG client reports that the restarted camera is ready again, and the promise rejects if the glasses report an error or never report readiness. Raw `settings_ack` events remain available through `addListener("settings_ack", ...)`. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
 
-`startVideoRecording(...)` and `stopVideoRecording(...)` resolve from the ASG `video_recording_status` event. Check `status.success` and `status.status` (`recording_started`, `recording_stopped`, or an error/status string) before updating UI or local recording state.
+`startVideoRecording(...)` and `stopVideoRecording(...)` resolve from successful ASG `video_recording_status` events and reject when the ASG reports `success: false`. Check `status.status` (`recording_started` or `recording_stopped`) before updating UI or local recording state. Raw `video_recording_status` events remain available through listeners.
 
 ## Streaming
 

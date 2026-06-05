@@ -462,7 +462,7 @@ await BluetoothSdk.showDashboard()
 await BluetoothSdk.setDashboardPosition(height, depth)
 await BluetoothSdk.setHeadUpAngle(angleDegrees)
 await BluetoothSdk.setScreenDisabled(disabled)
-await BluetoothSdk.requestPhoto(...)
+const photo = await BluetoothSdk.requestPhoto(...)
 await BluetoothSdk.queryGalleryStatus()
 await BluetoothSdk.setGalleryModeEnabled(enabled)
 await BluetoothSdk.setButtonPhotoSettings(size)
@@ -475,8 +475,8 @@ const wifiStatus = await BluetoothSdk.sendWifiCredentials(ssid, password)
 const forgetStatus = await BluetoothSdk.forgetWifiNetwork(ssid)
 const hotspotStatus = await BluetoothSdk.setHotspotState(enabled)
 const versionInfo = await BluetoothSdk.requestVersionInfo()
-await BluetoothSdk.startVideoRecording(requestId, save, sound)
-await BluetoothSdk.stopVideoRecording(requestId)
+const recordingStarted = await BluetoothSdk.startVideoRecording(requestId, save, sound)
+const recordingStopped = await BluetoothSdk.stopVideoRecording(requestId)
 await BluetoothSdk.startStream(...)
 await BluetoothSdk.stopStream()
 await BluetoothSdk.setMicState(enabled, useGlassesMic, bypassVad, sendTranscript, sendLc3Data)
@@ -484,8 +484,10 @@ await BluetoothSdk.setPreferredMic(preferredMic)
 await BluetoothSdk.setOwnAppAudioPlaying(playing)
 await BluetoothSdk.getGlassesMediaVolume()
 await BluetoothSdk.setGlassesMediaVolume(level)
-await BluetoothSdk.rgbLedControl(...)
+const ledAck = await BluetoothSdk.rgbLedControl(...)
 ```
+
+Photo, video, RGB LED, and settings promises resolve only for successful ASG command responses and reject on explicit ASG failure events. The raw event listeners remain available for apps that want to observe every success/error payload.
 
 **MentraOS-internal compatibility helpers:**
 

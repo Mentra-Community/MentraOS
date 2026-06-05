@@ -29,18 +29,18 @@ import {
   OtaQueryResult,
   OtaStartAckEvent,
   PhotoRequestParams,
-  PhotoResponseEvent,
+  PhotoSuccessResponseEvent,
   PublicBluetoothStatus,
   RgbLedAction,
   RgbLedColor,
-  RgbLedControlResponseEvent,
+  RgbLedControlSuccessResponseEvent,
   ScanModelOptions,
   ScanOptions,
   SettingsAckEvent,
   StreamKeepAliveRequest,
   StreamStartRequest,
   StreamStatusEvent,
-  VideoRecordingStatusEvent,
+  VideoRecordingSuccessStatusEvent,
   VideoRecordingSettings,
   VersionInfoResult,
   WifiSearchResult,
@@ -126,7 +126,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
-  requestPhoto(params: PhotoRequestParams): Promise<PhotoResponseEvent>
+  requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
 
   // OTA Commands
   sendOtaStart(): Promise<OtaStartAckEvent>
@@ -145,8 +145,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     save: boolean,
     sound: boolean,
     settings?: VideoRecordingSettings,
-  ): Promise<VideoRecordingStatusEvent>
-  stopVideoRecording(requestId: string): Promise<VideoRecordingStatusEvent>
+  ): Promise<VideoRecordingSuccessStatusEvent>
+  stopVideoRecording(requestId: string): Promise<VideoRecordingSuccessStatusEvent>
 
   // Stream Commands
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
@@ -178,7 +178,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     onDurationMs: number,
     offDurationMs: number,
     count: number,
-  ): Promise<RgbLedControlResponseEvent>
+  ): Promise<RgbLedControlSuccessResponseEvent>
 
   // STT Commands
   setSttModelDetails(path: string, languageCode: string): Promise<void>

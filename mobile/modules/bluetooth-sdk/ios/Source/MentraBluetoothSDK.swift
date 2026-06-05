@@ -1101,6 +1101,68 @@ public final class MentraBluetoothSDK {
         return BluetoothError(code: code, message: message)
     }
 
+    private func handlePhotoResponseForRequests(_ event: PhotoResponseEvent) {
+        guard let pending = pendingPhotoRequests[event.requestId] else { return }
+        switch event.response {
+        case .success:
+            pending.resolve(event)
+        case let .error(_, errorCode, errorMessage, _):
+            pending.reject(
+                BluetoothError(
+                    code: errorCode ?? "photo_request_failed",
+                    message: errorMessage
+                )
+            )
+        }
+    }
+
+    private func handleVideoRecordingStatusForRequests(_ event: VideoRecordingStatusEvent) {
+        guard let pending = pendingVideoRecordingRequests[event.requestId] else { return }
+        if event.success {
+            pending.resolve(event)
+        } else {
+            pending.reject(
+                BluetoothError(
+                    code: event.status.isEmpty ? "video_recording_failed" : event.status,
+                    message: event.details ?? "Video recording command failed."
+                )
+            )
+        }
+    }
+
+    private func handleRgbLedResponseForRequests(_ event: RgbLedControlResponseEvent) {
+        guard let pending = pendingRgbLedRequests[event.requestId] else { return }
+        if event.state == "success" {
+            pending.resolve(event)
+        } else {
+            pending.reject(
+                BluetoothError(
+                    code: event.errorCode ?? "rgb_led_control_failed",
+                    message: event.errorCode ?? "RGB LED command failed."
+                )
+            )
+        }
+    }
+
+    private func handleSettingsAckForRequests(_ event: SettingsAckEvent) {
+        guard let pending = pendingSettingsRequests[event.requestId] else { return }
+        if isFailureStatus(event.status) {
+            let fallbackSetting = event.setting.isEmpty ? event.requestId : event.setting
+            pending.reject(
+                BluetoothError(
+                    code: event.errorCode ?? "\(event.setting.isEmpty ? "settings" : event.setting)_failed",
+                    message: event.errorMessage ?? "Settings command \(fallbackSetting) failed."
+                )
+            )
+        } else {
+            pending.resolve(event)
+        }
+    }
+
+    private func isFailureStatus(_ status: String) -> Bool {
+        ["error", "failed", "failure", "rejected"].contains(status.lowercased())
+    }
+
     private func handleWifiScanResultsForRequests(_ results: [WifiScanResult]) {
         guard let request = pendingWifiScan else { return }
         if results.isEmpty, !request.sawInitialClear {
@@ -1312,17 +1374,17 @@ public final class MentraBluetoothSDK {
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "gallery_status", values: event.values))
         case "photo_response":
             let event = PhotoResponseEvent(values: data)
-            pendingPhotoRequests[event.requestId]?.resolve(event)
+            handlePhotoResponseForRequests(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .photoResponse(event))
         case "photo_status":
             delegate?.mentraBluetoothSDK(self, didReceive: .photoStatus(PhotoStatusEvent(values: data)))
         case "video_recording_status":
             let event = VideoRecordingStatusEvent(values: data)
-            pendingVideoRecordingRequests[event.requestId]?.resolve(event)
+            handleVideoRecordingStatusForRequests(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .videoRecordingStatus(event))
         case "rgb_led_control_response":
             let event = RgbLedControlResponseEvent(values: data)
-            pendingRgbLedRequests[event.requestId]?.resolve(event)
+            handleRgbLedResponseForRequests(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .rgbLedControlResponse(event))
         case "stream_status":
             let event = StreamStatusEvent(values: data)
@@ -1352,7 +1414,7 @@ public final class MentraBluetoothSDK {
             delegate?.mentraBluetoothSDK(self, didReceive: .otaStatus(OtaStatusEvent(values: resultValues)))
         case "settings_ack":
             let event = SettingsAckEvent(values: data)
-            pendingSettingsRequests[event.requestId]?.resolve(event)
+            handleSettingsAckForRequests(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .settingsAck(event))
         case "compatible_glasses_search_stop":
             delegate?.mentraBluetoothSDK(self, didStopScan: .completed)

@@ -131,9 +131,9 @@ requestPhoto(
   authToken: string | null,
   compress: PhotoCompression,
   sound: boolean,
-): Promise<PhotoResponseEvent>
-startVideoRecording(requestId: string, save: boolean, sound: boolean): Promise<VideoRecordingStatusEvent>
-stopVideoRecording(requestId: string): Promise<VideoRecordingStatusEvent>
+): Promise<PhotoSuccessResponseEvent>
+startVideoRecording(requestId: string, save: boolean, sound: boolean): Promise<VideoRecordingSuccessStatusEvent>
+stopVideoRecording(requestId: string): Promise<VideoRecordingSuccessStatusEvent>
 
 startStream(params: StreamStartRequest): Promise<void>
 stopStream(): Promise<void>
@@ -158,13 +158,15 @@ rgbLedControl(
   onDurationMs: number,
   offDurationMs: number,
   count: number,
-): Promise<RgbLedControlResponseEvent>
+): Promise<RgbLedControlSuccessResponseEvent>
 
 requestVersionInfo(): Promise<VersionInfoResult>
 checkForOtaUpdate(): Promise<OtaQueryResult>
 startOtaUpdate(): Promise<OtaStartAckEvent>
 retryOtaVersionCheck(): Promise<OtaQueryResult>
 ```
+
+Photo, video, RGB LED, and settings promises reject when the correlated ASG event reports explicit failure. The raw event listeners still receive the full success/error payloads.
 
 React hook signatures:
 
@@ -318,6 +320,8 @@ fun retryOtaVersionCheck(): OtaQueryResult
 override fun close()
 ```
 
+Photo, video, RGB LED, and settings commands throw when the correlated ASG event reports explicit failure; the event listener callbacks still receive the raw success/error event payloads.
+
 Public Android callback/listener signatures:
 
 ```kotlin
@@ -448,6 +452,8 @@ public func retryOtaVersionCheck() async throws -> OtaQueryResult
 
 public func invalidate()
 ```
+
+Photo, video, RGB LED, and settings commands throw when the correlated ASG event reports explicit failure; delegates still receive the raw success/error event payloads.
 
 Public iOS delegate/callback signatures:
 

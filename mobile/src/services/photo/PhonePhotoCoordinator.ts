@@ -121,7 +121,7 @@ export class PhonePhotoCoordinator {
       this.activeRequests.delete(requestId)
       // Best-effort free the slot on cloud — saves orphan slots.
       void freePhoto(requestId)
-      throw this.toPhotoError(err, "BLE_SEND_FAILED")
+      throw this.toPhotoError(err, "PHOTO_REQUEST_FAILED")
     }
 
     // 4) Kick off the long-poll. settleFromPoll() resolves or rejects via

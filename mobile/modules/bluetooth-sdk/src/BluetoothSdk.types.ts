@@ -154,6 +154,8 @@ export type PhotoResponseEvent =
       errorMessage: string
     }
 
+export type PhotoSuccessResponseEvent = Extract<PhotoResponseEvent, {state: "success"}>
+
 export type PhotoStatusState =
   | "accepted"
   | "queued"
@@ -252,6 +254,10 @@ export type VideoRecordingStatusEvent = {
   }
 }
 
+export type VideoRecordingSuccessStatusEvent = Omit<VideoRecordingStatusEvent, "success"> & {
+  success: true
+}
+
 export type GalleryStatusEvent = {
   type: "gallery_status"
   photos: number
@@ -306,6 +312,8 @@ export type RgbLedControlResponseEvent =
       requestId: string
       errorCode: string
     }
+
+export type RgbLedControlSuccessResponseEvent = Extract<RgbLedControlResponseEvent, {state: "success"}>
 
 export type SettingsAckStatus = "applied" | "ready" | "error" | string
 
@@ -822,14 +830,14 @@ export interface BluetoothSdkPublicModule {
   setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
-  requestPhoto(params: PhotoRequestParams): Promise<PhotoResponseEvent>
+  requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
   startVideoRecording(
     requestId: string,
     save: boolean,
     sound: boolean,
     settings?: VideoRecordingSettings,
-  ): Promise<VideoRecordingStatusEvent>
-  stopVideoRecording(requestId: string): Promise<VideoRecordingStatusEvent>
+  ): Promise<VideoRecordingSuccessStatusEvent>
+  stopVideoRecording(requestId: string): Promise<VideoRecordingSuccessStatusEvent>
 
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
   stopStream(): Promise<StreamStatusEvent>
@@ -848,7 +856,7 @@ export interface BluetoothSdkPublicModule {
     onDurationMs: number,
     offDurationMs: number,
     count: number,
-  ): Promise<RgbLedControlResponseEvent>
+  ): Promise<RgbLedControlSuccessResponseEvent>
 
   requestVersionInfo(): Promise<VersionInfoResult>
   /** Ask connected Mentra Live glasses to check/report OTA availability and status. */

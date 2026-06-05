@@ -53,12 +53,12 @@ public final class MentraBluetoothSDK {
     public func setDashboardPosition(_ request: MentraDashboardPositionRequest) async throws
     public func setHeadUpAngle(_ angleDegrees: Int) async throws
     public func setScreenDisabled(_ disabled: Bool) async throws
-    public func setGalleryModeEnabled(_ enabled: Bool) async throws
-    public func setButtonPhotoSettings(_ settings: MentraButtonPhotoSettings) async throws
-    public func setButtonVideoRecordingSettings(_ settings: MentraButtonVideoRecordingSettings) async throws
-    public func setButtonCameraLed(enabled: Bool) async throws
-    public func setButtonMaxRecordingTime(minutes: Int) async throws
-    public func setCameraFov(_ fov: MentraCameraFov) async throws
+    public func setGalleryModeEnabled(_ enabled: Bool) async throws -> MentraSettingsAckEvent
+    public func setButtonPhotoSettings(_ settings: MentraButtonPhotoSettings) async throws -> MentraSettingsAckEvent
+    public func setButtonVideoRecordingSettings(_ settings: MentraButtonVideoRecordingSettings) async throws -> MentraSettingsAckEvent
+    public func setButtonCameraLed(enabled: Bool) async throws -> MentraSettingsAckEvent
+    public func setButtonMaxRecordingTime(minutes: Int) async throws -> MentraSettingsAckEvent
+    public func setCameraFov(_ fov: MentraCameraFov) async throws -> MentraCameraFovResult
 
     public func setMicState(_ config: MentraMicConfiguration)
     public func setPreferredMic(_ preferredMic: MentraMicPreference)
@@ -69,18 +69,21 @@ public final class MentraBluetoothSDK {
     public func forgetWifiNetwork(ssid: String) async throws -> MentraWifiStatusEvent
     public func setHotspotState(enabled: Bool) async throws -> MentraHotspotStatusEvent
 
-    public func requestPhoto(_ request: MentraPhotoRequest)
-    public func queryGalleryStatus()
+    public func requestPhoto(_ request: MentraPhotoRequest) async throws -> MentraPhotoResponseEvent
+    public func queryGalleryStatus() async throws -> MentraGalleryStatusEvent
     public func startStream(_ request: MentraStreamRequest)
     public func stopStream()
-    public func startVideoRecording(_ request: MentraVideoRecordingRequest)
-    public func stopVideoRecording(requestId: String)
+    public func startVideoRecording(_ request: MentraVideoRecordingRequest) async throws -> MentraVideoRecordingStatusEvent
+    public func stopVideoRecording(requestId: String) async throws -> MentraVideoRecordingStatusEvent
+    public func rgbLedControl(_ request: MentraRgbLedRequest) async throws -> MentraRgbLedControlResponseEvent
 
     public func requestVersionInfo() async throws -> MentraVersionInfoResult
 
     public func invalidate()
 }
 ```
+
+Photo, video, RGB LED, and settings methods throw when the correlated ASG event reports explicit failure; delegates still receive the raw success/error payloads.
 
 `@MainActor` matches the current `DeviceManager` isolation and is idiomatic for a facade that interacts with CoreBluetooth state, audio state, and delegate callbacks. Long-running work should still happen inside the existing managers, not block the main actor.
 

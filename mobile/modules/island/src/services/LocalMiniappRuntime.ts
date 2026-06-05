@@ -1271,13 +1271,6 @@ class LocalMiniappRuntime {
         coerceNumber(payload.offtime, 0),
         coerceNumber(payload.count, 1),
       )
-      if (result.state === "error") {
-        this.sendResult(packageName, requestId, false, undefined, {
-          code: result.errorCode || MiniappErrorCode.INTERNAL,
-          message: result.errorCode || "RGB LED command failed",
-        })
-        return
-      }
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
       this.sendResult(packageName, requestId, false, undefined, {

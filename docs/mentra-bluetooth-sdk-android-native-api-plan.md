@@ -64,12 +64,12 @@ class MentraBluetoothSdk private constructor(
     fun setDashboardPosition(request: MentraDashboardPositionRequest)
     fun setHeadUpAngle(angleDegrees: Int)
     fun setScreenDisabled(disabled: Boolean)
-    fun setGalleryModeEnabled(enabled: Boolean)
-    fun setButtonPhotoSettings(settings: MentraButtonPhotoSettings)
-    fun setButtonVideoRecordingSettings(settings: MentraButtonVideoRecordingSettings)
-    fun setButtonCameraLed(enabled: Boolean)
-    fun setButtonMaxRecordingTime(minutes: Int)
-    fun setCameraFov(fov: MentraCameraFov)
+    fun setGalleryModeEnabled(enabled: Boolean): MentraSettingsAckEvent
+    fun setButtonPhotoSettings(settings: MentraButtonPhotoSettings): MentraSettingsAckEvent
+    fun setButtonVideoRecordingSettings(settings: MentraButtonVideoRecordingSettings): MentraSettingsAckEvent
+    fun setButtonCameraLed(enabled: Boolean): MentraSettingsAckEvent
+    fun setButtonMaxRecordingTime(minutes: Int): MentraSettingsAckEvent
+    fun setCameraFov(fov: MentraCameraFov): MentraCameraFovResult
 
     fun setMicState(config: MentraMicConfig)
     fun setPreferredMic(preferredMic: MentraMicPreference)
@@ -82,18 +82,21 @@ class MentraBluetoothSdk private constructor(
     fun forgetWifiNetwork(ssid: String): MentraWifiStatusEvent
     fun setHotspotState(enabled: Boolean): MentraHotspotStatusEvent
 
-    fun requestPhoto(request: MentraPhotoRequest)
-    fun queryGalleryStatus()
+    fun requestPhoto(request: MentraPhotoRequest): MentraPhotoResponseEvent
+    fun queryGalleryStatus(): MentraGalleryStatusEvent
     fun startStream(request: MentraStreamRequest)
     fun stopStream()
-    fun startVideoRecording(request: MentraVideoRecordingRequest)
-    fun stopVideoRecording(requestId: String)
+    fun startVideoRecording(request: MentraVideoRecordingRequest): MentraVideoRecordingStatusEvent
+    fun stopVideoRecording(requestId: String): MentraVideoRecordingStatusEvent
+    fun rgbLedControl(request: MentraRgbLedRequest): MentraRgbLedControlResponseEvent
 
     fun requestVersionInfo(): MentraVersionInfoResult
 
     override fun close()
 }
 ```
+
+Photo, video, RGB LED, and settings methods throw when the correlated ASG event reports explicit failure; callbacks still receive the raw success/error payloads.
 
 The core API should be Java-friendly. Avoid requiring coroutines, Flow, or AndroidX lifecycle owners in the base artifact. A later `mentra-bluetooth-sdk-ktx` artifact can add suspend functions and Flow wrappers.
 
