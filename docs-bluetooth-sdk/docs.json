@@ -1,0 +1,96 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "aspen",
+  "name": "Mentra Bluetooth SDK",
+  "colors": {
+    "primary": "#00b869",
+    "light": "#00b869",
+    "dark": "#00b869"
+  },
+  "favicon": "/static/img/favicon.ico",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "icon": "bluetooth",
+        "pages": [
+          "index",
+          "quickstart",
+          "examples"
+        ]
+      },
+      {
+        "group": "Platform Setup",
+        "icon": "mobile",
+        "pages": [
+          "react-native-expo",
+          "android",
+          "ios"
+        ]
+      },
+      {
+        "group": "Core APIs",
+        "icon": "glasses",
+        "pages": [
+          "api-reference",
+          "display",
+          "audio",
+          "camera-streaming",
+          "hardware"
+        ]
+      },
+      {
+        "group": "Release",
+        "icon": "clipboard-check",
+        "pages": [
+          "troubleshooting",
+          "production-checklist"
+        ]
+      }
+    ]
+  },
+  "anchors": [
+    {
+      "anchor": "Starter Kit",
+      "href": "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit",
+      "icon": "github"
+    },
+    {
+      "anchor": "Package",
+      "href": "https://www.npmjs.com/package/@mentra/bluetooth-sdk",
+      "icon": "npm"
+    },
+    {
+      "anchor": "MentraOS Docs",
+      "href": "https://docs.mentraglass.com",
+      "icon": "book"
+    }
+  ],
+  "logo": {
+    "light": "/static/img/mentra-logo-small.png",
+    "dark": "/static/img/mentra-logo-small-dark.png"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Support",
+        "href": "https://discord.gg/5ukNvkEAqT"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Starter Kit",
+      "href": "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit"
+    }
+  },
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude", "perplexity", "cursor", "vscode"]
+  },
+  "footer": {
+    "socials": {
+      "x": "https://x.com/mentralabs",
+      "github": "https://github.com/Mentra-Community",
+      "discord": "https://discord.gg/5ukNvkEAqT"
+    }
+  }
+}

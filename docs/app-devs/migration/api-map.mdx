@@ -80,16 +80,7 @@ Use this page to find the v3 equivalent of any v2 API. Press Ctrl+F (or Cmd+F) a
 
 ## Camera
 
-| v2 | v3 | Notes |
-|----|-----|-------|
-| `session.camera.takePhoto(options)` | `session.camera.takePhoto(options)` | Same API surface. |
-| `session.camera.onPhotoTaken(handler)` | `session.camera.onPhotoTaken(handler)` | Same API surface. |
-| `session.camera.startLocalLivestream({ streamUrl })` | `session.camera.startStream({ direct: url })` | Direct streaming. `streamUrl` → `direct`. Supports SRT, RTMP, RTMPS, WHIP. |
-| `session.camera.stopLocalLivestream()` | `session.camera.stopStream()` | One stop method for both modes. |
-| `session.camera.onLocalLivestreamStatus(handler)` | `session.camera.onStreamStatus(handler)` | Works for both managed and direct. |
-| `session.camera.startLivestream(options)` | `session.camera.startStream(options)` | Managed relay. No args = default. `restreamDestinations` → `destinations` (string[] instead of object[]). |
-| `session.camera.stopLivestream()` | `session.camera.stopStream()` | One stop method for both modes. |
-| `session.camera.onLivestreamStatus(handler)` | `session.camera.onStreamStatus(handler)` | Works for both managed and direct. |
+Camera, photo, and streaming workflows are no longer documented as the forward path for cloud Mini Apps. Use the standalone [Bluetooth SDK docs](https://bluetooth-sdk-docs.mentra.glass/camera-streaming) for camera-equipped glasses, direct mobile control, photo upload, and RTMP/SRT/WHIP streaming.
 
 ## Device State & Events
 
