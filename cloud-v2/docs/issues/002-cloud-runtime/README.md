@@ -11,6 +11,11 @@ and payloads on top of it.
 
 ## Index
 
+- [`architecture.md`](./architecture.md): the big picture in plain language, how the
+  runtime scales, how a session lives across pods, and one end-to-end trace.
+  **Start here.**
+- [`design.md`](./design.md): the `@mentra/cloud-runtime` package build map, the
+  files, what each owns, and the signatures.
 - [`protocol.md`](./protocol.md): the service-agnostic transport: envelope,
   handshake, auth, control, error model, and REST conventions shared by all
   services.

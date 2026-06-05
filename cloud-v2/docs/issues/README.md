@@ -29,7 +29,8 @@ lands.
 | [dev-console-service](./001-cloud-core/dev-console-service/) | Stub | needs spec |
 | [storage-service](./001-cloud-core/storage-service/) | Stub | needs spec (wrapper around swappable blob providers; used by miniapp-service, dev-console-service) |
 | **[002-cloud-runtime](./002-cloud-runtime/)** | | self-hostable runtime product |
-| [protocol (transport)](./002-cloud-runtime/protocol.md) | Locked | contract locked (`/api` paths, envelope with `timestamp`, REST subscriptions 2a with `sessionId`+`version`, UDP encryption). Left: write the zod types in `@mentra/cloud-runtime/protocol` |
+| [architecture + design](./002-cloud-runtime/architecture.md) | Written | [architecture.md](./002-cloud-runtime/architecture.md): the big picture (scaling rules, session lifecycle, e2e trace). [design.md](./002-cloud-runtime/design.md): the `@mentra/cloud-runtime` package build map + signatures + current state |
+| [protocol (transport)](./002-cloud-runtime/protocol.md) | Locked | contract locked (`/api` paths, envelope with `timestamp`, REST subscriptions 2a with `sessionId`+`version`, UDP encryption); zod types written in `@mentra/cloud-runtime/protocol` |
 | [audio](./002-cloud-runtime/audio/) | Specced / partial | spec + design (proposal, under review); pipeline partially built (UDP + Redis + Soniox, phone WS). Subscription transport decided (2a: REST + stream entry); UDP encryption documented |
 | [camera (managed photo + stream)](./002-cloud-runtime/camera/) | Specced | [spec.md](./002-cloud-runtime/camera/spec.md): presigned-upload photo (cloud out of the byte path, storage-event completion, `photo.ready` push) + client-controlled managed stream |
 | **[003-cloud-proxy](./003-cloud-proxy/)** | Stub | needs spike (non-blocking; cloud-client is proxy-aware via endpoint config) |
