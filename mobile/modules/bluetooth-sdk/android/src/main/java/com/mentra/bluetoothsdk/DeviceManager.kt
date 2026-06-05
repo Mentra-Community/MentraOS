@@ -285,6 +285,9 @@ class DeviceManager {
         } catch (e: Exception) {
             Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
             transcriber = null
+        } catch (e: LinkageError) {
+            Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
+            transcriber = null
         }
 
         // Initialize LC3 encoder/decoder for unified audio encoding
@@ -316,6 +319,9 @@ class DeviceManager {
             vadPolicy = policy
             Bridge.log("VadGateSpeechPolicy initialized")
         } catch (e: Exception) {
+            Bridge.log("Failed to initialize VadGateSpeechPolicy: ${e.message}")
+            vadPolicy = null
+        } catch (e: LinkageError) {
             Bridge.log("Failed to initialize VadGateSpeechPolicy: ${e.message}")
             vadPolicy = null
         }

@@ -313,7 +313,7 @@ public class BlePhotoUploadService {
             if (bmp != null) {
                 return bmp;
             }
-        } catch (Throwable e) {
+        } catch (Exception | LinkageError e) {
             Log.w(TAG, "HeifCoder AVIF decode unavailable/failed, trying BitmapFactory: " + e.getMessage());
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
