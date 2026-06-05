@@ -126,6 +126,17 @@ export type HotspotErrorEvent = {
   timestamp: number
 }
 
+export type VersionInfoResult = {
+  androidVersion: string
+  firmwareVersion: string
+  besFirmwareVersion: string
+  mtkFirmwareVersion: string
+  buildNumber: string
+  systemTimeMs?: number
+  otaVersionUrl: string
+  appVersion: string
+}
+
 export type PhotoResponseEvent =
   | {
       type: "photo_response"
@@ -798,10 +809,10 @@ export interface BluetoothSdkPublicModule {
   setHeadUpAngle(angleDegrees: number): Promise<void>
   setScreenDisabled(disabled: boolean): Promise<void>
 
-  requestWifiScan(): Promise<void>
-  sendWifiCredentials(ssid: string, password: string): Promise<void>
-  forgetWifiNetwork(ssid: string): Promise<void>
-  setHotspotState(enabled: boolean): Promise<void>
+  requestWifiScan(): Promise<WifiSearchResult[]>
+  sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
+  forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
+  setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
 
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
@@ -839,13 +850,13 @@ export interface BluetoothSdkPublicModule {
     count: number,
   ): Promise<RgbLedControlResponseEvent>
 
-  requestVersionInfo(): Promise<void>
+  requestVersionInfo(): Promise<VersionInfoResult>
   /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
   checkForOtaUpdate(): Promise<OtaQueryResult>
   /** Start the OTA flow after your app has presented the available update to the user. */
   startOtaUpdate(): Promise<OtaStartAckEvent>
   /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
-  retryOtaVersionCheck(): Promise<void>
+  retryOtaVersionCheck(): Promise<OtaQueryResult>
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>

@@ -40,6 +40,45 @@ private final class ActiveScanSession {
 }
 
 @MainActor
+private final class PendingWifiScan {
+    let pending: PendingResponse<[WifiScanResult]>
+    var sawInitialClear = false
+
+    init(pending: PendingResponse<[WifiScanResult]>) {
+        self.pending = pending
+    }
+}
+
+private enum WifiStatusOperation {
+    case connect
+    case forget
+}
+
+@MainActor
+private final class PendingWifiStatusRequest {
+    let operation: WifiStatusOperation
+    let ssid: String
+    let pending: PendingResponse<WifiStatusEvent>
+
+    init(operation: WifiStatusOperation, ssid: String, pending: PendingResponse<WifiStatusEvent>) {
+        self.operation = operation
+        self.ssid = ssid
+        self.pending = pending
+    }
+}
+
+@MainActor
+private final class PendingHotspotStatusRequest {
+    let enabled: Bool
+    let pending: PendingResponse<HotspotStatusEvent>
+
+    init(enabled: Bool, pending: PendingResponse<HotspotStatusEvent>) {
+        self.enabled = enabled
+        self.pending = pending
+    }
+}
+
+@MainActor
 private final class PendingResponse<T> {
     private let operation: String
     private var continuation: CheckedContinuation<T, Error>?
@@ -114,6 +153,20 @@ public final class MentraBluetoothSDK {
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>?
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>?
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>?
+    private var pendingWifiScan: PendingWifiScan?
+    private var pendingWifiStatus: PendingWifiStatusRequest?
+    private var pendingHotspotStatus: PendingHotspotStatusRequest?
+    private var pendingVersionInfo: PendingResponse<VersionInfoResult>?
+    private let versionInfoKeys: Set<String> = [
+        "androidVersion",
+        "firmwareVersion",
+        "besFirmwareVersion",
+        "mtkFirmwareVersion",
+        "buildNumber",
+        "otaVersionUrl",
+        "appVersion",
+        "systemTimeMs",
+    ]
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
         self.configuration = configuration
@@ -516,20 +569,102 @@ public final class MentraBluetoothSDK {
         return try GlassesMediaVolumeSetResult(values: await DeviceManager.shared.setGlassesMediaVolume(level: level))
     }
 
-    public func requestWifiScan() {
+    public func requestWifiScan() async throws -> [WifiScanResult] {
+        guard pendingWifiScan == nil else {
+            throw BluetoothError(
+                code: "request_in_flight",
+                message: "A WiFi scan is already waiting for a glasses response."
+            )
+        }
+        let pending = PendingResponse<[WifiScanResult]>(operation: "WiFi scan request")
+        pendingWifiScan = PendingWifiScan(pending: pending)
         DeviceManager.shared.requestWifiScan()
+        do {
+            let results = try await pending.wait()
+            if pendingWifiScan?.pending === pending {
+                pendingWifiScan = nil
+            }
+            return results
+        } catch {
+            if pendingWifiScan?.pending === pending {
+                pendingWifiScan = nil
+            }
+            throw error
+        }
     }
 
-    public func sendWifiCredentials(ssid: String, password: String) {
+    public func sendWifiCredentials(ssid: String, password: String) async throws -> WifiStatusEvent {
+        guard pendingWifiStatus == nil else {
+            throw BluetoothError(
+                code: "request_in_flight",
+                message: "A WiFi status command is already waiting for a glasses response."
+            )
+        }
+        let pending = PendingResponse<WifiStatusEvent>(operation: "WiFi connect request")
+        pendingWifiStatus = PendingWifiStatusRequest(operation: .connect, ssid: ssid, pending: pending)
         DeviceManager.shared.sendWifiCredentials(ssid, password)
+        do {
+            let event = try await pending.wait()
+            if pendingWifiStatus?.pending === pending {
+                pendingWifiStatus = nil
+            }
+            return event
+        } catch {
+            if pendingWifiStatus?.pending === pending {
+                pendingWifiStatus = nil
+            }
+            throw error
+        }
     }
 
-    public func forgetWifiNetwork(ssid: String) {
+    public func forgetWifiNetwork(ssid: String) async throws -> WifiStatusEvent {
+        guard pendingWifiStatus == nil else {
+            throw BluetoothError(
+                code: "request_in_flight",
+                message: "A WiFi status command is already waiting for a glasses response."
+            )
+        }
+        let pending = PendingResponse<WifiStatusEvent>(operation: "WiFi forget request")
+        pendingWifiStatus = PendingWifiStatusRequest(operation: .forget, ssid: ssid, pending: pending)
         DeviceManager.shared.forgetWifiNetwork(ssid)
+        do {
+            let event = try await pending.wait()
+            if pendingWifiStatus?.pending === pending {
+                pendingWifiStatus = nil
+            }
+            return event
+        } catch {
+            if pendingWifiStatus?.pending === pending {
+                pendingWifiStatus = nil
+            }
+            throw error
+        }
     }
 
-    public func setHotspotState(enabled: Bool) {
+    public func setHotspotState(enabled: Bool) async throws -> HotspotStatusEvent {
+        guard pendingHotspotStatus == nil else {
+            throw BluetoothError(
+                code: "request_in_flight",
+                message: "A hotspot command is already waiting for a glasses response."
+            )
+        }
+        let pending = PendingResponse<HotspotStatusEvent>(
+            operation: "hotspot \(enabled ? "enable" : "disable") request"
+        )
+        pendingHotspotStatus = PendingHotspotStatusRequest(enabled: enabled, pending: pending)
         DeviceManager.shared.setHotspotState(enabled)
+        do {
+            let event = try await pending.wait()
+            if pendingHotspotStatus?.pending === pending {
+                pendingHotspotStatus = nil
+            }
+            return event
+        } catch {
+            if pendingHotspotStatus?.pending === pending {
+                pendingHotspotStatus = nil
+            }
+            throw error
+        }
     }
 
     func setSystemTime(timestampMs: Int64) {
@@ -704,21 +839,50 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    public func requestVersionInfo() {
+    public func requestVersionInfo() async throws -> VersionInfoResult {
+        guard pendingVersionInfo == nil else {
+            throw BluetoothError(
+                code: "request_in_flight",
+                message: "A version info request is already waiting for a glasses response."
+            )
+        }
+        let pending = PendingResponse<VersionInfoResult>(operation: "version info request")
+        pendingVersionInfo = pending
         DeviceManager.shared.requestVersionInfo()
+        do {
+            let status = try await pending.wait()
+            if pendingVersionInfo === pending {
+                pendingVersionInfo = nil
+            }
+            return status
+        } catch {
+            if pendingVersionInfo === pending {
+                pendingVersionInfo = nil
+            }
+            throw error
+        }
     }
 
     /// Ask connected Mentra Live glasses to check/report OTA availability and status.
     public func checkForOtaUpdate() async throws -> OtaQueryResult {
+        try await performOtaQuery(operation: "OTA status query") {
+            DeviceManager.shared.sendOtaQueryStatus()
+        }
+    }
+
+    private func performOtaQuery(
+        operation: String,
+        sendRequest: () -> Void
+    ) async throws -> OtaQueryResult {
         if pendingOtaQuery != nil {
             throw BluetoothError(
                 code: "request_in_flight",
                 message: "An OTA status query is already waiting for a glasses response."
             )
         }
-        let pending = PendingResponse<OtaQueryResult>(operation: "OTA status query")
+        let pending = PendingResponse<OtaQueryResult>(operation: operation)
         pendingOtaQuery = pending
-        DeviceManager.shared.sendOtaQueryStatus()
+        sendRequest()
         do {
             let result = try await pending.wait()
             if pendingOtaQuery === pending {
@@ -759,8 +923,10 @@ public final class MentraBluetoothSDK {
     }
 
     /// Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures.
-    public func retryOtaVersionCheck() {
-        DeviceManager.shared.retryOtaVersionCheck()
+    public func retryOtaVersionCheck() async throws -> OtaQueryResult {
+        try await performOtaQuery(operation: "OTA version retry") {
+            DeviceManager.shared.retryOtaVersionCheck()
+        }
     }
 
     func sendOtaStart() async throws -> OtaStartAckEvent { try await startOtaUpdate() }
@@ -935,14 +1101,87 @@ public final class MentraBluetoothSDK {
         return BluetoothError(code: code, message: message)
     }
 
+    private func handleWifiScanResultsForRequests(_ results: [WifiScanResult]) {
+        guard let request = pendingWifiScan else { return }
+        if results.isEmpty, !request.sawInitialClear {
+            request.sawInitialClear = true
+            return
+        }
+        if pendingWifiScan === request {
+            pendingWifiScan = nil
+        }
+        request.pending.resolve(results)
+    }
+
+    private func handleWifiStatusForRequests(_ event: WifiStatusEvent) {
+        guard let request = pendingWifiStatus else { return }
+        guard wifiStatusMatches(event.status, request: request) else { return }
+        if pendingWifiStatus === request {
+            pendingWifiStatus = nil
+        }
+        request.pending.resolve(event)
+    }
+
+    private func wifiStatusMatches(_ status: WifiStatus, request: PendingWifiStatusRequest) -> Bool {
+        switch request.operation {
+        case .connect:
+            if case let .connected(ssid, _) = status {
+                return ssid == request.ssid
+            }
+            return false
+        case .forget:
+            switch status {
+            case .disconnected:
+                return true
+            case let .connected(ssid, _):
+                return ssid != request.ssid
+            }
+        }
+    }
+
+    private func handleHotspotStatusForRequests(_ event: HotspotStatusEvent) {
+        guard let request = pendingHotspotStatus else { return }
+        guard hotspotStatusMatches(event.status, enabled: request.enabled) else { return }
+        if pendingHotspotStatus === request {
+            pendingHotspotStatus = nil
+        }
+        request.pending.resolve(event)
+    }
+
+    private func hotspotStatusMatches(_ status: HotspotStatus, enabled: Bool) -> Bool {
+        if enabled {
+            return status.isEnabled
+        }
+        return status == .disabled
+    }
+
+    private func handleHotspotErrorForRequests(_ event: HotspotErrorEvent) {
+        guard let request = pendingHotspotStatus else { return }
+        if pendingHotspotStatus === request {
+            pendingHotspotStatus = nil
+        }
+        request.pending.reject(
+            BluetoothError(
+                code: "hotspot_command_failed",
+                message: event.message ?? "Hotspot command failed."
+            )
+        )
+    }
+
     private func dispatchStoreUpdate(_ category: String, _ changes: [String: Any]) {
         switch ObservableStore.normalizeCategory(category) {
         case "glasses":
             let nextState = state
+            if changes.keys.contains(where: { versionInfoKeys.contains($0) }) {
+                pendingVersionInfo?.resolve(VersionInfoResult(status: glassesStatus))
+            }
             delegate?.mentraBluetoothSDK(self, didUpdate: nextState)
             delegate?.mentraBluetoothSDK(self, didUpdateGlasses: nextState.glasses)
         case ObservableStore.bluetoothCategory:
             let nextState = state
+            if changes.keys.contains("wifiScanResults") {
+                handleWifiScanResultsForRequests(nextState.sdk.wifiScanResults)
+            }
             delegate?.mentraBluetoothSDK(self, didUpdate: nextState)
             delegate?.mentraBluetoothSDK(self, didUpdateSdkState: nextState.sdk)
             delegate?.mentraBluetoothSDK(self, didUpdateScan: nextState.scan)
@@ -1056,11 +1295,17 @@ public final class MentraBluetoothSDK {
                 didReceive: .speakingStatus(SpeakingStatusEvent(values: data))
             )
         case "hotspot_status_change":
-            delegate?.mentraBluetoothSDK(self, didReceive: .hotspotStatus(HotspotStatusEvent(values: data)))
+            let event = HotspotStatusEvent(values: data)
+            handleHotspotStatusForRequests(event)
+            delegate?.mentraBluetoothSDK(self, didReceive: .hotspotStatus(event))
         case "wifi_status_change":
-            delegate?.mentraBluetoothSDK(self, didReceive: .wifiStatus(WifiStatusEvent(values: data)))
+            let event = WifiStatusEvent(values: data)
+            handleWifiStatusForRequests(event)
+            delegate?.mentraBluetoothSDK(self, didReceive: .wifiStatus(event))
         case "hotspot_error":
-            delegate?.mentraBluetoothSDK(self, didReceive: .hotspotError(HotspotErrorEvent(values: data)))
+            let event = HotspotErrorEvent(values: data)
+            handleHotspotErrorForRequests(event)
+            delegate?.mentraBluetoothSDK(self, didReceive: .hotspotError(event))
         case "gallery_status":
             let event = GalleryStatusEvent(values: data)
             pendingGalleryStatus?.resolve(event)

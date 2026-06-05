@@ -40,6 +40,10 @@ class MentraBluetoothSdk private constructor(
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>? = null
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>? = null
     private var pendingStreamStop: PendingStreamStop? = null
+    private var pendingWifiScan: PendingWifiScan? = null
+    private var pendingWifiStatus: PendingWifiStatusRequest? = null
+    private var pendingHotspotStatus: PendingHotspotStatusRequest? = null
+    private var pendingVersionInfo: PendingResponse<VersionInfoResult>? = null
 
     init {
         listeners.add(listener)
@@ -52,6 +56,17 @@ class MentraBluetoothSdk private constructor(
     companion object {
         private val DEFAULT_DEVICE_KEYS = setOf("default_wearable", "device_name", "device_address")
         private val SCAN_STATE_KEYS = setOf("searching", "searchingController", "searchResults")
+        private val VERSION_INFO_KEYS =
+            setOf(
+                "androidVersion",
+                "firmwareVersion",
+                "besFirmwareVersion",
+                "mtkFirmwareVersion",
+                "buildNumber",
+                "otaVersionUrl",
+                "appVersion",
+                "systemTimeMs",
+            )
         private const val DEFAULT_SCAN_TIMEOUT_MS = 15_000L
         private const val DEFAULT_REQUEST_TIMEOUT_MS = 15_000L
         private const val STREAM_START_TIMEOUT_MS = 30_000L
@@ -88,6 +103,27 @@ class MentraBluetoothSdk private constructor(
     private data class PendingStreamStop(
         val streamId: String?,
         val pending: PendingResponse<StreamStatusEvent>,
+    )
+
+    private data class PendingWifiScan(
+        val pending: PendingResponse<List<WifiScanResult>>,
+        var sawInitialClear: Boolean = false,
+    )
+
+    private data class PendingWifiStatusRequest(
+        val operation: WifiStatusOperation,
+        val ssid: String,
+        val pending: PendingResponse<WifiStatusEvent>,
+    )
+
+    private enum class WifiStatusOperation {
+        CONNECT,
+        FORGET,
+    }
+
+    private data class PendingHotspotStatusRequest(
+        val enabled: Boolean,
+        val pending: PendingResponse<HotspotStatusEvent>,
     )
 
     private class PendingResponse<T>(
@@ -522,20 +558,96 @@ class MentraBluetoothSdk private constructor(
         return GlassesMediaVolumeSetResult.fromMap(deviceManager.setGlassesMediaVolumeBlocking(level))
     }
 
-    fun requestWifiScan() {
-        deviceManager.requestWifiScan()
+    fun requestWifiScan(): List<WifiScanResult> {
+        val pending = PendingResponse<List<WifiScanResult>>("WiFi scan request")
+        synchronized(oneShotLock) {
+            if (pendingWifiScan != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "A WiFi scan is already waiting for a glasses response.",
+                )
+            }
+            pendingWifiScan = PendingWifiScan(pending)
+        }
+        try {
+            deviceManager.requestWifiScan()
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingWifiScan?.pending === pending) {
+                    pendingWifiScan = null
+                }
+            }
+        }
     }
 
-    fun sendWifiCredentials(ssid: String, password: String) {
-        deviceManager.sendWifiCredentials(ssid, password)
+    fun sendWifiCredentials(ssid: String, password: String): WifiStatusEvent {
+        val pending = PendingResponse<WifiStatusEvent>("WiFi connect request")
+        synchronized(oneShotLock) {
+            if (pendingWifiStatus != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "A WiFi status command is already waiting for a glasses response.",
+                )
+            }
+            pendingWifiStatus = PendingWifiStatusRequest(WifiStatusOperation.CONNECT, ssid, pending)
+        }
+        try {
+            deviceManager.sendWifiCredentials(ssid, password)
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingWifiStatus?.pending === pending) {
+                    pendingWifiStatus = null
+                }
+            }
+        }
     }
 
-    fun forgetWifiNetwork(ssid: String) {
-        deviceManager.forgetWifiNetwork(ssid)
+    fun forgetWifiNetwork(ssid: String): WifiStatusEvent {
+        val pending = PendingResponse<WifiStatusEvent>("WiFi forget request")
+        synchronized(oneShotLock) {
+            if (pendingWifiStatus != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "A WiFi status command is already waiting for a glasses response.",
+                )
+            }
+            pendingWifiStatus = PendingWifiStatusRequest(WifiStatusOperation.FORGET, ssid, pending)
+        }
+        try {
+            deviceManager.forgetWifiNetwork(ssid)
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingWifiStatus?.pending === pending) {
+                    pendingWifiStatus = null
+                }
+            }
+        }
     }
 
-    fun setHotspotState(enabled: Boolean) {
-        deviceManager.setHotspotState(enabled)
+    fun setHotspotState(enabled: Boolean): HotspotStatusEvent {
+        val pending = PendingResponse<HotspotStatusEvent>("hotspot ${if (enabled) "enable" else "disable"} request")
+        synchronized(oneShotLock) {
+            if (pendingHotspotStatus != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "A hotspot command is already waiting for a glasses response.",
+                )
+            }
+            pendingHotspotStatus = PendingHotspotStatusRequest(enabled, pending)
+        }
+        try {
+            deviceManager.setHotspotState(enabled)
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingHotspotStatus?.pending === pending) {
+                    pendingHotspotStatus = null
+                }
+            }
+        }
     }
 
     fun setSystemTime(timestampMs: Long) {
@@ -692,13 +804,40 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    fun requestVersionInfo() {
-        deviceManager.requestVersionInfo()
+    fun requestVersionInfo(): VersionInfoResult {
+        val pending = PendingResponse<VersionInfoResult>("version info request")
+        synchronized(oneShotLock) {
+            if (pendingVersionInfo != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "A version info request is already waiting for a glasses response.",
+                )
+            }
+            pendingVersionInfo = pending
+        }
+        try {
+            deviceManager.requestVersionInfo()
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingVersionInfo === pending) {
+                    pendingVersionInfo = null
+                }
+            }
+        }
     }
 
     /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
-    fun checkForOtaUpdate(): OtaQueryResult {
-        val pending = PendingResponse<OtaQueryResult>("OTA status query")
+    fun checkForOtaUpdate(): OtaQueryResult =
+        performOtaQuery("OTA status query") {
+            deviceManager.sendOtaQueryStatus()
+        }
+
+    private fun performOtaQuery(
+        operation: String,
+        sendRequest: () -> Unit,
+    ): OtaQueryResult {
+        val pending = PendingResponse<OtaQueryResult>(operation)
         synchronized(oneShotLock) {
             if (pendingOtaQuery != null) {
                 throw BluetoothException(
@@ -709,7 +848,7 @@ class MentraBluetoothSdk private constructor(
             pendingOtaQuery = pending
         }
         try {
-            deviceManager.sendOtaQueryStatus()
+            sendRequest()
             return pending.await()
         } finally {
             synchronized(oneShotLock) {
@@ -745,8 +884,10 @@ class MentraBluetoothSdk private constructor(
     }
 
     /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
-    fun retryOtaVersionCheck() {
-        deviceManager.retryOtaVersionCheck()
+    fun retryOtaVersionCheck(): OtaQueryResult =
+        performOtaQuery("OTA version retry") {
+            deviceManager.retryOtaVersionCheck()
+        }
     }
 
     internal fun sendOtaStart(): OtaStartAckEvent = startOtaUpdate()
@@ -776,6 +917,11 @@ class MentraBluetoothSdk private constructor(
         when (ObservableStore.normalizeCategory(category)) {
             "glasses" -> {
                 val state = getState()
+                if (changes.keys.any { it in VERSION_INFO_KEYS }) {
+                    synchronized(oneShotLock) {
+                        pendingVersionInfo?.resolve(VersionInfoResult.from(getRawGlassesStatus()))
+                    }
+                }
                 dispatchToListeners {
                     it.onStateChanged(state)
                     it.onGlassesChanged(state.glasses)
@@ -784,6 +930,9 @@ class MentraBluetoothSdk private constructor(
             ObservableStore.BLUETOOTH_CATEGORY -> {
                 val state = getState()
                 val scanChanged = changes.keys.any { it in SCAN_STATE_KEYS }
+                if (changes.containsKey("wifiScanResults")) {
+                    handleWifiScanResultsForRequests(state.sdk.wifiScanResults)
+                }
                 dispatchToListeners {
                     it.onStateChanged(state)
                     it.onSdkStateChanged(state.sdk)
@@ -915,9 +1064,21 @@ class MentraBluetoothSdk private constructor(
                         )
                     )
                 }
-            "wifi_status_change" -> dispatchToListeners { it.onWifiStatusChanged(WifiStatusEvent(data)) }
-            "hotspot_status_change" -> dispatchToListeners { it.onHotspotStatusChanged(HotspotStatusEvent(data)) }
-            "hotspot_error" -> dispatchToListeners { it.onHotspotError(HotspotErrorEvent(data)) }
+            "wifi_status_change" -> {
+                val event = WifiStatusEvent(data)
+                handleWifiStatusForRequests(event)
+                dispatchToListeners { it.onWifiStatusChanged(event) }
+            }
+            "hotspot_status_change" -> {
+                val event = HotspotStatusEvent(data)
+                handleHotspotStatusForRequests(event)
+                dispatchToListeners { it.onHotspotStatusChanged(event) }
+            }
+            "hotspot_error" -> {
+                val event = HotspotErrorEvent(data)
+                handleHotspotErrorForRequests(event)
+                dispatchToListeners { it.onHotspotError(event) }
+            }
             "gallery_status" -> {
                 val event = GalleryStatusEvent(data)
                 synchronized(oneShotLock) {
@@ -1121,6 +1282,72 @@ class MentraBluetoothSdk private constructor(
         val details = (event.status as? StreamStatus.Error)?.errorDetails
             ?: "Stream status ${event.state.value}"
         return BluetoothException(code, details)
+    }
+
+    private fun handleWifiScanResultsForRequests(results: List<WifiScanResult>) {
+        val request = synchronized(oneShotLock) { pendingWifiScan } ?: return
+        if (results.isEmpty() && !request.sawInitialClear) {
+            request.sawInitialClear = true
+            return
+        }
+        synchronized(oneShotLock) {
+            if (pendingWifiScan === request) {
+                pendingWifiScan = null
+            }
+        }
+        request.pending.resolve(results)
+    }
+
+    private fun handleWifiStatusForRequests(event: WifiStatusEvent) {
+        val request = synchronized(oneShotLock) { pendingWifiStatus } ?: return
+        if (!wifiStatusMatches(event.status, request)) return
+        synchronized(oneShotLock) {
+            if (pendingWifiStatus === request) {
+                pendingWifiStatus = null
+            }
+        }
+        request.pending.resolve(event)
+    }
+
+    private fun wifiStatusMatches(status: WifiStatus, request: PendingWifiStatusRequest): Boolean =
+        when (request.operation) {
+            WifiStatusOperation.CONNECT ->
+                status is WifiStatus.Connected && status.ssid == request.ssid
+            WifiStatusOperation.FORGET ->
+                status == WifiStatus.Disconnected || (status is WifiStatus.Connected && status.ssid != request.ssid)
+        }
+
+    private fun handleHotspotStatusForRequests(event: HotspotStatusEvent) {
+        val request = synchronized(oneShotLock) { pendingHotspotStatus } ?: return
+        if (!hotspotStatusMatches(event.status, request.enabled)) return
+        synchronized(oneShotLock) {
+            if (pendingHotspotStatus === request) {
+                pendingHotspotStatus = null
+            }
+        }
+        request.pending.resolve(event)
+    }
+
+    private fun hotspotStatusMatches(status: HotspotStatus, enabled: Boolean): Boolean =
+        if (enabled) {
+            status is HotspotStatus.Enabled
+        } else {
+            status == HotspotStatus.Disabled
+        }
+
+    private fun handleHotspotErrorForRequests(event: HotspotErrorEvent) {
+        val request = synchronized(oneShotLock) { pendingHotspotStatus } ?: return
+        synchronized(oneShotLock) {
+            if (pendingHotspotStatus === request) {
+                pendingHotspotStatus = null
+            }
+        }
+        request.pending.reject(
+            BluetoothException(
+                "hotspot_command_failed",
+                event.message ?: "Hotspot command failed.",
+            )
+        )
     }
 
     private fun sendNextStreamKeepAlive(tracker: ActiveStreamKeepAlive) {

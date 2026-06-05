@@ -64,10 +64,10 @@ public final class MentraBluetoothSDK {
     public func setPreferredMic(_ preferredMic: MentraMicPreference)
     public func setOwnAppAudioPlaying(_ playing: Bool)
 
-    public func requestWifiScan()
-    public func sendWifiCredentials(ssid: String, password: String)
-    public func forgetWifiNetwork(ssid: String)
-    public func setHotspotState(enabled: Bool)
+    public func requestWifiScan() async throws -> [MentraWifiScanResult]
+    public func sendWifiCredentials(ssid: String, password: String) async throws -> MentraWifiStatusEvent
+    public func forgetWifiNetwork(ssid: String) async throws -> MentraWifiStatusEvent
+    public func setHotspotState(enabled: Bool) async throws -> MentraHotspotStatusEvent
 
     public func requestPhoto(_ request: MentraPhotoRequest)
     public func queryGalleryStatus()
@@ -76,7 +76,7 @@ public final class MentraBluetoothSDK {
     public func startVideoRecording(_ request: MentraVideoRecordingRequest)
     public func stopVideoRecording(requestId: String)
 
-    public func requestVersionInfo()
+    public func requestVersionInfo() async throws -> MentraVersionInfoResult
 
     public func invalidate()
 }

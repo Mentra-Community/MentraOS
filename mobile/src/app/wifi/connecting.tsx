@@ -1,12 +1,11 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {useLocalSearchParams} from "expo-router"
-import {useEffect, useRef, useState, useCallback} from "react"
+import {useEffect, useState, useCallback} from "react"
 import {ActivityIndicator, View} from "react-native"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {useGlassesStore} from "@/stores/glasses"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {translate} from "@/i18n"
@@ -23,80 +22,32 @@ export default function WifiConnectingScreen() {
   const {theme} = useAppTheme()
   const [connectionStatus, setConnectionStatus] = useState<"connecting" | "success" | "failed">("connecting")
   const [errorMessage, setErrorMessage] = useState("")
-  const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const failureGracePeriodRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const {goBack, push} = useNavigationStore.getState()
   const pushPrevious = usePushPrevious()
-  const connectedWifiSsid = useGlassesStore((state) => (state.wifi.state === "connected" ? state.wifi.ssid : undefined))
 
   useEffect(() => {
     // Start connection attempt
     attemptConnection()
-
-    return () => {
-      if (connectionTimeoutRef.current) {
-        clearTimeout(connectionTimeoutRef.current)
-        connectionTimeoutRef.current = null
-      }
-      if (failureGracePeriodRef.current) {
-        clearTimeout(failureGracePeriodRef.current)
-        failureGracePeriodRef.current = null
-      }
-    }
   }, [ssid])
-
-  useEffect(() => {
-    console.log("WiFi connection status changed:", connectedWifiSsid)
-
-    if (connectedWifiSsid === ssid) {
-      if (connectionTimeoutRef.current) {
-        clearTimeout(connectionTimeoutRef.current)
-        connectionTimeoutRef.current = null
-      }
-      if (failureGracePeriodRef.current) {
-        clearTimeout(failureGracePeriodRef.current)
-        failureGracePeriodRef.current = null
-      }
-
-      // Save credentials ONLY on successful connection if checkbox was checked
-      // This ensures we never save wrong passwords
-      if (password && rememberPassword) {
-        WifiCredentialsService.saveCredentials(ssid, password, true)
-        WifiCredentialsService.updateLastConnected(ssid)
-      }
-
-      setConnectionStatus("success")
-      // Don't show banner anymore since we have a dedicated success screen
-      // User will manually dismiss with Done button
-    } else if (connectionStatus === "connecting" && !failureGracePeriodRef.current) {
-      // Set up a grace period before showing failure. The glasses can briefly
-      // report old or disconnected WiFi state while applying new credentials.
-      failureGracePeriodRef.current = setTimeout(() => {
-        console.log("#$%^& Failed to connect to the network. Please check your password and try again.")
-        setConnectionStatus("failed")
-        setErrorMessage("Failed to connect to the network. Please check your password and try again.")
-        failureGracePeriodRef.current = null
-      }, 10000)
-    }
-  }, [connectedWifiSsid, connectionStatus, password, rememberPassword, ssid])
 
   const attemptConnection = async () => {
     try {
       console.log("Attempting to send wifi credentials to Core", ssid, password)
       await BluetoothSdk.sendWifiCredentials(ssid, password)
 
-      // Set timeout for connection attempt (20 seconds)
-      connectionTimeoutRef.current = setTimeout(() => {
-        if (connectionStatus === "connecting") {
-          setConnectionStatus("failed")
-          setErrorMessage("Connection timed out. Please try again.")
-        }
-      }, 20000)
+      // Save credentials ONLY on successful connection if checkbox was checked.
+      // This ensures we never save wrong passwords.
+      if (password && rememberPassword) {
+        WifiCredentialsService.saveCredentials(ssid, password, true)
+        WifiCredentialsService.updateLastConnected(ssid)
+      }
+
+      setConnectionStatus("success")
     } catch (error) {
-      console.error("Error sending WiFi credentials:", error)
+      console.error("Error connecting WiFi:", error)
       setConnectionStatus("failed")
-      setErrorMessage("Failed to send credentials to glasses. Please try again.")
+      setErrorMessage("Failed to connect to the network. Please check your password and try again.")
     }
   }
 

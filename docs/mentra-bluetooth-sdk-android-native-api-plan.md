@@ -77,10 +77,10 @@ class MentraBluetoothSdk private constructor(
     fun getGlassesMediaVolume(): MentraGlassesMediaVolumeGetResult
     fun setGlassesMediaVolume(level: Int): MentraGlassesMediaVolumeSetResult
 
-    fun requestWifiScan()
-    fun sendWifiCredentials(ssid: String, password: String)
-    fun forgetWifiNetwork(ssid: String)
-    fun setHotspotState(enabled: Boolean)
+    fun requestWifiScan(): List<MentraWifiScanResult>
+    fun sendWifiCredentials(ssid: String, password: String): MentraWifiStatusEvent
+    fun forgetWifiNetwork(ssid: String): MentraWifiStatusEvent
+    fun setHotspotState(enabled: Boolean): MentraHotspotStatusEvent
 
     fun requestPhoto(request: MentraPhotoRequest)
     fun queryGalleryStatus()
@@ -89,7 +89,7 @@ class MentraBluetoothSdk private constructor(
     fun startVideoRecording(request: MentraVideoRecordingRequest)
     fun stopVideoRecording(requestId: String)
 
-    fun requestVersionInfo()
+    fun requestVersionInfo(): MentraVersionInfoResult
 
     override fun close()
 }

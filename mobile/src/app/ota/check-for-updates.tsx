@@ -100,7 +100,9 @@ export default function OtaCheckForUpdatesScreen() {
 
           // Request version info since we don't have it yet
           console.log("OTA: Requesting version_info from glasses")
-          BluetoothSdk.requestVersionInfo()
+          void BluetoothSdk.requestVersionInfo().catch((error) => {
+            console.warn("OTA: Failed to request version_info from glasses:", error)
+          })
 
           versionInfoTimeoutRef.current = BgTimer.setTimeout(() => {
             if (checkCompletedRef.current) {
@@ -119,7 +121,9 @@ export default function OtaCheckForUpdatesScreen() {
       }
 
       // Match OtaUpdateChecker home path: BES often arrives late in version_info_3 (chip init after reflash).
-      void BluetoothSdk.requestVersionInfo()
+      void BluetoothSdk.requestVersionInfo().catch((error) => {
+        console.warn("OTA: Failed to refresh version_info before BES wait:", error)
+      })
 
       let latestBesFirmwareVersion = useGlassesStore.getState().besFirmwareVersion
       if (!latestBesFirmwareVersion) {
@@ -170,7 +174,9 @@ export default function OtaCheckForUpdatesScreen() {
         // Refresh version_info (build / fw) in case the store still held values from a prior session
         // before the native clear-on-connect + glasses_ready re-query completed.
         console.log("OTA: Requesting fresh version_info from glasses before HTTP compare")
-        void BluetoothSdk.requestVersionInfo()
+        void BluetoothSdk.requestVersionInfo().catch((error) => {
+          console.warn("OTA: Failed to refresh version_info before OTA compare:", error)
+        })
 
         const result = await checkForOtaUpdate(
           OTA_VERSION_URL_PROD,

@@ -271,27 +271,23 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         // MARK: - WiFi Commands
 
         AsyncFunction("requestWifiScan") {
-            await MainActor.run {
-                self.bluetoothSdk().requestWifiScan()
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.requestWifiScan().map(\.dictionary)
         }
 
         AsyncFunction("sendWifiCredentials") { (ssid: String, password: String) in
-            await MainActor.run {
-                self.bluetoothSdk().sendWifiCredentials(ssid: ssid, password: password)
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.sendWifiCredentials(ssid: ssid, password: password).values
         }
 
         AsyncFunction("forgetWifiNetwork") { (ssid: String) in
-            await MainActor.run {
-                self.bluetoothSdk().forgetWifiNetwork(ssid: ssid)
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.forgetWifiNetwork(ssid: ssid).values
         }
 
         AsyncFunction("setHotspotState") { (enabled: Bool) in
-            await MainActor.run {
-                self.bluetoothSdk().setHotspotState(enabled: enabled)
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setHotspotState(enabled: enabled).values
         }
 
         AsyncFunction("setSystemTime") { (timestampMs: Double) in
@@ -426,17 +422,15 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("retryOtaVersionCheck") {
-            await MainActor.run {
-                self.bluetoothSdk().retryOtaVersionCheck()
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.retryOtaVersionCheck().values
         }
 
         // MARK: - Version Info Commands
 
         AsyncFunction("requestVersionInfo") {
-            await MainActor.run {
-                self.bluetoothSdk().requestVersionInfo()
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.requestVersionInfo().dictionary
         }
 
         // MARK: - Power Control Commands

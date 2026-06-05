@@ -23,6 +23,7 @@ import {
   GlassesMediaVolumeSetResult,
   GlassesStatus,
   GalleryStatusEvent,
+  HotspotStatusChangeEvent,
   MicPreference,
   ObservableStoreCategory,
   OtaQueryResult,
@@ -41,6 +42,9 @@ import {
   StreamStatusEvent,
   VideoRecordingStatusEvent,
   VideoRecordingSettings,
+  VersionInfoResult,
+  WifiSearchResult,
+  WifiStatusChangeEvent,
 } from "../BluetoothSdk.types"
 import {photoRequestParamsForNative} from "./photoRequestPayload"
 
@@ -104,10 +108,10 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   sendIncidentId(incidentId: string, apiBaseUrl?: string | null): Promise<void>
 
   // WiFi Commands
-  requestWifiScan(): Promise<void>
-  sendWifiCredentials(ssid: string, password: string): Promise<void>
-  forgetWifiNetwork(ssid: string): Promise<void>
-  setHotspotState(enabled: boolean): Promise<void>
+  requestWifiScan(): Promise<WifiSearchResult[]>
+  sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
+  forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
+  setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
   /** Set glasses system clock (Mentra Live only) when phone detects clock skew. */
   setSystemTime(timestampMs: number): Promise<void>
   /** Logs current WiFi frequency (MHz) and 5 GHz band to Android logcat. */
@@ -128,12 +132,12 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   sendOtaStart(): Promise<OtaStartAckEvent>
   sendOtaQueryStatus(): Promise<OtaQueryResult>
   /** Re-run glasses-side OTA version check (called after a clock fix invalidates a TLS failure). */
-  retryOtaVersionCheck(): Promise<void>
+  retryOtaVersionCheck(): Promise<OtaQueryResult>
   checkForOtaUpdate(): Promise<OtaQueryResult>
   startOtaUpdate(): Promise<OtaStartAckEvent>
 
   // Version Info Commands
-  requestVersionInfo(): Promise<void>
+  requestVersionInfo(): Promise<VersionInfoResult>
 
   // Video Recording Commands
   startVideoRecording(

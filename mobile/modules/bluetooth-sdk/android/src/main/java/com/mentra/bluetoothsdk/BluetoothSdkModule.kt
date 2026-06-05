@@ -383,16 +383,16 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - WiFi Commands
 
-        AsyncFunction("requestWifiScan") { sdk?.requestWifiScan() }
+        AsyncFunction("requestWifiScan") { sdk?.requestWifiScan()?.map { it.toMap() } }
 
         AsyncFunction("sendWifiCredentials") { ssid: String, password: String ->
-            sdk?.sendWifiCredentials(ssid, password)
+            sdk?.sendWifiCredentials(ssid, password)?.values
         }
 
-        AsyncFunction("forgetWifiNetwork") { ssid: String -> sdk?.forgetWifiNetwork(ssid) }
+        AsyncFunction("forgetWifiNetwork") { ssid: String -> sdk?.forgetWifiNetwork(ssid)?.values }
 
         AsyncFunction("setHotspotState") { enabled: Boolean ->
-            sdk?.setHotspotState(enabled)
+            sdk?.setHotspotState(enabled)?.values
         }
 
         AsyncFunction("setSystemTime") { timestampMs: Double ->
@@ -463,11 +463,11 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("sendOtaQueryStatus") { sdk?.sendOtaQueryStatus()?.values }
 
-        AsyncFunction("retryOtaVersionCheck") { sdk?.retryOtaVersionCheck() }
+        AsyncFunction("retryOtaVersionCheck") { sdk?.retryOtaVersionCheck()?.values }
 
         // MARK: - Version Info Commands
 
-        AsyncFunction("requestVersionInfo") { sdk?.requestVersionInfo() }
+        AsyncFunction("requestVersionInfo") { sdk?.requestVersionInfo()?.toMap() }
 
         // MARK: - Power Control Commands
 

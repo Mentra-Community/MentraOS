@@ -129,7 +129,8 @@ if (!device) {
 }
 
 await BluetoothSdk.connect(device)
-await BluetoothSdk.requestVersionInfo()
+const versionInfo = await BluetoothSdk.requestVersionInfo()
+console.log(versionInfo.buildNumber)
 ```
 
 In multi-device environments, present an explicit picker instead of
@@ -230,10 +231,17 @@ await BluetoothSdk.clearDisplay()
 await BluetoothSdk.showDashboard()
 await BluetoothSdk.setDashboardPosition(4, 2)
 
-await BluetoothSdk.requestWifiScan()
-await BluetoothSdk.sendWifiCredentials('Office WiFi', 'secret')
-await BluetoothSdk.forgetWifiNetwork('Office WiFi')
-await BluetoothSdk.setHotspotState(true)
+const networks = await BluetoothSdk.requestWifiScan()
+console.log(networks.map((network) => network.ssid))
+
+const wifiStatus = await BluetoothSdk.sendWifiCredentials('Office WiFi', 'secret')
+console.log(wifiStatus.state)
+
+const forgetStatus = await BluetoothSdk.forgetWifiNetwork('Office WiFi')
+console.log(forgetStatus.state)
+
+const hotspotStatus = await BluetoothSdk.setHotspotState(true)
+console.log(hotspotStatus.state)
 
 const galleryAck = await BluetoothSdk.setGalleryModeEnabled(true)
 console.log(galleryAck.status)
@@ -255,6 +263,9 @@ const ledAck = await BluetoothSdk.rgbLedControl(
 console.log(ledAck.state)
 ```
 
+WiFi, hotspot, and version-info commands resolve from the ASG response path, not local dispatch:
+`requestWifiScan()` resolves with the updated scan list, `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` resolves when that SSID is no longer connected, `setHotspotState()` resolves when the requested hotspot state is reported, and `requestVersionInfo()` resolves with the updated version fields.
+
 `setMicState(true)` defaults to continuous microphone PCM from the glasses. The SDK does not apply phone-side Voice Activity Detection gating to microphone audio events. Use `setVoiceActivityDetectionEnabled(false)` when you want glasses-side Voice Activity Detection disabled for continuous external STT, recording, or playback. `voice_activity_detection_status` reports whether glasses-side Voice Activity Detection is enabled, and `speaking_status` reports speaking/not-speaking when supported. Microphone events include the latest `voiceActivityDetectionEnabled` value.
 
 ## OTA Updates
@@ -263,7 +274,7 @@ Mentra Live firmware owns the OTA flow. The SDK mirrors the MentraOS app command
 
 - `checkForOtaUpdate()` sends `ota_query_status` and resolves with the ASG response (`ota_update_available` or the current `ota_status`).
 - `startOtaUpdate()` sends `ota_start` and resolves with the ASG start ack after your app presents the update and the user accepts it.
-- `retryOtaVersionCheck()` sends `ota_retry_version_check`; use it only after fixing a known clock-skew/TLS failure.
+- `retryOtaVersionCheck()` sends `ota_retry_version_check` and resolves with the same ASG response shape as `checkForOtaUpdate()`; use it only after fixing a known clock-skew/TLS failure.
 
 ```ts
 import BluetoothSdk from '@mentra/bluetooth-sdk'

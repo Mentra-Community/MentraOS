@@ -205,6 +205,7 @@ export type {
   SwitchStatusEvent,
   TouchEvent,
   VideoRecordingStatusEvent,
+  VersionInfoResult,
   VoiceActivityDetectionStatusEvent,
   WifiSearchResult,
   WifiStatus,

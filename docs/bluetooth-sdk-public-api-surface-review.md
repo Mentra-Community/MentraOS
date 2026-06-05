@@ -111,10 +111,10 @@ setDashboardPosition(height: number, depth: number): Promise<void>
 setHeadUpAngle(angleDegrees: number): Promise<void>
 setScreenDisabled(disabled: boolean): Promise<void>
 
-requestWifiScan(): Promise<void>
-sendWifiCredentials(ssid: string, password: string): Promise<void>
-forgetWifiNetwork(ssid: string): Promise<void>
-setHotspotState(enabled: boolean): Promise<void>
+requestWifiScan(): Promise<WifiSearchResult[]>
+sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
+forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
+setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
 
 setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckEvent>
 setButtonPhotoSettings(size: ButtonPhotoSize): Promise<SettingsAckEvent>
@@ -160,9 +160,10 @@ rgbLedControl(
   count: number,
 ): Promise<RgbLedControlResponseEvent>
 
-requestVersionInfo(): Promise<void>
+requestVersionInfo(): Promise<VersionInfoResult>
 checkForOtaUpdate(): Promise<OtaQueryResult>
 startOtaUpdate(): Promise<OtaStartAckEvent>
+retryOtaVersionCheck(): Promise<OtaQueryResult>
 ```
 
 React hook signatures:
@@ -297,10 +298,10 @@ fun setOwnAppAudioPlaying(playing: Boolean)
 fun getGlassesMediaVolume(): GlassesMediaVolumeGetResult
 fun setGlassesMediaVolume(level: Int): GlassesMediaVolumeSetResult
 
-fun requestWifiScan()
-fun sendWifiCredentials(ssid: String, password: String)
-fun forgetWifiNetwork(ssid: String)
-fun setHotspotState(enabled: Boolean)
+fun requestWifiScan(): List<WifiScanResult>
+fun sendWifiCredentials(ssid: String, password: String): WifiStatusEvent
+fun forgetWifiNetwork(ssid: String): WifiStatusEvent
+fun setHotspotState(enabled: Boolean): HotspotStatusEvent
 
 fun requestPhoto(request: PhotoRequest): PhotoResponseEvent
 fun queryGalleryStatus(): GalleryStatusEvent
@@ -309,9 +310,10 @@ fun rgbLedControl(request: RgbLedRequest): RgbLedControlResponseEvent
 fun stopStream()
 fun startVideoRecording(request: VideoRecordingRequest): VideoRecordingStatusEvent
 fun stopVideoRecording(requestId: String): VideoRecordingStatusEvent
-fun requestVersionInfo()
+fun requestVersionInfo(): VersionInfoResult
 fun checkForOtaUpdate(): OtaQueryResult
 fun startOtaUpdate(): OtaStartAckEvent
+fun retryOtaVersionCheck(): OtaQueryResult
 
 override fun close()
 ```
@@ -427,10 +429,10 @@ public func setOwnAppAudioPlaying(_ playing: Bool)
 public func getGlassesMediaVolume() async throws -> GlassesMediaVolumeGetResult
 public func setGlassesMediaVolume(_ level: Int) async throws -> GlassesMediaVolumeSetResult
 
-public func requestWifiScan()
-public func sendWifiCredentials(ssid: String, password: String)
-public func forgetWifiNetwork(ssid: String)
-public func setHotspotState(enabled: Bool)
+public func requestWifiScan() async throws -> [WifiScanResult]
+public func sendWifiCredentials(ssid: String, password: String) async throws -> WifiStatusEvent
+public func forgetWifiNetwork(ssid: String) async throws -> WifiStatusEvent
+public func setHotspotState(enabled: Bool) async throws -> HotspotStatusEvent
 
 public func requestPhoto(_ request: PhotoRequest) async throws -> PhotoResponseEvent
 public func queryGalleryStatus() async throws -> GalleryStatusEvent
@@ -439,9 +441,10 @@ public func rgbLedControl(_ request: RgbLedRequest) async throws -> RgbLedContro
 public func stopStream()
 public func startVideoRecording(_ request: VideoRecordingRequest) async throws -> VideoRecordingStatusEvent
 public func stopVideoRecording(requestId: String) async throws -> VideoRecordingStatusEvent
-public func requestVersionInfo()
+public func requestVersionInfo() async throws -> VersionInfoResult
 public func checkForOtaUpdate() async throws -> OtaQueryResult
 public func startOtaUpdate() async throws -> OtaStartAckEvent
+public func retryOtaVersionCheck() async throws -> OtaQueryResult
 
 public func invalidate()
 ```
