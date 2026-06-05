@@ -267,7 +267,7 @@
           {
             "group": "Glasses OEMs",
             "icon": "industry",
-            "pages": ["glasses-oems/overview"]
+            "pages": ["glasses-oems/overview", "glasses-oems/integration-toolkit"]
           }
         ]
       },
