@@ -888,7 +888,6 @@ class MentraBluetoothSdk private constructor(
         performOtaQuery("OTA version retry") {
             deviceManager.retryOtaVersionCheck()
         }
-    }
 
     internal fun sendOtaStart(): OtaStartAckEvent = startOtaUpdate()
 
