@@ -4,11 +4,10 @@
 
 ## Why this doc
 
-Bridge from the audio spike ([`spike.md`](./spike.md)) to a concrete
-architectural proposal. Lays out goals, the chosen approach, the
-fault model, and what's deliberately out of scope. Implementation
-specifics (Redis commands, message shapes, walkthrough) live in
-[`design.md`](./design.md).
+The audio architecture: the goals, the chosen approach, the fault model, and what's
+deliberately out of scope. The plain-language overview of the whole runtime is in
+[`../architecture.md`](../architecture.md); the implementation specifics (Redis
+commands, message shapes, walkthroughs) are in [`design.md`](./design.md).
 
 ## Goals
 
@@ -17,13 +16,13 @@ specifics (Redis commands, message shapes, walkthrough) live in
 - **Workers per core.** Each pod uses every CPU it's given. CPU-bound
   work (LC3 decode, transcription) runs off the main event loop.
 - **Transcript continuity through failure.** Worker death, pod death,
-  Redis blip, phone reconnect — none of these produce a transcript
+  Redis blip, phone reconnect, none of these produce a transcript
   with missing words for the user. This is the load-bearing quality
   bar.
 - **Stateless ingress.** No pod is "the audio receiver" for any user.
   Any pod handles any packet.
 - **Inheritance from v1 where possible.** UDP packet format,
-  transcription provider behavior, Soniox reconnect logic — all
+  transcription provider behavior, Soniox reconnect logic, all
   carry forward. v2 is an architecture rewrite, not a from-scratch
   reimplementation of every component.
 
@@ -125,8 +124,8 @@ want to hit (target ~200–300 users/pod comfortable, ceiling ~1000),
 routing every entry through the main thread makes it the bottleneck
 (one event loop doing WS accept + UDP ingress + ownership refresh +
 per-entry postMessage routing). Splitting stream reads to workers
-keeps the main thread lean — it only sees user-assignment changes
-and transcripts going out — while parallelism scales with worker
+keeps the main thread lean, it only sees user-assignment changes
+and transcripts going out, while parallelism scales with worker
 count. ioredis client per worker is cheap (a few hundred connections
 to the Redis cluster across the fleet) and worker death stays local
 (ioredis cleans up on thread exit).
@@ -195,8 +194,8 @@ The user perceives a brief delay in transcript output during the
 failover, not a gap. No words are missing.
 
 This only works if the audio is in the stream. Audio that was in
-flight at the moment of the failure — between the phone and the
-ingress pod, never reaching Redis — is lost (UDP loss is expected).
+flight at the moment of the failure, between the phone and the
+ingress pod, never reaching Redis, is lost (UDP loss is expected).
 Audio that reached an ingress pod and was written to Redis is
 guaranteed delivery.
 
@@ -376,7 +375,27 @@ sharded pub/sub (`SPUBLISH`/`SSUBSCRIBE`).
 Single-node Redis (in-cluster pod or `cache.t4g.medium` ElastiCache)
 is plenty for the experiment phase. Cluster mode is the answer when
 we exceed ~3,000 concurrent users sustained, based on rough capacity
-math in the spike. See [`design.md`](./design.md) for sizing notes.
+math. See [`design.md`](./design.md) for sizing notes.
+
+## Alternatives considered and rejected
+
+Things we looked at and chose not to build, so the reasoning isn't lost:
+
+- **A warm standby pod per user** (a second pod kept ready so failover is under half
+  a second). Rejected: it roughly doubles the worker and provider resources, and the
+  bar we set (transcript continuity, not invisible recovery) doesn't need it. Worth
+  revisiting only if a worker dying turns out to be common in practice.
+- **A pool of pre-opened Soniox connections** (to skip the ~1 to 2 second handshake
+  when a worker takes over a user). Rejected for now: only worth it if measurement
+  shows that handshake is the step blowing the recovery budget.
+- **Pub/sub instead of a Redis stream for the audio bus** (simpler, lighter on
+  Redis). Rejected: pub/sub doesn't survive failover. Any audio published during the
+  gap between the old owner dying and the new one taking over is gone for good; a
+  stream keeps it, which is what makes the no-missing-words guarantee possible.
+- **Source-IP affinity at the load balancer** (pin a user's packets to one pod).
+  Rejected: mobile IPs change (cellular to WiFi), NAT means many clients share one IP,
+  and the routing we actually want is application-layer (read the session id from the
+  packet header). LB affinity would fight that, not help.
 
 ## What this assumes from other docs
 
@@ -393,7 +412,7 @@ math in the spike. See [`design.md`](./design.md) for sizing notes.
 
 ## Out of scope
 
-- Specific Redis commands, message shapes, walkthroughs — in
+- Specific Redis commands, message shapes, walkthroughs, in
   [`design.md`](./design.md).
 - Migration plan from v1 to v2. Big separate topic.
 - Multi-region active-active. Single region in v2.
@@ -418,15 +437,16 @@ math in the spike. See [`design.md`](./design.md) for sizing notes.
    (Soniox today, maybe Alibaba or Azure later). Carry v1's
    `TranscriptionProvider` interface or redesign? Lean: carry v1's
    surface; we're not chasing multi-provider in v2's audio.
-5. **Test client deployment.** The audio test client (for e2e)
-   needs to reach the cloud under test, the TEST OEM, and Redis.
-   Deployment topology — local Bun process, sibling Porter app,
-   K8s test namespace — needs deciding when we get to e2e tests.
+5. **Test client deployment.** The test client is the `@mentra/cloud-client` node
+   build (see [`../../004-cloud-client/`](../../004-cloud-client/)): the same client
+   the phone runs, driven from a server. It still needs to reach the cloud under
+   test, the TEST OEM, and Redis; the deployment topology (local Bun process, sibling
+   Porter app, K8s test namespace) is decided when we get to e2e tests.
 
 ## Related work
 
-- [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md) — runtime OEM auth (issued
+- [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md), runtime OEM auth (issued
   tokens; this spec consumes them)
-- [`../../005-websites/oem-portal/`](../../005-websites/oem-portal/) — OEM admin portal
+- [`../../005-websites/oem-portal/`](../../005-websites/oem-portal/), OEM admin portal
   (independent of audio path)
 - Future: e2e test infrastructure spec

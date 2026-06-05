@@ -255,7 +255,7 @@ What's built versus what's still in progress, so the map isn't mistaken for "don
   to the v2 messages (and to the full `TranscriptionData` result shape) is the planned
   step.
 - **UDP frames aren't decrypted yet.** The protocol defines per-session secretbox
-  encryption ([`audio/protocol.md`](./audio/protocol.md)); the ingress path has this
+  encryption ([`audio/wire.md`](./audio/wire.md)); the ingress path has this
   flagged as a to-do.
 - **Replay on failover** (`XAUTOCLAIM` of unacked entries) is specced in
   [`audio/design.md`](./audio/design.md); confirm it against the worker as that lands.

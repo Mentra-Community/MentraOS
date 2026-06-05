@@ -6,11 +6,11 @@ It defines the envelope, handshake, auth, control, error model, and REST
 conventions shared by every runtime service. Each service documents its own
 messages, endpoints, and payloads on top of this frame:
 
-- Audio service wire surface: [`audio/protocol.md`](./audio/protocol.md)
+- Audio service wire surface: [`audio/wire.md`](./audio/wire.md)
 - Camera service wire surface: [`camera/README.md`](./camera/README.md)
 
 This is a clean v2-native protocol. It does not carry the v1 phone contract; see
-[`audio/protocol.md`](./audio/protocol.md) for what that means for the audio path.
+[`audio/wire.md`](./audio/wire.md) for what that means for the audio path.
 
 ## Goals
 
@@ -44,7 +44,7 @@ handshake that establishes the runtime session.
   (`connection.init` / `connection.ack`), control (`ping`/`pong`), errors, and
   per-service push events.
 - **Audio ingest: UDP, binary frames.** Audio service only; documented in
-  [`audio/protocol.md`](./audio/protocol.md).
+  [`audio/wire.md`](./audio/wire.md).
 
 ## Envelope
 
@@ -119,7 +119,7 @@ interface ConnectionAck {
     sessionTag: number;     // u32 the client stamps into UDP audio frames
     udp: { host: string; port: number };
     // Per-session key for encrypting UDP audio. Delivered here because the
-    // handshake is over the TLS WebSocket. See audio/protocol.md "Encryption".
+    // handshake is over the TLS WebSocket. See audio/wire.md "Encryption".
     encryption: {
       algorithm: "xsalsa20-poly1305";  // NaCl secretbox
       key: string;                      // base64, 32 bytes
@@ -186,7 +186,7 @@ audio service's `SUBSCRIPTION_INVALID`); those are documented in the service doc
   distinguishes this from the legacy cloud, and the runtime API is on its first
   version. If a breaking change is ever needed, it takes `/api/v2/...`.
 - Per-service endpoints live in their service doc (audio subscriptions in
-  [`audio/protocol.md`](./audio/protocol.md); managed photo and managed stream in
+  [`audio/wire.md`](./audio/wire.md); managed photo and managed stream in
   [`camera/README.md`](./camera/README.md)).
 
 ## Message type registry (transport-level)

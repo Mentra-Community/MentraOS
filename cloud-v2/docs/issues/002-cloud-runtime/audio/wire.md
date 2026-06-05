@@ -40,16 +40,16 @@ entries (for example an unsupported language). An empty set is honored only when
 it is the latest version for the current session, so a stale empty cannot wipe a
 live set.
 
-This REST endpoint is the decided transport (Option 2a); see
-[`subscription-transport.md`](./subscription-transport.md). The cloud delivers the
-change to the owning worker as a control entry in the user's audio stream, no
-pub/sub.
+This REST endpoint is the decided transport (Option 2a): the cloud delivers the
+change to the owning worker as a control entry in the user's audio stream, with no
+pub/sub. REST was chosen over putting subscriptions on the WebSocket so the client
+gets request/response, acks, and retries, and so the WebSocket stays mostly a
+downstream push channel.
 
 ### Server-side routing (informative)
 
-Implementation guidance, not wire contract. This is Option 2a from
-[`subscription-transport.md`](./subscription-transport.md): REST, delivered to the
-owning worker through the user's audio stream, no pub/sub.
+Implementation guidance, not wire contract. The Option 2a routing: REST, delivered
+to the owning worker through the user's audio stream, no pub/sub.
 
 - The authoritative subscription set lives in a Redis key hash-tagged
   `{user:X}` (matching the audio stream and ownership keys), holding the full set
@@ -66,6 +66,12 @@ owning worker through the user's audio stream, no pub/sub.
   never off the entry payload alone.
 - The worker computes its provider set from the full subscription set each time.
   No derived caches across the boundary (legacy proved those drift).
+
+Two implementation choices are still open: whether the control entry goes in the
+`{user:X}:audio` stream or a dedicated `{user:X}:control` stream (lean: a dedicated
+control stream, so the worker doesn't branch on entry type inside the audio path),
+and the subscription key's lifetime (a TTL refreshed by the owner, an explicit delete
+on clean disconnect, or both).
 
 ## Push events (cloud to client)
 
@@ -108,17 +114,17 @@ forward from v1 (`cloud/issues/027-udp-audio-encryption`,
 - The cloud decrypts with the same key, authenticating the tag (tampered or
   forged packets are rejected).
 
-Implementation note: the v2 audio package (`cloud-v2/packages/audio`) does not
-decrypt UDP yet; wiring this scheme into the ingress is part of building the v2
-audio path.
+Implementation note: the runtime package (`cloud-v2/packages/runtime`) does not
+decrypt UDP yet; wiring this scheme into the ingress is part of building the v2 audio
+path.
 
 ## What this replaces
 
-The current `@mentra/audio` package speaks the v1 phone contract
-(`phone-protocol.ts`, `phone_subscription_update` inbound, `data_stream`
-outbound, `?token=` query auth) so the unchanged legacy mobile could reach
-cloud-v2. With the new client module owning the v2 path, the legacy miniapp
-system stays on v1 cloud over its own connection, so that adapter is removed from
-the v2 path during the `audio` to `runtime` rename. The `?token=` query mechanism
+The runtime package still carries a v1 phone-contract adapter
+(`wire/phone-protocol.ts`: `phone_subscription_update` inbound, `data_stream`
+outbound, `?token=` query auth) so the unchanged legacy mobile could reach cloud-v2.
+With `@mentra/cloud-client` owning the v2 path, the legacy miniapp system stays on v1
+cloud over its own connection, so that adapter goes away on the v2 path once the
+outbound moves to the v2 `stream.transcript` messages. The `?token=` query mechanism
 is the only piece carried forward, as the documented auth fallback in
 [`../protocol.md`](../protocol.md#auth-and-handshake).

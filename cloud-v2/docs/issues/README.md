@@ -47,7 +47,7 @@ lands.
 
 - None blocking right now. Recently decided: audio subscription transport
   (Option 2a, REST + stream control entry, see
-  [`002-cloud-runtime/audio/subscription-transport.md`](./002-cloud-runtime/audio/subscription-transport.md));
+  [`002-cloud-runtime/audio/wire.md`](./002-cloud-runtime/audio/wire.md));
   `mentraUserId` = `users._id`; the Mentra-as-OEM core-token migration bridge.
 
 ## What to spec next (rough order)

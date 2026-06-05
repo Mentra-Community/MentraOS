@@ -7,17 +7,26 @@ for Redis keys, the worker protocol, and failure walkthroughs) and the locked wi
 contract ([`protocol.md`](./protocol.md)). This doc is the on-ramp; the package
 build map is in [`design.md`](./design.md).
 
-A note on words used throughout:
+A note on words used throughout (skim once, refer back as needed):
 
 - **A pod** is one running copy of the runtime server. There are many, behind a load
   balancer, and any of them can handle any request.
 - **Redis** is a fast shared store all the pods talk to. A **Redis stream** is an
-  append-only log in Redis (you append to the end, readers pull from where they left
-  off).
-- **A worker** is a background thread inside a pod, so heavy CPU work runs off the
-  pod's main thread.
+  append-only log in Redis: you append to the end, readers pull from where they left
+  off. A **consumer group** is a set of readers on a stream where each entry goes to
+  exactly one of them, and an entry a reader didn't finish can be claimed by another,
+  which is how a new pod picks up where a dead one stopped.
+- **A worker** is a background thread inside a pod (Bun's `Worker`), so heavy CPU work
+  runs off the pod's main thread.
+- **UDP** is a fire-and-forget way to send packets: low overhead, low latency, but no
+  delivery guarantee (a packet can be dropped or arrive out of order). It's used for
+  audio because the latency is lower than a reliable connection.
 - **LC3** is the compressed audio codec the glasses send. It has to be decoded to
-  plain audio (PCM) before transcription.
+  plain audio (**PCM**, raw samples) before transcription.
+- **A TTL** is a timer on a Redis key that deletes it automatically when it runs out.
+  The runtime uses one for "who owns this user", and the owner keeps resetting it; if
+  the owner dies and stops resetting it, the key expires and someone else can take
+  over.
 
 ## 1. What the runtime is
 

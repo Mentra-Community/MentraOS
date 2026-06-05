@@ -19,15 +19,13 @@ and payloads on top of it.
 - [`protocol.md`](./protocol.md): the service-agnostic transport: envelope,
   handshake, auth, control, error model, and REST conventions shared by all
   services.
-- [`audio/`](./audio/): STT, TTS, translation.
-  - [`spec.md`](./audio/spec.md): architecture, fault model, and the canonical
-    subscription and result data models.
-  - [`design.md`](./audio/design.md): Redis keys, worker protocol, walkthroughs.
-  - [`spike.md`](./audio/spike.md): research and prior art.
-  - [`protocol.md`](./audio/protocol.md): audio wire surface (subscription REST
-    endpoint, transcript/translation push events, UDP audio frames).
-  - [`subscription-transport.md`](./audio/subscription-transport.md): open
-    decision: subscriptions over WS vs REST.
+- [`audio/`](./audio/): the live transcription and translation path.
+  - [`spec.md`](./audio/spec.md): the architecture, fault model, the canonical
+    subscription and result data models, and the rejected alternatives.
+  - [`design.md`](./audio/design.md): Redis keys, the worker protocol, the failure
+    walkthroughs.
+  - [`wire.md`](./audio/wire.md): the audio wire surface (subscription REST endpoint,
+    transcript/translation push events, UDP audio frames).
 - [`camera/`](./camera/): managed photo request and managed stream.
 
 ## Related

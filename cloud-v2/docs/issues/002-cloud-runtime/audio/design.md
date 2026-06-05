@@ -20,8 +20,9 @@ Conventions used throughout:
 
 ## Concepts primer (additions specific to this doc)
 
-Most concepts are defined in [`spike.md`](./spike.md). New ones used
-here:
+The general terms (pod, worker, Redis stream, consumer group, TTL, UDP, LC3, PCM) are
+glossed in [`../architecture.md`](../architecture.md). The Redis-command-level terms
+used here:
 
 - **`XADD`.** Redis Stream command. Appends an entry to a stream.
   Plain English: "add a new message to this stream's tail."
@@ -89,7 +90,7 @@ Every operation in the system, with the command and plain English.
 
 | Operation | Redis command | Plain English |
 | --- | --- | --- |
-| Pod startup | (none) — begin heartbeat loop | "Start refreshing my pod heartbeat" |
+| Pod startup | (none), begin heartbeat loop | "Start refreshing my pod heartbeat" |
 | Heartbeat refresh (every 1s) | `SET pods:heartbeat:<pod> <ts> EX 3` | "Set my heartbeat to 'now' and auto-delete in 3s" |
 | Phone WS connects → claim user | `SET {user:X}:owner "<pod>:<worker>" NX EX 5` | "Try to set the owner key, but only if nobody else has set it. Expire in 5s." |
 | Claim refresh (every 1.5s) | `SET {user:X}:owner "<pod>:<worker>" XX EX 5` | "Update the owner key to refresh its TTL, but only if it still exists (i.e., we still own it). Expire in 5s." |
@@ -117,7 +118,7 @@ Plain English: "Try to set this user's owner key. The `NX` flag means
 another pod owns this user."
 
 If `nil` is returned, the phone client retries after a brief backoff
-— eventually the prior owner's TTL expires and the new claim
+,  eventually the prior owner's TTL expires and the new claim
 succeeds.
 
 **2. Refresh (every 1.5s while owning):**
@@ -129,7 +130,7 @@ SET {user:abc}:owner "cloud-v2-cloud-fk7ss:3" XX EX 5
 Plain English: "Update the owner key, but only if it already exists.
 The `XX` flag is the opposite of `NX`. Reset the 5s expiry."
 
-If `nil` is returned, **we lost the claim** — another pod has it. The
+If `nil` is returned, **we lost the claim**, another pod has it. The
 worker should immediately stop processing audio for this user and
 release its in-memory state.
 
@@ -229,7 +230,7 @@ function dispatchAudioChunk(userId: string, chunk: ArrayBuffer): void {
   const msg: MainToWorkerMessage = { kind: "audio-chunk", userId, chunk };
   workers[workerIdx].postMessage(msg, [chunk]);
   // After postMessage with chunk as transferable, chunk.byteLength is 0
-  // in this thread — ownership has moved to the worker.
+  // in this thread, ownership has moved to the worker.
 }
 
 function assignUserToWorker(assignment: UserAssignment): void {
@@ -326,14 +327,14 @@ How the responsibility splits:
 Why so cautious about this: v1 burned weeks debugging a "the WS keeps
 dying after ~60 seconds of silence" symptom. Root cause was Kubernetes
 nginx-ingress's `proxy-send-timeout: 60s` default, which closes the
-connection when the **client** is silent — server-initiated pings only
+connection when the **client** is silent, server-initiated pings only
 reset the server→client direction and don't help. Once VAD started
 suppressing audio during silence, the upstream pipeline of "client
 sends nothing" → "ingress kills connection" → "session torn down" → "apps
 killed and respawned" became a cascade. See v1 issues
 `034-ws-liveness/` and `035-nginx-ws-timeout/`. The fix that worked was
 client-driven app-level pings + lifting the ingress timeout to one
-hour — same model we carry forward in cloud-v2.
+hour, same model we carry forward in cloud-v2.
 
 What this rules out, even when it looks tempting:
 
@@ -342,7 +343,7 @@ What this rules out, even when it looks tempting:
 - Setting `Bun.serve`'s `idleTimeout` to anything that fires during
   ordinary silence intervals (defaults to 120s in Bun; we either leave
   it alone or push it up).
-- Tearing down provider connections (Soniox, etc.) on silence — pause
+- Tearing down provider connections (Soniox, etc.) on silence, pause
   them instead. v1 issue `044-cloud-prod-error-storm/` covered the
   same lesson for the provider layer.
 
@@ -458,7 +459,7 @@ Failover scenarios follow.
 12. Phone starts sending UDP audio packets to the cloud's UDP service.
     Each packet lands on some pod (could be any pod; LB doesn't
     care).
-13. Receiving pod (say Pod A or Pod B or Pod C — any of them) parses
+13. Receiving pod (say Pod A or Pod B or Pod C, any of them) parses
     the v1-format packet header, extracts the session/user ID.
 14. Receiving pod runs:
     `XADD {user:<id>}:audio MAXLEN ~ 1000 * payload <bytes> ts <ms> ingress <pod>`.
@@ -584,7 +585,7 @@ Comfortably within the <10s budget.
    its next `XREADGROUP` call automatically because they're the
    same consumer name in the same group.
 
-Wait — there's a subtlety here. The consumer name `<pod>:<worker>` is
+Wait, there's a subtlety here. The consumer name `<pod>:<worker>` is
 the same after worker replacement (worker index 3 is still index 3).
 The Redis consumer group treats the new worker as continuing the old
 consumer. Pending entries are delivered on next read.
@@ -695,12 +696,12 @@ Per-user verbosity is bounded: log at INFO for state transitions
 
 ## Out of scope
 
-- Specific cluster topology (single shard vs N shards) — pick at
+- Specific cluster topology (single shard vs N shards), pick at
   deploy time based on measurement.
-- Specific Redis instance type — pick based on capacity needs.
-- Audio packet format details — carried unchanged from v1.
-- Test client implementation — e2e tests spec.
-- Worker-thread-vs-process discussion — chose Bun Workers (threads);
+- Specific Redis instance type, pick based on capacity needs.
+- Audio packet format details, carried unchanged from v1.
+- Test client implementation, e2e tests spec.
+- Worker-thread-vs-process discussion, chose Bun Workers (threads);
   not revisiting.
 
 ## Open questions
@@ -724,7 +725,11 @@ Per-user verbosity is bounded: log at INFO for state transitions
 
 ## Cross-references
 
-- [`spike.md`](./spike.md) — research findings, decisions, prior art
-- [`spec.md`](./spec.md) — architectural commitments, fault model
-- [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md) —
-  Mentra access token format (verified at WS handshake)
+- [`../architecture.md`](../architecture.md): the plain-language overview of the
+  whole runtime.
+- [`spec.md`](./spec.md): the architectural commitments, fault model, and the
+  rejected alternatives.
+- [`wire.md`](./wire.md): the audio wire surface (subscription REST, push events, UDP
+  frames).
+- [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md):
+  the Mentra access token format (verified at the WS handshake).

@@ -18,14 +18,15 @@ all cores of a pod.
 
 ## Files
 
-- `README.md` — this doc
-- [`spike.md`](./spike.md) — research findings, concepts primer,
-  options considered, decisions reached
-- [`spec.md`](./spec.md) — proposal: stateless UDP ingress, Redis-routed
-  ownership, worker model, fault tolerance, transcript continuity.
-  **Start here for the architecture.**
-- [`design.md`](./design.md) — implementation specifics: Redis keys,
-  typed worker protocol, walkthroughs, packet header format
+- `README.md`: this doc.
+- [`spec.md`](./spec.md): stateless UDP ingress, Redis-routed ownership, the worker
+  model, fault tolerance, transcript continuity, the data models, and the rejected
+  alternatives. **Start here for the architecture** (or [`../architecture.md`](../architecture.md)
+  for the whole-runtime overview).
+- [`design.md`](./design.md): the implementation specifics, Redis keys, the typed
+  worker protocol, walkthroughs, the packet header format.
+- [`wire.md`](./wire.md): the audio wire surface, the subscription REST endpoint, the
+  push events, and the UDP frame format.
 
 ## tl;dr
 
