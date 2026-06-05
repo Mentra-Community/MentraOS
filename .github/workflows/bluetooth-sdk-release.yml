@@ -28,6 +28,7 @@ concurrency:
 
 permissions:
   contents: read
+  id-token: write
 
 env:
   SDK_PACKAGE_DIR: mobile/modules/bluetooth-sdk
@@ -73,7 +74,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   npm:
-    name: Publish npm package
+    name: Stage npm package
     needs: detect
     if: needs.detect.outputs.run_release == 'true'
     runs-on: ubuntu-latest
@@ -84,8 +85,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
+
+      - name: Use npm with staged publishing support
+        run: npm install -g npm@latest
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -119,31 +123,19 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Dry-run npm publish
+      - name: Dry-run npm package
         if: steps.npm-registry.outputs.exists != 'true'
         working-directory: ${{ env.SDK_PACKAGE_DIR }}
-        run: npm publish --access public --dry-run
+        run: npm pack --dry-run
 
-      - name: Check npm publish credentials
-        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.exists != 'true'
-        run: |
-          if [[ -z "${NODE_AUTH_TOKEN:-}" ]]; then
-            echo "::error::Set the NPM_TOKEN repository secret before publishing @mentra/bluetooth-sdk."
-            exit 1
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish npm package
+      - name: Stage npm package
         if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.exists != 'true'
         working-directory: ${{ env.SDK_PACKAGE_DIR }}
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm stage publish
 
-      - name: Skip npm publish
+      - name: Skip npm stage publish
         if: steps.npm-registry.outputs.exists == 'true'
-        run: echo "Skipping npm publish because this version already exists."
+        run: echo "Skipping npm stage publish because this version already exists on npm."
 
   maven:
     name: Publish Maven Central artifacts
