@@ -25,8 +25,8 @@
 import type {
   AudioSubscription,
   LanguageSource,
-} from "../audio.types";
-import type { TranscriptMessage } from "../workers/audio.worker";
+} from "../services/session/subscriptions";
+import type { TranscriptMessage } from "../services/audio/workers/worker";
 
 // === Inbound: phone -> cloud ===
 

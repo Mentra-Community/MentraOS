@@ -35,7 +35,7 @@ import type {
   ProviderOptions,
   TranscriptionProvider,
   TranscriptEvent,
-} from "./provider.types";
+} from "./provider";
 
 const SONIOX_MODEL = process.env.SONIOX_MODEL ?? "stt-rt-v4";
 

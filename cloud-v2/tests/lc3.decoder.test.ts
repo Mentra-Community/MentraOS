@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { LC3Decoder } from "../packages/audio/src/workers/lc3/lc3.decoder";
+import { LC3Decoder } from "../packages/runtime/src/services/audio/workers/lc3";
 
 describe("LC3Decoder", () => {
   test("20-byte frame decodes to 160 samples (320 bytes PCM)", async () => {

@@ -16,9 +16,9 @@ export type {
   TranscriptionSubscription,
   TranslationSubscription,
   AudioSubscription,
-} from "./protocol/audio";
+} from "../../protocol/audio";
 
-import type { AudioSubscription, LanguageSource } from "./protocol/audio";
+import type { AudioSubscription, LanguageSource } from "../../protocol/audio";
 
 /**
  * Stable string key for a subscription, used for equality + Map keys.

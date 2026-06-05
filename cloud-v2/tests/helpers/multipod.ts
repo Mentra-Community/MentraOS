@@ -63,7 +63,7 @@ export async function spawnAudioPod(
   if (opts.redisUrl) env.REDIS_URL = opts.redisUrl;
 
   const proc = Bun.spawn(
-    ["bun", "packages/audio/src/index.ts"],
+    ["bun", "packages/runtime/src/index.ts"],
     {
       cwd: CLOUD_V2_ROOT,
       env,

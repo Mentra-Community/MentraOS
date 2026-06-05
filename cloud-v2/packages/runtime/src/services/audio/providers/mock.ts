@@ -13,7 +13,7 @@
 import type {
   ProviderOptions,
   TranscriptionProvider,
-} from "./provider.types";
+} from "./provider";
 
 export interface CreateMockProviderOptions extends ProviderOptions {
   /**

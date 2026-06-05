@@ -72,13 +72,13 @@ import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
 import {
   audioStreamKey,
   lookupSessionTagInRedis,
-} from "../packages/audio/src/services/audio-stream.service";
-import { getOwner } from "../packages/audio/src/services/ownership.service";
+} from "../packages/runtime/src/services/session/stream";
+import { getOwner } from "../packages/runtime/src/services/session/ownership";
 import {
   connectRedis,
   disconnectRedis,
   getRedis,
-} from "../packages/audio/src/connections/redis.connection";
+} from "../packages/runtime/src/clients/redis.client";
 import { TestClient } from "../test/test-client/src/client";
 import { spawnAudioPod, type PodHandle } from "./helpers/multipod";
 

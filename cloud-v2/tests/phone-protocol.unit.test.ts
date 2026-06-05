@@ -13,8 +13,8 @@ import {
   formatPhoneSubscription,
   parsePhoneSubscriptions,
   transcriptToDataStream,
-} from "../packages/audio/src/wire/phone-protocol";
-import type { TranscriptMessage } from "../packages/audio/src/workers/audio.worker";
+} from "../packages/runtime/src/wire/phone-protocol";
+import type { TranscriptMessage } from "../packages/runtime/src/services/audio/workers/worker";
 
 describe("parsePhoneSubscriptions", () => {
   test("specific-language transcription", () => {

@@ -20,7 +20,7 @@ import {
   connectRedis,
   disconnectRedis,
   redisReadinessCheck,
-} from "./connections/redis.connection";
+} from "./clients/redis.client";
 import os from "node:os";
 import {
   configureAudioSession,
@@ -29,20 +29,20 @@ import {
   HTTP_FALLTHROUGH,
   tryWsUpgrade,
   wsHandlers,
-} from "./services/session.service";
+} from "./net/ws";
 import {
   startUdpIngress,
   stopUdpIngress,
-} from "./services/udp-ingress.service";
+} from "./net/udp";
 import {
   startOwnershipRefreshLoop,
   stopOwnershipRefreshLoop,
-} from "./services/ownership.service";
+} from "./services/session/ownership";
 import {
   onTranscript,
   startWorkerPool,
   stopWorkerPool,
-} from "./services/worker-pool.service";
+} from "./services/audio/workers/pool";
 import { transcriptToDataStream } from "./wire/phone-protocol";
 
 const logger = createLogger("audio");

@@ -39,12 +39,12 @@ import {
   registerSessionTag,
   SESSION_TAG_REFRESH_INTERVAL_MS,
   unregisterSessionTag,
-} from "./audio-stream.service";
+} from "../services/session/stream";
 import {
   claimOwnershipWithRetry,
   releaseOwnership,
-} from "./ownership.service";
-import { assignUser, releaseUser, updateSubscriptions } from "./worker-pool.service";
+} from "../services/session/ownership";
+import { assignUser, releaseUser, updateSubscriptions } from "../services/audio/workers/pool";
 import {
   parsePhoneSubscriptions,
   type PhoneSubscriptionUpdate,

@@ -16,7 +16,7 @@
  * Wire-format and lifecycle decisions live in `docs/issues/003-audio/`.
  */
 
-import { getRedis } from "../connections/redis.connection";
+import { getRedis } from "../../clients/redis.client";
 
 // === Stream constants ===
 

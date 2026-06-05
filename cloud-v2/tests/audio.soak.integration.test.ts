@@ -69,7 +69,7 @@ import {
   connectRedis,
   disconnectRedis,
   getRedis,
-} from "../packages/audio/src/connections/redis.connection";
+} from "../packages/runtime/src/clients/redis.client";
 import { TestClient } from "../test/test-client/src/client";
 import { spawnAudioPod, type PodHandle } from "./helpers/multipod";
 

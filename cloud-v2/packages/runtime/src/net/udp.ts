@@ -25,8 +25,8 @@ import { createLogger } from "@mentra/cloud-shared";
 import {
   ingestAudioPacket,
   parseAudioPacket,
-} from "./audio-stream.service";
-import { getSessionByTag } from "./session.service";
+} from "../services/session/stream";
+import { getSessionByTag } from "./ws";
 
 const logger = createLogger("audio").child({ service: "udp-ingress" });
 

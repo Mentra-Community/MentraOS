@@ -35,7 +35,7 @@
  */
 
 import { createLogger } from "@mentra/cloud-shared";
-import { getRedis } from "../connections/redis.connection";
+import { getRedis } from "../../clients/redis.client";
 
 const logger = createLogger("audio").child({ service: "ownership.service" });
 

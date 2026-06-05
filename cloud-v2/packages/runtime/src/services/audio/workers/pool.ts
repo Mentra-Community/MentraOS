@@ -30,12 +30,12 @@ import type {
   TranscriptStubMessage,
   WorkerInMessage,
   WorkerOutMessage,
-} from "../workers/audio.worker";
-import type { AudioSubscription } from "../audio.types";
+} from "./worker";
+import type { AudioSubscription } from "../../session/subscriptions";
 
 const logger = createLogger("audio").child({ service: "worker-pool" });
 
-const WORKER_URL = new URL("../workers/audio.worker.ts", import.meta.url);
+const WORKER_URL = new URL("./worker.ts", import.meta.url);
 
 interface WorkerSlot {
   id: string;

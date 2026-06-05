@@ -24,12 +24,12 @@
  */
 
 import {Redis} from "ioredis"
-import {AUDIO_STREAM_GROUP, audioStreamKey} from "../services/audio-stream.service"
-import {LC3Decoder} from "./lc3/lc3.decoder"
-import {createMockProvider} from "./providers/mock.provider"
-import {createSonioxProvider} from "./providers/soniox.provider"
-import type {TranscriptionProvider, TranscriptEvent} from "./providers/provider.types"
-import type {AudioSubscription, LanguageSource, TranscriptionSubscription} from "../audio.types"
+import {AUDIO_STREAM_GROUP, audioStreamKey} from "../../session/stream"
+import {LC3Decoder} from "./lc3"
+import {createMockProvider} from "../providers/mock"
+import {createSonioxProvider} from "../providers/soniox"
+import type {TranscriptionProvider, TranscriptEvent} from "../providers/provider"
+import type {AudioSubscription, LanguageSource, TranscriptionSubscription} from "../../session/subscriptions"
 
 // === Worker IPC types ===
 

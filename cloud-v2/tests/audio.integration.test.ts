@@ -64,7 +64,7 @@ const TEST_OEM_PORT = 13100;
 }
 
 import { startCore, type CoreHandle } from "../packages/core/src/index";
-import { startAudio, type AudioHandle } from "../packages/audio/src/index";
+import { startAudio, type AudioHandle } from "../packages/runtime/src/index";
 import {
   startTestOem,
   type TestOemHandle,
@@ -77,14 +77,14 @@ import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
 import {
   audioStreamKey,
   lookupSessionTagInRedis,
-} from "../packages/audio/src/services/audio-stream.service";
+} from "../packages/runtime/src/services/session/stream";
 import {
   getOwner,
   tryClaimOwnership,
   refreshOwnership,
   releaseOwnership,
-} from "../packages/audio/src/services/ownership.service";
-import { getRedis } from "../packages/audio/src/connections/redis.connection";
+} from "../packages/runtime/src/services/session/ownership";
+import { getRedis } from "../packages/runtime/src/clients/redis.client";
 import { TestClient } from "../test/test-client/src/client";
 
 let coreHandle: CoreHandle;
