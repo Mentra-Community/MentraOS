@@ -274,15 +274,15 @@ React Native exposes the narrowest return types for clear branching after `await
 | `forgetWifiNetwork(ssid)` | `WifiStatusChangeEvent` once the requested SSID is no longer connected. | Timeout, send failure, or another Wi-Fi status command in flight. |
 | `setHotspotState(enabled)` | `HotspotStatusChangeEvent` matching the requested enabled/disabled state. | `hotspot_error`, timeout, send failure, or another hotspot command in flight. |
 | `requestVersionInfo()` | `VersionInfoResult` from the ASG `version_info` response. | Timeout, send failure, or another version query in flight. |
-| Gallery/button settings | `SettingsAckEvent` with a non-failure status such as `applied` or `ready`. | `settings_ack.status` of `error`, `failed`, `failure`, or `rejected`; timeout; send failure; or duplicate request ID. |
-| `setCameraFov(...)` | `CameraFovResult` with `ready: true`, `hardwareApplied: true`, `fov`, `roiPosition`, and `requestId` after the restarted camera is ready. | Glasses-side FOV/settings error, missing readiness after camera restart, timeout, send failure, or duplicate request ID. |
+| Gallery/button settings | `SettingsAckEvent` with a non-failure status such as `applied` or `ready`. | `settings_ack.status` of `error`, `failed`, `failure`, or `rejected`; timeout; or send failure. |
+| `setCameraFov(...)` | `CameraFovResult` with `ready: true`, `hardwareApplied: true`, `fov`, `roiPosition`, and `requestId` after the restarted camera is ready. | Glasses-side FOV/settings error, missing readiness after camera restart, timeout, or send failure. |
 | `queryGalleryStatus()` | `GalleryStatusEvent`, including `cameraBusy` and optional `cameraBusyReason`. | Timeout, send failure, or another gallery status query in flight. |
-| `requestPhoto(...)` | React Native `PhotoSuccessResponseEvent`; Android/iOS successful `PhotoResponseEvent`. | Raw `photo_response.state === "error"`, timeout, send failure, or duplicate request ID. |
+| `requestPhoto(...)` | React Native `PhotoSuccessResponseEvent`; Android/iOS successful `PhotoResponseEvent`. | Raw `photo_response.state === "error"`, timeout, or send failure. |
 | `startVideoRecording(...)` | React Native `VideoRecordingSuccessStatusEvent` with `status: "recording_started"`; Android/iOS successful `VideoRecordingStatusEvent`. | `success: false` statuses such as `already_recording`, timeout, send failure, or duplicate request ID. |
 | `stopVideoRecording(requestId)` | React Native `VideoRecordingSuccessStatusEvent` with `status: "recording_stopped"`; Android/iOS successful `VideoRecordingStatusEvent`. | `success: false` statuses such as `not_recording`, timeout, send failure, or duplicate request ID. |
-| `startStream(...)` | `StreamStatusEvent` for the requested stream once `status` is `streaming`. | `stream_status` error/reconnect failure, timeout, send failure, or duplicate stream start. |
+| `startStream(...)` | `StreamStatusEvent` for the requested stream once `status` is `streaming`. | `stream_status` error/reconnect failure, timeout, or send failure. |
 | `stopStream()` | `StreamStatusEvent` once `status` is `stopped`. | `stream_status` error, timeout, send failure, or another stream stop in flight. |
-| `rgbLedControl(...)` | React Native `RgbLedControlSuccessResponseEvent`; Android/iOS successful `RgbLedControlResponseEvent`. | Raw `rgb_led_control_response.state === "error"`, timeout, send failure, or duplicate request ID. |
+| `rgbLedControl(...)` | React Native `RgbLedControlSuccessResponseEvent`; Android/iOS successful `RgbLedControlResponseEvent`. | Raw `rgb_led_control_response.state === "error"`, timeout, or send failure. |
 | `checkForOtaUpdate()` / `retryOtaVersionCheck()` | `OtaQueryResult`: either `ota_update_available` or the current `ota_status`. | Command response timeout, send failure, or another OTA query in flight. A returned `ota_status.status === "failed"` is a glasses OTA state to show in UI, not a command transport rejection. |
 | `startOtaUpdate()` | `OtaStartAckEvent` from `ota_start_ack`. | Start-ack timeout, send failure, or another OTA start in flight. |
 
@@ -425,6 +425,7 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `local_transcription` | `LocalTranscriptionEvent` | SDK local transcription text update. |
 | `wifi_status_change` | `WifiStatusChangeEvent` | Glasses Wi-Fi connection state changes. |
 | `wifi_scan_result` | `WifiScanResultEvent` | Wi-Fi scan results. Intermediate events can have `scanComplete: false`; the final event has `scanComplete: true` and is what `requestWifiScan()` awaits. |
+| `version_info` | `VersionInfoEvent` | Glasses version metadata response. Also returned by `requestVersionInfo()`. |
 | `hotspot_status_change` | `HotspotStatusChangeEvent` | Glasses hotspot state changes. |
 | `hotspot_error` | `HotspotErrorEvent` | Hotspot operation fails. |
 | `photo_response` | `PhotoResponseEvent` | Photo request succeeds or fails. `requestPhoto(...)` resolves with the success case and rejects on the error case. |

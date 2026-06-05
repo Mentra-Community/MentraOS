@@ -158,6 +158,7 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
                 for (int i = 0; i < (networks != null ? networks.size() : 0); i += CHUNK_SIZE) {
                     int endIdx = Math.min(i + CHUNK_SIZE, networks.size());
                     List<String> chunk = networks.subList(i, endIdx);
+                    boolean scanComplete = endIdx >= networks.size();
                     
                     JSONObject response = new JSONObject();
                     response.put("type", "wifi_scan_result");
@@ -169,6 +170,7 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
                         Log.d(TAG, "📡 📶 Found network: " + network);
                     }
                     response.put("networks", networksArray);
+                    response.put("scan_complete", scanComplete);
 
                     String jsonString = response.toString();
                     Log.d(TAG, "📡 📤 Sending WiFi scan results chunk: " + jsonString);
