@@ -121,7 +121,7 @@ setButtonPhotoSettings(size: ButtonPhotoSize): Promise<SettingsAckEvent>
 setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckEvent>
 setButtonCameraLed(enabled: boolean): Promise<SettingsAckEvent>
 setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckEvent>
-setCameraFov(fov: CameraFov): Promise<SettingsAckEvent>
+setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
 queryGalleryStatus(): Promise<GalleryStatusEvent>
 requestPhoto(
   requestId: string,
@@ -202,13 +202,17 @@ type PhotoCompression = "none" | "medium" | "heavy"
 const CAMERA_FOV_MIN = 62
 const CAMERA_FOV_MAX = 118
 const CAMERA_FOV_DEFAULT = 102
-type CameraRoiPosition = 0 | 1 | 2
+type CameraRoiPosition = "center" | "bottom" | "top"
 type CameraFovPreset = "narrow" | "standard" | "wide"
-type CameraFovValue = {
+type CameraFovRequest = { fov: number; roiPosition?: CameraRoiPosition } | { preset: CameraFovPreset }
+type CameraFovResult = {
+  requestId: string
   fov: number
-  roiPosition?: CameraRoiPosition
+  roiPosition: CameraRoiPosition
+  ready: true
+  hardwareApplied: true
+  timestamp: number
 }
-type CameraFov = CameraFovValue | CameraFovPreset
 type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
 type RgbLedAction = "on" | "off"
 type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
@@ -279,7 +283,7 @@ fun setButtonPhotoSettings(settings: ButtonPhotoSettings): SettingsAckEvent
 fun setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int): SettingsAckEvent
 fun setButtonCameraLed(enabled: Boolean): SettingsAckEvent
 fun setButtonMaxRecordingTime(minutes: Int): SettingsAckEvent
-fun setCameraFov(fov: CameraFov): SettingsAckEvent
+fun setCameraFov(fov: CameraFov): CameraFovResult
 
 fun setMicState(
   enabled: Boolean,
@@ -409,7 +413,7 @@ public func setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int) a
 public func setButtonVideoRecordingSettings(_ settings: ButtonVideoRecordingSettings) async throws -> SettingsAckEvent
 public func setButtonCameraLed(enabled: Bool) async throws -> SettingsAckEvent
 public func setButtonMaxRecordingTime(minutes: Int) async throws -> SettingsAckEvent
-public func setCameraFov(_ fov: CameraFov) async throws -> SettingsAckEvent
+public func setCameraFov(_ fov: CameraFov) async throws -> CameraFovResult
 
 public func setMicState(
   enabled: Bool,

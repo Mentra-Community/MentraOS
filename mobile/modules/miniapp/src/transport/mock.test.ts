@@ -78,7 +78,7 @@ describe("MockTransport", () => {
     expect(payload.data.photoUrl.startsWith("data:image/png;base64,")).toBe(true)
   })
 
-  test("CAMERA_FOV returns a synthetic settings ack", async () => {
+  test("CAMERA_FOV returns a synthetic ready result", async () => {
     const t = new MockTransport({silent: true})
     const received: string[] = []
     t.onMessage((raw) => received.push(raw))
@@ -89,13 +89,10 @@ describe("MockTransport", () => {
 
     const payload = parseEnvelope(received[0])!.payload as {data: Record<string, unknown>}
     expect(payload.data).toMatchObject({
-      type: "settings_ack",
       requestId: "rid-fov",
-      setting: "camera_fov",
-      status: "ready",
-      ready: true,
       fov: 102,
-      roiPosition: 2,
+      roiPosition: "top",
+      ready: true,
       hardwareApplied: true,
     })
   })

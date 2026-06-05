@@ -451,18 +451,20 @@ class MentraBluetoothSdk private constructor(
             send = { requestId -> deviceManager.sendButtonMaxRecordingTime(requestId, minutes) },
         )
 
-    fun setCameraFov(fov: CameraFov): SettingsAckEvent =
-        performSettingsCommand(
+    fun setCameraFov(fov: CameraFov): CameraFovResult {
+        val ack = performSettingsCommand(
             setting = "camera_fov",
             updateStore = {
                 DeviceStore.set(
                     ObservableStore.BLUETOOTH_CATEGORY,
                     "camera_fov",
-                    mapOf("fov" to fov.fov, "roi_position" to fov.roiPosition),
+                    mapOf("fov" to fov.fov, "roi_position" to fov.roiPosition.value),
                 )
             },
-            send = { requestId -> deviceManager.sendCameraFovSetting(requestId, fov.fov, fov.roiPosition) },
+            send = { requestId -> deviceManager.sendCameraFovSetting(requestId, fov.fov, fov.roiPosition.value) },
         )
+        return CameraFovResult.fromAck(ack, fov)
+    }
 
     fun setMicState(
         enabled: Boolean,

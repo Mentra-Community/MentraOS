@@ -313,7 +313,7 @@ export type SettingsAckEvent = {
   ready?: boolean
   timestamp: number
   fov?: number
-  roiPosition?: CameraRoiPosition
+  roiPosition?: CameraRoiPositionValue
   hardwareApplied?: boolean
   active?: boolean
   size?: ButtonPhotoSize | string
@@ -367,24 +367,36 @@ export const CAMERA_FOV_MIN = 62
 export const CAMERA_FOV_MAX = 118
 export const CAMERA_FOV_DEFAULT = 102
 
-export type CameraRoiPosition = 0 | 1 | 2
+export type CameraRoiPosition = "center" | "bottom" | "top"
+export type CameraRoiPositionValue = 0 | 1 | 2
 export type CameraFovPreset = "narrow" | "standard" | "wide"
 
-export type CameraFovValue = {
-  fov: number
-  roiPosition?: CameraRoiPosition
-}
+export type CameraFovRequest =
+  | {
+      fov: number
+      roiPosition?: CameraRoiPosition
+    }
+  | {
+      preset: CameraFovPreset
+    }
 
-export type CameraFov = CameraFovValue | CameraFovPreset
+export type CameraFovResult = {
+  requestId: string
+  fov: number
+  roiPosition: CameraRoiPosition
+  ready: true
+  hardwareApplied: true
+  timestamp: number
+}
 
 export type CameraFovSetting = {
   fov: number
-  roiPosition: CameraRoiPosition
+  roiPosition: CameraRoiPositionValue
 }
 
 type NativeCameraFovSetting = {
   fov: number
-  roi_position: CameraRoiPosition
+  roi_position: CameraRoiPositionValue
 }
 
 export type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
@@ -797,7 +809,7 @@ export interface BluetoothSdkPublicModule {
   setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckEvent>
   setButtonCameraLed(enabled: boolean): Promise<SettingsAckEvent>
   setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckEvent>
-  setCameraFov(fov: CameraFov): Promise<SettingsAckEvent>
+  setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoResponseEvent>
   startVideoRecording(

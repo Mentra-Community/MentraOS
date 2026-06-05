@@ -181,24 +181,24 @@ export class MockTransport implements Transport {
 function syntheticDataFor(requestId: string, requestType: string, requestPayload: Record<string, unknown>): unknown {
   switch (requestType) {
     case MiniappRequestType.CAMERA_FOV: {
-      const fov =
-        typeof requestPayload.horizontal === "number"
-          ? requestPayload.horizontal
-          : typeof requestPayload.fov === "number"
-          ? requestPayload.fov
-          : 118
+      const presetFov =
+        requestPayload.preset === "narrow"
+          ? 82
+          : requestPayload.preset === "wide"
+          ? 118
+          : requestPayload.preset === "standard"
+          ? 102
+          : undefined
+      const fov = typeof requestPayload.fov === "number" ? requestPayload.fov : presetFov ?? 102
       const roi = requestPayload.roiPosition
-      const roiPosition = roi === 1 || roi === "bottom" ? 1 : roi === 2 || roi === "top" ? 2 : 0
+      const roiPosition = roi === "bottom" ? "bottom" : roi === "top" ? "top" : "center"
       return {
-        type: "settings_ack",
         requestId,
-        setting: "camera_fov",
-        status: "ready",
-        ready: true,
-        timestamp: Date.now(),
         fov,
         roiPosition,
+        ready: true,
         hardwareApplied: true,
+        timestamp: Date.now(),
       }
     }
 

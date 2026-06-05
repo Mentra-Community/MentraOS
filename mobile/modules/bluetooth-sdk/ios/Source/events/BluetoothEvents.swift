@@ -187,6 +187,18 @@ public struct SettingsAckEvent: CustomStringConvertible {
         intValue(values["timestamp"]) ?? Int(Date().timeIntervalSince1970 * 1000)
     }
 
+    public var fov: Int? {
+        intValue(values["fov"])
+    }
+
+    public var roiPosition: Int? {
+        intValue(values["roiPosition"]) ?? intValue(values["roi_position"])
+    }
+
+    public var hardwareApplied: Bool {
+        boolValue(values, "hardwareApplied") ?? boolValue(values, "hardware_applied") ?? false
+    }
+
     public var errorCode: String? {
         stringValue(values, "errorCode")
     }

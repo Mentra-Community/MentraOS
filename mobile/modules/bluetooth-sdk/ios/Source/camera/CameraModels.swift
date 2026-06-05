@@ -39,14 +39,36 @@ public struct ButtonVideoRecordingSettings {
     }
 }
 
+public enum CameraRoiPosition: Int {
+    case center = 0
+    case bottom = 1
+    case top = 2
+
+    public var label: String {
+        switch self {
+        case .center:
+            return "center"
+        case .bottom:
+            return "bottom"
+        case .top:
+            return "top"
+        }
+    }
+
+    public static func from(rawValue: Int?) -> CameraRoiPosition {
+        guard let rawValue else {
+            return .center
+        }
+        return CameraRoiPosition(rawValue: rawValue) ?? .center
+    }
+}
+
 public struct CameraFov {
     public static let minFov = 62
     public static let maxFov = 118
     public static let defaultFov = 102
     public static let narrowFov = 82
-    public static let minRoiPosition = 0
-    public static let maxRoiPosition = 2
-    public static let defaultRoiPosition = 0
+    public static let defaultRoiPosition = CameraRoiPosition.center
     public static let narrow = CameraFov(
         fov: CameraFov.narrowFov,
         roiPosition: CameraFov.defaultRoiPosition
@@ -61,15 +83,63 @@ public struct CameraFov {
     )
 
     public let fov: Int
-    public let roiPosition: Int
+    public let roiPosition: CameraRoiPosition
 
-    public init(fov: Int = CameraFov.defaultFov, roiPosition: Int = CameraFov.defaultRoiPosition) {
+    public init(fov: Int = CameraFov.defaultFov, roiPosition: CameraRoiPosition = CameraFov.defaultRoiPosition) {
         self.fov = min(max(fov, CameraFov.minFov), CameraFov.maxFov)
-        self.roiPosition = min(max(roiPosition, CameraFov.minRoiPosition), CameraFov.maxRoiPosition)
+        self.roiPosition = roiPosition
     }
 
     var value: [String: Int] {
-        ["fov": fov, "roi_position": roiPosition]
+        ["fov": fov, "roi_position": roiPosition.rawValue]
+    }
+}
+
+public struct CameraFovResult: CustomStringConvertible {
+    public let requestId: String
+    public let fov: Int
+    public let roiPosition: CameraRoiPosition
+    public let ready: Bool
+    public let hardwareApplied: Bool
+    public let timestamp: Int
+
+    public var values: [String: Any] {
+        [
+            "requestId": requestId,
+            "fov": fov,
+            "roiPosition": roiPosition.label,
+            "ready": ready,
+            "hardwareApplied": hardwareApplied,
+            "timestamp": timestamp,
+        ]
+    }
+
+    public var description: String {
+        "CameraFovResult(fov: \(fov), roiPosition: \(roiPosition.label), ready: \(ready))"
+    }
+
+    static func from(ack: SettingsAckEvent, fallback: CameraFov) throws -> CameraFovResult {
+        if ack.status == "error" {
+            throw BluetoothError(
+                code: ack.errorCode ?? "camera_fov_failed",
+                message: ack.errorMessage ?? "Camera FOV request failed."
+            )
+        }
+        if !ack.ready || ack.status != "ready" || !ack.hardwareApplied {
+            throw BluetoothError(
+                code: "camera_not_ready",
+                message: "Camera FOV changed, but the glasses did not report camera readiness."
+            )
+        }
+
+        return CameraFovResult(
+            requestId: ack.requestId,
+            fov: ack.fov ?? fallback.fov,
+            roiPosition: CameraRoiPosition.from(rawValue: ack.roiPosition ?? fallback.roiPosition.rawValue),
+            ready: true,
+            hardwareApplied: true,
+            timestamp: ack.timestamp
+        )
     }
 }
 

@@ -81,6 +81,8 @@ export type {
 } from "./modules/events"
 export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "./modules/speaker"
 export type {
+  CameraFovPreset,
+  CameraFovRequest,
   CameraFovResult,
   CameraRoiPosition,
   PhotoTaken,

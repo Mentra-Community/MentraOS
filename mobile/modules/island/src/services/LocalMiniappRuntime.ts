@@ -35,7 +35,14 @@ import localDisplayManager from "./LocalDisplayManager"
 import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
-import {getRuntimeHooks, ISLAND_SETTINGS_KEYS, type CameraRoiPosition, type TtsSynthesisResult} from "../runtime/config"
+import {
+  getRuntimeHooks,
+  ISLAND_SETTINGS_KEYS,
+  type CameraFovPreset,
+  type CameraFovRequest,
+  type CameraRoiPosition,
+  type TtsSynthesisResult,
+} from "../runtime/config"
 import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 
@@ -92,8 +99,10 @@ const RGB_LED_ACTIONS = new Set<RgbLedAction>(["on", "off"])
 const RGB_LED_COLORS = new Set<RgbLedColor>(["red", "green", "blue", "orange", "white"])
 const CAMERA_FOV_MIN = 62
 const CAMERA_FOV_MAX = 118
-const CAMERA_FOV_DEFAULT = 118
-const CAMERA_ROI_POSITION_BY_NAME: Record<string, CameraRoiPosition> = {center: 0, bottom: 1, top: 2}
+const CAMERA_FOV_DEFAULT = 102
+const CAMERA_FOV_PRESETS: Record<CameraFovPreset, number> = {narrow: 82, standard: CAMERA_FOV_DEFAULT, wide: 118}
+const CAMERA_ROI_POSITION_BY_NAME: Record<string, CameraRoiPosition> = {center: "center", bottom: "bottom", top: "top"}
+const CAMERA_ROI_POSITION_VALUES: Record<CameraRoiPosition, 0 | 1 | 2> = {center: 0, bottom: 1, top: 2}
 
 // =============================================================================
 // Declared-permission record helper (for CONNECT_ACK / PERMISSIONS_UPDATE)
@@ -126,27 +135,30 @@ function normalizeRgbLedColor(value: unknown): RgbLedColor | null {
   return typeof value === "string" && RGB_LED_COLORS.has(value as RgbLedColor) ? (value as RgbLedColor) : null
 }
 
-function normalizeCameraFovPayload(payload: Record<string, unknown>): number {
-  const rawFov =
-    typeof payload.horizontal === "number" && Number.isFinite(payload.horizontal)
-      ? payload.horizontal
-      : typeof payload.fov === "number" && Number.isFinite(payload.fov)
-      ? payload.fov
-      : CAMERA_FOV_DEFAULT
+function normalizeCameraFovPayload(payload: Record<string, unknown>): CameraFovRequest {
+  if (typeof payload.preset === "string") {
+    const preset = payload.preset in CAMERA_FOV_PRESETS ? (payload.preset as CameraFovPreset) : "standard"
+    return {preset}
+  }
 
-  return Math.min(CAMERA_FOV_MAX, Math.max(CAMERA_FOV_MIN, rawFov))
+  const rawFov = typeof payload.fov === "number" && Number.isFinite(payload.fov) ? payload.fov : CAMERA_FOV_DEFAULT
+
+  return {
+    fov: Math.min(CAMERA_FOV_MAX, Math.max(CAMERA_FOV_MIN, rawFov)),
+    roiPosition: normalizeCameraRoiPosition(payload.roiPosition ?? payload.roi_position),
+  }
 }
 
 function normalizeCameraRoiPosition(value: unknown): CameraRoiPosition {
   if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 2) {
-    return value as CameraRoiPosition
+    return value === 1 ? "bottom" : value === 2 ? "top" : "center"
   }
 
   if (typeof value === "string") {
-    return CAMERA_ROI_POSITION_BY_NAME[value] ?? 0
+    return CAMERA_ROI_POSITION_BY_NAME[value] ?? "center"
   }
 
-  return 0
+  return "center"
 }
 
 const ALL_CANONICAL_PERMISSIONS = ["location", "microphone", "camera", "notifications", "calendar"] as const
@@ -1605,31 +1617,19 @@ class LocalMiniappRuntime {
     }
 
     try {
-      const fov = normalizeCameraFovPayload(payload)
-      const roiPosition = normalizeCameraRoiPosition(payload.roiPosition ?? payload.roi_position)
-      console.log(`${LOG_TAG}: camera_fov_set fov=${fov} roi=${roiPosition}`)
+      const request = normalizeCameraFovPayload(payload)
+      const description =
+        "preset" in request ? `preset=${request.preset}` : `fov=${request.fov} roi=${request.roiPosition ?? "center"}`
+      console.log(`${LOG_TAG}: camera_fov_set ${description}`)
 
-      const ack = await cameraSettings.setFov(packageName, {fov, roiPosition})
-      if (ack.status === "error") {
-        this.sendResult(packageName, requestId, false, undefined, {
-          code: ack.errorCode || MiniappErrorCode.INTERNAL,
-          message: ack.errorMessage || "Camera FOV request failed",
-        })
-        return
-      }
+      const result = await cameraSettings.setFov(packageName, request)
 
-      const appliedFov = ack.fov ?? fov
-      const appliedRoiPosition = ack.roiPosition ?? roiPosition
       getRuntimeHooks().settings?.setSetting(
         ISLAND_SETTINGS_KEYS.cameraFov,
-        {fov: appliedFov, roi_position: appliedRoiPosition},
+        {fov: result.fov, roi_position: CAMERA_ROI_POSITION_VALUES[result.roiPosition]},
         false,
       )
-      this.sendResult(packageName, requestId, true, {
-        ...ack,
-        fov: appliedFov,
-        roiPosition: appliedRoiPosition,
-      })
+      this.sendResult(packageName, requestId, true, result)
     } catch (err) {
       console.error(`${LOG_TAG}: camera_fov error:`, err)
       this.sendResult(packageName, requestId, false, undefined, {

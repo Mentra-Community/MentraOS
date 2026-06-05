@@ -427,9 +427,10 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("setCameraFov") { fov: Map<String, Any> ->
             val value = (fov["fov"] as? Number)?.toInt() ?: CameraFov.DEFAULT_FOV
-            val roiPosition = (fov["roiPosition"] as? Number)?.toInt()
-                    ?: (fov["roi_position"] as? Number)?.toInt()
-                    ?: CameraFov.DEFAULT_ROI_POSITION
+            val roiPosition = CameraRoiPosition.fromValue(
+                (fov["roiPosition"] as? Number)?.toInt()
+                    ?: (fov["roi_position"] as? Number)?.toInt(),
+            )
             sdk?.setCameraFov(CameraFov(value, roiPosition))?.values
         }
 

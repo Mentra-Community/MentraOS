@@ -266,20 +266,25 @@ export interface StreamingAdapter {
   ) => void
 }
 
-export type CameraRoiPosition = 0 | 1 | 2
+export type CameraRoiPosition = "center" | "bottom" | "top"
+export type CameraFovPreset = "narrow" | "standard" | "wide"
 
-export interface CameraFovAck {
-  type: "settings_ack"
+export type CameraFovRequest =
+  | {
+      fov: number
+      roiPosition?: CameraRoiPosition
+    }
+  | {
+      preset: CameraFovPreset
+    }
+
+export interface CameraFovResult {
   requestId: string
-  setting: "camera_fov" | string
-  status: string
-  ready?: boolean
+  fov: number
+  roiPosition: CameraRoiPosition
+  ready: true
+  hardwareApplied: true
   timestamp: number
-  fov?: number
-  roiPosition?: CameraRoiPosition
-  hardwareApplied?: boolean
-  errorCode?: string
-  errorMessage?: string
 }
 
 /**
@@ -287,7 +292,7 @@ export interface CameraFovAck {
  * miniapp Promise resolves from the glasses-side settings_ack flow.
  */
 export interface CameraSettingsAdapter {
-  setFov: (packageName: string, opts: {fov: number; roiPosition: CameraRoiPosition}) => Promise<CameraFovAck>
+  setFov: (packageName: string, request: CameraFovRequest) => Promise<CameraFovResult>
 }
 
 export interface RuntimeHooks {

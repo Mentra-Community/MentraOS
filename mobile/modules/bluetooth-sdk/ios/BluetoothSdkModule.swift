@@ -345,7 +345,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("setCameraFov") { (fov: [String: Any]) in
             let value = intValue(fov["fov"]) ?? CameraFov.defaultFov
-            let roiPosition = intValue(fov["roiPosition"]) ?? intValue(fov["roi_position"]) ?? CameraFov.defaultRoiPosition
+            let roiPosition = CameraRoiPosition.from(
+                rawValue: intValue(fov["roiPosition"]) ?? intValue(fov["roi_position"])
+            )
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.setCameraFov(CameraFov(fov: value, roiPosition: roiPosition)).values
         }

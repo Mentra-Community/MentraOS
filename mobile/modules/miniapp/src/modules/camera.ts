@@ -5,31 +5,30 @@
 import {MiniappRequestType} from "../protocol"
 import {MiniappSession} from "../session"
 
-export type CameraRoiPosition = "center" | "bottom" | "top" | 0 | 1 | 2
+export type CameraRoiPosition = "center" | "bottom" | "top"
+export type CameraFovPreset = "narrow" | "standard" | "wide"
 
-export interface SetCameraFovOptions {
-  /** Horizontal FOV, degrees. Alias for `fov`. */
-  horizontal?: number
-  /** Horizontal FOV, degrees. */
-  fov?: number
-  /** Vertical FOV, degrees. Reserved for future camera firmware. */
-  vertical?: number
-  /** Crop/region position: center (0), bottom (1), or top (2). */
-  roiPosition?: CameraRoiPosition
-}
+export type CameraFovRequest =
+  | {
+      /** Horizontal FOV, degrees. */
+      fov: number
+      /** Crop/region position: center, bottom, or top. Defaults to center. */
+      roiPosition?: CameraRoiPosition
+    }
+  | {
+      /** Named FOV preset. Presets use center ROI. */
+      preset: CameraFovPreset
+    }
+
+export type SetCameraFovOptions = CameraFovRequest
 
 export interface CameraFovResult {
-  type: "settings_ack"
   requestId: string
-  setting: "camera_fov" | string
-  status: string
-  ready?: boolean
+  fov: number
+  roiPosition: CameraRoiPosition
+  ready: true
+  hardwareApplied: true
   timestamp: number
-  fov?: number
-  roiPosition?: 0 | 1 | 2
-  hardwareApplied?: boolean
-  errorCode?: string
-  errorMessage?: string
 }
 
 export interface TakePhotoOptions {
@@ -87,13 +86,10 @@ export class CameraModule {
    * Resolves after the ASG client reports that the setting was applied and the
    * camera is ready again. Requires CAMERA permission declared in miniapp.json.
    */
-  async setFov(options: SetCameraFovOptions): Promise<CameraFovResult> {
+  async setFov(request: CameraFovRequest): Promise<CameraFovResult> {
     return this.session.sendRequest<CameraFovResult>({
       type: MiniappRequestType.CAMERA_FOV,
-      horizontal: options.horizontal ?? options.fov,
-      fov: options.fov,
-      vertical: options.vertical,
-      roiPosition: options.roiPosition,
+      ...request,
     })
   }
 

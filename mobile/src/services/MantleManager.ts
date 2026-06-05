@@ -243,7 +243,7 @@ class MantleManager {
         stopForApp: (pkg) => phoneVideoCoordinator.stopForApp(pkg),
       },
       cameraSettings: {
-        setFov: (_pkg, opts) => BluetoothSdk.setCameraFov({fov: opts.fov, roiPosition: opts.roiPosition}),
+        setFov: (_pkg, request) => BluetoothSdk.setCameraFov(request),
       },
       // Google Nav SDK adapter — the island runtime fan-outs nav events to
       // miniapps subscribed to navigation_*. Delegates straight to the host's

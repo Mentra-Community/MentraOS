@@ -446,18 +446,19 @@ public final class MentraBluetoothSDK {
         )
     }
 
-    public func setCameraFov(_ fov: CameraFov) async throws -> SettingsAckEvent {
-        try await performSettingsCommand(
+    public func setCameraFov(_ fov: CameraFov) async throws -> CameraFovResult {
+        let ack = try await performSettingsCommand(
             setting: "camera_fov",
             updateStore: { DeviceStore.shared.set(ObservableStore.bluetoothCategory, "camera_fov", fov.value) },
             send: { requestId in
                 try DeviceManager.shared.sendCameraFovSetting(
                     requestId: requestId,
                     fov: fov.fov,
-                    roiPosition: fov.roiPosition
+                    roiPosition: fov.roiPosition.rawValue
                 )
             }
         )
+        return try CameraFovResult.from(ack: ack, fallback: fov)
     }
 
     public func setMicState(

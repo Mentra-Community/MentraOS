@@ -10,9 +10,11 @@ import {
   CAMERA_FOV_DEFAULT,
   CAMERA_FOV_MAX,
   CAMERA_FOV_MIN,
-  CameraFov,
   CameraFovPreset,
+  CameraFovRequest,
+  CameraFovResult,
   CameraFovSetting,
+  CameraRoiPosition,
   ConnectOptions,
   DashboardMenuItem,
   Device,
@@ -117,7 +119,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckEvent>
   setButtonCameraLed(enabled: boolean): Promise<SettingsAckEvent>
   setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckEvent>
-  setCameraFov(fov: CameraFovSetting): Promise<SettingsAckEvent>
+  setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoResponseEvent>
 
@@ -219,6 +221,11 @@ const DEFAULT_SCAN_TIMEOUT_MS = 15_000
 
 const CAMERA_ROI_MIN = 0
 const CAMERA_ROI_MAX = 2
+const CAMERA_ROI_POSITION_VALUES: Record<CameraRoiPosition, CameraFovSetting["roiPosition"]> = {
+  center: 0,
+  bottom: 1,
+  top: 2,
+}
 
 // Named presets are a convenience layer over the numeric {fov, roiPosition} API.
 // "narrow" uses 82, a device-tested FOV; "standard" matches CAMERA_FOV_DEFAULT.
@@ -232,22 +239,23 @@ function clampInteger(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.round(value)))
 }
 
-function normalizeCameraFov(setting: CameraFov): CameraFovSetting {
-  if (typeof setting === "string") {
-    return CAMERA_FOV_PRESETS[setting] ?? CAMERA_FOV_PRESETS.standard
+function normalizeCameraFov(request: CameraFovRequest): CameraFovSetting {
+  if ("preset" in request) {
+    return CAMERA_FOV_PRESETS[request.preset] ?? CAMERA_FOV_PRESETS.standard
   }
+
+  const roiPosition = request.roiPosition ?? "center"
 
   return {
     fov: clampInteger(
-      Number.isFinite(setting.fov) ? setting.fov : CAMERA_FOV_DEFAULT,
+      Number.isFinite(request.fov) ? request.fov : CAMERA_FOV_DEFAULT,
       CAMERA_FOV_MIN,
       CAMERA_FOV_MAX,
     ),
-    roiPosition: clampInteger(
-      Number.isFinite(setting.roiPosition ?? 0) ? (setting.roiPosition ?? 0) : 0,
-      CAMERA_ROI_MIN,
-      CAMERA_ROI_MAX,
-    ) as CameraFovSetting["roiPosition"],
+    roiPosition: clampInteger(CAMERA_ROI_POSITION_VALUES[roiPosition] ?? 0, CAMERA_ROI_MIN, CAMERA_ROI_MAX) as
+      | 0
+      | 1
+      | 2,
   }
 }
 
@@ -419,10 +427,12 @@ NativeBluetoothSdkModule.setVoiceActivityDetectionEnabled = function (enabled: b
   return this.updateBluetoothSettings({voice_activity_detection_enabled: enabled})
 }
 
-const nativeSetCameraFov = NativeBluetoothSdkModule.setCameraFov.bind(NativeBluetoothSdkModule)
-NativeBluetoothSdkModule.setCameraFov = function (fov: CameraFov) {
-  const setting = normalizeCameraFov(fov)
-  return nativeSetCameraFov(setting)
+const nativeSetCameraFov = NativeBluetoothSdkModule.setCameraFov.bind(NativeBluetoothSdkModule) as unknown as (
+  fov: CameraFovSetting,
+) => MaybePromise<CameraFovResult>
+NativeBluetoothSdkModule.setCameraFov = function (request: CameraFovRequest) {
+  const setting = normalizeCameraFov(request)
+  return Promise.resolve(nativeSetCameraFov(setting))
 }
 
 NativeBluetoothSdkModule.setMicState = function (

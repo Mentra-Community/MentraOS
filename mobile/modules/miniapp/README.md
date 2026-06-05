@@ -119,7 +119,7 @@ All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: 
 | `session.phone.calendar`      | `on(handler)`, `stop()`, `hasPermission`                                                                                                 |
 | `session.phone`               | `onBattery(handler)`                                                                                                                     |
 | `session.system`              | `share(opts)`, `openUrl(url)`, `copyToClipboard(text)`, `download(opts)`                                                                 |
-| `session.camera`              | `takePhoto({size?, compress?, sound?, saveToGallery?})`, `setFov({horizontal?, fov?, roiPosition?})`, `hasPermission`                    |
+| `session.camera`              | `takePhoto({size?, compress?, sound?, saveToGallery?})`, `setFov({fov, roiPosition?} \| {preset})`, `hasPermission`                     |
 | `session.led`                 | `turnOn({color?, ontime?, offtime?, count?})`, `turnOff()`, `blink(color, ontime, offtime, count)`, `solid(color, duration)`             |
 | `session.permissions`         | `has(type)`, `getAll()`, `onUpdate(handler)`, `onPermissionError(handler)`                                                               |
 | `session.storage`             | `get(key)`, `set(key, value)`, `delete(key)`, `list()` — strings only, scoped to `(userId, packageName)`                                 |
@@ -130,7 +130,7 @@ All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: 
 
 ### Camera FOV
 
-`await session.camera.setFov({fov, roiPosition})` applies camera FOV/ROI on the glasses and resolves with `CameraFovResult` after the ASG client reports the setting was applied and the camera is ready again. `roiPosition` accepts `"center"`/`0`, `"bottom"`/`1`, or `"top"`/`2`. The call requires `CAMERA` in `miniapp.json` and rejects with `MiniappRequestError` if the host cannot apply the setting or the glasses report an error.
+`await session.camera.setFov({fov, roiPosition})` applies camera FOV/ROI on the glasses and resolves with `CameraFovResult` after the ASG client reports the setting was applied and the camera is ready again. `roiPosition` accepts `"center"`, `"bottom"`, or `"top"` and defaults to `"center"`. You can also call `setFov({preset: "narrow" | "standard" | "wide"})`; presets map to 82, 102, and 118 degrees with center ROI. The call requires `CAMERA` in `miniapp.json` because it controls glasses camera hardware, and rejects with `MiniappRequestError` if the host cannot apply the setting or the glasses report an error.
 
 ### Transcription language convention
 

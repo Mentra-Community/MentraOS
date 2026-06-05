@@ -119,6 +119,9 @@ data class SettingsAckEvent(
     val status: String get() = stringValue(values, "status") ?: "applied"
     val ready: Boolean get() = boolValue(values, "ready") ?: (status == "ready")
     val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()
+    val fov: Int? get() = numberValue(values, "fov")
+    val roiPosition: Int? get() = numberValue(values, "roiPosition", "roi_position")
+    val hardwareApplied: Boolean get() = boolValue(values, "hardwareApplied", "hardware_applied") ?: false
     val errorCode: String? get() = stringValue(values, "errorCode")
     val errorMessage: String? get() = stringValue(values, "errorMessage")
 }

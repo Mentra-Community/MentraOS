@@ -47,27 +47,92 @@ data class ButtonVideoRecordingSettings(
     val fps: Int,
 )
 
+enum class CameraRoiPosition(val value: Int, val label: String) {
+    CENTER(0, "center"),
+    BOTTOM(1, "bottom"),
+    TOP(2, "top");
+
+    companion object {
+        @JvmStatic
+        fun fromValue(value: Int?): CameraRoiPosition =
+            values().firstOrNull { it.value == value } ?: CENTER
+
+        @JvmStatic
+        fun fromName(value: String?): CameraRoiPosition =
+            values().firstOrNull { it.label == value } ?: CENTER
+    }
+}
+
 class CameraFov @JvmOverloads constructor(
     fov: Int = DEFAULT_FOV,
-    roiPosition: Int = DEFAULT_ROI_POSITION,
+    roiPosition: CameraRoiPosition = DEFAULT_ROI_POSITION,
 ) {
     val fov: Int = fov.coerceIn(MIN_FOV, MAX_FOV)
-    val roiPosition: Int = roiPosition.coerceIn(MIN_ROI_POSITION, MAX_ROI_POSITION)
+    val roiPosition: CameraRoiPosition = roiPosition
 
     companion object {
         const val MIN_FOV = 62
         const val MAX_FOV = 118
         const val DEFAULT_FOV = 102
         const val NARROW_FOV = 82
-        const val MIN_ROI_POSITION = 0
-        const val MAX_ROI_POSITION = 2
-        const val DEFAULT_ROI_POSITION = 0
+        @JvmField
+        val DEFAULT_ROI_POSITION = CameraRoiPosition.CENTER
         @JvmField
         val NARROW = CameraFov(NARROW_FOV, DEFAULT_ROI_POSITION)
         @JvmField
         val STANDARD = CameraFov(DEFAULT_FOV, DEFAULT_ROI_POSITION)
         @JvmField
         val WIDE = CameraFov(MAX_FOV, DEFAULT_ROI_POSITION)
+    }
+}
+
+data class CameraFovResult(
+    val requestId: String,
+    val fov: Int,
+    val roiPosition: CameraRoiPosition,
+    val ready: Boolean,
+    val hardwareApplied: Boolean,
+    val timestamp: Long,
+) {
+    val values: Map<String, Any>
+        get() =
+            mapOf(
+                "requestId" to requestId,
+                "fov" to fov,
+                "roiPosition" to roiPosition.label,
+                "ready" to ready,
+                "hardwareApplied" to hardwareApplied,
+                "timestamp" to timestamp,
+            )
+
+    companion object {
+        @JvmStatic
+        fun fromAck(
+            ack: SettingsAckEvent,
+            fallback: CameraFov,
+        ): CameraFovResult {
+            if (ack.status == "error") {
+                throw BluetoothException(
+                    ack.errorCode ?: "camera_fov_failed",
+                    ack.errorMessage ?: "Camera FOV request failed.",
+                )
+            }
+            if (!ack.ready || ack.status != "ready" || !ack.hardwareApplied) {
+                throw BluetoothException(
+                    "camera_not_ready",
+                    "Camera FOV changed, but the glasses did not report camera readiness.",
+                )
+            }
+
+            return CameraFovResult(
+                requestId = ack.requestId,
+                fov = ack.fov ?: fallback.fov,
+                roiPosition = CameraRoiPosition.fromValue(ack.roiPosition ?: fallback.roiPosition.value),
+                ready = true,
+                hardwareApplied = true,
+                timestamp = ack.timestamp,
+            )
+        }
     }
 }
 

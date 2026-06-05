@@ -24,27 +24,22 @@ function mockSession(result: CameraFovResult) {
 
 describe("CameraModule", () => {
   test("setFov resolves from a request/response ack", async () => {
-    const ack: CameraFovResult = {
-      type: "settings_ack",
+    const result: CameraFovResult = {
       requestId: "fov-1",
-      setting: "camera_fov",
-      status: "ready",
-      ready: true,
-      timestamp: 123,
       fov: 102,
-      roiPosition: 1,
+      roiPosition: "bottom",
+      ready: true,
       hardwareApplied: true,
+      timestamp: 123,
     }
-    const {session, requestCalls} = mockSession(ack)
+    const {session, requestCalls} = mockSession(result)
     const camera = new CameraModule(session)
 
-    await expect(camera.setFov({fov: 102, roiPosition: "bottom"})).resolves.toEqual(ack)
+    await expect(camera.setFov({fov: 102, roiPosition: "bottom"})).resolves.toEqual(result)
     expect(requestCalls).toEqual([
       {
         type: MiniappRequestType.CAMERA_FOV,
-        horizontal: 102,
         fov: 102,
-        vertical: undefined,
         roiPosition: "bottom",
       },
     ])
