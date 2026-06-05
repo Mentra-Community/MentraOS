@@ -369,7 +369,9 @@ describe("audio multi-pod e2e", () => {
     client.subscribe([
       { kind: "transcription", language: { mode: "auto" } },
     ]);
-    await new Promise((r) => setTimeout(r, 150));
+    // subscribe() is a REST round-trip to the owner pod, then the worker
+    // builds the provider — give both time before audio arrives cross-pod.
+    await new Promise((r) => setTimeout(r, 400));
 
     client.sendAudioTo(podB.udpAddr, new Uint8Array(40).fill(0x44));
 

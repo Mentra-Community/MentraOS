@@ -19,13 +19,15 @@
  *     avoids the hash-collision-stacks-two-heavy-users-on-one-worker class
  *     of problems with no real cost.
  *
- * IPC surface (worker side: `workers/audio.worker.ts`):
- *   - main → worker: `ATTACH_USER { mentraUserId }`, `DETACH_USER { ... }`, `SHUTDOWN`
- *   - worker → main: `WORKER_READY`, `TRANSCRIPT_STUB { ... }`
+ * IPC surface (worker side: `./worker.ts`):
+ *   - main → worker: `ATTACH_USER`, `DETACH_USER`, `UPDATE_SUBSCRIPTIONS`,
+ *     `SET_CODEC`, `SHUTDOWN`
+ *   - worker → main: `WORKER_READY`, `TRANSCRIPT_STUB`, `TRANSCRIPT`
  */
 
 import { createLogger } from "@mentra/cloud-shared";
 import type {
+  AudioCodec,
   TranscriptMessage,
   TranscriptStubMessage,
   WorkerInMessage,
@@ -48,6 +50,8 @@ interface WorkerSlot {
   pendingAttaches: string[];
   /** UPDATE_SUBSCRIPTIONS messages queued while waiting for WORKER_READY. */
   pendingSubscriptions: Map<string, AudioSubscription[]>;
+  /** SET_CODEC messages queued while waiting for WORKER_READY. */
+  pendingCodecs: Map<string, AudioCodec>;
 }
 
 interface WorkerPoolState {
@@ -181,6 +185,23 @@ export function updateSubscriptions(
   }
 }
 
+/**
+ * Set the audio codec for `mentraUserId` on whichever worker holds them.
+ * Called once per session from the connection.init handler, before audio
+ * flows. No-op if the user isn't assigned to a worker on this pod.
+ */
+export function setUserCodec(mentraUserId: string, codec: AudioCodec): void {
+  if (!pool) return;
+  const slot = pool.userToWorker.get(mentraUserId);
+  if (!slot) return;
+  const msg: WorkerInMessage = { type: "SET_CODEC", mentraUserId, codec };
+  if (slot.ready) {
+    slot.worker.postMessage(msg);
+  } else {
+    slot.pendingCodecs.set(mentraUserId, codec);
+  }
+}
+
 export function releaseUser(mentraUserId: string): void {
   if (!pool) return;
   const slot = pool.userToWorker.get(mentraUserId);
@@ -249,6 +270,7 @@ function spawnWorkerSlot(id: string): WorkerSlot {
     ownedUsers: new Set(),
     pendingAttaches: [],
     pendingSubscriptions: new Map(),
+    pendingCodecs: new Map(),
   };
 
   worker.onmessage = (e: MessageEvent<WorkerOutMessage>) => {
@@ -261,6 +283,14 @@ function spawnWorkerSlot(id: string): WorkerSlot {
         worker.postMessage({ type: "ATTACH_USER", mentraUserId: userId } satisfies WorkerInMessage);
       }
       slot.pendingAttaches.length = 0;
+      for (const [userId, codec] of slot.pendingCodecs) {
+        worker.postMessage({
+          type: "SET_CODEC",
+          mentraUserId: userId,
+          codec,
+        } satisfies WorkerInMessage);
+      }
+      slot.pendingCodecs.clear();
       for (const [userId, subs] of slot.pendingSubscriptions) {
         worker.postMessage({
           type: "UPDATE_SUBSCRIPTIONS",

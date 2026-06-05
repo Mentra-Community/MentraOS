@@ -46,10 +46,22 @@ export interface UpdateSubscriptionsMessage {
   mentraUserId: string
   subs: AudioSubscription[]
 }
+/** Audio codec for a user's stream. Set from the client's connection.init. */
+export type AudioCodec = "lc3" | "pcm"
+export interface SetCodecMessage {
+  type: "SET_CODEC"
+  mentraUserId: string
+  codec: AudioCodec
+}
 export interface ShutdownMessage {
   type: "SHUTDOWN"
 }
-export type WorkerInMessage = AttachUserMessage | DetachUserMessage | UpdateSubscriptionsMessage | ShutdownMessage
+export type WorkerInMessage =
+  | AttachUserMessage
+  | DetachUserMessage
+  | UpdateSubscriptionsMessage
+  | SetCodecMessage
+  | ShutdownMessage
 
 /**
  * Emitted per Redis Stream entry to signal "audio reached a worker and was
@@ -120,6 +132,12 @@ const decoders = new Map<string, LC3Decoder>()
 const userProviders = new Map<string, Map<string, TranscriptionProvider>>()
 /** Most recently received subscription list per user, for reconciliation. */
 const userSubs = new Map<string, AudioSubscription[]>()
+/**
+ * Per-user audio codec. "lc3" (default) decodes each stream entry through the
+ * LC3 decoder; "pcm" treats the payload as raw Int16 mono PCM and feeds it to
+ * providers without decoding. Set from the client's connection.init.
+ */
+const userCodecs = new Map<string, AudioCodec>()
 let running = true
 
 /**
@@ -312,11 +330,15 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
     case "ATTACH_USER":
       void handleAttach(msg.mentraUserId)
       break
+    case "SET_CODEC":
+      userCodecs.set(msg.mentraUserId, msg.codec)
+      break
     case "DETACH_USER": {
       ownedUsers.delete(msg.mentraUserId)
       readyUsers.delete(msg.mentraUserId)
       decoders.delete(msg.mentraUserId)
       userSubs.delete(msg.mentraUserId)
+      userCodecs.delete(msg.mentraUserId)
       const providers = userProviders.get(msg.mentraUserId)
       if (providers) {
         userProviders.delete(msg.mentraUserId)
@@ -469,34 +491,46 @@ async function processBatch(
   for (const [streamKey, entries] of result) {
     const mentraUserId = streamKey.replace(/^audio:/, "")
     const decoder = decoders.get(mentraUserId)
+    const codec = userCodecs.get(mentraUserId) ?? "lc3"
 
     for (const [entryId, fields] of entries) {
       const map = fieldArrayToMap(fields)
       const seq = Number(map.seq ?? 0)
       const audioSessionId = map.audioSessionId ?? ""
 
-      // Recover binary LC3 bytes from the base64 we encoded on XADD.
-      const lc3Bytes = typeof map.payload === "string" ? Buffer.from(map.payload, "base64") : Buffer.alloc(0)
-      const payloadLen = lc3Bytes.byteLength
+      // Recover the binary payload from the base64 we encoded on XADD.
+      const payloadBytes = typeof map.payload === "string" ? Buffer.from(map.payload, "base64") : Buffer.alloc(0)
+      const payloadLen = payloadBytes.byteLength
 
-      // Decode LC3 → Int16 PCM, then feed to each subscribed transcription
-      // provider for this user. If the user has no subscriptions, decode
-      // still happens (so TRANSCRIPT_STUB is accurate) but no provider
-      // events fire — which is the correct behavior for a session that
-      // hasn't asked to be transcribed.
+      // Turn the payload into Int16 mono PCM, then feed it to each subscribed
+      // provider for this user. For "lc3" we decode; for "pcm" the payload
+      // already IS PCM, so we wrap it as Int16 directly (no encoder needed on
+      // the sending side — handy for tests and raw-PCM clients).
+      //
+      // If the user has no subscriptions, the PCM is computed (so the
+      // TRANSCRIPT_STUB byte count is accurate) but no provider fires — the
+      // correct behavior for a session that hasn't asked to be transcribed.
+      let pcm: Int16Array | null = null
+      if (payloadLen > 0) {
+        if (codec === "pcm") {
+          // Align to Int16 (drop a trailing odd byte if present).
+          const usableSamples = Math.floor(payloadLen / 2)
+          pcm = new Int16Array(payloadBytes.buffer, payloadBytes.byteOffset, usableSamples)
+        } else if (decoder) {
+          pcm = decoder.decode(new Uint8Array(payloadBytes.buffer, payloadBytes.byteOffset, payloadLen))
+        }
+      }
+
       let pcmBytesLen = 0
-      if (decoder && payloadLen > 0) {
-        const pcm = decoder.decode(new Uint8Array(lc3Bytes.buffer, lc3Bytes.byteOffset, payloadLen))
-        if (pcm) {
-          pcmBytesLen = pcm.byteLength
-          const providers = userProviders.get(mentraUserId)
-          if (providers) {
-            for (const provider of providers.values()) {
-              try {
-                provider.writeAudio(pcm)
-              } catch (err) {
-                console.error("[audio-worker] provider.writeAudio failed:", err)
-              }
+      if (pcm) {
+        pcmBytesLen = pcm.byteLength
+        const providers = userProviders.get(mentraUserId)
+        if (providers) {
+          for (const provider of providers.values()) {
+            try {
+              provider.writeAudio(pcm)
+            } catch (err) {
+              console.error("[audio-worker] provider.writeAudio failed:", err)
             }
           }
         }

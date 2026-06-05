@@ -45,7 +45,12 @@ import {
   claimOwnershipWithRetry,
   releaseOwnership,
 } from "../services/session/ownership";
-import { assignUser, releaseUser, updateSubscriptions } from "../services/audio/workers/pool";
+import {
+  assignUser,
+  releaseUser,
+  setUserCodec,
+  updateSubscriptions,
+} from "../services/audio/workers/pool";
 import { clientToCloudMessage } from "../protocol/messages";
 import { PROTOCOL_MAJOR } from "../protocol/envelope";
 import type { ConnectionInit } from "../protocol/handshake";
@@ -415,6 +420,10 @@ function handleConnectionInit(
   ws: ServerWebSocket<WsData>,
   init: ConnectionInit,
 ): void {
+  // Tell the worker this session's codec before any audio is processed, so it
+  // knows whether to LC3-decode the stream entries or treat them as raw PCM.
+  setUserCodec(ws.data.mentraUserId, init.audio?.codec ?? "lc3");
+
   // Seed the initial subscription set atomically with the session, so audio
   // that starts flowing right after the ack is transcribed against the right
   // subscriptions instead of an empty set. Mid-session changes arrive later
