@@ -24,6 +24,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import CapsuleMenu, {captureScreenshot} from "@/effects/CapsuleMenu"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
+import { useSetting } from "@/stores/settings"
 
 /**
  * LocalMiniappView — the UI half of a local (or dev) miniapp.
@@ -83,6 +84,7 @@ function LocalMiniappView({
   const [isLoaded, setIsLoaded] = useState(false)
   const [miniappConnected, setMiniappConnected] = useState(false)
   const [androidGatePassed, setAndroidGatePassed] = useState(false)
+  const [devMode, setDevMode] = useSetting(SETTINGS.dev_mode.key)
 
   // Reload-retry state for the "ready" handshake. `onLoadEnd` only means the
   // WebView painted — not that the miniapp UI JS actually mounted and called
@@ -587,7 +589,7 @@ function LocalMiniappView({
   // While the WebView is mounted but the miniapp hasn't sent `ready` yet,
   // show retry progress on the splash. Once connected, isLoaded hides it.
   let connectingLabel = undefined
-  if (loadAttempts > 0) {
+  if (loadAttempts > 0 && devMode) {
     connectingLabel = `Connecting… attempt (${Math.max(loadAttempts, 1)} of ${MAX_LOAD_ATTEMPTS})`
   }
 
