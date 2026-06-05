@@ -14,7 +14,8 @@
  *   3. We mint a random u32 sessionTag, register `tag → identity` BOTH locally
  *      (fast-path lookup for packets that land on this same pod) AND in Redis
  *      (so packets that land on other pods can still resolve who this is for).
- *   4. We send CONNECTION_ACK over the WS with sessionTag + UDP info.
+ *   4. Client sends `connection.init` (codec + initial subscriptions); we
+ *      answer with `connection.ack` carrying the sessionTag + UDP coordinates.
  *   5. Client starts sending UDP packets with the sessionTag in the header;
  *      udp-ingress.service looks up the tag (local first, Redis on miss).
  *
@@ -45,17 +46,23 @@ import {
   releaseOwnership,
 } from "../services/session/ownership";
 import { assignUser, releaseUser, updateSubscriptions } from "../services/audio/workers/pool";
-import {
-  parsePhoneSubscriptions,
-  type PhoneSubscriptionUpdate,
-} from "../wire/phone-protocol";
+import { clientToCloudMessage } from "../protocol/messages";
+import { PROTOCOL_MAJOR } from "../protocol/envelope";
+import type { ConnectionInit } from "../protocol/handshake";
 
 const logger = createLogger("audio").child({ service: "session.service" });
 
 const WS_PATH = "/ws/session";
 
 /**
- * What we put in CONNECTION_ACK's `udp` field. Set by `configureAudioSession`
+ * Protocol version this build speaks, echoed back in `connection.ack` as
+ * `negotiatedVersion`. Bump the minor as backward-compatible message types
+ * are added; bump the major (and `PROTOCOL_MAJOR`) only on a breaking change.
+ */
+const NEGOTIATED_VERSION = "2.0.0";
+
+/**
+ * What we put in connection.ack's `audio.udp` field. Set by `configureAudioSession`
  * at boot before Bun.serve goes live. Defaulted from env for the case where
  * something hits the WS endpoint before configure ran (shouldn't happen).
  */
@@ -282,67 +289,67 @@ export const wsHandlers: WebSocketHandler<WsData> = {
     }, SESSION_TAG_REFRESH_INTERVAL_MS);
     refreshIntervals.set(ws.data.sessionTag, interval);
 
-    ws.send(
-      JSON.stringify({
-        type: "CONNECTION_ACK",
-        sessionTag: ws.data.sessionTag,
-        audioSessionId: ws.data.audioSessionId,
-        udp: { host: udpAdvertise.host, port: udpAdvertise.port },
-      }),
-    );
+    // No ack yet. In the v2 protocol the client sends `connection.init`
+    // (carrying codec + initial subscriptions) and we answer with
+    // `connection.ack`. See the message handler below. The session state
+    // above (worker assignment, tag registration) is set up now so audio
+    // packets that arrive the instant after the ack already have somewhere
+    // to land.
   },
 
   message(ws, msg) {
-    // Control messages (subscriptions, etc.) land here once defined.
-    // Binary frames are the WS-fallback audio path — defer to the same
-    // dispatcher UDP packets use once dispatch ships.
+    // String frames are v2 protocol control messages; binary frames are the
+    // WS-fallback audio path (same 6-byte header + payload as UDP).
     if (typeof msg === "string") {
-      // App-level liveness from the client. **The client owns the heartbeat.**
-      // We just respond to pings. Cloud-v2 deliberately does NOT initiate
-      // its own pings, does NOT enforce an `idleTimeout` short enough to
-      // close idle WSs, and does NOT close a WS based on silence / VAD
-      // inactivity. Connection liveness is the client's responsibility.
-      //
-      // History: v1 burned weeks debugging "what kills my WS" — root cause
-      // was nginx ingress's `proxy-send-timeout` firing on CLIENT silence,
-      // which server-side pings can't fix (they only reset server→client
-      // direction). Fix was app-level client pings + nginx WS-ingress
-      // timeout bump to 1h. See cloud/issues/034-ws-liveness/ + 035 in v1.
-      let parsed: { type?: string } | null = null;
+      let json: unknown;
       try {
-        parsed = JSON.parse(msg) as { type?: string };
+        json = JSON.parse(msg);
       } catch {
-        /* not JSON; ignore for now */
+        return; // not JSON; ignore
       }
-      if (parsed?.type === "ping") {
-        ws.send(JSON.stringify({ type: "pong" }));
-        return;
-      }
-      if (parsed?.type === "phone_subscription_update") {
-        // The phone sends a flat list of subscription strings on every
-        // (re)connect — the v1 wire contract. We parse them into the internal
-        // subscription shape (dropping any non-audio entries) and hand them to
-        // the worker pool. No WS ACK; the next transcript-or-not is the
-        // implicit confirmation.
-        const raw = (parsed as PhoneSubscriptionUpdate).subscriptions;
-        const rawList = Array.isArray(raw) ? raw : [];
-        const subs = parsePhoneSubscriptions(rawList);
-        updateSubscriptions(ws.data.mentraUserId, subs);
-        logger.info(
-          {
-            sessionTag: ws.data.sessionTag,
-            mentraUserId: ws.data.mentraUserId,
-            rawCount: rawList.length,
-            audioSubCount: subs.length,
-          },
-          "phone subscriptions updated",
+
+      // Validate against the client-to-cloud union. Anything that doesn't
+      // parse (wrong version, unknown type, malformed payload) is dropped
+      // with a debug log rather than crashing the connection.
+      const parsed = clientToCloudMessage.safeParse(json);
+      if (!parsed.success) {
+        logger.debug(
+          { sessionTag: ws.data.sessionTag, issues: parsed.error.issues },
+          "ws control message failed v2 validation — ignoring",
         );
         return;
       }
-      logger.debug(
-        { sessionTag: ws.data.sessionTag, msg },
-        "ws control message (no handlers wired yet)",
-      );
+
+      const m = parsed.data;
+      switch (m.type) {
+        case "connection.init":
+          handleConnectionInit(ws, m.payload);
+          return;
+        case "control.ping":
+          // App-level liveness. **The client owns the heartbeat.** We answer
+          // pings but never initiate our own, never enforce a short
+          // idleTimeout, and never close a WS on silence / VAD inactivity.
+          // Connection liveness is the client's responsibility.
+          //
+          // History: v1 burned weeks debugging "what kills my WS" — the root
+          // cause was nginx ingress's proxy-send-timeout firing on CLIENT
+          // silence, which server-side pings can't fix (they only reset the
+          // server→client direction). The fix was app-level client pings plus
+          // an nginx WS-ingress timeout bump. See cloud/issues/034 + 035 (v1).
+          ws.send(
+            JSON.stringify({
+              v: PROTOCOL_MAJOR,
+              type: "control.pong",
+              timestamp: Date.now(),
+              payload: {},
+            }),
+          );
+          return;
+        case "control.pong":
+          // Client answering a (future) server-initiated ping. We don't send
+          // those today, so nothing to do — accepted for forward compat.
+          return;
+      }
     } else {
       // Binary WS frame = audio-fallback path. Same 6-byte header + payload
       // wire format as UDP packets. We route through the SAME `ingestAudioPacket`
@@ -396,6 +403,60 @@ export const wsHandlers: WebSocketHandler<WsData> = {
 };
 
 // === Internals ===
+
+/**
+ * Handle a `connection.init`: seed the initial subscriptions and answer with
+ * `connection.ack`. This is the v2 handshake's second half — the client opens
+ * the WS (auth happens at upgrade), sends init with its codec + initial
+ * subscriptions, and gets back the sessionTag and UDP coordinates it needs to
+ * start streaming audio.
+ */
+function handleConnectionInit(
+  ws: ServerWebSocket<WsData>,
+  init: ConnectionInit,
+): void {
+  // Seed the initial subscription set atomically with the session, so audio
+  // that starts flowing right after the ack is transcribed against the right
+  // subscriptions instead of an empty set. Mid-session changes arrive later
+  // via the REST subscriptions endpoint.
+  const subs = init.audio?.initialSubscriptions ?? [];
+  if (subs.length > 0) {
+    updateSubscriptions(ws.data.mentraUserId, subs);
+  }
+
+  // Per-session key for encrypting UDP audio, delivered over the TLS
+  // WebSocket. NOTE: ingress does not decrypt yet (that lands with the
+  // UDP-decrypt step); the key is minted and advertised now so the wire
+  // contract is stable and clients can adopt it without a later ack change.
+  const encryptionKey = crypto.randomBytes(32).toString("base64");
+
+  ws.send(
+    JSON.stringify({
+      v: PROTOCOL_MAJOR,
+      type: "connection.ack",
+      timestamp: Date.now(),
+      payload: {
+        sessionId: ws.data.audioSessionId,
+        negotiatedVersion: NEGOTIATED_VERSION,
+        audio: {
+          sessionTag: ws.data.sessionTag,
+          udp: { host: udpAdvertise.host, port: udpAdvertise.port },
+          encryption: { algorithm: "xsalsa20-poly1305", key: encryptionKey },
+        },
+      },
+    }),
+  );
+
+  logger.info(
+    {
+      sessionTag: ws.data.sessionTag,
+      mentraUserId: ws.data.mentraUserId,
+      codec: init.audio?.codec,
+      initialSubCount: subs.length,
+    },
+    "connection.init handled; connection.ack sent",
+  );
+}
 
 /**
  * WS-binary audio fallback. Same 6-byte header + payload as UDP. Routed via

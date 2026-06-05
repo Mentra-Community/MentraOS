@@ -6,7 +6,8 @@
  *
  *   1. TestClient mints OEM JWT from TEST OEM
  *   2. Exchanges at core for a Mentra access token
- *   3. Opens WS to audio, receives CONNECTION_ACK with sessionTag + UDP info
+ *   3. Opens WS to audio, sends connection.init, receives connection.ack
+ *      with sessionTag + UDP info
  *   4. Sends a UDP packet
  *   5. Audio echoes back UDP_PACKET_RECEIVED (debug-echo mode)
  *
@@ -39,7 +40,7 @@ const TEST_OEM_PORT = 13100;
 
 // === Env setup BEFORE any package imports ===
 // session.service.ts reads AUDIO_UDP_ADVERTISED_{HOST,PORT} at module-load
-// time to bake into CONNECTION_ACK responses. So these MUST be set before
+// time to bake into connection.ack responses. So these MUST be set before
 // the import below.
 {
   const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
@@ -162,21 +163,19 @@ beforeEach(async () => {
 // === Tests ===
 
 describe("audio e2e", () => {
-  test("handshake: WS connect yields CONNECTION_ACK with UDP info", async () => {
+  test("handshake: connection.init yields connection.ack with UDP info", async () => {
     const client = newClient("alice-handshake");
     await client.connect();
 
     expect(client.connected).toBe(true);
     expect(client.sessionTag).toBeGreaterThan(0);
 
-    const ack = client.messages.find((m) => m.type === "CONNECTION_ACK");
+    const ack = client.messages.find((m) => m.type === "connection.ack") as
+      | { payload: { audio?: { udp: { host: string; port: number } } } }
+      | undefined;
     expect(ack).toBeDefined();
-    expect((ack as { udp: { host: string; port: number } }).udp.host).toBe(
-      "127.0.0.1",
-    );
-    expect((ack as { udp: { host: string; port: number } }).udp.port).toBe(
-      AUDIO_UDP_PORT,
-    );
+    expect(ack!.payload.audio!.udp.host).toBe("127.0.0.1");
+    expect(ack!.payload.audio!.udp.port).toBe(AUDIO_UDP_PORT);
 
     await client.close();
   });
@@ -264,13 +263,11 @@ describe("audio e2e", () => {
     expect(after).toBeNull();
   });
 
-  test("ws responds to app-level ping with pong", async () => {
+  test("ws responds to control.ping with control.pong", async () => {
     const client = newClient("alice-ping");
     await client.connect();
 
-    // Send a ping via the underlying WS by going through the liveness wiring:
-    // enable liveness post-connect by reconstructing with the option.
-    // Simpler: directly probe the message handler.
+    // Probe the underlying WS directly with a v2 control.ping.
     const ws = (client as unknown as { ws: WebSocket }).ws;
     expect(ws).toBeTruthy();
 
@@ -280,13 +277,20 @@ describe("audio e2e", () => {
       if (typeof ev.data === "string") {
         try {
           const parsed = JSON.parse(ev.data);
-          if (parsed?.type === "pong") pongSeen = true;
+          if (parsed?.type === "control.pong") pongSeen = true;
         } catch { /* ignore */ }
       }
       oldOnMessage?.call(ws, ev);
     };
 
-    ws.send(JSON.stringify({ type: "ping" }));
+    ws.send(
+      JSON.stringify({
+        v: 2,
+        type: "control.ping",
+        timestamp: Date.now(),
+        payload: {},
+      }),
+    );
     await new Promise((r) => setTimeout(r, 200));
     expect(pongSeen).toBe(true);
 
@@ -320,13 +324,11 @@ describe("audio e2e", () => {
     // Send via WS binary instead of UDP. Same 6-byte header + payload.
     client.sendAudioWs(new Uint8Array(40).fill(0x55));
 
-    const m = (await client.waitFor("data_stream", 5000)) as {
-      type: "data_stream";
-      streamType: string;
-      data: { type: string; text: string };
+    const m = (await client.waitFor("stream.transcript", 5000)) as {
+      payload: { text: string; subscription: { kind: string } };
     };
-    expect(m.data.type).toBe("transcription");
-    expect(m.data.text).toMatch(/^mock mu_[A-Z0-9]+:\S+ \d+$/);
+    expect(m.payload.subscription.kind).toBe("transcription");
+    expect(m.payload.text).toMatch(/^mock mu_[A-Z0-9]+:\S+ \d+$/);
 
     await client.close();
   });
@@ -368,14 +370,13 @@ describe("audio e2e", () => {
 
     client.sendAudio(new Uint8Array(40).fill(0x42));
 
-    const m = (await client.waitFor("data_stream", 5000)) as {
-      type: "data_stream";
-      data: { text: string; isFinal: boolean; provider?: string };
+    const m = (await client.waitFor("stream.transcript", 5000)) as {
+      payload: { text: string; isFinal: boolean; provider: string };
     };
-    expect(m.data.provider).toBe("mock");
-    expect(m.data.isFinal).toBe(true);
+    expect(m.payload.provider).toBe("mock");
+    expect(m.payload.isFinal).toBe(true);
     // MockProvider format: `mock <scope> <n>`, scope = `mu_…:<lang>`.
-    expect(m.data.text).toMatch(/^mock mu_[A-Z0-9]+:\S+ \d+$/);
+    expect(m.payload.text).toMatch(/^mock mu_[A-Z0-9]+:\S+ \d+$/);
 
     await client.close();
   });
@@ -389,7 +390,9 @@ describe("audio e2e", () => {
     // Stub fires (proves decode happened) but no TRANSCRIPT should come.
     await client.waitFor("TRANSCRIPT_STUB", 3000);
     await new Promise((r) => setTimeout(r, 500));
-    const transcripts = client.messages.filter((m) => m.type === "data_stream");
+    const transcripts = client.messages.filter(
+      (m) => m.type === "stream.transcript" || m.type === "stream.translation",
+    );
     expect(transcripts.length).toBe(0);
 
     await client.close();
@@ -408,19 +411,17 @@ describe("audio e2e", () => {
     await new Promise((r) => setTimeout(r, 100));
     client.sendAudio(new Uint8Array(40).fill(0x77));
 
-    const m = (await client.waitFor("data_stream", 5000)) as {
-      type: "data_stream";
-      streamType: string;
-      data: {
-        type: string;
-        translateLanguage?: string;
-        transcribeLanguage?: string;
+    const m = (await client.waitFor("stream.translation", 5000)) as {
+      payload: {
+        text: string;
+        source: { language: string };
+        target: { language: string };
+        subscription: { kind: string; target: string };
       };
     };
-    expect(m.data.type).toBe("translation");
-    expect(m.streamType).toBe("translation:auto-to-es");
-    expect(m.data.translateLanguage).toBe("es"); // target
-    expect(m.data.transcribeLanguage).toBe("auto");
+    expect(m.payload.subscription.kind).toBe("translation");
+    expect(m.payload.target.language).toBe("es"); // target
+    expect(m.payload.source.language).toBe("auto");
 
     await client.close();
   });
@@ -447,21 +448,19 @@ describe("audio e2e", () => {
     const seen = new Set<string>();
     while (Date.now() < deadline && seen.size < 2) {
       for (const m of client.messages) {
-        if (m.type === "data_stream") {
-          seen.add((m as { data: { type: string } }).data.type);
+        if (m.type === "stream.transcript" || m.type === "stream.translation") {
+          seen.add(m.type);
         }
       }
       if (seen.size < 2) await new Promise((r) => setTimeout(r, 50));
     }
 
-    const transcripts = client.messages.filter(
-      (m) => m.type === "data_stream",
-    ) as Array<{ streamType: string; data: { type: string } }>;
-    const kinds = new Set(transcripts.map((t) => t.data.type));
-    expect(kinds.has("transcription")).toBe(true);
-    expect(kinds.has("translation")).toBe(true);
-    const trans = transcripts.find((t) => t.data.type === "translation");
-    expect(trans?.streamType).toBe("translation:auto-to-fr");
+    expect(seen.has("stream.transcript")).toBe(true);
+    expect(seen.has("stream.translation")).toBe(true);
+    const trans = client.messages.find(
+      (m) => m.type === "stream.translation",
+    ) as { payload: { target: { language: string } } } | undefined;
+    expect(trans?.payload.target.language).toBe("fr");
 
     await client.close();
   });
@@ -475,13 +474,14 @@ describe("audio e2e", () => {
     await new Promise((r) => setTimeout(r, 100));
     client.sendAudio(new Uint8Array(40).fill(0x55));
 
-    const m = (await client.waitFor("data_stream", 5000)) as {
-      type: "data_stream";
-      streamType: string;
-      data: { transcribeLanguage?: string };
+    const m = (await client.waitFor("stream.transcript", 5000)) as {
+      payload: {
+        resolvedLanguage: string;
+        subscription: { language: { code?: string } };
+      };
     };
-    expect(m.streamType).toBe("transcription:en-US");
-    expect(m.data.transcribeLanguage).toBe("en-US");
+    expect(m.payload.resolvedLanguage).toBe("en-US");
+    expect(m.payload.subscription.language.code).toBe("en-US");
 
     await client.close();
   });

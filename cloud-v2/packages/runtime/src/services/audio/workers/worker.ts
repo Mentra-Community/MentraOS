@@ -6,21 +6,21 @@
  *   2. Receives `ATTACH_USER` / `DETACH_USER` postMessages from the main
  *      thread when ownership changes.
  *   3. Runs an XREADGROUP loop for the streams of its currently-assigned
- *      users; processes each entry, ACKs it, and emits transcripts back
- *      to the main thread.
+ *      users; for each entry it decodes the audio (LC3 to PCM, or passes
+ *      raw PCM through), feeds it to that user's transcription/translation
+ *      providers, ACKs the entry, and emits results back to the main thread.
  *   4. Runs an XAUTOCLAIM loop for failover replay — entries stuck in a
  *      dead consumer's PEL get picked up here.
  *
- * What this worker does NOT do (yet):
- *   - LC3 decode (stub: passes payload through)
- *   - Soniox provider connection (stub: emits a synthetic `TRANSCRIPT_STUB`
- *     per entry containing the seq and payload length)
+ * Two kinds of message go back to the main thread:
+ *   - TRANSCRIPT: real provider output (text), one per result event.
+ *   - TRANSCRIPT_STUB: one per stream entry, regardless of subscriptions.
+ *     It reports "audio reached a worker and decoded to N PCM bytes" and is
+ *     what the routing/failover tests assert against without needing a
+ *     provider in the loop.
  *
- * The stub `TRANSCRIPT_STUB` is enough for tests to assert "audio reached
- * a worker." Real decode + provider lands in follow-up work.
- *
- * Spec: cloud-v2/docs/issues/003-audio/spec.md ("Workers handle their own
- * stream reads.")
+ * Spec: cloud-v2/docs/issues/002-cloud-runtime/design.md ("Workers handle
+ * their own stream reads.")
  */
 
 import {Redis} from "ioredis"
@@ -90,6 +90,13 @@ export interface TranscriptMessage {
   endMs?: number
   /** Provider that produced this — `"mock"`, `"soniox"`, etc. */
   source: string
+  /**
+   * The subscription that produced this transcript. Carried through so the
+   * main thread can build the v2 `stream.transcript` / `stream.translation`
+   * result (which echoes the subscription back to the client) without
+   * re-deriving it from the language fields.
+   */
+  subscription: AudioSubscription
 }
 
 export interface WorkerReadyMessage {
@@ -267,6 +274,7 @@ async function createProvider(mentraUserId: string, sub: AudioSubscription): Pro
       startMs: event.startMs,
       endMs: event.endMs,
       source: PROVIDER_KIND,
+      subscription: sub,
     }
     self.postMessage(out)
   }
@@ -336,7 +344,7 @@ async function ensureConsumerGroup(mentraUserId: string): Promise<boolean> {
     // = new entries only). Reason: UDP ingress may have XADDed packets to
     // the stream BEFORE the worker finished creating the group (the assign
     // happens at WS-open time, but UDP packets can arrive within
-    // milliseconds of CONNECTION_ACK reaching the client). `$` would
+    // milliseconds of connection.ack reaching the client). `$` would
     // silently skip those entries. `0` delivers everything that's in the
     // stream — `MAXLEN ~ 1000` keeps the backlog bounded so this isn't
     // unbounded replay.

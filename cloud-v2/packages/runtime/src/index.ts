@@ -34,6 +34,7 @@ import {
   startUdpIngress,
   stopUdpIngress,
 } from "./net/udp";
+import { tryAudioRest } from "./net/http";
 import {
   startOwnershipRefreshLoop,
   stopOwnershipRefreshLoop,
@@ -43,7 +44,7 @@ import {
   startWorkerPool,
   stopWorkerPool,
 } from "./services/audio/workers/pool";
-import { transcriptToDataStream } from "./wire/phone-protocol";
+import { transcriptToStreamMessage } from "./services/audio/result";
 
 const logger = createLogger("audio");
 
@@ -55,12 +56,12 @@ export interface StartAudioOptions {
   /** Redis URL. Default: env or `redis://127.0.0.1:6379`. */
   redisUrl?: string;
   /**
-   * Host advertised in CONNECTION_ACK's `udp.host`. Default: env or
+   * Host advertised in connection.ack's `audio.udp.host`. Default: env or
    * `127.0.0.1`. In prod this is the LB / NLB hostname clients should dial.
    */
   udpAdvertisedHost?: string;
   /**
-   * Port advertised in CONNECTION_ACK's `udp.port`. Default: env or
+   * Port advertised in connection.ack's `audio.udp.port`. Default: env or
    * matches `udpPort`. May differ from the bound port if the LB does
    * port translation.
    */
@@ -104,13 +105,13 @@ export async function startAudio(opts: StartAudioOptions = {}): Promise<AudioHan
     Number.parseInt(process.env.AUDIO_WORKERS ?? "2", 10);
   startWorkerPool({ podId, count: workerCount });
   // Route worker-emitted transcripts to the user's WS sessions on this pod.
-  // Real transcripts are translated into the v1 `data_stream` envelope the
-  // mobile expects (see wire/phone-protocol). Debug stubs (TRANSCRIPT_STUB)
-  // pass through untouched — only the test client reads them; the mobile
-  // ignores unknown message types.
+  // Real transcripts become v2 `stream.transcript` / `stream.translation`
+  // envelopes (see services/audio/result). Routing stubs (TRANSCRIPT_STUB)
+  // pass through untouched — only the integration tests read them; real
+  // clients ignore unknown message types.
   onTranscript((msg) => {
     const out =
-      msg.type === "TRANSCRIPT" ? transcriptToDataStream(msg) : msg;
+      msg.type === "TRANSCRIPT" ? transcriptToStreamMessage(msg) : msg;
     forwardToUserSessions(msg.mentraUserId, out);
   });
 
@@ -129,6 +130,8 @@ export async function startAudio(opts: StartAudioOptions = {}): Promise<AudioHan
     async fetch(req, srv) {
       const wsResult = await tryWsUpgrade(req, srv);
       if (wsResult !== HTTP_FALLTHROUGH) return wsResult;
+      const restResult = await tryAudioRest(req);
+      if (restResult) return restResult;
       return healthApp.fetch(req);
     },
     websocket: wsHandlers,

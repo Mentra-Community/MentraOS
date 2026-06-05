@@ -6,8 +6,8 @@
  *   bun test/test-client/src/index.ts <oemUserId>
  *
  * Pings the local stack: TEST OEM (:3100) → core (:3000) → audio (:3001 WS),
- * verifies CONNECTION_ACK, sends one fake-LC3 UDP packet, prints what the
- * cloud reports back when `AUDIO_DEBUG_ECHO=true` is set on audio.
+ * completes the connection.init/ack handshake, sends one fake-LC3 UDP packet,
+ * prints what the cloud reports back when `AUDIO_DEBUG_ECHO=true` is set.
  */
 
 export { TestClient, type TestClientOptions, type ConnectionAck } from "./client";

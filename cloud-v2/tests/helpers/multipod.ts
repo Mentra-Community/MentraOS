@@ -17,9 +17,9 @@ export interface SpawnAudioPodOptions {
   podId: string;
   httpPort: number;
   udpPort: number;
-  /** Host advertised in CONNECTION_ACK. Default `127.0.0.1`. */
+  /** Host advertised in connection.ack. Default `127.0.0.1`. */
   udpAdvertisedHost?: string;
-  /** Port advertised in CONNECTION_ACK. Default matches `udpPort`. */
+  /** Port advertised in connection.ack. Default matches `udpPort`. */
   udpAdvertisedPort?: number;
   /** Default: inherits from parent process. */
   redisUrl?: string;
