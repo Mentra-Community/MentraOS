@@ -2138,7 +2138,8 @@ class MentraLive: NSObject, SGCManager {
             updateBatteryStatus(level: level, isCharging: isCharging)
 
         case "voice_activity_detection_status":
-            let enabled = json["voiceActivityDetectionEnabled"] as? Bool ?? true
+            let enabled = json["voiceActivityDetectionEnabled"] as? Bool
+                ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
             handleVoiceActivityDetectionStatus(enabled: enabled)
 
         case "speaking_status":
@@ -5011,7 +5012,8 @@ extension MentraLive {
     }
 
     func sendVoiceActivityDetectionSetting() {
-        let enabled = DeviceStore.shared.get("bluetooth", "voice_activity_detection_enabled") as? Bool ?? true
+        let enabled = DeviceStore.shared.get("bluetooth", "voice_activity_detection_enabled") as? Bool
+            ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
         Bridge.log("LIVE: 🎤 Sending Voice Activity Detection setting to glasses: \(enabled)")
 
         guard connectedPeripheral != nil, txCharacteristic != nil else {
