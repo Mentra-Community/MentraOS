@@ -163,7 +163,7 @@ public class Bridge private constructor() {
         private fun micPcmEventBody(data: ByteArray): HashMap<String, Any> {
             val voiceActivityDetectionEnabled =
                     DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
-                            ?: true
+                            ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
             val body = HashMap<String, Any>()
             body["pcm"] = data
             body["sampleRate"] = MIC_SAMPLE_RATE
@@ -177,7 +177,7 @@ public class Bridge private constructor() {
         private fun micLc3EventBody(data: ByteArray): HashMap<String, Any> {
             val voiceActivityDetectionEnabled =
                     DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
-                            ?: true
+                            ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
             val frameSizeBytes =
                     (DeviceStore.store.get("bluetooth", "lc3_frame_size") as? Number)?.toInt()
                             ?: DEFAULT_LC3_FRAME_SIZE_BYTES

@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.DeviceStore
 
@@ -101,7 +102,8 @@ class MentraNex : SGCManager() {
 
     // Off by default; toggled from Nex Developer Settings via the nex_audio_playback flag.
     private val isLc3AudioEnabled: Boolean
-        get() = DeviceStore.get("bluetooth", "nex_audio_playback") as? Boolean ?: false
+        // get() = DeviceStore.get("bluetooth", "nex_audio_playback") as? Boolean ?: false
+        get() = false
     private var lc3AudioPlayer: Lc3Player? = null
 
     private var lc3DecoderPtr: Long = 0
@@ -300,7 +302,9 @@ class MentraNex : SGCManager() {
     override fun sendGalleryMode() { Bridge.log("Nex: sendGalleryMode operation not supported") }
 
     override fun sendVoiceActivityDetectionSetting() {
-        val enabled = DeviceStore.get("bluetooth", "voice_activity_detection_enabled") as? Boolean ?: true
+        val enabled =
+            DeviceStore.get("bluetooth", "voice_activity_detection_enabled") as? Boolean
+                ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
         Bridge.log("Nex: 🎤 Sending Voice Activity Detection setting to glasses: $enabled")
 
         if (connectionState != ConnTypes.CONNECTED) {

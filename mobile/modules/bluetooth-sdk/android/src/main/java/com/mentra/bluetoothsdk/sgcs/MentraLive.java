@@ -32,10 +32,11 @@ import androidx.core.app.ActivityCompat;
 // import androidx.preference.PreferenceManager;
 
 // Mentra
-import com.mentra.bluetoothsdk.sgcs.SGCManager;
-import com.mentra.bluetoothsdk.DeviceManager;
+import com.mentra.bluetoothsdk.BluetoothSdkDefaults;
 import com.mentra.bluetoothsdk.Bridge;
+import com.mentra.bluetoothsdk.DeviceManager;
 import com.mentra.bluetoothsdk.debug.BleTraceLogger;
+import com.mentra.bluetoothsdk.sgcs.SGCManager;
 import com.mentra.bluetoothsdk.utils.DeviceTypes;
 import com.mentra.bluetoothsdk.utils.ConnTypes;
 import com.mentra.bluetoothsdk.utils.BitmapJavaUtils;
@@ -2351,7 +2352,9 @@ public class MentraLive extends SGCManager {
 
             case "voice_activity_detection_status":
                 handleVoiceActivityDetectionStatus(
-                        json.optBoolean("voiceActivityDetectionEnabled", true));
+                        json.optBoolean(
+                                "voiceActivityDetectionEnabled",
+                                BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED));
                 break;
 
             case "speaking_status":
@@ -6697,7 +6700,10 @@ public class MentraLive extends SGCManager {
     @Override
     public void sendVoiceActivityDetectionSetting() {
         Object value = DeviceStore.INSTANCE.get("bluetooth", "voice_activity_detection_enabled");
-        boolean enabled = value instanceof Boolean ? (Boolean) value : true;
+        boolean enabled =
+                value instanceof Boolean
+                        ? (Boolean) value
+                        : BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED;
 
         Bridge.log("LIVE: 🎤 Sending Voice Activity Detection setting to glasses: " + enabled);
 

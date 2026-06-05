@@ -28,7 +28,7 @@ class DeviceStore {
         store.set("glasses", "deviceModel", "")
         store.set("glasses", "firmwareVersion", "")
         store.set("glasses", "micEnabled", false)
-        store.set("glasses", "voiceActivityDetectionEnabled", true)
+        store.set("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.voiceActivityDetectionEnabled)
         store.set("glasses", "bluetoothClassicConnected", false)
         store.set("glasses", "caseRemoved", true)
         store.set("glasses", "caseOpen", true)
@@ -87,7 +87,7 @@ class DeviceStore {
         store.set("bluetooth", "imu_enabled", false)
         store.set("bluetooth", "contextual_dashboard", true)
         store.set("bluetooth", "gallery_mode", true)
-        store.set("bluetooth", "voice_activity_detection_enabled", true)
+        store.set("bluetooth", "voice_activity_detection_enabled", BluetoothSdkDefaults.voiceActivityDetectionEnabled)
         // Mentra Nex feature flag (off by default; toggled from Nex Developer Settings):
         store.set("bluetooth", "nex_chinese_captions", false)
         store.set("bluetooth", "screen_disabled", false)
