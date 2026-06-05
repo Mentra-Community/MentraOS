@@ -390,7 +390,7 @@ export class PhoneStreamCoordinator {
         // The stream we wanted to tear down may already be gone (e.g. another
         // teardown won the lock and unwound it). Guard before acting.
         if (this.current?.streamId !== targetStreamId) return
-        await this.teardownLocked(reason)
+        await this.teardownLocked(reason, {sendBleStop: false})
       })
     }
   }
@@ -554,9 +554,10 @@ export class PhoneStreamCoordinator {
    * waiting on the lock can't claim the slot mid-stop and have its
    * startStream BLE write collide with our in-flight stopStream.
    */
-  private async teardownLocked(reason: string): Promise<void> {
+  private async teardownLocked(reason: string, options: {sendBleStop?: boolean} = {}): Promise<void> {
     const entry = this.current
     if (!entry) return
+    const sendBleStop = options.sendBleStop !== false
 
     // Dispose the lifecycle controller immediately so it doesn't fire one
     // more keep-alive against a stream we're tearing down. The transition
@@ -581,7 +582,9 @@ export class PhoneStreamCoordinator {
     }
 
     try {
-      await CoreModule.stopStream()
+      if (sendBleStop) {
+        await CoreModule.stopStream()
+      }
     } catch (err) {
       console.warn("[STREAM] CoreModule.stopStream failed:", err)
     } finally {

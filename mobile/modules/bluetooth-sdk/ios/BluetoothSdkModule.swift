@@ -480,15 +480,13 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         // MARK: - Stream Commands
 
         AsyncFunction("startStream") { (params: [String: Any]) in
-            await MainActor.run {
-                self.bluetoothSdk().startStream(StreamRequest(values: params))
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.startStream(StreamRequest(values: params)).values
         }
 
         AsyncFunction("stopStream") {
-            await MainActor.run {
-                self.bluetoothSdk().stopStream()
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.stopStream().values
         }
 
         AsyncFunction("sendExternallyManagedStreamKeepAlive") { (params: [String: Any]) in

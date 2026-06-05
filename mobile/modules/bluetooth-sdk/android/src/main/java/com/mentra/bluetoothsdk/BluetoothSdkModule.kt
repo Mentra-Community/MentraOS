@@ -505,10 +505,10 @@ class BluetoothSdkModule : Module() {
         // MARK: - Stream Commands
 
         AsyncFunction("startStream") { params: Map<String, Any> ->
-            sdk?.startStream(StreamRequest.fromMap(params))
+            sdk?.startStream(StreamRequest.fromMap(params))?.values
         }
 
-        AsyncFunction("stopStream") { sdk?.stopStream() }
+        AsyncFunction("stopStream") { sdk?.stopStream()?.values }
 
         AsyncFunction("sendExternallyManagedStreamKeepAlive") { params: Map<String, Any> ->
             sdk?.sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest.fromMap(params))

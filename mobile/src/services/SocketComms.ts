@@ -575,14 +575,18 @@ class SocketComms {
   private handle_start_stream(msg: any) {
     const streamUrl = msg.streamUrl
     if (streamUrl) {
-      BluetoothSdk.startExternallyManagedStream(msg)
+      void BluetoothSdk.startExternallyManagedStream(msg).catch((error) => {
+        console.warn("SOCKET: start_stream failed:", error)
+      })
     } else {
       console.log("Invalid stream request: missing stream URL")
     }
   }
 
   private handle_stop_stream() {
-    BluetoothSdk.stopStream()
+    void BluetoothSdk.stopStream().catch((error) => {
+      console.warn("SOCKET: stop_stream failed:", error)
+    })
   }
 
   private handle_keep_stream_alive(msg: any) {

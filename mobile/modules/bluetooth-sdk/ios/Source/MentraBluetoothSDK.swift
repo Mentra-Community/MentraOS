@@ -109,6 +109,8 @@ public final class MentraBluetoothSDK {
     private var pendingVideoRecordingRequests: [String: PendingResponse<VideoRecordingStatusEvent>] = [:]
     private var pendingRgbLedRequests: [String: PendingResponse<RgbLedControlResponseEvent>] = [:]
     private var pendingSettingsRequests: [String: PendingResponse<SettingsAckEvent>] = [:]
+    private var pendingStreamStarts: [String: PendingResponse<StreamStatusEvent>] = [:]
+    private var pendingStreamStop: (streamId: String?, pending: PendingResponse<StreamStatusEvent>)?
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>?
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>?
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>?
@@ -587,14 +589,24 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    public func startStream(_ request: StreamRequest) {
+    public func startStream(_ request: StreamRequest) async throws -> StreamStatusEvent {
         var values = request.values
         let streamId = stringValue(values, "streamId").flatMap { $0.isEmpty ? nil : $0 } ?? "sdk-\(UUID().uuidString)"
         values["streamId"] = streamId
+        let pending = PendingResponse<StreamStatusEvent>(operation: "start stream \(streamId)")
+        pendingStreamStarts[streamId] = pending
         stopStreamKeepAliveMonitor()
         DeviceManager.shared.startStream(values)
-        if request.keepAlive, !request.isExternallyManagedKeepAlive {
-            startStreamKeepAliveMonitor(streamId: streamId, intervalSeconds: request.keepAliveIntervalSeconds)
+        do {
+            let event = try await pending.wait(timeoutMs: 30_000)
+            pendingStreamStarts.removeValue(forKey: streamId)
+            if request.keepAlive, !request.isExternallyManagedKeepAlive {
+                startStreamKeepAliveMonitor(streamId: streamId, intervalSeconds: request.keepAliveIntervalSeconds)
+            }
+            return event
+        } catch {
+            pendingStreamStarts.removeValue(forKey: streamId)
+            throw error
         }
     }
 
@@ -624,9 +636,29 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    public func stopStream() {
+    public func stopStream() async throws -> StreamStatusEvent {
+        guard pendingStreamStop == nil else {
+            throw BluetoothError(
+                code: "request_in_flight",
+                message: "A stream stop command is already waiting for a glasses response."
+            )
+        }
+        let pending = PendingResponse<StreamStatusEvent>(operation: "stop stream")
+        pendingStreamStop = (streamId: activeStreamKeepAlive?.streamId, pending: pending)
         stopStreamKeepAliveMonitor()
         DeviceManager.shared.stopStream()
+        do {
+            let event = try await pending.wait(timeoutMs: 15_000)
+            if pendingStreamStop?.pending === pending {
+                pendingStreamStop = nil
+            }
+            return event
+        } catch {
+            if pendingStreamStop?.pending === pending {
+                pendingStreamStop = nil
+            }
+            throw error
+        }
     }
 
     public func startVideoRecording(_ request: VideoRecordingRequest) async throws -> VideoRecordingStatusEvent {
@@ -789,7 +821,8 @@ public final class MentraBluetoothSDK {
                     )
                 )
                 delegate?.mentraBluetoothSDK(self, didReceive: .streamStatus(event))
-                stopStream()
+                stopStreamKeepAliveMonitor()
+                DeviceManager.shared.stopStream()
                 return
             }
         }
@@ -841,6 +874,65 @@ public final class MentraBluetoothSDK {
                 tracker.missedAckCount = 0
             }
         }
+    }
+
+    private func handleStreamStatusForRequests(_ event: StreamStatusEvent) {
+        if let (streamId, pending) = matchingStreamStart(for: event) {
+            switch event.state {
+            case .streaming:
+                pendingStreamStarts.removeValue(forKey: streamId)
+                pending.resolve(event)
+            case .error, .reconnectFailed, .stopped:
+                pendingStreamStarts.removeValue(forKey: streamId)
+                pending.reject(streamStatusError(event, code: "stream_start_failed"))
+            default:
+                break
+            }
+        }
+
+        if let stop = pendingStreamStop, streamStatus(event, matches: stop.streamId) {
+            switch event.state {
+            case .stopped:
+                if pendingStreamStop?.pending === stop.pending {
+                    pendingStreamStop = nil
+                }
+                stop.pending.resolve(event)
+            case .error, .reconnectFailed:
+                if pendingStreamStop?.pending === stop.pending {
+                    pendingStreamStop = nil
+                }
+                stop.pending.reject(streamStatusError(event, code: "stream_stop_failed"))
+            default:
+                break
+            }
+        }
+    }
+
+    private func matchingStreamStart(for event: StreamStatusEvent) -> (String, PendingResponse<StreamStatusEvent>)? {
+        if let streamId = event.streamId, !streamId.isEmpty {
+            guard let pending = pendingStreamStarts[streamId] else { return nil }
+            return (streamId, pending)
+        }
+        if pendingStreamStarts.count == 1, let entry = pendingStreamStarts.first {
+            return (entry.key, entry.value)
+        }
+        return nil
+    }
+
+    private func streamStatus(_ event: StreamStatusEvent, matches streamId: String?) -> Bool {
+        guard let streamId, !streamId.isEmpty else { return true }
+        guard let eventStreamId = event.streamId, !eventStreamId.isEmpty else { return true }
+        return eventStreamId == streamId
+    }
+
+    private func streamStatusError(_ event: StreamStatusEvent, code: String) -> BluetoothError {
+        let message: String
+        if case let .error(_, errorDetails, _, _) = event.status {
+            message = errorDetails
+        } else {
+            message = "Stream status \(event.state.rawValue)"
+        }
+        return BluetoothError(code: code, message: message)
     }
 
     private func dispatchStoreUpdate(_ category: String, _ changes: [String: Any]) {
@@ -989,6 +1081,7 @@ public final class MentraBluetoothSDK {
             delegate?.mentraBluetoothSDK(self, didReceive: .rgbLedControlResponse(event))
         case "stream_status":
             let event = StreamStatusEvent(values: data)
+            handleStreamStatusForRequests(event)
             handleStreamStatusForKeepAlive(event.status)
             delegate?.mentraBluetoothSDK(self, didReceive: .streamStatus(event))
         case "keep_alive_ack":

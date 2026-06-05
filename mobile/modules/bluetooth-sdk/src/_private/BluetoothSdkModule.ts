@@ -38,6 +38,7 @@ import {
   SettingsAckEvent,
   StreamKeepAliveRequest,
   StreamStartRequest,
+  StreamStatusEvent,
   VideoRecordingStatusEvent,
   VideoRecordingSettings,
 } from "../BluetoothSdk.types"
@@ -144,9 +145,9 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   stopVideoRecording(requestId: string): Promise<VideoRecordingStatusEvent>
 
   // Stream Commands
-  startStream(params: StreamStartRequest): Promise<void>
-  startExternallyManagedStream(params: StreamStartRequest): Promise<void>
-  stopStream(): Promise<void>
+  startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
+  startExternallyManagedStream(params: StreamStartRequest): Promise<StreamStatusEvent>
+  stopStream(): Promise<StreamStatusEvent>
   sendExternallyManagedStreamKeepAlive(params: StreamKeepAliveRequest): Promise<void>
 
   // Microphone Commands

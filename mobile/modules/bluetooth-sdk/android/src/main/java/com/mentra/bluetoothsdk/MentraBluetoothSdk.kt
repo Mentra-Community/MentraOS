@@ -34,10 +34,12 @@ class MentraBluetoothSdk private constructor(
         ConcurrentHashMap<String, PendingResponse<VideoRecordingStatusEvent>>()
     private val pendingRgbLedRequests = ConcurrentHashMap<String, PendingResponse<RgbLedControlResponseEvent>>()
     private val pendingSettingsRequests = ConcurrentHashMap<String, PendingResponse<SettingsAckEvent>>()
+    private val pendingStreamStarts = ConcurrentHashMap<String, PendingResponse<StreamStatusEvent>>()
     private val oneShotLock = Any()
     private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>? = null
     private var pendingOtaQuery: PendingResponse<OtaQueryResult>? = null
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>? = null
+    private var pendingStreamStop: PendingStreamStop? = null
 
     init {
         listeners.add(listener)
@@ -52,6 +54,8 @@ class MentraBluetoothSdk private constructor(
         private val SCAN_STATE_KEYS = setOf("searching", "searchingController", "searchResults")
         private const val DEFAULT_SCAN_TIMEOUT_MS = 15_000L
         private const val DEFAULT_REQUEST_TIMEOUT_MS = 15_000L
+        private const val STREAM_START_TIMEOUT_MS = 30_000L
+        private const val STREAM_STOP_TIMEOUT_MS = 15_000L
         private const val DEFAULT_STREAM_KEEP_ALIVE_INTERVAL_SECONDS = 5
         private const val MAX_MISSED_STREAM_KEEP_ALIVE_ACKS = 3
 
@@ -79,6 +83,11 @@ class MentraBluetoothSdk private constructor(
         // slow startup (glasses can't ACK until they reach starting/streaming) can't trip a
         // false keep-alive timeout before the stream is ever up.
         var armed: Boolean = false,
+    )
+
+    private data class PendingStreamStop(
+        val streamId: String?,
+        val pending: PendingResponse<StreamStatusEvent>,
     )
 
     private class PendingResponse<T>(
@@ -582,15 +591,23 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    fun startStream(request: StreamRequest) {
+    fun startStream(request: StreamRequest): StreamStatusEvent {
         val message = request.toMap().toMutableMap()
         val streamId = (message["streamId"] as? String)?.takeIf { it.isNotBlank() }
                 ?: "sdk-${UUID.randomUUID()}"
         message["streamId"] = streamId
+        val pending = PendingResponse<StreamStatusEvent>("start stream $streamId")
+        pendingStreamStarts[streamId] = pending
         stopStreamKeepAliveMonitor()
-        deviceManager.startStream(message)
-        if (request.keepAlive && !request.isExternallyManagedKeepAlive()) {
-            startStreamKeepAliveMonitor(streamId, request.keepAliveIntervalSeconds)
+        try {
+            deviceManager.startStream(message)
+            val event = pending.await(STREAM_START_TIMEOUT_MS)
+            if (request.keepAlive && !request.isExternallyManagedKeepAlive()) {
+                startStreamKeepAliveMonitor(streamId, request.keepAliveIntervalSeconds)
+            }
+            return event
+        } finally {
+            pendingStreamStarts.remove(streamId, pending)
         }
     }
 
@@ -617,9 +634,31 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    fun stopStream() {
+    fun stopStream(): StreamStatusEvent {
+        val pending = PendingResponse<StreamStatusEvent>("stop stream")
+        val targetStreamId = synchronized(streamKeepAliveLock) {
+            activeStreamKeepAlive?.streamId
+        }
+        synchronized(oneShotLock) {
+            if (pendingStreamStop != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "A stream stop command is already waiting for a glasses response.",
+                )
+            }
+            pendingStreamStop = PendingStreamStop(targetStreamId, pending)
+        }
         stopStreamKeepAliveMonitor()
-        deviceManager.stopStream()
+        try {
+            deviceManager.stopStream()
+            return pending.await(STREAM_STOP_TIMEOUT_MS)
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingStreamStop?.pending === pending) {
+                    pendingStreamStop = null
+                }
+            }
+        }
     }
 
     fun startVideoRecording(request: VideoRecordingRequest): VideoRecordingStatusEvent {
@@ -904,6 +943,7 @@ class MentraBluetoothSdk private constructor(
             }
             "stream_status" -> {
                 val event = StreamStatusEvent(data)
+                handleStreamStatusForRequests(event)
                 handleStreamStatusForKeepAlive(event.status)
                 dispatchToListeners { it.onStreamStatus(event) }
             }
@@ -1017,6 +1057,72 @@ class MentraBluetoothSdk private constructor(
         tracker?.nextTick?.let { mainHandler.removeCallbacks(it) }
     }
 
+    private fun handleStreamStatusForRequests(event: StreamStatusEvent) {
+        val startMatch = matchingStreamStart(event)
+        if (startMatch != null) {
+            val (streamId, pending) = startMatch
+            when (event.state) {
+                StreamState.STREAMING -> {
+                    pendingStreamStarts.remove(streamId, pending)
+                    pending.resolve(event)
+                }
+                StreamState.ERROR,
+                StreamState.RECONNECT_FAILED,
+                StreamState.STOPPED -> {
+                    pendingStreamStarts.remove(streamId, pending)
+                    pending.reject(streamStatusException(event, "stream_start_failed"))
+                }
+                else -> Unit
+            }
+        }
+
+        val stop = synchronized(oneShotLock) { pendingStreamStop }
+        if (stop != null && streamStatusMatches(event, stop.streamId)) {
+            when (event.state) {
+                StreamState.STOPPED -> {
+                    synchronized(oneShotLock) {
+                        if (pendingStreamStop === stop) {
+                            pendingStreamStop = null
+                        }
+                    }
+                    stop.pending.resolve(event)
+                }
+                StreamState.ERROR,
+                StreamState.RECONNECT_FAILED -> {
+                    synchronized(oneShotLock) {
+                        if (pendingStreamStop === stop) {
+                            pendingStreamStop = null
+                        }
+                    }
+                    stop.pending.reject(streamStatusException(event, "stream_stop_failed"))
+                }
+                else -> Unit
+            }
+        }
+    }
+
+    private fun matchingStreamStart(event: StreamStatusEvent): Pair<String, PendingResponse<StreamStatusEvent>>? {
+        val streamId = event.streamId
+        if (!streamId.isNullOrBlank()) {
+            val pending = pendingStreamStarts[streamId] ?: return null
+            return streamId to pending
+        }
+        if (pendingStreamStarts.size == 1) {
+            val entry = pendingStreamStarts.entries.first()
+            return entry.key to entry.value
+        }
+        return null
+    }
+
+    private fun streamStatusMatches(event: StreamStatusEvent, streamId: String?): Boolean =
+        streamId.isNullOrBlank() || event.streamId.isNullOrBlank() || event.streamId == streamId
+
+    private fun streamStatusException(event: StreamStatusEvent, code: String): BluetoothException {
+        val details = (event.status as? StreamStatus.Error)?.errorDetails
+            ?: "Stream status ${event.state.value}"
+        return BluetoothException(code, details)
+    }
+
     private fun sendNextStreamKeepAlive(tracker: ActiveStreamKeepAlive) {
         var timeoutEvent: StreamStatusEvent? = null
         var request: StreamKeepAliveRequest? = null
@@ -1055,7 +1161,8 @@ class MentraBluetoothSdk private constructor(
 
         timeoutEvent?.let { event ->
             dispatchToListeners { it.onStreamStatus(event) }
-            stopStream()
+            stopStreamKeepAliveMonitor()
+            deviceManager.stopStream()
             return
         }
 

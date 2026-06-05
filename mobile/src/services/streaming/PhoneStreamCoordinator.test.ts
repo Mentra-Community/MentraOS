@@ -266,7 +266,7 @@ describe("PhoneStreamCoordinator", () => {
       } as never)
       // Teardown is async; let it settle.
       await new Promise((r) => setTimeout(r, 5))
-      expect(stopStream).toHaveBeenCalled()
+      expect(stopStream).not.toHaveBeenCalled()
       expect(coord.owns(streamId)).toBe(false)
     })
   })

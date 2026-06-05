@@ -820,8 +820,8 @@ export interface BluetoothSdkPublicModule {
   ): Promise<VideoRecordingStatusEvent>
   stopVideoRecording(requestId: string): Promise<VideoRecordingStatusEvent>
 
-  startStream(params: StreamStartRequest): Promise<void>
-  stopStream(): Promise<void>
+  startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
+  stopStream(): Promise<StreamStatusEvent>
 
   setMicState(enabled: boolean, useGlassesMic?: boolean, sendTranscript?: boolean, sendLc3Data?: boolean): Promise<void>
   setPreferredMic(preferredMic: MicPreference): Promise<void>
