@@ -339,6 +339,7 @@
     <queries>
         <package android:name="com.mentra.augmentos" />
         <package android:name="com.mentra.recovery" />
+        <package android:name="com.augmentos.otaupdater" />
     </queries>
 
 </manifest>
