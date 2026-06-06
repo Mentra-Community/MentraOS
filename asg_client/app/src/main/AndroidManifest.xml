@@ -6,12 +6,6 @@
     <permission
         android:name="com.mentra.asg_client.permission.RECOVERY_TELEMETRY"
         android:protectionLevel="signature" />
-    <permission
-        android:name="com.mentra.recovery.permission.HEARTBEAT"
-        android:protectionLevel="signature" />
-    <permission
-        android:name="com.mentra.recovery.permission.CONTROL"
-        android:protectionLevel="signature" />
 
     <uses-permission android:name="com.mentra.recovery.permission.HEARTBEAT" />
     <uses-permission android:name="com.mentra.recovery.permission.CONTROL" />
