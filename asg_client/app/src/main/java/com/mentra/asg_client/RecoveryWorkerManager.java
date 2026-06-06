@@ -17,6 +17,8 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** Deploys and starts the {@code com.mentra.recovery} sidecar (recovery worker APK). */
 public class RecoveryWorkerManager {
@@ -36,21 +38,24 @@ public class RecoveryWorkerManager {
 
     private final Context context;
     private final Handler handler;
+    private final ExecutorService workerExecutor;
     private PackageInstallReceiver packageInstallReceiver;
 
     public RecoveryWorkerManager(Context context) {
         this.context = context.getApplicationContext();
         this.handler = new Handler(Looper.getMainLooper());
+        this.workerExecutor = Executors.newSingleThreadExecutor();
     }
 
     public void initialize() {
         registerPackageInstallReceiver();
-        handler.post(this::ensureRecoveryWorker);
+        workerExecutor.execute(this::ensureRecoveryWorker);
     }
 
     public void cleanup() {
         unregisterPackageInstallReceiver();
         handler.removeCallbacksAndMessages(null);
+        workerExecutor.shutdownNow();
     }
 
     private void ensureRecoveryWorker() {
@@ -126,7 +131,7 @@ public class RecoveryWorkerManager {
             Log.i(TAG, "Installing recovery worker");
         } catch (Exception e) {
             Log.e(TAG, "Failed to deploy recovery worker from assets", e);
-            handler.postDelayed(this::launchRecoveryWorker, 15000);
+            handler.postDelayed(() -> workerExecutor.execute(this::launchRecoveryWorker), 15000);
         }
     }
 
@@ -282,7 +287,9 @@ public class RecoveryWorkerManager {
             String packageName =
                     intent.getData() != null ? intent.getData().getSchemeSpecificPart() : null;
             if (RECOVERY_PACKAGE.equals(packageName)) {
-                handler.postDelayed(RecoveryWorkerManager.this::launchRecoveryWorker, 2000);
+                handler.postDelayed(
+                        () -> workerExecutor.execute(RecoveryWorkerManager.this::launchRecoveryWorker),
+                        2000);
             }
         }
     }
