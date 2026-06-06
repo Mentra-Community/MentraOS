@@ -61,18 +61,6 @@ public class BackupStore {
         if (installedSigners.isEmpty() || !archiveSigners.equals(installedSigners)) {
           return false;
         }
-        long installedVersion = getLongVersionCode(installedInfo);
-        long archiveVersion = getLongVersionCode(archiveInfo);
-        if (archiveVersion < installedVersion) {
-          Log.e(
-              RecoveryConstants.TAG,
-              "Backup APK version "
-                  + archiveVersion
-                  + " is older than installed "
-                  + installedVersion
-                  + "; refusing reinstall to avoid VERSION_DOWNGRADE");
-          return false;
-        }
         return true;
       } catch (NameNotFoundException e) {
         // ASG may be uninstalled during recovery; archive signer presence is the best check.
@@ -81,6 +69,53 @@ public class BackupStore {
       }
     } catch (Exception e) {
       Log.e(RecoveryConstants.TAG, "Failed to validate backup", e);
+      return false;
+    }
+  }
+
+  /**
+   * True when a same-signer backup must uninstall the current build before OEM install can succeed.
+   */
+  public boolean requiresUninstallBeforeReinstall() {
+    File backup = new File(getBackupPath());
+    if (!backup.exists() || !backup.canRead() || backup.length() <= 0) {
+      return false;
+    }
+    try {
+      PackageManager pm = context.getPackageManager();
+      PackageInfo archiveInfo =
+          pm.getPackageArchiveInfo(
+              backup.getAbsolutePath(),
+              PackageManager.GET_ACTIVITIES | PackageManager.GET_SIGNING_CERTIFICATES);
+      if (archiveInfo == null) {
+        return false;
+      }
+      PackageInfo installedInfo =
+          pm.getPackageInfo(RecoveryConstants.ASG_PACKAGE, PackageManager.GET_SIGNING_CERTIFICATES);
+      Set<String> archiveSigners = getSignerDigests(archiveInfo);
+      Set<String> installedSigners = getSignerDigests(installedInfo);
+      if (archiveSigners.isEmpty()
+          || installedSigners.isEmpty()
+          || !archiveSigners.equals(installedSigners)) {
+        return false;
+      }
+      long archiveVersion = getLongVersionCode(archiveInfo);
+      long installedVersion = getLongVersionCode(installedInfo);
+      if (archiveVersion < installedVersion) {
+        Log.w(
+            RecoveryConstants.TAG,
+            "Backup version "
+                + archiveVersion
+                + " is older than installed "
+                + installedVersion
+                + "; will uninstall before reinstall");
+        return true;
+      }
+      return false;
+    } catch (NameNotFoundException e) {
+      return false;
+    } catch (Exception e) {
+      Log.e(RecoveryConstants.TAG, "Failed to evaluate uninstall-before-reinstall", e);
       return false;
     }
   }
