@@ -56,10 +56,10 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
         // Initialize managers
         serviceManager.initialize();
 
-        // Schedule OTA service start
+        // Recovery sidecar is the crash watchdog — start before other delayed init work.
+        recoveryWorkerManager.initialize();
         scheduleOtaServiceStart();
         scheduleRecoveryBackupRefresh();
-        scheduleRecoveryWorkerStart();
 
         // Clean up system packages
         // cleanupSystemPackages(); Not needed anymore
@@ -148,22 +148,6 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
                             .start();
                 },
                 3000);
-    }
-
-    private void scheduleRecoveryWorkerStart() {
-        mainHandler.postDelayed(
-                () -> {
-                    if (!isInitialized) {
-                        Log.d(
-                                TAG,
-                                "Skipping recovery worker init because lifecycle is not"
-                                        + " initialized");
-                        return;
-                    }
-                    Log.d(TAG, "Ensuring recovery worker after delay");
-                    recoveryWorkerManager.initialize();
-                },
-                6000);
     }
 
     private void cleanupSystemPackages() {
