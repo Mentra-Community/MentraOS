@@ -1385,7 +1385,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             addEvent("LIVE", "ignoring stale photo $requestId")
             return
         }
-        val uploadTarget = if (state.photoDestination == PhotoDestination.THIS_PHONE) "phone upload" else "local upload"
+        val uploadTarget = if (state.photoDestination == PhotoDestination.THIS_PHONE) "phone receiver" else "cloud webhook"
         val nextDetails = when (response) {
             is PhotoResponse.Error -> PhotoPreviewDetails(
                 error = response.errorCode ?: response.errorMessage,
@@ -1404,9 +1404,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(
             cameraStatus = when (response) {
                 is PhotoResponse.Error ->
-                    "Camera: glasses reported ${response.errorCode ?: response.errorMessage}; waiting for $uploadTarget"
+                    "Camera: photo failed (${response.errorCode ?: response.errorMessage})"
                 is PhotoResponse.Success ->
-                    "Camera: photo acknowledged; waiting for $uploadTarget"
+                    "Camera: photo delivered to $uploadTarget"
             },
             photoPreviewDetails = nextDetails,
         )
@@ -2315,7 +2315,7 @@ val photo = mentraBluetoothSdk.requestPhoto(
       iso = ${if (exposureManual) iso else "null"},
     )
 )
-println("Photo accepted: ${'$'}{photo.response.requestId}")
+println("Photo delivered: ${'$'}{photo.response.requestId}")
 """.trimIndent()
 
 fun photoStatusUrl(uploadUrlText: String, requestId: String): String {

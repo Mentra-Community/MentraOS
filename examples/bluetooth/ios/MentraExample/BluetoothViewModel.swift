@@ -1855,17 +1855,17 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             append(tag: "LIVE", text: "ignoring stale photo \(requestId)")
             return
         }
-        let uploadTarget = photoDestination == .thisPhone ? "phone upload" : "local upload"
+        let uploadTarget = photoDestination == .thisPhone ? "phone receiver" : "cloud webhook"
         let source = photoDestination == .thisPhone ? "Phone receiver" : "Cloud server"
         switch response {
-        case let .success(requestId, uploadUrl, timestamp):
+        case let .success(requestId, uploadUrl, _, _, _, _, _, _, timestamp):
             photoPreviewDetails = (photoPreviewDetails ?? .waiting(source: source)).acknowledged(
                 requestId: requestId,
                 source: source,
                 timestamp: timestamp,
                 uploadUrl: uploadUrl
             )
-            cameraStatus = "Camera: photo acknowledged; waiting for \(uploadTarget)"
+            cameraStatus = "Camera: photo delivered to \(uploadTarget)"
         case let .error(requestId, errorCode, errorMessage, timestamp):
             photoPreviewDetails = .failed(
                 requestId: requestId,
@@ -1873,7 +1873,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 error: errorCode ?? errorMessage,
                 timestamp: timestamp
             )
-            cameraStatus = "Camera: glasses reported \(errorCode ?? errorMessage); waiting for \(uploadTarget)"
+            cameraStatus = "Camera: photo failed (\(errorCode ?? errorMessage))"
         }
         append(tag: "LIVE", text: "photo response \(requestId)")
     }

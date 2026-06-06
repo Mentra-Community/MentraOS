@@ -192,7 +192,7 @@ import {useMentraBluetooth} from '@mentra/bluetooth-sdk/react';
 const mentra = useMentraBluetooth();
 ```
 
-Status snapshots are safe to read at any time. Treat command success as "command accepted"; keep UI state derived from status callbacks or hook state.
+Status snapshots are safe to read at any time. For continuous subsystems, keep UI state derived from status callbacks or hook state. Request/response commands document their exact promise resolution and error criteria below.
 
 Public status is grouped the same way across platforms:
 
@@ -479,7 +479,7 @@ val photo = sdk.requestPhoto(
         iso = null,
     )
 )
-println("Photo accepted: ${photo.response.requestId}")
+println("Photo delivered: ${photo.response.requestId}")
 ```
 
 iOS:
@@ -498,7 +498,7 @@ let photo = try await sdk.requestPhoto(
         iso: nil
     )
 )
-print("Photo accepted: \(photo.requestId)")
+print("Photo delivered: \(photo.requestId)")
 ```
 
 React Native:
@@ -515,10 +515,10 @@ const photo = await BluetoothSdk.requestPhoto({
   exposureTimeNs: null,
   iso: null,
 });
-console.log('Photo accepted', photo.uploadUrl);
+console.log('Photo delivered', photo.photoUrl ?? photo.uploadUrl);
 ```
 
-Omit `exposureTimeNs` or pass `null` for auto exposure. Pass a positive nanosecond value for one-shot manual exposure, for example `8_333_333` for about 1/120s. Pass `iso` with manual exposure when you want a specific sensor gain; `iso` is ignored when auto exposure is active. The camera light is always enabled for photo capture and streaming as a privacy indicator.
+`requestPhoto(...)` resolves after capture and webhook delivery finish. It rejects when the glasses reject the request, phone-side Bluetooth fallback upload fails, the SDK cannot send the command, or the terminal photo response times out. Omit `exposureTimeNs` or pass `null` for auto exposure. Pass a positive nanosecond value for one-shot manual exposure, for example `8_333_333` for about 1/120s. Pass `iso` with manual exposure when you want a specific sensor gain; `iso` is ignored when auto exposure is active. The camera light is always enabled for photo capture and streaming as a privacy indicator.
 
 Your webhook should accept multipart form data with a `photo` file and `requestId`. If you include `authToken`, the uploader adds `Authorization: Bearer <token>` on the webhook request.
 
@@ -707,7 +707,7 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `wifi_status_change` | `WifiStatusChangeEvent` | Glasses Wi-Fi connection state changes. |
 | `hotspot_status_change` | `HotspotStatusChangeEvent` | Glasses hotspot state changes. |
 | `hotspot_error` | `HotspotErrorEvent` | Hotspot operation fails. |
-| `photo_response` | `PhotoResponseEvent` | Raw photo request success or failure event. `requestPhoto(...)` resolves with a successful response and rejects on ASG failure. |
+| `photo_response` | `PhotoResponseEvent` | Terminal photo request success or failure event. `requestPhoto(...)` resolves after capture and webhook delivery finish, and rejects on glasses, phone-relay, send, or timeout failure. |
 | `video_recording_status` | `VideoRecordingStatusEvent` | Raw video recording start/stop success or failure event. `startVideoRecording(...)` and `stopVideoRecording(...)` resolve with successful status and reject on ASG failure. |
 | `gallery_status` | `GalleryStatusEvent` | Gallery content/camera-busy status changes. |
 | `settings_ack` | `SettingsAckEvent` | Raw gallery/button/FOV setting acknowledgements from the glasses. Gallery and button settings return this shape; `setCameraFov(...)` returns `CameraFovResult` after the raw ack reports camera readiness. |
@@ -724,7 +724,7 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `stream_status` | `StreamStatusEvent` | Camera stream lifecycle, reconnect, or error state changes. |
 | `keep_alive_ack` | `KeepAliveAckEvent` | Glasses acknowledge a stream keep-alive request. |
 
-For request/response commands, prefer the value returned by the method. Use listeners for ongoing hardware streams and status updates. React Native event payload fields use camelCase: `touch_event` includes `deviceModel` and `gestureName`, successful `photo_response` events include `uploadUrl`, hotspot errors include `errorMessage`, and `gallery_status` includes `hasContent` and `cameraBusy`. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
+For request/response commands, prefer the value returned by the method. Use listeners for ongoing hardware streams and status updates. React Native event payload fields use camelCase: `touch_event` includes `deviceModel` and `gestureName`, successful `photo_response` events include `uploadUrl` and may include webhook-returned `photoUrl`, `statusUrl`, or `bytes`, hotspot errors include `errorMessage`, and `gallery_status` includes `hasContent` and `cameraBusy`. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
 
 Android and iOS expose typed callbacks/delegate methods instead of the React Native string event API. Android uses `MentraBluetoothSdkListener` methods such as `onStateChanged`, `onGlassesChanged`, `onSdkStateChanged`, `onScanChanged`, `onDeviceDiscovered`, `onButtonPress`, `onVoiceActivityDetectionStatus`, `onSpeakingStatus`, `onPhotoResponse`, `onMicPcm`, and `onStreamStatus`. iOS uses `MentraBluetoothSDKDelegate` methods such as `mentraBluetoothSDK(_:didUpdate:)`, `mentraBluetoothSDK(_:didUpdateGlasses:)`, `mentraBluetoothSDK(_:didUpdateSdkState:)`, `mentraBluetoothSDK(_:didUpdateScan:)`, `mentraBluetoothSDK(_:didDiscover:)`, `mentraBluetoothSDK(_:didReceive:)`, `mentraBluetoothSDK(_:didReceiveMicPcm:)`, and `mentraBluetoothSDK(_:didReceiveMicLc3:)`. Microphone audio callbacks use `MicPcmEvent` and `MicLc3Event` objects with the same metadata as React Native.
 

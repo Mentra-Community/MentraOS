@@ -38,7 +38,7 @@ private func cameraSdkCall(
     \(isoLine)
         )
     )
-    print("Photo accepted: \\(photo.requestId)")
+    print("Photo delivered: \\(photo.requestId)")
     """
 }
 

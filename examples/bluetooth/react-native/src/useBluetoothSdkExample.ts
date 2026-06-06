@@ -1259,16 +1259,14 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         timestamp: payload.timestamp,
       });
       resetBarcodeScan();
-      setCameraStatus(
-        `Camera: glasses reported ${payload.errorCode ?? payload.errorMessage}; waiting for upload`,
-      );
+      setCameraStatus(`Camera: photo failed (${payload.errorCode ?? payload.errorMessage})`);
       addEvent('LIVE', `photo response ${payload.errorCode ?? payload.errorMessage}`);
       return;
     }
     setCameraStatus(
       photoCloudServerEnabledRef.current
-        ? 'Camera: photo acknowledged; waiting for cloud upload'
-        : 'Camera: photo acknowledged; waiting for phone upload',
+        ? 'Camera: photo delivered to cloud webhook'
+        : 'Camera: photo delivered to phone receiver',
     );
     setPhotoPreviewDetails((current) => ({
       ...current,
@@ -2945,7 +2943,7 @@ function photoStatusLabel(event: PhotoStatusEvent, galleryModeButtonPhoto = fals
     }
     switch (event.status) {
       case 'accepted':
-        return 'photo request accepted';
+        return 'photo request started';
       case 'queued':
         return 'photo queued on glasses';
       case 'configuring':
