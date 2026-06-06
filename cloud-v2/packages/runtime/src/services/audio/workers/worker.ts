@@ -151,11 +151,12 @@ const userCodecs = new Map<string, AudioCodec>()
 let running = true
 
 /**
- * Which provider to use. Defaults to "mock" so e2e tests don't need a
- * Soniox API key. Real Soniox lands behind `"soniox"` when the next
- * iteration's wrapper is built and `SONIOX_API_KEY` is present.
+ * Which transcription provider to use. Defaults to the real Soniox provider, so
+ * production is real unless told otherwise. Tests that exercise the routing /
+ * scaling / failover layer (not the transcription itself) set
+ * `AUDIO_PROVIDER=mock` for a deterministic, offline transcript source.
  */
-const PROVIDER_KIND = process.env.AUDIO_PROVIDER ?? "mock"
+const PROVIDER_KIND = process.env.AUDIO_PROVIDER ?? "soniox"
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://127.0.0.1:6379"
 const WORKER_ID = process.env.WORKER_ID ?? "worker"

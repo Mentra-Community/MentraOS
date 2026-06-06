@@ -58,6 +58,9 @@ const TEST_OEM_PORT = 13100;
   process.env.REDIS_URL ??= "redis://127.0.0.1:6379/1";
   process.env.AUDIO_UDP_ADVERTISED_HOST = "127.0.0.1";
   process.env.AUDIO_UDP_ADVERTISED_PORT = String(AUDIO_UDP_PORT);
+  // Deterministic offline transcript source: this suite tests the audio routing
+  // pipeline, not transcription (which the real Soniox e2e tests cover).
+  process.env.AUDIO_PROVIDER ??= "mock";
   // Audio echoes UDP_PACKET_RECEIVED over the WS so the test can assert receipt.
   process.env.AUDIO_DEBUG_ECHO = "true";
   // Quiet down the per-test log spam.

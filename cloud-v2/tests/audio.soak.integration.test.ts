@@ -52,6 +52,10 @@ const N_CLIENTS = Number.parseInt(process.env.AUDIO_SOAK_N ?? "30", 10);
     "mongodb://127.0.0.1:27017/mentra-cloud-v2-soak-test";
   // Distinct Redis DB so this test doesn't share keys with other suites.
   process.env.REDIS_URL ??= "redis://127.0.0.1:6379/3";
+  // Deterministic offline transcript source: this suite tests scaling/routing,
+  // not transcription. The product transcription path is covered by the real
+  // Soniox e2e tests.
+  process.env.AUDIO_PROVIDER ??= "mock";
   process.env.LOG_LEVEL ??= "warn";
 }
 

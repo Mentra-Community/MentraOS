@@ -56,6 +56,9 @@ const TEST_OEM_ID = "test-oem";
   // Different Redis DB from other test files so parallel runs don't conflict
   // on shared `audio:*` / `{user:*}:owner` keys. See audio.integration.test.ts.
   process.env.REDIS_URL ??= "redis://127.0.0.1:6379/2";
+  // Deterministic offline transcript source: this suite tests cross-pod routing
+  // and failover, not transcription. Propagated to spawned pods via process.env.
+  process.env.AUDIO_PROVIDER ??= "mock";
   process.env.LOG_LEVEL ??= "warn";
 }
 
