@@ -31,14 +31,25 @@ interface LiveInputResult {
   errors?: Array<{ code: number; message: string }>;
 }
 
+/** First defined value among the given env var names. */
+function env(...names: string[]): string | undefined {
+  for (const name of names) {
+    if (process.env[name]) return process.env[name];
+  }
+  return undefined;
+}
+
 export function createCloudflareStreamProvider(): StreamProvider {
-  const accountId = process.env.CF_STREAM_ACCOUNT_ID;
-  const apiToken = process.env.CF_STREAM_API_TOKEN;
-  const customerSubdomain = process.env.CF_STREAM_CUSTOMER_SUBDOMAIN;
+  // Accept the CF_STREAM_* names plus the v1 CLOUDFLARE_* names, so existing
+  // Cloudflare credentials work without re-keying. The token needs Stream:Edit.
+  const accountId = env("CF_STREAM_ACCOUNT_ID", "CLOUDFLARE_ACCOUNT_ID");
+  const apiToken = env("CF_STREAM_API_TOKEN", "CLOUDFLARE_API_TOKEN");
+  const customerSubdomain = env("CF_STREAM_CUSTOMER_SUBDOMAIN");
 
   if (!accountId || !apiToken) {
     throw new Error(
-      "STREAM_PROVIDER=cloudflare requires CF_STREAM_ACCOUNT_ID and CF_STREAM_API_TOKEN.",
+      "STREAM_PROVIDER=cloudflare requires CF_STREAM_ACCOUNT_ID/CLOUDFLARE_ACCOUNT_ID " +
+        "and CF_STREAM_API_TOKEN/CLOUDFLARE_API_TOKEN.",
     );
   }
 
