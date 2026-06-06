@@ -21,6 +21,22 @@ public class HealthMonitor {
   private boolean paused = false;
   private long currentIntervalMs = RecoveryConstants.HEARTBEAT_INTERVAL_MS;
 
+  private final Runnable pauseWatchdog =
+      new Runnable() {
+        @Override
+        public void run() {
+          if (!paused) {
+            return;
+          }
+          Log.w(
+              RecoveryConstants.TAG,
+              "Install pause exceeded "
+                  + RecoveryConstants.INSTALL_PAUSE_MAX_MS
+                  + "ms without completion; resuming heartbeat monitoring");
+          setPaused(false);
+        }
+      };
+
   private final Runnable heartbeatTick =
       new Runnable() {
         @Override
@@ -76,12 +92,14 @@ public class HealthMonitor {
   }
 
   public void setPaused(boolean paused) {
+    handler.removeCallbacks(pauseWatchdog);
     this.paused = paused;
     if (!paused) {
       resetHeartbeatCadence();
       scheduleNextTick();
     } else {
       handler.removeCallbacks(heartbeatTick);
+      handler.postDelayed(pauseWatchdog, RecoveryConstants.INSTALL_PAUSE_MAX_MS);
     }
     Log.i(RecoveryConstants.TAG, "HealthMonitor paused=" + paused);
   }
