@@ -205,6 +205,12 @@ public class AsgClientServiceManager {
             Log.d(TAG, "⏭️ Network manager already null - skipping");
         }
 
+        if (besOtaManager != null) {
+            Log.d(TAG, "🧹 Clearing BES OTA manager registry");
+            besOtaRegistry.clear();
+            besOtaManager = null;
+        }
+
         // Shutdown bluetooth manager
         if (bluetoothManager != null) {
             Log.d(TAG, "📶 Shutting down bluetooth manager");

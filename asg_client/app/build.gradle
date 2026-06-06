@@ -384,13 +384,24 @@ tasks.register('checkNoFullyQualifiedMentraTypes') {
         def violations = []
         def fqcnTypePattern = ~/com\.mentra\.asg_client\.(\w+\.)+[A-Z]\w*/
         fileTree(dir: 'src/main/java', include: '**/*.java').each { File f ->
+            boolean inBlockComment = false
             f.readLines().eachWithIndex { line, int idx ->
                 def trimmed = line.trim()
+                if (inBlockComment) {
+                    if (trimmed.contains('*/')) {
+                        inBlockComment = false
+                    }
+                    return
+                }
                 if (trimmed.startsWith('import ')
                         || trimmed.startsWith('package ')
                         || trimmed.startsWith('*')
                         || trimmed.startsWith('/**')
+                        || trimmed.startsWith('/*')
                         || trimmed.startsWith('//')) {
+                    if (trimmed.startsWith('/*') && !trimmed.contains('*/')) {
+                        inBlockComment = true
+                    }
                     return
                 }
                 // Intent action strings and broadcast actions are not Java type references.
@@ -412,7 +423,9 @@ tasks.register('checkNoFullyQualifiedMentraTypes') {
 
 // Disable Sentry tasks when auth token is not present
 afterEvaluate {
-    tasks.findByName('assembleDebug')?.dependsOn('checkNoFullyQualifiedMentraTypes')
+    tasks.matching { it.name == 'preBuild' }.configureEach {
+        dependsOn('checkNoFullyQualifiedMentraTypes')
+    }
     if (!sentryAuthToken) {
         tasks.matching { it.name.contains("sentry") || it.name.contains("Sentry") }.configureEach {
             enabled = false

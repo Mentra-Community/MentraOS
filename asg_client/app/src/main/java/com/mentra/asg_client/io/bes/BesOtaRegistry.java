@@ -16,6 +16,10 @@ public class BesOtaRegistry {
         this.instance = manager;
     }
 
+    public void clear() {
+        this.instance = null;
+    }
+
     public BesOtaManager getInstance() {
         return instance;
     }

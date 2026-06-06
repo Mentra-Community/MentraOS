@@ -131,6 +131,7 @@ public class WhipCameraCapturer implements VideoCapturer {
             if (cameraId == null) {
                 Log.e(TAG, "No back-facing camera found");
                 mObserver.onCapturerStarted(false);
+                cleanupAfterStartFailure();
                 return;
             }
 
@@ -212,6 +213,7 @@ public class WhipCameraCapturer implements VideoCapturer {
                             camera.close();
                             mCameraDevice = null;
                             mObserver.onCapturerStarted(false);
+                            cleanupAfterStartFailure();
                         }
 
                         @Override
@@ -220,6 +222,7 @@ public class WhipCameraCapturer implements VideoCapturer {
                             camera.close();
                             mCameraDevice = null;
                             mObserver.onCapturerStarted(false);
+                            cleanupAfterStartFailure();
                         }
                     },
                     mCameraHandler);
@@ -236,6 +239,7 @@ public class WhipCameraCapturer implements VideoCapturer {
             initialFrameRotation = 0;
             Log.e(TAG, "Failed to configure or open camera", e);
             mObserver.onCapturerStarted(false);
+            cleanupAfterStartFailure();
             return;
         }
 
@@ -510,6 +514,36 @@ public class WhipCameraCapturer implements VideoCapturer {
     @Override
     public boolean isScreencast() {
         return false;
+    }
+
+    private void cleanupAfterStartFailure() {
+        if (mSurfaceTextureHelper != null) {
+            mSurfaceTextureHelper.stopListening();
+        }
+
+        if (mCaptureSession != null) {
+            mCaptureSession.close();
+            mCaptureSession = null;
+        }
+
+        if (mCameraDevice != null) {
+            mCameraDevice.close();
+            mCameraDevice = null;
+        }
+
+        if (mCameraThread != null) {
+            HandlerThread thread = mCameraThread;
+            mCameraThread = null;
+            mCameraHandler = null;
+            thread.quitSafely();
+            if (Thread.currentThread() != thread) {
+                try {
+                    thread.join(2000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
     }
 
     private static int clamp(int value, int min, int max) {

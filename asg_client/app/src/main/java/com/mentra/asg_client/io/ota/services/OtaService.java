@@ -92,10 +92,8 @@ public class OtaService extends Service {
             EventBus.getDefault().unregister(this);
         }
 
-        // Clean up OTA helper
-        if (otaHelper != null) {
-            otaHelper.cleanup();
-        }
+        // OtaHelper is an app-scoped Hilt singleton shared by command handlers and debug
+        // receivers. Do not call cleanup() here; it tears down state that later OTA flows reuse.
     }
 
     @Override
