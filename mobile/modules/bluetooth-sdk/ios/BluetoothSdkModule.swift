@@ -19,6 +19,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "button_press",
             "touch_event",
             "accel_event",
+            "CompassHeadingEvent",
+            "CompassCalibrationEvent",
             "head_up",
             "voice_activity_detection_status",
             "speaking_status",

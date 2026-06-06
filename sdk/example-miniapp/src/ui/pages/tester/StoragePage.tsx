@@ -55,6 +55,7 @@ export default function StoragePage() {
           <TableRow
             emoji="🗄️"
             label="last result"
+            ordered
             data={result ? {method: result.method, args: result.args, value: result.value} : null}
           />
           <ErrorRow event={lastError} />

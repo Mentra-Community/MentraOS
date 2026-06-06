@@ -517,11 +517,16 @@ class AppRegistry {
     storage.remove(`${packageName}_dev_url`)
     storage.remove(`${packageName}_dev_port`)
     storage.remove(`${packageName}_dev_last_reachable`)
-    // Drop the single dev slot's home-tile metadata + dev URL/port keys (all
-    // stored under DEV_APP_PACKAGE_NAME, not `packageName`). Dev miniapps load
-    // over HTTP and aren't on disk, so without this the projected tile would
-    // reappear on the next getInstalledMiniapps() refresh.
-    unregisterDevApp()
+    // Drop the single dev slot's home-tile metadata + dev URL/port keys (all stored under
+    // DEV_APP_PACKAGE_NAME, not `packageName`). Dev miniapps load over HTTP and aren't on disk,
+    // so without this the projected tile would reappear on the next getInstalledMiniapps() refresh.
+    //
+    // Only do this when we're actually touching the dev slot: either the dev package itself, or the
+    // real manifest package currently occupying the slot. Otherwise a release install/uninstall of
+    // an UNRELATED package would wipe the active dev tile.
+    if (packageName === DEV_APP_PACKAGE_NAME || packageName === getDevAppSourcePackage()) {
+      unregisterDevApp()
+    }
   }
 
   /**
@@ -864,6 +869,12 @@ export interface DevAppRecord {
   devPort?: number
   permissions?: Array<string | {type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+  /**
+   * The dev miniapp's real manifest package name. `packageName` is overwritten to
+   * {@link DEV_APP_PACKAGE_NAME} so the launch chain routes consistently, so this field
+   * preserves the original so install/uninstall of OTHER packages don't wipe the dev slot.
+   */
+  sourcePackageName?: string
 }
 
 const DEV_APPS_INDEX_KEY = "dev_apps_index"
@@ -892,6 +903,10 @@ export const DEV_APP_PACKAGE_NAME = "com.dev"
 export function registerDevApp(record: DevAppRecord): void {
   const devRecord: DevAppRecord = {
     ...record,
+    // Preserve the real manifest package before overwriting packageName with the
+    // single dev-slot name, so clearDevArtifacts can tell whether an install/uninstall
+    // actually targets the dev slot.
+    sourcePackageName: record.sourcePackageName ?? record.packageName,
     packageName: DEV_APP_PACKAGE_NAME,
     // name: DEV_APP_NAME,
     iconUrl: record.iconUrl,
@@ -933,6 +948,21 @@ function getDevAppIndex(): string[] {
     return Array.isArray(parsed) ? (parsed as string[]) : []
   } catch {
     return []
+  }
+}
+
+/**
+ * The real manifest package name currently occupying the dev slot, or null if no dev app is
+ * registered. Used to decide whether clearing a package's artifacts should also drop the dev slot.
+ */
+export function getDevAppSourcePackage(): string | null {
+  const res = storage.load<string>(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
+  if (!res.is_ok()) return null
+  try {
+    const rec = JSON.parse(res.value) as DevAppRecord
+    return rec.sourcePackageName ?? null
+  } catch {
+    return null
   }
 }
 

@@ -894,8 +894,13 @@ struct ViewState {
         
         // re-apply display height/depth after reconnection
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            // Re-read the current sgc rather than capturing the connect-time instance: the user may
+            // have disconnected or switched glasses during the 2s window, and we must not push to a
+            // stale/torn-down connection.
+            guard let sgc = self?.sgc else { return }
             let h = DeviceStore.shared.get("bluetooth", "dashboard_height") as? Int ?? 4
-            let rawDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 1
+            // Fall back to the canonical default (2), matching DeviceStore — not 1.
+            let rawDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 2
             let d = min(max(rawDepth, 1), 4)
             sgc.setDashboardPosition(h, d)
         }

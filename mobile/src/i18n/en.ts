@@ -594,6 +594,7 @@ const en = {
     miniappScanInvalidQrTitle: "Invalid QR",
     miniappScanInvalidQrBody: "Expected a miniapp:// or http:// URL",
     miniappScanInvalidQrNoUrl: "No URL found in QR code",
+    miniappScanLoading: "Loading mini app…",
     miniappUrlTitle: "Load Mini App from URL",
     miniappUrlGroupTitle: "Dev Server URL",
     miniappUrlLabel: "URL",

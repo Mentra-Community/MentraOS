@@ -1,7 +1,7 @@
 import {CameraView, useCameraPermissions} from "expo-camera"
 import * as Haptics from "expo-haptics"
 import {useEffect, useState} from "react"
-import {Linking, View} from "react-native"
+import {ActivityIndicator, Linking, View} from "react-native"
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -34,6 +34,11 @@ export default function MiniappDeveloperScannerScreen() {
   const handleBarcodeScanned = async ({data}: {data: string}) => {
     if (scanned) return
     setScanned(true)
+    // Acknowledge the scan the instant it lands — a buzz the user feels before
+    // any of the async manifest fetch / permission flow below runs. The camera
+    // freezes (scanner is disabled while `scanned`) and the loading overlay
+    // covers it, so without this the scan would feel like nothing happened.
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {})
 
     if (data.startsWith("miniapp://release")) {
       try {
@@ -48,7 +53,6 @@ export default function MiniappDeveloperScannerScreen() {
           ])
           return
         }
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {})
         showAlert("Installed", `${res.value.name} v${res.value.version} is on your home screen.`, [
           {text: "OK", onPress: () => goBack()},
         ])
@@ -124,8 +128,6 @@ export default function MiniappDeveloperScannerScreen() {
           hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
         })
       }
-
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {})
 
       if (launchResult.decision === "offline") {
         clearHistoryAndGoHome()
@@ -236,13 +238,31 @@ export default function MiniappDeveloperScannerScreen() {
           onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
         />
 
-        <View className="absolute inset-0 items-center justify-center" pointerEvents="none">
-          <View className="w-[240px] h-[240px] rounded-xl border-2 border-indigo-500" />
-        </View>
+        {!scanned && (
+          <View className="absolute inset-0 items-center justify-center" pointerEvents="none">
+            <View className="w-[240px] h-[240px] rounded-xl border-2 border-indigo-500" />
+          </View>
+        )}
 
-        <View className="absolute left-0 right-0 bottom-6 items-center" pointerEvents="none">
-          <Text className="text-[13px] px-3 py-1.5 rounded-full overflow-hidden" tx="devSettings:miniappScanHint" />
-        </View>
+        {!scanned && (
+          <View className="absolute left-0 right-0 bottom-6 items-center" pointerEvents="none">
+            <Text className="text-[13px] px-3 py-1.5 rounded-full overflow-hidden" tx="devSettings:miniappScanHint" />
+          </View>
+        )}
+
+        {/* Post-scan acknowledgement: dim the (now-frozen) camera and show a
+            centered loading card while the manifest fetch / permission flow
+            runs. This is the visual half of the scan feedback — the haptic in
+            handleBarcodeScanned is the tactile half. No popup; it clears on its
+            own when we navigate away, or when an error path resets `scanned`. */}
+        {scanned && (
+          <View className="absolute inset-0 items-center justify-center bg-black/50">
+            <View className="flex-row items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-5 py-4">
+              <ActivityIndicator color={theme.colors.tint} />
+              <Text className="text-[15px] font-medium" tx="devSettings:miniappScanLoading" />
+            </View>
+          </View>
+        )}
       </View>
     </Screen>
   )

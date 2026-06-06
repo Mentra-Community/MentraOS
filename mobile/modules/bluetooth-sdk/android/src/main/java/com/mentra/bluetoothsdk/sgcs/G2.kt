@@ -29,8 +29,11 @@ import java.util.UUID
 import java.util.regex.Pattern
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 // ---------- G2 Protocol Constants ----------
 
@@ -1323,6 +1326,14 @@ class G2 : SGCManager() {
     private var lastMenuSelectTimestamp: Long? = null
     private var lastGestureCtrlTimestamp: Long? = null
 
+    /**
+     * Serializes all display mutations (text/bitmap/clear/rebuild). Each public display entry point
+     * launches on [displayScope] and runs its body under [displayMutex] so page shutdown/create and
+     * fragment sends can never interleave with another update on the glasses.
+     */
+    private val displayScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val displayMutex = Mutex()
+
     /** A tracked image container on the current page. Keyed by its rect for reuse. */
     private data class ImgContainer(
             val id: Int,
@@ -1689,6 +1700,15 @@ class G2 : SGCManager() {
 
             sendMenuApps()
             sendStoredCalendarEvents()
+
+            // Re-apply the IMU preference: the store only pushes imu_enabled to the glasses when
+            // the value changes, so after a reconnect an already-on IMU would otherwise stay off
+            // (accel_event stops) until the user toggles the setting again.
+            val imuEnabled = DeviceStore.get("bluetooth", "imu_enabled") as? Boolean ?: false
+            if (imuEnabled) {
+                Bridge.log("G2: re-applying imu_enabled=true after connect")
+                setImuEnabled(true)
+            }
         }
     }
 
@@ -1863,18 +1883,20 @@ class G2 : SGCManager() {
     // ---------- SGCManager: Display Control ----------
 
     override fun sendTextWall(text: String) {
-        CoroutineScope(Dispatchers.Main).launch {
-            sendText(
-                    text,
-                    x = defaultTextX,
-                    y = defaultTextY,
-                    width = defaultTextWidth,
-                    height = defaultTextHeight,
-                    borderWidth = defaultTextBorderWidth,
-                    borderColor = defaultTextBorderColor,
-                    borderRadius = defaultTextBorderRadius,
-                    paddingLength = defaultTextPaddingLength
-            )
+        displayScope.launch {
+            displayMutex.withLock {
+                sendText(
+                        text,
+                        x = defaultTextX,
+                        y = defaultTextY,
+                        width = defaultTextWidth,
+                        height = defaultTextHeight,
+                        borderWidth = defaultTextBorderWidth,
+                        borderColor = defaultTextBorderColor,
+                        borderRadius = defaultTextBorderRadius,
+                        paddingLength = defaultTextPaddingLength
+                )
+            }
         }
     }
 
@@ -1950,11 +1972,14 @@ class G2 : SGCManager() {
         }
 
         // update the text container:
+        // contentLength must describe the bytes we actually send (container.content, which is the
+        // space-substituted placeholder for empty input), not the original text — otherwise an empty
+        // string reports length 0 while a 1-byte payload is sent, leaving the glasses inconsistent.
         val msg =
                 EvenHubProto.updateTextMessage(
                         containerID = container.id,
                         contentOffset = 0,
-                        contentLength = text.toByteArray(Charsets.UTF_8).size,
+                        contentLength = container.content.toByteArray(Charsets.UTF_8).size,
                         content = container.content
                 )
         queueEvenHubCommand(msg)
@@ -1970,25 +1995,25 @@ class G2 : SGCManager() {
 
     override fun clearDisplay() {
         Bridge.log("G2: clearDisplay()")
-        // Don't shutdown the EvenHub page — that kills audio streaming too.
-
-        if (!pageCreated) {
-            Bridge.log("G2: clearDisplay() - page not created")
-            createPageWithContainers()
+        displayScope.launch {
+            displayMutex.withLock {
+                // reset the content of all text containers to empty:
+                for (i in textContainers.indices) {
+                    textContainers[i].content = " "
+                }
+                for (i in imageContainers.indices) {
+                    imageContainers[i].bmpData = ByteArray(0)
+                }
+                // shutdown the page and then recreate the containers without the content.
+                // Reset pageCreated so the recreate below issues a fresh createPageMessage rather
+                // than a rebuildPageMessage that no longer matches the torn-down page.
+                val msg = EvenHubProto.shutdownMessage()
+                sendEvenHubCommand(msg)
+                pageCreated = false
+                createPageWithContainers()
+                restartMicIfAlreadyEnabled()
+            }
         }
-
-        // reset the content of all text containers to empty:
-        for (i in textContainers.indices) {
-            textContainers[i].content = " "
-        }
-        for (i in imageContainers.indices) {
-            imageContainers[i].bmpData = ByteArray(0)
-        }
-        // shutdown the page and then recreate the containers without the content:
-        val msg = EvenHubProto.shutdownMessage()
-        sendEvenHubCommand(msg)
-        createPageWithContainers()
-        restartMicIfAlreadyEnabled()
     }
 
     /**
@@ -2051,14 +2076,17 @@ class G2 : SGCManager() {
 
         Bridge.log("G2: displayBitmap() - sending image data to container ${container.id}, ${container.bmpData.size} bytes")
 
-        CoroutineScope(Dispatchers.Main).launch {
-            // If the page was just created/rebuilt, give it a moment to settle before the BMP send
-            // (matches iOS's await). Reuse-on-existing-page path sends immediately.
-            if (needsRebuild) {
-                rebuildPage()
-                delay(if (existingIndex >= 0) 3000 else 1000)
+        displayScope.launch {
+            displayMutex.withLock {
+                if (needsRebuild) {
+                    // rebuildPage() already re-sends every image container (including this one), so
+                    // sending again here would upload the BMP twice and race on the glasses.
+                    rebuildPage()
+                } else {
+                    // Reuse on a live page: just push the new image data to the existing container.
+                    sendImageData(container.id, container.name, container.bmpData)
+                }
             }
-            sendImageData(container.id, container.name, container.bmpData)
         }
 
         return true
@@ -2125,37 +2153,47 @@ class G2 : SGCManager() {
         return container
     }
 
-    /** Shutdown and rebuild everything, re-sends all data to the glasses. */
-    private fun rebuildPage() {
+    /**
+     * Shutdown and rebuild everything, re-sending all data to the glasses.
+     *
+     * Suspends until the rebuild (shutdown → create → image/text re-send) has been issued, so
+     * callers no longer race a detached coroutine. Always invoke from within [displayMutex].
+     */
+    private suspend fun rebuildPage() {
         val msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
         rebuildState()
     }
 
-    /** Re-creates the containers and sends all images and text again to the glasses. */
-    private fun rebuildState() {
+    /**
+     * Re-creates the containers and sends all images and text again to the glasses.
+     *
+     * Runs inline (suspending) rather than launching a detached coroutine, so the page is fully
+     * rebuilt before the caller continues. Always invoke from within [displayMutex].
+     */
+    private suspend fun rebuildState() {
         Bridge.log("G2: rebuildState()")
-        CoroutineScope(Dispatchers.Main).launch {
-            // recreate the containers:
-            createPageWithContainers()
-            // go through each image container and send the data:
-            for (container in imageContainers) {
-                sendImageData(container.id, container.name, container.bmpData)
-                delay(300) // 300ms between containers
-            }
+        // recreate the containers:
+        createPageWithContainers()
+        // go through each image container and send the data:
+        for (container in imageContainers) {
+            sendImageData(container.id, container.name, container.bmpData)
+            delay(300) // 300ms between containers
+        }
 
-            // go through each text container and send the data:
-            // for (container in textContainers) {
-            //     val msg =
-            //             EvenHubProto.updateTextMessage(
-            //                     containerID = container.id,
-            //                     contentOffset = 0,
-            //                     contentLength = container.content.toByteArray(Charsets.UTF_8).size,
-            //                     content = container.content
-            //             )
-            //     sendEvenHubCommand(msg)
-            // }
+        // go through each text container and re-send its content, otherwise text stays blank after a
+        // rebuild (e.g. on native-dashboard close) while images come back.
+        for (container in textContainers) {
+            val textMsg =
+                    EvenHubProto.updateTextMessage(
+                            containerID = container.id,
+                            contentOffset = 0,
+                            contentLength = container.content.toByteArray(Charsets.UTF_8).size,
+                            content = container.content
+                    )
+            sendEvenHubCommand(textMsg)
+            delay(100)
         }
     }
 
@@ -2873,26 +2911,24 @@ class G2 : SGCManager() {
     fun setImuEnabled(enabled: Boolean, reportFrq: Int) {
         Bridge.log("G2: setImuEnabled($enabled, frq=$reportFrq)")
 
-        // IMU requires an active EvenHub page (same prerequisite as the mic).
-        if (enabled && !pageCreated) {
-            rebuildState() // re-creates the page if needed
-        }
+        displayScope.launch {
+            displayMutex.withLock {
+                // IMU requires an active EvenHub page (same prerequisite as the mic). Await the
+                // rebuild so the control packet is sent only after the page actually exists — page
+                // creation is async with variable delays, so a fixed wait could send too early and
+                // reporting would never start.
+                if (enabled && !pageCreated) {
+                    rebuildState()
+                }
 
-        val send = Runnable {
-            val msg =
-                    EvenHubProto.imuControlMessage(
-                            enable = enabled,
-                            reportFrq = reportFrq,
-                            magicRandom = sendManager.nextMagicRandom()
-                    )
-            sendEvenHubCommand(msg)
-        }
-
-        // If we just asked for a page, give it a moment to be created first.
-        if (enabled && !pageCreated) {
-            mainHandler.postDelayed(send, 500)
-        } else {
-            send.run()
+                val msg =
+                        EvenHubProto.imuControlMessage(
+                                enable = enabled,
+                                reportFrq = reportFrq,
+                                magicRandom = sendManager.nextMagicRandom()
+                        )
+                sendEvenHubCommand(msg)
+            }
         }
     }
 
@@ -2982,7 +3018,12 @@ class G2 : SGCManager() {
     }
 
     override fun sendShutdown() {
-        clearDisplay()
+        // Send the EvenHub shutdown synchronously before tearing down BLE. clearDisplay() is now
+        // fire-and-forget (it serializes on displayScope), so calling it here would let disconnect()
+        // close the GATT before the deferred shutdown packet was ever written.
+        val msg = EvenHubProto.shutdownMessage()
+        sendEvenHubCommand(msg)
+        pageCreated = false
         disconnect()
     }
 
@@ -3623,15 +3664,19 @@ class G2 : SGCManager() {
                 Bridge.log("G2: Menu selection ignored — placeholder or unknown appId=$appId")
             }
         } else {
-            // response codes:
-            val timestamp = System.currentTimeMillis()
-            val lastResponse = lastEvenHubResponseTimestamp
-            if (lastResponse != null && timestamp - lastResponse < 100) {
-                return
-            }
-            lastEvenHubResponseTimestamp = timestamp
+            // response codes.
+            //
+            // Page-state-critical detection (a glasses-initiated shutdown) MUST run before the
+            // dedup debounce below: a single burst from L+R can carry several acks plus a shutdown,
+            // and dropping the shutdown would leave pageCreated=true after the page was torn down.
 
-            // Parse error codes from responses
+            // If glasses sent a shutdown (cmd=9/10), our page is gone — reset state.
+            if (cmdValue == 9 || cmdValue == 10) {
+                Bridge.log("G2: ERROR: Glasses shutdown our EvenHub page — resetting page state")
+                pageCreated = false
+            }
+
+            // Scan response fields for a shutdown/error code regardless of the debounce window.
             // field 4 = StartupResCmd, field 6 = ImgResCmd, field 8 = RebuildResCmd, field 10 =
             // TextResCmd
             for (resField in listOf(4, 6, 8, 10)) {
@@ -3648,6 +3693,21 @@ class G2 : SGCManager() {
                         pageCreated = false
                     }
                 }
+            }
+
+            // Dedup only the non-critical logging path (img-success/error chatter), which L and R
+            // both deliver. Page-state resets above are intentionally outside this window.
+            val timestamp = System.currentTimeMillis()
+            val lastResponse = lastEvenHubResponseTimestamp
+            if (lastResponse != null && timestamp - lastResponse < 100) {
+                return
+            }
+            lastEvenHubResponseTimestamp = timestamp
+
+            for (resField in listOf(4, 6, 8, 10)) {
+                val resData = fields[resField] as? ByteArray ?: continue
+                val resReader = ProtobufReader(resData)
+                val resFields = resReader.parseFields()
                 (resFields[8] as? Int)?.let { errorCode ->
                     // ImgResCmd has ErrorCode in field 8
                     if (errorCode == 4) {
@@ -3656,12 +3716,6 @@ class G2 : SGCManager() {
                         Bridge.log("G2: EvenHub ImgRes errorCode=$errorCode")
                     }
                 }
-            }
-
-            // If glasses sent a shutdown (cmd=9/10), our page is gone — reset state
-            if (cmdValue == 9 || cmdValue == 10) {
-                Bridge.log("G2: ERROR: Glasses shutdown our EvenHub page — resetting page state")
-                pageCreated = false
             }
         }
     }
@@ -3979,10 +4033,13 @@ class G2 : SGCManager() {
                 // then we need to turn the mic back on and display the mentra main page:
                 if (dashboardShowing <= 1) {
                     dashboardShowing = 0
-                    // make sure the container exists:
-                    // DeviceManager.getInstance().sendCurrentState()
-                    // rebuild state:
-                    rebuildState()
+                    // Rebuild the page from cached containers, then reconcile against
+                    // DeviceManager's authoritative current view so the glasses match the phone
+                    // (not just the last-cached G2 containers) after returning from the dashboard.
+                    displayScope.launch {
+                        displayMutex.withLock { rebuildState() }
+                        DeviceManager.getInstance().sendCurrentState()
+                    }
                     // set the mic back on if it should be on
                     val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
                     if (micEnabled) {

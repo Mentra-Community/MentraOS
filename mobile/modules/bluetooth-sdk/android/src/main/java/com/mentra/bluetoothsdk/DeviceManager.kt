@@ -1116,7 +1116,7 @@ class DeviceManager {
                     val rawDepth =
                             (DeviceStore.store.get("bluetooth", "dashboard_depth") as? Number)
                                     ?.toInt()
-                                    ?: 1
+                                    ?: dashboardDepth // canonical default (2), not 1
                     val d = rawDepth.coerceIn(1, 4)
                     sgc?.setDashboardPosition(h, d)
                 },

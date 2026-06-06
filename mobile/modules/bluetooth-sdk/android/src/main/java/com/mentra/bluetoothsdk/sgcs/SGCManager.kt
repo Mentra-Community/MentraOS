@@ -113,8 +113,8 @@ abstract class SGCManager {
 
     /**
      * Enable/disable raw accelerometer (IMU) reporting from the glasses.
-     * Default no-op — only G2 (iOS) streams IMU data today; Android devices
-     * accept the call so the cross-platform JS API stays uniform.
+     * Default no-op for devices without IMU support. G2 (both iOS and Android) overrides this to
+     * stream IMU data; other devices accept the call so the cross-platform JS API stays uniform.
      */
     open fun setImuEnabled(enabled: Boolean) {
         Bridge.log("SGC: setImuEnabled not supported")
