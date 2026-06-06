@@ -22,6 +22,7 @@ import com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
@@ -46,6 +47,8 @@ public class OtaService extends Service {
 
         // Initialize OTA helper singleton
         otaHelper = OtaHelper.initialize(this);
+
+        stopLegacyOtaUpdaterIfPresent();
 
         // Clean up old firmware files from previous updates
         cleanupOldFirmwareFiles();
@@ -120,6 +123,15 @@ public class OtaService extends Service {
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null) {
             manager.notify(NOTIFICATION_ID, createNotification(contentText));
+        }
+    }
+
+    private void stopLegacyOtaUpdaterIfPresent() {
+        try {
+            Log.i(TAG, "Stopping legacy OTA updater to prevent conflicts with internal OTA");
+            SystemControllerFactory.get(this).stopApp("com.augmentos.otaupdater");
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to stop legacy OTA updater", e);
         }
     }
 
