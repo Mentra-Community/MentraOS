@@ -174,19 +174,23 @@ public class RecoveryWorkerManager {
             while ((bytesRead = assetStream.read(buffer)) != -1) {
                 fos.write(buffer, 0, bytesRead);
             }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to read bundled recovery worker version", e);
+            return -1;
+        }
+
+        try {
             PackageInfo archiveInfo =
                     context.getPackageManager()
                             .getPackageArchiveInfo(probeApk.getAbsolutePath(), 0);
             if (archiveInfo == null) {
+                Log.w(TAG, "Failed to parse bundled recovery worker APK");
                 return -1;
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 return (int) archiveInfo.getLongVersionCode();
             }
             return archiveInfo.versionCode;
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to read bundled recovery worker version", e);
-            return -1;
         } finally {
             if (probeApk.exists() && !probeApk.delete()) {
                 Log.w(TAG, "Failed to delete recovery worker probe APK");
