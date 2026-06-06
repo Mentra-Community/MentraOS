@@ -18,6 +18,7 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 
 import com.mentra.recovery.health.HealthMonitor;
+import com.mentra.recovery.health.InstallPauseNotifier;
 import com.mentra.recovery.reset.ResetController;
 import com.mentra.recovery.util.RecoveryConstants;
 import com.mentra.recovery.R;
@@ -42,6 +43,7 @@ public class RecoveryService extends Service {
             () -> {
               resetController.onAsgUnresponsive();
             });
+    InstallPauseNotifier.setListener(paused -> healthMonitor.setPaused(paused));
     registerReceivers();
     healthMonitor.start();
   }
@@ -65,6 +67,7 @@ public class RecoveryService extends Service {
     if (healthMonitor != null) {
       healthMonitor.stop();
     }
+    InstallPauseNotifier.clearListener();
     unregisterReceivers();
   }
 
