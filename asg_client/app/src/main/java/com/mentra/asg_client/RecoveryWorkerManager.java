@@ -1,6 +1,5 @@
 package com.mentra.asg_client;
 
-import android.app.ActivityManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -32,11 +31,8 @@ public class RecoveryWorkerManager {
     private static final String RECOVERY_APK_FILE_PATH =
             "/storage/emulated/0/asg/recovery_worker.apk";
     private static final int ASSETS_RECOVERY_VERSION = 5;
-    private static final long RECOVERY_VERIFY_DELAY_MS = 12_000L;
-    private static final int MAX_LAUNCH_FAILURES_BEFORE_REDEPLOY = 2;
     private static final String PREFS = "RecoveryWorkerManagerPrefs";
     private static final String KEY_PURGED_LEGACY = "legacy_updater_purged";
-    private static final String KEY_LAUNCH_FAILURE_COUNT = "recovery_launch_failure_count";
 
     private final Context context;
     private final Handler handler;
@@ -61,22 +57,18 @@ public class RecoveryWorkerManager {
         try {
             purgeLegacyUpdaterIfNeeded();
             int currentVersion = getInstalledVersion(RECOVERY_PACKAGE);
+            int bundledVersion = getBundledRecoveryVersionCode();
             if (currentVersion == -1
+                    || (bundledVersion > 0 && currentVersion < bundledVersion)
                     || currentVersion < ASSETS_RECOVERY_VERSION
                     || !canStartRecoveryWorker()) {
                 deployRecoveryWorkerFromAssets();
-            } else if (!launchRecoveryWorker()) {
-                handleRecoveryLaunchFailure();
             } else {
-                scheduleRecoveryHealthCheck();
+                launchRecoveryWorker();
             }
         } catch (Exception e) {
             Log.e(TAG, "Failed to ensure recovery worker", e);
-            if (!launchRecoveryWorker()) {
-                handleRecoveryLaunchFailure();
-            } else {
-                scheduleRecoveryHealthCheck();
-            }
+            launchRecoveryWorker();
         }
     }
 
@@ -137,80 +129,46 @@ public class RecoveryWorkerManager {
         }
     }
 
-    private boolean launchRecoveryWorker() {
+    private void launchRecoveryWorker() {
         if (sendStartRecoveryBroadcast()) {
             Log.d(TAG, "Requested recovery worker start via broadcast");
-            return true;
+            return;
         }
         if (startRecoveryLauncherIfAvailable()) {
             Log.d(TAG, "Triggered recovery worker launcher activity");
-            return true;
+            return;
         }
         Log.w(TAG, "Recovery worker installed but missing start surface; redeploying");
         deployRecoveryWorkerFromAssets();
-        return false;
     }
 
-    private void scheduleRecoveryHealthCheck() {
-        handler.postDelayed(this::verifyRecoveryWorkerHealthy, RECOVERY_VERIFY_DELAY_MS);
-    }
-
-    private void verifyRecoveryWorkerHealthy() {
-        if (getInstalledVersion(RECOVERY_PACKAGE) == -1) {
-            return;
-        }
-        if (isRecoveryProcessRunning()) {
-            clearLaunchFailureCount();
-            return;
-        }
-        Log.w(TAG, "Recovery worker installed but process is not running");
-        handleRecoveryLaunchFailure();
-    }
-
-    private void handleRecoveryLaunchFailure() {
-        int failures =
-                context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                                .getInt(KEY_LAUNCH_FAILURE_COUNT, 0)
-                        + 1;
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit()
-                .putInt(KEY_LAUNCH_FAILURE_COUNT, failures)
-                .apply();
-        if (failures >= MAX_LAUNCH_FAILURES_BEFORE_REDEPLOY) {
-            Log.w(TAG, "Recovery worker failed to stay running; redeploying from assets");
-            clearLaunchFailureCount();
-            deployRecoveryWorkerFromAssets();
-            return;
-        }
-        if (launchRecoveryWorker()) {
-            scheduleRecoveryHealthCheck();
-        }
-    }
-
-    private void clearLaunchFailureCount() {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit()
-                .putInt(KEY_LAUNCH_FAILURE_COUNT, 0)
-                .apply();
-    }
-
-    private boolean isRecoveryProcessRunning() {
-        ActivityManager activityManager =
-                (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
-        if (activityManager == null) {
-            return false;
-        }
-        List<ActivityManager.RunningAppProcessInfo> processes =
-                activityManager.getRunningAppProcesses();
-        if (processes == null) {
-            return false;
-        }
-        for (ActivityManager.RunningAppProcessInfo process : processes) {
-            if (RECOVERY_PACKAGE.equals(process.processName)) {
-                return true;
+    private int getBundledRecoveryVersionCode() {
+        File probeApk = new File(context.getCacheDir(), "recovery_worker_probe.apk");
+        try (InputStream assetStream = context.getAssets().open(RECOVERY_APK_ASSET_NAME);
+                FileOutputStream fos = new FileOutputStream(probeApk)) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = assetStream.read(buffer)) != -1) {
+                fos.write(buffer, 0, bytesRead);
+            }
+            PackageInfo archiveInfo =
+                    context.getPackageManager()
+                            .getPackageArchiveInfo(probeApk.getAbsolutePath(), 0);
+            if (archiveInfo == null) {
+                return -1;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                return (int) archiveInfo.getLongVersionCode();
+            }
+            return archiveInfo.versionCode;
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to read bundled recovery worker version", e);
+            return -1;
+        } finally {
+            if (probeApk.exists() && !probeApk.delete()) {
+                Log.w(TAG, "Failed to delete recovery worker probe APK");
             }
         }
-        return false;
     }
 
     private boolean canStartRecoveryWorker() {
@@ -310,13 +268,7 @@ public class RecoveryWorkerManager {
             String packageName =
                     intent.getData() != null ? intent.getData().getSchemeSpecificPart() : null;
             if (RECOVERY_PACKAGE.equals(packageName)) {
-                handler.postDelayed(
-                        () -> {
-                            if (launchRecoveryWorker()) {
-                                scheduleRecoveryHealthCheck();
-                            }
-                        },
-                        2000);
+                handler.postDelayed(RecoveryWorkerManager.this::launchRecoveryWorker, 2000);
             }
         }
     }
