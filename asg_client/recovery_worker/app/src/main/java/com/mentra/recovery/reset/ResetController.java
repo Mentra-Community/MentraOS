@@ -1,6 +1,7 @@
 package com.mentra.recovery.reset;
 
 import android.content.Context;
+import android.util.Log;
 
 import androidx.work.ExistingWorkPolicy;
 import androidx.work.OneTimeWorkRequest;
@@ -24,9 +25,20 @@ public class ResetController {
 
   public void onAsgUnresponsive() {
     String currentState = stateStore.getState();
+    boolean staleInFlightRecovery = false;
     if (RecoveryConstants.STATE_RESTARTING.equals(currentState)
         || RecoveryConstants.STATE_REINSTALLING_BACKUP.equals(currentState)) {
-      return;
+      staleInFlightRecovery = isInFlightRecoveryStale();
+      if (!staleInFlightRecovery) {
+        return;
+      }
+      Log.w(
+          RecoveryConstants.TAG,
+          "Recovery state "
+              + currentState
+              + " exceeded "
+              + RecoveryConstants.IN_FLIGHT_RECOVERY_STALE_MS
+              + "ms; enqueueing replacement worker");
     }
     if (RecoveryConstants.STATE_COOLDOWN.equals(currentState)
         && isWithinCooldownWindow()) {
@@ -56,7 +68,10 @@ public class ResetController {
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .build();
     WorkManager.getInstance(context)
-        .enqueueUniqueWork(RecoveryConstants.UNIQUE_RECOVERY_WORK, ExistingWorkPolicy.KEEP, request);
+        .enqueueUniqueWork(
+            RecoveryConstants.UNIQUE_RECOVERY_WORK,
+            staleInFlightRecovery ? ExistingWorkPolicy.REPLACE : ExistingWorkPolicy.KEEP,
+            request);
   }
 
   public void onAsgHealthy() {
@@ -92,5 +107,10 @@ public class ResetController {
   private boolean isWithinCooldownWindow() {
     long elapsed = System.currentTimeMillis() - stateStore.getLastTransitionMs();
     return elapsed >= 0 && elapsed < RecoveryConstants.COOLDOWN_MS;
+  }
+
+  private boolean isInFlightRecoveryStale() {
+    long elapsed = System.currentTimeMillis() - stateStore.getLastTransitionMs();
+    return elapsed < 0 || elapsed > RecoveryConstants.IN_FLIGHT_RECOVERY_STALE_MS;
   }
 }
