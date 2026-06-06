@@ -1,11 +1,11 @@
 ---
 title: "Bun Fullstack Dev Server"
-description: "How MentraOS mini apps serve both the API and webview from a single Bun process."
+description: "How MentraOS miniapps serve both the API and webview from a single Bun process."
 ---
 
 # Bun Fullstack Dev Server
 
-A MentraOS mini app is a single Bun process that does three things at once:
+A MentraOS miniapp is a single Bun process that does three things at once:
 
 1. **Connects to the MentraOS cloud** via WebSocket (handled by `MiniAppServer`)
 2. **Serves API routes** via [Hono](https://hono.dev) (for your webview to call)
@@ -34,7 +34,7 @@ All three run on the same port, same URL. The URL you give to ngrok (or deploy t
 
 ## Example setup
 
-This is based on how the stream-test app works. Every MentraOS mini app follows the same pattern:
+This is based on how the stream-test app works. Every MentraOS miniapp follows the same pattern:
 
 ```/dev/null/index.ts#L1-43
 import { MiniAppServer, type MentraSession } from "@mentra/sdk";

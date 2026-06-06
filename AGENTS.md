@@ -103,8 +103,9 @@ Core client app lives in `mobile/` (Expo React Native). Backend services, the Ty
 ## Naming Conventions
 
 - User-facing names: CamelCase ("MentraOS App", "MentraOS Store", "MentraOS Manager")
-- "mini app" is two words (lowercase) in prose: "mini apps", "a mini app"
-- The app store is always "Mentra MiniApp Store" (never "the app store", "mini app store", etc.)
+- "miniapp" is always one word (lowercase) in prose: "miniapps", "a miniapp" (never "mini app" or "mini-app")
+- The app store is always "Mentra Miniapp Store" (never "the app store", "miniapp store", etc.)
+- Code identifiers keep their existing casing (e.g. `MiniAppServer`, `@mentra/miniapp`); only prose follows these rules
 - Code follows language-specific conventions (Java, TypeScript, Swift)
 
 ## Testing Guidelines
