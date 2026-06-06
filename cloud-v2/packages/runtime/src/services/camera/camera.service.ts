@@ -59,9 +59,9 @@ export interface PhotoRequestResult {
 }
 
 /**
- * Create a managed-photo request: presign the upload + read URLs, record the
- * pending request, and (in dev auto-capture) simulate the upload. Returns the
- * URLs the device uses; the caller gets `photo.ready` over its WS on completion.
+ * Create a managed-photo request: presign the upload + read URLs and record the
+ * pending request. Returns the URLs the device uses; the caller gets
+ * `photo.ready` over its WS on completion.
  */
 export async function requestPhoto(
   mentraUserId: string,
