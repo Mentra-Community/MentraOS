@@ -26,7 +26,7 @@ android {
                 ?: (project.hasProperty("ASG_STORE_PASSWORD") ? project.property("ASG_STORE_PASSWORD") : "android")
             keyAlias System.getenv("RECOVERY_KEY_ALIAS")
                 ?: System.getenv("OTA_KEY_ALIAS")
-                ?: (project.hasProperty("ASG_KEY_ALIAS") ? project.property("ASG_KEY_ALIAS") : "recovery")
+                ?: (project.hasProperty("ASG_KEY_ALIAS") ? project.property("ASG_KEY_ALIAS") : "asg")
             keyPassword System.getenv("RECOVERY_KEY_PASSWORD")
                 ?: System.getenv("OTA_KEY_PASSWORD")
                 ?: (project.hasProperty("ASG_KEY_PASSWORD") ? project.property("ASG_KEY_PASSWORD") : "android")
