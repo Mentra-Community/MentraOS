@@ -29,7 +29,7 @@ import { Runtime } from "./modules/runtime/runtime";
 import { Connection } from "./modules/runtime/connection";
 import { RuntimeEmitter } from "./modules/runtime/emitter";
 import { Subscriptions } from "./modules/runtime/subscriptions";
-import { ManagedMedia } from "./modules/runtime/managed-media";
+import { Camera } from "./modules/runtime/camera";
 import { UdpAudio } from "./modules/runtime/audio-udp";
 import { Core } from "./modules/core/core";
 
@@ -178,14 +178,14 @@ export class CloudClient {
     });
     const emitter = new RuntimeEmitter();
     const subscriptions = new Subscriptions({ http: runtimeHttp });
-    const media = new ManagedMedia({ http: runtimeHttp });
+    const camera = new Camera({ http: runtimeHttp });
     const audio = new UdpAudio({ udp: config.transports.udp });
 
     const runtime = new Runtime({
       connection,
       emitter,
       subscriptions,
-      media,
+      camera,
       audio,
       logger,
     });

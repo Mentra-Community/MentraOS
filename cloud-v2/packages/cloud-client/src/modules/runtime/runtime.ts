@@ -6,7 +6,7 @@
  *   - connection: owns the WebSocket, the handshake, reconnect, and liveness.
  *   - emitter: the one typed event emitter the public `on*` methods wrap.
  *   - subscriptions: the REST full-replace writer with the version counter.
- *   - media: managed photo/stream (REST request, await the WebSocket push).
+ *   - camera: managed photo/stream (REST request, await the WebSocket push).
  *   - audio: the UDP audio path (encrypt each frame, hand bytes to the socket).
  *
  * Keeping the orchestration here, and the mechanics in the collaborators, means
@@ -27,12 +27,12 @@ import type { Logger } from "../../logger";
 import type { Connection } from "./connection";
 import type { RuntimeEmitter, RuntimeEvents } from "./emitter";
 import type { Subscriptions } from "./subscriptions";
-import type { ManagedMedia, PhotoOptions, StreamOptions, ManagedStream } from "./managed-media";
+import type { Camera, PhotoOptions, StreamOptions, ManagedStream } from "./camera";
 import type { UdpAudio } from "./audio-udp";
 
 // Re-export the camera option/result types so a host importing the runtime gets
 // them from one place alongside the module that produces them.
-export type { PhotoOptions, StreamOptions, ManagedStream } from "./managed-media";
+export type { PhotoOptions, StreamOptions, ManagedStream } from "./camera";
 
 /**
  * The public runtime surface, implemented by `Runtime` below.
@@ -78,7 +78,7 @@ export interface RuntimeDeps {
   connection: Connection;
   emitter: RuntimeEmitter;
   subscriptions: Subscriptions;
-  media: ManagedMedia;
+  camera: Camera;
   audio: UdpAudio;
   logger: Logger;
 }
@@ -87,7 +87,7 @@ export class Runtime implements RuntimeModule {
   private readonly connection: Connection;
   private readonly emitter: RuntimeEmitter;
   private readonly subscriptions: Subscriptions;
-  private readonly media: ManagedMedia;
+  private readonly camera: Camera;
   private readonly audio: UdpAudio;
   private readonly logger: Logger;
 
@@ -114,7 +114,7 @@ export class Runtime implements RuntimeModule {
     this.connection = deps.connection;
     this.emitter = deps.emitter;
     this.subscriptions = deps.subscriptions;
-    this.media = deps.media;
+    this.camera = deps.camera;
     this.audio = deps.audio;
     this.logger = deps.logger;
   }
@@ -136,16 +136,16 @@ export class Runtime implements RuntimeModule {
   }
 
   /**
-   * Wire the connection's message/state callbacks to the emitter and media.
+   * Wire the connection's message/state callbacks to the emitter and camera.
    *
    * Done once (guarded by `routed`). Inbound routing:
    *   - stream.transcript  -> emitter "transcript"
    *   - stream.translation -> emitter "translation"
    *   - error              -> emitter "error" (the typed ProtocolError payload)
-   *   - photo pushes        -> media.handlePush (resolves the pending request)
+   *   - photo pushes        -> camera.handlePush (resolves the pending request)
    *
    * Connection state drives `disconnected` and the subscription re-send on
-   * reconnect. We hand every message to `media.handlePush` regardless of type
+   * reconnect. We hand every message to `camera.handlePush` regardless of type
    * because it self-filters to photo pushes, which keeps the routing switch here
    * about the events this module owns.
    */
@@ -168,12 +168,12 @@ export class Runtime implements RuntimeModule {
           break;
         default:
           // Not one of the events this module surfaces directly. It may still be
-          // a managed-media push, so hand it on; media ignores anything that is
-          // not a photo event.
+          // a camera push, so hand it on; camera ignores anything that is not a
+          // photo event.
           break;
       }
-      // Managed photo/stream completions are pushes too; let media claim them.
-      this.media.handlePush(msg);
+      // Managed photo/stream completions are pushes too; let camera claim them.
+      this.camera.handlePush(msg);
     });
 
     this.connection.onState((state) => {
@@ -275,18 +275,18 @@ export class Runtime implements RuntimeModule {
     this.audio.sendFrame(frame);
   }
 
-  // --- Managed media (delegated) --------------------------------------------
+  // --- Camera: managed photo/stream (delegated) -----------------------------
 
   requestManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; readUrl: string }> {
-    return this.media.requestPhoto(opts);
+    return this.camera.requestPhoto(opts);
   }
 
   startManagedStream(opts: StreamOptions): Promise<ManagedStream> {
-    return this.media.startStream(opts);
+    return this.camera.startStream(opts);
   }
 
   stopManagedStream(streamId: string): Promise<void> {
-    return this.media.stopStream(streamId);
+    return this.camera.stopStream(streamId);
   }
 
   // --- Events (delegated to the one typed emitter) --------------------------

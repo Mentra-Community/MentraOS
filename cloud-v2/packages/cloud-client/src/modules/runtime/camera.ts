@@ -1,6 +1,6 @@
 /**
- * @fileoverview Managed photo and managed stream: a REST request, then await the
- * matching WebSocket push.
+ * @fileoverview Camera: the managed-photo and managed-stream features, each a
+ * REST request followed by awaiting the matching WebSocket push.
  *
  * Both flows are client-initiated REST on the runtime domain (any pod serves
  * them, no coupling to the audio session). The cloud is not in the image byte
@@ -65,7 +65,7 @@ export interface PhotoResult {
   readUrl: string;
 }
 
-export interface ManagedMediaDeps {
+export interface CameraDeps {
   http: HttpClient;
 }
 
@@ -97,13 +97,13 @@ interface PhotoErrorPush {
   payload: { requestId: string; reason: string };
 }
 
-export class ManagedMedia {
+export class Camera {
   private readonly http: HttpClient;
 
   /** In-flight photo requests, keyed by the `requestId` the cloud assigned. */
   private readonly pendingPhotos = new Map<string, Pending<PhotoResult>>();
 
-  constructor(deps: ManagedMediaDeps) {
+  constructor(deps: CameraDeps) {
     this.http = deps.http;
   }
 

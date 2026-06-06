@@ -57,7 +57,7 @@ cloud-v2/packages/cloud-client/
         connection.ts          # the WebSocket: handshake, reconnect, liveness ping
         emitter.ts             # the one typed event emitter
         subscriptions.ts       # setSubscriptions over REST, with the version counter
-        managed-media.ts       # managed photo + stream (REST request, await the push)
+        camera.ts              # managed photo + stream (REST request, await the push)
         audio-udp.ts           # UDP audio: encrypt each frame, hand bytes to the socket
       core/
         core.ts                # cloud.core: the CoreModule implementation
@@ -194,7 +194,7 @@ export function decodeClaims(jwt: string): {
 export class Runtime implements RuntimeModule {
   constructor(deps: {
     connection: Connection; emitter: RuntimeEmitter;
-    subscriptions: Subscriptions; media: ManagedMedia; audio: UdpAudio; logger: Logger
+    subscriptions: Subscriptions; camera: Camera; audio: UdpAudio; logger: Logger
   })
   connect(): Promise<void>
   close(): void
@@ -263,11 +263,11 @@ export class Subscriptions {
 }
 ```
 
-**`src/modules/runtime/managed-media.ts`**: managed photo and stream: send a REST
-request, then resolve when the matching push arrives.
+**`src/modules/runtime/camera.ts`**: the managed-photo and managed-stream
+features: send a REST request, then resolve when the matching push arrives.
 
 ```ts
-export class ManagedMedia {
+export class Camera {
   constructor(deps: { http: HttpClient })
   requestPhoto(opts: PhotoOptions): Promise<{ requestId: string; readUrl: string }>
   startStream(opts: StreamOptions): Promise<ManagedStream>
