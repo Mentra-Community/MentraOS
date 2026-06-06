@@ -13,6 +13,21 @@ public class SystemInstaller {
     this.context = context.getApplicationContext();
   }
 
+  public boolean uninstallPackage(String packageName) {
+    try {
+      Intent intent = new Intent("com.xy.xsetting.action");
+      intent.setPackage("com.android.systemui");
+      intent.putExtra("cmd", "uninstall");
+      intent.putExtra("pkname", packageName);
+      context.sendBroadcast(intent);
+      Log.i(RecoveryConstants.TAG, "Requested uninstall of " + packageName);
+      return true;
+    } catch (Exception e) {
+      Log.e(RecoveryConstants.TAG, "Failed to send uninstall broadcast", e);
+      return false;
+    }
+  }
+
   public boolean installApk(String apkPath, String receivePackage) {
     File apkFile = new File(apkPath);
     if (!apkFile.exists() || !apkFile.canRead()) {
