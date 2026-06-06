@@ -1855,6 +1855,7 @@ public class OtaHelper {
             File backupApk = new File(OtaConstants.BASE_DIR, OtaConstants.BACKUP_APK_FILENAME);
             long backupVersion = -1L;
             long backupModifiedMs = backupApk.exists() ? backupApk.lastModified() : 0L;
+            boolean backupInstallable = false;
             if (backupApk.exists() && backupApk.canRead()) {
                 PackageInfo archive =
                         pm.getPackageArchiveInfo(
@@ -1865,14 +1866,25 @@ public class OtaHelper {
                             Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
                                     ? archive.getLongVersionCode()
                                     : archive.versionCode;
+                    if (archive.applicationInfo != null) {
+                        archive.applicationInfo.sourceDir = backupApk.getAbsolutePath();
+                        archive.applicationInfo.publicSourceDir = backupApk.getAbsolutePath();
+                        backupInstallable =
+                                (archive.applicationInfo.flags & ApplicationInfo.FLAG_TEST_ONLY)
+                                        == 0;
+                    }
                 }
             }
 
-            if (backupVersion >= installedVersion && backupModifiedMs >= installed.lastUpdateTime) {
+            if (backupInstallable
+                    && backupVersion >= installedVersion
+                    && backupModifiedMs >= installed.lastUpdateTime) {
                 Log.d(
                         TAG,
                         "Recovery backup up to date (backup="
                                 + backupVersion
+                                + ", backupInstallable="
+                                + backupInstallable
                                 + ", backupModifiedMs="
                                 + backupModifiedMs
                                 + ", installed="
@@ -1887,6 +1899,8 @@ public class OtaHelper {
                     TAG,
                     "Refreshing recovery backup (backup="
                             + backupVersion
+                            + ", backupInstallable="
+                            + backupInstallable
                             + ", backupModifiedMs="
                             + backupModifiedMs
                             + ", installed="
