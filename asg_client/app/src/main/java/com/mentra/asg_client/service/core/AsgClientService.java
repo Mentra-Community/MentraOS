@@ -87,7 +87,11 @@ public class AsgClientService extends Service
     public static final String EXTRA_UVC_STREAMING = "extra_uvc_streaming";
     public static final String ACTION_START_OTA_UPDATER = "ACTION_START_OTA_UPDATER";
 
-    // OTA Update progress actions
+    // OTA Update progress actions (legacy updater + recovery namespace during migration)
+    public static final String LEGACY_ACTION_DOWNLOAD_PROGRESS =
+            "com.augmentos.otaupdater.ACTION_DOWNLOAD_PROGRESS";
+    public static final String LEGACY_ACTION_INSTALLATION_PROGRESS =
+            "com.augmentos.otaupdater.ACTION_INSTALLATION_PROGRESS";
     public static final String ACTION_DOWNLOAD_PROGRESS =
             "com.mentra.recovery.ACTION_DOWNLOAD_PROGRESS";
     public static final String ACTION_INSTALLATION_PROGRESS =
@@ -1549,10 +1553,12 @@ public class AsgClientService extends Service
 
                             switch (Objects.requireNonNull(action)) {
                                 case ACTION_DOWNLOAD_PROGRESS:
+                                case LEGACY_ACTION_DOWNLOAD_PROGRESS:
                                     Log.d(TAG, "📥 Handling download progress");
                                     handleDownloadProgress(intent);
                                     break;
                                 case ACTION_INSTALLATION_PROGRESS:
+                                case LEGACY_ACTION_INSTALLATION_PROGRESS:
                                     Log.d(TAG, "🔧 Handling installation progress");
                                     handleInstallationProgress(intent);
                                     break;
@@ -1566,6 +1572,8 @@ public class AsgClientService extends Service
             IntentFilter otaFilter = new IntentFilter();
             otaFilter.addAction(ACTION_DOWNLOAD_PROGRESS);
             otaFilter.addAction(ACTION_INSTALLATION_PROGRESS);
+            otaFilter.addAction(LEGACY_ACTION_DOWNLOAD_PROGRESS);
+            otaFilter.addAction(LEGACY_ACTION_INSTALLATION_PROGRESS);
             registerReceiver(otaProgressReceiver, otaFilter);
             Log.d(TAG, "✅ OTA progress receiver registered successfully");
         } catch (Exception e) {
