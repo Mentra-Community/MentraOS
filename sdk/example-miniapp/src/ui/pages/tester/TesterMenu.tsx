@@ -53,13 +53,6 @@ const API_ROWS: Row[] = [
     badge: "mentra-live-only",
   },
   {emoji: "📦", title: "session.storage", subtitle: "get / set / delete / list", path: "/tester/storage"},
-  {
-    emoji: "⏳",
-    title: "Coming Soon",
-    subtitle: "dashboard",
-    path: "/tester/coming-soon",
-    badge: "soon",
-  },
 ]
 
 function Badge({badge}: {badge?: Row["badge"]}) {

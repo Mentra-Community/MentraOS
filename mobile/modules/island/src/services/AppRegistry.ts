@@ -881,7 +881,7 @@ const DEV_APPS_INDEX_KEY = "dev_apps_index"
  * the dev URL/port and foreground target used the manifest name.
  */
 export const DEV_APP_PACKAGE_NAME = "com.dev"
-const DEV_APP_NAME = "Dev"
+// const DEV_APP_NAME = "Dev App"
 
 /**
  * Register (or replace) THE dev miniapp. Persists the home-tile metadata AND
@@ -893,7 +893,7 @@ export function registerDevApp(record: DevAppRecord): void {
   const devRecord: DevAppRecord = {
     ...record,
     packageName: DEV_APP_PACKAGE_NAME,
-    name: DEV_APP_NAME,
+    // name: DEV_APP_NAME,
     iconUrl: record.iconUrl,
   }
   storage.save(`${DEV_APP_PACKAGE_NAME}_dev_meta`, JSON.stringify(devRecord))
