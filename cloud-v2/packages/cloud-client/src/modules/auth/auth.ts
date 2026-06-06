@@ -41,8 +41,11 @@ import { TokenStore } from "./token-store";
  * `getAccessToken`.
  */
 export interface AuthModule {
-  // current access token, refreshing as needed (used by runtime/core)
-  getAccessToken(): Promise<string>;
+  // current access token, refreshing as needed (used by runtime/core). Pass
+  // `{ forceRefresh: true }` to bypass the in-memory cache and refresh now, for
+  // the case where the cloud rejected a token the client still thinks is fresh
+  // (clock skew or a mid-session revoke surfaced as AUTH_EXPIRED).
+  getAccessToken(opts?: { forceRefresh?: boolean }): Promise<string>;
   // a miniapp-scoped token, cached per packageName and re-minted before expiry
   getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>;
   // the user/oem identity read off the access token's claims
@@ -146,10 +149,18 @@ export class Auth implements AuthModule {
    * margin is returned with no network call. Otherwise we obtain one through a
    * single-flight so concurrent callers share the same request.
    */
-  async getAccessToken(): Promise<string> {
-    const cached = this.store.current();
-    if (cached && !this.isExpiring(cached.exp)) {
-      return cached.accessToken;
+  async getAccessToken(opts?: { forceRefresh?: boolean }): Promise<string> {
+    // A forced refresh drops the cached access token first, so the cache check
+    // below misses and we go straight to the single-flight refresh. The
+    // single-flight still de-dupes, so a burst of forced refreshes (one per
+    // reconnect attempt) collapses to one request.
+    if (opts?.forceRefresh) {
+      this.store.invalidateAccess();
+    } else {
+      const cached = this.store.current();
+      if (cached && !this.isExpiring(cached.exp)) {
+        return cached.accessToken;
+      }
     }
 
     // De-dupe: if a refresh/exchange is already running, await that one result.

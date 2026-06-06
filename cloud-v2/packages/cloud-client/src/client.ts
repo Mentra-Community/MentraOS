@@ -188,6 +188,10 @@ export class CloudClient {
       camera,
       audio,
       logger,
+      // On a fatal AUTH_EXPIRED at handshake, runtime forces auth to drop its
+      // cached access token and refresh; the connection then re-reads the fresh
+      // token via getAccessToken on the reopen.
+      forceRefreshToken: () => auth.getAccessToken({ forceRefresh: true }),
     });
 
     // Core is last: stateless REST on the core service, Bearer from auth.

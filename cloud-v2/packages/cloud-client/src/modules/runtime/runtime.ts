@@ -25,6 +25,7 @@ import type {
 } from "@mentra/cloud-runtime/protocol";
 import type { Logger } from "../../logger";
 import type { Connection } from "./connection";
+import { HandshakeRejectedError } from "./connection";
 import type { RuntimeEmitter, RuntimeEvents } from "./emitter";
 import type { Subscriptions } from "./subscriptions";
 import type { Camera, PhotoOptions, StreamOptions, ManagedStream } from "./camera";
@@ -81,7 +82,20 @@ export interface RuntimeDeps {
   camera: Camera;
   audio: UdpAudio;
   logger: Logger;
+  /**
+   * Force `cloud.auth` to drop its cached access token and refresh now.
+   *
+   * Called when the cloud rejects the handshake with `AUTH_EXPIRED` even though
+   * the client thought its token was fresh (clock skew or a mid-session revoke).
+   * The connection re-reads the token through its own `getToken` on the next
+   * open, so this only has to invalidate-and-refresh; it returns the new token
+   * but the runtime ignores it (the reopen picks it up).
+   */
+  forceRefreshToken: () => Promise<string>;
 }
+
+/** Protocol error code the cloud sends when the handshake token is expired. */
+const AUTH_EXPIRED_CODE = "AUTH_EXPIRED";
 
 export class Runtime implements RuntimeModule {
   private readonly connection: Connection;
@@ -90,6 +104,7 @@ export class Runtime implements RuntimeModule {
   private readonly camera: Camera;
   private readonly audio: UdpAudio;
   private readonly logger: Logger;
+  private readonly forceRefreshToken: () => Promise<string>;
 
   /**
    * Whether the inbound-message routing has been wired to the connection yet.
@@ -117,6 +132,7 @@ export class Runtime implements RuntimeModule {
     this.camera = deps.camera;
     this.audio = deps.audio;
     this.logger = deps.logger;
+    this.forceRefreshToken = deps.forceRefreshToken;
   }
 
   /**
@@ -128,11 +144,43 @@ export class Runtime implements RuntimeModule {
    * key) and announce `connected`. A later reconnect re-runs the handshake inside
    * the connection and re-fires the open path through the wired callbacks, so the
    * subscription re-send below is what restores a fresh session's audio set.
+   *
+   * If the cloud rejects the handshake with a fatal `AUTH_EXPIRED` (the token the
+   * client presented was expired or revoked despite the client thinking it was
+   * fresh), we force `cloud.auth` to refresh and reopen ONCE. The connection
+   * re-reads the freshly refreshed token through its own `getToken` on the
+   * reopen. We retry only once: if the second open also fails, the original error
+   * surfaces, because a second failure means refresh did not fix it and looping
+   * would not help.
    */
   async connect(): Promise<void> {
     this.wireRouting();
-    const ack = await this.connection.open();
+    const ack = await this.openWithAuthRetry();
     this.onOpened(ack);
+  }
+
+  /**
+   * Open the connection, retrying exactly once on a fatal `AUTH_EXPIRED`.
+   *
+   * Only `AUTH_EXPIRED` triggers the retry; any other handshake rejection (a bad
+   * protocol version, a hard auth failure) is surfaced as-is, since refreshing
+   * the token would not change the outcome. The retry forces a token refresh
+   * first, then reopens; if that reopen also rejects, the reopen's error
+   * propagates so the host sees the real, post-refresh failure.
+   */
+  private async openWithAuthRetry(): Promise<ConnectionAck> {
+    try {
+      return await this.connection.open();
+    } catch (err) {
+      if (!(err instanceof HandshakeRejectedError) || err.code !== AUTH_EXPIRED_CODE) {
+        throw err;
+      }
+      // The cloud says the token is expired even though we believed it fresh.
+      // Refresh once (the reopen re-reads the new token via getToken) and retry.
+      this.logger.warn("handshake rejected AUTH_EXPIRED; refreshing token and reopening once");
+      await this.forceRefreshToken();
+      return this.connection.open();
+    }
   }
 
   /**

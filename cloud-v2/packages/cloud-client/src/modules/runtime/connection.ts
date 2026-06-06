@@ -30,6 +30,25 @@ import type { Logger } from "../../logger";
 export type ConnectionState = "connecting" | "open" | "closed";
 
 /**
+ * The error `open()` rejects with when the cloud answers the handshake with a
+ * fatal protocol error instead of an ack.
+ *
+ * It carries the protocol `code` (for example `AUTH_EXPIRED`) so the caller can
+ * branch on the cause without string-matching the message. `cloud.runtime` uses
+ * this to recognize `AUTH_EXPIRED` and refresh-then-reopen once.
+ */
+export class HandshakeRejectedError extends Error {
+  readonly code: string;
+
+  constructor(code: string) {
+    super(`Handshake rejected: ${code}`);
+    this.name = "HandshakeRejectedError";
+    this.code = code;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
  * How often the client sends `control.ping`, and how long it waits for the
  * matching `control.pong` before declaring the socket dead.
  *
@@ -302,9 +321,7 @@ export class Connection {
     // the connection up).
     if (msg.type === "error") {
       if (msg.payload.fatal && this.pendingAck) {
-        this.failPendingAck(
-          new Error(`Handshake rejected: ${msg.payload.code}`),
-        );
+        this.failPendingAck(new HandshakeRejectedError(msg.payload.code));
       }
       this.messageHandler?.(msg);
       return;

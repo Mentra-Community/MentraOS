@@ -89,6 +89,18 @@ export class TokenStore {
   }
 
   /**
+   * Drop only the in-memory access token, keeping the persisted refresh token.
+   *
+   * Called when the cloud rejects an access token the store still believes is
+   * fresh (clock skew, or a mid-session revoke surfaced as AUTH_EXPIRED): the
+   * next `current()` returns null so the caller refreshes against the still-good
+   * refresh token, rather than handing back the rejected token again.
+   */
+  invalidateAccess(): void {
+    this.access = null;
+  }
+
+  /**
    * Clear all token state, in memory and in storage.
    *
    * Called when the refresh token is dead, so a later attempt does not keep
