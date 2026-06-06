@@ -48,29 +48,15 @@ jobs:
       - name: Patch ExpoModulesCore Swift 6 syntax
         working-directory: ./mobile
         run: |
-          # These 3 files use SE-0431 isolated conformance syntax (@MainActor in conformance
-          # position) which is Swift 6 only. Strip @MainActor from the conformance position
-          # so they compile in Swift 5 mode. SWIFT_STRICT_CONCURRENCY=minimal (set in Podfile
-          # post_install) suppresses the remaining actor isolation errors.
-
           FILE1="node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIHostingView.swift"
           FILE2="node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIVirtualView.swift"
           FILE3="node_modules/expo-modules-core/ios/Core/Views/ViewDefinition.swift"
 
-          # Line 45: public final class HostingView<...>: ExpoView, @MainActor AnyExpoSwiftUIHostingView {
           sed -i '' 's/, @MainActor AnyExpoSwiftUIHostingView/, AnyExpoSwiftUIHostingView/g' "$FILE1"
-          echo "Patched $FILE1"
-          grep -n "AnyExpoSwiftUIHostingView" "$FILE1" | head -3
-
-          # Line 196: extension ExpoSwiftUI.SwiftUIVirtualView: @MainActor ExpoSwiftUI.ViewWrapper {
           sed -i '' 's/: @MainActor ExpoSwiftUI\.ViewWrapper/: ExpoSwiftUI.ViewWrapper/g' "$FILE2"
-          echo "Patched $FILE2"
-          grep -n "ViewWrapper" "$FILE2" | head -3
-
-          # Line 121: extension UIView: @MainActor AnyArgument {
           sed -i '' 's/extension UIView: @MainActor AnyArgument/extension UIView: AnyArgument/g' "$FILE3"
-          echo "Patched $FILE3"
-          grep -n "AnyArgument" "$FILE3" | head -3
+
+          echo "ExpoModulesCore patches applied"
 
       - name: Patch Podfile
         working-directory: ./mobile/ios
@@ -82,18 +68,14 @@ jobs:
           injection = """
             installer.pods_project.targets.each do |target|
               target.build_configurations.each do |config|
-                # Raise all pods to iOS 14.5 minimum
                 dt = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
-                if dt && dt.to_f < 14.5
-                  config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.5'
+                if dt && dt.to_f < 16.0
+                  config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '16.0'
                 end
-                # ExpoModulesCore: use Swift 5 mode with minimal concurrency checking
-                # (SE-0431 syntax has been patched out of its source files above)
                 if target.name == 'ExpoModulesCore'
                   config.build_settings['SWIFT_VERSION'] = '5'
                   config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'
                 end
-                # SwiftProtobuf: WMO OOM-kills compiler on 80+ files
                 if target.name == 'SwiftProtobuf'
                   config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
                 end
@@ -144,7 +126,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             DEVELOPMENT_TEAM="" \
-            IPHONEOS_DEPLOYMENT_TARGET=14.5 \
+            IPHONEOS_DEPLOYMENT_TARGET=16.0 \
             2>&1 | tee /tmp/xcodebuild.log
 
           BUILD_RESULT=${PIPESTATUS[0]}
