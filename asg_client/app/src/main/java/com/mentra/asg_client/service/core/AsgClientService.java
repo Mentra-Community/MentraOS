@@ -45,6 +45,7 @@ import com.mentra.asg_client.service.utils.ServiceUtils;
 import com.mentra.asg_client.service.utils.SysProp;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
@@ -127,6 +128,7 @@ public class AsgClientService extends Service
     // private AugmentosService augmentosService = null;
     // private boolean isAugmentosBound = false;
     private static AsgClientService instance;
+    private static final AtomicBoolean serviceRunning = new AtomicBoolean(false);
     private boolean lastI2sPlaying = false;
     private boolean lastUvcStreaming = false;
     private boolean isConnected = false; // Track connection state based on heartbeat
@@ -224,6 +226,7 @@ public class AsgClientService extends Service
         BleTraceLogger.logLifecycle(this, "AsgClientService", "service_create");
 
         instance = this;
+        serviceRunning.set(true);
 
         // Must run before heavy onCreate() work: startForegroundService() deadline (~5s) is
         // measured until startForeground(), and onStartCommand() only runs after onCreate().
@@ -404,6 +407,7 @@ public class AsgClientService extends Service
         }
 
         instance = null;
+        serviceRunning.set(false);
         super.onDestroy();
     }
 
@@ -415,6 +419,10 @@ public class AsgClientService extends Service
 
     public static AsgClientService getInstance() {
         return instance;
+    }
+
+    public static boolean isServiceRunning() {
+        return serviceRunning.get();
     }
 
     /**
