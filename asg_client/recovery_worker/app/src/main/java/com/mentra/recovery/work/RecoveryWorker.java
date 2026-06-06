@@ -99,15 +99,11 @@ public class RecoveryWorker extends Worker {
         "RESTART_FAILED",
         attempt,
         false);
-    context.sendBroadcast(
-        new Intent(RecoveryConstants.ACTION_INSTALL_IN_PROGRESS)
-            .setPackage(RecoveryConstants.RECOVERY_PACKAGE));
+    notifyInstallInProgress(context);
 
     ReinstallStrategy reinstall = new ReinstallStrategy(context);
     if (!reinstall.execute()) {
-      context.sendBroadcast(
-          new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED)
-              .setPackage(RecoveryConstants.RECOVERY_PACKAGE));
+      notifyInstallCompleted(context);
       if (waitForPong(context, RecoveryConstants.RESTART_GRACE_MS)) {
         store.setState(RecoveryConstants.STATE_COOLDOWN, "ASG_ALIVE_SKIP_REINSTALL");
         telemetry.emit(
@@ -137,9 +133,7 @@ public class RecoveryWorker extends Worker {
       return completeReinstallSuccess(context, store, telemetry, attempt, "REINSTALL_LATE_PONG");
     }
 
-    context.sendBroadcast(
-        new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED)
-            .setPackage(RecoveryConstants.RECOVERY_PACKAGE));
+    notifyInstallCompleted(context);
     store.setState(RecoveryConstants.STATE_FAILED_NEEDS_MANUAL, "REINSTALL_NO_HEARTBEAT");
     telemetry.emit(
         "mentra_recovery_failed",
@@ -156,9 +150,7 @@ public class RecoveryWorker extends Worker {
       RecoveryTelemetry telemetry,
       int attempt,
       String reason) {
-    context.sendBroadcast(
-        new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED)
-            .setPackage(RecoveryConstants.RECOVERY_PACKAGE));
+    notifyInstallCompleted(context);
     store.setState(RecoveryConstants.STATE_COOLDOWN, reason);
     telemetry.emit("mentra_recovery_recovered", RecoveryConstants.STATE_HEALTHY, reason, attempt, true);
     return Result.success();
@@ -226,6 +218,18 @@ public class RecoveryWorker extends Worker {
       }
     }
     return gotAck[0];
+  }
+
+  private void notifyInstallInProgress(Context context) {
+    Intent intent = new Intent(RecoveryConstants.ACTION_INSTALL_IN_PROGRESS);
+    intent.setPackage(RecoveryConstants.RECOVERY_PACKAGE);
+    context.sendBroadcast(intent, RecoveryConstants.RECOVERY_CONTROL_PERMISSION);
+  }
+
+  private void notifyInstallCompleted(Context context) {
+    Intent intent = new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED);
+    intent.setPackage(RecoveryConstants.RECOVERY_PACKAGE);
+    context.sendBroadcast(intent, RecoveryConstants.RECOVERY_CONTROL_PERMISSION);
   }
 
   private void sendPingToAsg(Context context) {
