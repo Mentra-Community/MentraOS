@@ -55,6 +55,14 @@ export interface BitmapView {
   layoutType: "bitmap_view"
   /** Base64-encoded PNG/JPEG. Phone SGC converts to glasses-native format. */
   data: string
+  /** Top-left x of the target container on the 576×288 canvas. Omit for default placement. */
+  x?: number
+  /** Top-left y of the target container on the 576×288 canvas. Omit for default placement. */
+  y?: number
+  /** Target container width. On G2, width>200 (or height>100) renders in quad mode; otherwise a single positioned tile. */
+  width?: number
+  /** Target container height. */
+  height?: number
 }
 
 export interface ClearView {
@@ -72,6 +80,17 @@ export type Layout =
 export interface DisplayOptions {
   view?: ViewType
   durationMs?: number
+}
+
+export interface BitmapOptions extends DisplayOptions {
+  /** Top-left x of the target container on the 576×288 canvas. */
+  x?: number
+  /** Top-left y of the target container on the 576×288 canvas. */
+  y?: number
+  /** Target container width. On G2, width>200 (or height>100) renders in quad mode; otherwise a single positioned tile. */
+  width?: number
+  /** Target container height. */
+  height?: number
 }
 
 export class DisplayManager {
@@ -106,13 +125,23 @@ export class DisplayManager {
     this.send({layoutType: "dashboard_card", leftText, rightText}, {view: "dashboard"})
   }
 
-  /** Show a bitmap. Phone SGC handles conversion to glasses-native format. */
-  showBitmapView(data: string, options: DisplayOptions = {}): void {
-    this.send({layoutType: "bitmap_view", data}, options)
+  /**
+   * Show a bitmap. Phone SGC handles conversion to glasses-native format.
+   *
+   * Optional `x`/`y`/`width`/`height` position and size the bitmap's container.
+   * Omit them for default placement
+   *
+   * @example
+   * // 100×100 image pinned to the bottom-right of the 576×288 canvas
+   * display.showBitmapView(base64Png, {x: 476, y: 188, width: 100, height: 100})
+   */
+  showBitmapView(data: string, options: BitmapOptions = {}): void {
+    const {x, y, width, height, ...display} = options
+    this.send({layoutType: "bitmap_view", data, x, y, width, height}, display)
   }
 
   /** Clear the specified view. */
-  clearView(view: ViewType = "main"): void {
+  clear(view: ViewType = "main"): void {
     this.send({layoutType: "clear_view"}, {view})
   }
 }

@@ -1,0 +1,10 @@
+source "https://rubygems.org"
+
+# fastlane is used by:
+#   - scripts/release-ios.mjs (TestFlight via altool, not fastlane directly)
+#   - .github/workflows/staging-builds.yml (`fastlane match appstore --readonly`
+#     to install signing assets from the match-certs storage repo)
+#
+# Pinning fastlane here (rather than relying on globally-installed) keeps CI
+# and local behavior aligned and stops "works on my machine" version drift.
+gem "fastlane", "~> 2.235"

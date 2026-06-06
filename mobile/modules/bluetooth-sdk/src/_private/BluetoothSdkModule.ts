@@ -6,7 +6,12 @@ import {
   BluetoothSdkModuleEvents,
   BluetoothStatus,
   ButtonPhotoSize,
+  CalendarEvent,
+  CAMERA_FOV_DEFAULT,
+  CAMERA_FOV_MAX,
+  CAMERA_FOV_MIN,
   CameraFov,
+  CameraFovPreset,
   CameraFovSetting,
   ConnectOptions,
   DashboardMenuItem,
@@ -25,7 +30,9 @@ import {
   ScanOptions,
   StreamKeepAliveRequest,
   StreamStartRequest,
+  VideoRecordingSettings,
 } from "../BluetoothSdk.types"
+import {photoRequestParamsForNative} from "./photoRequestPayload"
 
 /**
  * Private React Native native-module facade.
@@ -76,7 +83,9 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setAutoBrightness(enabled: boolean): Promise<void>
   setDashboardPosition(height: number, depth: number): Promise<void>
   setDashboardMenu(items: DashboardMenuItem[]): Promise<void>
+  setCalendarEvents(events: CalendarEvent[]): Promise<void>
   setHeadUpAngle(angleDegrees: number): Promise<void>
+  setImuEnabled(enabled: boolean): Promise<void>
   setScreenDisabled(disabled: boolean): Promise<void>
   ping(): Promise<void>
   dbg1(): Promise<void>
@@ -90,6 +99,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   sendWifiCredentials(ssid: string, password: string): Promise<void>
   forgetWifiNetwork(ssid: string): Promise<void>
   setHotspotState(enabled: boolean): Promise<void>
+  /** Set glasses system clock (Mentra Live only) when phone detects clock skew. */
+  setSystemTime(timestampMs: number): Promise<void>
   /** Logs current WiFi frequency (MHz) and 5 GHz band to Android logcat. */
   logCurrentWifiFrequency(): Promise<void>
 
@@ -107,26 +118,31 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   // OTA Commands
   sendOtaStart(): Promise<void>
   sendOtaQueryStatus(): Promise<void>
+  /** Re-run glasses-side OTA version check (called after a clock fix invalidates a TLS failure). */
+  retryOtaVersionCheck(): Promise<void>
+  checkForOtaUpdate(): Promise<void>
+  startOtaUpdate(): Promise<void>
 
   // Version Info Commands
   requestVersionInfo(): Promise<void>
 
   // Video Recording Commands
-  startVideoRecording(requestId: string, save: boolean, sound: boolean): Promise<void>
+  startVideoRecording(
+    requestId: string,
+    save: boolean,
+    sound: boolean,
+    settings?: VideoRecordingSettings,
+  ): Promise<void>
   stopVideoRecording(requestId: string): Promise<void>
 
   // Stream Commands
   startStream(params: StreamStartRequest): Promise<void>
+  startExternallyManagedStream(params: StreamStartRequest): Promise<void>
   stopStream(): Promise<void>
-  keepStreamAlive(params: StreamKeepAliveRequest): Promise<void>
+  sendExternallyManagedStreamKeepAlive(params: StreamKeepAliveRequest): Promise<void>
 
   // Microphone Commands
-  setMicState(
-    enabled: boolean,
-    useGlassesMic?: boolean,
-    sendTranscript?: boolean,
-    sendLc3Data?: boolean,
-  ): Promise<void>
+  setMicState(enabled: boolean, useGlassesMic?: boolean, sendTranscript?: boolean, sendLc3Data?: boolean): Promise<void>
   setPreferredMic(preferredMic: MicPreference): Promise<void>
   restartTranscriber(): Promise<void>
 
@@ -158,6 +174,20 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   validateSttModel(path: string): Promise<boolean>
   extractTarBz2(sourcePath: string, destinationPath: string): Promise<boolean>
 
+  // TTS Commands
+  setTtsModelDetails(path: string, languageCode: string): Promise<void>
+  getTtsModelPath(): Promise<string>
+  getTtsModelLanguage(): Promise<string>
+  checkTtsModelAvailable(): Promise<boolean>
+  validateTtsModel(path: string): Promise<boolean>
+  generateTtsAudio(
+    text: string,
+    modelPath: string,
+    outputPath: string,
+    speakerId: number,
+    speed: number,
+  ): Promise<boolean>
+
   // Helper methods for type-safe observable store access
   updateGlasses(values: Partial<GlassesStatus>): Promise<void>
   updateBluetoothSettings(values: BluetoothSettingsUpdate): Promise<void>
@@ -181,9 +211,38 @@ const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
 
 const DEFAULT_SCAN_TIMEOUT_MS = 15_000
 
-const CAMERA_FOV_SETTINGS: Record<CameraFov, CameraFovSetting> = {
-  standard: {fov: 118, roiPosition: 0},
-  wide: {fov: 118, roiPosition: 0},
+const CAMERA_ROI_MIN = 0
+const CAMERA_ROI_MAX = 2
+
+// Named presets are a convenience layer over the numeric {fov, roiPosition} API.
+// "narrow" uses 82, a device-tested FOV; "standard" matches CAMERA_FOV_DEFAULT.
+const CAMERA_FOV_PRESETS: Record<CameraFovPreset, CameraFovSetting> = {
+  narrow: {fov: 82, roiPosition: 0},
+  standard: {fov: CAMERA_FOV_DEFAULT, roiPosition: 0},
+  wide: {fov: CAMERA_FOV_MAX, roiPosition: 0},
+}
+
+function clampInteger(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.round(value)))
+}
+
+function normalizeCameraFov(setting: CameraFov): CameraFovSetting {
+  if (typeof setting === "string") {
+    return CAMERA_FOV_PRESETS[setting] ?? CAMERA_FOV_PRESETS.standard
+  }
+
+  return {
+    fov: clampInteger(
+      Number.isFinite(setting.fov) ? setting.fov : CAMERA_FOV_DEFAULT,
+      CAMERA_FOV_MIN,
+      CAMERA_FOV_MAX,
+    ),
+    roiPosition: clampInteger(
+      Number.isFinite(setting.roiPosition ?? 0) ? (setting.roiPosition ?? 0) : 0,
+      CAMERA_ROI_MIN,
+      CAMERA_ROI_MAX,
+    ) as CameraFovSetting["roiPosition"],
+  }
 }
 
 function searchResultsForModel(status: Partial<PublicBluetoothStatus>, model: DeviceModel): Device[] {
@@ -276,7 +335,9 @@ NativeBluetoothSdkModule.getGlassesStatus = function () {
   return Promise.resolve(nativeGetGlassesStatus())
 }
 
-const nativeGetBluetoothStatus = NativeBluetoothSdkModule.getBluetoothStatus.bind(NativeBluetoothSdkModule) as () => MaybePromise<BluetoothStatus>
+const nativeGetBluetoothStatus = NativeBluetoothSdkModule.getBluetoothStatus.bind(
+  NativeBluetoothSdkModule,
+) as () => MaybePromise<BluetoothStatus>
 NativeBluetoothSdkModule.getBluetoothStatus = function () {
   return Promise.resolve(nativeGetBluetoothStatus())
 }
@@ -336,8 +397,16 @@ NativeBluetoothSdkModule.setDashboardMenu = function (items: DashboardMenuItem[]
   return this.updateBluetoothSettings({menu_apps: items.map(dashboardMenuItemToNative)})
 }
 
+NativeBluetoothSdkModule.setCalendarEvents = function (events: CalendarEvent[]) {
+  return this.updateBluetoothSettings({calendar_events: events})
+}
+
 NativeBluetoothSdkModule.setHeadUpAngle = function (angleDegrees: number) {
   return this.updateBluetoothSettings({head_up_angle: angleDegrees})
+}
+
+NativeBluetoothSdkModule.setImuEnabled = function (enabled: boolean) {
+  return this.updateBluetoothSettings({imu_enabled: enabled})
 }
 
 NativeBluetoothSdkModule.setScreenDisabled = function (disabled: boolean) {
@@ -373,7 +442,7 @@ NativeBluetoothSdkModule.setButtonMaxRecordingTime = function (minutes: number) 
 }
 
 NativeBluetoothSdkModule.setCameraFov = function (fov: CameraFov) {
-  const setting = CAMERA_FOV_SETTINGS[fov]
+  const setting = normalizeCameraFov(fov)
   return this.updateBluetoothSettings({
     camera_fov: {fov: setting.fov, roi_position: setting.roiPosition},
   })
@@ -386,12 +455,7 @@ NativeBluetoothSdkModule.setMicState = function (
   sendLc3Data?: boolean,
 ) {
   return Promise.resolve(
-    nativeSetMicState(
-      enabled,
-      useGlassesMic ?? true,
-      sendTranscript ?? false,
-      sendLc3Data ?? false,
-    ),
+    nativeSetMicState(enabled, useGlassesMic ?? true, sendTranscript ?? false, sendLc3Data ?? false),
   )
 }
 
@@ -421,10 +485,7 @@ NativeBluetoothSdkModule.connect = function (device: Device, options?: ConnectOp
   return this.connectWithOptions(device, {...DEFAULT_CONNECT_OPTIONS, ...options})
 }
 
-NativeBluetoothSdkModule.scan = async function (
-  modelOrOptions: DeviceModel | ScanOptions,
-  options?: ScanModelOptions,
-) {
+NativeBluetoothSdkModule.scan = async function (modelOrOptions: DeviceModel | ScanOptions, options?: ScanModelOptions) {
   const scanOptions = normalizeScanArgs(modelOrOptions, options)
   const timeoutMs = normalizeTimeoutMs(scanOptions.timeoutMs ?? scanOptions.timeout, DEFAULT_SCAN_TIMEOUT_MS)
   let latestResults: Device[] = []
@@ -485,30 +546,17 @@ NativeBluetoothSdkModule.scan = async function (
   })
 }
 
-/** Expo Android bridge rejects null values in Map<String, Any> — omit optional nullish fields. */
-function photoRequestParamsForNative(params: PhotoRequestParams): Record<string, string | number | boolean> {
-  const payload: Record<string, string | number | boolean> = {
-    requestId: params.requestId,
-    appId: params.appId,
-    size: params.size,
-    webhookUrl: params.webhookUrl ?? "",
-    compress: params.compress,
-    flash: true,
-    sound: params.sound,
-  }
-  if (params.authToken != null && params.authToken.length > 0) {
-    payload.authToken = params.authToken
-  }
-  if (params.exposureTimeNs != null && Number.isFinite(params.exposureTimeNs) && params.exposureTimeNs > 0) {
-    payload.exposureTimeNs = params.exposureTimeNs
-  }
-  return payload
-}
-
 const nativeRequestPhoto = NativeBluetoothSdkModule.requestPhoto.bind(NativeBluetoothSdkModule)
 NativeBluetoothSdkModule.requestPhoto = function (params: PhotoRequestParams) {
   return nativeRequestPhoto(photoRequestParamsForNative(params) as unknown as PhotoRequestParams)
 }
+
+const nativeStartStream = NativeBluetoothSdkModule.startStream.bind(NativeBluetoothSdkModule)
+NativeBluetoothSdkModule.startExternallyManagedStream = function (params: StreamStartRequest) {
+  return nativeStartStream({...params, keepAliveMode: "external"} as StreamStartRequest)
+}
+NativeBluetoothSdkModule.checkForOtaUpdate = NativeBluetoothSdkModule.sendOtaQueryStatus.bind(NativeBluetoothSdkModule)
+NativeBluetoothSdkModule.startOtaUpdate = NativeBluetoothSdkModule.sendOtaStart.bind(NativeBluetoothSdkModule)
 
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkPublicModule

@@ -12,7 +12,11 @@ class Simulated: SGCManager {
         DeviceStore.shared.apply("glasses", "connected", true)
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.CONNECTED)
         DeviceStore.shared.apply("glasses", "micEnabled", false)
-        DeviceStore.shared.apply("glasses", "voiceActivityDetectionEnabled", true)
+        DeviceStore.shared.apply(
+            "glasses",
+            "voiceActivityDetectionEnabled",
+            BluetoothSdkDefaults.voiceActivityDetectionEnabled
+        )
         DeviceStore.shared.apply("glasses", "bluetoothClassicConnected", false)
     }
 
@@ -75,7 +79,7 @@ class Simulated: SGCManager {
 
     // MARK: - Camera & Media
 
-    func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?, compress _: String?, flash _: Bool, sound _: Bool, exposureTimeNs _: Double?) {
+    func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?, compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, exposureTimeNs _: Double?, iso _: Int?) {
         Bridge.log("requestPhoto")
     }
 
@@ -137,7 +141,7 @@ class Simulated: SGCManager {
         Bridge.log("sendDoubleTextWall")
     }
 
-    func displayBitmap(base64ImageData _: String) async -> Bool {
+    func displayBitmap(base64ImageData _: String, x _: Int32?, y _: Int32?, width _: Int32?, height _: Int32?) async -> Bool {
         Bridge.log("displayBitmap")
         return false
     }

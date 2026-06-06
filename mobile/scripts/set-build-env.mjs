@@ -1,8 +1,13 @@
 #!/usr/bin/env zx
 import {config} from "dotenv"
 import {writeFile} from "fs/promises"
+import {generateBundledMiniapps} from "./generate-bundled-miniapps.mjs"
 
 export async function setBuildEnv() {
+  // Keep src/generated/bundledMiniapps.ts in sync with assets/miniapps/*.zip
+  // before any prebuild/bundle so newly-dropped bundles get shipped.
+  await generateBundledMiniapps()
+
   const gitCommit = (await $`git rev-parse --short HEAD`).stdout.trim()
   const gitBranch = (await $`git rev-parse --abbrev-ref HEAD`).stdout.trim()
   const gitUsername = (await $`git config user.name`).stdout.trim().replace(/ /g, "_")  // format: 2025-11-18_12-00

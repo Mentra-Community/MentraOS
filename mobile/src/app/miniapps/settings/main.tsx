@@ -24,12 +24,11 @@ export default function MainSettingsPage() {
   useRegisterCapsule({
     packageName: "com.mentra.settings",
     viewShotRef,
-    visibleOnRoutes: ["/miniapps/settings/main"],
+    visibleOnRoutes: ["/miniapps/settings/"],
     offsetRight: theme.spacing.s2,
   })
 
   return (
-    <>
       <Screen preset="fixed" safeAreaEdges={["top"]} ref={viewShotRef} className="px-0">
         <ScrollView className="pt-8 px-6" contentInsetAdjustmentBehavior="automatic">
           <View style={{flex: 1, gap: theme.spacing.s6}}>
@@ -77,9 +76,9 @@ export default function MainSettingsPage() {
                 onPress={() => push("/miniapps/settings/microphone")}
               />
               <RouteButton
-                icon={<Icon name="file-type-2" size={24} color={theme.colors.secondary_foreground} />}
-                label={translate("settings:transcriptionSettings")}
-                onPress={() => push("/miniapps/settings/transcription")}
+                icon={<Icon name="volume" size={24} color={theme.colors.secondary_foreground} />}
+                label={translate("settings:speechSettings")}
+                onPress={() => push("/miniapps/settings/speech")}
               />
               <RouteButton
                 icon={<Icon name="shield-lock" size={24} color={theme.colors.secondary_foreground} />}
@@ -104,6 +103,5 @@ export default function MainSettingsPage() {
           <Spacer height={theme.spacing.s10} />
         </ScrollView>
       </Screen>
-    </>
   )
 }

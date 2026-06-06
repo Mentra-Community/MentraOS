@@ -14,7 +14,7 @@
  * Overhead: 24 bytes nonce + 16 bytes auth tag = 40 bytes per packet
  */
 
-import {Buffer} from "buffer"
+import {Buffer} from "@craftzdog/react-native-buffer";
 import nacl from "tweetnacl"
 
 /** Nonce size for XSalsa20-Poly1305 (24 bytes) */

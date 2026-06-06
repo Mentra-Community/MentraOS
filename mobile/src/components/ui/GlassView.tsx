@@ -25,7 +25,7 @@ const GlassView = ({
 }: GlassViewProps & NewGlassViewProps) => {
   const [iosGlassEffect] = useSetting(SETTINGS.ios_glass_effect.key)
   const [androidInnerShadow] = useSetting(SETTINGS.android_inner_shadow.key)
-  
+
   const {theme} = useAppTheme()
   let boxShadowStyle = "8px 8px 16px 0px rgba(0, 0, 0, 0.06)"
   let colorScheme: "light" | "dark" = theme.isDark ? "dark" : "light"
@@ -44,7 +44,11 @@ const GlassView = ({
       )
     }
     return (
-      <GlassWithStyle style={[style, {boxShadow: boxShadowStyle}]} colorScheme={colorScheme} {...props}>
+      <GlassWithStyle
+        style={[style, {boxShadow: boxShadowStyle}]}
+        {...props}
+        colorScheme={colorScheme}
+        className="shadow-2xl">
         {children}
       </GlassWithStyle>
     )

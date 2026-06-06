@@ -1,5 +1,7 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.BluetoothSdkDefaults
+import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.utils.ConnTypes
 
@@ -21,13 +23,35 @@ abstract class SGCManager {
             authToken: String?,
             compress: String?,
             flash: Boolean,
+            save: Boolean,
             sound: Boolean,
             exposureTimeNs: Long?,
+            iso: Int?,
     )
     abstract fun startStream(message: MutableMap<String, Any>)
     abstract fun stopStream()
     abstract fun sendStreamKeepAlive(message: MutableMap<String, Any>)
     abstract fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean)
+
+    /**
+     * Start video recording with optional per-recording resolution/fps. A width,
+     * height, or fps of 0 means "use the device's saved button-video default".
+     * The base implementation ignores the settings and delegates to the default
+     * recording path; devices that support custom settings (e.g. Mentra Live)
+     * override this.
+     */
+    open fun startVideoRecording(
+        requestId: String,
+        save: Boolean,
+        flash: Boolean,
+        sound: Boolean,
+        width: Int,
+        height: Int,
+        fps: Int,
+    ) {
+        startVideoRecording(requestId, save, flash, sound)
+    }
+
     abstract fun stopVideoRecording(requestId: String)
 
     // Button Settings
@@ -42,7 +66,17 @@ abstract class SGCManager {
     abstract fun clearDisplay()
     abstract fun sendTextWall(text: String)
     abstract fun sendDoubleTextWall(top: String, bottom: String)
-    abstract fun displayBitmap(base64ImageData: String): Boolean
+    /**
+     * Display a bitmap. Optional [x]/[y]/[width]/[height] position and size the target
+     * container (used by G2; other SGCs ignore positioning and render the bitmap as before).
+     */
+    abstract fun displayBitmap(
+            base64ImageData: String,
+            x: Int? = null,
+            y: Int? = null,
+            width: Int? = null,
+            height: Int? = null
+    ): Boolean
     abstract fun showDashboard()
     abstract fun setDashboardPosition(height: Int, depth: Int)
 
@@ -61,12 +95,31 @@ abstract class SGCManager {
     // Dashboard Menu (default no-op — only G2 supports this)
     open fun setDashboardMenu(items: List<Map<String, Any>>) {}
 
+    // Calendar Events (default no-op — only G2 supports this)
+    open fun sendCalendarEvents(events: List<Map<String, Any>>) {}
+
+    // Dashboard display settings (default no-op — only G2 supports this)
+    open fun sendDashboardDisplaySettings() {}
+
+    // Notification Panel (default no-op — only G2 supports this)
+    open fun showNotificationsPanel() {}
+
     // Controller bridging (default no-op — only G2 supports pairing with a ring controller)
     open fun connectController() {}
     open fun disconnectController() {}
 
     // Device Control
     abstract fun setHeadUpAngle(angle: Int)
+
+    /**
+     * Enable/disable raw accelerometer (IMU) reporting from the glasses.
+     * Default no-op for devices without IMU support. G2 (both iOS and Android) overrides this to
+     * stream IMU data; other devices accept the call so the cross-platform JS API stays uniform.
+     */
+    open fun setImuEnabled(enabled: Boolean) {
+        Bridge.log("SGC: setImuEnabled not supported")
+    }
+
     abstract fun getBatteryStatus()
     abstract fun setSilentMode(enabled: Boolean)
     abstract fun exit()
@@ -100,6 +153,11 @@ abstract class SGCManager {
     abstract fun forgetWifiNetwork(ssid: String)
     abstract fun sendHotspotState(enabled: Boolean)
 
+    /** Set glasses system clock (Mentra Live only; no-op on other devices). */
+    open fun sendSetSystemTime(timestampMs: Long) {
+        Bridge.log("SGC: sendSetSystemTime not supported on $type")
+    }
+
     // User Context (for crash reporting)
     abstract fun sendUserEmailToGlasses(email: String)
 
@@ -112,6 +170,9 @@ abstract class SGCManager {
 
     // Voice Activity Detection
     open fun sendVoiceActivityDetectionSetting() {}
+
+    // Start/stop LC3 audio playback from glasses based on the nex_audio_playback flag.
+    open fun applyNexAudioPlaybackSetting() {}
 
     // Version info
     abstract fun requestVersionInfo()
@@ -160,7 +221,9 @@ abstract class SGCManager {
         get() = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
 
     val voiceActivityDetectionEnabled: Boolean
-        get() = DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean ?: true
+        get() =
+            DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
+                ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
 
     val batteryLevel: Int
         get() = DeviceStore.get("glasses", "batteryLevel") as? Int ?: -1

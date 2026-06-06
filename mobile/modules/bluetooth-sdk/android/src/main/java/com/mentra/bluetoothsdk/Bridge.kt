@@ -9,6 +9,7 @@ package com.mentra.bluetoothsdk
 
 import android.util.Base64
 import android.util.Log
+import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import java.util.HashMap
 import java.util.UUID
 import kotlin.jvm.JvmStatic
@@ -106,6 +107,16 @@ public class Bridge private constructor() {
             sendTypedMessage("log", data as Map<String, Any>)
         }
 
+        /** Report tar.bz2 extraction progress to JavaScript. */
+        @JvmStatic
+        fun sendExtractionProgress(percentage: Int, bytesRead: Long, totalBytes: Long) {
+            val data = HashMap<String, Any>()
+            data["percentage"] = percentage
+            data["bytesRead"] = bytesRead
+            data["totalBytes"] = totalBytes
+            sendTypedMessage("extraction_progress", data as Map<String, Any>)
+        }
+
         /** Send head position event */
         @JvmStatic
         fun sendHeadUp(isUp: Boolean) {
@@ -152,7 +163,7 @@ public class Bridge private constructor() {
         private fun micPcmEventBody(data: ByteArray): HashMap<String, Any> {
             val voiceActivityDetectionEnabled =
                     DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
-                            ?: true
+                            ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
             val body = HashMap<String, Any>()
             body["pcm"] = data
             body["sampleRate"] = MIC_SAMPLE_RATE
@@ -166,7 +177,7 @@ public class Bridge private constructor() {
         private fun micLc3EventBody(data: ByteArray): HashMap<String, Any> {
             val voiceActivityDetectionEnabled =
                     DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
-                            ?: true
+                            ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
             val frameSizeBytes =
                     (DeviceStore.store.get("bluetooth", "lc3_frame_size") as? Number)?.toInt()
                             ?: DEFAULT_LC3_FRAME_SIZE_BYTES
@@ -347,14 +358,20 @@ public class Bridge private constructor() {
 
         @JvmStatic
         fun sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
+            val timestamp = System.currentTimeMillis()
             val event = HashMap<String, Any>()
             event["type"] = "photo_response"
             event["state"] = "error"
             event["requestId"] = requestId
             event["errorCode"] = errorCode
             event["errorMessage"] = errorMessage
-            event["timestamp"] = System.currentTimeMillis()
+            event["timestamp"] = timestamp
             sendTypedMessage("photo_response", event as Map<String, Any>)
+        }
+
+        @JvmStatic
+        fun sendPhotoStatus(statusJson: Map<String, Any>) {
+            sendTypedMessage("photo_status", statusJson)
         }
 
         /** Send RGB LED control response */
@@ -534,6 +551,7 @@ public class Bridge private constructor() {
         }
 
         @JvmStatic
+        @JvmOverloads
         fun sendOtaStatus(
                 sessionId: String,
                 totalSteps: Int,
@@ -543,7 +561,8 @@ public class Bridge private constructor() {
                 stepPercent: Int,
                 overallPercent: Int,
                 status: String,
-                errorMessage: String?
+                errorMessage: String? = null,
+                glassesTimeMs: Long? = null,
         ) {
             val eventBody = HashMap<String, Any>()
             eventBody["session_id"] = sessionId
@@ -555,6 +574,9 @@ public class Bridge private constructor() {
             eventBody["overall_percent"] = overallPercent
             eventBody["status"] = status
             errorMessage?.let { eventBody["error_message"] = it }
+            if (glassesTimeMs != null && glassesTimeMs > 0) {
+                eventBody["glasses_time_ms"] = glassesTimeMs
+            }
 
             Log.d(TAG, "Bridge: sendOtaStatus: $eventBody")
 
@@ -604,6 +626,20 @@ public class Bridge private constructor() {
             sendTypedMessage("imu_gesture_event", eventBody as Map<String, Any>)
         }
 
+        /**
+         * Send a single accelerometer reading from the glasses IMU - matches iOS
+         * Bridge.sendAccelEvent. A richer combined IMU event (gyro + magnetometer) is future work.
+         */
+        @JvmStatic
+        fun sendAccelEvent(x: Float, y: Float, z: Float, timestamp: Long) {
+            val body = HashMap<String, Any>()
+            body["x"] = x
+            body["y"] = y
+            body["z"] = z
+            body["timestamp"] = timestamp
+            sendTypedMessage("accel_event", body as Map<String, Any>)
+        }
+
         // Arbitrary WS Comms (don't use these, make a dedicated function for your use case):
 
         /** Send WebSocket text message */
@@ -645,6 +681,19 @@ public class Bridge private constructor() {
                     return
                 }
 
+                if (shouldTraceTypedMessage(type)) {
+                    try {
+                        BleTraceLogger.logMap(
+                            "phone_to_app",
+                            "sdk_event_dispatch",
+                            type,
+                            mutableBody as Map<String, Any>,
+                        )
+                    } catch (e: Exception) {
+                        Log.d(TAG, "BLE trace logging failed for typed message '$type'", e)
+                    }
+                }
+
                 // Send directly using type as event name - no JSON serialization
                 sinks.forEach { sink ->
                     try {
@@ -662,6 +711,9 @@ public class Bridge private constructor() {
                 Log.e(TAG, "Error sending typed message of type '$type'", e)
             }
         }
+
+        private fun shouldTraceTypedMessage(type: String): Boolean =
+                type != "log" && type != "mic_pcm" && type != "mic_lc3"
     }
 
     init {

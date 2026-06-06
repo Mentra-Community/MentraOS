@@ -2,6 +2,8 @@
  * @mentra/types - App/Applet types for client interfaces
  */
 
+import type { ReactNode } from "react";
+
 import { HardwareRequirement } from "./hardware";
 
 /**
@@ -43,9 +45,19 @@ export interface AppletInterface {
   name: string;
   webviewUrl: string;
   logoUrl: string;
+  iconComponent?: ReactNode;
   type: AppletType;
   permissions: AppletPermission[];
   running: boolean;
+  /**
+   * True while this app's UI WebView is mounted in the Compositor overlay.
+   * At most one app is foregrounded at a time. Distinct from `running`:
+   * a foregrounded app is always running, but a running app may be
+   * backgrounded (JSContext alive, WebView torn down). Normalized to a
+   * concrete boolean by the apps store's projectApps; literal call sites
+   * may omit it.
+   */
+  foregrounded?: boolean;
   healthy: boolean;
   hardwareRequirements: HardwareRequirement[];
   /** ISO date string when the app was installed */
@@ -72,13 +84,6 @@ export interface ClientApp extends AppletInterface {
   loading: boolean;
   local: boolean;
   hidden: boolean;
-  /**
-   * True when this miniapp is the on-screen active one. Only one local
-   * miniapp may have foreground=true at a time. Set by setForeground();
-   * reset by clearForeground() (e.g. swipe-to-back) or when another app
-   * is foregrounded.
-   */
-  foreground?: boolean;
   onStart?: () => void;
   onStop?: () => void;
   screenshot?: string;

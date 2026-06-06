@@ -3,7 +3,7 @@ import {AppState} from "react-native"
 
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {isGlassesConnected, selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {useCoreStore} from "@/stores/core"
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
@@ -35,6 +35,8 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
     return true
   }
   try {
+    // Seed native state before connectDefault() replays settings to glasses.
+    await BluetoothSdk.updateBluetoothSettings(useSettingsStore.getState().getCoreSettings())
     await BluetoothSdk.connectDefault()
   } catch (error) {
     console.warn("RECONNECT: failed to connect default wearable:", error)

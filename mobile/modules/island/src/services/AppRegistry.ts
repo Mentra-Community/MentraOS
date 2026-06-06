@@ -9,6 +9,7 @@
  *
  * Public surface:
  *   - installFromUrl(url, opts?)            install/replace a miniapp from a URL
+ *   - installFromLocalZip(path, opts?)      install/replace from a local zip
  *   - uninstall(packageName, version?)      remove one or all versions
  *   - getInstalledMiniapps()                ClientApp[] derived from disk
  *   - getActiveVersion(packageName)         active version string for a package
@@ -25,6 +26,7 @@ import type {AppletPermission, AppPermissionType, ClientApp} from "../types/appl
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
+import {checkManifestVersions} from "./manifestVersionGate"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 
 const ALLOWED_PERMISSION_TYPES: ReadonlySet<AppPermissionType> = new Set<AppPermissionType>([
@@ -130,23 +132,13 @@ interface InstalledLma {
 }
 
 /**
- * Download a miniapp zip from `url`, unpack it, and install it under
- * `lmas/<packageName>/<version>/`.
+ * Download a miniapp zip from `url` into the cache and return its local path.
  *
- * Zip layout: flat — files at root, `miniapp.json` at the top level. We're
- * strict on shape so we fail loudly on malformed bundles.
- *
- * @param versionOverride  override the manifest's version field. Used by the
- *                         dev miniapp caching path which stamps `dev-<ms>`
- *                         so multiple snapshots can coexist alongside
- *                         semver-installed versions.
+ * `File.downloadFileAsync` is HTTP(S)-only, so this path is for remote bundles
+ * (dev server, store). Bundled-asset installs already have a local zip and
+ * should call {@link unpackMiniApp} directly.
  */
-async function downloadAndInstallMiniApp(
-  url: string,
-  versionOverride?: string,
-): Promise<{packageName: string; version: string}> {
-  let downloadedZipPath: string = ""
-
+async function downloadMiniAppZip(url: string): Promise<string> {
   const downloadDir = new Directory(Paths.cache, "lma_downloads")
   try {
     if (!downloadDir.exists) {
@@ -174,14 +166,30 @@ async function downloadAndInstallMiniApp(
 
   try {
     const output = await File.downloadFileAsync(url, downloadDir)
-    downloadedZipPath = output.uri
+    return output.uri
   } catch (error) {
     console.error("ZIP: Error downloading zip file", error)
     throw "DOWNLOAD_FAILED"
   }
+}
 
-  console.log("ZIP: done downloading, starting unzip")
-
+/**
+ * Unpack a local miniapp zip and install it under
+ * `lmas/<packageName>/<version>/`.
+ *
+ * Zip layout: flat — files at root, `miniapp.json` at the top level. We're
+ * strict on shape so we fail loudly on malformed bundles.
+ *
+ * @param zipPath          file:// URI of the zip on local disk.
+ * @param versionOverride  override the manifest's version field. Used by the
+ *                         dev miniapp caching path which stamps `dev-<ms>`
+ *                         so multiple snapshots can coexist alongside
+ *                         semver-installed versions.
+ */
+async function unpackMiniApp(
+  zipPath: string,
+  versionOverride?: string,
+): Promise<{packageName: string; version: string}> {
   const unzipDir = new Directory(Paths.cache, "lma_unzip")
   try {
     if (unzipDir.exists) unzipDir.delete()
@@ -192,8 +200,8 @@ async function downloadAndInstallMiniApp(
   }
 
   try {
-    console.log("ZIP: unzipping", downloadedZipPath)
-    await unzip(downloadedZipPath, unzipDir.uri)
+    console.log("ZIP: unzipping", zipPath)
+    await unzip(zipPath, unzipDir.uri)
   } catch (error) {
     console.error("Error unzipping zip file", error)
     throw "UNZIP_FAILED"
@@ -258,6 +266,25 @@ async function downloadAndInstallMiniApp(
   return {packageName, version}
 }
 
+/**
+ * Download a miniapp zip from `url`, unpack it, and install it under
+ * `lmas/<packageName>/<version>/`. Thin composition of
+ * {@link downloadMiniAppZip} + {@link unpackMiniApp} for remote bundles.
+ *
+ * @param versionOverride  override the manifest's version field. Used by the
+ *                         dev miniapp caching path which stamps `dev-<ms>`
+ *                         so multiple snapshots can coexist alongside
+ *                         semver-installed versions.
+ */
+async function downloadAndInstallMiniApp(
+  url: string,
+  versionOverride?: string,
+): Promise<{packageName: string; version: string}> {
+  const downloadedZipPath = await downloadMiniAppZip(url)
+  console.log("ZIP: done downloading, starting unzip")
+  return unpackMiniApp(downloadedZipPath, versionOverride)
+}
+
 type Listener = () => void
 
 class AppRegistry {
@@ -301,7 +328,64 @@ class AppRegistry {
    * On-disk path for a given miniapp bundle version.
    */
   public getBundleDir(packageName: string, version: string): string {
-    return `${Paths.document.uri}/lmas/${packageName}/${version}`
+    const bundleDir = new Directory(Paths.document, "lmas", packageName, version)
+    return bundleDir.uri
+  }
+
+  /**
+   * Resolve the two-layer entry paths for an installed miniapp version.
+   * Returns absolute file:// URIs for `background` and (when present) `ui`.
+   *
+   * Legacy single-layer bundles (no `entry` object in manifest) fall back
+   * to `index.html` discovery so the WebView host keeps working unchanged.
+   * Two-layer bundles ship `entry.background` and optional `entry.ui`
+   * paths relative to the bundle root.
+   *
+   * Returns null if neither shape resolves to existing files on disk.
+   */
+  public getMiniappEntryPaths(
+    packageName: string,
+    version: string,
+  ): {background: string | null; ui: string | null} | null {
+    const manifest = this.getMiniappManifest(packageName, version) as {
+      entry?: {background?: string; ui?: string}
+    } | null
+    const bundleDir = this.getBundleDir(packageName, version)
+    const resolve = (rel: string): string | null => {
+      const trimmed = rel.replace(/^\.?\/+/, "")
+      const file = new File(bundleDir, trimmed)
+      return file.exists ? file.uri : null
+    }
+    if (manifest?.entry) {
+      console.log("manifest.entry", manifest.entry)
+      const bg = manifest.entry.background ? resolve(manifest.entry.background) : null
+      console.log("bg", bg)
+      const ui = manifest.entry.ui ? resolve(manifest.entry.ui) : null
+      console.log("ui", ui)
+      if (bg || ui) {
+        return {background: bg, ui: ui}
+      }
+    }
+    // Legacy single-bundle fallback — `index.html` at the bundle root.
+    const legacy = new File(new Directory(bundleDir.replace(/^file:\/\//, "")), "index.html")
+    return {
+      background: null,
+      ui: legacy.exists ? legacy.uri : null,
+    }
+  }
+
+  /**
+   * Verify a manifest declares an SDK / host version range compatible
+   * with the current host. Delegates to the pure
+   * {@link checkManifestVersions} helper — same shape, no React Native
+   * imports, unit-testable. Manifests missing either field pass
+   * through unchanged (legacy single-layer path).
+   */
+  public checkManifestVersions(
+    manifest: {sdkVersion?: string; minHostVersion?: string} | null,
+    options: {hostVersion: string; supportedSdkRange: string},
+  ): {ok: true} | {ok: false; reason: string} {
+    return checkManifestVersions(manifest, options)
   }
 
   /**
@@ -341,21 +425,48 @@ class AppRegistry {
     return Res.try_async(async () => {
       const {packageName, version} = await downloadAndInstallMiniApp(url, opts?.versionOverride)
       console.log("APP_REGISTRY: Downloaded and installed mini app")
-
-      // If this is a release install (semver, not dev-*) of a package that
-      // currently has dev-* snapshots, clear the dev state so the swap to
-      // "released" is clean. Otherwise the dev version would keep winning
-      // getActiveVersion's dev-precedence rule and the just-installed
-      // release wouldn't run.
-      const isDevInstall = version.startsWith("dev-")
-      if (!isDevInstall) {
-        this.clearDevArtifacts(packageName)
-      }
-
-      this.setActiveVersion(packageName, version)
-      this.refreshNeeded = true
-      this.notify()
+      this.finalizeInstall(packageName, version)
     })
+  }
+
+  /**
+   * Install a miniapp from a zip already on local disk (e.g. a bundled asset
+   * copied into cache). Skips the HTTP download path that `installFromUrl`
+   * uses — `File.downloadFileAsync` is HTTP(S)-only and rejects file:// URIs.
+   *
+   * @param zipPath  file:// URI of the local zip.
+   */
+  public installFromLocalZip(
+    zipPath: string,
+    opts?: {versionOverride?: string},
+  ): AsyncResult<{packageName: string; version: string}, Error> {
+    return Res.try_async(async () => {
+      const {packageName, version} = await unpackMiniApp(zipPath, opts?.versionOverride)
+      console.log("APP_REGISTRY: Installed mini app from local zip")
+      this.finalizeInstall(packageName, version)
+      return {packageName, version}
+    })
+  }
+
+  /**
+   * Post-install bookkeeping shared by every install path: clear stale dev
+   * artifacts on release installs, point the active-version at the just-
+   * installed bundle, and notify subscribers to refresh.
+   */
+  private finalizeInstall(packageName: string, version: string): void {
+    // If this is a release install (semver, not dev-*) of a package that
+    // currently has dev-* snapshots, clear the dev state so the swap to
+    // "released" is clean. Otherwise the dev version would keep winning
+    // getActiveVersion's dev-precedence rule and the just-installed
+    // release wouldn't run.
+    const isDevInstall = version.startsWith("dev-")
+    if (!isDevInstall) {
+      this.clearDevArtifacts(packageName)
+    }
+
+    this.setActiveVersion(packageName, version)
+    this.refreshNeeded = true
+    this.notify()
   }
 
   public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string, version: string, name: string}, Error> {
@@ -381,9 +492,10 @@ class AppRegistry {
   }
 
   /**
-   * Drop every dev-* version directory for a package plus the dev MMKV keys.
-   * Called on a release install so the package transitions cleanly from
-   * "dev mode" to "released mode."
+   * Drop every dev-* version directory for a package plus ALL dev MMKV keys
+   * (URL/port/reachability + the home-tile metadata record). Called on a
+   * release install (dev → released transition) and on uninstall, so a dev
+   * package leaves nothing behind that `projectDevApps` could re-surface.
    */
   private clearDevArtifacts(packageName: string): void {
     try {
@@ -405,6 +517,16 @@ class AppRegistry {
     storage.remove(`${packageName}_dev_url`)
     storage.remove(`${packageName}_dev_port`)
     storage.remove(`${packageName}_dev_last_reachable`)
+    // Drop the single dev slot's home-tile metadata + dev URL/port keys (all stored under
+    // DEV_APP_PACKAGE_NAME, not `packageName`). Dev miniapps load over HTTP and aren't on disk,
+    // so without this the projected tile would reappear on the next getInstalledMiniapps() refresh.
+    //
+    // Only do this when we're actually touching the dev slot: either the dev package itself, or the
+    // real manifest package currently occupying the slot. Otherwise a release install/uninstall of
+    // an UNRELATED package would wipe the active dev tile.
+    if (packageName === DEV_APP_PACKAGE_NAME || packageName === getDevAppSourcePackage()) {
+      unregisterDevApp()
+    }
   }
 
   /**
@@ -439,7 +561,9 @@ class AppRegistry {
     return Res.try_async(async () => {
       if (version) {
         const lmaDir = new Directory(Paths.document, "lmas", packageName, version)
-        lmaDir.delete()
+        // Guard exists: a dev miniapp loads over HTTP and has no on-disk dir,
+        // so an unconditional delete() would throw and abort the cleanup below.
+        if (lmaDir.exists) lmaDir.delete()
         console.log("APP_REGISTRY: Uninstalled mini app version", version)
         const packageDir = new Directory(Paths.document, "lmas", packageName)
         if (packageDir.exists && packageDir.list().length === 0) {
@@ -452,6 +576,10 @@ class AppRegistry {
         }
         console.log("APP_REGISTRY: Uninstalled all versions of mini app", packageName)
       }
+      // Always clear dev artifacts: for HTTP-direct dev miniapps the tile is
+      // backed by storage records (_dev_meta + dev_apps_index), not the disk
+      // dir, so without this the projected tile reappears on the next refresh.
+      this.clearDevArtifacts(packageName)
       this.refreshNeeded = true
       this.notify()
     })
@@ -542,17 +670,30 @@ class AppRegistry {
    *
    * `running` reflects MiniappHost mount state via miniappRunningRegistry.
    */
+  /**
+   * Merge disk-derived apps with the projected dev + offline layers,
+   * de-duping by packageName. A real on-disk install (or offline app) wins
+   * over a dev tile of the same package — a dev record is just a launcher
+   * stub that an actual install supersedes.
+   */
+  private mergeProjectedApps(diskApps: ClientApp[]): ClientApp[] {
+    const seen = new Set(diskApps.map((a) => a.packageName))
+    const offline = this.projectOfflineApps()
+    for (const a of offline) seen.add(a.packageName)
+    const dev = this.projectDevApps().filter((a) => !seen.has(a.packageName))
+    return [...diskApps, ...dev, ...offline]
+  }
+
   public async getInstalledMiniapps(): Promise<ClientApp[]> {
     if (!this.refreshNeeded && this.cachedApps.length > 0) {
       // Cache hit: re-project running from the registry. The cached array
       // IS the disk-derived truth; running comes from the mount registry.
-      return [
-        ...this.cachedApps.map((a) => ({
+      return this.mergeProjectedApps(
+        this.cachedApps.map((a) => ({
           ...a,
           running: miniappRunningRegistry.has(a.packageName),
         })),
-        ...this.projectOfflineApps(),
-      ]
+      )
     }
 
     try {
@@ -604,17 +745,56 @@ class AppRegistry {
 
       this.cachedApps = out
       this.refreshNeeded = false
-      return [...this.cachedApps, ...this.projectOfflineApps()]
+      return this.mergeProjectedApps(this.cachedApps)
     } catch (error) {
       console.error("APP_REGISTRY: Error getting local applets", error)
-      return [
-        ...this.cachedApps.map((a) => ({
+      return this.mergeProjectedApps(
+        this.cachedApps.map((a) => ({
           ...a,
           running: miniappRunningRegistry.has(a.packageName),
         })),
-        ...this.projectOfflineApps(),
-      ]
+      )
     }
+  }
+
+  /** Force the next getInstalledMiniapps() to re-derive from disk + records. */
+  public markRefreshNeeded(): void {
+    this.refreshNeeded = true
+    this.notify()
+  }
+
+  /**
+   * Project persisted dev-app metadata records into ClientApp tiles. Dev
+   * miniapps aren't installed to disk (they load over HTTP), so they don't
+   * appear in the `lmas/` scan — this surfaces them on the home screen so
+   * they're re-launchable without re-scanning the QR.
+   */
+  private projectDevApps(): ClientApp[] {
+    return getDevAppRecords().map((rec) => {
+      const permissions = normalizeManifestPermissions(rec.permissions)
+      const hardwareRequirements = buildHardwareRequirements(rec.hardwareRequirements, rec.packageName)
+      return {
+        packageName: rec.packageName,
+        version: undefined,
+        running: miniappRunningRegistry.has(rec.packageName),
+        local: true,
+        healthy: true,
+        loading: false,
+        offline: false,
+        hidden: false,
+        offlineRoute: "",
+        name: rec.name,
+        webviewUrl: "",
+        logoUrl: rec.iconUrl,
+        type: "standard",
+        permissions,
+        hardwareRequirements,
+        isMiniappDev: true,
+        devUrl: rec.devUrl,
+        onStart: () => saveLocalAppRunningState(rec.packageName, true),
+        onStop: () => saveLocalAppRunningState(rec.packageName, false),
+      }
+    })
   }
 
   private projectOfflineApps(): ClientApp[] {
@@ -669,6 +849,135 @@ export function getLocalAppScreenshot(packageName: string): string | undefined {
   const res = storage.load<string>(`${packageName}_screenshot`)
   if (res.is_ok()) return res.value
   return undefined
+}
+
+/**
+ * Persisted metadata for a dev miniapp's home tile.
+ *
+ * Dev miniapps load directly off the dev server over HTTP and are NOT
+ * installed into `lmas/`, so the disk scan in `getInstalledMiniapps` can't
+ * see them. We persist a tiny record at scan / dev-URL-entry time so the
+ * tile survives across app launches and is re-launchable without re-scanning.
+ * `permissions` / `hardwareRequirements` are snapshotted from the manifest so
+ * the home-screen permission gate has data without a disk bundle.
+ */
+export interface DevAppRecord {
+  packageName: string
+  name: string
+  iconUrl: string
+  devUrl: string
+  devPort?: number
+  permissions?: Array<string | {type: string; required?: boolean; description?: string}>
+  hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+  /**
+   * The dev miniapp's real manifest package name. `packageName` is overwritten to
+   * {@link DEV_APP_PACKAGE_NAME} so the launch chain routes consistently, so this field
+   * preserves the original so install/uninstall of OTHER packages don't wipe the dev slot.
+   */
+  sourcePackageName?: string
+}
+
+const DEV_APPS_INDEX_KEY = "dev_apps_index"
+
+/**
+ * The one and only package name a dev miniapp is registered under.
+ *
+ * There is a SINGLE dev slot: scanning a new QR (or entering a new dev URL)
+ * replaces the previous dev app rather than adding a second tile. Because the
+ * whole launch chain — JSContext registration, UI-router binding,
+ * setForeground, dev_url/dev_port storage keys, respawn-bg lookup — keys on
+ * this package name, every consumer MUST use `DEV_APP_PACKAGE_NAME` (not the
+ * manifest's real packageName) so messages route consistently. Mixing the two
+ * was the cause of the "CONNECT_ACK timeout" — the tile said `com.dev` while
+ * the dev URL/port and foreground target used the manifest name.
+ */
+export const DEV_APP_PACKAGE_NAME = "com.dev"
+// const DEV_APP_NAME = "Dev App"
+
+/**
+ * Register (or replace) THE dev miniapp. Persists the home-tile metadata AND
+ * the dev_url/dev_port keyed on {@link DEV_APP_PACKAGE_NAME}, so this function
+ * is the single source of truth for the dev slot — callers must not write the
+ * `*_dev_url` / `*_dev_port` keys under the manifest's real package name.
+ */
+export function registerDevApp(record: DevAppRecord): void {
+  const devRecord: DevAppRecord = {
+    ...record,
+    // Preserve the real manifest package before overwriting packageName with the
+    // single dev-slot name, so clearDevArtifacts can tell whether an install/uninstall
+    // actually targets the dev slot.
+    sourcePackageName: record.sourcePackageName ?? record.packageName,
+    packageName: DEV_APP_PACKAGE_NAME,
+    // name: DEV_APP_NAME,
+    iconUrl: record.iconUrl,
+  }
+  storage.save(`${DEV_APP_PACKAGE_NAME}_dev_meta`, JSON.stringify(devRecord))
+  // The launch chain (LocalMiniappView.resolveDevPort, mentraJsBootstrap
+  // respawn-bg) reads these keys under DEV_APP_PACKAGE_NAME — persist them
+  // here so callers can't key them on the wrong (real) package name.
+  storage.save(`${DEV_APP_PACKAGE_NAME}_dev_url`, record.devUrl)
+  if (typeof record.devPort === "number" && Number.isFinite(record.devPort)) {
+    storage.save(`${DEV_APP_PACKAGE_NAME}_dev_port`, record.devPort)
+  } else {
+    storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_port`)
+  }
+  const idx = getDevAppIndex()
+  if (!idx.includes(DEV_APP_PACKAGE_NAME)) {
+    idx.push(DEV_APP_PACKAGE_NAME)
+    storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(idx))
+  }
+  appRegistry.markRefreshNeeded()
+}
+
+/** Drop the dev miniapp's home-tile metadata + dev URL/port keys. */
+export function unregisterDevApp(): void {
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_url`)
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_port`)
+  storage.remove(`${DEV_APP_PACKAGE_NAME}_dev_last_reachable`)
+  const idx = getDevAppIndex().filter((p) => p !== DEV_APP_PACKAGE_NAME)
+  storage.save(DEV_APPS_INDEX_KEY, JSON.stringify(idx))
+  appRegistry.markRefreshNeeded()
+}
+
+function getDevAppIndex(): string[] {
+  const res = storage.load<string>(DEV_APPS_INDEX_KEY)
+  if (!res.is_ok()) return []
+  try {
+    const parsed = JSON.parse(res.value)
+    return Array.isArray(parsed) ? (parsed as string[]) : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * The real manifest package name currently occupying the dev slot, or null if no dev app is
+ * registered. Used to decide whether clearing a package's artifacts should also drop the dev slot.
+ */
+export function getDevAppSourcePackage(): string | null {
+  const res = storage.load<string>(`${DEV_APP_PACKAGE_NAME}_dev_meta`)
+  if (!res.is_ok()) return null
+  try {
+    const rec = JSON.parse(res.value) as DevAppRecord
+    return rec.sourcePackageName ?? null
+  } catch {
+    return null
+  }
+}
+
+export function getDevAppRecords(): DevAppRecord[] {
+  const out: DevAppRecord[] = []
+  for (const pkg of getDevAppIndex()) {
+    const res = storage.load<string>(`${pkg}_dev_meta`)
+    if (!res.is_ok()) continue
+    try {
+      out.push(JSON.parse(res.value) as DevAppRecord)
+    } catch {
+      /* corrupt record — skip */
+    }
+  }
+  return out
 }
 
 const appRegistry = AppRegistry.getInstance()

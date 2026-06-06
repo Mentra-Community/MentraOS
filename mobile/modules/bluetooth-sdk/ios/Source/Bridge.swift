@@ -10,7 +10,7 @@ import Foundation
 /// Bridge for Bluetooth SDK communication between Expo modules and native iOS code
 /// Has commands for the Bluetooth SDK to use to send messages to JavaScript
 class Bridge {
-    private static let micSampleRate = 16_000
+    private static let micSampleRate = 16000
     private static let pcmBitsPerSample = 16
     private static let micChannels = 1
     private static let lc3FrameDurationMs = 10
@@ -67,6 +67,16 @@ class Bridge {
         Bridge.sendTypedMessage("log", body: data)
     }
 
+    /// Report tar.bz2 extraction progress to JavaScript.
+    static func sendExtractionProgress(percentage: Int, bytesRead: Int64, totalBytes: Int64) {
+        let body: [String: Any] = [
+            "percentage": percentage,
+            "bytesRead": bytesRead,
+            "totalBytes": totalBytes,
+        ]
+        Bridge.sendTypedMessage("extraction_progress", body: body)
+    }
+
     static func sendHeadUp(_ isUp: Bool) {
         let data = ["up": isUp]
         Bridge.sendTypedMessage("head_up", body: data)
@@ -90,7 +100,8 @@ class Bridge {
     @MainActor
     private static func micPcmEventBody(_ data: Data) -> [String: Any] {
         let voiceActivityDetectionEnabled =
-            DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool ?? true
+            DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool
+                ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
         return [
             "pcm": data,
             "sampleRate": micSampleRate,
@@ -104,7 +115,8 @@ class Bridge {
     @MainActor
     private static func micLc3EventBody(_ data: Data) -> [String: Any] {
         let voiceActivityDetectionEnabled =
-            DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool ?? true
+            DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool
+                ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
         let frameSizeBytes = DeviceStore.shared.get("bluetooth", "lc3_frame_size") as? Int ?? defaultLc3FrameSizeBytes
         return [
             "lc3": data,
@@ -239,6 +251,16 @@ class Bridge {
         Bridge.sendTypedMessage("touch_event", body: body)
     }
 
+    static func sendAccelEvent(x: Float, y: Float, z: Float, timestamp: Int64) {
+        let body: [String: Any] = [
+            "x": x,
+            "y": y,
+            "z": z,
+            "timestamp": timestamp,
+        ]
+        Bridge.sendTypedMessage("accel_event", body: body)
+    }
+
     static func sendSwipeVolumeStatus(enabled: Bool, timestamp: Int64) {
         let body: [String: Any] = [
             "enabled": enabled,
@@ -270,11 +292,12 @@ class Bridge {
     }
 
     static func sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
+        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
         var event: [String: Any] = [
             "type": "photo_response",
             "state": "error",
             "requestId": requestId,
-            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+            "timestamp": timestamp,
         ]
         if !errorCode.isEmpty {
             event["errorCode"] = errorCode
@@ -283,6 +306,10 @@ class Bridge {
             event["errorMessage"] = errorMessage
         }
         Bridge.sendTypedMessage("photo_response", body: event)
+    }
+
+    static func sendPhotoStatus(_ status: [String: Any]) {
+        Bridge.sendTypedMessage("photo_status", body: status)
     }
 
     static func sendMiniappSelected(packageName: String) {
@@ -389,7 +416,8 @@ class Bridge {
         stepPercent: Int,
         overallPercent: Int,
         status: String,
-        errorMessage: String?
+        errorMessage: String?,
+        glassesTimeMs: Int64? = nil
     ) {
         var eventBody: [String: Any] = [
             "session_id": sessionId,
@@ -403,6 +431,9 @@ class Bridge {
         ]
         if let error = errorMessage {
             eventBody["error_message"] = error
+        }
+        if let glassesTimeMs, glassesTimeMs > 0 {
+            eventBody["glasses_time_ms"] = glassesTimeMs
         }
         Bridge.sendTypedMessage("ota_status", body: eventBody)
     }

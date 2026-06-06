@@ -1,3 +1,4 @@
+import {createElement} from "react"
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 
@@ -10,19 +11,20 @@ import {
   HardwareCompatibility,
   HardwareRequirementLevel,
   HardwareType,
+  sttModelManager as STTModelManager,
   type ClientApp,
   type StartOptions,
   useAppStatusStore,
 } from "@mentra/island"
 
 import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import {miniappHost} from "@/components/miniapp/MiniappHost"
+import {DevToolsIcon} from "@/components/miniapps/DevIcons"
+import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {showAlert} from "@/contexts/ModalContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {submitMiniappStartFailedBugReport} from "@/services/bugReport/miniappStartBugReport"
 import restComms from "@/services/RestComms"
-import STTModelManager from "@/services/STTModelManager"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 
@@ -184,7 +186,7 @@ class MiniappCatalog {
           ],
         })
         if (result === 1) {
-          nav.push("/miniapps/settings/transcription")
+          nav.push("/miniapps/settings/speech")
         }
         return false
       }
@@ -226,8 +228,12 @@ class MiniappCatalog {
   }
 
   private async beforeStop(app: ClientApp): Promise<void> {
-    if (app.isMiniappDev) {
-      miniappHost.unmount(app.packageName)
+    if (app.local || app.isMiniappDev) {
+      // Two-layer teardown: kill the JSContext (the always-on half).
+      // The UI WebView (if currently open) lives inside the
+      // /applet/local route and unbinds on its own when the user
+      // navigates away — we don't touch it from here.
+      await getMentraJS()?.router.unregister(app.packageName)
       return
     }
 
@@ -338,10 +344,12 @@ class MiniappCatalog {
     }
     if (app.offline) return // offline app without a route — nothing to navigate to
     if (app.isMiniappDev && app.devUrl) {
-      // Dev miniapps don't push a route. The Compositor (running as an effect)
-      // sees foreground=true and mounts/foregrounds the webview over /home.
-      // Reachability check still routes to the offline screen if the dev
-      // server isn't responding.
+      // Dev miniapps foreground through the Compositor overlay, same as
+      // released local miniapps (and the same as the app switcher's
+      // setForeground path) — so the launch is identical no matter where
+      // the user tapped. We still pre-flight reachability first so an
+      // unreachable dev server lands on the dedicated offline screen
+      // rather than the inline error card LocalMiniappView falls back to.
       const {packageName, devUrl, name: appName, logoUrl} = app
       decideDevLaunchRoute(packageName, devUrl).then((result) => {
         if (result.decision === "live") {
@@ -353,8 +361,7 @@ class MiniappCatalog {
       return
     }
     if (app.local) {
-      // Local miniapps: no route push. Compositor renders the foregrounded
-      // app over /home; swipe-to-back clears foreground but keeps it running.
+      // bring the local miniapp to the foreground:
       useAppStatusStore.getState().setForeground(app.packageName)
       return
     }
@@ -506,7 +513,7 @@ class MiniappCatalog {
       },
     ]
 
-    if (useSettingsStore.getState().getSetting(SETTINGS.super_mode.key)) {
+    if (useSettingsStore.getState().getSetting(SETTINGS.dev_mode.key)) {
       apps.push({
         packageName: lmaInstallerPackageName,
         name: translate("miniApps:lmaInstaller"),
@@ -522,6 +529,7 @@ class MiniappCatalog {
         hidden: false,
         hardwareRequirements: [],
         logoUrl: require("@assets/applet-icons/store.png"),
+        iconComponent: createElement(DevToolsIcon),
       })
     }
 

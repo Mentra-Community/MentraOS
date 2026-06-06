@@ -104,17 +104,16 @@ Three red blinks to indicate something went wrong.
 session.led.setColor("red", { onTime: 300, offTime: 300, count: 3 });
 ```
 
-### Privacy Indicator During Camera Use
+### Privacy Indicator
 
-Keep the LED on while the camera is streaming so bystanders know recording is active.
+Use the LED as a visible status indicator for long-running work.
 
 ```typescript
 app.onSession(async (session: MentraSession) => {
   session.led.setColor("white", 60000);
-  await session.camera.startStream();
+  await doLongRunningWork();
 
-  // Later, when stopping the stream
-  await session.camera.stopStream();
+  // Later, when work is complete
   session.led.off();
 });
 ```

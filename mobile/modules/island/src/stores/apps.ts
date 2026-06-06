@@ -27,6 +27,7 @@ import {HardwareCompatibility} from "../utils/hardware/hardware"
 import {storage} from "../utils/storage/storage"
 import appRegistry from "../services/AppRegistry"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 // ---------------------------------------------------------------------------
 // Configuration / hooks
@@ -66,6 +67,8 @@ interface AppStatusState {
   refresh: () => Promise<void>
   start: (app: ClientApp, opts?: StartOptions) => Promise<void>
   stop: (packageName: string) => Promise<void>
+  setForeground: (packageName: string) => Promise<void>
+  clearForeground: () => void
   stopAll: () => AsyncResult<void, Error>
   install: (url: string, opts?: {versionOverride?: string}) => AsyncResult<void, Error>
   uninstall: (packageName: string, version?: string) => AsyncResult<void, Error>
@@ -74,10 +77,6 @@ interface AppStatusState {
   getHiddenStatus: (packageName: string) => boolean
   /** Replace the whole apps array. Hosts use this when their extra source changes. */
   setApps: (apps: ClientApp[]) => void
-  /** Mark a single app as the foreground miniapp; clears foreground on all others. */
-  setForeground: (packageName: string) => void
-  /** Clear foreground on every app — used when the user swipes/closes the host overlay. */
-  clearForeground: () => void
 }
 
 export const DUMMY_APPLET: ClientApp = {
@@ -107,6 +106,12 @@ export const saveAppsOrder = (orderMap: OrderMap): Result<void, Error> => {
 export const getAppsOrder = (): Result<OrderMap, Error> => {
   return storage.load<OrderMap>(APP_ORDER_KEY)
 }
+
+// In-memory cache for hidden flags. `projectApps` reads getHiddenStatus once
+// per app per refresh — without a cache that was a synchronous JNI hop per
+// app per refresh on a hot UI path. Kept consistent with disk by writing
+// through in setHiddenStatus. Map of packageName → hidden boolean.
+const hiddenStatusCache = new Map<string, boolean>()
 
 const getRawPackageNamePriority = (pkg: string): number => {
   if (pkg.includes("@empty")) {
@@ -156,54 +161,101 @@ const startStopApp = async (app: ClientApp, status: boolean): Promise<void> => {
   }
 }
 
+/**
+ * Build the final `apps` array for the store from the two source lists
+ * (local + cloud). Pure — same inputs → same outputs. Used by `refresh`
+ * to emit twice (local-only, then merged) without duplicating the
+ * dedupe/carry-over/compat/hidden/postProcess pipeline.
+ */
+function projectApps(
+  previousState: AppStatusState,
+  localApps: ClientApp[],
+  extraApps: ClientApp[],
+): ClientApp[] {
+  // Dedupe by packageName, keep first occurrence (extra/cloud wins).
+  const byPackage = new Map<string, ClientApp>()
+  for (const app of [...extraApps, ...localApps]) {
+    if (!byPackage.has(app.packageName)) byPackage.set(app.packageName, app)
+  }
+
+  // Index previous snapshot for cheap lookups (was O(N²) via .find()).
+  const previousByPackage = new Map<string, ClientApp>()
+  for (const oldApp of previousState.apps) {
+    previousByPackage.set(oldApp.packageName, oldApp)
+  }
+
+  const capabilities = hostHooks.getCapabilities?.() ?? getModelCapabilities(DeviceTypes.NONE)
+
+  // Single pass: dedupe → screenshot carry-over → compat → hidden, all into
+  // fresh objects. The previous in-place mutation re-used object references
+  // across refreshes, which broke React.memo / referential-equality
+  // memoization downstream (every refresh propagated re-renders even when
+  // nothing meaningful changed) AND tripped Reanimated's "tried to modify
+  // key of an object already passed to a worklet" warning whenever the home
+  // screen's animated app cards held a reference to a previous snapshot's
+  // app object that we then mutated.
+  return Array.from(byPackage.values()).map((app) => ({
+    ...app,
+    screenshot: previousByPackage.get(app.packageName)?.screenshot ?? app.screenshot,
+    compatibility: HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities),
+    hidden: previousState.getHiddenStatus(app.packageName),
+    // Carry over the foreground flag across refreshes (same reasoning as
+    // screenshot): a cloud/local refresh shouldn't drop the WebView the
+    // Compositor is currently rendering. Normalized to a concrete boolean.
+    foregrounded: previousByPackage.get(app.packageName)?.foregrounded ?? false,
+  }))
+}
+
 export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   apps: [],
 
   refresh: async () => {
-    const state = get()
-
+    // Two-pass: local apps first (fast, no network), then merge cloud
+    // applets when they arrive. Without this the home tray waits for
+    // `loadExtraApps` to return — and when cloud is slow/503 (e.g. on
+    // a fresh boot), the just-installed dev miniapp takes 10+ seconds
+    // to show up because the local entry is held back behind the cloud
+    // fetch.
+    //
+    // Pass 1 carries over the PREVIOUS snapshot's cloud apps so the
+    // tray doesn't flicker — empty cloud list on first render would
+    // blank out tiles for a frame before pass 2 re-merges them. On
+    // first-ever refresh (state.apps is empty) we skip pass 1 entirely
+    // and let pass 2 own the only emit; there are no rendered tiles to
+    // flicker yet.
+    const previousState = get()
     const localApps = await appRegistry.getInstalledMiniapps()
-    const extraApps = (await hostHooks.loadExtraApps?.()) ?? []
+    const hasPriorSnapshot = previousState.apps.length > 0
+    if (hasPriorSnapshot) {
+      const previousCloudApps = previousState.apps.filter((a) => !a.local)
+      let pass1 = projectApps(previousState, localApps, previousCloudApps)
+      if (hostHooks.postProcessApps) {
+        try {
+          pass1 = await hostHooks.postProcessApps(pass1)
+        } catch (e) {
+          console.warn("ISLAND: postProcessApps threw on local-only pass:", e)
+        }
+      }
+      set({apps: pass1})
+    }
 
-    let apps: ClientApp[] = [...extraApps, ...localApps]
-
-    // Dedupe by packageName, keep first occurrence (extra/cloud wins over local).
-    const byPackage = new Map<string, ClientApp>()
-    for (const app of apps) {
-      if (!byPackage.has(app.packageName)) {
-        byPackage.set(app.packageName, app)
+    // Pass 2: fetch cloud applets, merge, re-emit.
+    let extraApps: ClientApp[] = []
+    try {
+      extraApps = (await hostHooks.loadExtraApps?.()) ?? []
+    } catch {
+      // Cloud failures shouldn't blow away the local list we just published.
+      extraApps = []
+    }
+    let pass2 = projectApps(get(), localApps, extraApps)
+    if (hostHooks.postProcessApps) {
+      try {
+        pass2 = await hostHooks.postProcessApps(pass2)
+      } catch (e) {
+        console.warn("ISLAND: postProcessApps threw on merged pass:", e)
       }
     }
-    apps = Array.from(byPackage.values())
-
-    // Carry over screenshots + foreground flag from the previous snapshot.
-    // refresh() rebuilds from registry+cloud sources which don't know about
-    // UI state (foreground), so preserving here keeps the Compositor's overlay
-    // from snapping off when an unrelated registry event fires mid-launch.
-    const oldApps = state.apps
-    for (const oldApp of oldApps) {
-      const next = apps.find((a) => a.packageName === oldApp.packageName)
-      if (!next) continue
-      if (oldApp.screenshot) next.screenshot = oldApp.screenshot
-      if (oldApp.foreground) next.foreground = true
-    }
-
-    // Compatibility info using host-provided capabilities.
-    const capabilities = hostHooks.getCapabilities?.() ?? getModelCapabilities(DeviceTypes.NONE)
-    for (const app of apps) {
-      app.compatibility = HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities)
-    }
-
-    // Hidden flag from MMKV.
-    for (const app of apps) {
-      app.hidden = state.getHiddenStatus(app.packageName)
-    }
-
-    if (hostHooks.postProcessApps) {
-      apps = await hostHooks.postProcessApps(apps)
-    }
-
-    set({apps})
+    set({apps: pass2})
   },
 
   start: async (clientApp: ClientApp, opts?: StartOptions) => {
@@ -267,7 +319,48 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       ),
     }))
 
+    // if there are no apps running, call clearDisplay():
+    // read fresh state via get() — `state` was captured before the set() above, so it still shows
+    // this app as running and would never reach 0 when stopping the last app.
+    if (get().apps.filter((a) => a.running).length === 0) {
+      BluetoothSdk.clearDisplay()
+    }
     await startStopApp(app, false)
+  },
+
+  setForeground: async (packageName: string) => {
+    const app = get().apps.find((a) => a.packageName === packageName)
+    if (!app) {
+      console.error(`ISLAND: setForeground — app not found: ${packageName}`)
+      return
+    }
+
+    // Flip the foreground flag synchronously so the Compositor's open
+    // animation starts on the same frame as the tap. We do NOT await start()
+    // first — that gated the flag (and thus the animation) behind the whole
+    // JSContext-spawn chain, which was the perceived launch delay. The
+    // Compositor/LocalMiniappView already handle the spawn being in-flight
+    // (the phase machine), so foregrounding needn't wait for it.
+    saveLastOpenTime(packageName)
+    set((s) => ({
+      apps: s.apps.map((a) => ({...a, foregrounded: a.packageName === packageName})),
+    }))
+
+    // Ensure the JSContext exists. start() is idempotent for an
+    // already-running app and enforces the foreground-only-one rule for
+    // standard apps. Fire-and-forget after the flag flip so it doesn't block
+    // paint.
+    // if (!app.running) {
+    //   get().start(app)
+    // }
+  },
+
+  clearForeground: () => {
+    set((s) => ({
+      apps: s.apps.some((a) => a.foregrounded)
+        ? s.apps.map((a) => (a.foregrounded ? {...a, foregrounded: false} : a))
+        : s.apps,
+    }))
   },
 
   stopAll: () => {
@@ -303,6 +396,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   },
 
   setHiddenStatus: (packageName: string, status: boolean) => {
+    hiddenStatusCache.set(packageName, status)
     set((s) => ({
       apps: s.apps.map((a) => (a.packageName === packageName ? {...a, hidden: status} : a)),
     }))
@@ -317,25 +411,15 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   },
 
   getHiddenStatus: (packageName: string): boolean => {
+    const cached = hiddenStatusCache.get(packageName)
+    if (cached !== undefined) return cached
     const res = storage.load<boolean>(`${packageName}_hidden`)
-    if (res.is_ok()) return res.value
-    return false
+    const value = res.is_ok() ? res.value : false
+    hiddenStatusCache.set(packageName, value)
+    return value
   },
 
   setApps: (apps) => set({apps}),
-
-  setForeground: (packageName: string) => {
-    set((s) => ({
-      apps: s.apps.map((a) => ({...a, foreground: a.packageName === packageName})),
-    }))
-  },
-
-  clearForeground: () => {
-    set((s) => {
-      if (!s.apps.some((a) => a.foreground)) return s
-      return {apps: s.apps.map((a) => (a.foreground ? {...a, foreground: false} : a))}
-    })
-  },
 }))
 
 // Project miniappRunningRegistry membership into the store's `running` field
@@ -369,6 +453,8 @@ appRegistry.subscribe(() => {
 export const useApps = () => useAppStatusStore((state) => state.apps)
 export const useStart = () => useAppStatusStore((state) => state.start)
 export const useStop = () => useAppStatusStore((state) => state.stop)
+export const useSetForeground = () => useAppStatusStore((state) => state.setForeground)
+export const useClearForeground = () => useAppStatusStore((state) => state.clearForeground)
 export const useRefresh = () => useAppStatusStore((state) => state.refresh)
 export const useStopAll = () => useAppStatusStore((state) => state.stopAll)
 export const useInstall = () => useAppStatusStore((state) => state.install)
@@ -400,6 +486,16 @@ export const useActiveForegroundApp = () => {
   return useMemo(() => apps.find((app) => (app.type === "standard" || !app.type) && app.running) ?? null, [apps])
 }
 
+/**
+ * The single app currently foregrounded in the Compositor overlay, or null.
+ * Driven by setForeground/clearForeground — distinct from the "active
+ * standard app" (running) selector above.
+ */
+export const useForegroundApp = () => {
+  const apps = useApps()
+  return useMemo(() => apps.find((app) => app.foregrounded) ?? null, [apps])
+}
+
 export const useActiveBackgroundAppsCount = () => {
   const apps = useApps()
   return useMemo(() => apps.filter((app) => app.type === "background" && app.running).length, [apps])
@@ -410,11 +506,3 @@ export const useLocalMiniApps = () => {
   return useMemo(() => apps.filter((app) => app.local), [apps])
 }
 
-/** Currently-foregrounded local miniapp, if any. The Compositor renders this. */
-export const useForegroundMiniApp = () => {
-  const apps = useApps()
-  return useMemo(() => apps.find((app) => app.local && app.foreground) ?? null, [apps])
-}
-
-export const useSetForeground = () => useAppStatusStore((state) => state.setForeground)
-export const useClearForeground = () => useAppStatusStore((state) => state.clearForeground)

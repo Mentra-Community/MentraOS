@@ -31,6 +31,8 @@ interface BufferedLog {
   level: string
   args: unknown[]
   timestamp: number
+  /** "ui" = WebView, "background" = JSContext. Stamped at capture time. */
+  source: "ui" | "background"
   size: number
 }
 
@@ -48,6 +50,7 @@ interface BridgeEntry {
 class DevServerBridge {
   private entries = new Map<string, BridgeEntry>()
   private globalReloadHandler: ((packageName: string) => void) | null = null
+  private globalRespawnBackgroundHandler: ((packageName: string) => void) | null = null
 
   /**
    * Register a global reload handler. MiniappHost calls this once at boot. The
@@ -56,6 +59,17 @@ class DevServerBridge {
    */
   public onReload(handler: (packageName: string) => void): void {
     this.globalReloadHandler = handler
+  }
+
+  /**
+   * Register a global background-respawn handler. Fires when the dev
+   * server sends `{type: "respawn-bg"}` — emitted on filesystem changes
+   * under `src/background/`. The host (MentraJSRouter via the
+   * bootstrap) should kill + respawn the JSContext to pick up the
+   * change. WebView reload is separate (see `onReload`).
+   */
+  public onRespawnBackground(handler: (packageName: string) => void): void {
+    this.globalRespawnBackgroundHandler = handler
   }
 
   /** Open (or re-open) a bridge to the given dev server. */
@@ -91,11 +105,26 @@ class DevServerBridge {
     this.entries.delete(packageName)
   }
 
-  /** Forward a `dev_log` envelope. Called from LocalMiniappRuntime. */
-  public forwardLog(packageName: string, level: string, args: unknown[], timestamp: number): void {
+  /**
+   * Forward a `log` envelope to the connected dev sidecar. Called from
+   * the JSContext side (`MentraJSRouter.__log` handler) AND the WebView
+   * side (`MentraUIRouter.routeFromWebView` for `type:"log"` frames).
+   *
+   * `source` distinguishes the two halves so the CLI can prefix lines
+   * `[UI]` vs `[MentraJS]`. Logs are silently dropped when no bridge
+   * exists for the package (no `mentra-miniapp dev` running) and
+   * buffered in the per-bridge ring while disconnected.
+   */
+  public forwardLog(
+    packageName: string,
+    level: string,
+    args: unknown[],
+    timestamp: number,
+    source: "ui" | "background",
+  ): void {
     const entry = this.entries.get(packageName)
     if (!entry) return
-    const message = JSON.stringify({type: "log", level, args, packageName, timestamp})
+    const message = JSON.stringify({type: "log", level, args, packageName, timestamp, source})
     if (entry.state === "connected" && entry.ws) {
       try {
         entry.ws.send(message)
@@ -104,7 +133,7 @@ class DevServerBridge {
         // Fall through to buffer.
       }
     }
-    this.bufferLog(entry, {packageName, level, args, timestamp, size: message.length})
+    this.bufferLog(entry, {packageName, level, args, timestamp, source, size: message.length})
   }
 
   // -----------------------------------------------------------------------
@@ -196,6 +225,15 @@ class DevServerBridge {
         this.globalReloadHandler?.(packageName)
         return
       }
+
+      // Two-layer dev signal: filesystem changes under src/background/
+      // trigger a full JSContext kill + respawn (not just a WebView
+      // reload). The host's MentraJSRouter listens here.
+      if (parsed.type === "respawn-bg") {
+        console.log(`${LOG_TAG}: ${packageName} received respawn-bg signal`)
+        this.globalRespawnBackgroundHandler?.(packageName)
+        return
+      }
     }
 
     ws.onerror = () => {
@@ -257,6 +295,7 @@ class DevServerBridge {
             args: log.args,
             packageName: log.packageName,
             timestamp: log.timestamp,
+            source: log.source,
           }),
         )
       } catch {

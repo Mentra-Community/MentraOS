@@ -3,10 +3,9 @@ import {useLocalSearchParams} from "expo-router"
 import {SquircleView} from "expo-squircle-view"
 import {View} from "react-native"
 
-import {Button, Header, Screen, Text} from "@/components/ignite"
+import {Button, Screen, Text} from "@/components/ignite"
 import {useNavigationStore} from "@/stores/navigation"
-import {useApps} from "@mentra/island"
-import {decideDevLaunchRoute} from "@mentra/island"
+import {useApps, decideDevLaunchRoute, useAppStatusStore} from "@mentra/island"
 import {storage} from "@/utils/storage/storage"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useRef} from "react"
@@ -28,7 +27,7 @@ export default function DevMiniappOfflineScreen() {
     name?: string
     iconUrl?: string
   }>()
-  const {goBack, replace, push} = useNavigationStore.getState()
+  const {replace, push} = useNavigationStore.getState()
   const apps = useApps()
   const viewShotRef = useRef<View>(null)
 
@@ -53,7 +52,7 @@ export default function DevMiniappOfflineScreen() {
     if (!packageName) return
     const devUrlRes = storage.load<string>(`${packageName}_dev_url`)
     if (!devUrlRes.is_ok()) {
-      push("/miniapps/settings/miniapp-developer-scanner")
+      push("/miniapps/miniappdev/scanner")
       return
     }
     // Pre-flight reachability before deciding the route. If still down,
@@ -61,19 +60,14 @@ export default function DevMiniappOfflineScreen() {
     // re-scan. If up, replace into /applet/local.
     const launchResult = await decideDevLaunchRoute(packageName, devUrlRes.value)
     if (launchResult.decision === "live") {
-      replace("/applet/local", {
-        packageName,
-        devUrl: devUrlRes.value,
-        appName: name,
-        iconUrl,
-      })
+      await useAppStatusStore.getState().setForeground(packageName)
     }
     // else: stay put — the "Last reached" line stays accurate, user can
     // tap again or re-scan.
   }
 
   const onRescan = () => {
-    push("/miniapps/settings/miniapp-developer-scanner")
+    push("/miniapps/miniappdev/scanner")
   }
 
   const displayName = resolvedName ?? packageName ?? "Dev mini app"
@@ -104,8 +98,8 @@ export default function DevMiniappOfflineScreen() {
         />
 
         <View className="w-full max-w-[320px] gap-3">
-          <Button text="Try again" onPress={onTryAgain} preset="alternate" />
-          <Button text="Re-scan QR" onPress={onRescan} preset="default" />
+          <Button text="Try again" onPress={onTryAgain} preset="primary" />
+          <Button text="Re-scan QR" onPress={onRescan} preset="alternate" />
         </View>
       </View>
     </Screen>

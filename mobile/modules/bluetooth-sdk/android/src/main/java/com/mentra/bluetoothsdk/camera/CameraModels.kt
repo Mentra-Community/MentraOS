@@ -47,9 +47,28 @@ data class ButtonVideoRecordingSettings(
     val fps: Int,
 )
 
-enum class CameraFov(val fov: Int, val roiPosition: Int) {
-    STANDARD(118, 0),
-    WIDE(118, 0),
+class CameraFov @JvmOverloads constructor(
+    fov: Int = DEFAULT_FOV,
+    roiPosition: Int = DEFAULT_ROI_POSITION,
+) {
+    val fov: Int = fov.coerceIn(MIN_FOV, MAX_FOV)
+    val roiPosition: Int = roiPosition.coerceIn(MIN_ROI_POSITION, MAX_ROI_POSITION)
+
+    companion object {
+        const val MIN_FOV = 62
+        const val MAX_FOV = 118
+        const val DEFAULT_FOV = 102
+        const val NARROW_FOV = 82
+        const val MIN_ROI_POSITION = 0
+        const val MAX_ROI_POSITION = 2
+        const val DEFAULT_ROI_POSITION = 0
+        @JvmField
+        val NARROW = CameraFov(NARROW_FOV, DEFAULT_ROI_POSITION)
+        @JvmField
+        val STANDARD = CameraFov(DEFAULT_FOV, DEFAULT_ROI_POSITION)
+        @JvmField
+        val WIDE = CameraFov(MAX_FOV, DEFAULT_ROI_POSITION)
+    }
 }
 
 data class PhotoRequest @JvmOverloads constructor(
@@ -60,9 +79,12 @@ data class PhotoRequest @JvmOverloads constructor(
     val authToken: String? = null,
     val compress: PhotoCompression = PhotoCompression.MEDIUM,
     val flash: Boolean = true,
+    val save: Boolean = false,
     val sound: Boolean = true,
     /** Sensor exposure time for this capture only (ns), or null for auto exposure */
     val exposureTimeNs: Double? = null,
+    /** Sensor ISO for this capture only. Only used when exposureTimeNs enables manual exposure. */
+    val iso: Int? = null,
 ) {
     companion object {
         /** Mirrors iOS `BluetoothSdkModule` defaults for keys omitted from the JS bridge. */
@@ -74,6 +96,17 @@ data class PhotoRequest @JvmOverloads constructor(
                     is Number -> rawExp.toDouble().takeIf { it.isFinite() && it > 0 }
                     else -> null
                 }
+            val rawIso = values["iso"]
+            val iso: Int? =
+                when (rawIso) {
+                    is Number -> rawIso.toDouble().takeIf { it.isFinite() && it > 0 }?.let { value ->
+                        when {
+                            value > Int.MAX_VALUE.toDouble() -> Int.MAX_VALUE
+                            else -> value.toInt()
+                        }
+                    }
+                    else -> null
+                }
             return PhotoRequest(
                 requestId = stringValue(values, "requestId", "request_id").orEmpty(),
                 appId = stringValue(values, "appId", "app_id").orEmpty(),
@@ -82,8 +115,10 @@ data class PhotoRequest @JvmOverloads constructor(
                 authToken = stringValue(values, "authToken", "auth_token")?.takeIf { it.isNotBlank() },
                 compress = PhotoCompression.fromValue(stringValue(values, "compress") ?: "none"),
                 flash = boolValue(values, "flash") ?: true,
+                save = boolValue(values, "save", "saveToGallery") ?: false,
                 sound = boolValue(values, "sound") ?: true,
                 exposureTimeNs = exposureTimeNs,
+                iso = iso,
             )
         }
     }
@@ -128,6 +163,10 @@ data class VideoRecordingRequest(
     val requestId: String,
     val save: Boolean,
     val sound: Boolean,
+    // Optional per-recording overrides; 0 means "use the saved button-video default".
+    val width: Int = 0,
+    val height: Int = 0,
+    val fps: Int = 0,
 )
 
 data class GalleryStatusEvent(
@@ -206,4 +245,18 @@ data class PhotoResponseEvent(
 
     val requestId: String get() = response.requestId
     val values: Map<String, Any> get() = response.toEventMap()
+}
+
+data class PhotoStatusEvent(
+    val values: Map<String, Any>,
+) {
+    val requestId: String get() = stringValue(values, "requestId").orEmpty()
+    val status: String get() = stringValue(values, "status").orEmpty()
+    val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()
+    val resolvedConfig: Map<String, Any>? get() = stringMapValue(values["resolvedConfig"])
+    val requestedCaptureConfig: Map<String, Any>? get() = stringMapValue(values["requestedCaptureConfig"])
+    val meteredPreview: Map<String, Any>? get() = stringMapValue(values["meteredPreview"])
+    val captureMetadata: Map<String, Any>? get() = stringMapValue(values["captureMetadata"])
+    val errorCode: String? get() = stringValue(values, "errorCode")
+    val errorMessage: String? get() = stringValue(values, "errorMessage")
 }

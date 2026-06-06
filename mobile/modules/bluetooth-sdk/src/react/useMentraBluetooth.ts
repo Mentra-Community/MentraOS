@@ -2,6 +2,7 @@ import {useState} from "react"
 
 import BluetoothSdk from "../index"
 import {
+  DEFAULT_VOICE_ACTIVITY_DETECTION_ENABLED,
   DeviceModels,
   createDisconnectedGlassesStatus,
   isConnectedGlassesConnectionStatus,
@@ -221,7 +222,7 @@ function runtimeGlassesState(status: Partial<PublicGlassesStatus>): GlassesRunti
       strengthDbm: numberValue((status as Record<string, unknown>).signalStrength),
       updatedAt: numberValue((status as Record<string, unknown>).signalStrengthUpdatedAt),
     },
-    voiceActivityDetectionEnabled: status.voiceActivityDetectionEnabled ?? true,
+    voiceActivityDetectionEnabled: status.voiceActivityDetectionEnabled ?? DEFAULT_VOICE_ACTIVITY_DETECTION_ENABLED,
     wifi: status.wifi ?? {state: "disconnected"},
   }
 }
