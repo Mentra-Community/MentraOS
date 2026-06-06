@@ -53,6 +53,11 @@ public final class RecoveryConstants {
   public static final int MAX_RECOVERIES_PER_WINDOW = 3;
   public static final long COOLDOWN_MS = 30_000L;
   /**
+   * Max time to trust an in-flight recovery state without worker completion. Covers restart,
+   * reinstall, and late-heartbeat grace windows with buffer for package-manager latency.
+   */
+  public static final long IN_FLIGHT_RECOVERY_STALE_MS = 3 * 60 * 1000L;
+  /**
    * Max time to honor an install pause without {@link #ACTION_INSTALL_COMPLETED}. Covers typical
    * OTA reboot windows; resumes monitoring if the completion signal is never received.
    */
