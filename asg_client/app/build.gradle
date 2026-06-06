@@ -391,7 +391,14 @@ tasks.register('checkNoFullyQualifiedMentraTypes') {
                     if (trimmed.contains('*/')) {
                         inBlockComment = false
                     }
-                    return
+                    int commentEnd = line.indexOf('*/')
+                    if (commentEnd >= 0) {
+                        inBlockComment = false
+                        line = line.substring(commentEnd + 2)
+                        trimmed = line.trim()
+                    } else {
+                        return
+                    }
                 }
                 if (trimmed.startsWith('import ')
                         || trimmed.startsWith('package ')
