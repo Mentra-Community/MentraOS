@@ -25,8 +25,7 @@ public class ResetController {
   public void onAsgUnresponsive() {
     String currentState = stateStore.getState();
     if (RecoveryConstants.STATE_RESTARTING.equals(currentState)
-        || RecoveryConstants.STATE_REINSTALLING_BACKUP.equals(currentState)
-        || RecoveryConstants.STATE_FAILED_NEEDS_MANUAL.equals(currentState)) {
+        || RecoveryConstants.STATE_REINSTALLING_BACKUP.equals(currentState)) {
       return;
     }
     if (RecoveryConstants.STATE_COOLDOWN.equals(currentState)
