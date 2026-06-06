@@ -1854,6 +1854,7 @@ public class OtaHelper {
 
             File backupApk = new File(OtaConstants.BASE_DIR, OtaConstants.BACKUP_APK_FILENAME);
             long backupVersion = -1L;
+            long backupModifiedMs = backupApk.exists() ? backupApk.lastModified() : 0L;
             if (backupApk.exists() && backupApk.canRead()) {
                 PackageInfo archive =
                         pm.getPackageArchiveInfo(
@@ -1867,13 +1868,17 @@ public class OtaHelper {
                 }
             }
 
-            if (backupVersion >= installedVersion) {
+            if (backupVersion >= installedVersion && backupModifiedMs >= installed.lastUpdateTime) {
                 Log.d(
                         TAG,
                         "Recovery backup up to date (backup="
                                 + backupVersion
+                                + ", backupModifiedMs="
+                                + backupModifiedMs
                                 + ", installed="
                                 + installedVersion
+                                + ", installedLastUpdateMs="
+                                + installed.lastUpdateTime
                                 + ")");
                 return;
             }
@@ -1882,8 +1887,12 @@ public class OtaHelper {
                     TAG,
                     "Refreshing recovery backup (backup="
                             + backupVersion
+                            + ", backupModifiedMs="
+                            + backupModifiedMs
                             + ", installed="
                             + installedVersion
+                            + ", installedLastUpdateMs="
+                            + installed.lastUpdateTime
                             + ")");
             initialize(appContext).createAppBackup("com.mentra.asg_client", appContext);
         } catch (Exception e) {
