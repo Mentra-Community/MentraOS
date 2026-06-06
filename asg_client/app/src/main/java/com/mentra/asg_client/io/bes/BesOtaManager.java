@@ -290,6 +290,18 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
         }
     }
 
+    /**
+     * Abort any in-flight BES OTA and release its resources (wakelock, UART fast mode, state). Safe
+     * to call when no update is running. Used during service teardown so a dropped manager handle
+     * does not leak an active update.
+     */
+    public void abortIfInProgress() {
+        if (isBesOtaInProgress || isWaitingForAuthorization) {
+            Log.w(TAG, "Aborting in-flight BES OTA during cleanup");
+            cleanup();
+        }
+    }
+
     /** Cleanup and reset state */
     private void cleanup() {
         // Cancel authorization timeout if pending

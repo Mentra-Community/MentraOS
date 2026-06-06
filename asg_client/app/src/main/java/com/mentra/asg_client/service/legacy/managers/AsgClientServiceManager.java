@@ -207,6 +207,9 @@ public class AsgClientServiceManager {
 
         if (besOtaManager != null) {
             Log.d(TAG, "🧹 Clearing BES OTA manager registry");
+            // Abort any in-flight update first so we don't drop the only handle to an active OTA
+            // and leak its wakelock / UART fast-mode state.
+            besOtaManager.abortIfInProgress();
             besOtaRegistry.clear();
             besOtaManager = null;
         }

@@ -298,12 +298,14 @@ public class WhipCameraCapturer implements VideoCapturer {
                         public void onConfigureFailed(@NonNull CameraCaptureSession session) {
                             Log.e(TAG, "Capture session configuration failed");
                             mObserver.onCapturerStarted(false);
+                            cleanupAfterStartFailure();
                         }
                     },
                     mCameraHandler);
         } catch (CameraAccessException e) {
             Log.e(TAG, "Failed to create capture session", e);
             mObserver.onCapturerStarted(false);
+            cleanupAfterStartFailure();
         }
     }
 
@@ -458,6 +460,7 @@ public class WhipCameraCapturer implements VideoCapturer {
         } catch (CameraAccessException e) {
             Log.e(TAG, "Failed to start repeating request", e);
             mObserver.onCapturerStarted(false);
+            cleanupAfterStartFailure();
         }
     }
 
