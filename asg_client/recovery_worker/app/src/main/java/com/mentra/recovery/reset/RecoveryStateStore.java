@@ -40,4 +40,8 @@ public class RecoveryStateStore {
   public void setWindowStartMs(long value) {
     prefs.edit().putLong(RecoveryConstants.KEY_WINDOW_START_MS, value).apply();
   }
+
+  public long getLastTransitionMs() {
+    return prefs.getLong(RecoveryConstants.KEY_LAST_TRANSITION_MS, 0L);
+  }
 }
