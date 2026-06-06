@@ -31,11 +31,14 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
@@ -46,6 +49,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import android.net.ConnectivityManager;
@@ -298,8 +302,14 @@ public class MediaCaptureService {
     // Photo job state tracking - one photo job (capture + upload/BLE-handoff) in flight at a time.
     // Set on entry to takePhotoAndUpload / takePhotoForBleTransfer; cleared only at terminal
     // exits (success or failure) of the full pipeline, NOT on the capture→upload transition.
-    // Concurrent SDK photo requests are rejected with CAMERA_BUSY while this is true.
+    // Camera photo jobs are single-flight. SDK requests are rejected with CAMERA_BUSY while
+    // this is true; local gallery saves attach to the active photo instead of starting another
+    // capture.
     private final AtomicReference<String> activePhotoJobRequestId = new AtomicReference<>(null);
+    private final AtomicReference<String> activePhotoJobFilePath = new AtomicReference<>(null);
+    private final AtomicBoolean activePhotoJobAcceptsSdkAttachment = new AtomicBoolean(false);
+    private final List<PendingLocalPhotoSave> pendingLocalPhotoSaves = Collections.synchronizedList(new ArrayList<>());
+    private final List<PendingSdkPhotoRequest> pendingSdkPhotoRequests = Collections.synchronizedList(new ArrayList<>());
     private final AtomicBoolean isCleaningUp = new AtomicBoolean(false);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     /**
@@ -318,14 +328,50 @@ public class MediaCaptureService {
     // slow webhook upload on flaky WiFi so we don't prematurely free the flag while the upload
     // is still grinding. Force-resets isPhotoJobInFlight if no terminal callback fires.
     private static final long CAPTURE_SAFETY_TIMEOUT_MS = 45000; // 45 seconds
+    private static final long RECENT_LOCAL_PHOTO_ATTACH_WINDOW_MS = 3000; // 3 seconds
     private final Object captureSafetyTimeoutLock = new Object();
     private Runnable captureSafetyTimeout;
     private String captureSafetyTimeoutRequestId;
 
     // Per-request timing instrumentation (gated by ENABLE_PHOTO_TIMING_LOGS)
     private final Map<String, Map<String, Long>> photoTimings = new HashMap<>();
+    private final AtomicReference<String> recentLocalPhotoPath = new AtomicReference<>(null);
+    private final AtomicLong recentLocalPhotoCapturedAtMs = new AtomicLong(0);
 
     private final FileManager fileManager;
+
+    private static final class PendingLocalPhotoSave {
+        final String requestId;
+        final String destinationPath;
+        final long requestStartTimeMs;
+
+        PendingLocalPhotoSave(String requestId, String destinationPath, long requestStartTimeMs) {
+            this.requestId = requestId;
+            this.destinationPath = destinationPath;
+            this.requestStartTimeMs = requestStartTimeMs;
+        }
+    }
+
+    private static final class PendingSdkPhotoRequest {
+        final String requestId;
+        final String webhookUrl;
+        final String authToken;
+        final String bleImgId;
+        final String size;
+        final String transferMethod;
+        final String compress;
+
+        PendingSdkPhotoRequest(String requestId, String webhookUrl, String authToken, String bleImgId,
+                               String size, String transferMethod, String compress) {
+            this.requestId = requestId;
+            this.webhookUrl = webhookUrl;
+            this.authToken = authToken;
+            this.bleImgId = bleImgId;
+            this.size = size;
+            this.transferMethod = transferMethod;
+            this.compress = compress;
+        }
+    }
 
     /**
      * Interface for listening to media capture and upload events
@@ -1242,6 +1288,12 @@ public class MediaCaptureService {
         // TESTING: Add fake delay for camera init
         PhotoCaptureTestFramework.addFakeDelay("CAMERA_INIT");
 
+        if (!acquirePhotoJob(requestId, photoFilePath, true)) {
+            attachLocalSaveToActivePhoto(requestId, photoFilePath, requestStartTimeMs);
+            return;
+        }
+        startCaptureSafetyTimeout(requestId);
+
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
         if (!shouldSuppressPhotoFeedback()) {
             // RGB LED always flashes for photos (user visibility indicator)
@@ -1256,6 +1308,7 @@ public class MediaCaptureService {
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestFramework.shouldFail("CAMERA_CAPTURE")) {
+            releasePhotoJob(requestId);
             Log.e(TAG, "TESTING: Simulating camera capture failure");
             sendPhotoErrorResponse(requestId, PhotoCaptureTestFramework.getErrorCode(), 
                 PhotoCaptureTestFramework.getErrorMessage());
@@ -1284,7 +1337,9 @@ public class MediaCaptureService {
                         }
                         
                         Log.d(TAG, "Local photo captured successfully at: " + filePath);
-                        
+                        publishActivePhotoForPendingLocalSaves(filePath);
+                        rememberRecentLocalPhoto(filePath);
+
                         // LED is now managed by CameraNeoService and will turn off when camera closes
                         
                         // Notify through standard capture listener if set up
@@ -1295,10 +1350,14 @@ public class MediaCaptureService {
                         
                         // Send gallery status update to phone after photo capture
                         sendGalleryStatusUpdate();
+                        List<PendingSdkPhotoRequest> sdkRequestsToRun = drainPendingSdkPhotoRequests();
+                        releasePhotoJob(requestId);
+                        startSdkPhotoRequestsWithExistingPhoto(filePath, sdkRequestsToRun);
                     }
 
                     @Override
                     public void onPhotoError(String errorMessage) {
+                        releasePhotoJob(requestId);
                         Log.e(TAG, "Failed to capture offline photo: " + errorMessage);
 
                         // LED is now managed by CameraNeoService and will turn off when camera closes
@@ -1372,7 +1431,7 @@ public class MediaCaptureService {
 
         // Single-flight guard: reject if any photo job (capture or upload) is already in progress.
         // The flag stays set across capture → upload; cleared only at terminal exits below.
-        if (!acquirePhotoJob(requestId)) {
+        if (!acquirePhotoJob(requestId, photoFilePath, false)) {
             Log.w(TAG, "🚫 Photo job in flight - rejecting concurrent request: " + requestId);
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
             return;
@@ -1452,6 +1511,7 @@ public class MediaCaptureService {
                             }
 
                             Log.d(TAG, "Photo captured successfully at: " + filePath);
+                            publishActivePhotoForPendingLocalSaves(filePath);
 
                             // LED is now managed by CameraNeoService and will turn off when camera closes
 
@@ -1509,16 +1569,217 @@ public class MediaCaptureService {
         return activePhotoJobRequestId.get() != null;
     }
 
-    private boolean acquirePhotoJob(String requestId) {
-        return activePhotoJobRequestId.compareAndSet(null, requestId);
+    public boolean attachSdkPhotoRequestToActiveOrRecentLocalPhoto(String requestId, String webhookUrl,
+                                                                    String authToken, String bleImgId,
+                                                                    String size, String transferMethod,
+                                                                    String compress) {
+        PendingSdkPhotoRequest request = new PendingSdkPhotoRequest(
+                requestId, webhookUrl, authToken, bleImgId, size, transferMethod, compress);
+        String activeRequestId = activePhotoJobRequestId.get();
+        if (activeRequestId != null && activePhotoJobAcceptsSdkAttachment.get()) {
+            Log.i(TAG, "📸 SDK photo request attached to active local capture " + activeRequestId +
+                    " instead of starting a second capture: " + requestId);
+            pendingSdkPhotoRequests.add(request);
+            return true;
+        }
+
+        String recentPath = recentLocalPhotoPath.get();
+        long recentCapturedAt = recentLocalPhotoCapturedAtMs.get();
+        long recentAgeMs = System.currentTimeMillis() - recentCapturedAt;
+        if (recentPath != null
+                && recentCapturedAt > 0
+                && recentAgeMs >= 0
+                && recentAgeMs <= RECENT_LOCAL_PHOTO_ATTACH_WINDOW_MS
+                && new File(recentPath).exists()) {
+            Log.i(TAG, "📸 SDK photo request reused recent local photo captured " + recentAgeMs +
+                    "ms ago: " + requestId);
+            startSdkPhotoRequestWithExistingPhoto(recentPath, request);
+            return true;
+        }
+
+        return false;
+    }
+
+    private boolean acquirePhotoJob(String requestId, String photoFilePath, boolean acceptsSdkAttachment) {
+        if (!activePhotoJobRequestId.compareAndSet(null, requestId)) {
+            return false;
+        }
+        activePhotoJobFilePath.set(photoFilePath);
+        activePhotoJobAcceptsSdkAttachment.set(acceptsSdkAttachment);
+        return true;
     }
 
     private void releasePhotoJob(String requestId) {
         if (activePhotoJobRequestId.compareAndSet(requestId, null)) {
             cancelCaptureSafetyTimeout(requestId);
+            activePhotoJobFilePath.set(null);
+            activePhotoJobAcceptsSdkAttachment.set(false);
+            failPendingLocalSaves("Camera photo job ended before a photo was available");
+            failPendingSdkPhotoRequests("Camera photo job ended before a photo was available");
         } else {
             Log.w(TAG, "Ignoring stale photo job release for " + requestId +
                 "; active job is " + activePhotoJobRequestId.get());
+        }
+    }
+
+    private void rememberRecentLocalPhoto(String filePath) {
+        recentLocalPhotoPath.set(filePath);
+        recentLocalPhotoCapturedAtMs.set(System.currentTimeMillis());
+    }
+
+    private void attachLocalSaveToActivePhoto(String requestId, String destinationPath, long requestStartTimeMs) {
+        String activeRequestId = activePhotoJobRequestId.get();
+        String activePath = activePhotoJobFilePath.get();
+        if (activeRequestId == null) {
+            Log.w(TAG, "Local photo save could not attach because no photo job is active: " + requestId);
+            notifyLocalPhotoSaveError(requestId, "Camera busy");
+            return;
+        }
+
+        Log.i(TAG, "📸 Local gallery save attached to active photo job " + activeRequestId +
+                " instead of starting a second capture: " + requestId);
+        if (activePath != null && new File(activePath).exists()) {
+            saveActivePhotoCopyForLocalRequest(activePath, new PendingLocalPhotoSave(requestId, destinationPath, requestStartTimeMs));
+            return;
+        }
+        pendingLocalPhotoSaves.add(new PendingLocalPhotoSave(requestId, destinationPath, requestStartTimeMs));
+    }
+
+    private void publishActivePhotoForPendingLocalSaves(String sourcePath) {
+        List<PendingLocalPhotoSave> savesToRun;
+        synchronized (pendingLocalPhotoSaves) {
+            if (pendingLocalPhotoSaves.isEmpty()) {
+                return;
+            }
+            savesToRun = new ArrayList<>(pendingLocalPhotoSaves);
+            pendingLocalPhotoSaves.clear();
+        }
+        for (PendingLocalPhotoSave save : savesToRun) {
+            saveActivePhotoCopyForLocalRequest(sourcePath, save);
+        }
+    }
+
+    private List<PendingSdkPhotoRequest> drainPendingSdkPhotoRequests() {
+        synchronized (pendingSdkPhotoRequests) {
+            if (pendingSdkPhotoRequests.isEmpty()) {
+                return Collections.emptyList();
+            }
+            List<PendingSdkPhotoRequest> requestsToRun = new ArrayList<>(pendingSdkPhotoRequests);
+            pendingSdkPhotoRequests.clear();
+            return requestsToRun;
+        }
+    }
+
+    private void startSdkPhotoRequestsWithExistingPhoto(String sourcePath, List<PendingSdkPhotoRequest> requestsToRun) {
+        for (PendingSdkPhotoRequest request : requestsToRun) {
+            startSdkPhotoRequestWithExistingPhoto(sourcePath, request);
+        }
+    }
+
+    private void startSdkPhotoRequestWithExistingPhoto(String sourcePath, PendingSdkPhotoRequest request) {
+        if (!acquirePhotoJob(request.requestId, sourcePath, false)) {
+            Log.w(TAG, "🚫 Attached SDK photo request rejected - photo job already in flight: " + request.requestId);
+            sendPhotoErrorResponse(request.requestId, "CAMERA_BUSY", "Another photo job is in progress");
+            return;
+        }
+        startCaptureSafetyTimeout(request.requestId);
+        photoSaveFlags.put(request.requestId, true);
+        photoRequestedSizes.put(request.requestId, request.size);
+        if (request.bleImgId != null && !request.bleImgId.isEmpty()) {
+            photoBleIds.put(request.requestId, request.bleImgId);
+            photoOriginalPaths.put(request.requestId, sourcePath);
+        }
+
+        if ("ble".equals(request.transferMethod)) {
+            reusePhotoForBleTransfer(sourcePath, request.requestId, request.bleImgId, true, request.size);
+        } else if ("auto".equals(request.transferMethod)) {
+            if (isWiFiConnected() && request.webhookUrl != null && !request.webhookUrl.isEmpty()) {
+                notifyExistingPhotoUploadStarted(request.requestId, sourcePath);
+                uploadPhotoToWebhook(sourcePath, request.requestId, request.webhookUrl, request.authToken, request.compress);
+            } else {
+                reusePhotoForBleTransfer(sourcePath, request.requestId, request.bleImgId, true, request.size);
+            }
+        } else {
+            notifyExistingPhotoUploadStarted(request.requestId, sourcePath);
+            uploadPhotoToWebhook(sourcePath, request.requestId, request.webhookUrl, request.authToken, request.compress);
+        }
+    }
+
+    private void notifyExistingPhotoUploadStarted(String requestId, String sourcePath) {
+        if (mMediaCaptureListener != null) {
+            mMediaCaptureListener.onPhotoCaptured(requestId, sourcePath);
+            mMediaCaptureListener.onPhotoUploading(requestId);
+        }
+    }
+
+    private void saveActivePhotoCopyForLocalRequest(String sourcePath, PendingLocalPhotoSave save) {
+        try {
+            copyFile(sourcePath, save.destinationPath);
+            long totalElapsedMs = System.currentTimeMillis() - save.requestStartTimeMs;
+            if (ENABLE_PHOTO_TIMING_LOGS) {
+                Log.i(TAG, "⏱️ [TIMING] LOCAL Photo reused active capture in " + totalElapsedMs + "ms");
+            }
+            Log.i(TAG, "📸 Saved active photo to gallery path for local request " + save.requestId +
+                    ": " + save.destinationPath);
+            if (mMediaCaptureListener != null) {
+                mMediaCaptureListener.onPhotoCaptured(save.requestId, save.destinationPath);
+                mMediaCaptureListener.onPhotoUploading(save.requestId);
+            }
+            sendGalleryStatusUpdate();
+        } catch (IOException e) {
+            Log.e(TAG, "Failed to save active photo for local request " + save.requestId, e);
+            notifyLocalPhotoSaveError(save.requestId, "Failed to save active photo: " + e.getMessage());
+        }
+    }
+
+    private void failPendingLocalSaves(String errorMessage) {
+        List<PendingLocalPhotoSave> savesToFail;
+        synchronized (pendingLocalPhotoSaves) {
+            if (pendingLocalPhotoSaves.isEmpty()) {
+                return;
+            }
+            savesToFail = new ArrayList<>(pendingLocalPhotoSaves);
+            pendingLocalPhotoSaves.clear();
+        }
+        for (PendingLocalPhotoSave save : savesToFail) {
+            notifyLocalPhotoSaveError(save.requestId, errorMessage);
+        }
+    }
+
+    private void failPendingSdkPhotoRequests(String errorMessage) {
+        List<PendingSdkPhotoRequest> requestsToFail;
+        synchronized (pendingSdkPhotoRequests) {
+            if (pendingSdkPhotoRequests.isEmpty()) {
+                return;
+            }
+            requestsToFail = new ArrayList<>(pendingSdkPhotoRequests);
+            pendingSdkPhotoRequests.clear();
+        }
+        for (PendingSdkPhotoRequest request : requestsToFail) {
+            sendPhotoErrorResponse(request.requestId, "CAMERA_BUSY", errorMessage);
+        }
+    }
+
+    private void notifyLocalPhotoSaveError(String requestId, String errorMessage) {
+        if (mMediaCaptureListener != null) {
+            mMediaCaptureListener.onMediaError(requestId, errorMessage, MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+        }
+    }
+
+    private void copyFile(String sourcePath, String destinationPath) throws IOException {
+        File source = new File(sourcePath);
+        File destination = new File(destinationPath);
+        File parent = destination.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            throw new IOException("Failed to create destination directory: " + parent.getAbsolutePath());
+        }
+        try (FileInputStream in = new FileInputStream(source);
+             FileOutputStream out = new FileOutputStream(destination)) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                out.write(buffer, 0, read);
+            }
         }
     }
 
@@ -1543,6 +1804,10 @@ public class MediaCaptureService {
                 }
                 Log.e(TAG, "⚠️ SAFETY TIMEOUT: isPhotoJobInFlight force-reset after " +
                     CAPTURE_SAFETY_TIMEOUT_MS + "ms - no terminal callback fired for " + requestId);
+                activePhotoJobFilePath.set(null);
+                activePhotoJobAcceptsSdkAttachment.set(false);
+                failPendingLocalSaves("Photo job timed out on glasses - no terminal callback fired");
+                failPendingSdkPhotoRequests("Photo job timed out on glasses - no terminal callback fired");
                 dumpTimings(requestId);
                 sendPhotoErrorResponse(requestId, "CAPTURE_TIMEOUT",
                     "Photo job timed out on glasses - no terminal callback fired");
@@ -2361,7 +2626,7 @@ public class MediaCaptureService {
 
         // Single-flight guard: reject if any photo job (capture or upload/BLE-handoff) is in flight.
         // Flag stays set through capture → BLE compression → BLE handoff; cleared at terminal exits.
-        if (!acquirePhotoJob(requestId)) {
+        if (!acquirePhotoJob(requestId, photoFilePath, false)) {
             Log.w(TAG, "🚫 Photo job in flight - rejecting concurrent BLE request: " + requestId);
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
             return;
@@ -2428,6 +2693,7 @@ public class MediaCaptureService {
                             }
 
                             Log.d(TAG, "Photo captured successfully for BLE transfer: " + filePath);
+                            publishActivePhotoForPendingLocalSaves(filePath);
 
                             // LED is now managed by CameraNeoService and will turn off when camera closes
 
