@@ -15,6 +15,7 @@ import { connectionInitPayloadSchema, connectionAckPayloadSchema } from "./hands
 import { controlPingPayloadSchema, controlPongPayloadSchema } from "./control";
 import { protocolErrorPayloadSchema } from "./errors";
 import { transcriptionDataSchema, translationDataSchema } from "./audio";
+import { photoReadyPayloadSchema, photoErrorPayloadSchema } from "./camera";
 
 // --- Per-type enveloped message schemas -------------------------------------
 
@@ -27,6 +28,10 @@ export const errorMessage = envelope("error", protocolErrorPayloadSchema);
 // Audio service push events (registered in audio/protocol.md).
 export const streamTranscriptMessage = envelope("stream.transcript", transcriptionDataSchema);
 export const streamTranslationMessage = envelope("stream.translation", translationDataSchema);
+
+// Camera service push events (registered in camera/spec.md).
+export const photoReadyMessage = envelope("photo.ready", photoReadyPayloadSchema);
+export const photoErrorMessage = envelope("photo.error", photoErrorPayloadSchema);
 
 // --- Direction-scoped unions ------------------------------------------------
 
@@ -46,6 +51,8 @@ export const cloudToClientMessage = z.discriminatedUnion("type", [
   errorMessage,
   streamTranscriptMessage,
   streamTranslationMessage,
+  photoReadyMessage,
+  photoErrorMessage,
 ]);
 export type CloudToClientMessage = z.infer<typeof cloudToClientMessage>;
 
@@ -58,5 +65,7 @@ export const anyMessage = z.discriminatedUnion("type", [
   errorMessage,
   streamTranscriptMessage,
   streamTranslationMessage,
+  photoReadyMessage,
+  photoErrorMessage,
 ]);
 export type AnyMessage = z.infer<typeof anyMessage>;

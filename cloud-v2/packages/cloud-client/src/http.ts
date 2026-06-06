@@ -37,6 +37,7 @@ export interface HttpClient {
   get<T>(path: string, opts?: ReqOpts): Promise<T>;
   post<T>(path: string, body?: unknown, opts?: ReqOpts): Promise<T>;
   put<T>(path: string, body: unknown, opts?: ReqOpts): Promise<T>;
+  delete<T>(path: string, opts?: ReqOpts): Promise<T>;
 }
 
 /**
@@ -96,7 +97,7 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
    * to branch on (auth handles its own 401 refresh-and-retry a layer up).
    */
   async function request<T>(
-    method: "GET" | "POST" | "PUT",
+    method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     body: unknown,
     opts?: ReqOpts,
@@ -113,8 +114,10 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
       payload = JSON.stringify(body);
     }
 
-    // GET is inherently safe to retry; other verbs opt in via the flag.
-    const idempotent = opts?.idempotent ?? method === "GET";
+    // GET and DELETE are idempotent by HTTP semantics, so safe to retry; other
+    // verbs opt in via the flag.
+    const idempotent =
+      opts?.idempotent ?? (method === "GET" || method === "DELETE");
 
     let lastNetworkError: unknown;
     for (let attempt = 0; attempt <= (idempotent ? MAX_RETRIES : 0); attempt++) {
@@ -200,6 +203,9 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     },
     put<T>(path: string, body: unknown, opts?: ReqOpts): Promise<T> {
       return request<T>("PUT", path, body, opts);
+    },
+    delete<T>(path: string, opts?: ReqOpts): Promise<T> {
+      return request<T>("DELETE", path, undefined, opts);
     },
   };
 }

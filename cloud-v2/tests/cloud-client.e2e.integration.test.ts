@@ -191,6 +191,38 @@ describe("cloud-client e2e (the real client as harness)", () => {
     cloud.runtime.close();
     await sleep(100);
   }, 20_000);
+
+  test("managed photo: request -> photo.ready push -> resolves with readUrl", async () => {
+    const cloud = await newCloud("alice-cc-photo");
+    await cloud.runtime.connect();
+
+    // requestPhoto resolves only when the cloud pushes photo.ready over the WS
+    // (the mock provider simulates the capture). No fixed wait: the await is the
+    // event.
+    const photo = await cloud.runtime.requestManagedPhoto({ size: "medium" });
+    expect(photo.requestId).toMatch(/^photo_/);
+    expect(photo.readUrl).toContain("/photos/");
+    expect(photo.readUrl).toContain(photo.requestId);
+
+    cloud.runtime.close();
+    await sleep(100);
+  }, 20_000);
+
+  test("managed stream: provision over REST + stop", async () => {
+    const cloud = await newCloud("alice-cc-stream");
+    await cloud.runtime.connect();
+
+    const stream = await cloud.runtime.startManagedStream({});
+    expect(stream.streamId).toMatch(/^stream_/);
+    expect(typeof (stream.ingest as { url?: string }).url).toBe("string");
+    expect(typeof (stream.playback as { url?: string }).url).toBe("string");
+
+    // Stop returns 204; should resolve without throwing.
+    await cloud.runtime.stopManagedStream(stream.streamId);
+
+    cloud.runtime.close();
+    await sleep(100);
+  }, 20_000);
 });
 
 // === Helpers ===

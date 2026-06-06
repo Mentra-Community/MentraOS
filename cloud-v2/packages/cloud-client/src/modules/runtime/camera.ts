@@ -9,55 +9,34 @@
  * `requestId` and resolves it when the matching push arrives, or rejects it on an
  * error push or a timeout.
  *
- * See docs/issues/002-cloud-runtime/camera/spec.md and
- * docs/issues/004-cloud-client/design.md ("Managed photo and stream").
+ * Only managed photo awaits a push (`photo.ready` / `photo.error`); managed
+ * stream is fully answered by the REST response, so it just returns the
+ * provisioned coordinates.
  *
- * NOTE (endpoints TBD): the camera REST endpoints are not finalized server-side.
- * The paths below match the camera spec's current draft; treat them as
- * provisional until the camera service is built. The request/await shape is the
- * stable part.
+ * See docs/issues/002-cloud-runtime/camera/spec.md and
+ * docs/issues/004-cloud-client/design.md ("Camera").
  */
 import type { HttpClient } from "../../http";
-import type { CloudToClientMessage } from "@mentra/cloud-runtime/protocol";
+import type {
+  CloudToClientMessage,
+  PhotoOptions,
+  StreamOptions,
+  ManagedStream,
+} from "@mentra/cloud-runtime/protocol";
 
-/** Provisional REST paths from the camera spec draft (see file note above). */
+// The camera wire types are canonical in the protocol package (the cloud server
+// uses the same ones); re-export them so a host gets them from this module.
+export type {
+  PhotoOptions,
+  StreamOptions,
+  ManagedStream,
+} from "@mentra/cloud-runtime/protocol";
+
 const PHOTO_PATH = "/api/camera/photo";
 const STREAM_PATH = "/api/camera/stream";
 
-/** How long to wait for the completion push before failing a managed request. */
+/** How long to wait for the completion push before failing a photo request. */
 const REQUEST_TIMEOUT_MS = 30_000;
-
-/**
- * Options for a managed photo capture.
- *
- * Mirrors the camera spec's `POST /api/camera/photo` body. All fields optional so
- * a caller can take a default photo with `requestPhoto({})`.
- */
-export interface PhotoOptions {
-  size?: "small" | "medium" | "large" | "full";
-  compress?: "none" | "medium" | "heavy";
-  saveToGallery?: boolean;
-  sound?: boolean;
-}
-
-/** Options for provisioning a managed stream. Shape firms up with the service. */
-export interface StreamOptions {
-  /** Optional region hint so the cloud provisions a nearby ingest endpoint. */
-  region?: string;
-}
-
-/**
- * A provisioned managed stream.
- *
- * `ingest` is where the glasses/phone push frames; `playback` is where viewers
- * watch. Both are left as open records because the provider (Cloudflare Stream by
- * default) is swappable per region and its exact field shapes are not finalized.
- */
-export interface ManagedStream {
-  streamId: string;
-  ingest: Record<string, unknown>;
-  playback: Record<string, unknown>;
-}
 
 /** What `requestPhoto` resolves to once the cloud confirms the photo is ready. */
 export interface PhotoResult {
@@ -80,21 +59,6 @@ interface Pending<T> {
   resolve: (value: T) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
-}
-
-/**
- * A photo push from the cloud. Declared structurally here because the photo event
- * types are not yet in the protocol's validated message union (the camera service
- * is unbuilt). `handlePush` checks `type` before reading these, so an unrelated
- * message is never misread as a photo push.
- */
-interface PhotoReadyPush {
-  type: "photo.ready";
-  payload: { requestId: string; readUrl: string };
-}
-interface PhotoErrorPush {
-  type: "photo.error";
-  payload: { requestId: string; reason: string };
 }
 
 export class Camera {
@@ -148,11 +112,11 @@ export class Camera {
   }
 
   /**
-   * Stop a managed stream by id. The DELETE is the lifecycle end; the cloud tears
-   * down the provider stream.
+   * Stop a managed stream by id. `DELETE /api/camera/stream/:id` is the
+   * lifecycle end; the cloud tears down the provider stream.
    */
   async stopStream(streamId: string): Promise<void> {
-    await this.http.post<void>(`${STREAM_PATH}/${encodeURIComponent(streamId)}/stop`);
+    await this.http.delete<void>(`${STREAM_PATH}/${encodeURIComponent(streamId)}`);
   }
 
   /**
@@ -164,19 +128,18 @@ export class Camera {
    * duplicate after a timeout, say) is dropped harmlessly.
    */
   handlePush(msg: CloudToClientMessage): void {
-    // `type` is a safe discriminant to read on any validated message. The photo
-    // payloads are not yet in the protocol union, so we narrow structurally.
-    const type = (msg as { type: string }).type;
-
-    if (type === "photo.ready") {
-      const { requestId, readUrl } = (msg as unknown as PhotoReadyPush).payload;
+    // photo.ready / photo.error are in the validated message union, so the
+    // discriminant narrows `msg.payload` to the typed camera payloads with no
+    // cast. Any other message type is ignored here.
+    if (msg.type === "photo.ready") {
+      const { requestId, readUrl } = msg.payload;
       const pending = this.takePending(requestId);
       pending?.resolve({ requestId, readUrl });
       return;
     }
 
-    if (type === "photo.error") {
-      const { requestId, reason } = (msg as unknown as PhotoErrorPush).payload;
+    if (msg.type === "photo.error") {
+      const { requestId, reason } = msg.payload;
       const pending = this.takePending(requestId);
       pending?.reject(new Error(`Managed photo ${requestId} failed: ${reason}`));
     }

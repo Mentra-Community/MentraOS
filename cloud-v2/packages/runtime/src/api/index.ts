@@ -15,6 +15,7 @@
 import { Hono } from "hono";
 import { createHealthApp, type ReadinessCheck } from "@mentra/cloud-shared";
 import { audioApi } from "./audio.api";
+import { cameraApi } from "./camera.api";
 
 export interface CreateApiAppOptions {
   /** Readiness probes surfaced at the health app's `/readyz`. */
@@ -26,7 +27,7 @@ export function createApiApp(opts: CreateApiAppOptions): Hono {
   const app = new Hono();
 
   app.route("/api/audio", audioApi);
-  // app.route("/api/camera", cameraApi)  // lands with the camera service
+  app.route("/api/camera", cameraApi);
 
   // Health/readiness routes (/healthz, /readyz). Mounted at the root so its
   // own paths are unchanged.
