@@ -271,8 +271,6 @@ public class BesWireFormat {
         }
     }
 
-    }
-
     /**
      * Create the JSON envelope used by formatMessageForTransmission before BES2700 packing.
      *
