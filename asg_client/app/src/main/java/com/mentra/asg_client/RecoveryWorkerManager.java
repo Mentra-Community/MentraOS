@@ -58,10 +58,7 @@ public class RecoveryWorkerManager {
             purgeLegacyUpdaterIfNeeded();
             int currentVersion = getInstalledVersion(RECOVERY_PACKAGE);
             int bundledVersion = getBundledRecoveryVersionCode();
-            if (currentVersion == -1
-                    || (bundledVersion > 0 && currentVersion < bundledVersion)
-                    || currentVersion < ASSETS_RECOVERY_VERSION
-                    || !canStartRecoveryWorker()) {
+            if (needsRecoveryRedeploy(currentVersion, bundledVersion)) {
                 deployRecoveryWorkerFromAssets();
             } else {
                 launchRecoveryWorker();
@@ -142,8 +139,30 @@ public class RecoveryWorkerManager {
             Log.d(TAG, "Triggered recovery worker launcher activity");
             return;
         }
-        Log.w(TAG, "Recovery worker installed but missing start surface; redeploying");
+        int installedVersion = getInstalledVersion(RECOVERY_PACKAGE);
+        int bundledVersion = getBundledRecoveryVersionCode();
+        if (!needsRecoveryRedeploy(installedVersion, bundledVersion)) {
+            Log.w(
+                    TAG,
+                    "Recovery worker missing start surface but installed v"
+                            + installedVersion
+                            + " is not older than bundled v"
+                            + bundledVersion
+                            + "; skipping downgrade redeploy");
+            return;
+        }
+        Log.w(TAG, "Recovery worker missing start surface; redeploying from assets");
         deployRecoveryWorkerFromAssets();
+    }
+
+    private boolean needsRecoveryRedeploy(int installedVersion, int bundledVersion) {
+        if (installedVersion == -1) {
+            return true;
+        }
+        if (bundledVersion > 0 && installedVersion < bundledVersion) {
+            return true;
+        }
+        return installedVersion < ASSETS_RECOVERY_VERSION;
     }
 
     private int getBundledRecoveryVersionCode() {
@@ -173,19 +192,6 @@ public class RecoveryWorkerManager {
                 Log.w(TAG, "Failed to delete recovery worker probe APK");
             }
         }
-    }
-
-    private boolean canStartRecoveryWorker() {
-        PackageManager pm = context.getPackageManager();
-        Intent launchIntent = new Intent();
-        launchIntent.setClassName(RECOVERY_PACKAGE, RECOVERY_LAUNCHER_ACTIVITY);
-        if (launchIntent.resolveActivity(pm) != null) {
-            return true;
-        }
-        Intent startIntent = new Intent(ACTION_START_RECOVERY);
-        startIntent.setPackage(RECOVERY_PACKAGE);
-        List<ResolveInfo> receivers = pm.queryBroadcastReceivers(startIntent, 0);
-        return receivers != null && !receivers.isEmpty();
     }
 
     private boolean sendStartRecoveryBroadcast() {
