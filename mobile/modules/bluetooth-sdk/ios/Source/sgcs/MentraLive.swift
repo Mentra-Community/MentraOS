@@ -69,7 +69,9 @@ class BlePhotoUploadService {
         imageData: Data,
         requestId: String,
         webhookUrl: String,
-        authToken: String?
+        authToken: String?,
+        onSuccess: ((String, String) -> Void)? = nil,
+        onError: ((String, String) -> Void)? = nil
     ) {
         Task {
             do {
@@ -81,7 +83,7 @@ class BlePhotoUploadService {
                 Bridge.log("\(TAG): Converted to JPEG for upload. Size: \(jpegData.count) bytes")
 
                 // Upload to webhook
-                try await uploadToWebhook(
+                let responseBody = try await uploadToWebhook(
                     jpegData: jpegData,
                     requestId: requestId,
                     webhookUrl: webhookUrl,
@@ -89,19 +91,13 @@ class BlePhotoUploadService {
                 )
 
                 Bridge.log("\(TAG): Photo uploaded successfully for requestId: \(requestId)")
-
-                //        DispatchQueue.main.async {
-                //          callback.onSuccess(requestId: requestId)
-                //        }
+                onSuccess?(requestId, responseBody)
 
             } catch {
                 Bridge.log(
                     "\(TAG): Error processing BLE photo for requestId: \(requestId), error: \(error)"
                 )
-
-                //        DispatchQueue.main.async {
-                //          callback.onError(requestId: requestId, error: error.localizedDescription)
-                //        }
+                onError?(requestId, error.localizedDescription)
             }
         }
     }
@@ -409,10 +405,10 @@ class BlePhotoUploadService {
         requestId: String,
         webhookUrl: String,
         authToken: String?
-    ) async throws {
+    ) async throws -> String {
         guard let url = URL(string: webhookUrl) else {
             Bridge.log("LIVE: Invalid webhook URL: \(webhookUrl)")
-            return
+            throw PhotoUploadError.uploadFailed("Invalid webhook URL")
         }
 
         var request = URLRequest(url: url)
@@ -476,6 +472,7 @@ class BlePhotoUploadService {
             }
 
             print("LIVE: Upload successful. Response code: \(httpResponse.statusCode)")
+            return String(data: data, encoding: .utf8) ?? ""
 
         } catch {
             if error is PhotoUploadError {
@@ -3571,7 +3568,53 @@ class MentraLive: NSObject, SGCManager {
         BlePhotoUploadService.processAndUploadPhoto(
             imageData: imageData, requestId: transfer.requestId, webhookUrl: transfer.webhookUrl,
             authToken: transfer.authToken
-        )
+        ) { [weak self] requestId, responseBody in
+            self?.sendPhotoTerminalSuccessResponse(
+                requestId: requestId,
+                uploadUrl: transfer.webhookUrl,
+                responseBody: responseBody
+            )
+        } onError: { requestId, error in
+            Bridge.sendPhotoError(
+                requestId: requestId,
+                errorCode: "PHONE_UPLOAD_FAILED",
+                errorMessage: "BLE photo upload failed: \(error)"
+            )
+        }
+    }
+
+    private func sendPhotoTerminalSuccessResponse(
+        requestId: String,
+        uploadUrl: String,
+        responseBody: String
+    ) {
+        var event: [String: Any] = [
+            "type": "photo_response",
+            "state": "success",
+            "success": true,
+            "requestId": requestId,
+            "uploadUrl": uploadUrl,
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+        ]
+        copyPhotoUploadResponseMetadata(into: &event, responseBody: responseBody)
+        Bridge.sendPhotoResponse(event)
+    }
+
+    private func copyPhotoUploadResponseMetadata(
+        into event: inout [String: Any],
+        responseBody: String
+    ) {
+        guard !responseBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let data = responseBody.data(using: .utf8),
+            let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return
+        }
+        for key in ["photoUrl", "statusUrl", "mimeType", "contentType", "bytes", "size"] {
+            if let value = response[key], !(value is NSNull) {
+                event[key] = value
+            }
+        }
     }
 
     private func sendAckToGlasses(messageId: Int) {

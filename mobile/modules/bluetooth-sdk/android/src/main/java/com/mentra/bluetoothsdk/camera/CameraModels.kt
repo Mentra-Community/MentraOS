@@ -261,7 +261,7 @@ sealed interface PhotoResponse {
                 "requestId" to requestId,
                 "uploadUrl" to uploadUrl,
                 "timestamp" to timestamp,
-            )
+            ).withOptionalPhotoMetadata(this)
 
             is Error -> mutableMapOf<String, Any>(
                 "state" to state,
@@ -280,6 +280,12 @@ sealed interface PhotoResponse {
     data class Success(
         override val requestId: String,
         val uploadUrl: String,
+        val photoUrl: String?,
+        val statusUrl: String?,
+        val mimeType: String?,
+        val contentType: String?,
+        val bytes: Long?,
+        val size: Long?,
         override val timestamp: Long,
     ) : PhotoResponse {
         override val state: String = "success"
@@ -299,20 +305,44 @@ sealed interface PhotoResponse {
             val requestId = stringValue(values, "requestId").orEmpty()
             val timestamp = longValue(values, "timestamp") ?: System.currentTimeMillis()
             val state = stringValue(values, "state")?.lowercase()
-            return if (state == "success") {
+            val success = state == "success" || boolValue(values, "success") == true
+            return if (success) {
                 val uploadUrl = stringValue(values, "uploadUrl").orEmpty()
-                Success(requestId = requestId, uploadUrl = uploadUrl, timestamp = timestamp)
+                Success(
+                    requestId = requestId,
+                    uploadUrl = uploadUrl,
+                    photoUrl = stringValue(values, "photoUrl"),
+                    statusUrl = stringValue(values, "statusUrl"),
+                    mimeType = stringValue(values, "mimeType"),
+                    contentType = stringValue(values, "contentType"),
+                    bytes = longValue(values, "bytes"),
+                    size = longValue(values, "size"),
+                    timestamp = timestamp,
+                )
             } else {
                 Error(
                     requestId = requestId,
                     errorCode = stringValue(values, "errorCode"),
-                    errorMessage = stringValue(values, "errorMessage") ?: "Unknown photo error",
+                    errorMessage =
+                        stringValue(values, "errorMessage", "error") ?: "Unknown photo error",
                     timestamp = timestamp,
                 )
             }
         }
     }
 }
+
+private fun Map<String, Any>.withOptionalPhotoMetadata(
+    success: PhotoResponse.Success,
+): Map<String, Any> =
+    toMutableMap().apply {
+        success.photoUrl?.takeIf { it.isNotBlank() }?.let { this["photoUrl"] = it }
+        success.statusUrl?.takeIf { it.isNotBlank() }?.let { this["statusUrl"] = it }
+        success.mimeType?.takeIf { it.isNotBlank() }?.let { this["mimeType"] = it }
+        success.contentType?.takeIf { it.isNotBlank() }?.let { this["contentType"] = it }
+        success.bytes?.let { this["bytes"] = it }
+        success.size?.let { this["size"] = it }
+    }
 
 data class PhotoResponseEvent(
     val response: PhotoResponse,

@@ -102,7 +102,7 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 
 **Responses:** the handler can produce three different response types depending on the path taken.
 
-`photo_response` — request accepted or rejected. Camera-busy, low-battery, storage, and FOV-restart rejections are decided before a success response is emitted. A success response means the glasses accepted the command and captured the upload target; capture, upload, and Bluetooth fallback progress continue through `photo_status`:
+`photo_response` — terminal success or failure for the full photo action. Camera-busy, low-battery, storage, FOV-restart, capture, direct-upload, and Bluetooth-fallback failures emit `state: "error"`. A success response means capture completed and the photo reached the configured upload target, either directly from the glasses or through the phone fallback relay. Capture, upload, and Bluetooth fallback progress continue through `photo_status` until this terminal response:
 
 ```json
 {
@@ -110,7 +110,8 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
   "requestId": "photo_001",
   "state": "success",
   "success": true,
-  "uploadUrl": "https://api.example.com/mentra/photo"
+  "uploadUrl": "https://api.example.com/mentra/photo",
+  "photoUrl": "https://cdn.example.com/photos/photo_001.jpg"
 }
 ```
 

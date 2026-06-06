@@ -1670,6 +1670,7 @@ public class MediaCaptureService {
                                         compress);
                             } else {
                                 // No webhook → no upload phase to run. Job ends here.
+                                sendPhotoSuccessResponse(requestId, "");
                                 releasePhotoJob(requestId);
                             }
                         }
@@ -1679,21 +1680,13 @@ public class MediaCaptureService {
                             releasePhotoJob(requestId);
 
                             Log.e(TAG, "Failed to capture photo: " + errorMessage);
-                            sendPhotoStatus(
-                                    requestId,
-                                    "failed",
-                                    null,
-                                    "CAMERA_CAPTURE_FAILED",
-                                    errorMessage);
+                            sendPhotoErrorResponse(
+                                    requestId, "CAMERA_CAPTURE_FAILED", errorMessage);
 
                             // LED is now managed by CameraNeoService and will turn off when camera
                             // closes
 
                             dumpTimings(requestId);
-                            sendMediaErrorResponse(
-                                    requestId,
-                                    errorMessage,
-                                    MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
 
                             if (mMediaCaptureListener != null) {
                                 mMediaCaptureListener.onMediaError(
@@ -1707,16 +1700,8 @@ public class MediaCaptureService {
         } catch (Exception e) {
             releasePhotoJob(requestId);
             Log.e(TAG, "Error taking photo", e);
-            sendPhotoStatus(
-                    requestId,
-                    "failed",
-                    null,
-                    "CAMERA_CAPTURE_FAILED",
-                    "Error taking photo: " + e.getMessage());
-            sendMediaErrorResponse(
-                    requestId,
-                    "Error taking photo: " + e.getMessage(),
-                    MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+            sendPhotoErrorResponse(
+                    requestId, "CAMERA_CAPTURE_FAILED", "Error taking photo: " + e.getMessage());
 
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
@@ -2329,17 +2314,25 @@ public class MediaCaptureService {
                             try {
                                 if (!photoFile.exists()) {
                                     Log.e(TAG, "❌ Photo file does not exist: " + photoFilePath);
+                                    String errorMessage = "Photo file not found";
                                     tracePhotoUploadError(
                                             requestId,
                                             webhookUrl,
                                             photoFile,
                                             uploadStartTime,
-                                            new IllegalStateException("Photo file not found"),
+                                            new IllegalStateException(errorMessage),
                                             "file_missing");
+                                    sendPhotoErrorResponse(
+                                            requestId, "PHOTO_FILE_NOT_FOUND", errorMessage);
+                                    photoSaveFlags.remove(requestId);
+                                    photoBleIds.remove(requestId);
+                                    photoOriginalPaths.remove(requestId);
+                                    photoRequestedSizes.remove(requestId);
+                                    releasePhotoJob(requestId);
                                     if (mMediaCaptureListener != null) {
                                         mMediaCaptureListener.onMediaError(
                                                 requestId,
-                                                "Photo file not found",
+                                                errorMessage,
                                                 MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
                                     }
                                     return;
@@ -2463,6 +2456,7 @@ public class MediaCaptureService {
                                         mMediaCaptureListener.onPhotoUploaded(
                                                 requestId, webhookUrl);
                                     }
+                                    sendPhotoSuccessResponse(requestId, webhookUrl, responseBody);
 
                                     // Terminal success — release the photo job.
                                     releasePhotoJob(requestId);
@@ -2533,10 +2527,8 @@ public class MediaCaptureService {
 
                                     // No BLE fallback available
                                     dumpTimings(requestId);
-                                    sendPhotoStatus(
+                                    sendPhotoErrorResponse(
                                             requestId,
-                                            "failed",
-                                            null,
                                             "UPLOAD_FAILED",
                                             errorMessage);
                                     Log.d(
@@ -2646,10 +2638,8 @@ public class MediaCaptureService {
 
                                 // No BLE fallback available
                                 Log.d(TAG, "❌ No BLE fallback available, handling exception");
-                                sendPhotoStatus(
+                                sendPhotoErrorResponse(
                                         requestId,
-                                        "failed",
-                                        null,
                                         "UPLOAD_FAILED",
                                         "Upload error: " + e.getMessage());
 
@@ -3297,16 +3287,8 @@ public class MediaCaptureService {
         } catch (Exception e) {
             releasePhotoJob(requestId);
             Log.e(TAG, "Error taking photo for BLE", e);
-            sendPhotoStatus(
-                    requestId,
-                    "failed",
-                    null,
-                    "CAMERA_CAPTURE_FAILED",
-                    "Error taking photo: " + e.getMessage());
-            sendMediaErrorResponse(
-                    requestId,
-                    "Error taking photo: " + e.getMessage(),
-                    MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+            sendPhotoErrorResponse(
+                    requestId, "CAMERA_CAPTURE_FAILED", "Error taking photo: " + e.getMessage());
 
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
@@ -3766,9 +3748,11 @@ public class MediaCaptureService {
             JSONObject json = new JSONObject();
             json.put("type", "photo_response");
             json.put("requestId", requestId);
+            json.put("state", "error");
             json.put("success", false);
             json.put("errorCode", errorCode);
             json.put("errorMessage", errorMessage);
+            json.put("timestamp", System.currentTimeMillis());
 
             Log.e(
                     TAG,
@@ -3790,8 +3774,13 @@ public class MediaCaptureService {
         }
     }
 
-    /** Send a one-shot success acknowledgment once a photo capture request is accepted. */
+    /** Send terminal success once the photo action has completed. */
     public void sendPhotoSuccessResponse(String requestId, String uploadUrl) {
+        sendPhotoSuccessResponse(requestId, uploadUrl, null);
+    }
+
+    /** Send terminal success once the photo action has completed. */
+    public void sendPhotoSuccessResponse(String requestId, String uploadUrl, String responseBody) {
         try {
             JSONObject json = new JSONObject();
             json.put("type", "photo_response");
@@ -3800,8 +3789,9 @@ public class MediaCaptureService {
             json.put("success", true);
             json.put("uploadUrl", uploadUrl != null ? uploadUrl : "");
             json.put("timestamp", System.currentTimeMillis());
+            copyPhotoUploadResponseMetadata(json, responseBody);
 
-            Log.i(TAG, "📸 SENDING PHOTO ACCEPTED: requestId=" + requestId);
+            Log.i(TAG, "📸 SENDING PHOTO COMPLETE: requestId=" + requestId);
 
             if (mServiceCallback != null) {
                 mServiceCallback.sendThroughBluetooth(json.toString().getBytes());
@@ -3811,6 +3801,30 @@ public class MediaCaptureService {
             }
         } catch (JSONException e) {
             Log.e(TAG, "❌ Error creating photo success response", e);
+        }
+    }
+
+    private void copyPhotoUploadResponseMetadata(JSONObject target, String responseBody) {
+        if (responseBody == null || responseBody.trim().isEmpty()) {
+            return;
+        }
+        try {
+            JSONObject response = new JSONObject(responseBody);
+            copyJsonField(target, response, "photoUrl");
+            copyJsonField(target, response, "statusUrl");
+            copyJsonField(target, response, "mimeType");
+            copyJsonField(target, response, "contentType");
+            copyJsonField(target, response, "bytes");
+            copyJsonField(target, response, "size");
+        } catch (JSONException e) {
+            Log.d(TAG, "Photo upload response body was not JSON metadata");
+        }
+    }
+
+    private void copyJsonField(JSONObject target, JSONObject source, String key)
+            throws JSONException {
+        if (source.has(key) && !source.isNull(key)) {
+            target.put(key, source.get(key));
         }
     }
 

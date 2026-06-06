@@ -39,7 +39,7 @@ public class BlePhotoUploadService {
     private static final int JPEG_QUALITY = 90;
 
     public interface UploadCallback {
-        void onSuccess(String requestId);
+        void onSuccess(String requestId, String responseBody);
         void onError(String requestId, String error);
     }
 
@@ -62,10 +62,11 @@ public class BlePhotoUploadService {
                 Log.d(TAG, "Converted to JPEG for upload. Size: " + jpegData.length + " bytes");
 
                 // 3. Upload to webhook
-                uploadToWebhook(jpegData, imageData.length, requestId, webhookUrl, authToken);
+                String responseBody =
+                        uploadToWebhook(jpegData, imageData.length, requestId, webhookUrl, authToken);
 
                 Log.d(TAG, "Photo uploaded successfully for requestId: " + requestId);
-                callback.onSuccess(requestId);
+                callback.onSuccess(requestId, responseBody);
 
             } catch (Exception e) {
                 Log.e(TAG, "Error processing BLE photo for requestId: " + requestId, e);
@@ -372,12 +373,12 @@ public class BlePhotoUploadService {
         }
     }
 
-    private static void uploadToWebhook(byte[] jpegData, String requestId,
+    private static String uploadToWebhook(byte[] jpegData, String requestId,
                                        String webhookUrl, @Nullable String authToken) throws IOException {
-        uploadToWebhook(jpegData, -1, requestId, webhookUrl, authToken);
+        return uploadToWebhook(jpegData, -1, requestId, webhookUrl, authToken);
     }
 
-    private static void uploadToWebhook(byte[] jpegData, int sourceImageBytes, String requestId,
+    private static String uploadToWebhook(byte[] jpegData, int sourceImageBytes, String requestId,
                                        String webhookUrl, @Nullable String authToken) throws IOException {
         OkHttpClient client = new OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
@@ -424,6 +425,7 @@ public class BlePhotoUploadService {
                 throw new IOException("Upload failed with code " + response.code() + ": " + errorBody);
             }
 
+            String responseBody = response.body() != null ? response.body().string() : "";
             traceRelayUploadEnd(
                 requestId,
                 webhookUrl,
@@ -435,6 +437,7 @@ public class BlePhotoUploadService {
                 "uploaded");
             responseTraced = true;
             Log.d(TAG, "Upload successful. Response code: " + response.code());
+            return responseBody;
         } catch (IOException e) {
             if (!responseTraced) {
                 traceRelayUploadError(
@@ -566,8 +569,8 @@ public class BlePhotoUploadService {
         new Thread(() -> {
             try {
                 Log.d(TAG, "Uploading pre-decoded JPEG. Size: " + jpegData.length + " bytes");
-                uploadToWebhook(jpegData, requestId, webhookUrl, authToken);
-                callback.onSuccess(requestId);
+                String responseBody = uploadToWebhook(jpegData, requestId, webhookUrl, authToken);
+                callback.onSuccess(requestId, responseBody);
             } catch (Exception e) {
                 Log.e(TAG, "Error uploading JPEG photo", e);
                 callback.onError(requestId, e.getMessage());

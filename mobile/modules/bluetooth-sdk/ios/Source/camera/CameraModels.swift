@@ -291,24 +291,42 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
         case error
     }
 
-    case success(requestId: String, uploadUrl: String, timestamp: Int)
+    case success(
+        requestId: String,
+        uploadUrl: String,
+        photoUrl: String?,
+        statusUrl: String?,
+        mimeType: String?,
+        contentType: String?,
+        bytes: Int?,
+        size: Int?,
+        timestamp: Int
+    )
     case error(requestId: String, errorCode: String?, errorMessage: String, timestamp: Int)
 
     public init(values: [String: Any]) {
         let requestId = stringValue(values, "requestId") ?? ""
         let timestamp = intValue(values["timestamp"]) ?? Int(Date().timeIntervalSince1970 * 1000)
         let state = stringValue(values, "state")?.lowercased()
-        if state == State.success.rawValue {
+        let success = state == State.success.rawValue || boolValue(values, "success") == true
+        if success {
             self = .success(
                 requestId: requestId,
                 uploadUrl: stringValue(values, "uploadUrl") ?? "",
+                photoUrl: stringValue(values, "photoUrl"),
+                statusUrl: stringValue(values, "statusUrl"),
+                mimeType: stringValue(values, "mimeType"),
+                contentType: stringValue(values, "contentType"),
+                bytes: intValue(values["bytes"]),
+                size: intValue(values["size"]),
                 timestamp: timestamp
             )
         } else {
             self = .error(
                 requestId: requestId,
                 errorCode: stringValue(values, "errorCode"),
-                errorMessage: stringValue(values, "errorMessage") ?? "Unknown photo error",
+                errorMessage: stringValue(values, "errorMessage") ?? stringValue(values, "error")
+                    ?? "Unknown photo error",
                 timestamp: timestamp
             )
         }
@@ -325,27 +343,49 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
 
     public var requestId: String {
         switch self {
-        case let .success(requestId, _, _), let .error(requestId, _, _, _):
+        case let .success(requestId, _, _, _, _, _, _, _, _), let .error(requestId, _, _, _):
             requestId
         }
     }
 
     public var timestamp: Int {
         switch self {
-        case let .success(_, _, timestamp), let .error(_, _, _, timestamp):
+        case let .success(_, _, _, _, _, _, _, _, timestamp), let .error(_, _, _, timestamp):
             timestamp
         }
     }
 
     public var values: [String: Any] {
         switch self {
-        case let .success(requestId, uploadUrl, timestamp):
-            return [
+        case let .success(
+            requestId, uploadUrl, photoUrl, statusUrl, mimeType, contentType, bytes, size,
+            timestamp
+        ):
+            var values: [String: Any] = [
                 "state": State.success.rawValue,
                 "requestId": requestId,
                 "uploadUrl": uploadUrl,
                 "timestamp": timestamp,
             ]
+            if let photoUrl, !photoUrl.isEmpty {
+                values["photoUrl"] = photoUrl
+            }
+            if let statusUrl, !statusUrl.isEmpty {
+                values["statusUrl"] = statusUrl
+            }
+            if let mimeType, !mimeType.isEmpty {
+                values["mimeType"] = mimeType
+            }
+            if let contentType, !contentType.isEmpty {
+                values["contentType"] = contentType
+            }
+            if let bytes {
+                values["bytes"] = bytes
+            }
+            if let size {
+                values["size"] = size
+            }
+            return values
         case let .error(requestId, errorCode, errorMessage, timestamp):
             var values: [String: Any] = [
                 "state": State.error.rawValue,

@@ -612,14 +612,13 @@ class MantleManager {
         BluetoothSdk.addListener("photo_response", (event) => {
           // Local miniapps' photos are tracked by phonePhotoCoordinator. If
           // glasses report an error (BATTERY_LOW, CAMERA_BUSY, ...) for a
-          // phone-owned requestId, short-circuit the in-flight long-poll
-          // with the typed error. Cloud-app photos (third-party SDK) still
-          // forward to cloud's PhotoManager.
+          // phone-owned requestId, short-circuit the in-flight long-poll with
+          // the typed error. Terminal success is ignored here because the
+          // coordinator resolves from the phone/cloud upload result. Cloud-app
+          // photos (third-party SDK) still forward to cloud's PhotoManager.
           //
-          // Success only means ASG accepted the request; local miniapps still
-          // resolve from the phone/cloud photo upload path below. Error
-          // responses are the only photo_response events that settle the
-          // coordinator directly.
+          // Error responses are the only photo_response events that settle
+          // the coordinator directly.
           if (event.requestId && phonePhotoCoordinator.owns(event.requestId)) {
             if (event.state === "error") {
               phonePhotoCoordinator.handlePhotoError(

@@ -132,6 +132,10 @@ All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: 
 
 `await session.camera.setFov({fov, roiPosition})` applies camera FOV/ROI on the glasses and resolves with `CameraFovResult` after the ASG client reports the setting was applied and the camera is ready again. `roiPosition` accepts `"center"`, `"bottom"`, or `"top"` and defaults to `"center"`. You can also call `setFov({preset: "narrow" | "standard" | "wide"})`; presets map to 82, 102, and 118 degrees with center ROI. The call requires `CAMERA` in `miniapp.json` because it controls glasses camera hardware, and rejects with `MiniappRequestError` if the host cannot apply the setting or the glasses report an error.
 
+### Camera Photos
+
+`await session.camera.takePhoto(...)` resolves only after the photo is delivered through the phone/cloud upload path. The result includes `{requestId, photoUrl, mimeType, size}`. Glasses-side or phone-relay failures such as `CAMERA_BUSY`, `BATTERY_LOW`, storage errors, or fallback upload failures reject before upload polling completes; intermediate `photo_status` progress and request acceptance alone do not resolve the miniapp photo promise.
+
 ### Transcription language convention
 
 Transcription/translation streams use a colon-suffixed wire format: `transcription:en-US`, `translation:en-US:fr-FR`. `session.transcription.on(handler)` subscribes to `transcription:auto` (cloud auto-detects). The detected language is in the payload. A handler on `transcription:auto` receives any `transcription:<lang>` event — wildcard fan-out — so "give me transcripts in whatever language" works without manual wiring. Use `session.transcription.forLanguage(lang | [langs], handler)` to pin specific languages.

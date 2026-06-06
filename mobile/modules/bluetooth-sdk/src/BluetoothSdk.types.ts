@@ -155,6 +155,12 @@ export type PhotoResponseEvent =
       state: "success"
       requestId: string
       uploadUrl: string
+      photoUrl?: string
+      statusUrl?: string
+      mimeType?: string
+      contentType?: string
+      bytes?: number
+      size?: number
       timestamp: number
     }
   | {

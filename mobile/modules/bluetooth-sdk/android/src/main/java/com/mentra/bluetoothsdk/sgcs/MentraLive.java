@@ -6681,14 +6681,14 @@ public class MentraLive extends SGCManager {
             transfer.authToken,
             new BlePhotoUploadService.UploadCallback() {
                 @Override
-                public void onSuccess(String requestId) {
+                public void onSuccess(String requestId, String responseBody) {
                     long uploadDuration = System.currentTimeMillis() - uploadStartTime;
                     long totalDuration = System.currentTimeMillis() - transfer.phoneStartTime;
 
                     Bridge.log("LIVE: ✅ BLE photo uploaded successfully via phone relay for requestId: " + requestId);
                     Bridge.log("LIVE: ⏱️ Upload duration: " + uploadDuration + "ms");
                     Bridge.log("LIVE: ⏱️ Total end-to-end duration: " + totalDuration + "ms");
-                    //sendPhotoUploadSuccess(requestId);
+                    sendPhotoTerminalSuccessResponse(requestId, transfer.webhookUrl, responseBody);
                 }
 
                 @Override
@@ -6696,10 +6696,50 @@ public class MentraLive extends SGCManager {
                     long uploadDuration = System.currentTimeMillis() - uploadStartTime;
                     Log.e(TAG, "❌ BLE photo upload failed for requestId: " + requestId + ", error: " + error);
                     Log.e(TAG, "⏱️ Failed after: " + uploadDuration + "ms");
-                    //sendPhotoUploadError(requestId, error);
+                    Bridge.sendPhotoError(
+                            requestId,
+                            "PHONE_UPLOAD_FAILED",
+                            "BLE photo upload failed: " + error);
                 }
             }
         );
+    }
+
+    private void sendPhotoTerminalSuccessResponse(
+            String requestId, String uploadUrl, String responseBody) {
+        Map<String, Object> event = new HashMap<>();
+        event.put("type", "photo_response");
+        event.put("state", "success");
+        event.put("success", true);
+        event.put("requestId", requestId);
+        event.put("uploadUrl", uploadUrl != null ? uploadUrl : "");
+        event.put("timestamp", System.currentTimeMillis());
+        copyPhotoUploadResponseMetadata(event, responseBody);
+        Bridge.sendPhotoResponse(event);
+    }
+
+    private void copyPhotoUploadResponseMetadata(Map<String, Object> event, String responseBody) {
+        if (responseBody == null || responseBody.trim().isEmpty()) {
+            return;
+        }
+        try {
+            JSONObject response = new JSONObject(responseBody);
+            copyJsonField(event, response, "photoUrl");
+            copyJsonField(event, response, "statusUrl");
+            copyJsonField(event, response, "mimeType");
+            copyJsonField(event, response, "contentType");
+            copyJsonField(event, response, "bytes");
+            copyJsonField(event, response, "size");
+        } catch (JSONException e) {
+            Bridge.log("LIVE: BLE upload response body was not JSON metadata");
+        }
+    }
+
+    private void copyJsonField(Map<String, Object> event, JSONObject response, String key)
+            throws JSONException {
+        if (response.has(key) && !response.isNull(key)) {
+            event.put(key, response.get(key));
+        }
     }
 
     /**

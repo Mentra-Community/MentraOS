@@ -45,6 +45,8 @@ export interface TakePhotoOptions {
 }
 
 export interface PhotoTaken {
+  /** Request id that correlates ASG status, upload, and phone/cloud logs. */
+  requestId: string
   photoUrl: string
   mimeType: string
   size: number

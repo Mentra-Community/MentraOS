@@ -4,9 +4,9 @@ import {describe, expect, test} from "bun:test"
 
 import {MiniappRequestType} from "../protocol"
 import type {MiniappSession} from "../session"
-import {CameraModule, type CameraFovResult} from "./camera"
+import {CameraModule, type CameraFovResult, type PhotoTaken} from "./camera"
 
-function mockSession(result: CameraFovResult) {
+function mockSession<T>(result: T) {
   const requestCalls: object[] = []
   const session = {
     _hasManifestPermission: () => true,
@@ -41,6 +41,29 @@ describe("CameraModule", () => {
         type: MiniappRequestType.CAMERA_FOV,
         fov: 102,
         roiPosition: "bottom",
+      },
+    ])
+  })
+
+  test("takePhoto returns delivered photo metadata with requestId", async () => {
+    const result: PhotoTaken = {
+      requestId: "photo-1",
+      photoUrl: "https://example.com/photo.jpg",
+      mimeType: "image/jpeg",
+      size: 1234,
+    }
+    const {session, requestCalls} = mockSession(result)
+    const camera = new CameraModule(session)
+
+    await expect(camera.takePhoto({size: "full", compress: "none"})).resolves.toEqual(result)
+    expect(requestCalls).toEqual([
+      {
+        type: MiniappRequestType.PHOTO,
+        size: "full",
+        compress: "none",
+        sound: true,
+        saveToGallery: false,
+        exposureTimeNs: undefined,
       },
     ])
   })

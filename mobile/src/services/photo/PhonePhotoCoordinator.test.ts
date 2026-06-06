@@ -202,7 +202,10 @@ describe("PhonePhotoCoordinator", () => {
       expect(requestPhotoNative).not.toHaveBeenCalled()
     })
 
-    test("BLE photoRequest failure surfaces as PhotoError(BLE_SEND_FAILED), releases the slot, and tries to free cloud-side", async () => {
+    test("BluetoothSdk.requestPhoto rejection surfaces as PhotoError(BLE_SEND_FAILED), releases the slot, and tries to free cloud-side", async () => {
+      pollUntilReady.mockImplementationOnce(
+        () => new Promise(() => {/* native rejection wins */}),
+      )
       requestPhotoNative.mockRejectedValueOnce(new Error("BLE down"))
       const coord = new PhonePhotoCoordinator()
       try {

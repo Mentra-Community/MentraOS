@@ -101,6 +101,12 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         + requestId + ": ISO " + iso);
             }
 
+            MediaCaptureService captureService = serviceManager.getMediaCaptureService();
+            if (captureService == null) {
+                logCommandResult("take_photo", false, "Media capture service not available");
+                return false;
+            }
+
             // Route SDK no-save captures into the sync-hidden _sdk_pending area so an in-flight
             // upload cannot be picked up by gallery_status or AsgCameraServer between capture and
             // post-upload delete. Permanent (save=true) captures keep their original layout.
@@ -110,12 +116,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                             : generateTransientCaptureFilePath(packageName, "IMG_", ".jpg");
             if (photoFilePath == null) {
                 logCommandResult("take_photo", false, "Failed to generate file path");
-                return false;
-            }
-
-            MediaCaptureService captureService = serviceManager.getMediaCaptureService();
-            if (captureService == null) {
-                logCommandResult("take_photo", false, "Media capture service not available");
+                captureService.sendPhotoErrorResponse(
+                        requestId, "PHOTO_FILE_PATH_FAILED", "Failed to generate file path");
                 return false;
             }
 
@@ -210,13 +212,19 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             logCommandResult("take_photo", success, success ? null : "Photo capture failed");
             if (success) {
                 Log.i(TAG, "PHOTO PIPELINE [ASG 3/3] Capture accepted requestId=" + requestId);
-                captureService.sendPhotoSuccessResponse(requestId, webhookUrl);
             }
             return success;
 
         } catch (Exception e) {
             Log.e(TAG, "Error handling take photo command", e);
             logCommandResult("take_photo", false, "Exception: " + e.getMessage());
+            MediaCaptureService captureService = serviceManager.getMediaCaptureService();
+            if (captureService != null && !requestIdForLog.isEmpty()) {
+                captureService.sendPhotoErrorResponse(
+                        requestIdForLog,
+                        "PHOTO_COMMAND_FAILED",
+                        "Error handling photo command: " + e.getMessage());
+            }
             return false;
         }
     }
