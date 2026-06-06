@@ -52,6 +52,11 @@ public final class RecoveryConstants {
   public static final long RECOVERY_WINDOW_MS = 30 * 60 * 1000L;
   public static final int MAX_RECOVERIES_PER_WINDOW = 3;
   public static final long COOLDOWN_MS = 30_000L;
+  /**
+   * Max time to honor an install pause without {@link #ACTION_INSTALL_COMPLETED}. Covers typical
+   * OTA reboot windows; resumes monitoring if the completion signal is never received.
+   */
+  public static final long INSTALL_PAUSE_MAX_MS = 5 * 60 * 1000L;
 
   public static final String UNIQUE_RECOVERY_WORK = "mentra_recovery_oneshot";
 
