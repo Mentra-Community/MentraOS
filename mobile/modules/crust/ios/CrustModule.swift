@@ -403,6 +403,27 @@ public class CrustModule: Module {
                 return ["success": false, "error": "File does not exist"]
             }
 
+            // Verify photo library authorization before calling performChanges.
+            // On iOS 14+, addOnly status is sufficient for saving new assets.
+            let authStatus: PHAuthorizationStatus
+            if #available(iOS 14, *) {
+                authStatus = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+            } else {
+                authStatus = PHPhotoLibrary.authorizationStatus()
+            }
+
+            let isAuthorized: Bool
+            if #available(iOS 14, *) {
+                isAuthorized = authStatus == .authorized || authStatus == .limited || authStatus == .addOnly
+            } else {
+                isAuthorized = authStatus == .authorized || authStatus == .limited
+            }
+
+            guard isAuthorized else {
+                NSLog("CrustModule: Not authorized to save to photo library (status: \(authStatus.rawValue))")
+                return ["success": false, "error": "Photo library access not authorized (status: \(authStatus.rawValue))"]
+            }
+
             var assetIdentifier: String?
             let semaphore = DispatchSemaphore(value: 0)
             var resultError: Error?

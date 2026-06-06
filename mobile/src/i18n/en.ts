@@ -447,6 +447,9 @@ const en = {
     automaticSync: "Automatic Sync",
     saveToCameraRoll: "Save to Camera Roll",
     storageInfo: "Storage Info",
+    cameraRollPermissionTitle: "Camera Roll Access Required",
+    cameraRollPermissionMessage:
+      "Some photos could not be saved to your camera roll. Go to Settings > Privacy & Security > Photos > Mentra and select \"Add Photos Only\" or \"All Photos\", then sync again.",
     glassesAreReconnecting: "Reconnecting...",
     glassesAreReconnectingMessage: "Make sure your glasses are turned on.",
     // Gallery sync WiFi explanation
