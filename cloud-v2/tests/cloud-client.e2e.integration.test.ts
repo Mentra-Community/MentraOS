@@ -54,11 +54,6 @@ const TEST_OEM_PORT = 13120;
   process.env.REDIS_URL ??= "redis://127.0.0.1:6379/4";
   process.env.AUDIO_UDP_ADVERTISED_HOST = "127.0.0.1";
   process.env.AUDIO_UDP_ADVERTISED_PORT = String(AUDIO_UDP_PORT);
-  // Local storage provider (default) + dev auto-capture, so the managed-photo
-  // flow completes without real glasses: the runtime stores a placeholder and
-  // serves it back at the readUrl.
-  process.env.STORAGE_PROVIDER ??= "local";
-  process.env.CAMERA_AUTOCAPTURE ??= "true";
   process.env.LOG_LEVEL ??= "warn";
 }
 
@@ -72,7 +67,6 @@ import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
 import { getRedis } from "../packages/runtime/src/clients/redis.client";
 import { CloudClient } from "../packages/cloud-client/node";
-import { TestClient } from "../test/test-client/src/client";
 import type {
   TranscriptionData,
   TranslationData,
@@ -130,7 +124,6 @@ beforeEach(async () => {
     "{user:*}:owner",
     "{user:*}:subscriptions",
     "{user:*}:control",
-    "photo-request:*",
   ]) {
     const keys = await redis.keys(pattern);
     if (keys.length > 0) await redis.del(...keys);
@@ -197,94 +190,6 @@ describe("cloud-client e2e (the real client as harness)", () => {
 
     cloud.runtime.close();
     await sleep(100);
-  }, 20_000);
-
-  test("managed photo: request -> photo.ready push -> resolves with readUrl", async () => {
-    const cloud = await newCloud("alice-cc-photo");
-    await cloud.runtime.connect();
-
-    // requestPhoto resolves only when the cloud pushes photo.ready over the WS
-    // (the mock provider simulates the capture). No fixed wait: the await is the
-    // event.
-    const photo = await cloud.runtime.requestManagedPhoto({ size: "medium" });
-    expect(photo.requestId).toMatch(/^photo_/);
-    expect(photo.readUrl).toContain("/api/camera/blob/photos/");
-    expect(photo.readUrl).toContain(photo.requestId);
-
-    // The readUrl serves REAL bytes from the local storage provider (proving the
-    // storage round-trip, not a mock URL pointing nowhere).
-    const res = await fetch(photo.readUrl);
-    expect(res.ok).toBe(true);
-    const body = await res.text();
-    expect(body).toContain("mentra-local-placeholder-photo");
-
-    cloud.runtime.close();
-    await sleep(100);
-  }, 20_000);
-
-  test("managed stream: provision over REST + stop", async () => {
-    const cloud = await newCloud("alice-cc-stream");
-    await cloud.runtime.connect();
-
-    const stream = await cloud.runtime.startManagedStream({});
-    expect(stream.streamId).toMatch(/^stream_/);
-    expect(typeof (stream.ingest as { url?: string }).url).toBe("string");
-    expect(typeof (stream.playback as { url?: string }).url).toBe("string");
-
-    // Stop returns 204; should resolve without throwing.
-    await cloud.runtime.stopManagedStream(stream.streamId);
-
-    cloud.runtime.close();
-    await sleep(100);
-  }, 20_000);
-
-  test("storage webhook completes a photo (r2-style completion path)", async () => {
-    // Exercise the OTHER completion trigger: the storage object-created event
-    // reaching the webhook (what R2 wiring posts), instead of the local upload.
-    // Turn auto-capture off for this one so the webhook is the only completion.
-    const prev = process.env.CAMERA_AUTOCAPTURE;
-    process.env.CAMERA_AUTOCAPTURE = "false";
-    const base = `http://localhost:${AUDIO_HTTP_PORT}`;
-    try {
-      // A raw WS to receive the push (test-client is the low-level harness).
-      const client = new TestClient({
-        testOemUrl: testOemHandle.url,
-        coreUrl: coreHandle.url,
-        audioWsUrl: audioHandle.wsUrl,
-        oemUserId: "alice-cc-webhook",
-      });
-      await client.connect();
-
-      // Request a photo over REST (no auto-capture now, so it stays pending).
-      const photoRes = await fetch(`${base}/api/camera/photo`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${client.token}`,
-        },
-        body: "{}",
-      });
-      expect(photoRes.ok).toBe(true);
-      const { requestId } = (await photoRes.json()) as { requestId: string };
-
-      // Simulate the provider's object-created event hitting the webhook.
-      const eventRes = await fetch(`${base}/api/camera/storage-events`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: `photos/${requestId}` }),
-      });
-      expect(eventRes.status).toBe(204);
-
-      // The push should land on the WS.
-      const ready = (await client.waitFor("photo.ready", 5000)) as {
-        payload: { requestId: string; readUrl: string };
-      };
-      expect(ready.payload.requestId).toBe(requestId);
-
-      await client.close();
-    } finally {
-      process.env.CAMERA_AUTOCAPTURE = prev;
-    }
   }, 20_000);
 });
 

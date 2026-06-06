@@ -8,9 +8,7 @@
  *     `completeUpload` directly (instant, no polling).
  *   - r2/s3 provider: the object-created event reaches the storage webhook,
  *     which calls `completeUpload`.
- * A dev auto-capture (CAMERA_AUTOCAPTURE, opt-in) simulates the glasses by
- * self-storing a placeholder, so the flow completes without hardware in tests
- * and local dev.
+ * The device (glasses) does the actual capture + upload to the presigned URL.
  *
  * Managed stream is provisioned synchronously (stub coordinates today; a real
  * Cloudflare Stream provider lands later) and has no push.
@@ -27,6 +25,7 @@ import { ulid } from "ulid";
 import { createLogger } from "@mentra/cloud-shared";
 import { getRedis } from "../../clients/redis.client";
 import { getStorageProvider } from "../storage/storage.service";
+import { getStreamProvider } from "../stream/stream.service";
 import { forwardToUserSessions } from "../../net/ws";
 import { PROTOCOL_MAJOR } from "../../protocol/envelope";
 import type { PhotoOptions, StreamOptions, ManagedStream } from "../../protocol/camera";
@@ -36,20 +35,6 @@ const logger = createLogger("audio").child({ service: "camera.service" });
 const PHOTO_CONTENT_TYPE = "image/jpeg";
 /** Pending photo requests TTL: long enough for an upload, then abandoned. */
 const PHOTO_REQUEST_TTL_SEC = 300;
-
-/**
- * Opt-in dev simulation of the glasses capture+upload (off in production). Read
- * lazily, not at module load: the env is configured by the host/test before the
- * first request, after this module is already imported.
- */
-function autocaptureEnabled(): boolean {
-  return process.env.CAMERA_AUTOCAPTURE === "true";
-}
-/** How long the dev auto-capture waits before "uploading", so the client has
- * recorded its pending request from the POST response first. */
-function autocaptureDelayMs(): number {
-  return Number.parseInt(process.env.CAMERA_AUTOCAPTURE_MS ?? "50", 10);
-}
 
 interface PendingPhoto {
   mentraUserId: string;
@@ -104,30 +89,10 @@ export async function requestPhoto(
 
   logger.info({ mentraUserId, requestId, provider: provider.name }, "managed photo requested");
 
-  // Dev auto-capture: simulate the glasses uploading a placeholder so the flow
-  // completes without hardware. Only the local provider serves its own bytes;
-  // for remote providers there is nothing to self-store, so we just complete.
-  if (autocaptureEnabled()) {
-    setTimeout(() => {
-      void simulateCapture(key);
-    }, autocaptureDelayMs());
-  }
-
+  // The device (glasses) uploads the captured image to `uploadUrl` out of band.
+  // Completion arrives via the local upload handler (local provider) or the
+  // storage-events webhook (r2/s3); both call `completeUpload`.
   return { requestId, uploadUrl: upload.url, readUrl };
-}
-
-/** Dev-only: store a placeholder image (local provider) then mark complete. */
-async function simulateCapture(key: string): Promise<void> {
-  try {
-    const provider = getStorageProvider();
-    if (provider.servesBytes && provider.put) {
-      const placeholder = new TextEncoder().encode(`mentra-local-placeholder-photo:${key}`);
-      await provider.put(key, placeholder, PHOTO_CONTENT_TYPE);
-    }
-    await completeUpload(key);
-  } catch (err) {
-    logger.error({ err, key }, "auto-capture failed");
-  }
 }
 
 /**
@@ -177,25 +142,21 @@ async function takePending(requestId: string): Promise<PendingPhoto | null> {
 }
 
 /**
- * Provision a managed stream. Stub coordinates for now; a real Cloudflare Stream
- * provider lands later. Fully answered by this response (no push).
+ * Provision a managed stream on the configured stream provider (Cloudflare
+ * Stream). Fully answered by this response (no push). Throws if no stream
+ * provider is configured, rather than returning fake coordinates.
  */
 export async function startStream(
   mentraUserId: string,
   opts: StreamOptions,
 ): Promise<ManagedStream> {
-  void opts;
-  const streamId = `stream_${ulid()}`;
-  logger.info({ mentraUserId, streamId }, "managed stream provisioned");
-  return {
-    streamId,
-    ingest: { url: `rtmps://stream.mentra.local/ingest/${streamId}` },
-    playback: { url: `https://stream.mentra.local/play/${streamId}.m3u8` },
-  };
+  const stream = await getStreamProvider().provision(mentraUserId, opts);
+  logger.info({ mentraUserId, streamId: stream.streamId }, "managed stream provisioned");
+  return stream;
 }
 
 /** Stop a managed stream. */
 export async function stopStream(mentraUserId: string, streamId: string): Promise<void> {
-  void mentraUserId;
+  await getStreamProvider().stop(streamId);
   logger.info({ mentraUserId, streamId }, "managed stream stopped");
 }
