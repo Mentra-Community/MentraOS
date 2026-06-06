@@ -28,8 +28,10 @@ public class BesWireFormat {
     public static final byte CMD_TYPE_DATA = 0x35; // Generic data type
 
     // File transfer constants
-    public static final int FILE_PACK_SIZE_MAX = 221; // 256 MTU - 3 ATT bytes - 32 protocol overhead
-    public static final int FILE_PACK_SIZE_DEFAULT = FILE_PACK_SIZE_MAX; // Safe default before phone MTU config arrives
+    public static final int FILE_PACK_SIZE_MAX =
+            221; // 256 MTU - 3 ATT bytes - 32 protocol overhead
+    public static final int FILE_PACK_SIZE_DEFAULT =
+            FILE_PACK_SIZE_MAX; // Safe default before phone MTU config arrives
     public static final int FILE_PACK_SIZE_MIN = 100; // Minimum safe packet size
     private static int filePackSize = FILE_PACK_SIZE_DEFAULT; // Configurable packet size
     public static final int LENGTH_FILE_START = 2;
@@ -66,9 +68,7 @@ public class BesWireFormat {
                 "📦 File pack size set to " + filePackSize + " bytes (MTU=" + mtu + ")");
     }
 
-    /**
-     * Reset file pack size to default safe BLE payload size.
-     */
+    /** Reset file pack size to default safe BLE payload size. */
     public static void resetFilePackSize() {
         filePackSize = FILE_PACK_SIZE_DEFAULT;
         Log.i("BesWireFormat", "📦 File pack size reset to default: " + filePackSize + " bytes");

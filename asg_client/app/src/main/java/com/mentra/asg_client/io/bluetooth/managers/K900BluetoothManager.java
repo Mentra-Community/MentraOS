@@ -6,10 +6,10 @@ import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesMessageParser;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.MessageChunker;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
 import com.mentra.asg_client.io.bluetooth.utils.DebugNotificationManager;
 import com.mentra.asg_client.logging.BleTraceLogger;
-import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.MessageChunker;
 import com.mentra.asg_client.reporting.domains.BluetoothReporting;
 import com.mentra.asg_client.service.core.AsgClientService;
 import java.io.File;
@@ -248,14 +248,27 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
             boolean allSent = true;
             for (int i = 0; i < chunks.size(); i++) {
-                byte[] chunkData = BesWireFormat.formatMessageForTransmission(chunks.get(i).toString());
-                Log.d(TAG, "📡 🧩 Sending chunk " + (i + 1) + "/" + chunks.size()
-                        + " (" + chunkData.length + " bytes packed)");
+                byte[] chunkData =
+                        BesWireFormat.formatMessageForTransmission(chunks.get(i).toString());
+                Log.d(
+                        TAG,
+                        "📡 🧩 Sending chunk "
+                                + (i + 1)
+                                + "/"
+                                + chunks.size()
+                                + " ("
+                                + chunkData.length
+                                + " bytes packed)");
                 boolean sent = comManager.send(chunkData);
                 allSent = allSent && sent;
                 if (!sent) {
-                    Log.w(TAG, "📡 ❌ Chunk " + (i + 1) + "/" + chunks.size()
-                            + " failed to send; phone will drop the incomplete message");
+                    Log.w(
+                            TAG,
+                            "📡 ❌ Chunk "
+                                    + (i + 1)
+                                    + "/"
+                                    + chunks.size()
+                                    + " failed to send; phone will drop the incomplete message");
                 }
 
                 if (i < chunks.size() - 1) {
@@ -1227,9 +1240,16 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             json.put("reason", reason);
             json.put("timestamp", System.currentTimeMillis());
 
-            boolean sent = sendData(json.toString().getBytes(StandardCharsets.UTF_8));
-            Log.i(TAG, "📤 transfer_failed sent to phone for " + fileName
-                    + " (reason=" + reason + ", sent=" + sent + ")");
+            boolean sent = sendMessage(json.toString().getBytes(StandardCharsets.UTF_8));
+            Log.i(
+                    TAG,
+                    "📤 transfer_failed sent to phone for "
+                            + fileName
+                            + " (reason="
+                            + reason
+                            + ", sent="
+                            + sent
+                            + ")");
         } catch (Exception e) {
             Log.e(TAG, "Failed to notify phone about transfer failure", e);
         }
