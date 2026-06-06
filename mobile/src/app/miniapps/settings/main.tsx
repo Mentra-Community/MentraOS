@@ -24,7 +24,7 @@ export default function MainSettingsPage() {
   useRegisterCapsule({
     packageName: "com.mentra.settings",
     viewShotRef,
-    visibleOnRoutes: ["/miniapps/settings/main"],
+    visibleOnRoutes: ["/miniapps/settings/"],
     offsetRight: theme.spacing.s2,
   })
 
