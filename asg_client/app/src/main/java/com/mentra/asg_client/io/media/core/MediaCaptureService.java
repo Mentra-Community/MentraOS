@@ -1437,7 +1437,7 @@ public class MediaCaptureService {
      * @param iso optional sensor sensitivity for manual exposure captures only; {@code null} =
      *     derive ISO from preview metering
      */
-    public void takePhotoAndUpload(
+    public boolean takePhotoAndUpload(
             String photoFilePath,
             String requestId,
             String webhookUrl,
@@ -1466,14 +1466,14 @@ public class MediaCaptureService {
                 || WhipStreamingService.isStreaming()) {
             Log.e(TAG, "Cannot take photo - streaming active");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with streaming");
-            return;
+            return false;
         }
 
         // Check if camera HAL is restarting after FOV change
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
-            return;
+            return false;
         }
 
         // Check battery level before proceeding
@@ -1486,7 +1486,7 @@ public class MediaCaptureService {
                         requestId,
                         "BATTERY_LOW",
                         "Battery too low to take photo (" + batteryLevel + "%)");
-                return;
+                return false;
             }
         } else {
             Log.w(TAG, "⚠️ StateManager not initialized - skipping battery check for photo upload");
@@ -1501,7 +1501,7 @@ public class MediaCaptureService {
                     requestId,
                     "INSUFFICIENT_STORAGE",
                     "Insufficient storage space for photo capture");
-            return;
+            return false;
         }
 
         // Single-flight guard: reject if any photo job (capture or upload) is already in progress.
@@ -1509,7 +1509,7 @@ public class MediaCaptureService {
         if (!acquirePhotoJob(requestId)) {
             Log.w(TAG, "🚫 Photo job in flight - rejecting concurrent request: " + requestId);
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
-            return;
+            return false;
         }
         startCaptureSafetyTimeout(requestId);
         sendPhotoStatus(requestId, "accepted");
@@ -1540,7 +1540,7 @@ public class MediaCaptureService {
                     requestId,
                     PhotoCaptureTestHooks.getErrorCode(),
                     PhotoCaptureTestHooks.getErrorMessage());
-            return;
+            return false;
         } else {
             Log.d(TAG, "Camera capture failure not simulated");
         }
@@ -1703,6 +1703,7 @@ public class MediaCaptureService {
                             }
                         }
                     });
+            return true;
         } catch (Exception e) {
             releasePhotoJob(requestId);
             Log.e(TAG, "Error taking photo", e);
@@ -1723,6 +1724,7 @@ public class MediaCaptureService {
                         "Error taking photo: " + e.getMessage(),
                         MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
             }
+            return false;
         }
     }
 
@@ -2975,7 +2977,7 @@ public class MediaCaptureService {
      * @param iso optional sensor sensitivity for manual exposure captures only; {@code null} =
      *     derive ISO from preview metering
      */
-    public void takePhotoAutoTransfer(
+    public boolean takePhotoAutoTransfer(
             String photoFilePath,
             String requestId,
             String webhookUrl,
@@ -2992,7 +2994,7 @@ public class MediaCaptureService {
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
-            return;
+            return false;
         }
 
         // Check battery level before proceeding (defense-in-depth)
@@ -3005,7 +3007,7 @@ public class MediaCaptureService {
                         requestId,
                         "BATTERY_LOW",
                         "Battery too low to take photo (" + batteryLevel + "%)");
-                return;
+                return false;
             }
         } else {
             Log.w(
@@ -3024,7 +3026,7 @@ public class MediaCaptureService {
                     requestId, "direct_webhook", "wifi_connected", webhookUrl, null);
 
             Log.d(TAG, "📶 WiFi connected - attempting direct upload for " + requestId);
-            takePhotoAndUpload(
+            return takePhotoAndUpload(
                     photoFilePath,
                     requestId,
                     webhookUrl,
@@ -3040,7 +3042,7 @@ public class MediaCaptureService {
             // No WiFi - skip webhook entirely, go straight to BLE (saves 2-5s timeout wait)
             tracePhotoWifiRoute(requestId, "ble", "wifi_unavailable", webhookUrl, null);
             Log.d(TAG, "📵 No WiFi - skipping webhook, using BLE transfer for " + requestId);
-            takePhotoForBleTransfer(
+            return takePhotoForBleTransfer(
                     photoFilePath,
                     requestId,
                     bleImgId,
@@ -3065,7 +3067,7 @@ public class MediaCaptureService {
      * @param iso optional sensor sensitivity for manual exposure captures only; {@code null} =
      *     derive ISO from preview metering
      */
-    public void takePhotoForBleTransfer(
+    public boolean takePhotoForBleTransfer(
             String photoFilePath,
             String requestId,
             String bleImgId,
@@ -3088,14 +3090,14 @@ public class MediaCaptureService {
                 || WhipStreamingService.isStreaming()) {
             Log.e(TAG, "Cannot take photo - streaming active");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with streaming");
-            return;
+            return false;
         }
 
         // Check if camera HAL is restarting after FOV change
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
-            return;
+            return false;
         }
 
         // Check battery level before proceeding
@@ -3108,7 +3110,7 @@ public class MediaCaptureService {
                         requestId,
                         "BATTERY_LOW",
                         "Battery too low to take photo (" + batteryLevel + "%)");
-                return;
+                return false;
             }
         } else {
             Log.w(TAG, "⚠️ StateManager not initialized - skipping battery check for BLE transfer");
@@ -3123,7 +3125,7 @@ public class MediaCaptureService {
                     requestId,
                     "INSUFFICIENT_STORAGE",
                     "Insufficient storage space for photo capture");
-            return;
+            return false;
         }
 
         // Single-flight guard: reject if any photo job (capture or upload/BLE-handoff) is in
@@ -3133,7 +3135,7 @@ public class MediaCaptureService {
         if (!acquirePhotoJob(requestId)) {
             Log.w(TAG, "🚫 Photo job in flight - rejecting concurrent BLE request: " + requestId);
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
-            return;
+            return false;
         }
         startCaptureSafetyTimeout(requestId);
         sendPhotoStatus(requestId, "accepted");
@@ -3163,7 +3165,7 @@ public class MediaCaptureService {
                     requestId,
                     PhotoCaptureTestHooks.getErrorCode(),
                     PhotoCaptureTestHooks.getErrorMessage());
-            return;
+            return false;
         }
 
         // TESTING: Add fake delay for camera capture
@@ -3291,6 +3293,7 @@ public class MediaCaptureService {
                             }
                         }
                     });
+            return true;
         } catch (Exception e) {
             releasePhotoJob(requestId);
             Log.e(TAG, "Error taking photo for BLE", e);
@@ -3311,6 +3314,7 @@ public class MediaCaptureService {
                         "Error taking photo: " + e.getMessage(),
                         MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
             }
+            return false;
         }
     }
 

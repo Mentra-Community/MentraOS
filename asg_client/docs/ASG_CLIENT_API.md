@@ -102,14 +102,15 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 
 **Responses:** the handler can produce three different response types depending on the path taken.
 
-`photo_response` — direct/auto upload finished:
+`photo_response` — request accepted or rejected. Camera-busy, low-battery, storage, and FOV-restart rejections are decided before a success response is emitted. A success response means the glasses accepted the command and captured the upload target; capture, upload, and Bluetooth fallback progress continue through `photo_status`:
 
 ```json
 {
   "type": "photo_response",
   "requestId": "photo_001",
+  "state": "success",
   "success": true,
-  "mediaUrl": "/storage/.../IMG_001.jpg"
+  "uploadUrl": "https://api.example.com/mentra/photo"
 }
 ```
 

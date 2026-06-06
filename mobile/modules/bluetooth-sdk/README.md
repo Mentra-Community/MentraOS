@@ -272,7 +272,7 @@ React Native narrows returned values to success shapes where the raw listener ev
 
 | API | Returned Value After `await` | Error Path |
 | --- | --- | --- |
-| `requestPhoto(...)` | `PhotoSuccessResponseEvent` with `state: "success"` and `uploadUrl`. | Rejects when raw `photo_response.state === "error"` or the ASG response times out. |
+| `requestPhoto(...)` | ASG acceptance `PhotoSuccessResponseEvent` with `state: "success"` and `uploadUrl`; capture/upload progress follows through `photo_status`. | Rejects when raw `photo_response.state === "error"` or the ASG acceptance response times out. |
 | `startVideoRecording(...)` | `VideoRecordingSuccessStatusEvent` with `success: true` and `status: "recording_started"`. | Rejects on `success: false` statuses such as `already_recording`, send failure, or timeout. |
 | `stopVideoRecording(...)` | `VideoRecordingSuccessStatusEvent` with `success: true` and `status: "recording_stopped"`. | Rejects on `success: false` statuses such as `not_recording`, send failure, or timeout. |
 | `rgbLedControl(...)` | `RgbLedControlSuccessResponseEvent` with `state: "success"`. | Rejects when raw `rgb_led_control_response.state === "error"` or the response times out. |
@@ -326,7 +326,7 @@ const photo = await BluetoothSdk.requestPhoto({
 console.log('photo accepted', photo.uploadUrl)
 ```
 
-`requestPhoto(...)` resolves from a successful ASG `photo_response` and rejects if the ASG reports `state: "error"` or no response arrives. The raw `photo_response` event stream still includes both success and error events for subscribers. The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
+`requestPhoto(...)` resolves when the ASG accepts the photo request and returns a successful `photo_response` with the upload URL. It rejects if the ASG reports `state: "error"` or no acceptance response arrives. Camera-busy, low-battery, storage, and FOV-restart rejections are decided before the success response; once success is emitted, later capture/upload failures are reported through `photo_status`. This promise does not wait for the JPEG to be captured, uploaded, or delivered through Bluetooth fallback; listen to `photo_status` for `configuring`, `capturing`, `captured`, `uploading`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring` progress. The raw `photo_response` event stream still includes both success and error events for subscribers. The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
 
 For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
 

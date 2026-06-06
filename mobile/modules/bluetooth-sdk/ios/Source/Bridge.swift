@@ -331,6 +331,10 @@ class Bridge {
         Bridge.sendTypedMessage("photo_status", body: status)
     }
 
+    static func sendPhotoResponse(_ response: [String: Any]) {
+        Bridge.sendTypedMessage("photo_response", body: response)
+    }
+
     static func sendMiniappSelected(packageName: String) {
         let event: [String: Any] = [
             "packageName": packageName,

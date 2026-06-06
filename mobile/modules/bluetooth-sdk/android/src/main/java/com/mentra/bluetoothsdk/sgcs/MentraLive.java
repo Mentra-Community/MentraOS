@@ -2421,6 +2421,12 @@ public class MentraLive extends SGCManager {
                 String photoState = json.optString("state", "");
                 boolean photoSuccess = "success".equals(photoState) || json.optBoolean("success", false);
 
+                try {
+                    Bridge.sendPhotoResponse(jsonObjectToMap(json));
+                } catch (JSONException e) {
+                    Log.e(TAG, "Error converting photo response to Map", e);
+                }
+
                 if (!photoSuccess) {
                     // Handle failed photo response
                     String errorMsg = json.optString("errorMessage", json.optString("error", "Unknown error"));

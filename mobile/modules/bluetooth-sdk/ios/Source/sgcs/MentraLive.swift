@@ -2177,6 +2177,9 @@ class MentraLive: NSObject, SGCManager {
         case "photo_status":
             emitPhotoStatus(json)
 
+        case "photo_response":
+            emitPhotoResponse(json)
+
         case "gallery_status":
             let photoCount = json["photos"] as? Int ?? 0
             let videoCount = json["videos"] as? Int ?? 0
@@ -4296,6 +4299,10 @@ class MentraLive: NSObject, SGCManager {
 
     private func emitPhotoStatus(_ json: [String: Any]) {
         Bridge.sendPhotoStatus(json)
+    }
+
+    private func emitPhotoResponse(_ json: [String: Any]) {
+        Bridge.sendPhotoResponse(json)
     }
 
     private func emitButtonPress(buttonId: String, pressType: String, timestamp: Int64) {

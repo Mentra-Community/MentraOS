@@ -25,9 +25,7 @@ const photo = await BluetoothSdk.requestPhoto({
   exposureTimeNs: null,
   iso: null,
 });
-if (photo.state === 'error') {
-  throw new Error(photo.errorMessage);
-}
+console.log('photo request accepted', photo.uploadUrl);
 ```
 
   </Tab>
@@ -47,7 +45,7 @@ val photo = sdk.requestPhoto(
         iso = null,
     )
 )
-check(photo.response.state == "success") { "Photo request failed" }
+println("photo request accepted: ${photo.requestId}")
 ```
 
   </Tab>
@@ -67,13 +65,13 @@ let photo = try await sdk.requestPhoto(
         iso: nil
     )
 )
-guard photo.response.state == .success else {
-    throw PhotoError.requestRejected
-}
+print("photo request accepted: \(photo.requestId)")
 ```
 
   </Tab>
 </Tabs>
+
+`requestPhoto(...)` resolves when the glasses accept the request and return the upload URL through `photo_response`. It rejects or throws when the glasses reject the request, the SDK cannot send the command, or that acceptance response times out. Camera-busy, low-battery, storage, and FOV-restart rejections are decided before the success response; once success is emitted, later capture/upload failures are reported through `photo_status`. It does not wait for the JPEG to be captured, uploaded, or delivered through Bluetooth fallback; use `photo_status` and your upload receiver events for that lifecycle.
 
 The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
 

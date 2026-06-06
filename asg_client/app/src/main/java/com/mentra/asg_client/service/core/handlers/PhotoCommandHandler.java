@@ -256,7 +256,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
         Log.d(TAG, "Processing photo capture with transfer method: " + transferMethod);
         switch (transferMethod) {
             case "ble":
-                captureService.takePhotoForBleTransfer(
+                return captureService.takePhotoForBleTransfer(
                         photoFilePath,
                         requestId,
                         bleImgId,
@@ -266,13 +266,12 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         sound,
                         exposureTimeNs,
                         iso);
-                return true;
             case "auto":
                 if (bleImgId.isEmpty()) {
                     Log.e(TAG, "Auto mode requires bleImgId for fallback");
                     return false;
                 }
-                captureService.takePhotoAutoTransfer(
+                return captureService.takePhotoAutoTransfer(
                         photoFilePath,
                         requestId,
                         webhookUrl,
@@ -285,9 +284,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         compress,
                         exposureTimeNs,
                         iso);
-                return true;
             default:
-                captureService.takePhotoAndUpload(
+                return captureService.takePhotoAndUpload(
                         photoFilePath,
                         requestId,
                         webhookUrl,
@@ -299,7 +297,6 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         compress,
                         exposureTimeNs,
                         iso);
-                return true;
         }
     }
 }
