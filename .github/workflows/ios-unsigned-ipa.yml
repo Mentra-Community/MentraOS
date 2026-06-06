@@ -45,18 +45,23 @@ jobs:
           chmod +x scripts/setup-sherpa-onnx-optional.sh
           ./scripts/setup-sherpa-onnx-optional.sh || true
 
-      - name: Patch ExpoModulesCore Swift 6 syntax
+      - name: Patch node_modules source files
         working-directory: ./mobile
         run: |
+          # --- ExpoModulesCore: remove SE-0431 isolated conformance syntax (Swift 6 only) ---
           FILE1="node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIHostingView.swift"
           FILE2="node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIVirtualView.swift"
           FILE3="node_modules/expo-modules-core/ios/Core/Views/ViewDefinition.swift"
-
           sed -i '' 's/, @MainActor AnyExpoSwiftUIHostingView/, AnyExpoSwiftUIHostingView/g' "$FILE1"
           sed -i '' 's/: @MainActor ExpoSwiftUI\.ViewWrapper/: ExpoSwiftUI.ViewWrapper/g' "$FILE2"
           sed -i '' 's/extension UIView: @MainActor AnyArgument/extension UIView: AnyArgument/g' "$FILE3"
-
           echo "ExpoModulesCore patches applied"
+
+          # --- ExpoVideo: AVAssetVariant has no 'url' property in any iOS SDK version ---
+          TRACKS="node_modules/expo-video/ios/Records/Tracks.swift"
+          sed -i '' 's/variant\.url/nil/g' "$TRACKS"
+          echo "ExpoVideo Tracks.swift patched"
+          grep -n "variant\." "$TRACKS" | head -5
 
       - name: Patch Podfile
         working-directory: ./mobile/ios
@@ -97,7 +102,7 @@ jobs:
 
       - name: Show patched post_install
         working-directory: ./mobile/ios
-        run: grep -A 25 "post_install" Podfile | head -35
+        run: grep -A 20 "post_install" Podfile | head -30
 
       - name: Install pods
         working-directory: ./mobile/ios
