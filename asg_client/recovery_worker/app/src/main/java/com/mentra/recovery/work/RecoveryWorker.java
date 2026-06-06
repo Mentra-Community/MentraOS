@@ -21,6 +21,7 @@ import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
 import com.mentra.recovery.R;
+import com.mentra.recovery.health.InstallPauseNotifier;
 import com.mentra.recovery.reset.RecoveryStateStore;
 import com.mentra.recovery.reset.ReinstallStrategy;
 import com.mentra.recovery.reset.RestartStrategy;
@@ -221,15 +222,11 @@ public class RecoveryWorker extends Worker {
   }
 
   private void notifyInstallInProgress(Context context) {
-    Intent intent = new Intent(RecoveryConstants.ACTION_INSTALL_IN_PROGRESS);
-    intent.setPackage(RecoveryConstants.RECOVERY_PACKAGE);
-    context.sendBroadcast(intent, RecoveryConstants.RECOVERY_CONTROL_PERMISSION);
+    InstallPauseNotifier.notifyInstallInProgress();
   }
 
   private void notifyInstallCompleted(Context context) {
-    Intent intent = new Intent(RecoveryConstants.ACTION_INSTALL_COMPLETED);
-    intent.setPackage(RecoveryConstants.RECOVERY_PACKAGE);
-    context.sendBroadcast(intent, RecoveryConstants.RECOVERY_CONTROL_PERMISSION);
+    InstallPauseNotifier.notifyInstallCompleted();
   }
 
   private void sendPingToAsg(Context context) {
