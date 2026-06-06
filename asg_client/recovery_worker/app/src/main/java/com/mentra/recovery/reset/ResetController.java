@@ -26,8 +26,11 @@ public class ResetController {
     String currentState = stateStore.getState();
     if (RecoveryConstants.STATE_RESTARTING.equals(currentState)
         || RecoveryConstants.STATE_REINSTALLING_BACKUP.equals(currentState)
-        || RecoveryConstants.STATE_FAILED_NEEDS_MANUAL.equals(currentState)
-        || RecoveryConstants.STATE_COOLDOWN.equals(currentState)) {
+        || RecoveryConstants.STATE_FAILED_NEEDS_MANUAL.equals(currentState)) {
+      return;
+    }
+    if (RecoveryConstants.STATE_COOLDOWN.equals(currentState)
+        && isWithinCooldownWindow()) {
       return;
     }
     long now = System.currentTimeMillis();
@@ -85,5 +88,10 @@ public class ResetController {
     stateStore.setWindowStartMs(0L);
     telemetry.emit(
         "mentra_recovery_recovered", RecoveryConstants.STATE_HEALTHY, reason, attempts, true);
+  }
+
+  private boolean isWithinCooldownWindow() {
+    long elapsed = System.currentTimeMillis() - stateStore.getLastTransitionMs();
+    return elapsed >= 0 && elapsed < RecoveryConstants.COOLDOWN_MS;
   }
 }
