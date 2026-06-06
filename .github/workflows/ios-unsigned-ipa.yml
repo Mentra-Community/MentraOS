@@ -59,10 +59,10 @@ jobs:
 
           # --- ExpoVideo: AVAssetVariant has no 'url' property in any iOS SDK version ---
           TRACKS="node_modules/expo-video/ios/Records/Tracks.swift"
-          sed -i '' 's/variant\.url/nil/g' "$TRACKS"
+          sed -i '' 's/assetVariant\.url/nil/g' "$TRACKS"
           echo "ExpoVideo Tracks.swift patched"
-          grep -n "variant\." "$TRACKS" | head -5
-
+          grep -n "assetVariant\." "$TRACKS" | head -5
+          
       - name: Patch Podfile
         working-directory: ./mobile/ios
         run: |
