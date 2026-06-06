@@ -26,6 +26,12 @@ export interface CloudClientConfig {
   logger?: Logger;
   // backoff tuning for the live socket; one place so a host can match its fleet
   reconnect?: { baseMs: number; maxMs: number; jitter: boolean };
+  /**
+   * Audio format announced in `connection.init`. Defaults to LC3 at 16 kHz (the
+   * glasses' on-device codec). A host that feeds raw PCM frames (no on-device
+   * LC3 encoder) sets `codec: "pcm"`.
+   */
+  audio?: { codec?: "lc3" | "pcm"; sampleRate?: number };
 }
 
 /**

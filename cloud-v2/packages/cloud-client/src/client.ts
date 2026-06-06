@@ -162,8 +162,8 @@ export class CloudClient {
     const initPayload = (): ConnectionInit => ({
       protocolVersion: PROTOCOL_VERSION,
       audio: {
-        codec: DEFAULT_AUDIO_CODEC,
-        sampleRate: DEFAULT_AUDIO_SAMPLE_RATE,
+        codec: config.audio?.codec ?? DEFAULT_AUDIO_CODEC,
+        sampleRate: config.audio?.sampleRate ?? DEFAULT_AUDIO_SAMPLE_RATE,
       },
     });
 

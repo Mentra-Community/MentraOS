@@ -1,35 +1,40 @@
 /**
- * @fileoverview End-to-end test driven by the real @mentra/cloud-client (node).
+ * @fileoverview Real end-to-end test driven by @mentra/cloud-client (node).
  *
- * This is the integration-test harness the rollout calls for: the SAME client
- * the phone runs, on a server, exercising the whole v2 path against the runtime:
- *   - cloud.auth exchanges the OEM JWT at /api/client/auth/exchange
- *   - cloud.runtime opens the WS, does the connection.init/ack handshake
- *   - cloud.runtime.setSubscriptions PUTs the guarded subscription write
- *   - cloud.runtime.sendAudioFrame encrypts frames and sends them over UDP
- *   - transcripts come back as typed onTranscript / onTranslation events
+ * The SAME client the phone runs, on a server, exercising the whole v2 path for
+ * real, no mocks: OEM-JWT exchange at /api/client/auth/exchange, the
+ * connection.init/ack handshake, guarded REST subscriptions, encrypted UDP
+ * audio, and REAL Soniox transcription + translation coming back as typed
+ * onTranscript / onTranslation events.
  *
- * It runs against the MOCK provider (the default), so it is offline and
- * deterministic: the mock emits a transcript per audio frame, which proves the
- * full wire without a real ASR. The real-Soniox proof lives in
- * audio.e2e.soniox.integration.test.ts.
+ * The client streams real speech (macOS `say` + `afconvert`, 16 kHz mono PCM) as
+ * raw PCM frames through cloud.runtime.sendAudioFrame, so it needs no LC3
+ * encoder. Gated on SONIOX_API_KEY + say/afconvert; run with:
+ *   doppler run -- bun test tests/cloud-client.e2e.integration.test.ts
+ * Offline (no key) the whole suite skips.
  */
 
 import crypto from "node:crypto";
-import {
-  afterAll,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  test,
-} from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 const TEST_OEM_ID = "test-oem";
 const CORE_PORT = 13020;
 const AUDIO_HTTP_PORT = 13021;
 const AUDIO_UDP_PORT = 18020;
 const TEST_OEM_PORT = 13120;
+
+const HAS_KEY = !!process.env.SONIOX_API_KEY;
+const HAS_SAY = existsSync("/usr/bin/say") && existsSync("/usr/bin/afconvert");
+const RUN = HAS_KEY && HAS_SAY;
+
+if (!RUN) {
+  console.log(
+    `[cloud-client.e2e] skipped (SONIOX_API_KEY=${HAS_KEY ? "set" : "missing"}, say/afconvert=${HAS_SAY ? "present" : "missing"}). Run with: doppler run -- bun test tests/cloud-client.e2e.integration.test.ts`,
+  );
+}
 
 // === Env setup BEFORE any package imports ===
 {
@@ -40,20 +45,13 @@ const TEST_OEM_PORT = 13120;
   process.env.MENTRA_JWT_PUBLIC_KEY = stripPemWrap(
     access.publicKey.export({ type: "spki", format: "pem" }).toString(),
   );
-  // Second keypair for miniapp-scoped tokens (separate from the access key).
-  const miniapp = crypto.generateKeyPairSync("ed25519");
-  process.env.MENTRA_MINIAPP_JWT_PRIVATE_KEY ??= stripPemWrap(
-    miniapp.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
-  );
-  process.env.MENTRA_MINIAPP_JWT_PUBLIC_KEY ??= stripPemWrap(
-    miniapp.publicKey.export({ type: "spki", format: "pem" }).toString(),
-  );
   process.env.REFRESH_TOKEN_PEPPER ??= "test-pepper-not-for-production";
-  process.env.MONGO_URL ??=
-    "mongodb://127.0.0.1:27017/mentra-cloud-v2-cloudclient-test";
+  process.env.MONGO_URL ??= "mongodb://127.0.0.1:27017/mentra-cloud-v2-cloudclient-test";
   process.env.REDIS_URL ??= "redis://127.0.0.1:6379/4";
   process.env.AUDIO_UDP_ADVERTISED_HOST = "127.0.0.1";
   process.env.AUDIO_UDP_ADVERTISED_PORT = String(AUDIO_UDP_PORT);
+  // Real Soniox provider in the workers.
+  process.env.AUDIO_PROVIDER = "soniox";
   process.env.LOG_LEVEL ??= "warn";
 }
 
@@ -75,10 +73,12 @@ import type {
 let coreHandle: CoreHandle;
 let audioHandle: AudioHandle;
 let testOemHandle: TestOemHandle;
+let pcmEn: Int16Array;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 beforeAll(async () => {
+  if (!RUN) return;
   const { resetMentraKeyCache } = await import("../packages/shared/src/auth");
   const { resetSigningKeyCache } = await import(
     "../packages/core/src/services/session.service"
@@ -101,7 +101,8 @@ beforeAll(async () => {
     udpAdvertisedHost: "127.0.0.1",
     udpAdvertisedPort: AUDIO_UDP_PORT,
   });
-});
+  pcmEn = generateSpeechPcm("the quick brown fox jumps over the lazy dog");
+}, 30_000);
 
 afterAll(async () => {
   await audioHandle?.stop();
@@ -110,6 +111,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  if (!RUN) return;
   await Promise.all([
     OemModel.deleteMany({}),
     UserModel.deleteMany({}),
@@ -136,61 +138,46 @@ beforeEach(async () => {
   });
 });
 
-describe("cloud-client e2e (the real client as harness)", () => {
-  test("auth exchange + handshake + subscribe + encrypted audio -> transcript", async () => {
+describe.skipIf(!RUN)("cloud-client real e2e (the real client + real Soniox)", () => {
+  test("captions: real speech over the client -> real transcript", async () => {
     const cloud = await newCloud("alice-cc-caps");
-
     const transcripts: TranscriptionData[] = [];
     cloud.runtime.onTranscript((d) => transcripts.push(d));
 
     await cloud.runtime.connect();
-    // identity is read off the exchanged access token's claims.
-    expect(cloud.auth.identity.mentraUserId).toMatch(/^[a-f0-9]{24}$|^mu_/);
-
     await cloud.runtime.setSubscriptions([
-      { kind: "transcription", language: { mode: "auto" } },
+      { kind: "transcription", language: { mode: "specific", code: "en" } },
     ]);
 
-    const ok = await pumpAudioUntil(
-      () => transcripts.length > 0,
-      () => cloud.runtime.sendAudioFrame(new Uint8Array(40).fill(0x42)),
-    );
-    expect(ok).toBe(true);
-
-    const t = transcripts[0]!;
-    expect(t.provider).toBe("mock");
-    expect(t.subscription.kind).toBe("transcription");
-    // MockProvider text format: `mock <scope> <n>`.
-    expect(t.text).toMatch(/^mock /);
+    const best = await streamAndCollect(cloud, transcripts);
+    console.log(`[cloud-client.e2e] caption: "${best}"`);
+    const low = best.toLowerCase();
+    expect(best.length).toBeGreaterThan(0);
+    expect(low).toContain("quick");
+    expect(low).toContain("fox");
 
     cloud.runtime.close();
-    await sleep(100);
-  }, 20_000);
+    await sleep(200);
+  }, 45_000);
 
-  test("translation subscription -> onTranslation", async () => {
+  test("translation: real speech over the client -> real Spanish", async () => {
     const cloud = await newCloud("alice-cc-xlate");
-
     const translations: TranslationData[] = [];
     cloud.runtime.onTranslation((d) => translations.push(d));
 
     await cloud.runtime.connect();
     await cloud.runtime.setSubscriptions([
-      { kind: "translation", source: { mode: "auto" }, target: "es" },
+      { kind: "translation", source: { mode: "specific", code: "en" }, target: "es" },
     ]);
 
-    const ok = await pumpAudioUntil(
-      () => translations.length > 0,
-      () => cloud.runtime.sendAudioFrame(new Uint8Array(40).fill(0x77)),
-    );
-    expect(ok).toBe(true);
-
-    const t = translations[0]!;
-    expect(t.subscription.kind).toBe("translation");
-    expect(t.target.language).toBe("es");
+    const best = await streamAndCollect(cloud, translations);
+    console.log(`[cloud-client.e2e] translation: "${best}"`);
+    expect(best.length).toBeGreaterThan(0);
+    expect(best.toLowerCase()).toMatch(/zorro|perro|r[áa]pido|salta|perezoso/);
 
     cloud.runtime.close();
-    await sleep(100);
-  }, 20_000);
+    await sleep(200);
+  }, 45_000);
 });
 
 // === Helpers ===
@@ -205,31 +192,57 @@ async function newCloud(oemUserId: string): Promise<CloudClient> {
   const { jwt } = (await mintRes.json()) as { jwt: string };
 
   return new CloudClient({
-    endpoints: {
-      core: coreHandle.url,
-      runtime: `http://localhost:${AUDIO_HTTP_PORT}`,
-    },
+    endpoints: { core: coreHandle.url, runtime: `http://localhost:${AUDIO_HTTP_PORT}` },
     auth: { subjectToken: jwt, subjectTokenType: "oem-jwt" },
+    // Feed raw PCM (the say-generated audio) rather than LC3.
+    audio: { codec: "pcm", sampleRate: 16000 },
   });
 }
 
 /**
- * Pump audio frames until a result lands (or a deadline passes). This is the
- * realistic streaming shape: keep feeding frames and stop the instant the event
- * fires, rather than waiting a fixed interval and hoping the provider is ready.
+ * Give the worker a beat to open the Soniox session, stream the phrase as 100ms
+ * PCM frames at ~2x realtime followed by trailing silence (so Soniox hits an
+ * endpoint and flushes the final result + translation), then let results settle.
+ * Returns the longest text seen.
  */
-async function pumpAudioUntil(
-  done: () => boolean,
-  sendFrame: () => void,
-  timeoutMs = 10_000,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (done()) return true;
-    sendFrame();
+async function streamAndCollect(
+  cloud: CloudClient,
+  results: Array<{ text: string }>,
+): Promise<string> {
+  await sleep(400); // Soniox session connect latency (real, not a mock)
+
+  const FRAME = 1600; // 100 ms at 16 kHz
+  const frames: Int16Array[] = [];
+  for (let i = 0; i < pcmEn.length; i += FRAME) frames.push(pcmEn.subarray(i, i + FRAME));
+  const silence = new Int16Array(FRAME);
+  for (let i = 0; i < 15; i++) frames.push(silence);
+
+  for (const f of frames) {
+    cloud.runtime.sendAudioFrame(new Uint8Array(f.buffer, f.byteOffset, f.byteLength));
     await sleep(50);
   }
-  return done();
+  await sleep(3000);
+
+  return results.reduce((a, r) => (r.text.length > a.length ? r.text : a), "");
+}
+
+/** macOS `say` -> 16 kHz mono signed-16 PCM, as an Int16Array. */
+function generateSpeechPcm(phrase: string): Int16Array {
+  const stamp = `${process.pid}-${phrase.replace(/\W+/g, "").slice(0, 12)}`;
+  const aiff = join(tmpdir(), `mentra-cc-say-${stamp}.aiff`);
+  const wav = join(tmpdir(), `mentra-cc-say-${stamp}.wav`);
+  const say = Bun.spawnSync(["/usr/bin/say", "-o", aiff, phrase]);
+  if (say.exitCode !== 0) throw new Error(`say failed: ${say.stderr}`);
+  const conv = Bun.spawnSync([
+    "/usr/bin/afconvert", aiff, wav, "-d", "LEI16@16000", "-c", "1", "-f", "WAVE",
+  ]);
+  if (conv.exitCode !== 0) throw new Error(`afconvert failed: ${conv.stderr}`);
+  const buf = readFileSync(wav);
+  const dataIdx = buf.indexOf("data");
+  if (dataIdx < 0) throw new Error("no data chunk in WAV");
+  const pcmBytes = buf.subarray(dataIdx + 8);
+  const usable = pcmBytes.byteLength - (pcmBytes.byteLength % 2);
+  return new Int16Array(pcmBytes.buffer, pcmBytes.byteOffset, usable / 2);
 }
 
 function stripPemWrap(pem: string): string {
