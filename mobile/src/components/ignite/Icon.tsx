@@ -4,6 +4,8 @@ import {
   Bell,
   CircleUser,
   CircleX,
+  Hammer,
+  Wrench,
   Cog,
   Ellipsis,
   ExternalLink,
@@ -70,6 +72,8 @@ const lucideIcons = {
   "pause": PauseIcon,
   "pointer": PointerIcon,
   "circle-x": CircleX,
+  "hammer": Hammer,
+  "wrench": Wrench,
   // custom icons:
   "grid": GridIcon,
   "shopping-bag": ShoppingBagIcon,

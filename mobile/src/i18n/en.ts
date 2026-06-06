@@ -998,7 +998,7 @@ const en = {
     store: "MiniApp Store",
     notify: "Notifications",
     feedback: "Give Feedback",
-    lmaInstaller: "Local Store",
+    lmaInstaller: "Dev Tools",
     lmaLoader: "Side Loader",
   },
   appInfo: {

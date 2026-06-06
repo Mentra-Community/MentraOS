@@ -1,3 +1,4 @@
+import {createElement} from "react"
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 
@@ -17,6 +18,7 @@ import {
 } from "@mentra/island"
 
 import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
+import {DevToolsIcon} from "@/components/miniapps/DevIcons"
 import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {showAlert} from "@/contexts/ModalContext"
 import {useNavigationStore} from "@/stores/navigation"
@@ -527,6 +529,7 @@ class MiniappCatalog {
         hidden: false,
         hardwareRequirements: [],
         logoUrl: require("@assets/applet-icons/store.png"),
+        iconComponent: createElement(DevToolsIcon),
       })
     }
 
