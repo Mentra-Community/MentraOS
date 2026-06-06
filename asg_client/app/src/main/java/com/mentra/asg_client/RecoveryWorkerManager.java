@@ -45,7 +45,7 @@ public class RecoveryWorkerManager {
 
     public void initialize() {
         registerPackageInstallReceiver();
-        handler.postDelayed(this::ensureRecoveryWorker, 5000);
+        handler.post(this::ensureRecoveryWorker);
     }
 
     public void cleanup() {
