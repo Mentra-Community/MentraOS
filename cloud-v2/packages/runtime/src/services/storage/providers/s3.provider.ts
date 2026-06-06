@@ -29,15 +29,25 @@ import type {
 /** Presigned URL lifetime. Long enough for a glasses upload, short enough to limit replay. */
 const PRESIGN_EXPIRES_SEC = 600;
 
-function env(name: string, fallback?: string): string | undefined {
-  return process.env[name] ?? (fallback ? process.env[fallback] : undefined);
+/** First defined value among the given env var names. */
+function env(...names: string[]): string | undefined {
+  for (const name of names) {
+    if (process.env[name]) return process.env[name];
+  }
+  return undefined;
 }
 
 export function createS3Provider(): StorageProvider {
-  const endpoint = env("STORAGE_S3_ENDPOINT", "R2_ENDPOINT");
-  const bucket = env("STORAGE_S3_BUCKET", "R2_BUCKET");
-  const accessKeyId = env("STORAGE_S3_ACCESS_KEY_ID", "R2_ACCESS_KEY_ID");
-  const secretAccessKey = env("STORAGE_S3_SECRET_ACCESS_KEY", "R2_SECRET_ACCESS_KEY");
+  // Accept the v2 STORAGE_S3_* names, plus R2_* and the v1 CLOUDFLARE_R2_*
+  // names, so existing Cloudflare R2 credentials work without re-keying.
+  const endpoint = env("STORAGE_S3_ENDPOINT", "R2_ENDPOINT", "CLOUDFLARE_R2_S3_ENDPOINT");
+  const bucket = env("STORAGE_S3_BUCKET", "R2_BUCKET", "CLOUDFLARE_R2_GALLERY_BUCKET");
+  const accessKeyId = env("STORAGE_S3_ACCESS_KEY_ID", "R2_ACCESS_KEY_ID", "CLOUDFLARE_R2_ACCESS_KEY_ID");
+  const secretAccessKey = env(
+    "STORAGE_S3_SECRET_ACCESS_KEY",
+    "R2_SECRET_ACCESS_KEY",
+    "CLOUDFLARE_R2_SECRET_ACCESS_KEY",
+  );
   const region = env("STORAGE_S3_REGION") ?? "auto";
 
   if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) {
