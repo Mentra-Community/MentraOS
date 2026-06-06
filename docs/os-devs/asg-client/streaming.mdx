@@ -61,9 +61,36 @@ Initiates a stream to the specified URL. The protocol is auto-detected from the 
 {
   "type": "stream_status",
   "status": "initializing",
-  "streamId": "unique-stream-id"
+  "streamId": "unique-stream-id",
+  "resolvedConfig": {
+    "transport": "rtmp",
+    "video": {
+      "width": 854,
+      "height": 480,
+      "captureWidth": 1920,
+      "captureHeight": 1080,
+      "bitrate": 1000000,
+      "fps": 15
+    },
+    "audio": {
+      "bitrate": 64000,
+      "sampleRate": 44100,
+      "echoCancellation": false,
+      "noiseSuppression": false
+    }
+  }
 }
 ```
+
+`resolvedConfig` reports the effective stream settings after the glasses apply
+defaults, clamps, and camera-mode selection. `video.width` and `video.height`
+are the encoded output dimensions sent to the stream endpoint. `video.captureWidth`
+and `video.captureHeight` are the native camera buffer dimensions selected on the
+glasses before crop or downscale; when no separate capture mode is needed, they
+match `width` and `height`. `video.bitrate` is the encoded video bitrate in bits
+per second, and `video.fps` is the resolved capture/encode frame rate. The
+`audio` object reports the resolved audio bitrate, sample rate, echo cancellation,
+and noise suppression settings when audio is active.
 
 ### 2. stop_stream
 
@@ -130,9 +157,31 @@ Queries the current streaming status.
 {
   "type": "stream_status",
   "streaming": true,
-  "reconnecting": false
+  "reconnecting": false,
+  "resolvedConfig": {
+    "transport": "rtmp",
+    "video": {
+      "width": 854,
+      "height": 480,
+      "captureWidth": 1920,
+      "captureHeight": 1080,
+      "bitrate": 1000000,
+      "fps": 15
+    },
+    "audio": {
+      "bitrate": 64000,
+      "sampleRate": 44100,
+      "echoCancellation": false,
+      "noiseSuppression": false
+    }
+  }
 }
 ```
+
+The `get_stream_status` response uses the same `resolvedConfig` schema as
+`start_stream`: encoded output size in `video.width` / `video.height`, native
+camera capture size in `video.captureWidth` / `video.captureHeight`, video
+bitrate and `fps`, plus resolved audio settings.
 
 ## Stream Lifecycle
 

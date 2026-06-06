@@ -610,7 +610,7 @@ export function GalleryScreen() {
       const cacheDir = `${RNFS.CachesDirectoryPath}/share`
       await RNFS.mkdir(cacheDir)
 
-      for (const photo of photosToShare) {
+      for (const [index, photo] of photosToShare.entries()) {
         let filePath = ""
         if (photo.filePath) {
           filePath = photo.filePath.startsWith("file://") ? photo.filePath.replace("file://", "") : photo.filePath
@@ -623,7 +623,7 @@ export function GalleryScreen() {
         if (!exists) continue
 
         const basename = filePath.split("/").pop() || photo.name
-        const cachePath = `${cacheDir}/${basename}`
+        const cachePath = `${cacheDir}/${String(index + 1).padStart(3, "0")}-${basename}`
         await RNFS.unlink(cachePath).catch(() => {})
         await RNFS.copyFile(filePath, cachePath)
         shareUrls.push(`file://${cachePath}`)

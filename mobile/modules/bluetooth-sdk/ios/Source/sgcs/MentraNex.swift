@@ -464,7 +464,10 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         waiters.forEach { $0.resume() }
     }
 
-    private func waitForWriteAck() async {
+    /// Suspends until CoreBluetooth signals it can accept another write-without-response
+    /// (resumed by peripheralIsReady(toSendWriteWithoutResponse:), or by the disconnect
+    /// handlers so an in-flight send can't wedge the queue across a drop).
+    private func waitUntilReadyToWrite() async {
         await withCheckedContinuation { continuation in
             pendingWriteContinuation = continuation
         }
@@ -567,8 +570,18 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
                 "NEX: 📦 Sending chunk \(index) of \(command.chunks.count) to \(peripheral.name ?? "Unknown")"
             )
             Bridge.log("NEX: 📦 Chunk data: \(data.toHexString())")
-            peripheral.writeValue(data, for: writeCharacteristic, type: .withResponse)
-            await waitForWriteAck()
+            // Write WITHOUT response: a write-with-response is one outstanding request at a
+            // time gated on a remote round trip, which puts the (screen-off-throttled) app
+            // thread in the path of every fragment and makes captions crawl in the background.
+            // .withoutResponse lets CoreBluetooth batch fragments into connection events.
+            // CoreBluetooth does NOT call didWriteValueFor for .withoutResponse, so we use its
+            // flow-control flag instead of an ack — gating prevents dropped fragments (which
+            // would make the firmware discard the whole reassembled caption). See
+            // docs/ble-disconnects-during-captions.md in the firmware repo.
+            if !peripheral.canSendWriteWithoutResponse {
+                await waitUntilReadyToWrite()
+            }
+            peripheral.writeValue(data, for: writeCharacteristic, type: .withoutResponse)
 
             // Delay between chunks except maybe after the last chunk if waitTime will handle it
             if index < command.chunks.count - 1 {
@@ -1284,7 +1297,8 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     }
 
     func sendVoiceActivityDetectionSetting() {
-        let enabled = DeviceStore.shared.get("bluetooth", "voice_activity_detection_enabled") as? Bool ?? true
+        let enabled = DeviceStore.shared.get("bluetooth", "voice_activity_detection_enabled") as? Bool
+            ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
         Bridge.log("NEX: 🎤 Sending Voice Activity Detection setting to glasses: \(enabled)")
 
         guard nexReady else {
@@ -2424,8 +2438,10 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // iOS MTU is automatically negotiated - we can only discover the current value
         // No manual MTU request available on iOS (platform limitation)
 
-        // Get current MTU capability (iOS-specific approach)
-        let maxWriteLength = peripheral.maximumWriteValueLength(for: .withResponse)
+        // Get current MTU capability (iOS-specific approach). Query for .withoutResponse
+        // since that's the write type the caption path uses; its limit can differ from
+        // .withResponse, and sizing chunks to it avoids oversized writes being dropped.
+        let maxWriteLength = peripheral.maximumWriteValueLength(for: .withoutResponse)
         let actualMTU = maxWriteLength + 3 // Add L2CAP header size
 
         Bridge.log("NEX: 📊 iOS MTU Discovery Results:")
@@ -2655,6 +2671,11 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             resumePendingWrite()
             return
         }
+        resumePendingWrite()
+    }
+
+    func peripheralIsReady(toSendWriteWithoutResponse _: CBPeripheral) {
+        // CoreBluetooth can accept more write-without-response data; unblock the sender.
         resumePendingWrite()
     }
 

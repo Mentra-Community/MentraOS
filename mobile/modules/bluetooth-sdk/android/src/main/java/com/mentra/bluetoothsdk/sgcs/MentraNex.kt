@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.DeviceStore
 
@@ -69,6 +70,10 @@ class MentraNex : SGCManager() {
         
         private const val MAX_CHUNK_SIZE_DEFAULT: Int = 176 // Maximum chunk size for BLE packets
         private const val DELAY_BETWEEN_CHUNKS_SEND: Long = 10 // Adjust this value as needed
+        // Upper bound on waiting for onCharacteristicWrite. A no-response write's
+        // callback is normally near-instant; this only guards against a callback that
+        // never arrives, so a dropped write can't wedge the send queue forever.
+        private const val WRITE_CALLBACK_TIMEOUT_MS: Long = 2000
 
         private const val INITIAL_CONNECTION_DELAY_MS = 350L // Adjust this value as needed
         // Window to let a queued DisconnectRequest flush to the glasses before we close GATT.
@@ -101,7 +106,8 @@ class MentraNex : SGCManager() {
 
     // Off by default; toggled from Nex Developer Settings via the nex_audio_playback flag.
     private val isLc3AudioEnabled: Boolean
-        get() = DeviceStore.get("bluetooth", "nex_audio_playback") as? Boolean ?: false
+        // get() = DeviceStore.get("bluetooth", "nex_audio_playback") as? Boolean ?: false
+        get() = false
     private var lc3AudioPlayer: Lc3Player? = null
 
     private var lc3DecoderPtr: Long = 0
@@ -277,6 +283,17 @@ class MentraNex : SGCManager() {
             }
         }
 
+        /** Bounded wait: returns early if the flag is still set after [timeoutMs]. */
+        @Synchronized
+        fun waitWhileTrue(timeoutMs: Long) {
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (flag) {
+                val remaining = deadline - System.currentTimeMillis()
+                if (remaining <= 0) break
+                (this as Object).wait(remaining)
+            }
+        }
+
         @Synchronized
         fun setTrue() {
             flag = true
@@ -300,7 +317,9 @@ class MentraNex : SGCManager() {
     override fun sendGalleryMode() { Bridge.log("Nex: sendGalleryMode operation not supported") }
 
     override fun sendVoiceActivityDetectionSetting() {
-        val enabled = DeviceStore.get("bluetooth", "voice_activity_detection_enabled") as? Boolean ?: true
+        val enabled =
+            DeviceStore.get("bluetooth", "voice_activity_detection_enabled") as? Boolean
+                ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
         Bridge.log("Nex: 🎤 Sending Voice Activity Detection setting to glasses: $enabled")
 
         if (connectionState != ConnTypes.CONNECTED) {
@@ -939,9 +958,13 @@ class MentraNex : SGCManager() {
         val result = gatt.setCharacteristicNotification(characteristic, true)
         Bridge.log("Nex: PROC_QUEUE - setCharacteristicNotification result: $result")
 
-        // Set write type for the characteristic
-        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-        Bridge.log("Nex: PROC_QUEUE - write type set")
+        // Write-without-response: the onCharacteristicWrite callback fires when the
+        // local stack accepts the buffer, not after a remote ATT round-trip, so TX is
+        // no longer throttled to ~1 packet per connection interval. This is what keeps
+        // captions flowing when the phone is asleep and the interval is relaxed (the
+        // firmware RX characteristic advertises WRITE_WITHOUT_RESP). Matches G1.
+        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        Bridge.log("Nex: PROC_QUEUE - write type set (NO_RESPONSE)")
 
         // Add delay
         Bridge.log("Nex: PROC_QUEUE - waiting to enable notification...")
@@ -1653,17 +1676,30 @@ class MentraNex : SGCManager() {
                         // Send to main glass
                         val canSend = mainGlassGatt != null && mainWriteChar != null && isMainConnected
                         Bridge.log("[BLE] PROC_QUEUE send check: gatt=${mainGlassGatt != null} writeChar=${mainWriteChar != null} connected=$isMainConnected → canSend=$canSend len=${request.data.size}")
+                        var writeStarted = false
                         if (canSend) {
                             mainWaiter.setTrue()
                             mainWriteChar?.value = request.data
-                            mainGlassGatt?.writeCharacteristic(mainWriteChar)
-                            lastSendTimestamp = System.currentTimeMillis()
-                            Bridge.log("[BLE] PROC_QUEUE writeCharacteristic issued, waiting for onCharacteristicWrite callback")
+                            // Honor the return value: writeCharacteristic returns false when the
+                            // stack is busy / out of buffers, and in that case no callback fires.
+                            // Only wait for the callback if the write actually started, otherwise
+                            // the waiter would block until the next disconnect.
+                            val issued = mainGlassGatt?.writeCharacteristic(mainWriteChar) ?: false
+                            if (issued) {
+                                writeStarted = true
+                                lastSendTimestamp = System.currentTimeMillis()
+                                Bridge.log("[BLE] PROC_QUEUE writeCharacteristic issued, awaiting onCharacteristicWrite")
+                            } else {
+                                mainWaiter.setFalse()
+                                Log.e(TAG, "[BLE] PROC_QUEUE writeCharacteristic returned false — stack busy, dropping fragment")
+                            }
                         } else {
                             Bridge.log("[BLE] PROC_QUEUE skipping write — not ready, packet dropped")
                         }
 
-                        mainWaiter.waitWhileTrue()
+                        if (writeStarted) {
+                            mainWaiter.waitWhileTrue(WRITE_CALLBACK_TIMEOUT_MS)
+                        }
 
                         Thread.sleep(DELAY_BETWEEN_CHUNKS_SEND)
 
