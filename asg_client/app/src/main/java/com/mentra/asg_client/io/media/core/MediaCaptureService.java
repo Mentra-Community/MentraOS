@@ -26,6 +26,8 @@ import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.settings.VideoSettings;
+import com.mentra.asg_client.utils.GalleryStatusHelper;
+import com.mentra.asg_client.utils.GallerySyncFilter;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -1339,8 +1341,7 @@ public class MediaCaptureService {
 
                     @Override
                     public void onPhotoCapturing(
-                            JSONObject requestedCaptureConfig,
-                            JSONObject meteredPreview) {
+                            JSONObject requestedCaptureConfig, JSONObject meteredPreview) {
                         sendPhotoStatus(
                                 requestId,
                                 "capturing",
@@ -1395,11 +1396,7 @@ public class MediaCaptureService {
                     public void onPhotoError(String errorMessage) {
                         Log.e(TAG, "Failed to capture offline photo: " + errorMessage);
                         sendPhotoStatus(
-                                requestId,
-                                "failed",
-                                null,
-                                "CAMERA_CAPTURE_FAILED",
-                                errorMessage);
+                                requestId, "failed", null, "CAMERA_CAPTURE_FAILED", errorMessage);
 
                         // LED is now managed by CameraNeoService and will turn off when camera
                         // closes
@@ -1565,8 +1562,7 @@ public class MediaCaptureService {
                                 + ", exposureTimeNs="
                                 + exposureTimeNs
                                 + " ns, iso="
-                                + (iso != null ? iso : "auto")
-                );
+                                + (iso != null ? iso : "auto"));
             }
             CameraNeoService.enqueuePhotoRequest(
                     mContext,
@@ -1595,8 +1591,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoCapturing(
-                                JSONObject requestedCaptureConfig,
-                                JSONObject meteredPreview) {
+                                JSONObject requestedCaptureConfig, JSONObject meteredPreview) {
                             sendPhotoStatus(
                                     requestId,
                                     "capturing",
@@ -1657,11 +1652,7 @@ public class MediaCaptureService {
                                 // Upload directly to app webhook
                                 recordTiming(requestId, "upload_start");
                                 uploadPhotoToWebhook(
-                                        filePath,
-                                        requestId,
-                                        webhookUrl,
-                                        authToken,
-                                        compress);
+                                        filePath, requestId, webhookUrl, authToken, compress);
                             } else {
                                 // No webhook → no upload phase to run. Job ends here.
                                 releasePhotoJob(requestId);
@@ -2003,7 +1994,8 @@ public class MediaCaptureService {
         }
     }
 
-    private void logPhotoWifiTrace(String direction, String layer, String type, JSONObject payload) {
+    private void logPhotoWifiTrace(
+            String direction, String layer, String type, JSONObject payload) {
         try {
             BleTraceLogger.logEvent(direction, layer, type, payload);
         } catch (Exception e) {
@@ -2601,7 +2593,11 @@ public class MediaCaptureService {
                                             "📱 Webhook upload exception, attempting BLE fallback");
                                     Log.d(TAG, "🔄 BLE Image ID: " + bleImgId);
                                     tracePhotoUploadFallback(
-                                            requestId, webhookUrl, photoFile, "exception", bleImgId);
+                                            requestId,
+                                            webhookUrl,
+                                            photoFile,
+                                            "exception",
+                                            bleImgId);
 
                                     // Clean up tracking (will be re-added by BLE transfer)
                                     photoBleIds.remove(requestId);
@@ -3014,8 +3010,7 @@ public class MediaCaptureService {
             photoBleIds.put(requestId, bleImgId);
             photoOriginalPaths.put(requestId, photoFilePath);
             photoRequestedSizes.put(requestId, size);
-            tracePhotoWifiRoute(
-                    requestId, "direct_webhook", "wifi_connected", webhookUrl, null);
+            tracePhotoWifiRoute(requestId, "direct_webhook", "wifi_connected", webhookUrl, null);
 
             Log.d(TAG, "📶 WiFi connected - attempting direct upload for " + requestId);
             takePhotoAndUpload(
@@ -3198,8 +3193,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoCapturing(
-                                JSONObject requestedCaptureConfig,
-                                JSONObject meteredPreview) {
+                                JSONObject requestedCaptureConfig, JSONObject meteredPreview) {
                             sendPhotoStatus(
                                     requestId,
                                     "capturing",
@@ -3661,10 +3655,7 @@ public class MediaCaptureService {
     }
 
     private JSONObject addPhotoTransferDetails(
-            JSONObject resolvedConfig,
-            boolean save,
-            String transferMethod,
-            String compression) {
+            JSONObject resolvedConfig, boolean save, String transferMethod, String compression) {
         JSONObject config = resolvedConfig != null ? resolvedConfig : new JSONObject();
         try {
             config.put("saveToGallery", save);
@@ -3691,14 +3682,7 @@ public class MediaCaptureService {
             String errorCode,
             String errorMessage) {
         sendPhotoStatus(
-                requestId,
-                status,
-                resolvedConfig,
-                errorCode,
-                errorMessage,
-                null,
-                null,
-                null);
+                requestId, status, resolvedConfig, errorCode, errorMessage, null, null, null);
     }
 
     private void sendPhotoStatus(
@@ -3958,18 +3942,16 @@ public class MediaCaptureService {
 
             // Build gallery status using shared utility with sync-safe filters
             JSONObject response =
-                    com.mentra.asg_client.utils.GalleryStatusHelper.buildGalleryStatus(
+                    GalleryStatusHelper.buildGalleryStatus(
                             fileManager,
                             metadata ->
-                                    !com.mentra.asg_client.utils.GallerySyncFilter
-                                                    .isCaptureBlockedFromSync(
-                                                            metadata.getFileName(),
-                                                            activeCaptureId,
-                                                            blockedCaptureIds)
-                                            && !com.mentra.asg_client.utils.GallerySyncFilter
-                                                    .isZeroBytePrimaryVideo(
-                                                            metadata.getFileName(),
-                                                            metadata.getFileSize()));
+                                    !GallerySyncFilter.isCaptureBlockedFromSync(
+                                                    metadata.getFileName(),
+                                                    activeCaptureId,
+                                                    blockedCaptureIds)
+                                            && !GallerySyncFilter.isZeroBytePrimaryVideo(
+                                                    metadata.getFileName(),
+                                                    metadata.getFileSize()));
 
             // Send through bluetooth if available
             if (mServiceCallback != null) {

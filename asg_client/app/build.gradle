@@ -1,8 +1,8 @@
 plugins {
     id 'com.android.application'
     id 'androidx.navigation.safeargs'
-
     id 'io.sentry.android.gradle' version '5.8.0'
+    id 'com.google.dagger.hilt.android'
 }
 
 apply plugin: 'com.diffplug.spotless'
@@ -147,6 +147,10 @@ android {
         targetCompatibility JavaVersion.VERSION_17 // Should generally match sourceCompatibility
     }
 
+    hilt {
+        enableAggregatingTask = true
+    }
+
     signingConfigs {
         debug {
             // Use production keystore for debug builds if available (maintains app identity)
@@ -225,6 +229,8 @@ android {
 
         // Sentry configuration
         buildConfigField "String", "SENTRY_DSN", "\"${envProperties['SENTRY_DSN'] ?: ""}\""
+
+        buildConfigField "boolean", "ENABLE_SYSTEM_NETWORK_MANAGER", "true"
     }
 
     packagingOptions {
@@ -331,6 +337,9 @@ dependencies {
     // Sentry SDK for error reporting
     implementation 'io.sentry:sentry-android:7.5.0'
 
+    implementation 'com.google.dagger:hilt-android:2.51.1'
+    annotationProcessor 'com.google.dagger:hilt-compiler:2.51.1'
+
     // Google WebRTC for Android (WHIP streaming)
     // Community-maintained prebuilt of the official Google WebRTC codebase; uses org.webrtc package.
     // Pinned to M114 (2023) — compiled with Java 11, compatible with this project's Java 17 toolchain.
@@ -370,8 +379,60 @@ sentry {
     }
 }
 
+tasks.register('checkNoFullyQualifiedMentraTypes') {
+    doLast {
+        def violations = []
+        def fqcnTypePattern = ~/com\.mentra\.asg_client\.(\w+\.)+[A-Z]\w*/
+        fileTree(dir: 'src/main/java', include: '**/*.java').each { File f ->
+            boolean inBlockComment = false
+            f.readLines().eachWithIndex { line, int idx ->
+                def trimmed = line.trim()
+                if (inBlockComment) {
+                    if (trimmed.contains('*/')) {
+                        inBlockComment = false
+                    }
+                    int commentEnd = line.indexOf('*/')
+                    if (commentEnd >= 0) {
+                        inBlockComment = false
+                        line = line.substring(commentEnd + 2)
+                        trimmed = line.trim()
+                    } else {
+                        return
+                    }
+                }
+                if (trimmed.startsWith('import ')
+                        || trimmed.startsWith('package ')
+                        || trimmed.startsWith('*')
+                        || trimmed.startsWith('/**')
+                        || trimmed.startsWith('/*')
+                        || trimmed.startsWith('//')) {
+                    if (trimmed.startsWith('/*') && !trimmed.contains('*/')) {
+                        inBlockComment = true
+                    }
+                    return
+                }
+                // Intent action strings and broadcast actions are not Java type references.
+                if (line.contains('"com.mentra.asg_client')) {
+                    return
+                }
+                if (fqcnTypePattern.matcher(line).find()) {
+                    violations << "${f.path}:${idx + 1}"
+                }
+            }
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException(
+                    'Use imports instead of fully-qualified com.mentra.asg_client types: '
+                            + violations.join(', '))
+        }
+    }
+}
+
 // Disable Sentry tasks when auth token is not present
 afterEvaluate {
+    tasks.matching { it.name == 'preBuild' }.configureEach {
+        dependsOn('checkNoFullyQualifiedMentraTypes')
+    }
     if (!sentryAuthToken) {
         tasks.matching { it.name.contains("sentry") || it.name.contains("Sentry") }.configureEach {
             enabled = false

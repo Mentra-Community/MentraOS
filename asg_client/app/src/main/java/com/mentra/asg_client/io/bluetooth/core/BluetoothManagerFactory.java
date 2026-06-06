@@ -2,7 +2,7 @@ package com.mentra.asg_client.io.bluetooth.core;
 
 import android.content.Context;
 import android.util.Log;
-import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.StandardBluetoothManager;
 import com.mentra.asg_client.service.utils.DeviceProfile;
@@ -21,7 +21,7 @@ public class BluetoothManagerFactory {
      * @param context The application context
      * @return An implementation of IBluetoothManager appropriate for the device
      */
-    public static IBluetoothManager getBluetoothManager(Context context) {
+    public static ICompanionTransport getBluetoothManager(Context context) {
         Context appContext = context.getApplicationContext();
 
         DeviceProfile profile = DeviceProfile.detect(appContext);
@@ -40,18 +40,5 @@ public class BluetoothManagerFactory {
 
         Log.i(TAG, "Creating StandardBluetoothManager");
         return new StandardBluetoothManager(appContext);
-    }
-
-    /**
-     * Check if the device is a K900
-     *
-     * @param context The application context
-     * @return true if the device is a K900, false otherwise
-     * @deprecated Use ServiceUtils.isK900Device() instead - centralized implementation
-     */
-    @Deprecated
-    public static boolean isK900Device(Context context) {
-        Log.w(TAG, "⚠️ Using deprecated isK900Device() - switch to ServiceUtils.isK900Device()");
-        return ServiceUtils.isK900Device(context);
     }
 }
