@@ -7,8 +7,8 @@
  * `cloud-v2-storage-test/` key prefix and cleans up after itself.
  *
  * Gated on R2 credentials in the env (the s3 provider reads STORAGE_S3_*, R2_*,
- * or the v1 CLOUDFLARE_R2_* names). Run with the v1 creds, e.g.:
- *   bun test --env-file=../cloud/.env tests/storage.r2.integration.test.ts
+ * or the v1 CLOUDFLARE_R2_* names). The cloud-v2 Doppler config has them, so:
+ *   doppler run --project cloud-v2 --config dev -- bun test tests/storage.r2.integration.test.ts
  * Without creds the suite skips.
  */
 
@@ -29,7 +29,7 @@ const RUN = HAS_ENDPOINT && HAS_KEY;
 
 if (!RUN) {
   console.log(
-    "[storage.r2] skipped (no R2 creds). Run with: bun test --env-file=../cloud/.env tests/storage.r2.integration.test.ts",
+    "[storage.r2] skipped (no R2 creds). Run with: doppler run --project cloud-v2 --config dev -- bun test tests/storage.r2.integration.test.ts",
   );
 }
 

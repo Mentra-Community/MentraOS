@@ -5,8 +5,9 @@
  * RTMPS ingest + HLS/DASH playback coordinates, then deletes it (cleanup).
  *
  * Gated on Cloudflare creds (CF_STREAM_* or the v1 CLOUDFLARE_ACCOUNT_ID +
- * CLOUDFLARE_API_TOKEN). The token must have Stream:Edit. Run with:
- *   bun test --env-file=../cloud/.env tests/stream.cloudflare.integration.test.ts
+ * CLOUDFLARE_API_TOKEN). The token must have Stream:Edit. The cloud-v2 Doppler
+ * config has them, so:
+ *   doppler run --project cloud-v2 --config dev -- bun test tests/stream.cloudflare.integration.test.ts
  * Without creds the suite skips.
  */
 
@@ -20,7 +21,7 @@ const RUN = !!(
 
 if (!RUN) {
   console.log(
-    "[stream.cloudflare] skipped (no Cloudflare creds). Run with: bun test --env-file=../cloud/.env tests/stream.cloudflare.integration.test.ts",
+    "[stream.cloudflare] skipped (no Cloudflare creds). Run with: doppler run --project cloud-v2 --config dev -- bun test tests/stream.cloudflare.integration.test.ts",
   );
 }
 
