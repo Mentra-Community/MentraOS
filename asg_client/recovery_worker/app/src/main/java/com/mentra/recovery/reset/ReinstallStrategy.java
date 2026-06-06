@@ -19,6 +19,15 @@ public class ReinstallStrategy {
     if (!backupStore.isValidBackup()) {
       return false;
     }
+    if (backupStore.requiresUninstallBeforeReinstall()) {
+      installer.uninstallPackage(RecoveryConstants.ASG_PACKAGE);
+      try {
+        Thread.sleep(5000L);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return false;
+      }
+    }
     return installer.installApk(backupStore.getBackupPath(), RecoveryConstants.ASG_PACKAGE);
   }
 }
