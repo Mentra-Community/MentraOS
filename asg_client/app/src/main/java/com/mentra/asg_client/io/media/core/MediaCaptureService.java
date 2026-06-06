@@ -3261,12 +3261,6 @@ public class MediaCaptureService {
                             releasePhotoJob(requestId);
 
                             Log.e(TAG, "Failed to capture photo for BLE: " + errorMessage);
-                            sendPhotoStatus(
-                                    requestId,
-                                    "failed",
-                                    null,
-                                    "CAMERA_CAPTURE_FAILED",
-                                    errorMessage);
 
                             // LED is now managed by CameraNeoService and will turn off when camera
                             // closes
