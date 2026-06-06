@@ -77,12 +77,16 @@ public class RecoveryWorkerManager {
                 .getBoolean(KEY_PURGED_LEGACY, false)) {
             return;
         }
-        if (getInstalledVersion(LEGACY_UPDATER_PACKAGE) == -1) {
-            // Already gone — record success so we never check again.
+        try {
+            context.getPackageManager().getPackageInfo(LEGACY_UPDATER_PACKAGE, 0);
+        } catch (PackageManager.NameNotFoundException e) {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .edit()
                     .putBoolean(KEY_PURGED_LEGACY, true)
                     .apply();
+            return;
+        } catch (Exception e) {
+            Log.w(TAG, "Could not verify legacy updater package visibility; will retry", e);
             return;
         }
         try {
