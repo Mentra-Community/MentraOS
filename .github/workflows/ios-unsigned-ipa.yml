@@ -8,15 +8,11 @@ on:
 
 jobs:
   build:
-    runs-on: macos-13   # important: stable runner with Xcode 15
+    runs-on: macos-15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      # ✅ Force Xcode 15 (avoids Swift 6 entirely)
-      - name: Select Xcode 15.4
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
 
       - name: Confirm Xcode version
         run: |
@@ -41,112 +37,153 @@ jobs:
 
       - name: Expo prebuild
         working-directory: ./mobile
-        run: npx expo prebuild --platform ios
+        run: bun expo prebuild --platform ios
 
-      # ✅ Install CocoaPods cleanly
-      - name: Install CocoaPods
-        run: sudo gem install cocoapods
+      - name: Setup Sherpa Onnx (optional)
+        working-directory: ./mobile
+        run: |
+          chmod +x scripts/setup-sherpa-onnx-optional.sh
+          ./scripts/setup-sherpa-onnx-optional.sh || true
 
-      # ✅ Apply SAFE Podfile patch (no duplication)
-      - name: Patch Podfile (Swift 5 fix)
+      - name: Patch node_modules source files
+        working-directory: ./mobile
+        run: |
+          # ExpoModulesCore: remove SE-0431 isolated conformance syntax (Swift 6 only)
+          FILE1="node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIHostingView.swift"
+          FILE2="node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIVirtualView.swift"
+          FILE3="node_modules/expo-modules-core/ios/Core/Views/ViewDefinition.swift"
+          sed -i '' 's/, @MainActor AnyExpoSwiftUIHostingView/, AnyExpoSwiftUIHostingView/g' "$FILE1"
+          sed -i '' 's/: @MainActor ExpoSwiftUI\.ViewWrapper/: ExpoSwiftUI.ViewWrapper/g' "$FILE2"
+          sed -i '' 's/extension UIView: @MainActor AnyArgument/extension UIView: AnyArgument/g' "$FILE3"
+          echo "ExpoModulesCore patches applied"
+
+          # ExpoVideo: AVAssetVariant has no 'url' property in the iOS SDK
+          TRACKS="node_modules/expo-video/ios/Records/Tracks.swift"
+          sed -i '' 's/assetVariant\.url/nil/g' "$TRACKS"
+          echo "ExpoVideo Tracks.swift patched"
+
+      - name: Patch Podfile
         working-directory: ./mobile/ios
         run: |
-          ruby <<'RUBY'
-          file = 'Podfile'
-          content = File.read(file)
+          python3 << 'PYEOF'
+          with open('Podfile', 'r') as f:
+              content = f.read()
 
-          unless content.include?("SWIFT_VERSION")
-            injection = <<~EOS
-
-              post_install do |installer|
-                installer.pods_project.targets.each do |target|
-                  target.build_configurations.each do |config|
-                    config.build_settings['SWIFT_VERSION'] = '5.0'
-                    config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'
-                    config.build_settings['SWIFT_TREAT_WARNINGS_AS_ERRORS'] = 'NO'
-                  end
+          injection = """
+            installer.pods_project.targets.each do |target|
+              target.build_configurations.each do |config|
+                dt = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+                if dt && dt.to_f < 16.0
+                  config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '16.0'
+                end
+                if target.name == 'ExpoModulesCore'
+                  config.build_settings['SWIFT_VERSION'] = '5'
+                  config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'
+                end
+                if target.name == 'SwiftProtobuf'
+                  config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
                 end
               end
-            EOS
+            end
+          """
 
-            content += injection
-            File.write(file, content)
-            puts "✅ Podfile patched"
-          else
-            puts "ℹ️ Podfile already patched"
-          end
-          RUBY
+          marker = 'post_install do |installer|'
+          if marker in content:
+              content = content.replace(marker, marker + '\n' + injection, 1)
+              print("Injected into existing post_install block")
+          else:
+              content += f'\n\npost_install do |installer|\n{injection}\nend\n'
+              print("Added new post_install block")
+
+          with open('Podfile', 'w') as f:
+              f.write(content)
+          PYEOF
+
+      - name: Show patched post_install
+        working-directory: ./mobile/ios
+        run: grep -A 25 "post_install" Podfile | head -35
 
       - name: Install pods
         working-directory: ./mobile/ios
-        run: pod install --repo-update
+        run: pod install
 
-      # ✅ Dynamically detect workspace + scheme
-      - name: Detect workspace and scheme
+      - name: List schemes
         working-directory: ./mobile/ios
-        run: |
-          WORKSPACE=$(ls *.xcworkspace | head -1)
-          echo "WORKSPACE=$WORKSPACE" >> $GITHUB_ENV
-
-          SCHEME=$(xcodebuild -workspace "$WORKSPACE" -list | awk '/Schemes:/ {getline; print $1}')
-          echo "SCHEME=$SCHEME" >> $GITHUB_ENV
-
-          echo "Using workspace: $WORKSPACE"
-          echo "Using scheme: $SCHEME"
+        run: xcodebuild -workspace Mentra.xcworkspace -list
 
       - name: Archive app
         working-directory: ./mobile/ios
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: "true"
         run: |
           set -o pipefail
 
           xcodebuild archive \
-            -workspace "$WORKSPACE" \
-            -scheme "$SCHEME" \
+            -workspace Mentra.xcworkspace \
+            -scheme Mentra \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -archivePath "$GITHUB_WORKSPACE/App.xcarchive" \
+            -archivePath "$GITHUB_WORKSPACE/Mentra.xcarchive" \
+            -resultBundlePath /tmp/build.xcresult \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            DEVELOPMENT_TEAM="" \
+            IPHONEOS_DEPLOYMENT_TARGET=16.0 \
             2>&1 | tee /tmp/xcodebuild.log
 
-          EXIT_CODE=${PIPESTATUS[0]}
+          BUILD_RESULT=${PIPESTATUS[0]}
 
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "❌ Build failed"
-            grep ": error:" /tmp/xcodebuild.log | head -50
-            exit $EXIT_CODE
+          if [ "$BUILD_RESULT" -ne 0 ]; then
+            echo "========== ERRORS =========="
+            grep ": error:" /tmp/xcodebuild.log | grep -v "^note:" | head -80
+            exit "$BUILD_RESULT"
           fi
 
           echo "✅ Archive succeeded"
 
-      - name: Extract .app
+      - name: Verify archive and find .app
         run: |
-          APP_PATH=$(find $GITHUB_WORKSPACE -name "*.app" -type d | head -1)
-
+          APP_PATH=$(find "$GITHUB_WORKSPACE" -name "Mentra.app" -type d | head -1)
           if [ -z "$APP_PATH" ]; then
-            echo "❌ .app not found"
+            echo "❌ Mentra.app not found"
             exit 1
           fi
-
+          echo "✅ Found: $APP_PATH"
+          if [ ! -f "$APP_PATH/Info.plist" ]; then
+            echo "❌ Info.plist missing"
+            exit 1
+          fi
           echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
-          echo "Found app: $APP_PATH"
 
-      # ✅ SideStore-compatible IPA packaging
       - name: Package IPA
         run: |
-          mkdir Payload
-          cp -r "$APP_PATH" Payload/App.app
-          zip -r App.ipa Payload
-          ls -lh App.ipa
+          mkdir -p Payload
+          cp -r "${{ env.APP_PATH }}" Payload/App.app
+          touch Payload/App.app/embedded.mobileprovision
+          zip -r Mentra.ipa Payload
+          ls -lh Mentra.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: SideStore-IPA
-          path: App.ipa
+          name: Mentra-SideStore-IPA
+          path: Mentra.ipa
+          retention-days: 14
 
-      - name: Upload logs
+      - name: Upload xcresult bundle
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-xcresult
+          path: /tmp/build.xcresult
+          retention-days: 5
+
+      - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logs
+          name: xcodebuild-log
           path: /tmp/xcodebuild.log
+          retention-days: 5
