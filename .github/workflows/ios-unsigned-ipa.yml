@@ -57,31 +57,28 @@ jobs:
           sed -i '' 's/extension UIView: @MainActor AnyArgument/extension UIView: AnyArgument/g' "$FILE3"
           echo "ExpoModulesCore patches applied"
 
-          # ExpoVideo: AVAssetVariant has no 'url'
+          # ExpoVideo: AVAssetVariant has no 'url' — set to nil and fallback to mainUrl
           TRACKS="node_modules/expo-video/ios/Records/Tracks.swift"
           sed -i '' 's/let trackUrl = assetVariant\.url/let trackUrl: URL? = nil/g' "$TRACKS"
           sed -i '' 's/let id = extractHlsTrackId(trackUrl: trackUrl,/let id = extractHlsTrackId(trackUrl: trackUrl ?? mainUrl,/g' "$TRACKS"
           echo "ExpoVideo Tracks.swift patched"
 
-          # expo-router Toolbar: comment out all iOS 26 API references by content pattern
-          for FILE in \
-            "node_modules/expo-router/ios/Toolbar/RouterToolbarHostView.swift" \
-            "node_modules/expo-router/ios/Toolbar/RouterToolbarItemView.swift" \
-            "node_modules/expo-router/ios/Toolbar/RouterToolbarModule.swift"; do
-            sed -i '' 's/.*hidesSharedBackground.*/\/\/ [CI] iOS 26 API removed/g' "$FILE"
-            sed -i '' 's/.*sharesBackground.*/\/\/ [CI] iOS 26 API removed/g' "$FILE"
-            sed -i '' 's/.*searchBarPlacementBarButtonItem.*/\/\/ [CI] iOS 26 API removed/g' "$FILE"
-            sed -i '' 's/.*UIBarButtonItem\.Badge.*/\/\/ [CI] iOS 26 API removed/g' "$FILE"
-            sed -i '' 's/.*\.badge.*/\/\/ [CI] iOS 26 API removed/g' "$FILE"
-            sed -i '' 's/.*\.prominent.*/\/\/ [CI] iOS 26 API removed/g' "$FILE"
-            sed -i '' 's/.*badge =.*/\/\/ [CI] iOS 26 API removed/g' "$FILE"
-            echo "Patched $FILE"
+          # expo-router Toolbar: iOS 26 APIs not in iOS 18.5 SDK — delete by pattern
+          TOOLBAR_DIR="node_modules/expo-router/ios/Toolbar"
+          for f in "$TOOLBAR_DIR"/*.swift; do
+            sed -i '' '/hidesSharedBackground/d' "$f"
+            sed -i '' '/sharesBackground/d' "$f"
+            sed -i '' '/searchBarPlacementBarButtonItem/d' "$f"
+            sed -i '' '/UIBarButtonItem\.Badge/d' "$f"
+            sed -i '' '/\.prominent/d' "$f"
+            sed -i '' '/\.badge/d' "$f"
+            echo "Patched: $f"
           done
 
-          # expo-notifications: DateComponents.isRepeatedDay is iOS 26 API
-          NOTIFY="node_modules/expo-notifications/ios/ExpoNotifications/Notifications/DateComponentsSerializer.swift"
-          sed -i '' 's/.*isRepeatedDay.*/\/\/ [CI] iOS 26 API removed/g' "$NOTIFY"
-          echo "expo-notifications patched"
+          # expo-notifications: DateComponents.isRepeatedDay not in iOS 18.5 SDK
+          NOTIF="node_modules/expo-notifications/ios/ExpoNotifications/Notifications/DateComponentsSerializer.swift"
+          sed -i '' '/isRepeatedDay/d' "$NOTIF"
+          echo "All patches applied"
 
       - name: Patch Podfile
         working-directory: ./mobile/ios
