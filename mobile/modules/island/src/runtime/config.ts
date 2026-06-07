@@ -232,26 +232,25 @@ export interface LocationTierAdapter {
  * host's PhoneStreamCoordinator implements them.
  */
 export interface StreamingAdapter {
+  /** Glasses-confirmed publisher start result. */
   startUnmanaged: (
     packageName: string,
     opts: {
       streamUrl: string
       video?: unknown
       audio?: unknown
-      flash?: boolean
       sound?: boolean
     },
-  ) => Promise<{streamId: string}>
+  ) => Promise<StreamPublisherStartResult>
   startManaged: (
     packageName: string,
-    opts: {restreamDestinations?: Array<string | {url: string; name?: string}>},
-  ) => Promise<{
-    streamId: string
-    liveInputId: string
-    hlsUrl: string
-    dashUrl: string
-    webrtcUrl?: string
-  }>
+    opts: {
+      restreamDestinations?: Array<string | {url: string; name?: string}>
+      video?: unknown
+      audio?: unknown
+      sound?: boolean
+    },
+  ) => Promise<ManagedStreamStartResult>
   stop: (packageName: string, streamId?: string) => Promise<void>
   /**
    * Subscribe to status updates produced by the coordinator (BLE-originated
@@ -264,6 +263,19 @@ export interface StreamingAdapter {
       update: {streamId: string; status: string; data?: Record<string, unknown>; source: string},
     ) => void,
   ) => void
+}
+
+export interface StreamPublisherStartResult {
+  streamId: string
+  status: string
+  resolvedConfig?: Record<string, unknown>
+}
+
+export interface ManagedStreamStartResult extends StreamPublisherStartResult {
+  liveInputId: string
+  hlsUrl: string
+  dashUrl: string
+  webrtcUrl?: string
 }
 
 export type CameraRoiPosition = "center" | "bottom" | "top"

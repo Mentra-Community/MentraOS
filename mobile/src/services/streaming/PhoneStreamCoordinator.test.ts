@@ -4,7 +4,14 @@ import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
 
 // Mock module dependencies BEFORE importing the coordinator.
 const startStream = mock(async (_req: unknown) => {})
-const startExternallyManagedStream = mock(async (_req: unknown) => {})
+const streamStatusFor = (req: unknown) => ({
+  type: "stream_status",
+  kind: "lifecycle",
+  status: "streaming",
+  streamId: (req as {streamId?: string}).streamId,
+  resolvedConfig: {audio: {sampleRate: 16_000}},
+})
+const startExternallyManagedStream = mock(async (req: unknown) => streamStatusFor(req))
 const stopStream = mock(async () => {})
 const sendExternallyManagedStreamKeepAlive = mock(async (_req: unknown) => {})
 
@@ -68,14 +75,19 @@ describe("PhoneStreamCoordinator", () => {
         cloudflareStatusPollMs: 1000,
         keepAliveIntervalMs: 10_000,
       })
-      const {streamId} = await coord.startUnmanaged("com.a", {
+      const result = await coord.startUnmanaged("com.a", {
         streamUrl: "rtmp://my.server/key",
+        sound: false,
       })
+      const {streamId} = result
       expect(streamId).toMatch(/^phone-u-/)
+      expect(result.status).toBe("streaming")
+      expect(result.resolvedConfig).toEqual({audio: {sampleRate: 16_000}})
       expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
-      const arg = startExternallyManagedStream.mock.calls[0]![0] as {streamUrl: string; streamId: string}
+      const arg = startExternallyManagedStream.mock.calls[0]![0] as {sound: boolean; streamUrl: string; streamId: string}
       expect(arg.streamUrl).toBe("rtmp://my.server/key")
       expect(arg.streamId).toBe(streamId)
+      expect(arg.sound).toBe(false)
       expect(coord.owns(streamId)).toBe(true)
     })
 
@@ -143,15 +155,29 @@ describe("PhoneStreamCoordinator", () => {
         cloudflareStatusPollMs: 1000,
         keepAliveIntervalMs: 10_000,
       })
-      const result = await coord.startManaged("com.a", {})
+      const result = await coord.startManaged("com.a", {
+        audio: {bitrate: 64_000},
+        sound: false,
+        video: {fps: 30},
+      })
       expect(result.streamId).toMatch(/^phone-m-/)
+      expect(result.status).toBe("streaming")
+      expect(result.resolvedConfig).toEqual({audio: {sampleRate: 16_000}})
       expect(result.liveInputId).toBe("cf-input-test")
       expect(result.hlsUrl).toBe("https://playback.test/abc/manifest/video.m3u8")
       expect(result.webrtcUrl).toBe("https://playback.test/abc/whep")
       expect(provisionManagedStream).toHaveBeenCalledTimes(1)
       // Glasses should be told to publish to the WHIP endpoint (preferred).
-      const arg = startExternallyManagedStream.mock.calls[0]![0] as {streamUrl: string}
+      const arg = startExternallyManagedStream.mock.calls[0]![0] as {
+        audio: unknown
+        sound: boolean
+        streamUrl: string
+        video: unknown
+      }
       expect(arg.streamUrl).toBe("https://ingest.test/abc/whip")
+      expect(arg.sound).toBe(false)
+      expect(arg.video).toEqual({fps: 30})
+      expect(arg.audio).toEqual({bitrate: 64_000})
     })
 
     test("second miniapp joins existing managed stream and gets same URLs", async () => {
@@ -305,8 +331,9 @@ describe("PhoneStreamCoordinator", () => {
 
     test("concurrent startUnmanaged calls — second rejects, first wins", async () => {
       // Slow the first BLE start so the two callers overlap.
-      startExternallyManagedStream.mockImplementationOnce(async () => {
+      startExternallyManagedStream.mockImplementationOnce(async (req: unknown) => {
         await new Promise((r) => setTimeout(r, 30))
+        return streamStatusFor(req)
       })
       const coord = new PhoneStreamCoordinator({
         hlsReadinessInitialDelayMs: 5,
@@ -329,10 +356,11 @@ describe("PhoneStreamCoordinator", () => {
     test("stop waits for an in-flight start to finish before calling stopStream", async () => {
       // Slow the BLE start; the stop should queue behind it.
       const order: string[] = []
-      startExternallyManagedStream.mockImplementationOnce(async () => {
+      startExternallyManagedStream.mockImplementationOnce(async (req: unknown) => {
         order.push("start-begin")
         await new Promise((r) => setTimeout(r, 30))
         order.push("start-end")
+        return streamStatusFor(req)
       })
       stopStream.mockImplementationOnce(async () => {
         order.push("stop")

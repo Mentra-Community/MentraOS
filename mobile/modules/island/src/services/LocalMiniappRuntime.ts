@@ -1905,6 +1905,7 @@ class LocalMiniappRuntime {
         streamUrl: payload.streamUrl as string,
         video: payload.video,
         audio: payload.audio,
+        sound: payload.sound as boolean | undefined,
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
@@ -1955,6 +1956,9 @@ class LocalMiniappRuntime {
         restreamDestinations: payload.restreamDestinations as
           | Array<string | {url: string; name?: string}>
           | undefined,
+        video: payload.video,
+        audio: payload.audio,
+        sound: payload.sound as boolean | undefined,
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
