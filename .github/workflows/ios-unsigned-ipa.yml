@@ -62,7 +62,38 @@ jobs:
           sed -i '' 's/let trackUrl = assetVariant\.url/let trackUrl: URL? = nil/g' "$TRACKS"
           sed -i '' 's/let id = extractHlsTrackId(trackUrl: trackUrl,/let id = extractHlsTrackId(trackUrl: trackUrl ?? mainUrl,/g' "$TRACKS"
           echo "ExpoVideo Tracks.swift patched"
-          grep -n "trackUrl" "$TRACKS"
+
+          # expo-router and expo-notifications use iOS 26 APIs not in iOS 18.5 SDK
+          python3 << 'PYEOF'
+          def comment_lines(filepath, line_numbers):
+              with open(filepath, 'r') as f:
+                  lines = f.readlines()
+              for n in line_numbers:
+                  idx = n - 1
+                  if idx < len(lines):
+                      lines[idx] = '// [CI patched - iOS 26 API] ' + lines[idx]
+              with open(filepath, 'w') as f:
+                  f.writelines(lines)
+              print(f"Patched {filepath} lines {line_numbers}")
+
+          comment_lines(
+              'node_modules/expo-router/ios/Toolbar/RouterToolbarHostView.swift',
+              [85]
+          )
+          comment_lines(
+              'node_modules/expo-router/ios/Toolbar/RouterToolbarItemView.swift',
+              [116, 164, 165, 175, 195, 197]
+          )
+          comment_lines(
+              'node_modules/expo-router/ios/Toolbar/RouterToolbarModule.swift',
+              [98]
+          )
+          comment_lines(
+              'node_modules/expo-notifications/ios/ExpoNotifications/Notifications/DateComponentsSerializer.swift',
+              [9]
+          )
+          PYEOF
+          echo "expo-router and expo-notifications patches applied"
 
       - name: Patch Podfile
         working-directory: ./mobile/ios
