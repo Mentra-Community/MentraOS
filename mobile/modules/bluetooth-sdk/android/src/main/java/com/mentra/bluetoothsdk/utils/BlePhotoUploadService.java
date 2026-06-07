@@ -10,6 +10,7 @@ import androidx.annotation.VisibleForTesting;
 import androidx.exifinterface.media.ExifInterface;
 
 import com.mentra.bluetoothsdk.debug.BleTraceLogger;
+import com.mentra.bluetoothsdk.photoreceiver.LocalPhotoReceiverRegistry;
 import com.radzivon.bartoshyk.avif.coder.HeifCoder;
 import com.radzivon.bartoshyk.avif.coder.PreferredColorConfig;
 
@@ -380,6 +381,7 @@ public class BlePhotoUploadService {
 
     private static String uploadToWebhook(byte[] jpegData, int sourceImageBytes, String requestId,
                                        String webhookUrl, @Nullable String authToken) throws IOException {
+        String effectiveWebhookUrl = resolvePhoneRelayWebhookUrl(webhookUrl);
         OkHttpClient client = new OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
@@ -395,7 +397,7 @@ public class BlePhotoUploadService {
             .build();
 
         Request.Builder requestBuilder = new Request.Builder()
-            .url(webhookUrl)
+            .url(effectiveWebhookUrl)
             .post(requestBody);
 
         if (authToken != null && !authToken.isEmpty()) {
@@ -404,9 +406,13 @@ public class BlePhotoUploadService {
 
         Request request = requestBuilder.build();
 
-        Log.d(TAG, "Uploading photo to webhook: " + webhookUrl);
+        if (!effectiveWebhookUrl.equals(webhookUrl)) {
+            Log.d(TAG, "Uploading BLE fallback photo to local receiver via loopback: " + effectiveWebhookUrl);
+        } else {
+            Log.d(TAG, "Uploading photo to webhook: " + webhookUrl);
+        }
         long startMs = System.currentTimeMillis();
-        traceRelayUploadStart(requestId, webhookUrl, authToken, sourceImageBytes, jpegData.length, startMs);
+        traceRelayUploadStart(requestId, effectiveWebhookUrl, webhookUrl, authToken, sourceImageBytes, jpegData.length, startMs);
 
         boolean responseTraced = false;
         try (Response response = client.newCall(request).execute()) {
@@ -414,6 +420,7 @@ public class BlePhotoUploadService {
                 String errorBody = response.body() != null ? response.body().string() : "No response body";
                 traceRelayUploadEnd(
                     requestId,
+                    effectiveWebhookUrl,
                     webhookUrl,
                     sourceImageBytes,
                     jpegData.length,
@@ -428,6 +435,7 @@ public class BlePhotoUploadService {
             String responseBody = response.body() != null ? response.body().string() : "";
             traceRelayUploadEnd(
                 requestId,
+                effectiveWebhookUrl,
                 webhookUrl,
                 sourceImageBytes,
                 jpegData.length,
@@ -442,6 +450,7 @@ public class BlePhotoUploadService {
             if (!responseTraced) {
                 traceRelayUploadError(
                     requestId,
+                    effectiveWebhookUrl,
                     webhookUrl,
                     sourceImageBytes,
                     jpegData.length,
@@ -453,7 +462,13 @@ public class BlePhotoUploadService {
         }
     }
 
+    private static String resolvePhoneRelayWebhookUrl(String webhookUrl) {
+        String loopbackUrl = LocalPhotoReceiverRegistry.loopbackUploadUrlFor(webhookUrl);
+        return loopbackUrl != null ? loopbackUrl : webhookUrl;
+    }
+
     private static void traceRelayUploadStart(String requestId, String webhookUrl,
+                                             String originalWebhookUrl,
                                              @Nullable String authToken, int sourceImageBytes,
                                              int jpegBytes, long startMs) {
         JSONObject payload = createRelayUploadPayload(
@@ -463,11 +478,13 @@ public class BlePhotoUploadService {
             sourceImageBytes,
             jpegBytes,
             startMs);
+        putRelayRewrite(payload, webhookUrl, originalWebhookUrl);
         putJson(payload, "bearerHeaderPresent", authToken != null && !authToken.isEmpty());
         safeTraceJson("phone_to_wifi", "wifi_http_output", payload);
     }
 
     private static void traceRelayUploadEnd(String requestId, String webhookUrl,
+                                           String originalWebhookUrl,
                                            int sourceImageBytes, int jpegBytes, long startMs,
                                            int statusCode, boolean success, String outcome) {
         JSONObject payload = createRelayUploadPayload(
@@ -477,6 +494,7 @@ public class BlePhotoUploadService {
             sourceImageBytes,
             jpegBytes,
             startMs);
+        putRelayRewrite(payload, webhookUrl, originalWebhookUrl);
         long endMs = System.currentTimeMillis();
         putJson(payload, "endMs", endMs);
         putJson(payload, "durationMs", endMs - startMs);
@@ -487,6 +505,7 @@ public class BlePhotoUploadService {
     }
 
     private static void traceRelayUploadError(String requestId, String webhookUrl,
+                                             String originalWebhookUrl,
                                              int sourceImageBytes, int jpegBytes, long startMs,
                                              Exception error, String outcome) {
         JSONObject payload = createRelayUploadPayload(
@@ -496,6 +515,7 @@ public class BlePhotoUploadService {
             sourceImageBytes,
             jpegBytes,
             startMs);
+        putRelayRewrite(payload, webhookUrl, originalWebhookUrl);
         long endMs = System.currentTimeMillis();
         putJson(payload, "endMs", endMs);
         putJson(payload, "durationMs", endMs - startMs);
@@ -520,6 +540,23 @@ public class BlePhotoUploadService {
         putJson(payload, "startMs", startMs);
         putWebhookSummary(payload, webhookUrl);
         return payload;
+    }
+
+    private static void putRelayRewrite(JSONObject payload, String webhookUrl, String originalWebhookUrl) {
+        if (webhookUrl == null || originalWebhookUrl == null || webhookUrl.equals(originalWebhookUrl)) {
+            return;
+        }
+
+        putJson(payload, "relayRewrite", "loopback");
+        try {
+            URI original = URI.create(originalWebhookUrl);
+            putJson(payload, "originalUrlHost", original.getHost());
+            if (original.getPort() != -1) {
+                putJson(payload, "originalUrlPort", original.getPort());
+            }
+        } catch (Exception e) {
+            putJson(payload, "originalUrlParseError", e.getClass().getSimpleName());
+        }
     }
 
     private static void putWebhookSummary(JSONObject payload, String webhookUrl) {

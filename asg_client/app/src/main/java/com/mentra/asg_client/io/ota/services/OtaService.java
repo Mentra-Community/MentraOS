@@ -23,16 +23,19 @@ import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+import dagger.hilt.android.AndroidEntryPoint;
+import javax.inject.Inject;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 
+@AndroidEntryPoint
 public class OtaService extends Service {
     private static final String TAG = OtaConstants.TAG;
     private static final String CHANNEL_ID = "ota_service_channel";
     private static final int NOTIFICATION_ID = 2001;
 
-    private OtaHelper otaHelper;
+    @Inject OtaHelper otaHelper;
 
     @Override
     public void onCreate() {
@@ -54,9 +57,6 @@ public class OtaService extends Service {
         } catch (Exception e) {
             Log.e(TAG, "Failed to stop external OTA updater", e);
         }
-
-        // Initialize OTA helper singleton
-        otaHelper = OtaHelper.initialize(this);
 
         // Clean up old firmware files from previous updates
         cleanupOldFirmwareFiles();
@@ -92,10 +92,8 @@ public class OtaService extends Service {
             EventBus.getDefault().unregister(this);
         }
 
-        // Clean up OTA helper
-        if (otaHelper != null) {
-            otaHelper.cleanup();
-        }
+        // OtaHelper is an app-scoped Hilt singleton shared by command handlers and debug
+        // receivers. Do not call cleanup() here; it tears down state that later OTA flows reuse.
     }
 
     @Override

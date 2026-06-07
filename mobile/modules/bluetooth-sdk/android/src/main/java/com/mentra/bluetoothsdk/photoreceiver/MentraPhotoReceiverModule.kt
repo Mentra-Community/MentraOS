@@ -37,8 +37,6 @@ class MentraPhotoReceiverModule : Module() {
 
   @Synchronized
   private fun startPhotoReceiver(): Map<String, Any> {
-    val host = bestLocalIpv4Address()
-      ?: throw IllegalStateException("No Wi-Fi/LAN IPv4 address found for this phone.")
     val server = photoUploadServer ?: LocalPhotoUploadServer(
       context = reactContext(),
       onLog = { message -> emitStatus(message) },
@@ -47,19 +45,24 @@ class MentraPhotoReceiverModule : Module() {
       photoUploadServer = it
     }
 
+    val host = bestLocalIpv4Address()
+      ?: throw IllegalStateException("No Wi-Fi/LAN IPv4 address found for this phone.")
+
     server.activePort?.let { activePort ->
-      val uploadUrl = "http://$host:$activePort/upload"
-      emitStatus("Photo receiver ready at $uploadUrl")
-      return receiverResult(uploadUrl, host, activePort)
+      val endpoint = receiverEndpoint(host, activePort)
+      LocalPhotoReceiverRegistry.register(endpoint.uploadUrl)
+      emitStatus("Photo receiver ready at ${endpoint.uploadUrl}")
+      return receiverResult(endpoint)
     }
 
     var lastError: Throwable? = null
     for (port in PHOTO_PORTS) {
       try {
         val actualPort = server.start(port)
-        val uploadUrl = "http://$host:$actualPort/upload"
-        emitStatus("Photo receiver ready at $uploadUrl")
-        return receiverResult(uploadUrl, host, actualPort)
+        val endpoint = receiverEndpoint(host, actualPort)
+        LocalPhotoReceiverRegistry.register(endpoint.uploadUrl)
+        emitStatus("Photo receiver ready at ${endpoint.uploadUrl}")
+        return receiverResult(endpoint)
       } catch (error: Throwable) {
         lastError = error
         emitStatus("Port $port unavailable: ${error.message ?: error::class.java.simpleName}")
@@ -74,6 +77,7 @@ class MentraPhotoReceiverModule : Module() {
   @Synchronized
   private fun stopPhotoReceiverInternal() {
     photoUploadServer?.stop()
+    LocalPhotoReceiverRegistry.unregister()
     emitStatus("Photo receiver stopped")
   }
 
@@ -81,6 +85,7 @@ class MentraPhotoReceiverModule : Module() {
   private fun closePhotoReceiverInternal() {
     photoUploadServer?.close()
     photoUploadServer = null
+    LocalPhotoReceiverRegistry.unregister()
   }
 
   private fun handlePhotoUpload(upload: PhotoUpload) {
@@ -156,11 +161,19 @@ class MentraPhotoReceiverModule : Module() {
       )?.hostAddress
   }
 
-  private fun receiverResult(uploadUrl: String, host: String, port: Int): Map<String, Any> {
+  private fun receiverEndpoint(host: String, port: Int): ReceiverEndpoint {
+    return ReceiverEndpoint(
+      uploadUrl = "http://$host:$port/upload",
+      host = host,
+      port = port,
+    )
+  }
+
+  private fun receiverResult(endpoint: ReceiverEndpoint): Map<String, Any> {
     return mapOf(
-      "uploadUrl" to uploadUrl,
-      "host" to host,
-      "port" to port,
+      "uploadUrl" to endpoint.uploadUrl,
+      "host" to endpoint.host,
+      "port" to endpoint.port,
     )
   }
 
@@ -181,4 +194,10 @@ class MentraPhotoReceiverModule : Module() {
     const val TAG = "MentraPhotoReceiver"
     val PHOTO_PORTS = listOf(8787, 8788, 8789, 8790)
   }
+
+  private data class ReceiverEndpoint(
+    val uploadUrl: String,
+    val host: String,
+    val port: Int,
+  )
 }

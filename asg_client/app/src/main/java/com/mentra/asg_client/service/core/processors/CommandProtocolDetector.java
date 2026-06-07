@@ -1,31 +1,26 @@
 package com.mentra.asg_client.service.core.processors;
 
 import android.util.Log;
-
 import androidx.annotation.NonNull;
-
-import org.json.JSONException;
-import org.json.JSONObject;
-
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.K900ProtocolStrategy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
  * Detects and classifies command protocols following SOLID principles.
- * <p>
- * Single Responsibility: Only handles protocol detection and classification
- * Open/Closed: Extensible through protocol strategy pattern
- * Liskov Substitution: All protocol detectors implement the same interface
- * Interface Segregation: Focused interfaces for detection and extraction
- * Dependency Inversion: Depends on abstractions, not concretions
+ *
+ * <p>Single Responsibility: Only handles protocol detection and classification Open/Closed:
+ * Extensible through protocol strategy pattern Liskov Substitution: All protocol detectors
+ * implement the same interface Interface Segregation: Focused interfaces for detection and
+ * extraction Dependency Inversion: Depends on abstractions, not concretions
  */
 public class CommandProtocolDetector {
     private static final String TAG = "CommandProtocolDetector";
 
-    /**
-     * Protocol types that can be detected
-     */
+    /** Protocol types that can be detected */
     public enum ProtocolType {
         JSON_COMMAND("JSON Command"),
         K900_PROTOCOL("K900 Protocol"),
@@ -42,30 +37,25 @@ public class CommandProtocolDetector {
         }
     }
 
-    /**
-     * Protocol detection strategy interface following Interface Segregation Principle
-     */
+    /** Protocol detection strategy interface following Interface Segregation Principle */
     public interface ProtocolDetectionStrategy {
-        /**
-         * Check if this strategy can handle the given JSON
-         */
+        /** Check if this strategy can handle the given JSON */
         boolean canHandle(JSONObject json);
 
-        /**
-         * Detect protocol and extract relevant data
-         */
+        /** Detect protocol and extract relevant data */
         ProtocolDetectionResult detect(JSONObject json);
 
-        /**
-         * Get the protocol type this strategy handles
-         */
+        /** Get the protocol type this strategy handles */
         ProtocolType getProtocolType();
     }
 
-    /**
-     * Result of protocol detection following Single Responsibility Principle
-     */
-    public record ProtocolDetectionResult(ProtocolType protocolType, JSONObject extractedData, String commandType, long messageId, boolean isValid) {
+    /** Result of protocol detection following Single Responsibility Principle */
+    public record ProtocolDetectionResult(
+            ProtocolType protocolType,
+            JSONObject extractedData,
+            String commandType,
+            long messageId,
+            boolean isValid) {
         public boolean hasMessageId() {
             return messageId != -1;
         }
@@ -73,8 +63,13 @@ public class CommandProtocolDetector {
         @NonNull
         @Override
         public String toString() {
-            return String.format(Locale.getDefault(), "ProtocolDetectionResult{type=%s, commandType='%s', messageId=%d, valid=%s}",
-                    protocolType.getDisplayName(), commandType, messageId, isValid);
+            return String.format(
+                    Locale.getDefault(),
+                    "ProtocolDetectionResult{type=%s, commandType='%s', messageId=%d, valid=%s}",
+                    protocolType.getDisplayName(),
+                    commandType,
+                    messageId,
+                    isValid);
         }
     }
 
@@ -86,9 +81,7 @@ public class CommandProtocolDetector {
         initializeDetectionStrategies();
     }
 
-    /**
-     * Initialize detection strategies following Open/Closed Principle
-     */
+    /** Initialize detection strategies following Open/Closed Principle */
     private void initializeDetectionStrategies() {
         // Order matters - more specific strategies should come first
         // ChunkedMessageProtocolStrategy needs to be created with a ChunkReassembler
@@ -97,12 +90,14 @@ public class CommandProtocolDetector {
         detectionStrategies.add(new K900ProtocolStrategy());
         detectionStrategies.add(new UnknownProtocolStrategy());
 
-        Log.d(TAG, "✅ Initialized " + detectionStrategies.size() + " protocol detection strategies");
+        Log.d(
+                TAG,
+                "✅ Initialized " + detectionStrategies.size() + " protocol detection strategies");
     }
-    
+
     /**
-     * Add chunked message support with the provided ChunkReassembler
-     * This must be called from CommandProcessor after initialization
+     * Add chunked message support with the provided ChunkReassembler This must be called from
+     * CommandProcessor after initialization
      */
     public void addChunkedMessageSupport(ChunkReassembler chunkReassembler) {
         // Add at the beginning for priority
@@ -142,13 +137,14 @@ public class CommandProtocolDetector {
         }
     }
 
-    /**
-     * Add a new detection strategy following Open/Closed Principle
-     */
+    /** Add a new detection strategy following Open/Closed Principle */
     public void addDetectionStrategy(ProtocolDetectionStrategy strategy) {
         if (strategy != null) {
             detectionStrategies.add(0, strategy); // Add at beginning for priority`
-            Log.d(TAG, "➕ Added new protocol detection strategy: " + strategy.getProtocolType().getDisplayName());
+            Log.d(
+                    TAG,
+                    "➕ Added new protocol detection strategy: "
+                            + strategy.getProtocolType().getDisplayName());
         }
     }
 
@@ -156,9 +152,7 @@ public class CommandProtocolDetector {
     // Protocol Detection Strategies
     // ========================================
 
-    /**
-     * Strategy for detecting JSON command protocol
-     */
+    /** Strategy for detecting JSON command protocol */
     private static class JsonCommandProtocolStrategy implements ProtocolDetectionStrategy {
         @Override
         public boolean canHandle(JSONObject json) {
@@ -212,22 +206,11 @@ public class CommandProtocolDetector {
                 messageId = dataToProcess.optLong("mId", -1);
 
                 return new ProtocolDetectionResult(
-                        ProtocolType.JSON_COMMAND,
-                        dataToProcess,
-                        commandType,
-                        messageId,
-                        true
-                );
+                        ProtocolType.JSON_COMMAND, dataToProcess, commandType, messageId, true);
 
             } catch (JSONException e) {
                 Log.e(TAG, "Error parsing JSON command protocol", e);
-                return new ProtocolDetectionResult(
-                        ProtocolType.JSON_COMMAND,
-                        json,
-                        "",
-                        -1,
-                        false
-                );
+                return new ProtocolDetectionResult(ProtocolType.JSON_COMMAND, json, "", -1, false);
             }
         }
 
@@ -237,72 +220,7 @@ public class CommandProtocolDetector {
         }
     }
 
-    /**
-     * Strategy for detecting K900 protocol
-     */
-    private static class K900ProtocolStrategy implements ProtocolDetectionStrategy {
-        @Override
-        public boolean canHandle(JSONObject json) {
-            // K900 protocol has C field with invalid JSON content
-            if (json.has("C")) {
-                String dataPayload = json.optString("C", "");
-                try {
-                    new JSONObject(dataPayload); // If this succeeds, it's not K900
-                    return false;
-                } catch (JSONException e) {
-                    return true; // Invalid JSON in C field indicates K900 protocol
-                }
-            }
-            return false;
-        }
-
-        @Override
-        public ProtocolDetectionResult detect(JSONObject json) {
-            try {
-                String command = json.optString("C", "");
-                JSONObject bData = json.optJSONObject("B");
-                int version = json.optInt("V", 1);
-
-                Log.d(TAG, "📦 Detected K900 protocol format: " + command);
-
-                // Create standardized data structure for K900 commands
-                JSONObject standardizedData = new JSONObject();
-                standardizedData.put("type", "k900_" + command);
-                standardizedData.put("command", command);
-                standardizedData.put("version", version);
-                if (bData != null) {
-                    standardizedData.put("data", bData);
-                }
-
-                return new ProtocolDetectionResult(
-                        ProtocolType.K900_PROTOCOL,
-                        standardizedData,
-                        "k900_" + command,
-                        -1, // K900 protocol doesn't use message IDs
-                        true
-                );
-
-            } catch (JSONException e) {
-                Log.e(TAG, "Error parsing K900 protocol", e);
-                return new ProtocolDetectionResult(
-                        ProtocolType.K900_PROTOCOL,
-                        json,
-                        "",
-                        -1,
-                        false
-                );
-            }
-        }
-
-        @Override
-        public ProtocolType getProtocolType() {
-            return ProtocolType.K900_PROTOCOL;
-        }
-    }
-
-    /**
-     * Strategy for handling unknown protocols
-     */
+    /** Strategy for handling unknown protocols */
     private static class UnknownProtocolStrategy implements ProtocolDetectionStrategy {
         @Override
         public boolean canHandle(JSONObject json) {
@@ -313,13 +231,7 @@ public class CommandProtocolDetector {
         @Override
         public ProtocolDetectionResult detect(JSONObject json) {
             Log.w(TAG, "📦 Unknown protocol format detected");
-            return new ProtocolDetectionResult(
-                    ProtocolType.UNKNOWN,
-                    json,
-                    "",
-                    -1,
-                    false
-            );
+            return new ProtocolDetectionResult(ProtocolType.UNKNOWN, json, "", -1, false);
         }
 
         @Override
@@ -327,4 +239,4 @@ public class CommandProtocolDetector {
             return ProtocolType.UNKNOWN;
         }
     }
-} 
+}
