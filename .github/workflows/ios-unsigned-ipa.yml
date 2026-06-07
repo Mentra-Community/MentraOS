@@ -14,8 +14,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Confirm Xcode version
+      - name: Select Xcode 26.2
         run: |
+          sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
           xcodebuild -version
           swift --version
 
@@ -48,7 +49,7 @@ jobs:
       - name: Patch node_modules source files
         working-directory: ./mobile
         run: |
-          # ExpoModulesCore: remove SE-0431 isolated conformance syntax (Swift 6 only)
+          # ExpoModulesCore: remove SE-0431 isolated conformance syntax
           FILE1="node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIHostingView.swift"
           FILE2="node_modules/expo-modules-core/ios/Core/Views/SwiftUI/SwiftUIVirtualView.swift"
           FILE3="node_modules/expo-modules-core/ios/Core/Views/ViewDefinition.swift"
@@ -57,28 +58,11 @@ jobs:
           sed -i '' 's/extension UIView: @MainActor AnyArgument/extension UIView: AnyArgument/g' "$FILE3"
           echo "ExpoModulesCore patches applied"
 
-          # ExpoVideo: AVAssetVariant has no 'url' — set to nil and fallback to mainUrl
+          # ExpoVideo: AVAssetVariant has no 'url' property
           TRACKS="node_modules/expo-video/ios/Records/Tracks.swift"
           sed -i '' 's/let trackUrl = assetVariant\.url/let trackUrl: URL? = nil/g' "$TRACKS"
           sed -i '' 's/let id = extractHlsTrackId(trackUrl: trackUrl,/let id = extractHlsTrackId(trackUrl: trackUrl ?? mainUrl,/g' "$TRACKS"
           echo "ExpoVideo Tracks.swift patched"
-
-          # expo-router Toolbar: iOS 26 APIs not in iOS 18.5 SDK — delete by pattern
-          TOOLBAR_DIR="node_modules/expo-router/ios/Toolbar"
-          for f in "$TOOLBAR_DIR"/*.swift; do
-            sed -i '' '/hidesSharedBackground/d' "$f"
-            sed -i '' '/sharesBackground/d' "$f"
-            sed -i '' '/searchBarPlacementBarButtonItem/d' "$f"
-            sed -i '' '/UIBarButtonItem\.Badge/d' "$f"
-            sed -i '' '/\.prominent/d' "$f"
-            sed -i '' '/\.badge/d' "$f"
-            echo "Patched: $f"
-          done
-
-          # expo-notifications: DateComponents.isRepeatedDay not in iOS 18.5 SDK
-          NOTIF="node_modules/expo-notifications/ios/ExpoNotifications/Notifications/DateComponentsSerializer.swift"
-          sed -i '' '/isRepeatedDay/d' "$NOTIF"
-          echo "All patches applied"
 
       - name: Patch Podfile
         working-directory: ./mobile/ios
@@ -90,10 +74,6 @@ jobs:
           injection = """
             installer.pods_project.targets.each do |target|
               target.build_configurations.each do |config|
-                dt = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
-                if dt && dt.to_f < 16.0
-                  config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '16.0'
-                end
                 if target.name == 'ExpoModulesCore'
                   config.build_settings['SWIFT_VERSION'] = '5'
                   config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'
@@ -119,7 +99,7 @@ jobs:
 
       - name: Show patched post_install
         working-directory: ./mobile/ios
-        run: grep -A 25 "post_install" Podfile | head -35
+        run: grep -A 20 "post_install" Podfile | head -30
 
       - name: Install pods
         working-directory: ./mobile/ios
@@ -148,7 +128,6 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             DEVELOPMENT_TEAM="" \
-            IPHONEOS_DEPLOYMENT_TARGET=16.0 \
             2>&1 | tee /tmp/xcodebuild.log
 
           BUILD_RESULT=${PIPESTATUS[0]}
