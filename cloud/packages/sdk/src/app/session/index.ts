@@ -256,7 +256,7 @@ export class AppSession {
   constructor(private config: AppSessionConfig) {
     // Set defaults and merge with provided config
     this.config = {
-      mentraOSWebsocketUrl: `ws://localhost:8002/app-ws`, // Use localhost as default
+      mentraOSWebsocketUrl: `wss://api.mentra.glass/app-ws`, // Production WebSocket URL
       autoReconnect: true, // Enable auto-reconnection by default for better reliability
       maxReconnectAttempts: 3, // Default to 3 reconnection attempts for better resilience
       reconnectDelay: 1000, // Start with 1 second delay (uses exponential backoff)
