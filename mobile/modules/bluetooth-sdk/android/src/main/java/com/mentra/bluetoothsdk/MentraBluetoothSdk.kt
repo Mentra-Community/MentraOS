@@ -1251,17 +1251,16 @@ class MentraBluetoothSdk private constructor(
 
         val stop = synchronized(oneShotLock) { pendingStreamStop }
         if (stop != null && streamStatusMatches(event, stop.streamId)) {
-            when (event.state) {
-                StreamState.STOPPED -> {
+            when {
+                isAlreadyStoppedStreamStatus(event) -> {
                     synchronized(oneShotLock) {
                         if (pendingStreamStop === stop) {
                             pendingStreamStop = null
                         }
                     }
-                    stop.pending.resolve(event)
+                    stop.pending.resolve(stoppedStreamEvent(event, stop.streamId))
                 }
-                StreamState.ERROR,
-                StreamState.RECONNECT_FAILED -> {
+                event.state == StreamState.ERROR || event.state == StreamState.RECONNECT_FAILED -> {
                     synchronized(oneShotLock) {
                         if (pendingStreamStop === stop) {
                             pendingStreamStop = null
@@ -1289,6 +1288,24 @@ class MentraBluetoothSdk private constructor(
 
     private fun streamStatusMatches(event: StreamStatusEvent, streamId: String?): Boolean =
         streamId.isNullOrBlank() || event.streamId.isNullOrBlank() || event.streamId == streamId
+
+    private fun isAlreadyStoppedStreamStatus(event: StreamStatusEvent): Boolean {
+        if (event.state == StreamState.STOPPED) {
+            return true
+        }
+        val details = (event.status as? StreamStatus.Error)?.errorDetails?.lowercase()
+        return details in setOf("not_streaming", "already_stopped", "not streaming")
+    }
+
+    private fun stoppedStreamEvent(event: StreamStatusEvent, streamId: String?): StreamStatusEvent =
+        StreamStatusEvent(
+            StreamStatus.Lifecycle(
+                state = StreamState.STOPPED,
+                streamId = event.streamId ?: streamId,
+                timestamp = event.status.timestamp ?: System.currentTimeMillis(),
+                resolvedConfig = event.resolvedConfig,
+            )
+        )
 
     private fun streamStatusException(event: StreamStatusEvent, code: String): BluetoothException {
         val details = (event.status as? StreamStatus.Error)?.errorDetails

@@ -1058,19 +1058,16 @@ public final class MentraBluetoothSDK {
         }
 
         if let stop = pendingStreamStop, streamStatus(event, matches: stop.streamId) {
-            switch event.state {
-            case .stopped:
+            if isAlreadyStoppedStreamStatus(event) {
                 if pendingStreamStop?.pending === stop.pending {
                     pendingStreamStop = nil
                 }
-                stop.pending.resolve(event)
-            case .error, .reconnectFailed:
+                stop.pending.resolve(stoppedStreamEvent(from: event, fallbackStreamId: stop.streamId))
+            } else if event.state == .error || event.state == .reconnectFailed {
                 if pendingStreamStop?.pending === stop.pending {
                     pendingStreamStop = nil
                 }
                 stop.pending.reject(streamStatusError(event, code: "stream_stop_failed"))
-            default:
-                break
             }
         }
     }
@@ -1090,6 +1087,27 @@ public final class MentraBluetoothSDK {
         guard let streamId, !streamId.isEmpty else { return true }
         guard let eventStreamId = event.streamId, !eventStreamId.isEmpty else { return true }
         return eventStreamId == streamId
+    }
+
+    private func isAlreadyStoppedStreamStatus(_ event: StreamStatusEvent) -> Bool {
+        if event.state == .stopped {
+            return true
+        }
+        guard case let .error(_, errorDetails, _, _) = event.status else {
+            return false
+        }
+        return ["not_streaming", "already_stopped", "not streaming"].contains(errorDetails.lowercased())
+    }
+
+    private func stoppedStreamEvent(from event: StreamStatusEvent, fallbackStreamId: String?) -> StreamStatusEvent {
+        StreamStatusEvent(
+            status: .lifecycle(
+                state: .stopped,
+                streamId: event.streamId ?? fallbackStreamId,
+                timestamp: event.status.timestamp ?? Int(Date().timeIntervalSince1970 * 1000),
+                resolvedConfig: event.resolvedConfig
+            )
+        )
     }
 
     private func streamStatusError(_ event: StreamStatusEvent, code: String) -> BluetoothError {

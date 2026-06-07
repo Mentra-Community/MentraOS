@@ -209,7 +209,7 @@ sdk.stopStream()
   </Tab>
 </Tabs>
 
-Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https://` for WHIP/WebRTC ingest. The SDK sends stream keep-alives automatically while streaming and reports keep-alive failures through `stream_status`. The camera light is always enabled while streaming.
+Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https://` for WHIP/WebRTC ingest. `startStream()` resolves once glasses report `status: "streaming"`; `stopStream()` resolves once glasses report `status: "stopped"` and also resolves with a normalized stopped event when glasses report that no stream was active. The SDK sends stream keep-alives automatically while streaming and reports keep-alive failures through `stream_status`. The camera light is always enabled while streaming.
 
 ## Optional Local Demo Helper
 
