@@ -57,43 +57,31 @@ jobs:
           sed -i '' 's/extension UIView: @MainActor AnyArgument/extension UIView: AnyArgument/g' "$FILE3"
           echo "ExpoModulesCore patches applied"
 
-          # ExpoVideo: AVAssetVariant has no 'url' — set to nil and fallback to mainUrl
+          # ExpoVideo: AVAssetVariant has no 'url'
           TRACKS="node_modules/expo-video/ios/Records/Tracks.swift"
           sed -i '' 's/let trackUrl = assetVariant\.url/let trackUrl: URL? = nil/g' "$TRACKS"
           sed -i '' 's/let id = extractHlsTrackId(trackUrl: trackUrl,/let id = extractHlsTrackId(trackUrl: trackUrl ?? mainUrl,/g' "$TRACKS"
           echo "ExpoVideo Tracks.swift patched"
 
-          # expo-router and expo-notifications use iOS 26 APIs not in iOS 18.5 SDK
-          python3 << 'PYEOF'
-          def comment_lines(filepath, line_numbers):
-              with open(filepath, 'r') as f:
-                  lines = f.readlines()
-              for n in line_numbers:
-                  idx = n - 1
-                  if idx < len(lines):
-                      lines[idx] = '// [CI patched - iOS 26 API] ' + lines[idx]
-              with open(filepath, 'w') as f:
-                  f.writelines(lines)
-              print(f"Patched {filepath} lines {line_numbers}")
+          # expo-router Toolbar: comment out all iOS 26 API references by content pattern
+          for FILE in \
+            "node_modules/expo-router/ios/Toolbar/RouterToolbarHostView.swift" \
+            "node_modules/expo-router/ios/Toolbar/RouterToolbarItemView.swift" \
+            "node_modules/expo-router/ios/Toolbar/RouterToolbarModule.swift"; do
+            sed -i '' 's/.*hidesSharedBackground.*/\/\/ [CI] iOS 26 API removed/g' "$FILE"
+            sed -i '' 's/.*sharesBackground.*/\/\/ [CI] iOS 26 API removed/g' "$FILE"
+            sed -i '' 's/.*searchBarPlacementBarButtonItem.*/\/\/ [CI] iOS 26 API removed/g' "$FILE"
+            sed -i '' 's/.*UIBarButtonItem\.Badge.*/\/\/ [CI] iOS 26 API removed/g' "$FILE"
+            sed -i '' 's/.*\.badge.*/\/\/ [CI] iOS 26 API removed/g' "$FILE"
+            sed -i '' 's/.*\.prominent.*/\/\/ [CI] iOS 26 API removed/g' "$FILE"
+            sed -i '' 's/.*badge =.*/\/\/ [CI] iOS 26 API removed/g' "$FILE"
+            echo "Patched $FILE"
+          done
 
-          comment_lines(
-              'node_modules/expo-router/ios/Toolbar/RouterToolbarHostView.swift',
-              [85]
-          )
-          comment_lines(
-              'node_modules/expo-router/ios/Toolbar/RouterToolbarItemView.swift',
-              [116, 164, 165, 175, 195, 197]
-          )
-          comment_lines(
-              'node_modules/expo-router/ios/Toolbar/RouterToolbarModule.swift',
-              [98]
-          )
-          comment_lines(
-              'node_modules/expo-notifications/ios/ExpoNotifications/Notifications/DateComponentsSerializer.swift',
-              [9]
-          )
-          PYEOF
-          echo "expo-router and expo-notifications patches applied"
+          # expo-notifications: DateComponents.isRepeatedDay is iOS 26 API
+          NOTIFY="node_modules/expo-notifications/ios/ExpoNotifications/Notifications/DateComponentsSerializer.swift"
+          sed -i '' 's/.*isRepeatedDay.*/\/\/ [CI] iOS 26 API removed/g' "$NOTIFY"
+          echo "expo-notifications patched"
 
       - name: Patch Podfile
         working-directory: ./mobile/ios
