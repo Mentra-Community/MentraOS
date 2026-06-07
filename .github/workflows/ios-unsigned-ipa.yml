@@ -57,9 +57,10 @@ jobs:
           sed -i '' 's/extension UIView: @MainActor AnyArgument/extension UIView: AnyArgument/g' "$FILE3"
           echo "ExpoModulesCore patches applied"
 
-          # ExpoVideo: AVAssetVariant has no 'url' property — replace with typed nil
+          # ExpoVideo: AVAssetVariant has no 'url' — set to nil and fallback to mainUrl
           TRACKS="node_modules/expo-video/ios/Records/Tracks.swift"
           sed -i '' 's/let trackUrl = assetVariant\.url/let trackUrl: URL? = nil/g' "$TRACKS"
+          sed -i '' 's/let id = extractHlsTrackId(trackUrl: trackUrl,/let id = extractHlsTrackId(trackUrl: trackUrl ?? mainUrl,/g' "$TRACKS"
           echo "ExpoVideo Tracks.swift patched"
           grep -n "trackUrl" "$TRACKS"
 
