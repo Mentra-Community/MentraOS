@@ -4,9 +4,11 @@ import android.content.Context;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import com.mentra.asg_client.io.bes.BesOtaManager;
+import com.mentra.asg_client.io.bes.BesOtaRegistry;
 import com.mentra.asg_client.io.bluetooth.core.BluetoothManagerFactory;
-import com.mentra.asg_client.io.bluetooth.core.ComManager;
-import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
@@ -19,8 +21,11 @@ import com.mentra.asg_client.logging.Logger;
 import com.mentra.asg_client.sensors.ImuManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.core.AsgClientService;
+import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
+import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
+import com.mentra.asg_client.service.utils.DeviceProfile;
 import com.mentra.asg_client.settings.AsgSettings;
 import java.util.Objects;
 import java.util.Set;
@@ -39,7 +44,7 @@ public class AsgClientServiceManager {
     // Core components
     private AsgSettings asgSettings;
     private INetworkManager networkManager;
-    private IBluetoothManager bluetoothManager;
+    private ICompanionTransport bluetoothManager;
     private MediaUploadQueueManager mediaQueueManager;
     private MediaCaptureService mediaCaptureService;
     private ImuManager imuManager;
@@ -56,15 +61,20 @@ public class AsgClientServiceManager {
     private RgbLedCommandHandler rgbLedCommandHandler;
 
     private final FileManager fileManager;
+    private final BesOtaRegistry besOtaRegistry;
 
     // StateManager for battery monitoring (set after construction)
     private IStateManager stateManager;
+
+    /** Set before {@link #initialize(K900CommandHandler)} so BES OTA can be constructed with it. */
+    private K900CommandHandler besOtaK900CommandHandler;
 
     public AsgClientServiceManager(
             Context context,
             @NonNull AsgClientService service,
             ICommunicationManager communicationManager,
-            FileManager fileManager) {
+            FileManager fileManager,
+            BesOtaRegistry besOtaRegistry) {
         AsgClientService requiredService = Objects.requireNonNull(service, "service");
 
         Log.d(TAG, "🔧 AsgClientServiceManager constructor called");
@@ -82,12 +92,19 @@ public class AsgClientServiceManager {
         this.service = requiredService;
         this.fileManager = fileManager;
         this.communicationManager = communicationManager;
+        this.besOtaRegistry = besOtaRegistry;
 
         Log.d(TAG, "✅ AsgClientServiceManager instance created successfully");
     }
 
-    /** Initialize all service components */
-    public void initialize() {
+    /**
+     * Initialize all service components.
+     *
+     * @param k900CommandHandler Required on K900 for {@link BesOtaManager}; may be null on generic
+     *     devices
+     */
+    public void initialize(K900CommandHandler k900CommandHandler) {
+        this.besOtaK900CommandHandler = k900CommandHandler;
         Log.d(
                 TAG,
                 "🚀 initialize() called - Current state: "
@@ -188,6 +205,15 @@ public class AsgClientServiceManager {
             Log.d(TAG, "⏭️ Network manager already null - skipping");
         }
 
+        if (besOtaManager != null) {
+            Log.d(TAG, "🧹 Clearing BES OTA manager registry");
+            // Abort any in-flight update first so we don't drop the only handle to an active OTA
+            // and leak its wakelock / UART fast-mode state.
+            besOtaManager.abortIfInProgress();
+            besOtaRegistry.clear();
+            besOtaManager = null;
+        }
+
         // Shutdown bluetooth manager
         if (bluetoothManager != null) {
             Log.d(TAG, "📶 Shutting down bluetooth manager");
@@ -277,34 +303,29 @@ public class AsgClientServiceManager {
                     TAG,
                     "📦 Bluetooth manager created: " + bluetoothManager.getClass().getSimpleName());
 
-            isK900Device = BluetoothManagerFactory.isK900Device(context);
+            isK900Device = DeviceProfile.detect(context).isK900();
             Log.d(TAG, "🔍 Device type detection - K900: " + isK900Device);
-            //
-            //            isK900Device = BluetoothManagerFactory.isK900Device(context);
-            //            Log.d(TAG, "🔍 Device type detection - K900: " + isK900Device);
 
             bluetoothManager.addBluetoothListener(service);
             Log.d(TAG, "📡 Bluetooth listener added to bluetooth manager");
 
             // Set up file transfer completion callback for error queue processing
-            if (bluetoothManager
-                    instanceof com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager) {
-                com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager k900Manager =
-                        (com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager)
-                                bluetoothManager;
+            if (bluetoothManager instanceof K900BluetoothManager) {
+                K900BluetoothManager k900Manager = (K900BluetoothManager) bluetoothManager;
                 Log.d(TAG, "📋 K900 Bluetooth manager configured");
 
                 // Initialize BES OTA Manager for K900 devices
                 Log.d(TAG, "🔧 Initializing BES OTA Manager for firmware updates");
                 try {
-                    ComManager comManager = k900Manager.getComManager();
+                    SerialPortBridge comManager = k900Manager.getSerialPortBridge();
                     if (comManager != null) {
-                        besOtaManager = new BesOtaManager(comManager, context);
-                        BesOtaManager.setInstance(besOtaManager);
+                        besOtaManager =
+                                new BesOtaManager(comManager, context, besOtaK900CommandHandler);
+                        besOtaRegistry.setInstance(besOtaManager);
                         comManager.registerOtaListener(besOtaManager);
                         Log.i(TAG, "✅ BES OTA Manager initialized and registered");
                     } else {
-                        Log.w(TAG, "⚠️ ComManager not available - BES OTA disabled");
+                        Log.w(TAG, "⚠️ SerialPortBridge not available - BES OTA disabled");
                     }
                 } catch (Exception e) {
                     Log.e(TAG, "💥 Error initializing BES OTA Manager", e);
@@ -347,23 +368,18 @@ public class AsgClientServiceManager {
                                     try {
                                         Log.d(
                                                 TAG,
-                                                "🔧 Attempting to get CommandProcessor for BES"
-                                                        + " system version request");
-                                        com.mentra.asg_client.service.core.processors
-                                                        .CommandProcessor
-                                                commandProcessor = service.getCommandProcessor();
+                                                "🔧 Attempting to get CommandProcessor for BES system version request");
+                                        CommandProcessor commandProcessor =
+                                                service.getCommandProcessor();
                                         if (commandProcessor != null) {
                                             Log.d(
                                                     TAG,
-                                                    "🔧 Requesting BES system version via"
-                                                            + " CommandProcessor");
+                                                    "🔧 Requesting BES system version via CommandProcessor");
                                             commandProcessor.requestSystemVersion();
                                         } else {
                                             Log.w(
                                                     TAG,
-                                                    "⚠️ CommandProcessor not available yet - BES"
-                                                            + " version will be requested when"
-                                                            + " available");
+                                                    "⚠️ CommandProcessor not available yet - BES version will be requested when available");
                                         }
                                     } catch (Exception e) {
                                         Log.w(TAG, "⚠️ Could not request BES system version", e);
@@ -650,7 +666,7 @@ public class AsgClientServiceManager {
         return networkManager;
     }
 
-    public IBluetoothManager getBluetoothManager() {
+    public ICompanionTransport getBluetoothManager() {
         // Log.d(TAG, "📶 getBluetoothManager() called - returning: " + (bluetoothManager != null ?
         // "valid" : "null"));
         return bluetoothManager;
@@ -693,6 +709,10 @@ public class AsgClientServiceManager {
                 "📡 getServerManager() called - returning: "
                         + (serverManager != null ? "valid" : "null"));
         return serverManager;
+    }
+
+    public BesOtaManager getBesOtaManager() {
+        return besOtaManager;
     }
 
     /**

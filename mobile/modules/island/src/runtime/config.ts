@@ -232,26 +232,25 @@ export interface LocationTierAdapter {
  * host's PhoneStreamCoordinator implements them.
  */
 export interface StreamingAdapter {
+  /** Glasses-confirmed publisher start result. */
   startUnmanaged: (
     packageName: string,
     opts: {
       streamUrl: string
       video?: unknown
       audio?: unknown
-      flash?: boolean
       sound?: boolean
     },
-  ) => Promise<{streamId: string}>
+  ) => Promise<StreamPublisherStartResult>
   startManaged: (
     packageName: string,
-    opts: {restreamDestinations?: Array<string | {url: string; name?: string}>},
-  ) => Promise<{
-    streamId: string
-    liveInputId: string
-    hlsUrl: string
-    dashUrl: string
-    webrtcUrl?: string
-  }>
+    opts: {
+      restreamDestinations?: Array<string | {url: string; name?: string}>
+      video?: unknown
+      audio?: unknown
+      sound?: boolean
+    },
+  ) => Promise<ManagedStreamStartResult>
   stop: (packageName: string, streamId?: string) => Promise<void>
   /**
    * Subscribe to status updates produced by the coordinator (BLE-originated
@@ -264,6 +263,46 @@ export interface StreamingAdapter {
       update: {streamId: string; status: string; data?: Record<string, unknown>; source: string},
     ) => void,
   ) => void
+}
+
+export interface StreamPublisherStartResult {
+  streamId: string
+  status: string
+  resolvedConfig?: Record<string, unknown>
+}
+
+export interface ManagedStreamStartResult extends StreamPublisherStartResult {
+  liveInputId: string
+  hlsUrl: string
+  dashUrl: string
+  webrtcUrl?: string
+}
+
+export type CameraRoiPosition = "center" | "bottom" | "top"
+export type CameraFovPreset = "narrow" | "standard" | "wide"
+
+export type CameraFovRequest =
+  | {
+      fov: number
+      roiPosition?: CameraRoiPosition
+    }
+  | {
+      preset: CameraFovPreset
+    }
+
+export interface CameraFovResult {
+  requestId: string
+  fov: number
+  roiPosition: CameraRoiPosition
+  timestamp: number
+}
+
+/**
+ * Camera settings adapter. Used for local miniapp camera.setFov so the
+ * miniapp Promise resolves from the glasses-side hardware-applied ack flow.
+ */
+export interface CameraSettingsAdapter {
+  setFov: (packageName: string, request: CameraFovRequest) => Promise<CameraFovResult>
 }
 
 export interface RuntimeHooks {
@@ -310,6 +349,8 @@ export interface RuntimeHooks {
   photo?: PhotoAdapter
   /** Phone-orchestrated video recording (session.camera.startVideoRecording). */
   videoRecording?: VideoRecordingAdapter
+  /** Phone-orchestrated camera settings (session.camera.setFov). */
+  cameraSettings?: CameraSettingsAdapter
   /** Phone-orchestrated RTMP/SRT/WHIP publishing. */
   streaming?: StreamingAdapter
 }
@@ -319,7 +360,7 @@ export interface RuntimeHooks {
  * The runtime calls these from its handleVideoRecordingStart/Stop handlers; the
  * host's PhoneVideoCoordinator implements them (drives the glasses over BLE via
  * the bluetooth-sdk startVideoRecording/stopVideoRecording). Unlike photo, this
- * is fire-and-forget start/stop — no uploaded URL is returned.
+ * returns recording control status only — no uploaded URL is returned.
  */
 export interface VideoRecordingAdapter {
   startRecording: (

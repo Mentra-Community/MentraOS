@@ -163,7 +163,7 @@ public class Bridge private constructor() {
         private fun micPcmEventBody(data: ByteArray): HashMap<String, Any> {
             val voiceActivityDetectionEnabled =
                     DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
-                            ?: true
+                            ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
             val body = HashMap<String, Any>()
             body["pcm"] = data
             body["sampleRate"] = MIC_SAMPLE_RATE
@@ -177,7 +177,7 @@ public class Bridge private constructor() {
         private fun micLc3EventBody(data: ByteArray): HashMap<String, Any> {
             val voiceActivityDetectionEnabled =
                     DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
-                            ?: true
+                            ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
             val frameSizeBytes =
                     (DeviceStore.store.get("bluetooth", "lc3_frame_size") as? Number)?.toInt()
                             ?: DEFAULT_LC3_FRAME_SIZE_BYTES
@@ -374,6 +374,11 @@ public class Bridge private constructor() {
             sendTypedMessage("photo_status", statusJson)
         }
 
+        @JvmStatic
+        fun sendPhotoResponse(responseJson: Map<String, Any>) {
+            sendTypedMessage("photo_response", responseJson)
+        }
+
         /** Send RGB LED control response */
         @JvmStatic
         fun sendRgbLedControlResponse(requestId: String, success: Boolean, error: String?) {
@@ -390,6 +395,45 @@ public class Bridge private constructor() {
             } catch (e: Exception) {
                 log("Bridge: Error sending rgb_led_control_response: $e")
             }
+        }
+
+        @JvmStatic
+        fun sendSettingsAck(values: Map<String, Any>) {
+            val body = HashMap<String, Any>()
+            body["type"] = "settings_ack"
+            values.forEach { (key, value) ->
+                body[key] = value
+            }
+            sendTypedMessage("settings_ack", body)
+        }
+
+        @JvmStatic
+        fun sendVideoRecordingStatus(values: Map<String, Any>) {
+            val body = HashMap<String, Any>()
+            body["type"] = "video_recording_status"
+            values.forEach { (key, value) ->
+                body[key] = value
+            }
+            sendTypedMessage("video_recording_status", body)
+        }
+
+        @JvmStatic
+        fun sendVersionInfo(values: Map<String, Any>) {
+            fun stringField(vararg keys: String): String =
+                    keys.firstNotNullOfOrNull { key -> values[key] as? String } ?: ""
+            val body = HashMap<String, Any>()
+            body["type"] = "version_info"
+            body["androidVersion"] = stringField("androidVersion", "android_version")
+            body["firmwareVersion"] = stringField("firmwareVersion", "firmware_version")
+            body["besFirmwareVersion"] = stringField("besFirmwareVersion", "bes_fw_version")
+            body["mtkFirmwareVersion"] = stringField("mtkFirmwareVersion", "mtk_fw_version")
+            body["buildNumber"] = stringField("buildNumber", "build_number")
+            (values["systemTimeMs"] as? Number ?: values["system_time_ms"] as? Number)?.let {
+                body["systemTimeMs"] = it.toLong()
+            }
+            body["otaVersionUrl"] = stringField("otaVersionUrl", "ota_version_url")
+            body["appVersion"] = stringField("appVersion", "app_version")
+            sendTypedMessage("version_info", body)
         }
 
         /**
@@ -458,7 +502,7 @@ public class Bridge private constructor() {
 
         /** Send WiFi scan results */
         @JvmStatic
-        fun updateWifiScanResults(networks: List<Map<String, Any>>) {
+        fun updateWifiScanResults(networks: List<Map<String, Any>>, scanComplete: Boolean) {
             var storedNetworks: List<Map<String, Any>> =
                     DeviceStore.get("bluetooth", "wifiScanResults") as? List<Map<String, Any>>
                             ?: emptyList()
@@ -470,6 +514,10 @@ public class Bridge private constructor() {
                 }
             }
             DeviceStore.apply("bluetooth", "wifiScanResults", updatedNetworks)
+            val body = HashMap<String, Any>()
+            body["networks"] = updatedNetworks
+            body["scanComplete"] = scanComplete
+            sendTypedMessage("wifi_scan_result", body)
         }
 
         /** Send gallery status - matches iOS MentraLive.swift handleGalleryStatus pattern */
@@ -479,14 +527,21 @@ public class Bridge private constructor() {
                 videoCount: Int,
                 totalCount: Int,
                 totalSize: Long,
-                hasContent: Boolean
+                hasContent: Boolean,
+                cameraBusy: Boolean,
+                cameraBusyReason: String?
         ) {
             val galleryData = HashMap<String, Any>()
+            galleryData["type"] = "gallery_status"
             galleryData["photos"] = photoCount
             galleryData["videos"] = videoCount
             galleryData["total"] = totalCount
             galleryData["totalSize"] = totalSize
             galleryData["hasContent"] = hasContent
+            galleryData["cameraBusy"] = cameraBusy
+            if (!cameraBusyReason.isNullOrBlank()) {
+                galleryData["cameraBusyReason"] = cameraBusyReason
+            }
 
             sendTypedMessage("gallery_status", galleryData as Map<String, Any>)
         }

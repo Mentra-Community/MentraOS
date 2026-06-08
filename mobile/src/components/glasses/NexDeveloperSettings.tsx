@@ -276,8 +276,8 @@ export default function NexDeveloperSettings() {
   // When on, the Nex display skips ASCII-only sanitization so CJK text renders.
   const [chineseCaptionsEnabled, setChineseCaptionsEnabled] = useSetting(SETTINGS.nex_chinese_captions.key)
 
-  // VAD (Voice Activity Detection) — sourced from native DeviceStore via glasses status.
-  const vadEnabled = useGlassesStore((state) => state.voiceActivityDetectionEnabled)
+  // VAD (Voice Activity Detection) — Manager defaults this on, then syncs it through CORE_SETTINGS_KEYS.
+  const [vadEnabled, setVadEnabled] = useSetting<boolean>(SETTINGS.voice_activity_detection_enabled.key)
 
   // // // Get both protobuf versions from core status
   // const protobufSchemaVersion = status.core_info.protobuf_schema_version || "Unknown"
@@ -372,7 +372,7 @@ export default function NexDeveloperSettings() {
     }
   }
 
-  // Both toggles persist to the settings store, which auto-syncs the flag to core
+  // These toggles persist to the settings store, which auto-syncs the flag to core
   // (CORE_SETTINGS_KEYS) where native applies the behavior change.
   const onLc3AudioToggle = (enabled: boolean) => {
     setLc3AudioEnabled(enabled)
@@ -383,8 +383,9 @@ export default function NexDeveloperSettings() {
   }
 
   const onVadToggle = async (enabled: boolean) => {
-    if (glassesConnected) {
-      await BluetoothSdk.setVoiceActivityDetectionEnabled(enabled)
+    const result = await setVadEnabled(enabled)
+    if (result.is_error()) {
+      showAlert("VAD setting failed", result.error.message || "Please try again.", [{text: "OK"}])
     }
   }
 

@@ -6,12 +6,13 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import com.mentra.asg_client.RecoveryWorkerManager;
+import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.services.OtaService;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IServiceLifecycle;
-import com.mentra.asg_client.service.system.interfaces.ISystemController;
 
 /**
  * Manages service lifecycle operations. Follows Single Responsibility Principle by handling only
@@ -25,6 +26,8 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
     private final AsgClientServiceManager serviceManager;
     private final CommandProcessor commandProcessor;
     private final AsgNotificationManager notificationManager;
+    private final RecoveryWorkerManager recoveryWorkerManager;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private boolean isInitialized = false;
 
@@ -37,6 +40,7 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
         this.serviceManager = serviceManager;
         this.commandProcessor = commandProcessor;
         this.notificationManager = notificationManager;
+        this.recoveryWorkerManager = new RecoveryWorkerManager(context);
     }
 
     @Override
@@ -48,11 +52,13 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
 
         Log.d(TAG, "Initializing service lifecycle");
 
-        // Initialize managers
-        serviceManager.initialize();
+        // Initialize managers (K900CommandHandler required for BesOtaManager on Mentra Live)
+        serviceManager.initialize(commandProcessor.getK900CommandHandler());
 
-        // Schedule OTA service start
+        // Recovery sidecar is the crash watchdog — start before other delayed init work.
+        recoveryWorkerManager.initialize();
         scheduleOtaServiceStart();
+        scheduleRecoveryBackupRefresh();
 
         // Clean up system packages
         // cleanupSystemPackages(); Not needed anymore
@@ -98,11 +104,13 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
     @Override
     public void cleanup() {
         Log.d(TAG, "Cleaning up service lifecycle");
+        mainHandler.removeCallbacksAndMessages(null);
 
         // Clean up managers
         if (serviceManager != null) {
             serviceManager.cleanup();
         }
+        recoveryWorkerManager.cleanup();
 
         isInitialized = false;
         Log.d(TAG, "Service lifecycle cleanup completed");
@@ -114,25 +122,36 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
     }
 
     private void scheduleOtaServiceStart() {
-        new Handler(Looper.getMainLooper())
-                .postDelayed(
-                        () -> {
-                            Log.d(TAG, "Starting internal OTA service after delay");
-                            Intent otaIntent = new Intent(context, OtaService.class);
-                            if (android.os.Build.VERSION.SDK_INT
-                                    >= android.os.Build.VERSION_CODES.O) {
-                                context.startForegroundService(otaIntent);
-                            } else {
-                                context.startService(otaIntent);
-                            }
-                        },
-                        5000);
+        mainHandler.postDelayed(
+                () -> {
+                    Log.d(TAG, "Starting internal OTA service after delay");
+                    Intent otaIntent = new Intent(context, OtaService.class);
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        context.startForegroundService(otaIntent);
+                    } else {
+                        context.startService(otaIntent);
+                    }
+                },
+                5000);
+    }
+
+    private void scheduleRecoveryBackupRefresh() {
+        mainHandler.postDelayed(
+                () -> {
+                    if (!isInitialized) {
+                        return;
+                    }
+                    new Thread(
+                                    () -> OtaHelper.ensureRecoveryBackupIfNeeded(context),
+                                    "recovery-backup-refresh")
+                            .start();
+                },
+                3000);
     }
 
     private void cleanupSystemPackages() {
-        ISystemController sysCtl = SystemControllerFactory.get(context);
-        sysCtl.uninstallPackage("com.lhs.btserver");
-        sysCtl.uninstallPackageViaAdb("com.lhs.btserver");
+        SystemControllerFactory.get(context).uninstallPackage("com.lhs.btserver");
+        SystemControllerFactory.get(context).uninstallPackageViaAdb("com.lhs.btserver");
     }
 
     private void handleStartService() {
@@ -153,11 +172,11 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
     private void handleRestartCamera() {
         Log.d(TAG, "Handling restart camera action");
         try {
-            ISystemController sysCtl = SystemControllerFactory.get(context);
-            sysCtl.injectAdbCommand(
-                    "pm grant " + context.getPackageName() + " android.permission.CAMERA");
-            sysCtl.injectAdbCommand("kill $(pidof cameraserver)");
-            sysCtl.injectAdbCommand("kill $(pidof mediaserver)");
+            SystemControllerFactory.get(context)
+                    .injectAdbCommand(
+                            "pm grant " + context.getPackageName() + " android.permission.CAMERA");
+            SystemControllerFactory.get(context).injectAdbCommand("kill $(pidof cameraserver)");
+            SystemControllerFactory.get(context).injectAdbCommand("kill $(pidof mediaserver)");
         } catch (Exception e) {
             Log.e(TAG, "Error resetting camera service", e);
         }

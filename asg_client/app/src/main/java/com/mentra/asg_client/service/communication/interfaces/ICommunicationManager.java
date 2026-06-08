@@ -29,8 +29,9 @@ public interface ICommunicationManager {
     /**
      * Send enhanced WiFi scan results over Bluetooth with security and signal info
      * @param networks List of NetworkInfo objects with enhanced data
+     * @param scanComplete Whether this payload is the terminal scan response
      */
-    void sendWifiScanResultsOverBleEnhanced(java.util.List<NetworkInfo> networks);
+    void sendWifiScanResultsOverBleEnhanced(java.util.List<NetworkInfo> networks, boolean scanComplete);
     
     /**
      * Send acknowledgment response
@@ -86,4 +87,4 @@ public interface ICommunicationManager {
      * Terminal events (complete/failed) are sent via reliable delivery.
      */
     void sendOtaStatus(JSONObject status);
-} 
+}

@@ -27,7 +27,7 @@
 private boolean createOtaUpdaterBackup() {
     try {
         PackageInfo info = getPackageManager().getPackageInfo(
-            "com.augmentos.otaupdater", 0);
+            "com.mentra.recovery", 0);
         String sourceApk = info.applicationInfo.sourceDir;
 
         File backupFile = new File(BASE_DIR, "ota_updater_backup.apk");
@@ -96,7 +96,7 @@ public void recoverOtaUpdater() {
         PackageInfo info = getPackageManager().getPackageArchiveInfo(
             backupApk.getAbsolutePath(), PackageManager.GET_ACTIVITIES);
 
-        if (info != null && info.packageName.equals("com.augmentos.otaupdater")) {
+        if (info != null && info.packageName.equals("com.mentra.recovery")) {
             // Install backup
             Intent intent = new Intent("com.xy.xsetting.action");
             intent.setPackage("com.android.systemui");
@@ -169,7 +169,7 @@ adb shell ls -la /storage/emulated/0/asg/
 
 # Manual backup creation
 adb shell cp /data/app/com.mentra.asg_client*/base.apk /storage/emulated/0/asg/asg_client_backup.apk
-adb shell cp /data/app/com.augmentos.otaupdater*/base.apk /storage/emulated/0/asg/ota_updater_backup.apk
+adb shell cp /data/app/com.mentra.recovery*/base.apk /storage/emulated/0/asg/ota_updater_backup.apk
 
 # Trigger recovery
 adb shell am broadcast -a com.augmentos.RECOVER_ASG_CLIENT

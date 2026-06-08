@@ -1189,7 +1189,7 @@ class DeviceManager {
         Bridge.log("MAN: Device disconnected")
         lastSystemTimeSyncConnectionKey = ""
         DeviceStore.apply("glasses", "headUp", false)
-        DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", true)
+        DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
     }
 
     fun handleControllerReady() {
@@ -1369,6 +1369,36 @@ class DeviceManager {
     fun sendOtaQueryStatus() {
         Bridge.log("MAN: 📱 Sending OTA query status command to glasses")
         (sgc as? MentraLive)?.sendOtaQueryStatus()
+    }
+
+    fun sendGalleryMode(requestId: String, enabled: Boolean) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendGalleryMode(requestId, enabled)
+    }
+
+    fun sendButtonPhotoSettings(requestId: String, size: String) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendButtonPhotoSettings(requestId, size)
+    }
+
+    fun sendButtonVideoRecordingSettings(requestId: String, width: Int, height: Int, fps: Int) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendButtonVideoRecordingSettings(requestId, width, height, fps)
+    }
+
+    fun sendButtonCameraLedSetting(requestId: String, enabled: Boolean) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendButtonCameraLedSetting(requestId, enabled)
+    }
+
+    fun sendButtonMaxRecordingTime(requestId: String, minutes: Int) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendButtonMaxRecordingTime(requestId, minutes)
+    }
+
+    fun sendCameraFovSetting(requestId: String, fov: Int, roiPosition: Int) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraFovSetting(requestId, fov, roiPosition)
     }
 
     fun retryOtaVersionCheck() {
@@ -1646,7 +1676,7 @@ class DeviceManager {
         DeviceStore.apply("glasses", "deviceModel", "")
         DeviceStore.apply("glasses", "fullyBooted", false)
         DeviceStore.apply("glasses", "connected", false)
-        DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", true)
+        DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
         // disconnect the controller as well:
         searchingController = false
         DeviceStore.apply("glasses", "controllerConnected", false)
