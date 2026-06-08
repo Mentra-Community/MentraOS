@@ -190,6 +190,8 @@ export type {
   SpeakingStatusEvent,
   SettingsAckEvent,
   SettingsAckSetting,
+  SettingsAckSuccessEvent,
+  SettingsAckSuccessStatus,
   SettingsAckStatus,
   StreamAudioConfig,
   StreamResolvedConfig,

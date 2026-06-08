@@ -274,7 +274,7 @@ React Native exposes the narrowest return types for clear branching after `await
 | `forgetWifiNetwork(ssid)` | `WifiStatusChangeEvent` once the requested SSID is no longer connected. | Timeout, send failure, or another Wi-Fi status command in flight. |
 | `setHotspotState(enabled)` | `HotspotStatusChangeEvent` matching the requested enabled/disabled state. | `hotspot_error`, timeout, send failure, or another hotspot command in flight. |
 | `requestVersionInfo()` | `VersionInfoResult` from the ASG `version_info` response. | Timeout, send failure, or another version query in flight. |
-| Gallery/button settings | `SettingsAckEvent` with a non-failure status such as `applied` or `ready`; the SDK local settings store updates only after this ASG ack resolves. | `settings_ack.status` of `error`, `failed`, `failure`, or `rejected`; timeout; or send failure. |
+| Gallery/button settings | `SettingsAckSuccessEvent` with a non-failure status such as `applied` or `ready`; the SDK local settings store updates only after this ASG ack resolves. | `settings_ack.status` of `error`, `failed`, `failure`, or `rejected`; timeout; or send failure. |
 | `setCameraFov(...)` | `CameraFovResult` with `ready: true`, `hardwareApplied: true`, `fov`, `roiPosition`, and `requestId` after the restarted camera is ready; the SDK local FOV setting updates only after this result resolves. | Glasses-side FOV/settings error, missing readiness after camera restart, timeout, or send failure. |
 | `queryGalleryStatus()` | `GalleryStatusEvent`, including `cameraBusy` and optional `cameraBusyReason`. | Timeout, send failure, or another gallery status query in flight. |
 | `requestPhoto(...)` | Terminal response after capture and delivery finish: React Native `PhotoSuccessResponseEvent`; Android/iOS successful `PhotoResponseEvent`. The success includes `uploadUrl`, and may include webhook-returned `photoUrl`, `statusUrl`, `bytes`, `size`, `mimeType`, or `contentType`. Progress follows through `photo_status`. | Raw `photo_response.state === "error"` from glasses/phone, fallback upload failure, terminal response timeout, or send failure. |
@@ -290,7 +290,7 @@ React Native exposes the narrowest return types for clear branching after `await
 
 Mentra Live has a gallery mode for the right action button. When gallery mode is enabled, a short press takes a photo, a long press starts video recording, and a short press stops the active video recording. Button and touch events are still reported to the SDK.
 
-Use `setGalleryModeEnabled(true)` to enable local button capture, and `setGalleryModeEnabled(false)` to report button events without triggering local gallery capture while the glasses are connected. These setting calls return `SettingsAckEvent` from the ASG client. The SDK can also configure the capture settings used by gallery mode:
+Use `setGalleryModeEnabled(true)` to enable local button capture, and `setGalleryModeEnabled(false)` to report button events without triggering local gallery capture while the glasses are connected. These setting calls return `SettingsAckSuccessEvent` from the ASG client and reject on failure statuses. Raw `settings_ack` listeners still receive `SettingsAckEvent` because listener events can include both success and failure statuses. The SDK can also configure the capture settings used by gallery mode:
 
 | Setting | API |
 | --- | --- |
@@ -432,7 +432,7 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `photo_status` | `PhotoStatusEvent` | Photo capture progress changes. May include `resolvedConfig`, `requestedCaptureConfig`, `meteredPreview`, or `captureMetadata` depending on status. |
 | `video_recording_status` | `VideoRecordingStatusEvent` | Video recording start/stop succeeds or fails. `startVideoRecording(...)` and `stopVideoRecording(...)` resolve with `success: true`; unsuccessful statuses such as `already_recording` reject the promise. |
 | `gallery_status` | `GalleryStatusEvent` | Gallery content/camera-busy status changes. `cameraBusyReason` is included when the glasses report a busy camera reason such as `video` or `stream`. |
-| `settings_ack` | `SettingsAckEvent` | Raw gallery/button/FOV setting acknowledgements from the glasses. Gallery and button setting methods return this shape; `setCameraFov(...)` resolves a friendlier `CameraFovResult` after the raw ack reports camera readiness. |
+| `settings_ack` | `SettingsAckEvent` | Raw gallery/button/FOV setting acknowledgements from the glasses. Gallery and button setting methods return `SettingsAckSuccessEvent` and reject failure statuses; `setCameraFov(...)` resolves a friendlier `CameraFovResult` after the raw ack reports camera readiness. |
 | `compatible_glasses_search_stop` | `CompatibleGlassesSearchStopEvent` | Compatible-glasses search stops for a model. |
 | `swipe_volume_status` | `SwipeVolumeStatusEvent` | Swipe-volume setting changes. |
 | `switch_status` | `SwitchStatusEvent` | Glasses switch status changes. |

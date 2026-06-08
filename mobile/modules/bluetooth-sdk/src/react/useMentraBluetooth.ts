@@ -17,7 +17,7 @@ import type {
   PublicBluetoothStatus,
   PublicGlassesStatus,
   MicMode,
-  SettingsAckEvent,
+  SettingsAckSuccessEvent,
   WifiSearchResult,
   WifiStatus,
 } from "../BluetoothSdk.types"
@@ -136,7 +136,7 @@ export type MentraBluetoothSession = {
   scan: ScanController
   sdk: PhoneSdkRuntimeState
   setDefaultDevice: (device: Device | null) => Promise<void>
-  setGalleryModeEnabled: (enabled: boolean) => Promise<SettingsAckEvent>
+  setGalleryModeEnabled: (enabled: boolean) => Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled: (enabled: boolean) => Promise<void>
 }
 
@@ -273,7 +273,7 @@ export function useMentraBluetooth(options: UseMentraBluetoothOptions = {}): Men
   const [galleryModeApplying, setGalleryModeApplying] = useState(false)
   const [galleryModeError, setGalleryModeError] = useState<unknown | null>(null)
 
-  async function setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckEvent> {
+  async function setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent> {
     setGalleryModeApplying(true)
     setGalleryModeError(null)
     try {

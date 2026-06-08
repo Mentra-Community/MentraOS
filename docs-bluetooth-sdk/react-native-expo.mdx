@@ -252,7 +252,7 @@ type GlassesConnectionStatus =
 
 Use `mentra.glasses.connection.state` for link-layer progress. `fullyBooted` only exists when `state === 'connected'`.
 
-Use `useMentraBluetooth()` as the React status API for connection, battery, Wi-Fi, hotspot, scan, and SDK runtime state. `setGalleryModeEnabled(...)` resolves with the ASG `SettingsAckEvent`, `mentra.sdk.galleryMode.enabled` reflects the acknowledged gallery-mode setting, and `mentra.sdk.galleryMode.applying` is true while that ASG response is in flight.
+Use `useMentraBluetooth()` as the React status API for connection, battery, Wi-Fi, hotspot, scan, and SDK runtime state. `setGalleryModeEnabled(...)` resolves with the ASG `SettingsAckSuccessEvent` and rejects failure statuses, `mentra.sdk.galleryMode.enabled` reflects the acknowledged gallery-mode setting, and `mentra.sdk.galleryMode.applying` is true while that ASG response is in flight.
 
 ## Default Device
 

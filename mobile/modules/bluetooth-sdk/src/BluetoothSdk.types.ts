@@ -371,6 +371,12 @@ export type SettingsAckEvent = {
   errorMessage?: string
 }
 
+export type SettingsAckSuccessStatus = Exclude<SettingsAckStatus, "error" | "failed" | "failure" | "rejected">
+
+export type SettingsAckSuccessEvent = Omit<SettingsAckEvent, "status"> & {
+  status: SettingsAckSuccessStatus
+}
+
 export type RgbLedAction = "on" | "off"
 export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
 export type PhotoSize = "small" | "medium" | "large" | "full"
@@ -852,12 +858,12 @@ export interface BluetoothSdkPublicModule {
   forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
 
-  setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckEvent>
+  setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
-  setButtonPhotoSettings(size: ButtonPhotoSize): Promise<SettingsAckEvent>
-  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckEvent>
-  setButtonCameraLed(enabled: boolean): Promise<SettingsAckEvent>
-  setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckEvent>
+  setButtonPhotoSettings(size: ButtonPhotoSize): Promise<SettingsAckSuccessEvent>
+  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
+  setButtonCameraLed(enabled: boolean): Promise<SettingsAckSuccessEvent>
+  setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>

@@ -36,7 +36,7 @@ import {
   RgbLedControlSuccessResponseEvent,
   ScanModelOptions,
   ScanOptions,
-  SettingsAckEvent,
+  SettingsAckSuccessEvent,
   StreamKeepAliveRequest,
   StreamStartRequest,
   StreamStatusEvent,
@@ -118,12 +118,12 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   logCurrentWifiFrequency(): Promise<void>
 
   // Gallery Commands
-  setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckEvent>
+  setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
-  setButtonPhotoSettings(size: ButtonPhotoSize): Promise<SettingsAckEvent>
-  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckEvent>
-  setButtonCameraLed(enabled: boolean): Promise<SettingsAckEvent>
-  setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckEvent>
+  setButtonPhotoSettings(size: ButtonPhotoSize): Promise<SettingsAckSuccessEvent>
+  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
+  setButtonCameraLed(enabled: boolean): Promise<SettingsAckSuccessEvent>
+  setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckSuccessEvent>
   setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
   queryGalleryStatus(): Promise<GalleryStatusEvent>
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
