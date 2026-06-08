@@ -14,7 +14,12 @@
  * Overhead: 24 bytes nonce + 16 bytes auth tag = 40 bytes per packet
  */
 
-import {Buffer} from "@craftzdog/react-native-buffer";
+// Pure-JS buffer (not @craftzdog/react-native-buffer): this is only used for a
+// one-time 32-byte base64 key decode, so the native QuickBase64-backed Buffer
+// buys nothing here, and depending on it crashes builds where that C++
+// TurboModule is not compiled in. The pure-JS base64 is more than fast enough
+// for a single 32-byte key.
+import {Buffer} from "buffer";
 import nacl from "tweetnacl"
 
 /** Nonce size for XSalsa20-Poly1305 (24 bytes) */
