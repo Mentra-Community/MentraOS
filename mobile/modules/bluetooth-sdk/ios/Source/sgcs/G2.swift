@@ -2090,17 +2090,6 @@ class G2: NSObject, SGCManager {
             Bridge.log("G2: displayBitmap() - added container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh), rebuilding page")
             await rebuildPage()
         }
-
-        // Bridge.log("G2: displayBitmap() - sending image data to container \(container.id), \(container.bmpData.count) bytes")
-
-        // let success = await sendImageData(
-        //     containerID: container.id, containerName: container.name, bmpData: container.bmpData
-        // )
-        // if !success {
-        //     Bridge.log("G2: displayBitmap() - failed sending image data")
-        // }
-        // Bridge.log("G2: displayBitmap() - image sent to container \(container.id), \(bmpData.count) bytes")
-        // return success
         return true
     }
 

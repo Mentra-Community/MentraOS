@@ -2056,29 +2056,26 @@ class G2 : SGCManager() {
         // Reuse an existing container if the rect matches exactly; otherwise add a new one.
         val container: ImgContainer
         val existingIndex = imageContainers.indexOfFirst { it.matches(rx, ry, rw, rh) }
-        val needsRebuild: Boolean
         if (existingIndex >= 0) {
             imageContainers[existingIndex].bmpData = bmpData
             container = imageContainers[existingIndex]
-            needsRebuild = !pageCreated
             Bridge.log("G2: displayBitmap() - reusing container ${container.id} for rect $rx,$ry ${rw}x$rh")
+            displayScope.launch {
+                displayMutex.withLock {
+                    if (!pageCreated) {
+                        rebuildPage()
+                    } else {
+                        sendImageData(container.id, container.name, container.bmpData)
+                    }
+                }
+            }
+            return true
         } else {
             container = addImageContainer(rx, ry, rw, rh, bmpData)
-            needsRebuild = true
             Bridge.log("G2: displayBitmap() - added container ${container.id} for rect $rx,$ry ${rw}x$rh, rebuilding page")
-        }
-
-        Bridge.log("G2: displayBitmap() - sending image data to container ${container.id}, ${container.bmpData.size} bytes")
-
-        displayScope.launch {
-            displayMutex.withLock {
-                if (needsRebuild) {
-                    // rebuildPage() already re-sends every image container (including this one), so
-                    // sending again here would upload the BMP twice and race on the glasses.
+            displayScope.launch {
+                displayMutex.withLock {
                     rebuildPage()
-                } else {
-                    // Reuse on a live page: just push the new image data to the existing container.
-                    sendImageData(container.id, container.name, container.bmpData)
                 }
             }
         }
