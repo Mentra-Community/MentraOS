@@ -18,6 +18,7 @@ import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
+import {initCloudV2} from "@/services/cloudV2Client"
 import {WebSocketStatus} from "@/services/ws-types"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
 import {handleOtaClockSkewFromGlasses} from "@/services/asg/glassesClockSync"
@@ -25,6 +26,7 @@ import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugRepor
 import {
   appRegistry,
   configureRuntime,
+  getRuntimeHooks,
   displayProcessor,
   localMiniappRuntime,
   localSttFallbackCoordinator,
@@ -175,11 +177,17 @@ class MantleManager {
     // island service that reads settings / glasses status / sockets / audio
     // (LocalMiniappRuntime, LocalDisplayManager, LocalSttFallbackCoordinator,
     // DisplayProcessor) is touched.
+    // Construct + connect the v2 cloud client (best-effort) and wire its
+    // runtime adapter alongside the v1 socketComms path. Dual-cloud during the
+    // transition — the v1 path below is unchanged.
+    const cloud = initCloudV2()
+
     configureRuntime({
       socketComms: {
         sendMessage: (message) => socketComms.sendMessage(message as Parameters<typeof socketComms.sendMessage>[0]),
         updatePhoneSubscriptions: (subs) => socketComms.updatePhoneSubscriptions(subs),
       },
+      cloud,
       audioPlayback: {
         play: (request, onComplete) => audioPlaybackService.play(request, onComplete),
         stopForApp: (packageName) => audioPlaybackService.stopForApp(packageName),
@@ -1043,6 +1051,14 @@ class MantleManager {
             udp.sendAudio(event.lc3)
           } else {
             socketComms.sendBinary(event.lc3)
+          }
+
+          // Cloud-v2 fork: forward the same LC3 frame to the v2 cloud, gated so
+          // we don't waste UDP bandwidth when nothing is subscribed on v2. The
+          // v1 sends above are unchanged.
+          const cloud = getRuntimeHooks().cloud
+          if (cloud?.isConnected() && cloud.hasAudioSubscriptions()) {
+            cloud.sendAudioFrame(new Uint8Array(event.lc3))
           }
         }),
       )
