@@ -671,7 +671,7 @@ function CameraSettingsControl({
           />
         ))}
       </OptionGroup>
-      <Text style={styles.settingDescription}>{status}. Applying FOV/ROI waits for the Mentra Live hardware-applied ack.</Text>
+      <Text style={styles.settingDescription}>{status}</Text>
     </View>
   );
 }

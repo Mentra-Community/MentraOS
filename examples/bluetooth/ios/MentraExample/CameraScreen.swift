@@ -528,7 +528,7 @@ private struct CameraFovSettingsCard: View {
                         }
                 }
             }
-            Text("\(model.cameraSettingsStatus). Applying FOV/ROI waits for the Mentra Live hardware-applied ack.")
+            Text(model.cameraSettingsStatus)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(AppColor.muted)
         }

@@ -499,7 +499,7 @@ private fun CameraFovSettingsCard(controller: MentraExampleController) {
             }
         }
         Text(
-            "${state.cameraSettingsStatus}. Applying FOV/ROI waits for the Mentra Live hardware-applied ack.",
+            state.cameraSettingsStatus,
             color = AppColor.muted,
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,
