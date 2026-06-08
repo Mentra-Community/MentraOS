@@ -57,12 +57,8 @@ if (!beforeSha && eventPath) {
   }
 }
 
-if (!beforeSha || /^0+$/.test(beforeSha)) {
-  try {
-    beforeSha = git(['rev-parse', 'HEAD^'], {allowFailure: true});
-  } catch {
-    beforeSha = '';
-  }
+if (/^0+$/.test(beforeSha)) {
+  beforeSha = '';
 }
 
 const previousPackage = beforeSha ? readJsonAt(beforeSha, packagePath) : null;
