@@ -180,10 +180,6 @@ public struct SettingsAckEvent: CustomStringConvertible {
         stringValue(values, "status") ?? "applied"
     }
 
-    public var ready: Bool {
-        boolValue(values, "ready") ?? (status == "ready")
-    }
-
     public var timestamp: Int {
         intValue(values["timestamp"]) ?? Int(Date().timeIntervalSince1970 * 1000)
     }

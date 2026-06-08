@@ -355,7 +355,6 @@ export type SettingsAckEvent = {
   requestId: string
   setting: SettingsAckSetting
   status: SettingsAckStatus
-  ready?: boolean
   timestamp: number
   fov?: number
   roiPosition?: CameraRoiPositionValue

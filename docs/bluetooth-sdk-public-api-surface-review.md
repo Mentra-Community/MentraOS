@@ -212,8 +212,6 @@ type CameraFovResult = {
   requestId: string
   fov: number
   roiPosition: CameraRoiPosition
-  ready: true
-  hardwareApplied: true
   timestamp: number
 }
 type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
