@@ -2,20 +2,20 @@
 jest.mock("react-native-permissions", () => require("react-native-permissions/mock"))
 
 jest.mock("@mentra/bluetooth-sdk", () => {
-  const {coreModuleMock} = require("./src/test-utils/mockCoreModule")
+  const {bluetoothSdkMock} = require("./src/test-utils/mockBluetoothSdk")
   return {
     __esModule: true,
-    default: coreModuleMock,
-    ...coreModuleMock,
+    default: bluetoothSdkMock,
+    ...bluetoothSdkMock,
   }
 })
 
 jest.mock("@mentra/bluetooth-sdk-internal", () => {
-  const {coreModuleMock} = require("./src/test-utils/mockCoreModule")
+  const {bluetoothSdkMock} = require("./src/test-utils/mockBluetoothSdk")
   return {
     __esModule: true,
-    default: coreModuleMock,
-    ...coreModuleMock,
+    default: bluetoothSdkMock,
+    ...bluetoothSdkMock,
   }
 })
 

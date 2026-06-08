@@ -36,7 +36,7 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
   }
   try {
     // Seed native state before connectDefault() replays settings to glasses.
-    await BluetoothSdk.updateBluetoothSettings(useSettingsStore.getState().getCoreSettings())
+    await BluetoothSdk.updateBluetoothSettings(useSettingsStore.getState().getBluetoothSettings())
     await BluetoothSdk.connectDefault()
   } catch (error) {
     console.warn("RECONNECT: failed to connect default wearable:", error)

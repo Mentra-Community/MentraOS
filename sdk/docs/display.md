@@ -8,7 +8,7 @@ Mirrors cloud SDK v3's `DisplayManager` naming. Was called `LayoutManager` /
 `session.layouts` before the v3-alignment round.
 
 The phone-side `LocalMiniappRuntime` forwards each call to
-`CoreModule.displayEvent`, which reads `event.view` and
+`BluetoothSdk.displayEvent`, which reads `event.view` and
 `event.layout.layoutType`.
 
 Source: [mobile/modules/miniapp/src/modules/display.ts](../../mobile/modules/miniapp/src/modules/display.ts)
