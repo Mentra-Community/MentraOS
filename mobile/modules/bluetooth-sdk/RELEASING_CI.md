@@ -49,7 +49,9 @@ workflow for a real release:
 
 1. The detector job reads `mobile/modules/bluetooth-sdk/package.json` at `HEAD`
    and at the prior push SHA. If the version did not change, the workflow exits
-   after writing a summary.
+   after writing a summary. If GitHub does not provide a usable prior push SHA,
+   the detector fails closed; rerun with `workflow_dispatch` and
+   `force_release=true` after confirming the version should release.
 2. The npm job installs mobile workspace dependencies, builds the SDK package,
    checks whether `@mentra/bluetooth-sdk@VERSION` already exists, runs
    `npm pack --dry-run`, then submits the package with `npm stage publish` when
