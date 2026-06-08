@@ -254,6 +254,11 @@ export class Runtime implements RuntimeModule {
     const ack = this.connection.ack;
     if (!ack) return;
     this.configureAudio(ack);
+    // Announce the reconnection the same way the first open does. Without this,
+    // a host that tracks liveness via `onConnected`/`onDisconnected` would stay
+    // stuck "disconnected" after every reconnect (its flag never flips back),
+    // even though the socket is live and transcription has resumed.
+    this.emitter.emit("connected", undefined);
     try {
       await this.subscriptions.resend(ack.sessionId);
     } catch (err) {

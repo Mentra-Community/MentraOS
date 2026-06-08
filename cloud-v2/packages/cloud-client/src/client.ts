@@ -36,11 +36,14 @@ import { Core } from "./modules/core/core";
 /**
  * Default reconnect/backoff for the live socket when a host supplies none.
  *
- * One second base, capped at thirty, with jitter on: jitter keeps a fleet of
- * phones from reconnecting in lockstep after a shared cloud blip. A host can
- * override any of these through `config.reconnect`.
+ * Half-second base, capped at five seconds, with jitter on. The small cap is
+ * deliberate: the socket should recover within a few seconds of the cloud
+ * coming back (a routine runtime redeploy is a ~30-60s blip), not sit on a long
+ * backoff. Full jitter still keeps a fleet of phones from reconnecting in
+ * lockstep after a shared blip. A host can override any of these through
+ * `config.reconnect`.
  */
-const DEFAULT_RECONNECT = { baseMs: 1_000, maxMs: 30_000, jitter: true };
+const DEFAULT_RECONNECT = { baseMs: 500, maxMs: 5_000, jitter: true };
 
 /**
  * The default audio codec the client announces in the handshake.
