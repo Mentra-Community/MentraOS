@@ -45,9 +45,9 @@ services:
       nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
     terminationGracePeriodSeconds: 10
 
-  # ── audio ──────────────────────────────────────────────────────────
+  # ── runtime ────────────────────────────────────────────────────────
   # Holds the per-user WS, ingests UDP, runs LC3 + Soniox in Bun Workers.
-  - name: audio
+  - name: runtime
     type: web
     run: bun packages/runtime/src/index.ts
     port: 3001
@@ -57,7 +57,7 @@ services:
       PORT: "3001"
       AUDIO_UDP_PORT: "8000"
       LOG_STDOUT_JSON: "true"
-      SERVICE_NAME: "audio"
+      SERVICE_NAME: "runtime"
       # Worker count default — tune per-pod-size in env group when we know
       # the actual CPU limits we get in each environment.
       AUDIO_WORKERS: "2"
