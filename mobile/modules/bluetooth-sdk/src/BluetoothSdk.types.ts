@@ -396,7 +396,7 @@ export type SettingsAckSuccessEvent = Omit<SettingsAckEvent, "status"> & {
 export type RgbLedAction = "on" | "off"
 export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
 export type PhotoSize = "small" | "medium" | "large" | "full"
-export type ButtonPhotoSize = "small" | "medium" | "large"
+export type ButtonPhotoSize = "small" | "medium" | "large" | "max"
 export type PhotoCompression = "none" | "medium" | "heavy"
 
 /**

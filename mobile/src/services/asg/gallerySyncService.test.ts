@@ -211,6 +211,58 @@ describe("GallerySyncService", () => {
     expect(BluetoothSdk.setHotspotState).toHaveBeenCalledWith(true)
   })
 
+  it("aborts pre-flight quietly when glasses disconnect during any pre-flight await", async () => {
+    const {checkConnectivityRequirementsUI} = require("@/utils/PermissionsUtils")
+    let resolveConnectivity: (() => void) | null = null
+    ;(checkConnectivityRequirementsUI as jest.Mock).mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveConnectivity = () => resolve(true)
+        }),
+    )
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+
+    const startPromise = gallerySyncService.startSync()
+    expect(gallerySyncService.isSyncStarting()).toBe(true)
+    expect(gallerySyncService.isSyncing()).toBe(false)
+
+    // Disconnect while connectivity check is in flight — shouldAbortPreFlight catches it after the await
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+
+    resolveConnectivity?.()
+    await startPromise
+
+    expect(useGallerySyncStore.getState().syncState).toBe("idle")
+    expect(useGallerySyncStore.getState().lastError).toBeNull()
+    expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+    expect(gallerySyncNotifications.requestPermissions).not.toHaveBeenCalled()
+  })
+
+  it("coalesces concurrent startSync calls into a single pre-flight attempt", async () => {
+    const {checkConnectivityRequirementsUI} = require("@/utils/PermissionsUtils")
+    let resolveConnectivity: (() => void) | null = null
+    ;(checkConnectivityRequirementsUI as jest.Mock).mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveConnectivity = () => resolve(true)
+        }),
+    )
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+
+    const first = gallerySyncService.startSync()
+    const second = gallerySyncService.startSync()
+
+    expect(gallerySyncService.isSyncStarting()).toBe(true)
+    expect(checkConnectivityRequirementsUI).toHaveBeenCalledTimes(1)
+
+    resolveConnectivity?.()
+    await Promise.all([first, second])
+
+    expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")
+  })
+
   it("keeps sync watermark before zero-byte video captures", async () => {
     const serverTime = 1_700_000_000_000
     const failedTimestamp = serverTime - 5_000

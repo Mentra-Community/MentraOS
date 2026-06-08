@@ -2,17 +2,7 @@
 import {setBuildEnv} from "./set-build-env.mjs"
 await setBuildEnv()
 
-// Build iOS archive
-
-const now = new Date()
-const date = now.toLocaleDateString("en-US", {month: "2-digit", day: "2-digit", year: "2-digit"})
-const time = now.toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", hour12: true})
-const archiveName = `Mentra ${date.replace(/\//g, "-")}, ${time}.xcarchive`
-
-const archiveDate = now.toISOString().split("T")[0]
-const archivePath = `${os.homedir()}/Library/Developer/Xcode/Archives/${archiveDate}/${archiveName}`
-
-console.log(chalk.blue(`Building archive: ${archiveName}`))
+console.log("Building iOS release...")
 
 // prebuild ios:
 await $({stdio: "inherit"})`bun expo prebuild --platform ios`
@@ -20,17 +10,58 @@ await $({stdio: "inherit"})`bun expo prebuild --platform ios`
 // copy .env to ios/.xcode.env.local:
 await $({stdio: "inherit"})`cp .env ios/.xcode.env.local`
 
-await $({
-  stdio: "inherit",
-  env: process.env,
-})`xcodebuild archive \
-  -workspace ios/Mentra.xcworkspace \
-  -scheme Mentra \
-  -configuration Release \
-  -destination generic/platform=iOS \
-  -archivePath ${archivePath}`
+// Sync CocoaPods after prebuild so new native source files are compiled
+await $({stdio: "inherit", cwd: "ios"})`pod install`
 
-// -arch arm64 \
+function isConnectedIphone(device) {
+  return (
+    (device.capabilities?.some((c) => c.name === "iPhone") ||
+      device.deviceProperties?.marketingName?.includes("iPhone")) &&
+    device.connectionProperties?.tunnelState === "connected"
+  )
+}
 
-console.log(chalk.green("✓ Archive created!"))
-console.log(chalk.blue("Open: Xcode > Window > Organizer"))
+async function listDevicesViaDevicectl() {
+  const tmpFile = `/tmp/devicectl-${Date.now()}.json`
+  try {
+    await $`xcrun devicectl list devices --json-output ${tmpFile} --timeout 5`
+    const json = JSON.parse(await fs.readFile(tmpFile, "utf-8"))
+    return json.result?.devices ?? []
+  } catch (error) {
+    const message = String(error?.message ?? error)
+    // Only silently fall back when devicectl itself is absent on this machine.
+    // Timeouts, JSON parse errors, and other failures are real problems that
+    // should abort so the caller gets a visible error rather than a wrong build.
+    if (/not found|unable to find utility|No such file/i.test(message)) {
+      console.warn("devicectl unavailable, falling back to simulator:", message)
+      return null
+    }
+    throw error
+  } finally {
+    await fs.remove(tmpFile).catch(() => {})
+  }
+}
+
+const devices = await listDevicesViaDevicectl()
+
+let deviceName
+if (devices) {
+  const device = devices.find(isConnectedIphone)
+  if (device) {
+    deviceName = device.deviceProperties.name
+  }
+}
+
+if (!deviceName) {
+  console.log("No physical iPhone connected — building release for iOS Simulator")
+  await $({stdio: "inherit"})`bun expo run:ios --configuration Release --no-bundler`
+  console.log("✅ iOS release built and installed on Simulator!")
+  process.exit(0)
+}
+
+console.log(`Using device: ${deviceName}`)
+
+// Build and install release on device
+await $({stdio: "inherit"})`bun expo run:ios --device ${deviceName} --configuration Release --no-bundler`
+
+console.log("✅ iOS release built and installed successfully!")

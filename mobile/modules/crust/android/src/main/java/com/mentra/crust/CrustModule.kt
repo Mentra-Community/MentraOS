@@ -514,7 +514,11 @@ class CrustModule : Module() {
 
     // MARK: - Media Library Commands
 
-    AsyncFunction("saveToGalleryWithDate") { filePath: String, captureTimeMillis: Long? ->
+    AsyncFunction("saveToGalleryWithDate") {
+            filePath: String,
+            captureTimeMillis: Long?,
+            displayName: String?
+      ->
       val context =
               appContext.reactContext
                       ?: appContext.currentActivity
@@ -555,9 +559,25 @@ class CrustModule : Module() {
                   }
                 }
 
+        val mediaDisplayName =
+                displayName?.takeIf { it.isNotBlank() }
+                        ?: run {
+                          val parentName = file.parentFile?.name
+                          if (parentName != null &&
+                                          (parentName.startsWith("IMG_") ||
+                                                  parentName.startsWith("VID_")) &&
+                                          (file.name == "base.jpg" || file.name == "base.mp4")
+                          ) {
+                            val ext = if (mimeType.startsWith("video/")) "mp4" else "jpg"
+                            "$parentName.$ext"
+                          } else {
+                            file.name
+                          }
+                        }
+
         val values =
                 android.content.ContentValues().apply {
-                  put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+                  put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, mediaDisplayName)
                   put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mimeType)
                   put(android.provider.MediaStore.MediaColumns.SIZE, file.length())
 
@@ -604,7 +624,7 @@ class CrustModule : Module() {
 
           android.util.Log.d(
                   "CrustModule",
-                  "Successfully saved to gallery with proper DATE_TAKEN: ${file.name}"
+                  "Successfully saved to gallery with proper DATE_TAKEN: $mediaDisplayName"
           )
           mapOf("success" to true, "uri" to uri.toString())
         } catch (e: Exception) {

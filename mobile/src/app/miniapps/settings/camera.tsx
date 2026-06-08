@@ -15,7 +15,7 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import {spacing, ThemedStyle} from "@/theme"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
-type PhotoSize = "small" | "medium" | "large"
+type PhotoSize = "small" | "medium" | "large" | "max"
 // The Mentra Live sensor only records 1080p/720p — 1440p/4K wedge the camera.
 type VideoResolution = "720p" | "1080p"
 type VideoFps = "30" | "15" | "5"
@@ -29,6 +29,7 @@ const PHOTO_SIZE_OPTIONS = [
   {key: "small" as PhotoSize, label: "Low (960×720)"},
   {key: "medium" as PhotoSize, label: "Medium (1440×1088)"},
   {key: "large" as PhotoSize, label: "High (3264×2448)"},
+  {key: "max" as PhotoSize, label: "Max (camera maximum)"},
 ]
 
 const VIDEO_RESOLUTION_OPTIONS = [

@@ -11,6 +11,7 @@ public enum ButtonPhotoSize: String {
     case small
     case medium
     case large
+    case max
 }
 
 public enum PhotoCompression: String {

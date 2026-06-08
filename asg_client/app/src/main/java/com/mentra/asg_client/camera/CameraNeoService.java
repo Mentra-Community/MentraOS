@@ -20,6 +20,7 @@ import android.util.Rational;
 import android.util.Size;
 import android.view.Surface;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.lifecycle.LifecycleService;
 import com.mentra.asg_client.camera.lifecycle.CameraCoordinator;
 import com.mentra.asg_client.camera.lifecycle.CameraOpener;
@@ -28,6 +29,7 @@ import com.mentra.asg_client.camera.lifecycle.CameraServiceNotification;
 import com.mentra.asg_client.camera.lifecycle.HandlerExecutor;
 import com.mentra.asg_client.camera.lifecycle.ImageReaderTwin;
 import com.mentra.asg_client.camera.lifecycle.PhotoSession;
+import org.json.JSONObject;
 import com.mentra.asg_client.camera.lifecycle.VideoRecordingSession;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
@@ -46,12 +48,12 @@ import java.io.File;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
-import org.json.JSONObject;
 
 public class CameraNeoService extends LifecycleService {
     private static final String TAG = "CameraNeo";
@@ -142,14 +144,19 @@ public class CameraNeoService extends LifecycleService {
     // Callback interface for photo capture
     public interface PhotoCaptureCallback {
         default void onPhotoConfigured(JSONObject resolvedConfig) {}
+
         default void onPhotoCapturing() {}
-        default void onPhotoCapturing(JSONObject requestedCaptureConfig, JSONObject meteredPreview) {
+
+        default void onPhotoCapturing(
+                JSONObject requestedCaptureConfig, JSONObject meteredPreview) {
             onPhotoCapturing();
         }
-        default void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
-            onPhotoCaptured(filePath);
+
+        default void onPhotoCaptured(String filePath) {
+            onPhotoCaptured(filePath, null);
         }
-        void onPhotoCaptured(String filePath);
+
+        void onPhotoCaptured(String filePath, @Nullable JSONObject captureMetadata);
 
         void onPhotoError(String errorMessage);
     }
@@ -443,7 +450,8 @@ public class CameraNeoService extends LifecycleService {
             boolean isFromSdk,
             Long exposureTimeNs,
             PhotoCaptureCallback callback) {
-        enqueuePhotoRequest(context, filePath, size, enableLed, isFromSdk, exposureTimeNs, null, callback);
+        enqueuePhotoRequest(
+                context, filePath, size, enableLed, isFromSdk, exposureTimeNs, null, callback);
     }
 
     /**
@@ -797,6 +805,13 @@ public class CameraNeoService extends LifecycleService {
             } else {
                 // For photos, find the closest available JPEG size to our target
                 Size[] jpegSizes = CameraOpener.jpegOutputSizes(map);
+                if (jpegSizes != null) {
+                    Log.d(TAG, "AAACamera " + this.cameraId + " JPEG output sizes: " + Arrays.toString(jpegSizes));
+                    for (Size size : jpegSizes) {
+                        Log.d(TAG, "Camera " + this.cameraId + " JPEG size: " +
+                            size.getWidth() + "x" + size.getHeight());
+                    }
+                }
                 if (jpegSizes == null || jpegSizes.length == 0) {
                     photoSession.notifyHostPhotoError("Camera doesn't support JPEG format");
                     stopSelf();
@@ -825,7 +840,6 @@ public class CameraNeoService extends LifecycleService {
                 // auto-exposed
                 // preview frames in the same buffer queue.
                 photoSession.setJpegSize(chosenJpeg);
-                photoSession.notifyPhotoConfigured(chosenJpeg, photoSession.previewJpegQuality());
                 photoSession.prepareStillReaders(filePath, chosenJpeg, backgroundHandler);
             }
 
@@ -1110,10 +1124,6 @@ public class CameraNeoService extends LifecycleService {
                 videoSession.stopRecording(videoSession.currentVideoId());
             }
             closeCamera();
-            if (mImuRecorder != null) {
-                mImuRecorder.release();
-                mImuRecorder = null;
-            }
             releaseWakeLocks();
 
             sInstance = null;

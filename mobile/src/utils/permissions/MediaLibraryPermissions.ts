@@ -3,6 +3,8 @@ import {check, request, PERMISSIONS, RESULTS} from "react-native-permissions"
 
 import CrustModule from "crust"
 
+import {deriveGalleryDisplayName} from "./galleryDisplayName"
+
 /**
  * MediaLibraryPermissions - Handles save-only permissions for camera roll
  *
@@ -100,10 +102,11 @@ export class MediaLibraryPermissions {
 
       // Remove file:// prefix if present
       const cleanPath = filePath.replace("file://", "")
+      const displayName = deriveGalleryDisplayName(cleanPath)
 
       // Use native module to save with proper DATE_TAKEN / creation date metadata
       // This ensures gallery apps show the correct capture date, not the sync date
-      const result = await CrustModule.saveToGalleryWithDate(cleanPath, creationTime)
+      const result = await CrustModule.saveToGalleryWithDate(cleanPath, creationTime, displayName)
 
       if (result.success) {
         if (creationTime) {

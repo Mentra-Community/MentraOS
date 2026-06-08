@@ -12,6 +12,7 @@ package com.mentra.asg_client.camera;
  * - medium: Good balance of quality and speed (SDK default)
  * - large: High quality for detailed analysis
  * - full: Native sensor resolution (SDK only, for apps that truly need max detail)
+ * - max: Highest JPEG size reported by camera hardware (button photos only)
  */
 public final class CameraConstants {
 
@@ -92,6 +93,7 @@ public final class CameraConstants {
     public static final String SIZE_MEDIUM = "medium";
     public static final String SIZE_LARGE = "large";
     public static final String SIZE_FULL = "full";
+    public static final String SIZE_MAX = "max";
 
     // =========================================================================
     // EXPECTED FILE SIZES (approximate, for documentation)
