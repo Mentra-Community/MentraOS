@@ -21,7 +21,9 @@ data class MicPcmEvent(
         bitsPerSample = numberValue(values, "bitsPerSample") ?: BITS_PER_SAMPLE,
         channels = numberValue(values, "channels") ?: CHANNELS,
         encoding = stringValue(values, "encoding") ?: ENCODING,
-        voiceActivityDetectionEnabled = boolValue(values, "voiceActivityDetectionEnabled") ?: true,
+        voiceActivityDetectionEnabled =
+            boolValue(values, "voiceActivityDetectionEnabled")
+                ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED,
     )
 
     fun toMap(): Map<String, Any> =
@@ -63,7 +65,9 @@ data class MicLc3Event(
         frameSizeBytes = numberValue(values, "frameSizeBytes") ?: DEFAULT_FRAME_SIZE_BYTES,
         bitrate = numberValue(values, "bitrate") ?: DEFAULT_BITRATE,
         packetizedFromGlasses = boolValue(values, "packetizedFromGlasses") ?: false,
-        voiceActivityDetectionEnabled = boolValue(values, "voiceActivityDetectionEnabled") ?: true,
+        voiceActivityDetectionEnabled =
+            boolValue(values, "voiceActivityDetectionEnabled")
+                ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED,
     )
 
     fun toMap(): Map<String, Any> =

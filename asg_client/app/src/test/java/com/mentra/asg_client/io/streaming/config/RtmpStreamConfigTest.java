@@ -83,14 +83,14 @@ public class RtmpStreamConfigTest {
         low.put("frameRate", 1);
         RtmpStreamConfig c = RtmpStreamConfig.fromJson(low, null);
         assertEquals(100_000, c.getVideoBitrate());
-        assertEquals(10, c.getVideoFps());
+        assertEquals(5, c.getVideoFps());
 
         JSONObject high = new JSONObject();
         high.put("bitrate", 100_000_000);
         high.put("frameRate", 240);
         c = RtmpStreamConfig.fromJson(high, null);
         assertEquals(10_000_000, c.getVideoBitrate());
-        assertEquals(60, c.getVideoFps());
+        assertEquals(30, c.getVideoFps());
     }
 
     @Test

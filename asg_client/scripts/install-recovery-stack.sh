@@ -9,7 +9,7 @@ RECOVERY_DIR="$ROOT/recovery_worker"
 ASG_APK="$ROOT/app/build/outputs/apk/debug/app-debug.apk"
 RECOVERY_APK="$RECOVERY_DIR/app/build/outputs/apk/release/app-release.apk"
 
-if ! adb devices | awk 'NR>1 && $2 ~ /^device/{exit 0} END{exit 1}'; then
+if ! adb devices | awk 'NR>1 && $2 ~ /^device/{found=1; exit} END{exit !found}'; then
   echo "ERROR: No ADB device. Connect glasses with Infinity Cable, then retry." >&2
   exit 1
 fi

@@ -121,6 +121,18 @@ class BluetoothSdkModule : Module() {
                     sendEvent("keep_alive_ack", event.values)
                 }
 
+                override fun onOtaUpdateAvailable(event: OtaUpdateAvailableEvent) {
+                    sendEvent("ota_update_available", event.values)
+                }
+
+                override fun onOtaStartAck(event: OtaStartAckEvent) {
+                    sendEvent("ota_start_ack", event.values)
+                }
+
+                override fun onOtaStatus(event: OtaStatusEvent) {
+                    sendEvent("ota_status", event.values)
+                }
+
                 override fun onMicPcm(event: MicPcmEvent) {
                     sendEvent("mic_pcm", event.toMap())
                 }
@@ -458,8 +470,8 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("stopStream") { sdk?.stopStream() }
 
-        AsyncFunction("keepStreamAlive") { params: Map<String, Any> ->
-            sdk?.keepStreamAlive(StreamKeepAliveRequest.fromMap(params))
+        AsyncFunction("sendExternallyManagedStreamKeepAlive") { params: Map<String, Any> ->
+            sdk?.sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest.fromMap(params))
         }
 
         // MARK: - Microphone Commands

@@ -1,21 +1,17 @@
-package com.mentra.asg_client.io.bluetooth.core;
+package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
 
 import android.content.Context;
 import android.util.Log;
-
 import com.lhs.serialport.api.SerialManager;
-import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import com.mentra.asg_client.io.bes.BesOtaUartListener;
-
+import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-/**
- * Manager for serial communication with the BES2700 Bluetooth module in K900 devices.
- */
-public class ComManager {
-    private static final String TAG = "ComManager";
+/** Manager for serial communication with the BES2700 Bluetooth module in K900 devices. */
+public class SerialPortBridge {
+    private static final String TAG = "SerialPortBridge";
 
     // Serial port configuration - matches the K900 SDK
     private static final String COM_PATH = "/dev/ttyS1";
@@ -33,11 +29,11 @@ public class ComManager {
     public boolean mbOtaUpdating = false;
 
     /**
-     * Create a new ComManager
+     * Create a new SerialPortBridge
      *
      * @param context The application context
      */
-    public ComManager(Context context) {
+    public SerialPortBridge(Context context) {
         mContext = context;
     }
 
@@ -65,14 +61,12 @@ public class ComManager {
      * @return true if started successfully, false otherwise
      */
     public boolean start() {
-        if (mbStart)
-            return true;
+        if (mbStart) return true;
 
         boolean bSucc = SerialManager.getInstance().openSerial(COM_PATH, COM_BAUDRATE);
         Log.d(TAG, "openSerial dev=" + COM_PATH + ", bSucc=" + bSucc);
 
-        if (mListener != null)
-            mListener.onSerialOpen(bSucc, 0, COM_PATH, "");
+        if (mListener != null) mListener.onSerialOpen(bSucc, 0, COM_PATH, "");
 
         if (bSucc) {
             mbStart = true;
@@ -87,19 +81,16 @@ public class ComManager {
             mRecvThread = new RecvThread();
             mRecvThread.start();
 
-            if (mListener != null)
-                mListener.onSerialReady(COM_PATH);
+            if (mListener != null) mListener.onSerialReady(COM_PATH);
         }
 
         return bSucc;
     }
 
-    /**
-     * Stop the serial communication
-     */
+    /** Stop the serial communication */
     public void stop() {
         if (mbStart) {
-            Log.d(TAG, "ComManager stopping");
+            Log.d(TAG, "SerialPortBridge stopping");
             if (mRecvThread != null) {
                 mRecvThread.setStop();
                 mRecvThread.interrupt();
@@ -108,16 +99,14 @@ public class ComManager {
             SerialManager.getInstance().closeSerial(COM_PATH);
             mbStart = false;
 
-            if (mListener != null)
-                mListener.onSerialClose(COM_PATH);
+            if (mListener != null) mListener.onSerialClose(COM_PATH);
 
-            Log.d(TAG, "ComManager stopped");
+            Log.d(TAG, "SerialPortBridge stopped");
         }
     }
 
     /**
-     * Send data over the serial port
-     * Blocked during BES OTA updates
+     * Send data over the serial port Blocked during BES OTA updates
      *
      * @param data The data to send
      */
@@ -136,7 +125,12 @@ public class ComManager {
             if (mbOtaUpdating) {
                 Log.d(TAG, "Cannot send data - BES OTA in progress");
             } else {
-                Log.d(TAG, "Cannot send data - not started or output stream is null. mbStart=" + mbStart + ", mOS=" + mOS);
+                Log.d(
+                        TAG,
+                        "Cannot send data - not started or output stream is null. mbStart="
+                                + mbStart
+                                + ", mOS="
+                                + mOS);
             }
         }
 
@@ -144,8 +138,8 @@ public class ComManager {
     }
 
     /**
-     * Send file data over the serial port (without logging the data content)
-     * Blocked during BES OTA updates
+     * Send file data over the serial port (without logging the data content) Blocked during BES OTA
+     * updates
      *
      * @param data The file data to send
      */
@@ -162,7 +156,12 @@ public class ComManager {
             if (mbOtaUpdating) {
                 Log.d(TAG, "Cannot send file - BES OTA in progress");
             } else {
-                Log.d(TAG, "Cannot send file - not started or output stream is null. mbStart=" + mbStart + ", mOS=" + mOS);
+                Log.d(
+                        TAG,
+                        "Cannot send file - not started or output stream is null. mbStart="
+                                + mbStart
+                                + ", mOS="
+                                + mOS);
             }
         }
     }
@@ -178,8 +177,8 @@ public class ComManager {
     }
 
     /**
-     * Set BES OTA updating state
-     * When true, normal UART traffic is blocked and only OTA commands pass through
+     * Set BES OTA updating state When true, normal UART traffic is blocked and only OTA commands
+     * pass through
      *
      * @param bOtaUpdate true to enable OTA mode, false to return to normal mode
      */
@@ -189,8 +188,7 @@ public class ComManager {
     }
 
     /**
-     * Send OTA command data over UART
-     * Only works when mbOtaUpdating is true
+     * Send OTA command data over UART Only works when mbOtaUpdating is true
      *
      * @param data The OTA command data to send
      * @return true if sent successfully, false otherwise
@@ -205,20 +203,23 @@ public class ComManager {
                 Log.e(TAG, "Error writing OTA data to serial port: " + e.getMessage());
             }
         } else {
-            Log.e(TAG, "Cannot send OTA data - mbStart=" + mbStart + ", mOS=" + mOS + ", mbOtaUpdating=" + mbOtaUpdating);
+            Log.e(
+                    TAG,
+                    "Cannot send OTA data - mbStart="
+                            + mbStart
+                            + ", mOS="
+                            + mOS
+                            + ", mbOtaUpdating="
+                            + mbOtaUpdating);
         }
         return false;
     }
 
-
-    /**
-     * Thread for receiving data from the serial port
-     */
+    /** Thread for receiving data from the serial port */
     class RecvThread extends Thread {
         private boolean mbStop = false;
 
-        public RecvThread() {
-        }
+        public RecvThread() {}
 
         public void setStop() {
             mbStop = true;
@@ -251,7 +252,8 @@ public class ComManager {
 
                 try {
                     // Use fast mode (5ms) for file transfers, normal mode (50ms) otherwise
-                    // Note: Original K900_server_sdk used 150ms, but K900Server_common uses 50ms/5ms
+                    // Note: Original K900_server_sdk used 150ms, but K900Server_common uses
+                    // 50ms/5ms
                     Thread.sleep(mbRequestFast ? 5 : 50);
                 } catch (InterruptedException e) {
                     Log.e(TAG, "RecvThread interrupted", e);
@@ -262,4 +264,4 @@ public class ComManager {
             Log.d(TAG, "RecvThread exiting");
         }
     }
-} 
+}

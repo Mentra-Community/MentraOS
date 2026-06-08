@@ -16,13 +16,17 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import com.mentra.asg_client.di.hilt.AsgClientEntryPoint;
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.io.bes.BesOtaManager;
+import com.mentra.asg_client.io.bes.BesOtaRegistry;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
 import com.mentra.asg_client.io.ota.events.InstallationProgressEvent;
+import com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.FirmwareDownloadException;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.utils.SysProp;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.utils.WakeLockManager;
@@ -208,78 +212,10 @@ public class OtaHelper {
     private String lastOtaPhoneEventStatus;
     private String lastOtaPhoneError;
 
-    // ========== Singleton Pattern ==========
+    private final BesOtaRegistry besOtaRegistry;
 
-    private static volatile OtaHelper instance;
-
-    /** Notified when {@link #initialize(Context)} creates the singleton (e.g. from OtaService). */
-    public interface OnInitializedListener {
-        void onOtaHelperInitialized(OtaHelper helper);
-    }
-
-    private static final CopyOnWriteArrayList<OnInitializedListener> initializedListeners =
-            new CopyOnWriteArrayList<>();
-
-    /**
-     * Register for singleton creation. If already initialized, the listener is invoked immediately.
-     */
-    public static void addOnInitializedListener(OnInitializedListener listener) {
-        if (listener == null) {
-            return;
-        }
-        synchronized (OtaHelper.class) {
-            OtaHelper current = instance;
-            if (current != null) {
-                listener.onOtaHelperInitialized(current);
-            } else {
-                initializedListeners.add(listener);
-            }
-        }
-    }
-
-    public static void removeOnInitializedListener(OnInitializedListener listener) {
-        synchronized (OtaHelper.class) {
-            initializedListeners.remove(listener);
-        }
-    }
-
-    private static void notifyInitialized(OtaHelper helper) {
-        for (OnInitializedListener listener : initializedListeners) {
-            try {
-                listener.onOtaHelperInitialized(helper);
-            } catch (Exception e) {
-                Log.e(TAG, "OnInitializedListener callback failed", e);
-            }
-        }
-        initializedListeners.clear();
-    }
-
-    /**
-     * Get the singleton instance of OtaHelper. Must call initialize(Context) first.
-     *
-     * @return The OtaHelper instance, or null if not initialized
-     */
-    public static OtaHelper getInstance() {
-        return instance;
-    }
-
-    /**
-     * Initialize the singleton instance. Should be called once during app startup (e.g., from
-     * OtaService).
-     *
-     * @param context Application context
-     * @return The OtaHelper instance
-     */
-    public static synchronized OtaHelper initialize(Context context) {
-        if (instance == null) {
-            instance = new OtaHelper(context);
-            Log.i(TAG, "OtaHelper singleton initialized");
-            notifyInitialized(instance);
-        }
-        return instance;
-    }
-
-    public OtaHelper(Context context) {
+    public OtaHelper(Context context, BesOtaRegistry besOtaRegistry) {
+        this.besOtaRegistry = besOtaRegistry;
         this.context =
                 context.getApplicationContext(); // Use application context to avoid memory leaks
         handler = new Handler(Looper.getMainLooper());
@@ -2832,7 +2768,7 @@ public class OtaHelper {
             }
 
             Log.i(TAG, "BES firmware ready - starting install phase");
-            BesOtaManager manager = BesOtaManager.getInstance();
+            BesOtaManager manager = besOtaRegistry.getInstance();
             if (manager != null) {
                 Log.i(TAG, "Starting BES firmware update from: " + OtaConstants.BES_FIRMWARE_PATH);
                 boolean started = manager.startFirmwareUpdate(OtaConstants.BES_FIRMWARE_PATH);
@@ -3167,7 +3103,7 @@ public class OtaHelper {
                                 TAG,
                                 "Starting MTK firmware update from: "
                                         + OtaConstants.MTK_FIRMWARE_PATH);
-                        com.mentra.asg_client.service.system.core.SystemControllerFactory.get(ctx)
+                        SystemControllerFactory.get(ctx)
                                 .installSystemOta(OtaConstants.MTK_FIRMWARE_PATH);
                         Log.i(
                                 TAG,
@@ -4024,12 +3960,10 @@ public class OtaHelper {
             isMtkOtaInProgress = true;
 
             // Post started event
-            EventBus.getDefault()
-                    .post(com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent.createStarted());
+            EventBus.getDefault().post(MtkOtaProgressEvent.createStarted());
 
             // Trigger MTK OTA installation via system broadcast
-            com.mentra.asg_client.service.system.core.SystemControllerFactory.get(context)
-                    .installSystemOta(OtaConstants.MTK_FIRMWARE_PATH);
+            SystemControllerFactory.get(context).installSystemOta(OtaConstants.MTK_FIRMWARE_PATH);
 
             Log.i(
                     TAG,
@@ -4057,6 +3991,10 @@ public class OtaHelper {
      */
     public static boolean debugInstallBesFirmware(Context context) {
         try {
+            BesOtaRegistry registry =
+                    dagger.hilt.android.EntryPointAccessors.fromApplication(
+                                    context.getApplicationContext(), AsgClientEntryPoint.class)
+                            .besOtaRegistry();
             // Check if BES OTA is already in progress - don't interrupt it!
             if (BesOtaManager.isBesOtaInProgress) {
                 Log.w(TAG, "DEBUG: BES OTA already in progress - skipping to avoid interruption");
@@ -4080,7 +4018,7 @@ public class OtaHelper {
             Log.w(TAG, "⚠️ DEBUG: Skipping all checks - version, mutual exclusion, SHA256");
 
             // Get BesOtaManager singleton
-            BesOtaManager manager = BesOtaManager.getInstance();
+            BesOtaManager manager = registry.getInstance();
             if (manager == null) {
                 Log.e(TAG, "DEBUG: BesOtaManager not available - is this a K900 device?");
                 return false;
