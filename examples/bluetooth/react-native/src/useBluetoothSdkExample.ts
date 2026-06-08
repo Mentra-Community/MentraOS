@@ -145,6 +145,10 @@ export type PhotoPreviewDetails = {
   uploadedAt?: string;
   width?: number;
 };
+
+type PhotoResponseWithMetadata = PhotoResponseEvent & {
+  fileSizeBytes?: number;
+};
 export type BarcodeScanDetails = {
   barcodes: BarcodeScanResult[];
   error?: string;
@@ -1240,30 +1244,31 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   function handlePhotoResponse(payload: PhotoResponseEvent) {
+    const response = payload as PhotoResponseWithMetadata;
     const activeRequestId = activePhotoRequestIdRef.current;
-    if (activeRequestId && payload.requestId !== activeRequestId) {
-      addEvent('LIVE', `ignoring stale photo ${payload.requestId}`);
+    if (activeRequestId && response.requestId !== activeRequestId) {
+      addEvent('LIVE', `ignoring stale photo ${response.requestId}`);
       return;
     }
-    if (payload.state === 'error') {
+    if (response.state === 'error') {
       setPhotoStatus({
         type: 'photo_status',
-        requestId: payload.requestId,
+        requestId: response.requestId,
         status: 'failed',
-        timestamp: payload.timestamp,
-        errorCode: payload.errorCode,
-        errorMessage: payload.errorMessage,
+        timestamp: response.timestamp,
+        errorCode: response.errorCode,
+        errorMessage: response.errorMessage,
       });
       setPhotoPreviewDetails({
-        error: payload.errorCode ?? payload.errorMessage,
-        requestId: payload.requestId,
+        error: response.errorCode ?? response.errorMessage,
+        requestId: response.requestId,
         source: photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver',
         state: 'error',
-        timestamp: payload.timestamp,
+        timestamp: response.timestamp,
       });
       resetBarcodeScan();
-      setCameraStatus(`Camera: photo failed (${payload.errorCode ?? payload.errorMessage})`);
-      addEvent('LIVE', `photo response ${payload.errorCode ?? payload.errorMessage}`);
+      setCameraStatus(`Camera: photo failed (${response.errorCode ?? response.errorMessage})`);
+      addEvent('LIVE', `photo response ${response.errorCode ?? response.errorMessage}`);
       return;
     }
     setCameraStatus(
@@ -1273,13 +1278,16 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     );
     setPhotoPreviewDetails((current) => ({
       ...current,
-      requestId: payload.requestId,
+      byteCount: typeof response.fileSizeBytes === 'number' ? response.fileSizeBytes : current?.byteCount,
+      contentType: response.contentType ?? current?.contentType,
+      previewUrl: response.photoUrl ?? current?.previewUrl,
+      requestId: response.requestId,
       source: photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver',
-      state: current?.state === 'preview' ? 'preview' : 'acknowledged',
-      timestamp: payload.timestamp,
-      uploadUrl: payload.uploadUrl,
+      state: current?.state === 'preview' || response.photoUrl ? 'preview' : 'acknowledged',
+      timestamp: response.timestamp,
+      uploadUrl: response.uploadUrl,
     }));
-    addEvent('LIVE', `photo response ${payload.requestId}`);
+    addEvent('LIVE', `photo response ${response.requestId}`);
   }
 
   async function pollPhotoPreview(
@@ -1301,8 +1309,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         });
         if (response.ok) {
           const json = (await response.json()) as {
-            bytes?: number;
             contentType?: string;
+            fileSizeBytes?: number;
             photoUrl?: string;
             requestId?: string;
             uploadedAt?: string;
@@ -1315,7 +1323,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
               bleFallbackMessage: current?.bleFallbackUsed
                 ? 'Wi-Fi upload failed; photo was compressed and delivered through Bluetooth.'
                 : current?.bleFallbackMessage,
-              byteCount: typeof json.bytes === 'number' ? json.bytes : current?.byteCount,
+              byteCount: typeof json.fileSizeBytes === 'number' ? json.fileSizeBytes : current?.byteCount,
               contentType: json.contentType ?? current?.contentType,
               previewUrl: json.photoUrl,
               requestId: json.requestId ?? requestId,
