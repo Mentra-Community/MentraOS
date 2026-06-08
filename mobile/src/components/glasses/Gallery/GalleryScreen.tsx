@@ -518,7 +518,7 @@ export function GalleryScreen() {
 
   // Handle sync button press - delegate to service
   const handleSyncPress = () => {
-    if (gallerySyncService.isSyncing()) {
+    if (gallerySyncService.isSyncing() || gallerySyncService.isSyncStarting()) {
       console.log("[GalleryScreen] Already syncing, ignoring press")
       return
     }

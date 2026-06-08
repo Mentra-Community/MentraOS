@@ -51,7 +51,9 @@ function getNitroTimer(): NitroTimerApi | null {
     nitroTimer =
       BackgroundTimer &&
       typeof BackgroundTimer.setTimeout === "function" &&
-      typeof BackgroundTimer.setInterval === "function"
+      typeof BackgroundTimer.setInterval === "function" &&
+      typeof BackgroundTimer.clearTimeout === "function" &&
+      typeof BackgroundTimer.clearInterval === "function"
         ? BackgroundTimer
         : null
   } catch {

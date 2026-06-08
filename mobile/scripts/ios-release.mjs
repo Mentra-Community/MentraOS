@@ -13,39 +13,43 @@ await $({stdio: "inherit"})`cp .env ios/.xcode.env.local`
 // Sync CocoaPods after prebuild so new native source files are compiled
 await $({stdio: "inherit", cwd: "ios"})`pod install`
 
-// Get connected iOS devices via devicectl
-const tmpFile = `/tmp/devicectl-${Date.now()}.json`
-await $`xcrun devicectl list devices --json-output ${tmpFile} --timeout 5`
-const json = JSON.parse(await fs.readFile(tmpFile, "utf-8"))
-await fs.remove(tmpFile)
-
-const device =
-  json.result?.devices?.find(
-    (d) => d.capabilities?.some((c) => c.name === "iPhone") || d.deviceProperties?.marketingName?.includes("iPhone"),
-  ) &&
-  json.result.devices.find(
-    (d) =>
-      (d.capabilities?.some((c) => c.name === "iPhone") || d.deviceProperties?.marketingName?.includes("iPhone")) &&
-      d.connectionProperties?.tunnelState === "connected",
+function isConnectedIphone(device) {
+  return (
+    (device.capabilities?.some((c) => c.name === "iPhone") ||
+      device.deviceProperties?.marketingName?.includes("iPhone")) &&
+    device.connectionProperties?.tunnelState === "connected"
   )
+}
 
-if (!device) {
-  // Fallback: find any available paired iPhone
-  const available = json.result?.devices?.find(
-    (d) =>
-      d.hardwareProperties?.deviceType === "iPhone" &&
-      d.connectionProperties?.pairingState === "paired" &&
-      d.connectionProperties?.tunnelState !== "unavailable",
-  )
-  if (!available) {
-    console.log("No physical iPhone connected — building release for iOS Simulator")
-    await $({stdio: "inherit"})`bun expo run:ios --configuration Release --no-bundler`
-    console.log("✅ iOS release built and installed on Simulator!")
-    process.exit(0)
+async function listDevicesViaDevicectl() {
+  const tmpFile = `/tmp/devicectl-${Date.now()}.json`
+  try {
+    await $`xcrun devicectl list devices --json-output ${tmpFile} --timeout 5`
+    const json = JSON.parse(await fs.readFile(tmpFile, "utf-8"))
+    return json.result?.devices ?? []
+  } catch (error) {
+    console.warn("devicectl probe failed, falling back to simulator:", error?.message ?? error)
+    return null
+  } finally {
+    await fs.remove(tmpFile).catch(() => {})
   }
-  var deviceName = available.deviceProperties.name
-} else {
-  var deviceName = device.deviceProperties.name
+}
+
+const devices = await listDevicesViaDevicectl()
+
+let deviceName
+if (devices) {
+  const device = devices.find(isConnectedIphone)
+  if (device) {
+    deviceName = device.deviceProperties.name
+  }
+}
+
+if (!deviceName) {
+  console.log("No physical iPhone connected — building release for iOS Simulator")
+  await $({stdio: "inherit"})`bun expo run:ios --configuration Release --no-bundler`
+  console.log("✅ iOS release built and installed on Simulator!")
+  process.exit(0)
 }
 
 console.log(`Using device: ${deviceName}`)

@@ -77,6 +77,7 @@ class GallerySyncService {
   private lastFullSyncRetryKey: string | null = null
   private wifiSettingsOpenedAt: number | null = null // Timestamp when user was sent to WiFi settings
   private syncStartPromise: Promise<void> | null = null
+  private startAborted = false
 
   private constructor() {}
 
@@ -159,6 +160,13 @@ class GallerySyncService {
    */
   private handleGlassesDisconnected = (): void => {
     const store = useGallerySyncStore.getState()
+
+    // Pre-flight has no sync state yet — abort quietly; runStartSync checks this flag after awaits
+    if (this.syncStartPromise && !this.isSyncing()) {
+      console.log("[GallerySyncService] Glasses disconnected during pre-flight — aborting start")
+      this.startAborted = true
+      return
+    }
 
     // Only handle if we're actively syncing
     if (!this.isSyncing()) {
@@ -367,6 +375,17 @@ class GallerySyncService {
     return this.syncStartPromise
   }
 
+  private shouldAbortPreFlight(): boolean {
+    if (this.startAborted) {
+      this.startAborted = false
+      return true
+    }
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) {
+      return true
+    }
+    return false
+  }
+
   private async runStartSync(): Promise<void> {
     console.log("[GallerySyncService] ========================================")
     console.log("[GallerySyncService] 🚀 SYNC START INITIATED")
@@ -396,6 +415,10 @@ class GallerySyncService {
 
     // Reuse shared connectivity gate (BT + Android location); shows the right alert if not ready
     const connectivityOk = await checkConnectivityRequirementsUI()
+    if (this.shouldAbortPreFlight()) {
+      console.log("[GallerySyncService] Pre-flight aborted after connectivity check")
+      return
+    }
     if (!connectivityOk) {
       console.warn("[GallerySyncService] Sync aborted - connectivity requirements not met")
       store.setSyncError("Connectivity requirements not met")
@@ -2167,13 +2190,16 @@ class GallerySyncService {
     }
   }
 
+  /** True while pre-flight startSync work is in flight (before sync state transitions). */
+  isSyncStarting(): boolean {
+    return this.syncStartPromise !== null
+  }
+
   /**
-   * Check if sync is currently in progress
+   * Check if sync is currently in progress (hotspot/WiFi/download phases).
+   * Does not include pre-flight — use isSyncStarting() for that.
    */
   isSyncing(): boolean {
-    if (this.syncStartPromise) {
-      return true
-    }
     const store = useGallerySyncStore.getState()
     return (
       store.syncState === "syncing" || store.syncState === "connecting_wifi" || store.syncState === "requesting_hotspot"

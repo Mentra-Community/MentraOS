@@ -211,6 +211,31 @@ describe("GallerySyncService", () => {
     expect(BluetoothSdk.setHotspotState).toHaveBeenCalledWith(true)
   })
 
+  it("aborts pre-flight quietly when glasses disconnect before sync state advances", async () => {
+    const {checkConnectivityRequirementsUI} = require("@/utils/PermissionsUtils")
+    let resolveConnectivity: (() => void) | null = null
+    ;(checkConnectivityRequirementsUI as jest.Mock).mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveConnectivity = () => resolve(true)
+        }),
+    )
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+
+    const startPromise = gallerySyncService.startSync()
+    expect(gallerySyncService.isSyncStarting()).toBe(true)
+    expect(gallerySyncService.isSyncing()).toBe(false)
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+
+    resolveConnectivity?.()
+    await startPromise
+
+    expect(useGallerySyncStore.getState().syncState).toBe("idle")
+    expect(useGallerySyncStore.getState().lastError).toBeNull()
+  })
+
   it("coalesces concurrent startSync calls into a single pre-flight attempt", async () => {
     const {checkConnectivityRequirementsUI} = require("@/utils/PermissionsUtils")
     let resolveConnectivity: (() => void) | null = null
@@ -226,7 +251,7 @@ describe("GallerySyncService", () => {
     const first = gallerySyncService.startSync()
     const second = gallerySyncService.startSync()
 
-    expect(gallerySyncService.isSyncing()).toBe(true)
+    expect(gallerySyncService.isSyncStarting()).toBe(true)
     expect(checkConnectivityRequirementsUI).toHaveBeenCalledTimes(1)
 
     resolveConnectivity?.()
