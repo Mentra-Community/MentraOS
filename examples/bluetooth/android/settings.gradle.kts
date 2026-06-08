@@ -6,6 +6,10 @@ pluginManagement {
     }
 }
 val mentraBluetoothSdkRoot = providers.environmentVariable("MENTRA_BLUETOOTH_SDK_PACKAGE_PATH").orNull
+val useMavenLocal = providers.gradleProperty("mentraUseMavenLocal")
+    .map(String::toBoolean)
+    .orElse(false)
+    .get()
 
 dependencyResolutionManagement {
     repositoriesMode.set(
@@ -19,10 +23,11 @@ dependencyResolutionManagement {
         if (!mentraBluetoothSdkRoot.isNullOrBlank()) {
             maven(file("$mentraBluetoothSdkRoot/android/libs/maven"))
         }
-        mavenLocal()
+        if (!mentraBluetoothSdkRoot.isNullOrBlank() || useMavenLocal) {
+            mavenLocal()
+        }
         google()
         mavenCentral()
-        maven("https://www.jitpack.io")
     }
 }
 

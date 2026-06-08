@@ -17,7 +17,7 @@ This example installs the SDK as `com.mentraglass:bluetooth-sdk` and is intended
 The example reads the SDK version from `gradle.properties`:
 
 ```properties
-mentraSdkVersion=0.1.7
+mentraSdkVersion=0.1.10
 ```
 
 Use the latest SDK version published by Mentra. If a future release note lists an additional Maven repository, add it to `settings.gradle.kts` beside `google()` and `mavenCentral()`.
@@ -72,10 +72,12 @@ cd /path/to/MentraOS/mobile/android
 ./gradlew :lc3Lib:publishToMavenLocal :mentra-bluetooth-sdk:publishToMavenLocal
 
 cd /path/to/mentra-bluetooth-sdk-starter-kit/examples/android
-./gradlew installDebug
+./gradlew installDebug -PmentraUseMavenLocal=true
 ```
 
-`settings.gradle.kts` already includes `mavenLocal()` so the local artifact overrides the published version when the version numbers match.
+`settings.gradle.kts` only includes `mavenLocal()` when explicitly requested,
+so the default command line path validates the published Maven Central
+artifacts instead of a stale local copy.
 
 ## App Walkthrough
 
@@ -123,4 +125,4 @@ adb -s <glasses-serial> logcat -v threadtime | rg -i "WhipStreamingService|WHIP|
 - `app/src/main/java/com/mentra/examples/android/screens/`: Compose screens for the five tabs.
 - `app/src/main/java/com/mentra/examples/android/media/`: direct phone photo and WebRTC receivers.
 - `app/build.gradle.kts`: SDK, Compose, Media3, Coil, GStreamer, and coroutine dependencies.
-- `settings.gradle.kts`: Maven repositories, including `mavenLocal()` for SDK development.
+- `settings.gradle.kts`: Maven repositories for public and local SDK development.

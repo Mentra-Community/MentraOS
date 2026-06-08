@@ -68,14 +68,14 @@ Add the public Swift package in Xcode or `Package.swift`:
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Use version `0.1.7` or newer, then add the `MentraBluetoothSDK` product to your app target.
+Use version `0.1.10` or newer, then add the `MentraBluetoothSDK` product to your app target.
 
 For `Package.swift` consumers:
 
 ```swift
 .package(
   url: "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git",
-  from: "0.1.7"
+  from: "0.1.10"
 )
 ```
 

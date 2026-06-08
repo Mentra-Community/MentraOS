@@ -5,7 +5,7 @@
     "": {
       "name": "mentra-bluetooth-sdk-example",
       "dependencies": {
-        "@mentra/bluetooth-sdk": "0.1.9",
+        "@mentra/bluetooth-sdk": "0.1.10",
         "@mentra/react-native-barcode-scanner": "file:modules/mentra-barcode-scanner",
         "@mentra/react-native-video-stream-receiver": "file:modules/mentra-video-stream-receiver",
         "expo": "~55.0.24",
@@ -299,7 +299,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@mentra/bluetooth-sdk": ["@mentra/bluetooth-sdk@0.1.9", "", { "peerDependencies": { "@expo/config-plugins": ">=8.0.0", "@types/react": ">=18.0.0", "expo": ">=49.0.0", "react": ">=18.0.0", "react-native": ">=0.72.0" } }, "sha512-WC2RloWf2W8EKTaVrimDm3ZZy34w9e1B2bAIthVxtKq8lkbjNDGWbbY/FSwxKhcBpq+go0tYQqrCSbAdXoPt/w=="],
+    "@mentra/bluetooth-sdk": ["@mentra/bluetooth-sdk@0.1.10", "", { "peerDependencies": { "@expo/config-plugins": ">=8.0.0", "@types/react": ">=18.0.0", "expo": ">=49.0.0", "react": ">=18.0.0", "react-native": ">=0.72.0" } }, "sha512-pv5yps/rJRG79fUVDRbFCOiTD5D/zl6IzodLPJ6CHtPsxbZ6TW6J2NDfdt/VkNzXOI1Q2875/9zFuO3TLXnR4Q=="],
 
     "@mentra/react-native-barcode-scanner": ["@mentra/react-native-barcode-scanner@file:modules/mentra-barcode-scanner", { "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }],
 

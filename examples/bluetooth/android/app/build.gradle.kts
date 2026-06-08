@@ -71,8 +71,6 @@ android {
     packaging {
         jniLibs {
             pickFirsts += "**/libc++_shared.so"
-            pickFirsts += "**/libonnxruntime.so"
-            pickFirsts += "**/libonnxruntime4j_jni.so"
         }
     }
 }

@@ -1870,7 +1870,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         let uploadTarget = photoDestination == .thisPhone ? "phone receiver" : "cloud webhook"
         let source = photoDestination == .thisPhone ? "Phone receiver" : "Cloud server"
         switch response {
-        case let .success(requestId, uploadUrl, _, _, _, _, _, _, timestamp):
+        case let .success(requestId, uploadUrl, _, _, _, _, timestamp):
             photoPreviewDetails = (photoPreviewDetails ?? .waiting(source: source)).acknowledged(
                 requestId: requestId,
                 source: source,
