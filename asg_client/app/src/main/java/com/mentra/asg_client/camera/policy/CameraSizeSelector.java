@@ -49,4 +49,31 @@ public final class CameraSizeSelector {
 
         return bestSize;
     }
+
+    /** Returns the supported size with the largest pixel count (width × height). */
+    public static Size largestSize(Size[] choices) {
+        if (choices == null || choices.length == 0) {
+            Log.w(TAG, "No size choices available");
+            return null;
+        }
+
+        Size largest = choices[0];
+        long largestPixels = (long) largest.getWidth() * largest.getHeight();
+        for (int i = 1; i < choices.length; i++) {
+            Size option = choices[i];
+            long pixels = (long) option.getWidth() * option.getHeight();
+            if (pixels > largestPixels) {
+                largest = option;
+                largestPixels = pixels;
+            }
+        }
+
+        Log.i(
+                TAG,
+                "Selected largest JPEG size: "
+                        + largest.getWidth()
+                        + "x"
+                        + largest.getHeight());
+        return largest;
+    }
 }
