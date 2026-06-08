@@ -1844,13 +1844,13 @@ public class OtaHelper {
                             + ", installedLastUpdateMs="
                             + installed.lastUpdateTime
                             + ")");
-            initialize(appContext).createAppBackup("com.mentra.asg_client", appContext);
+            createAppBackup("com.mentra.asg_client", appContext);
         } catch (Exception e) {
             Log.e(TAG, "Failed to ensure recovery backup", e);
         }
     }
 
-    private void createAppBackup(String packageName, Context context) {
+    private static void createAppBackup(String packageName, Context context) {
         // Only backup ASG client - OTA updater can be restored from ASG client assets
         if (!packageName.equals("com.mentra.asg_client")) {
             Log.d(TAG, "Skipping backup for " + packageName + " (can be restored from assets)");
@@ -1915,7 +1915,7 @@ public class OtaHelper {
         }
     }
 
-    private File resolveInstallableBackupSource(PackageManager pm, PackageInfo installedInfo) {
+    private static File resolveInstallableBackupSource(PackageManager pm, PackageInfo installedInfo) {
         File installedApk = new File(installedInfo.applicationInfo.sourceDir);
         if (!isTestOnlyApk(pm, installedApk.getAbsolutePath())) {
             return installedApk;
@@ -1934,7 +1934,7 @@ public class OtaHelper {
         return null;
     }
 
-    private boolean isValidAsgArchiveForBackup(
+    private static boolean isValidAsgArchiveForBackup(
             PackageManager pm, String apkPath, PackageInfo installedInfo) {
         PackageInfo archiveInfo =
                 pm.getPackageArchiveInfo(
@@ -1950,7 +1950,7 @@ public class OtaHelper {
         return !installedSigners.isEmpty() && archiveSigners.equals(installedSigners);
     }
 
-    private Set<String> getSignerDigests(PackageInfo info) {
+    private static Set<String> getSignerDigests(PackageInfo info) {
         Set<String> digests = new TreeSet<>();
         try {
             Signature[] signers = null;
@@ -2006,7 +2006,7 @@ public class OtaHelper {
         Log.d(TAG, "Notified recovery worker: install completed");
     }
 
-    private boolean isTestOnlyApk(PackageManager pm, String apkPath) {
+    private static boolean isTestOnlyApk(PackageManager pm, String apkPath) {
         PackageInfo archiveInfo =
                 pm.getPackageArchiveInfo(
                         apkPath, PackageManager.GET_SIGNING_CERTIFICATES);
@@ -2019,7 +2019,7 @@ public class OtaHelper {
         return (appInfo.flags & ApplicationInfo.FLAG_TEST_ONLY) != 0;
     }
 
-    private void copyFile(File source, File destination) throws IOException {
+    private static void copyFile(File source, File destination) throws IOException {
         try (FileInputStream fis = new FileInputStream(source);
                 FileOutputStream fos = new FileOutputStream(destination)) {
             byte[] buffer = new byte[8192];
