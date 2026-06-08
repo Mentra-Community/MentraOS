@@ -236,6 +236,71 @@ describe("Connection reconnect robustness", () => {
     conn.close();
   });
 
+  test("each (re)connect's connection.init carries the live initPayload (initialSubscriptions)", async () => {
+    // Regression: a reconnect's new cloud session is brand-new and starts with an
+    // empty subscription set. If `connection.init` does not carry the live
+    // subscriptions, the reconnected session has audio but no transcription
+    // provider until a follow-up REST resend lands — and that resend's
+    // control-stream nudge can be missed by the new owner pod's just-created
+    // consumer group. So the init payload MUST carry the current set on EVERY
+    // (re)open. Here `initPayload` reads a mutable holder, exactly as the real
+    // client reads `subscriptions.currentSet()`; we assert both the initial and
+    // the reconnect handshake frames carry it.
+    const first = new FakeSocket();
+    const second = new FakeSocket();
+
+    // Stand-in for the live subscription set the real `initPayload` reads.
+    const liveSubs = [
+      { kind: "transcription", language: { mode: "specific", code: "en-US" } },
+    ] as unknown as NonNullable<
+      NonNullable<ConnectionInit["audio"]>["initialSubscriptions"]
+    >;
+
+    let created = 0;
+    const ws = (_url: string): WebSocketLike => {
+      const socket = [first, second][created] ?? new FakeSocket();
+      created += 1;
+      return socket;
+    };
+    const conn = new Connection({
+      ws,
+      url: "wss://example.test/ws",
+      getToken: async () => "test-token",
+      // Factory re-read on every open, mirroring client.ts.
+      initPayload: () => ({
+        protocolVersion: "2.0.0",
+        audio: { codec: "lc3", sampleRate: 16000, initialSubscriptions: liveSubs },
+      }),
+      reconnect: FAST_RECONNECT,
+      logger: noopLogger,
+    });
+
+    const readInit = (sock: FakeSocket): ConnectionInit => {
+      const frame = sock.sent
+        .map((s) => JSON.parse(s) as { type: string; payload: ConnectionInit })
+        .find((m) => m.type === "connection.init");
+      if (!frame) throw new Error("no connection.init frame was sent");
+      return frame.payload;
+    };
+
+    // Initial connect.
+    const opened = conn.open();
+    await wait(5);
+    first.driveSuccessfulHandshake(SAMPLE_ACK);
+    await opened;
+    expect(readInit(first).audio?.initialSubscriptions).toEqual(liveSubs);
+
+    // Reconnect: the new handshake must also carry the live set.
+    first.closeCb?.({ code: 1006, reason: "abnormal" });
+    await wait(40);
+    expect(created).toBe(2);
+    second.driveSuccessfulHandshake({ ...SAMPLE_ACK, sessionId: "s2" });
+    await wait(5);
+    expect(readInit(second).audio?.initialSubscriptions).toEqual(liveSubs);
+
+    conn.close();
+  });
+
   test("close() stops the reconnect loop", async () => {
     const first = new FakeSocket();
     const { conn, createdCount } = makeConnection({ sockets: [first] });

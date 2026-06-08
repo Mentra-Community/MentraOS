@@ -157,20 +157,36 @@ export class CloudClient {
       logger,
     });
 
+    const emitter = new RuntimeEmitter();
+    const subscriptions = new Subscriptions({ http: runtimeHttp });
+
     // The handshake payload the connection sends on every (re)open. It is a
     // factory (not a fixed value) so each reconnect re-reads the current defaults
     // rather than reusing a stale snapshot. The token is omitted here: the
     // connection attaches the live access token itself via `getToken`, so the
     // payload never carries a credential that could go stale between reopens.
+    //
+    // `initialSubscriptions` carries the LIVE subscription set on every reopen so
+    // the cloud seeds the new session's subscription key non-empty at handshake.
+    // Without this a reconnect's new (stateless) cloud session starts with an
+    // empty set and depends entirely on the follow-up REST resend's control-stream
+    // nudge — which the new owner pod's just-created `$`-positioned consumer group
+    // can miss, leaving the session with audio but no transcription provider. By
+    // riding the set in `connection.init`, the seed + the cloud's in-process
+    // post-seed reconcile (which reads the key directly, not the stream) brings
+    // providers up atomically with the session. On the very first connect the set
+    // is empty (no `set()` has run yet) and the first `setSubscriptions` REST call
+    // applies it; on every reconnect it is the live set.
     const initPayload = (): ConnectionInit => ({
       protocolVersion: PROTOCOL_VERSION,
       audio: {
         codec: config.audio?.codec ?? DEFAULT_AUDIO_CODEC,
         sampleRate: config.audio?.sampleRate ?? DEFAULT_AUDIO_SAMPLE_RATE,
+        initialSubscriptions: subscriptions.currentSet(),
       },
     });
 
-    // Build the runtime's five pieces, then the runtime that orchestrates them.
+    // Build the remaining runtime pieces, then the runtime that orchestrates them.
     const connection = new Connection({
       ws: config.transports.ws,
       url: toRuntimeWsUrl(runtimeUrl),
@@ -179,8 +195,6 @@ export class CloudClient {
       reconnect,
       logger,
     });
-    const emitter = new RuntimeEmitter();
-    const subscriptions = new Subscriptions({ http: runtimeHttp });
     const camera = new Camera({ http: runtimeHttp });
     const audio = new UdpAudio({ udp: config.transports.udp });
 

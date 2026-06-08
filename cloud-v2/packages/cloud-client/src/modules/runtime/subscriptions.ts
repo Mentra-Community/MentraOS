@@ -46,6 +46,21 @@ export class Subscriptions {
   }
 
   /**
+   * The current desired subscription set (the last one `set()` recorded).
+   *
+   * Read by the connection's `initPayload` so a (re)connect's `connection.init`
+   * carries the live set as `audio.initialSubscriptions`. That makes the cloud
+   * seed the new session's subscription key NON-EMPTY at handshake, so the
+   * reconnected session transcribes atomically — without depending on the
+   * follow-up REST resend landing (whose control-stream nudge can be missed by a
+   * just-created `$`-positioned consumer group on the new owner pod). Returns a
+   * copy so a caller cannot mutate our cached set.
+   */
+  currentSet(): AudioSubscription[] {
+    return [...this.current];
+  }
+
+  /**
    * Replace the cloud's subscription set with `subs` for this session.
    *
    * Bumps the version on every call (even when the set is unchanged) so the
