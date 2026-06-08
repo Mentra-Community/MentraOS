@@ -39,11 +39,14 @@ metadata:
     service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
 spec:
   type: LoadBalancer
-  # Match Porter's audio pods specifically (NOT the core service). v1 used
-  # the same selector pattern in cloud/udp-service.yaml.
+  # Match Porter's runtime pods specifically (NOT the core service). The
+  # service was renamed audio -> runtime; this NLB Service keeps its name
+  # (cloud-v2-audio-udp) to preserve the NLB hostname already wired into
+  # AUDIO_UDP_ADVERTISED_HOST, but retargets the runtime pods. v1 used the
+  # same selector pattern in cloud/udp-service.yaml.
   selector:
     porter.run/app-name: cloud-v2
-    porter.run/service-name: audio
+    porter.run/service-name: runtime
   ports:
     - name: udp-audio
       protocol: UDP
