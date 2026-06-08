@@ -53,10 +53,11 @@ class InmoGo2: NSObject, SGCManager {
     private let RX_CHAR_UUID  = CBUUID(string: "00004862-0000-1000-8000-00805f9b34fb")
 
     // -----------------------------------------------------------------------
-    // MARK: Prefs key
+    // MARK: Prefs keys
     // -----------------------------------------------------------------------
 
     private let PREFS_DEVICE_NAME = "InmoGo2LastConnectedDeviceName"
+    private let PREFS_DEVICE_UUID = "InmoGo2LastConnectedDeviceUUID"
 
     // -----------------------------------------------------------------------
     // MARK: BLE objects  (iOS acts as central / client)
@@ -248,13 +249,11 @@ class InmoGo2: NSObject, SGCManager {
     // MARK: Missing SGCManager protocol stubs
     // -----------------------------------------------------------------------
 
-    /// Camera LED — Go2 uses torch as recording indicator; no separate LED protocol.
     func sendButtonCameraLedSetting() {
         let enabled = GlassesStore.shared.get("core", "button_camera_led") as? Bool ?? true
         sendJson(["type": "button_camera_led", "enabled": enabled], wakeUp: true)
     }
 
-    /// Camera FOV — send to ASG client for lens configuration.
     func sendCameraFovSetting() {
         let settings = GlassesStore.shared.get("core", "camera_fov") as? [String: Any]
             ?? ["fov": 118, "roi_position": 0]
@@ -266,13 +265,11 @@ class InmoGo2: NSObject, SGCManager {
         ], wakeUp: true)
     }
 
-    /// No-arg variant required by protocol — reads value from GlassesStore.
     func sendButtonMaxRecordingTime() {
         let maxTime = GlassesStore.shared.get("core", "button_max_recording_time") as? Int ?? 10
         sendButtonMaxRecordingTime(maxTime)
     }
 
-    /// RGB LED control — Go2 has no RGB LED; no-op.
     func sendRgbLedControl(
         requestId _: String, packageName _: String?, action _: String,
         color _: String?, ontime _: Int, offtime _: Int, count _: Int
@@ -280,7 +277,6 @@ class InmoGo2: NSObject, SGCManager {
         Bridge.log("GO2: sendRgbLedControl — no RGB LED on INMO Go2, ignoring")
     }
 
-    /// Incident log upload — forward incidentId to ASG client for on-device log collection.
     func sendIncidentId(_ incidentId: String, apiBaseUrl: String?) {
         var base = (apiBaseUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if base.isEmpty { base = "https://api.mentra.glass" }
@@ -292,12 +288,10 @@ class InmoGo2: NSObject, SGCManager {
         ], wakeUp: true)
     }
 
-    /// Gallery status query — request current photo/video counts from ASG client.
     func queryGalleryStatus() {
         sendJson(["type": "query_gallery_status"], wakeUp: true)
     }
 
-    /// Gallery mode — tell ASG client whether to save media to gallery.
     func sendGalleryMode() {
         let active = GlassesStore.shared.get("core", "gallery_mode") as? Bool ?? false
         sendJson([
@@ -314,8 +308,6 @@ class InmoGo2: NSObject, SGCManager {
     func setMicEnabled(_ enabled: Bool) {
         Bridge.log("GO2: 🎤 setMicEnabled(\(enabled))")
         GlassesStore.shared.apply("glasses", "micEnabled", enabled)
-        // Go2 mic is handled entirely on the Android side via ASG client;
-        // we simply notify it of the desired state through the standard JSON channel.
         let json: [String: Any] = ["type": "set_mic_enabled", "enabled": enabled]
         sendJson(json, wakeUp: true)
     }
@@ -332,9 +324,11 @@ class InmoGo2: NSObject, SGCManager {
                     delegate: self, queue: bluetoothQueue,
                     options: ["CBCentralManagerOptionShowPowerAlertKey": 0]
                 )
-                try? await Task.sleep(nanoseconds: 100 * 1_000_000) // 100 ms warm-up
+                try? await Task.sleep(nanoseconds: 100 * 1_000_000)
             }
+            // Clear stored pairing so we do a fresh scan for new device discovery
             UserDefaults.standard.set("", forKey: PREFS_DEVICE_NAME)
+            UserDefaults.standard.set("", forKey: PREFS_DEVICE_UUID)
             startScan()
         }
     }
@@ -350,23 +344,43 @@ class InmoGo2: NSObject, SGCManager {
             )
         }
 
-        // Check for already-connected peripherals first
-        let connectedPeripherals = centralManager!.retrieveConnectedPeripherals(
-            withServices: [SERVICE_UUID]
-        )
+        guard let cm = centralManager else { return }
+
+        // 1. Check for already-connected system peripherals (active GATT connections)
+        let connectedPeripherals = cm.retrieveConnectedPeripherals(withServices: [SERVICE_UUID])
         for peripheral in connectedPeripherals {
             if let name = peripheral.name, isCompatibleDeviceName(name) {
                 Bridge.log("GO2: Found already-connected peripheral: \(name)")
                 discoveredPeripherals[name] = peripheral
                 emitDiscoveredDevice(name, identifier: peripheral.identifier.uuidString)
-                if let saved = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME),
-                   saved == name
-                {
+                if name == deviceName {
                     connectToDevice(peripheral)
                     return
                 }
             }
         }
+
+        // 2. Try reconnect by stored UUID — handles bonded devices that are
+        //    suppressed from scan results by iOS after OS-level pairing
+        if let uuidString = UserDefaults.standard.string(forKey: PREFS_DEVICE_UUID),
+           !uuidString.isEmpty,
+           let uuid = UUID(uuidString: uuidString)
+        {
+            let known = cm.retrievePeripherals(withIdentifiers: [uuid])
+            if let peripheral = known.first {
+                Bridge.log("GO2: Reconnecting via stored UUID: \(uuidString)")
+                discoveredPeripherals[peripheral.name ?? deviceName] = peripheral
+                // Tell scan screen to auto-proceed without waiting for user selection
+                Bridge.sendDiscoveredDevice(
+                    DeviceTypes.INMO_GO2, "NOTREQUIREDSKIP",
+                    deviceAddress: uuidString, rssi: nil
+                )
+                connectToDevice(peripheral)
+                return
+            }
+        }
+
+        // 3. Fall back to BLE scan (first-time pairing)
         startScan()
     }
 
@@ -377,6 +391,9 @@ class InmoGo2: NSObject, SGCManager {
     func forget() {
         Bridge.log("GO2: forget()")
         if isScanning { stopScan(); emitStopScanEvent() }
+        // Clear stored pairing so next launch does a fresh scan
+        UserDefaults.standard.set("", forKey: PREFS_DEVICE_NAME)
+        UserDefaults.standard.set("", forKey: PREFS_DEVICE_UUID)
         destroy()
     }
 
@@ -418,9 +435,6 @@ class InmoGo2: NSObject, SGCManager {
         Bridge.log("GO2: BLE scan stopped")
     }
 
-    /// Returns true if the BLE advertisement name belongs to an INMO Go2.
-    /// The Go2 advertises as "INMO GO2" (confirmed). We also accept a bare
-    /// "INMO_GO2" in case the ASG client overrides the name in future builds.
     private func isCompatibleDeviceName(_ name: String) -> Bool {
         let n = name.uppercased()
         return n == "INMO GO2" || n == "INMO_GO2"
@@ -465,6 +479,21 @@ class InmoGo2: NSObject, SGCManager {
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self, self.connectedPeripheral == nil, !self.isKilled else { return }
+
+            // Try UUID-based reconnect first before falling back to scan
+            if let uuidString = UserDefaults.standard.string(forKey: self.PREFS_DEVICE_UUID),
+               !uuidString.isEmpty,
+               let uuid = UUID(uuidString: uuidString),
+               let cm = self.centralManager
+            {
+                let known = cm.retrievePeripherals(withIdentifiers: [uuid])
+                if let peripheral = known.first {
+                    Bridge.log("GO2: Reconnect via stored UUID: \(uuidString)")
+                    self.connectToDevice(peripheral)
+                    return
+                }
+            }
+
             if let lastName = UserDefaults.standard.string(forKey: self.PREFS_DEVICE_NAME),
                !lastName.isEmpty
             {
@@ -483,11 +512,6 @@ class InmoGo2: NSObject, SGCManager {
     // MARK: sendJson  (plain UTF-8 JSON — no K900 framing)
     // -----------------------------------------------------------------------
 
-    /// Encode `json` as UTF-8 JSON and queue it for BLE transmission to the Go2.
-    ///
-    /// The Go2 ASG client speaks plain JSON over the 4862 write characteristic.
-    /// Unlike MentraLive (which has a BES2700 chip requiring `##...$$` framing),
-    /// no binary wrapper is applied here.
     func sendJson(_ json: [String: Any], wakeUp: Bool = false, requireAck: Bool = true) {
         do {
             var payload = json
@@ -518,12 +542,10 @@ class InmoGo2: NSObject, SGCManager {
     // MARK: Incoming data processing
     // -----------------------------------------------------------------------
 
-    /// All data received from the Go2 is plain UTF-8 JSON starting with `{`.
     private func processReceivedData(_ data: Data) {
         guard !data.isEmpty else { return }
         let bytes = [UInt8](data)
 
-        // JSON starts with '{'
         if bytes[0] == 0x7B,
            let jsonString = String(data: data, encoding: .utf8),
            jsonString.hasPrefix("{")
@@ -546,7 +568,6 @@ class InmoGo2: NSObject, SGCManager {
     }
 
     private func processJsonObject(_ json: [String: Any]) {
-        // Clear pending ACK if this is the acknowledgement we're waiting for
         if let type = json["type"] as? String, type == "msg_ack" {
             if let mId = json["mId"] as? Int, String(mId) == pending?.id {
                 Bridge.log("GO2: ✅ ACK for mId=\(mId)")
@@ -557,7 +578,6 @@ class InmoGo2: NSObject, SGCManager {
             return
         }
 
-        // Send ACK back to glasses for messages that carry a message ID
         if let mId = json["mId"] as? Int {
             sendAckToGlasses(messageId: mId)
         }
@@ -641,7 +661,6 @@ class InmoGo2: NSObject, SGCManager {
 
         stopReadinessCheckLoop()
 
-        // Clear stale version fields
         GlassesStore.shared.apply("glasses", "buildNumber",  "")
         GlassesStore.shared.apply("glasses", "appVersion",   "")
         GlassesStore.shared.apply("glasses", "besFwVersion", "")
@@ -789,7 +808,6 @@ class InmoGo2: NSObject, SGCManager {
         sendJson(["type": "stop_video_recording", "request_id": requestId])
     }
 
-    // Touch event reporting
     private func setTouchEventReporting(_ enabled: Bool) {
         sendJson(["type": "set_touch_event_reporting", "enabled": enabled])
     }
@@ -1035,14 +1053,14 @@ class InmoGo2: NSObject, SGCManager {
         if isScanning { stopScan(); emitStopScanEvent() }
         stopAllTimers()
         if let p = connectedPeripheral { centralManager?.cancelPeripheralConnection(p) }
-        GlassesStore.shared.apply("glasses", "connected",      false)
-        GlassesStore.shared.apply("glasses", "fullyBooted",    false)
-        GlassesStore.shared.apply("glasses", "wifiConnected",  false)
-        GlassesStore.shared.apply("glasses", "wifiSsid",       "")
-        GlassesStore.shared.apply("glasses", "wifiLocalIp",    "")
-        GlassesStore.shared.apply("glasses", "hotspotEnabled", false)
-        GlassesStore.shared.apply("glasses", "hotspotSsid",    "")
-        GlassesStore.shared.apply("glasses", "hotspotPassword","")
+        GlassesStore.shared.apply("glasses", "connected",       false)
+        GlassesStore.shared.apply("glasses", "fullyBooted",     false)
+        GlassesStore.shared.apply("glasses", "wifiConnected",   false)
+        GlassesStore.shared.apply("glasses", "wifiSsid",        "")
+        GlassesStore.shared.apply("glasses", "wifiLocalIp",     "")
+        GlassesStore.shared.apply("glasses", "hotspotEnabled",  false)
+        GlassesStore.shared.apply("glasses", "hotspotSsid",     "")
+        GlassesStore.shared.apply("glasses", "hotspotPassword", "")
         GlassesStore.shared.apply("glasses", "hotspotGatewayIp","")
         connectedPeripheral = nil
         centralManager?.delegate = nil
@@ -1059,6 +1077,18 @@ extension InmoGo2: CBCentralManagerDelegate {
         switch central.state {
         case .poweredOn:
             Bridge.log("GO2: Bluetooth powered on")
+            // Try UUID-based reconnect first, then fall back to scan
+            if let uuidString = UserDefaults.standard.string(forKey: PREFS_DEVICE_UUID),
+               !uuidString.isEmpty,
+               let uuid = UUID(uuidString: uuidString)
+            {
+                let known = central.retrievePeripherals(withIdentifiers: [uuid])
+                if let peripheral = known.first {
+                    Bridge.log("GO2: Auto-reconnect via stored UUID on BT power on")
+                    connectToDevice(peripheral)
+                    return
+                }
+            }
             if let saved = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME),
                !saved.isEmpty
             {
@@ -1096,11 +1126,16 @@ extension InmoGo2: CBCentralManagerDelegate {
         }
     }
 
-    func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
+    func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         Bridge.log("GO2: ✅ GATT connected — discovering services…")
         stopConnectionTimeout()
         isConnecting = false
         connectedPeripheral = peripheral
+
+        // Persist UUID so we can reconnect directly next time
+        // (bypasses iOS advertisement suppression for bonded devices)
+        UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: PREFS_DEVICE_UUID)
+
         if let name = peripheral.name {
             UserDefaults.standard.set(name, forKey: PREFS_DEVICE_NAME)
             GlassesStore.shared.apply("glasses", "bluetoothName", name)
@@ -1204,7 +1239,6 @@ extension InmoGo2: CBPeripheralDelegate {
             return
         }
         guard let data = characteristic.value else { return }
-        // All incoming data arrives on TX (4861 Notify)
         processReceivedData(data)
     }
 
@@ -1212,7 +1246,6 @@ extension InmoGo2: CBPeripheralDelegate {
         if let error {
             Bridge.log("GO2: Write error: \(error.localizedDescription)")
         }
-        // ACK write success — queue pump will clear pending if needed after glasses ACK
     }
 
     func peripheral(
