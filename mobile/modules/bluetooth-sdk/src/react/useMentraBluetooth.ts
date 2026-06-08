@@ -2,6 +2,7 @@ import {useState} from "react"
 
 import BluetoothSdk from "../index"
 import {
+  DEFAULT_VOICE_ACTIVITY_DETECTION_ENABLED,
   DeviceModels,
   createDisconnectedGlassesStatus,
   isConnectedGlassesConnectionStatus,
@@ -16,6 +17,7 @@ import type {
   PublicBluetoothStatus,
   PublicGlassesStatus,
   MicMode,
+  SettingsAckSuccessEvent,
   WifiSearchResult,
   WifiStatus,
 } from "../BluetoothSdk.types"
@@ -134,7 +136,7 @@ export type MentraBluetoothSession = {
   scan: ScanController
   sdk: PhoneSdkRuntimeState
   setDefaultDevice: (device: Device | null) => Promise<void>
-  setGalleryModeEnabled: (enabled: boolean) => Promise<void>
+  setGalleryModeEnabled: (enabled: boolean) => Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled: (enabled: boolean) => Promise<void>
 }
 
@@ -221,7 +223,7 @@ function runtimeGlassesState(status: Partial<PublicGlassesStatus>): GlassesRunti
       strengthDbm: numberValue((status as Record<string, unknown>).signalStrength),
       updatedAt: numberValue((status as Record<string, unknown>).signalStrengthUpdatedAt),
     },
-    voiceActivityDetectionEnabled: status.voiceActivityDetectionEnabled ?? true,
+    voiceActivityDetectionEnabled: status.voiceActivityDetectionEnabled ?? DEFAULT_VOICE_ACTIVITY_DETECTION_ENABLED,
     wifi: status.wifi ?? {state: "disconnected"},
   }
 }
@@ -271,11 +273,11 @@ export function useMentraBluetooth(options: UseMentraBluetoothOptions = {}): Men
   const [galleryModeApplying, setGalleryModeApplying] = useState(false)
   const [galleryModeError, setGalleryModeError] = useState<unknown | null>(null)
 
-  async function setGalleryModeEnabled(enabled: boolean) {
+  async function setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent> {
     setGalleryModeApplying(true)
     setGalleryModeError(null)
     try {
-      await BluetoothSdk.setGalleryModeEnabled(enabled)
+      return await BluetoothSdk.setGalleryModeEnabled(enabled)
     } catch (error) {
       setGalleryModeError(error)
       options.onError?.(error)

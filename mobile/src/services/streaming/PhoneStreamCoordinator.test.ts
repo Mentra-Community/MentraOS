@@ -3,11 +3,18 @@
 import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
 
 // Mock module dependencies BEFORE importing the coordinator.
-const startStream = mock(async (_req: unknown) => {})
+const streamStatusFor = (req: unknown) => ({
+  type: "stream_status",
+  kind: "lifecycle",
+  status: "streaming",
+  streamId: (req as {streamId?: string}).streamId,
+  resolvedConfig: {audio: {sampleRate: 16_000}},
+})
+const startExternallyManagedStream = mock(async (req: unknown) => streamStatusFor(req))
 const stopStream = mock(async () => {})
 
 mock.module("@mentra/bluetooth-sdk-internal", () => ({
-  default: {startStream, stopStream},
+  default: {startExternallyManagedStream, stopStream},
 }))
 
 const provisionManagedStream = mock(async (_destinations?: unknown) => ({
@@ -36,7 +43,7 @@ mock.module("./v2StreamApi", () => ({
 let hlsHeadResponder: () => Response = () => new Response(null, {status: 200})
 const realFetch = globalThis.fetch
 beforeEach(() => {
-  startStream.mockClear()
+  startExternallyManagedStream.mockClear()
   stopStream.mockClear()
   provisionManagedStream.mockClear()
   getManagedStreamStatus.mockClear()
@@ -64,14 +71,19 @@ describe("PhoneStreamCoordinator", () => {
         cloudflareStatusPollMs: 1000,
         keepAliveIntervalMs: 10_000,
       })
-      const {streamId} = await coord.startUnmanaged("com.a", {
+      const result = await coord.startUnmanaged("com.a", {
         streamUrl: "rtmp://my.server/key",
+        sound: false,
       })
+      const {streamId} = result
       expect(streamId).toMatch(/^phone-u-/)
-      expect(startStream).toHaveBeenCalledTimes(1)
-      const arg = startStream.mock.calls[0]![0] as {streamUrl: string; streamId: string}
+      expect(result.status).toBe("streaming")
+      expect(result.resolvedConfig).toEqual({audio: {sampleRate: 16_000}})
+      expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
+      const arg = startExternallyManagedStream.mock.calls[0]![0] as {sound: boolean; streamUrl: string; streamId: string}
       expect(arg.streamUrl).toBe("rtmp://my.server/key")
       expect(arg.streamId).toBe(streamId)
+      expect(arg.sound).toBe(false)
       expect(coord.owns(streamId)).toBe(true)
     })
 
@@ -114,8 +126,8 @@ describe("PhoneStreamCoordinator", () => {
       expect(coord.owns(streamId)).toBe(true)
     })
 
-    test("start rolls back state if CoreModule.startStream rejects", async () => {
-      startStream.mockRejectedValueOnce(new Error("BLE down"))
+    test("start rolls back state if CoreModule.startExternallyManagedStream rejects", async () => {
+      startExternallyManagedStream.mockRejectedValueOnce(new Error("BLE down"))
       const coord = new PhoneStreamCoordinator({
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
@@ -127,7 +139,7 @@ describe("PhoneStreamCoordinator", () => {
       )
       // Should be able to start another stream after the failure.
       await coord.startUnmanaged("com.a", {streamUrl: "rtmp://y"})
-      expect(startStream).toHaveBeenCalledTimes(2)
+      expect(startExternallyManagedStream).toHaveBeenCalledTimes(2)
     })
   })
 
@@ -139,15 +151,29 @@ describe("PhoneStreamCoordinator", () => {
         cloudflareStatusPollMs: 1000,
         keepAliveIntervalMs: 10_000,
       })
-      const result = await coord.startManaged("com.a", {})
+      const result = await coord.startManaged("com.a", {
+        audio: {bitrate: 64_000},
+        sound: false,
+        video: {fps: 30},
+      })
       expect(result.streamId).toMatch(/^phone-m-/)
+      expect(result.status).toBe("streaming")
+      expect(result.resolvedConfig).toEqual({audio: {sampleRate: 16_000}})
       expect(result.liveInputId).toBe("cf-input-test")
       expect(result.hlsUrl).toBe("https://playback.test/abc/manifest/video.m3u8")
       expect(result.webrtcUrl).toBe("https://playback.test/abc/whep")
       expect(provisionManagedStream).toHaveBeenCalledTimes(1)
       // Glasses should be told to publish to the WHIP endpoint (preferred).
-      const arg = startStream.mock.calls[0]![0] as {streamUrl: string}
+      const arg = startExternallyManagedStream.mock.calls[0]![0] as {
+        audio: unknown
+        sound: boolean
+        streamUrl: string
+        video: unknown
+      }
       expect(arg.streamUrl).toBe("https://ingest.test/abc/whip")
+      expect(arg.sound).toBe(false)
+      expect(arg.video).toEqual({fps: 30})
+      expect(arg.audio).toEqual({bitrate: 64_000})
     })
 
     test("second miniapp joins existing managed stream and gets same URLs", async () => {
@@ -262,7 +288,7 @@ describe("PhoneStreamCoordinator", () => {
       } as never)
       // Teardown is async; let it settle.
       await new Promise((r) => setTimeout(r, 5))
-      expect(stopStream).toHaveBeenCalled()
+      expect(stopStream).not.toHaveBeenCalled()
       expect(coord.owns(streamId)).toBe(false)
     })
   })
@@ -296,13 +322,14 @@ describe("PhoneStreamCoordinator", () => {
       ])
       expect(a.streamId).toBe(b.streamId)
       expect(provisionManagedStream).toHaveBeenCalledTimes(1)
-      expect(startStream).toHaveBeenCalledTimes(1)
+      expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
     })
 
     test("concurrent startUnmanaged calls — second rejects, first wins", async () => {
       // Slow the first BLE start so the two callers overlap.
-      startStream.mockImplementationOnce(async () => {
+      startExternallyManagedStream.mockImplementationOnce(async (req: unknown) => {
         await new Promise((r) => setTimeout(r, 30))
+        return streamStatusFor(req)
       })
       const coord = new PhoneStreamCoordinator({
         hlsReadinessInitialDelayMs: 5,
@@ -319,16 +346,17 @@ describe("PhoneStreamCoordinator", () => {
       expect(fulfilled).toHaveLength(1)
       expect(rejected).toHaveLength(1)
       expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(StreamConflictError)
-      expect(startStream).toHaveBeenCalledTimes(1)
+      expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
     })
 
     test("stop waits for an in-flight start to finish before calling stopStream", async () => {
       // Slow the BLE start; the stop should queue behind it.
       const order: string[] = []
-      startStream.mockImplementationOnce(async () => {
+      startExternallyManagedStream.mockImplementationOnce(async (req: unknown) => {
         order.push("start-begin")
         await new Promise((r) => setTimeout(r, 30))
         order.push("start-end")
+        return streamStatusFor(req)
       })
       stopStream.mockImplementationOnce(async () => {
         order.push("stop")

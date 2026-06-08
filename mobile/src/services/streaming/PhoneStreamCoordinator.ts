@@ -28,7 +28,7 @@
  */
 
 import CoreModule from "@mentra/bluetooth-sdk-internal"
-import type {StreamStatusEvent} from "@mentra/bluetooth-sdk-internal"
+import type {StreamResolvedConfig, StreamStatusEvent} from "@mentra/bluetooth-sdk-internal"
 
 import {
   getManagedStreamStatus,
@@ -59,16 +59,23 @@ export interface StartUnmanagedOptions {
   streamUrl: string
   video?: unknown
   audio?: unknown
-  flash?: boolean
   sound?: boolean
 }
 
 export interface StartManagedOptions {
   restreamDestinations?: RestreamDestinationInput[]
+  video?: unknown
+  audio?: unknown
+  sound?: boolean
 }
 
-export interface ManagedStartResult {
+export interface StreamPublisherStartResult {
   streamId: string
+  status: string
+  resolvedConfig?: StreamResolvedConfig
+}
+
+export interface ManagedStartResult extends StreamPublisherStartResult {
   liveInputId: string
   hlsUrl: string
   dashUrl: string
@@ -99,6 +106,7 @@ interface ManagedEntry {
   hlsUrl: string
   dashUrl: string
   webrtcUrl?: string
+  publisherStart?: StreamPublisherStartResult
   subscribers: Set<string>
   hlsReady: boolean
   hlsReadyResolvers: Array<(result: ManagedStartResult) => void>
@@ -174,7 +182,7 @@ export class PhoneStreamCoordinator {
   async startUnmanaged(
     packageName: string,
     opts: StartUnmanagedOptions,
-  ): Promise<{streamId: string}> {
+  ): Promise<StreamPublisherStartResult> {
     // Pre-check the obvious-bad input before queueing — the lock is for
     // serializing state transitions, not for validating arguments.
     if (!opts.streamUrl || typeof opts.streamUrl !== "string") {
@@ -200,7 +208,7 @@ export class PhoneStreamCoordinator {
       this.current = entry
 
       try {
-        await CoreModule.startStream({
+        const event = await CoreModule.startExternallyManagedStream({
           type: "start_stream",
           streamUrl: opts.streamUrl,
           streamId,
@@ -210,12 +218,12 @@ export class PhoneStreamCoordinator {
           video: opts.video as never,
           audio: opts.audio as never,
         })
+        const result = publisherStartResult(streamId, event)
+        return result
       } catch (err) {
         this.current = null
         throw err
       }
-
-      return {streamId}
     })
   }
 
@@ -252,13 +260,7 @@ export class PhoneStreamCoordinator {
         }
         existing.subscribers.add(packageName)
         const immediate: ManagedStartResult | null = existing.hlsReady
-          ? {
-              streamId: existing.streamId,
-              liveInputId: existing.liveInputId,
-              hlsUrl: existing.hlsUrl,
-              dashUrl: existing.dashUrl,
-              webrtcUrl: existing.webrtcUrl,
-            }
+          ? managedStartResult(existing)
           : null
         return {kind: "join", entry: existing, immediate}
       }
@@ -287,14 +289,17 @@ export class PhoneStreamCoordinator {
       this.current = entry
 
       try {
-        await CoreModule.startStream({
+        const event = await CoreModule.startExternallyManagedStream({
           type: "start_stream",
           streamUrl: ingestUrl,
           streamId,
           keepAlive: true,
           keepAliveIntervalSeconds: this.timings.keepAliveIntervalMs / 1000,
-          sound: true,
+          sound: opts.sound ?? true,
+          video: opts.video as never,
+          audio: opts.audio as never,
         })
+        entry.publisherStart = publisherStartResult(streamId, event)
       } catch (err) {
         this.current = null
         await teardownManagedStream(provision.liveInputId).catch(() => undefined)
@@ -369,7 +374,7 @@ export class PhoneStreamCoordinator {
         // The stream we wanted to tear down may already be gone (e.g. another
         // teardown won the lock and unwound it). Guard before acting.
         if (this.current?.streamId !== targetStreamId) return
-        await this.teardownLocked(reason)
+        await this.teardownLocked(reason, {sendBleStop: false})
       })
     }
   }
@@ -416,13 +421,7 @@ export class PhoneStreamCoordinator {
             clearInterval(entry.hlsTimer)
             entry.hlsTimer = undefined
           }
-          const result: ManagedStartResult = {
-            streamId: entry.streamId,
-            liveInputId: entry.liveInputId,
-            hlsUrl: entry.hlsUrl,
-            dashUrl: entry.dashUrl,
-            webrtcUrl: entry.webrtcUrl,
-          }
+          const result = managedStartResult(entry)
           for (const r of entry.hlsReadyResolvers) r(result)
           entry.hlsReadyResolvers = []
           entry.hlsReadyRejecters = []
@@ -490,9 +489,10 @@ export class PhoneStreamCoordinator {
    * waiting on the lock can't claim the slot mid-stop and have its
    * startStream BLE write collide with our in-flight stopStream.
    */
-  private async teardownLocked(reason: string): Promise<void> {
+  private async teardownLocked(reason: string, options: {sendBleStop?: boolean} = {}): Promise<void> {
     const entry = this.current
     if (!entry) return
+    const sendBleStop = options.sendBleStop !== false
 
     if (entry.kind === "managed") {
       if (entry.cloudflareTimer) clearInterval(entry.cloudflareTimer)
@@ -511,7 +511,9 @@ export class PhoneStreamCoordinator {
     }
 
     try {
-      await CoreModule.stopStream()
+      if (sendBleStop) {
+        await CoreModule.stopStream()
+      }
     } catch (err) {
       console.warn("[STREAM] CoreModule.stopStream failed:", err)
     } finally {
@@ -534,6 +536,26 @@ function pickIngestUrl(p: ProvisionResult): string {
     throw new Error("Cloudflare provision returned no usable ingest URL")
   }
   return url
+}
+
+function publisherStartResult(streamId: string, event?: StreamStatusEvent): StreamPublisherStartResult {
+  return {
+    streamId: event?.streamId || streamId,
+    status: event?.status ?? "streaming",
+    ...(event?.resolvedConfig ? {resolvedConfig: event.resolvedConfig} : {}),
+  }
+}
+
+function managedStartResult(entry: ManagedEntry): ManagedStartResult {
+  const publisher = entry.publisherStart ?? publisherStartResult(entry.streamId)
+  return {
+    ...publisher,
+    streamId: entry.streamId,
+    liveInputId: entry.liveInputId,
+    hlsUrl: entry.hlsUrl,
+    dashUrl: entry.dashUrl,
+    webrtcUrl: entry.webrtcUrl,
+  }
 }
 
 // Singleton — coordinator's single-stream constraint is process-wide.

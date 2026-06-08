@@ -32,10 +32,11 @@ import androidx.core.app.ActivityCompat;
 // import androidx.preference.PreferenceManager;
 
 // Mentra
-import com.mentra.bluetoothsdk.sgcs.SGCManager;
-import com.mentra.bluetoothsdk.DeviceManager;
+import com.mentra.bluetoothsdk.BluetoothSdkDefaults;
 import com.mentra.bluetoothsdk.Bridge;
+import com.mentra.bluetoothsdk.DeviceManager;
 import com.mentra.bluetoothsdk.debug.BleTraceLogger;
+import com.mentra.bluetoothsdk.sgcs.SGCManager;
 import com.mentra.bluetoothsdk.utils.DeviceTypes;
 import com.mentra.bluetoothsdk.utils.ConnTypes;
 import com.mentra.bluetoothsdk.utils.BitmapJavaUtils;
@@ -2349,9 +2350,15 @@ public class MentraLive extends SGCManager {
                 }
                 break;
 
+            case "video_recording_status":
+                emitVideoRecordingStatus(json);
+                break;
+
             case "voice_activity_detection_status":
                 handleVoiceActivityDetectionStatus(
-                        json.optBoolean("voiceActivityDetectionEnabled", true));
+                        json.optBoolean(
+                                "voiceActivityDetectionEnabled",
+                                BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED));
                 break;
 
             case "speaking_status":
@@ -2414,6 +2421,12 @@ public class MentraLive extends SGCManager {
                 String photoState = json.optString("state", "");
                 boolean photoSuccess = "success".equals(photoState) || json.optBoolean("success", false);
 
+                try {
+                    Bridge.sendPhotoResponse(jsonObjectToMap(json));
+                } catch (JSONException e) {
+                    Log.e(TAG, "Error converting photo response to Map", e);
+                }
+
                 if (!photoSuccess) {
                     // Handle failed photo response
                     String errorMsg = json.optString("errorMessage", json.optString("error", "Unknown error"));
@@ -2472,7 +2485,8 @@ public class MentraLive extends SGCManager {
                         }
                 }
                 
-                Bridge.updateWifiScanResults(networks);
+                boolean scanComplete = json.optBoolean("scan_complete", json.optBoolean("scanComplete", false));
+                Bridge.updateWifiScanResults(networks, scanComplete);
                 break;
 
             case "token_status":
@@ -2598,12 +2612,29 @@ public class MentraLive extends SGCManager {
                 int totalCount = json.optInt("total", 0);
                 long totalSize = json.optLong("total_size", 0);
                 boolean hasContent = json.optBoolean("has_content", false);
+                Object cameraBusyValue = json.opt("camera_busy");
+                boolean cameraBusy = json.optBoolean("cameraBusy", false);
+                String cameraBusyReason = json.optString("cameraBusyReason", null);
+                if (cameraBusyValue instanceof Boolean) {
+                    cameraBusy = cameraBusy || (Boolean) cameraBusyValue;
+                } else if (cameraBusyValue instanceof String) {
+                    String busyReason = ((String) cameraBusyValue).trim();
+                    if (!busyReason.isEmpty() && !"false".equalsIgnoreCase(busyReason)) {
+                        cameraBusy = true;
+                        cameraBusyReason = busyReason;
+                    }
+                }
 
                 Bridge.log("LIVE: 📸 Received gallery status: " + photoCount + " photos, " +
                       videoCount + " videos, total size: " + totalSize + " bytes");
 
                 // Send gallery status to React Native frontend (matches iOS pattern)
-                Bridge.sendGalleryStatus(photoCount, videoCount, totalCount, totalSize, hasContent);
+                Bridge.sendGalleryStatus(photoCount, videoCount, totalCount, totalSize, hasContent,
+                        cameraBusy, cameraBusyReason);
+                break;
+
+            case "settings_ack":
+                emitSettingsAck(json);
                 break;
 
             // case "touch_event":
@@ -2805,6 +2836,15 @@ public class MentraLive extends SGCManager {
                 DeviceStore.INSTANCE.apply("glasses", "firmwareVersion", firmwareVersionLegacy);
                 DeviceStore.INSTANCE.apply("glasses", "bluetoothMacAddress", btMacAddressLegacy);
 
+                Map<String, Object> versionInfoLegacy = new HashMap<>();
+                versionInfoLegacy.put("appVersion", appVersionLegacy);
+                versionInfoLegacy.put("buildNumber", buildNumberLegacy);
+                versionInfoLegacy.put("deviceModel", deviceModelLegacy);
+                versionInfoLegacy.put("androidVersion", androidVersionLegacy);
+                versionInfoLegacy.put("otaVersionUrl", otaVersionUrlLegacy != null ? otaVersionUrlLegacy : "");
+                versionInfoLegacy.put("firmwareVersion", firmwareVersionLegacy);
+                Bridge.sendVersionInfo(versionInfoLegacy);
+
                 // Parse build number as integer for version checks (local field)
                 try {
                     buildNumberInt = Integer.parseInt(buildNumberLegacy);
@@ -3004,10 +3044,63 @@ public class MentraLive extends SGCManager {
                     }
 
                     Bridge.log("LIVE: Processed version_info fields and sent to RN");
+                    Bridge.sendVersionInfo(fields);
                 } else {
                     Log.d(TAG, "📦 Unknown message type: " + type);
                 }
                 break;
+        }
+    }
+
+    private void emitSettingsAck(JSONObject json) {
+        try {
+            Map<String, Object> body = jsonObjectToMap(json);
+            if (body.containsKey("request_id") && !body.containsKey("requestId")) {
+                body.put("requestId", body.get("request_id"));
+            }
+            if (body.containsKey("roi_position") && !body.containsKey("roiPosition")) {
+                body.put("roiPosition", body.get("roi_position"));
+            }
+            if (body.containsKey("error_code") && !body.containsKey("errorCode")) {
+                body.put("errorCode", body.get("error_code"));
+            }
+            if (body.containsKey("error_message") && !body.containsKey("errorMessage")) {
+                body.put("errorMessage", body.get("error_message"));
+            }
+            if (body.containsKey("hardware_applied") && !body.containsKey("hardwareApplied")) {
+                body.put("hardwareApplied", body.get("hardware_applied"));
+            }
+            body.remove("request_id");
+            body.remove("roi_position");
+            body.remove("error_code");
+            body.remove("error_message");
+            body.remove("hardware_applied");
+            if (!body.containsKey("timestamp")) {
+                body.put("timestamp", System.currentTimeMillis());
+            }
+            Bridge.sendSettingsAck(body);
+        } catch (JSONException e) {
+            Log.e(TAG, "Error converting settings_ack to Map", e);
+        }
+    }
+
+    private void emitVideoRecordingStatus(JSONObject json) {
+        try {
+            Map<String, Object> body = jsonObjectToMap(json);
+            if (body.containsKey("request_id") && !body.containsKey("requestId")) {
+                body.put("requestId", body.get("request_id"));
+            }
+            if (body.containsKey("error_details") && !body.containsKey("details")) {
+                body.put("details", body.get("error_details"));
+            }
+            body.remove("request_id");
+            body.remove("error_details");
+            if (!body.containsKey("timestamp")) {
+                body.put("timestamp", System.currentTimeMillis());
+            }
+            Bridge.sendVideoRecordingStatus(body);
+        } catch (JSONException e) {
+            Log.e(TAG, "Error converting video_recording_status to Map", e);
         }
     }
 
@@ -3793,10 +3886,17 @@ public class MentraLive extends SGCManager {
     @Override
     public void sendGalleryMode() {
         boolean active = (Boolean) DeviceStore.INSTANCE.get("bluetooth", "gallery_mode");
+        sendGalleryMode(null, active);
+    }
+
+    public void sendGalleryMode(String requestId, boolean active) {
         Bridge.log("LIVE: 📸 Sending gallery mode active to glasses: " + active);
         try {
             JSONObject json = new JSONObject();
             json.put("type", "save_in_gallery_mode");
+            if (requestId != null && !requestId.isEmpty()) {
+                json.put("request_id", requestId);
+            }
             json.put("active", active);
             json.put("timestamp", System.currentTimeMillis());
             sendJson(json, true);
@@ -4917,10 +5017,17 @@ public class MentraLive extends SGCManager {
     // }
 
     public void sendButtonPhotoSettings(String size) {
+        sendButtonPhotoSettings(null, size);
+    }
+
+    public void sendButtonPhotoSettings(String requestId, String size) {
         // Send photo size settings to glasses
         JSONObject command = new JSONObject();
         try {
             command.put("type", "button_photo_setting");
+            if (requestId != null && !requestId.isEmpty()) {
+                command.put("request_id", requestId);
+            }
             command.put("size", size);
             sendJson(command, true);
         } catch (Exception e) {
@@ -4955,11 +5062,21 @@ public class MentraLive extends SGCManager {
                     videoFps = ((Number) fps).intValue();
                 }
             }
-            
+            sendButtonVideoRecordingSettings(null, videoWidth, videoHeight, videoFps);
+        } catch (Exception e) {
+            Log.e(TAG, "❌ [SETTINGS_SYNC] Error sending button video recording settings", e);
+        }
+    }
+
+    public void sendButtonVideoRecordingSettings(String requestId, int videoWidth, int videoHeight, int videoFps) {
+        try {
             Bridge.log("LIVE: 🎥 [SETTINGS_SYNC] Sending button video recording settings: " + videoWidth + "x" + videoHeight + "@" + videoFps + "fps");
 
             JSONObject json = new JSONObject();
             json.put("type", "button_video_recording_setting");
+            if (requestId != null && !requestId.isEmpty()) {
+                json.put("request_id", requestId);
+            }
             JSONObject settings = new JSONObject();
             settings.put("width", videoWidth);
             settings.put("height", videoHeight);
@@ -4974,10 +5091,17 @@ public class MentraLive extends SGCManager {
     }
 
     public void sendButtonCameraLedSetting(boolean enabled) {
+        sendButtonCameraLedSetting(null, enabled);
+    }
+
+    public void sendButtonCameraLedSetting(String requestId, boolean enabled) {
         // Send LED setting to glasses
         JSONObject command = new JSONObject();
         try {
             command.put("type", "button_camera_led");
+            if (requestId != null && !requestId.isEmpty()) {
+                command.put("request_id", requestId);
+            }
             command.put("enabled", enabled);
             sendJson(command, true);
         } catch (Exception e) {
@@ -6557,14 +6681,14 @@ public class MentraLive extends SGCManager {
             transfer.authToken,
             new BlePhotoUploadService.UploadCallback() {
                 @Override
-                public void onSuccess(String requestId) {
+                public void onSuccess(String requestId, String responseBody) {
                     long uploadDuration = System.currentTimeMillis() - uploadStartTime;
                     long totalDuration = System.currentTimeMillis() - transfer.phoneStartTime;
 
                     Bridge.log("LIVE: ✅ BLE photo uploaded successfully via phone relay for requestId: " + requestId);
                     Bridge.log("LIVE: ⏱️ Upload duration: " + uploadDuration + "ms");
                     Bridge.log("LIVE: ⏱️ Total end-to-end duration: " + totalDuration + "ms");
-                    //sendPhotoUploadSuccess(requestId);
+                    sendPhotoTerminalSuccessResponse(requestId, transfer.webhookUrl, responseBody);
                 }
 
                 @Override
@@ -6572,10 +6696,50 @@ public class MentraLive extends SGCManager {
                     long uploadDuration = System.currentTimeMillis() - uploadStartTime;
                     Log.e(TAG, "❌ BLE photo upload failed for requestId: " + requestId + ", error: " + error);
                     Log.e(TAG, "⏱️ Failed after: " + uploadDuration + "ms");
-                    //sendPhotoUploadError(requestId, error);
+                    Bridge.sendPhotoError(
+                            requestId,
+                            "PHONE_UPLOAD_FAILED",
+                            "BLE photo upload failed: " + error);
                 }
             }
         );
+    }
+
+    private void sendPhotoTerminalSuccessResponse(
+            String requestId, String uploadUrl, String responseBody) {
+        Map<String, Object> event = new HashMap<>();
+        event.put("type", "photo_response");
+        event.put("state", "success");
+        event.put("success", true);
+        event.put("requestId", requestId);
+        event.put("uploadUrl", uploadUrl != null ? uploadUrl : "");
+        event.put("timestamp", System.currentTimeMillis());
+        copyPhotoUploadResponseMetadata(event, responseBody);
+        Bridge.sendPhotoResponse(event);
+    }
+
+    private void copyPhotoUploadResponseMetadata(Map<String, Object> event, String responseBody) {
+        if (responseBody == null || responseBody.trim().isEmpty()) {
+            return;
+        }
+        try {
+            JSONObject response = new JSONObject(responseBody);
+            copyJsonField(event, response, "photoUrl");
+            copyJsonField(event, response, "statusUrl");
+            copyJsonField(event, response, "mimeType");
+            copyJsonField(event, response, "contentType");
+            copyJsonField(event, response, "bytes");
+            copyJsonField(event, response, "size");
+        } catch (JSONException e) {
+            Bridge.log("LIVE: BLE upload response body was not JSON metadata");
+        }
+    }
+
+    private void copyJsonField(Map<String, Object> event, JSONObject response, String key)
+            throws JSONException {
+        if (response.has(key) && !response.isNull(key)) {
+            event.put(key, response.get(key));
+        }
     }
 
     /**
@@ -6697,7 +6861,10 @@ public class MentraLive extends SGCManager {
     @Override
     public void sendVoiceActivityDetectionSetting() {
         Object value = DeviceStore.INSTANCE.get("bluetooth", "voice_activity_detection_enabled");
-        boolean enabled = value instanceof Boolean ? (Boolean) value : true;
+        boolean enabled =
+                value instanceof Boolean
+                        ? (Boolean) value
+                        : BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED;
 
         Bridge.log("LIVE: 🎤 Sending Voice Activity Detection setting to glasses: " + enabled);
 
@@ -6736,22 +6903,7 @@ public class MentraLive extends SGCManager {
      */
     public void sendButtonPhotoSettings() {
         String size = (String) DeviceStore.INSTANCE.get("bluetooth", "button_photo_size");
-
-        Bridge.log("LIVE: Sending button photo setting: " + size);
-
-        if (!isConnected) {
-            Log.w(TAG, "Cannot send button photo settings - not connected");
-            return;
-        }
-
-        try {
-            JSONObject json = new JSONObject();
-            json.put("type", "button_photo_setting");
-            json.put("size", size);
-            sendJson(json);
-        } catch (JSONException e) {
-            Log.e(TAG, "Error creating button photo settings message", e);
-        }
+        sendButtonPhotoSettings(null, size);
     }
 
     /**
@@ -6760,22 +6912,7 @@ public class MentraLive extends SGCManager {
     @Override
     public void sendButtonCameraLedSetting() {
         boolean enabled = (Boolean) DeviceStore.INSTANCE.get("bluetooth", "button_camera_led");
-
-        Bridge.log("LIVE: Sending button camera LED setting: " + enabled);
-
-        if (!isConnected) {
-            Log.w(TAG, "Cannot send button camera LED setting - not connected");
-            return;
-        }
-
-        try {
-            JSONObject json = new JSONObject();
-            json.put("type", "button_camera_led");
-            json.put("enabled", enabled);
-            sendJson(json, true);
-        } catch (JSONException e) {
-            Log.e(TAG, "Error creating button camera LED setting message", e);
-        }
+        sendButtonCameraLedSetting(null, enabled);
     }
 
     /**
@@ -6799,6 +6936,10 @@ public class MentraLive extends SGCManager {
             Log.w(TAG, "Could not read camera_fov from store, using defaults", e);
         }
 
+        sendCameraFovSetting(null, fov, roiPosition);
+    }
+
+    public void sendCameraFovSetting(String requestId, int fov, int roiPosition) {
         Bridge.log("LIVE: Sending camera FOV setting: fov=" + fov + ", roiPosition=" + roiPosition);
 
         if (!isConnected) {
@@ -6809,6 +6950,9 @@ public class MentraLive extends SGCManager {
         try {
             JSONObject json = new JSONObject();
             json.put("type", "camera_fov_setting");
+            if (requestId != null && !requestId.isEmpty()) {
+                json.put("request_id", requestId);
+            }
             JSONObject params = new JSONObject();
             params.put("fov", fov);
             params.put("roi_position", roiPosition);
@@ -6825,6 +6969,12 @@ public class MentraLive extends SGCManager {
      */
     @Override
     public void sendButtonMaxRecordingTime() {
+        Object rawMinutes = DeviceStore.INSTANCE.get("bluetooth", "button_max_recording_time");
+        int minutes = (rawMinutes instanceof Number) ? ((Number) rawMinutes).intValue() : 10;
+        sendButtonMaxRecordingTime(null, minutes);
+    }
+
+    public void sendButtonMaxRecordingTime(String requestId, int minutes) {
         Bridge.log("LIVE: Sending button max recording time");
 
         if (!isConnected) {
@@ -6832,12 +6982,12 @@ public class MentraLive extends SGCManager {
             return;
         }
 
-        Object rawMinutes = DeviceStore.INSTANCE.get("bluetooth", "button_max_recording_time");
-        int minutes = (rawMinutes instanceof Number) ? ((Number) rawMinutes).intValue() : 10;
-
         try {
             JSONObject json = new JSONObject();
             json.put("type", "button_max_recording_time");
+            if (requestId != null && !requestId.isEmpty()) {
+                json.put("request_id", requestId);
+            }
             json.put("minutes", minutes);
             sendJson(json, true);
         } catch (JSONException e) {

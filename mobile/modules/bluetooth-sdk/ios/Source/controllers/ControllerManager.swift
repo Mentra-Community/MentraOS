@@ -154,7 +154,8 @@ extension ControllerManager {
     }
 
     var voiceActivityDetectionEnabled: Bool {
-        DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool ?? true
+        DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool
+            ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
     }
 
     var batteryLevel: Int {

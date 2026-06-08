@@ -30,6 +30,8 @@ This structure is good internal machinery, but not a good public SDK boundary.
 Create a public facade in `com.mentra.bluetoothsdk`:
 
 ```kotlin
+import java.util.concurrent.CompletableFuture
+
 class MentraBluetoothSdk private constructor(
     context: Context,
     config: MentraBluetoothSdkConfig,
@@ -64,38 +66,41 @@ class MentraBluetoothSdk private constructor(
     fun setDashboardPosition(request: MentraDashboardPositionRequest)
     fun setHeadUpAngle(angleDegrees: Int)
     fun setScreenDisabled(disabled: Boolean)
-    fun setGalleryModeEnabled(enabled: Boolean)
-    fun setButtonPhotoSettings(settings: MentraButtonPhotoSettings)
-    fun setButtonVideoRecordingSettings(settings: MentraButtonVideoRecordingSettings)
-    fun setButtonCameraLed(enabled: Boolean)
-    fun setButtonMaxRecordingTime(minutes: Int)
-    fun setCameraFov(fov: MentraCameraFov)
+    fun setGalleryModeEnabled(enabled: Boolean): CompletableFuture<MentraSettingsAckEvent>
+    fun setButtonPhotoSettings(settings: MentraButtonPhotoSettings): CompletableFuture<MentraSettingsAckEvent>
+    fun setButtonVideoRecordingSettings(settings: MentraButtonVideoRecordingSettings): CompletableFuture<MentraSettingsAckEvent>
+    fun setButtonCameraLed(enabled: Boolean): CompletableFuture<MentraSettingsAckEvent>
+    fun setButtonMaxRecordingTime(minutes: Int): CompletableFuture<MentraSettingsAckEvent>
+    fun setCameraFov(fov: MentraCameraFov): CompletableFuture<MentraCameraFovResult>
 
     fun setMicState(config: MentraMicConfig)
     fun setPreferredMic(preferredMic: MentraMicPreference)
     fun setOwnAppAudioPlaying(playing: Boolean)
-    fun getGlassesMediaVolume(): MentraGlassesMediaVolumeGetResult
-    fun setGlassesMediaVolume(level: Int): MentraGlassesMediaVolumeSetResult
+    fun getGlassesMediaVolume(): CompletableFuture<MentraGlassesMediaVolumeGetResult>
+    fun setGlassesMediaVolume(level: Int): CompletableFuture<MentraGlassesMediaVolumeSetResult>
 
-    fun requestWifiScan()
-    fun sendWifiCredentials(ssid: String, password: String)
-    fun forgetWifiNetwork(ssid: String)
-    fun setHotspotState(enabled: Boolean)
+    fun requestWifiScan(): CompletableFuture<List<MentraWifiScanResult>>
+    fun sendWifiCredentials(ssid: String, password: String): CompletableFuture<MentraWifiStatusEvent>
+    fun forgetWifiNetwork(ssid: String): CompletableFuture<MentraWifiStatusEvent>
+    fun setHotspotState(enabled: Boolean): CompletableFuture<MentraHotspotStatusEvent>
 
-    fun requestPhoto(request: MentraPhotoRequest)
-    fun queryGalleryStatus()
+    fun requestPhoto(request: MentraPhotoRequest): CompletableFuture<MentraPhotoResponseEvent>
+    fun queryGalleryStatus(): CompletableFuture<MentraGalleryStatusEvent>
     fun startStream(request: MentraStreamRequest)
     fun stopStream()
-    fun startVideoRecording(request: MentraVideoRecordingRequest)
-    fun stopVideoRecording(requestId: String)
+    fun startVideoRecording(request: MentraVideoRecordingRequest): CompletableFuture<MentraVideoRecordingStatusEvent>
+    fun stopVideoRecording(requestId: String): CompletableFuture<MentraVideoRecordingStatusEvent>
+    fun rgbLedControl(request: MentraRgbLedRequest): CompletableFuture<MentraRgbLedControlResponseEvent>
 
-    fun requestVersionInfo()
+    fun requestVersionInfo(): CompletableFuture<MentraVersionInfoResult>
 
     override fun close()
 }
 ```
 
-The core API should be Java-friendly. Avoid requiring coroutines, Flow, or AndroidX lifecycle owners in the base artifact. A later `mentra-bluetooth-sdk-ktx` artifact can add suspend functions and Flow wrappers.
+Request/response methods complete from correlated ASG response events and complete exceptionally when the glasses report explicit failure or the response times out. This keeps slow operations such as FOV camera restarts and Wi-Fi connection attempts off the Android main thread while preserving a Java-friendly base artifact.
+
+The core API should be Java-friendly. Avoid requiring coroutines, Flow, or AndroidX lifecycle owners in the base artifact. A later `mentra-bluetooth-sdk-ktx` artifact can add suspend functions and Flow wrappers over the `CompletableFuture` methods.
 
 ## Capability Shape
 
