@@ -246,7 +246,7 @@ class Simulated: SGCManager {
         Bridge.log("sendUserEmailToGlasses: \(email)")
     }
 
-    func sendOtaStart() {
+    func sendOtaStart(otaVersionUrl _: String?) {
         Bridge.log("sendOtaStart")
     }
 

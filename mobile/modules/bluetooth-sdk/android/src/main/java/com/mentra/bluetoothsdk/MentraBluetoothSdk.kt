@@ -868,7 +868,8 @@ class MentraBluetoothSdk private constructor(
     }
 
     /** Start the OTA flow after your app has presented the available update to the user. */
-    fun startOtaUpdate(): OtaStartAckEvent {
+    fun startOtaUpdate(otaVersionUrl: String? = null): OtaStartAckEvent {
+        val normalizedOtaVersionUrl = normalizeOtaVersionUrl(otaVersionUrl)
         val pending = PendingResponse<OtaStartAckEvent>("OTA start command")
         synchronized(oneShotLock) {
             if (pendingOtaStart != null) {
@@ -880,7 +881,7 @@ class MentraBluetoothSdk private constructor(
             pendingOtaStart = pending
         }
         try {
-            deviceManager.sendOtaStart()
+            deviceManager.sendOtaStart(normalizedOtaVersionUrl)
             return pending.await()
         } finally {
             synchronized(oneShotLock) {
@@ -897,9 +898,46 @@ class MentraBluetoothSdk private constructor(
             deviceManager.retryOtaVersionCheck()
         }
 
-    internal fun sendOtaStart(): OtaStartAckEvent = startOtaUpdate()
+    internal fun sendOtaStart(otaVersionUrl: String? = null): OtaStartAckEvent =
+        startOtaUpdate(otaVersionUrl)
 
     internal fun sendOtaQueryStatus(): OtaQueryResult = checkForOtaUpdate()
+
+    private fun normalizeOtaVersionUrl(otaVersionUrl: String?): String? {
+        if (otaVersionUrl == null) {
+            return null
+        }
+        val trimmed = otaVersionUrl.trim()
+        if (trimmed.isEmpty()) {
+            throw BluetoothException(
+                "invalid_argument",
+                "otaVersionUrl must be a non-empty http(s) URL when provided.",
+            )
+        }
+        val uri =
+            try {
+                java.net.URI.create(trimmed)
+            } catch (e: IllegalArgumentException) {
+                throw BluetoothException(
+                    "invalid_argument",
+                    "otaVersionUrl must be a valid http(s) URL.",
+                    e,
+                )
+            }
+        val scheme = uri.scheme
+        val host = uri.host
+        if (
+            scheme == null ||
+                (!scheme.equals("http", ignoreCase = true) && !scheme.equals("https", ignoreCase = true)) ||
+                host.isNullOrEmpty()
+        ) {
+            throw BluetoothException(
+                "invalid_argument",
+                "otaVersionUrl must be a valid http(s) URL.",
+            )
+        }
+        return trimmed
+    }
 
     internal fun sendShutdown() {
         deviceManager.sendShutdown()

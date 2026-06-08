@@ -413,9 +413,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - OTA Commands
 
-        AsyncFunction("sendOtaStart") {
+        AsyncFunction("sendOtaStart") { (otaVersionUrl: String?) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.sendOtaStart().values
+            return try await sdk.sendOtaStart(otaVersionUrl: otaVersionUrl).values
         }
 
         AsyncFunction("sendOtaQueryStatus") {

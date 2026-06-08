@@ -807,6 +807,14 @@ User accepted an OTA update.
 {"type": "ota_start"}
 ```
 
+SDK OTA delivery may include an optional HTTP(S) manifest URL:
+
+```json
+{"type": "ota_start", "ota_version_url": "https://ota.mentraglass.com/sdk_live_version.json"}
+```
+
+When `ota_version_url` is omitted, the ASG client uses the compiled production default. Empty or non-HTTP(S) values are rejected.
+
 If `OtaHelper` isn't initialized yet (can happen right after APK install), the handler retries up to 4 times with 2 s backoff. After exhausting retries it sends:
 
 ```json

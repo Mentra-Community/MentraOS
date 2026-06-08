@@ -922,7 +922,8 @@ public final class MentraBluetoothSDK {
     }
 
     /// Start the OTA flow after your app has presented the available update to the user.
-    public func startOtaUpdate() async throws -> OtaStartAckEvent {
+    public func startOtaUpdate(otaVersionUrl: String? = nil) async throws -> OtaStartAckEvent {
+        let normalizedOtaVersionUrl = try normalizeOtaVersionUrl(otaVersionUrl)
         if pendingOtaStart != nil {
             throw BluetoothError(
                 code: "request_in_flight",
@@ -931,7 +932,7 @@ public final class MentraBluetoothSDK {
         }
         let pending = PendingResponse<OtaStartAckEvent>(operation: "OTA start command")
         pendingOtaStart = pending
-        DeviceManager.shared.sendOtaStart()
+        DeviceManager.shared.sendOtaStart(otaVersionUrl: normalizedOtaVersionUrl)
         do {
             let event = try await pending.wait()
             if pendingOtaStart === pending {
@@ -953,9 +954,37 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    func sendOtaStart() async throws -> OtaStartAckEvent { try await startOtaUpdate() }
+    func sendOtaStart(otaVersionUrl: String? = nil) async throws -> OtaStartAckEvent {
+        try await startOtaUpdate(otaVersionUrl: otaVersionUrl)
+    }
 
     func sendOtaQueryStatus() async throws -> OtaQueryResult { try await checkForOtaUpdate() }
+
+    private func normalizeOtaVersionUrl(_ otaVersionUrl: String?) throws -> String? {
+        guard let otaVersionUrl else {
+            return nil
+        }
+        let trimmed = otaVersionUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw BluetoothError(
+                code: "invalid_argument",
+                message: "otaVersionUrl must be a non-empty http(s) URL when provided."
+            )
+        }
+        guard
+            let components = URLComponents(string: trimmed),
+            let scheme = components.scheme?.lowercased(),
+            (scheme == "http" || scheme == "https"),
+            let host = components.host,
+            !host.isEmpty
+        else {
+            throw BluetoothError(
+                code: "invalid_argument",
+                message: "otaVersionUrl must be a valid http(s) URL."
+            )
+        }
+        return trimmed
+    }
 
     func sendShutdown() {
         DeviceManager.shared.sendShutdown()

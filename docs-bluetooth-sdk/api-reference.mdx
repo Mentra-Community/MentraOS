@@ -284,7 +284,7 @@ React Native exposes the narrowest return types for clear branching after `await
 | `stopStream()` | `StreamStatusEvent` once `status` is `stopped`; an already-stopped / not-streaming glasses reply resolves as a normalized stopped event. | Real stop error, timeout, send failure, or another stream stop in flight. |
 | `rgbLedControl(...)` | React Native `RgbLedControlSuccessResponseEvent`; Android/iOS successful `RgbLedControlResponseEvent`. | Raw `rgb_led_control_response.state === "error"`, timeout, or send failure. |
 | `checkForOtaUpdate()` / `retryOtaVersionCheck()` | `OtaQueryResult`: either `ota_update_available` or the current `ota_status`. | Command response timeout, send failure, or another OTA query in flight. A returned `ota_status.status === "failed"` is a glasses OTA state to show in UI, not a command transport rejection. |
-| `startOtaUpdate()` | `OtaStartAckEvent` from `ota_start_ack`. | Start-ack timeout, send failure, or another OTA start in flight. |
+| `startOtaUpdate(otaVersionUrl?)` | `OtaStartAckEvent` from `ota_start_ack`. Omitting `otaVersionUrl` uses the glasses production default manifest. | Start-ack timeout, send failure, invalid manifest URL, or another OTA start in flight. |
 
 ## Gallery Mode
 
@@ -323,7 +323,7 @@ Mentra Live OTA is glasses-owned. The SDK exposes the same command and event sem
 | API | Glasses command | Purpose |
 | --- | --- | --- |
 | `checkForOtaUpdate()` | `ota_query_status` | Ask the glasses to report update availability or current progress. Resolves with `OtaQueryResult` from the ASG client. |
-| `startOtaUpdate()` | `ota_start` | Start OTA after your app presents the update and the user accepts it. Resolves with `OtaStartAckEvent` from the ASG client. |
+| `startOtaUpdate(otaVersionUrl?)` | `ota_start` | Start OTA after your app presents the update and the user accepts it. Optional HTTP(S) manifest URL; omit it to use the glasses production default. Resolves with `OtaStartAckEvent` from the ASG client. |
 | `retryOtaVersionCheck()` | `ota_retry_version_check` | Re-run the glasses-side version check after a known clock-skew/TLS failure. |
 
 Use the returned query/start values for one-shot UI. Keep `ota_status` listeners/delegates for install progress and terminal `complete` / `failed` state. React Native still receives `ota_update_available`, `ota_start_ack`, and `ota_status` events for low-level integrations; Android listeners receive `onOtaUpdateAvailable`, `onOtaStartAck`, and `onOtaStatus`; iOS delegates receive `.otaUpdateAvailable`, `.otaStartAck`, and `.otaStatus` through `BluetoothEvent`.

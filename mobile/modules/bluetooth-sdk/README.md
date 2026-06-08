@@ -287,7 +287,7 @@ Android and iOS async APIs use `BluetoothException` / `BluetoothError` for the s
 Mentra Live firmware owns the OTA flow. The SDK mirrors the MentraOS app commands and events:
 
 - `checkForOtaUpdate()` sends `ota_query_status` and resolves with the ASG response (`ota_update_available` or the current `ota_status`).
-- `startOtaUpdate()` sends `ota_start` and resolves with the ASG start ack after your app presents the update and the user accepts it.
+- `startOtaUpdate(otaVersionUrl?)` sends `ota_start` and resolves with the ASG start ack after your app presents the update and the user accepts it. Omit `otaVersionUrl` to use the glasses production default.
 - `retryOtaVersionCheck()` sends `ota_retry_version_check` and resolves with the same ASG response shape as `checkForOtaUpdate()`; use it only after fixing a known clock-skew/TLS failure.
 
 ```ts
