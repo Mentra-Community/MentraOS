@@ -49,7 +49,7 @@ services:
   # Holds the per-user WS, ingests UDP, runs LC3 + Soniox in Bun Workers.
   - name: audio
     type: web
-    run: bun packages/audio/src/index.ts
+    run: bun packages/runtime/src/index.ts
     port: 3001
     cpuCores: 2
     ramMegabytes: 2048

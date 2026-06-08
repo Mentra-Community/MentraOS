@@ -21,8 +21,9 @@ WORKDIR /app
 COPY bun.lock package.json ./
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/core/package.json ./packages/core/
-COPY packages/audio/package.json ./packages/audio/
+COPY packages/runtime/package.json ./packages/runtime/
 COPY packages/proxy/package.json ./packages/proxy/
+COPY packages/cloud-client/package.json ./packages/cloud-client/
 COPY test/test-oem/package.json ./test/test-oem/
 COPY test/test-client/package.json ./test/test-client/
 
