@@ -74,11 +74,14 @@ export async function createSonioxProvider(
   // specific code we pass it as hint with detection still on. (Letting
   // Soniox identify even when hinted is robust to user accent / code-switch.)
   //
-  // Endpoint detection + diarization mirror v1's SonioxTranscriptionProvider:
+  // Endpoint detection + diarization mirror v1's SonioxSdkStream:
   // `enable_endpoint_detection` makes Soniox emit an `<end>` (surfaced here as
-  // the `endpoint` event) at natural utterance boundaries, which is our signal
-  // to commit a single FINAL per utterance. `enable_speaker_diarization` tags
-  // tokens with a `speaker` id so a speaker change can also close an utterance.
+  // the `endpoint` event) at natural utterance boundaries, which is our ONLY
+  // signal to commit a single FINAL per utterance (besides stream close).
+  // `enable_speaker_diarization` tags tokens with a `speaker` id used purely for
+  // the "Speaker N" label; a speaker change does NOT close an utterance, because
+  // Soniox re-diarizes its rolling window and the per-token speaker flickers
+  // mid-utterance (see handleResult for the full rationale).
   // `max_endpoint_delay_ms` is the v2 SDK's analogue of v1's
   // `max_non_final_tokens_duration_ms` (both bound how long Soniox waits before
   // finalizing after speech ends); v1 used 2000ms.
@@ -145,8 +148,10 @@ export async function createSonioxProvider(
 
   /**
    * Commit the current utterance as a single FINAL and reset for the next one.
-   * Called only at a real boundary (endpoint / speaker change). No-op if there
-   * is nothing buffered, so back-to-back boundaries don't emit empty finals.
+   * Called only at a real utterance boundary: the Soniox `endpoint` event and
+   * stream `close()`. NOT on per-token speaker flicker (see handleResult). No-op
+   * if there is nothing buffered, so back-to-back boundaries don't emit empty
+   * finals.
    */
   const emitFinal = (startMs?: number, endMs?: number): void => {
     if (!lastSentInterim) {
@@ -197,28 +202,31 @@ export async function createSonioxProvider(
     let currentFinalText = "";
 
     for (const t of tokens) {
-      // Speaker change → close the previous utterance with a FINAL, then start
-      // a fresh one for the new speaker. Mirrors v1's behavior; keeps each
-      // speaker's turn as one card.
-      if (t.speaker && t.speaker !== currentSpeakerId) {
-        if (currentUtteranceId && lastSentInterim) {
-          emitFinal(startMs, endMs);
-        }
-        startNewUtterance(t.speaker, t.language ?? opts.language);
-        // A speaker change resets the per-utterance composite; restart the
-        // local accumulators for this batch so we don't carry the previous
-        // speaker's finalized text forward.
-        interimText = "";
-        currentFinalText = "";
-        startMs = undefined;
-        endMs = undefined;
-      }
-
       // First token of the stream (or first after a commit): open an utterance.
+      //
+      // IMPORTANT: we deliberately do NOT split the utterance when a token's
+      // `speaker` label differs from `currentSpeakerId`. Soniox delivers a
+      // ROLLING WINDOW that it RE-DIARIZES across results, so a given token's
+      // `speaker` can flicker/flip between rounds within one real utterance.
+      // The previous implementation called `emitFinal` + `startNewUtterance` on
+      // every such per-token change, which fired spuriously many times within a
+      // single utterance — committing a FINAL and minting a NEW utteranceId per
+      // partial. On the captions client that produced a pile-up of growing,
+      // cumulative cards (one per partial, uncorrelatable), worse with
+      // diarization. We instead finalize ONLY on the real utterance boundary:
+      // the Soniox `endpoint` event (`handleEndpoint`) and on `close()`.
+      //
+      // This mirrors v1's SonioxSdkStream (cloud/.../providers/SonioxSdkStream.ts),
+      // whose `handleResult` uses the LAST token's speaker for attribution and
+      // documents: "Speaker changes within the window do NOT rotate the
+      // utteranceId." Speaker is still tracked below for the "Speaker N" label;
+      // it just doesn't trigger a finalize/restart.
       if (!currentUtteranceId) {
         startNewUtterance(t.speaker, t.language ?? opts.language);
       }
 
+      // Track the latest token's speaker so the emitted interim/final carries
+      // the current (dominant) speaker for the label — without splitting.
       if (t.speaker) currentSpeakerId = t.speaker;
       // Track detected language for output but DON'T split the utterance on a
       // language change — Soniox's per-token language can flap mid-utterance.
@@ -248,8 +256,8 @@ export async function createSonioxProvider(
 
     // Emit an INTERIM only. We deliberately do NOT emit a final on every round
     // that has finalized tokens (v1 lesson: that piles up one card per partial
-    // on the client). The single final is emitted at an utterance boundary by
-    // `emitFinal`, driven by the endpoint event or a speaker change.
+    // on the client). The single final is emitted at the utterance boundary by
+    // `emitFinal`, driven by the Soniox `endpoint` event (and on `close()`).
     if (compositeText !== lastSentInterim) {
       opts.onTranscript({
         text: compositeText,
