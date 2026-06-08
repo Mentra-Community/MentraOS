@@ -57,8 +57,9 @@ workflow for a real release:
    package before it becomes available on npm.
 3. The Maven job installs the mobile workspace, runs Expo prebuild to create the
    generated `mobile/android` Gradle project, checks Maven Central for both
-   Android artifacts, runs `publishToMavenLocal`, then uploads the signed
-   `lc3Lib` and `mentra-bluetooth-sdk` publications to Sonatype Central.
+   Android artifacts, runs a public-mode `publishToMavenLocal`, then uploads the
+   signed public-mode `lc3Lib` and `mentra-bluetooth-sdk` publications to
+   Sonatype Central.
 4. The iOS job checks out the SwiftPM mirror repository, refuses to overwrite an
    existing version tag, exports the package with
    `scripts/export-bluetooth-sdk-ios-spm.sh --verify`, then pushes `main` and

@@ -231,6 +231,7 @@ jobs:
           ./gradlew \
             :lc3Lib:publishToMavenLocal \
             :mentra-bluetooth-sdk:publishToMavenLocal \
+            -PmentraPublicSdk=true \
             --no-daemon \
             --stacktrace
         env:
@@ -266,6 +267,7 @@ jobs:
             :lc3Lib:publishReleasePublicationToSonatypeCentralRepository \
             :mentra-bluetooth-sdk:publishReleasePublicationToSonatypeCentralRepository \
             :mentra-bluetooth-sdk:uploadSonatypeCentralDeployment \
+            -PmentraPublicSdk=true \
             --no-daemon \
             --stacktrace
         env:
