@@ -488,6 +488,14 @@ export class NavigationController {
       }),
     )
 
+    this.unsubs.push(
+      this.ui.handle("test:count-1-to-10", () => {
+        for (let i = 1; i <= 10; i++) {
+          setTimeout(() => this.display.showText(String(i)), (i - 1) * 3000)
+        }
+      }),
+    )
+
     // Mid-trip hydration: every fresh WebView open gets a snapshot.
     this.unsubs.push(this.ui.onOpen(() => this.ui.send("nav:snapshot", this.buildSnapshot())))
   }

@@ -2564,7 +2564,7 @@ class G2: NSObject, SGCManager {
                 x: c.x, y: c.y, width: c.width, height: c.height,
                 borderWidth: c.borderWidth, borderColor: c.borderColor, borderRadius: c.borderRadius,
                 paddingLength: c.paddingLength, containerID: c.id,
-                containerName: c.name, isEventCapture: index == 0,
+                containerName: c.name, isEventCapture: c.id == 0,
                 content: c.content
             ))
         }

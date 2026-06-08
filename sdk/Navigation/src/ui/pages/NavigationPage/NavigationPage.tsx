@@ -935,6 +935,15 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     Send
                   </button>
                 </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Count 1→10 every 3s</span>
+                  <button
+                    type="button"
+                    onClick={() => mentra.request("test:count-1-to-10", undefined)}
+                    className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                    Start
+                  </button>
+                </div>
               </>
             ) : null}
             {devTab === "nav" ? <>
