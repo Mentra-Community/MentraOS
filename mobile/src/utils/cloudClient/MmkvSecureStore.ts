@@ -22,6 +22,7 @@ export const cloudSecureStore: KeyValueStore = {
     store.set(key, value)
   },
   async delete(key: string): Promise<void> {
-    store.delete(key)
+    // react-native-mmkv v4's instance method is `remove`, not `delete`.
+    store.remove(key)
   },
 }
