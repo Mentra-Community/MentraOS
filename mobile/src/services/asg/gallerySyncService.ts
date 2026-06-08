@@ -387,6 +387,11 @@ class GallerySyncService {
   }
 
   private async runStartSync(): Promise<void> {
+    // Clear stale abort flag — it can persist when a prior pre-flight exited through
+    // a non-shouldAbortPreFlight path (e.g. connectivity failed, disk full), which
+    // would otherwise cause the next sync attempt to abort spuriously.
+    this.startAborted = false
+
     console.log("[GallerySyncService] ========================================")
     console.log("[GallerySyncService] 🚀 SYNC START INITIATED")
     console.log("[GallerySyncService] ========================================")

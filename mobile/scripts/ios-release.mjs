@@ -28,8 +28,15 @@ async function listDevicesViaDevicectl() {
     const json = JSON.parse(await fs.readFile(tmpFile, "utf-8"))
     return json.result?.devices ?? []
   } catch (error) {
-    console.warn("devicectl probe failed, falling back to simulator:", error?.message ?? error)
-    return null
+    const message = String(error?.message ?? error)
+    // Only silently fall back when devicectl itself is absent on this machine.
+    // Timeouts, JSON parse errors, and other failures are real problems that
+    // should abort so the caller gets a visible error rather than a wrong build.
+    if (/not found|unable to find utility|No such file/i.test(message)) {
+      console.warn("devicectl unavailable, falling back to simulator:", message)
+      return null
+    }
+    throw error
   } finally {
     await fs.remove(tmpFile).catch(() => {})
   }
