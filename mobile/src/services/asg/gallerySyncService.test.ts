@@ -211,6 +211,30 @@ describe("GallerySyncService", () => {
     expect(BluetoothSdk.setHotspotState).toHaveBeenCalledWith(true)
   })
 
+  it("coalesces concurrent startSync calls into a single pre-flight attempt", async () => {
+    const {checkConnectivityRequirementsUI} = require("@/utils/PermissionsUtils")
+    let resolveConnectivity: (() => void) | null = null
+    ;(checkConnectivityRequirementsUI as jest.Mock).mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveConnectivity = () => resolve(true)
+        }),
+    )
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+
+    const first = gallerySyncService.startSync()
+    const second = gallerySyncService.startSync()
+
+    expect(gallerySyncService.isSyncing()).toBe(true)
+    expect(checkConnectivityRequirementsUI).toHaveBeenCalledTimes(1)
+
+    resolveConnectivity?.()
+    await Promise.all([first, second])
+
+    expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")
+  })
+
   it("keeps sync watermark before zero-byte video captures", async () => {
     const serverTime = 1_700_000_000_000
     const failedTimestamp = serverTime - 5_000
