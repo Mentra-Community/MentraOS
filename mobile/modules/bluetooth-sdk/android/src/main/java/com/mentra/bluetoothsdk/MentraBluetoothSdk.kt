@@ -868,6 +868,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     /** Start the OTA flow after your app has presented the available update to the user. */
+    @JvmOverloads
     fun startOtaUpdate(otaVersionUrl: String? = null): OtaStartAckEvent {
         val normalizedOtaVersionUrl = normalizeOtaVersionUrl(otaVersionUrl)
         val pending = PendingResponse<OtaStartAckEvent>("OTA start command")
