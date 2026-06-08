@@ -1951,39 +1951,33 @@ class G2 : SGCManager() {
             Bridge.log("G2: sendText() - reusing container ${container.id} for rect $rx,$ry ${rw}x$rh")
             if (!pageCreated) {
                 rebuildPage()
-                delay(1000) // settle before sending text data
+                return
             }
-        } else {
-            container =
-                    addTextContainer(
-                            rx,
-                            ry,
-                            rw,
-                            rh,
-                            content,
-                            rBorderWidth,
-                            rBorderColor,
-                            rBorderRadius,
-                            rPaddingLength
-                    )
-            Bridge.log("G2: sendText() - added text container ${container.id} for rect $rx,$ry ${rw}x$rh, rebuilding page")
-            rebuildPage()
-            delay(1000) // settle before sending text data
+            // update the text container:
+            val msg =
+            EvenHubProto.updateTextMessage(
+                    containerID = container.id,
+                    contentOffset = 0,
+                    contentLength = container.content.toByteArray(Charsets.UTF_8).size,
+                    content = container.content
+            )
+            sendEvenHubCommand(msg)
+            return
         }
-
-        // update the text container:
-        // contentLength must describe the bytes we actually send (container.content, which is the
-        // space-substituted placeholder for empty input), not the original text — otherwise an empty
-        // string reports length 0 while a 1-byte payload is sent, leaving the glasses inconsistent.
-        val msg =
-                EvenHubProto.updateTextMessage(
-                        containerID = container.id,
-                        contentOffset = 0,
-                        contentLength = container.content.toByteArray(Charsets.UTF_8).size,
-                        content = container.content
+        container =
+                addTextContainer(
+                        rx,
+                        ry,
+                        rw,
+                        rh,
+                        content,
+                        rBorderWidth,
+                        rBorderColor,
+                        rBorderRadius,
+                        rPaddingLength
                 )
-        queueEvenHubCommand(msg)
-        currentTextContent = text
+        Bridge.log("G2: sendText() - added text container ${container.id} for rect $rx,$ry ${rw}x$rh, rebuilding page")
+        rebuildPage()
     }
 
     override fun sendDoubleTextWall(top: String, bottom: String) {

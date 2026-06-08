@@ -1821,6 +1821,9 @@ class G2: NSObject, SGCManager {
             // send dashboard menu if we have stored items
             self.sendMenuApps()
 
+            // order the calendar (Schedule) widget first on the dashboard
+            self.setCalendarWidgetFirst()
+
             // send calendar events
             let calendarEvents = DeviceStore.shared.get("bluetooth", "calendar_events") as? [[String: Any]] ?? []
             self.sendCalendarEvents(calendarEvents)
@@ -2902,6 +2905,7 @@ class G2: NSObject, SGCManager {
     }
 
     func dbg1() {
+        setCalendarWidgetFirst()
         // toggleHeyEven()
     }
 
@@ -3006,6 +3010,37 @@ class G2: NSObject, SGCManager {
     func getBatteryStatus() {
         Bridge.log("G2: getBatteryStatus()")
         requestDeviceInfo()
+    }
+
+    /// Reorder the dashboard widgets so the calendar (Schedule) widget appears first.
+    ///
+    /// Sends a Dashboard_Receive (service 0x01) display-settings push with
+    /// `widgetDisplayOrder` led by WidgetType 3 (Schedule). The remaining widgets
+    /// keep their default relative order.
+    ///   WidgetType: 1=News, 2=Stock, 3=Schedule, 4=Quicklist, 5=Health
+    func setCalendarWidgetFirst() {
+        // Schedule (calendar) first, then the rest in their default order.
+        let widgetOrder: [UInt8] = [3, 1, 2, 4, 5]
+
+        var dashDisplayW = ProtobufWriter()
+        dashDisplayW.writeInt32Field(1, 4) // displayMode
+        dashDisplayW.writeInt32Field(2, 3) // statusDisplayCount
+        dashDisplayW.writeMessageField(3, Data([1, 2, 3])) // statusDisplayOrder
+        dashDisplayW.writeInt32Field(4, Int32(widgetOrder.count)) // widgetDisplayCount
+        dashDisplayW.writeMessageField(5, Data(widgetOrder)) // widgetDisplayOrder: Schedule first
+        dashDisplayW.writeInt32Field(6, dashboardHalfDayFormat()) // halfDayFormat
+        dashDisplayW.writeInt32Field(7, dashboardTemperatureUnit()) // temperatureUnit
+
+        var dashRecvW = ProtobufWriter()
+        dashRecvW.writeMessageField(2, dashDisplayW.data)
+
+        var dashPkgW = ProtobufWriter()
+        dashPkgW.writeInt32Field(1, 2) // Dashboard_Receive
+        dashPkgW.writeInt32Field(2, sendManager.nextMagicRandom())
+        dashPkgW.writeMessageField(4, dashRecvW.data)
+        sendDashboardCommand(dashPkgW.data)
+
+        Bridge.log("G2: setCalendarWidgetFirst — widgetDisplayOrder \(widgetOrder)")
     }
 
     func setDashboardMenu(_ items: [[String: Any]]) {
@@ -3300,7 +3335,7 @@ class G2: NSObject, SGCManager {
             handleEvenHubCtrlResponse(result.payload)
         default:
             Bridge.log(
-                "G2: Unhandled service \(result.serviceId) (\(result.payload.count) bytes): \(result.payload.prefix(32).map { String(format: "%02X", $0) }.joined())"
+                "G2: Unhandled service \(result.serviceId) (\(result.payload.count) bytes): \(result.payload.map { String(format: "%02X", $0) }.joined())"
             )
         }
     }
@@ -3887,7 +3922,7 @@ class G2: NSObject, SGCManager {
 
     private func handleDashboardResponse(_ payload: Data) {
         Bridge.log(
-            "G2: dashboard response: \(payload.prefix(32).map { String(format: "%02X", $0) }.joined())"
+            "G2: dashboard response: \(payload.map { String(format: "%02X", $0) }.joined())"
         )
         var reader = ProtobufReader(payload)
         let fields = reader.parseFields()
