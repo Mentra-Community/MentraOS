@@ -101,6 +101,12 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         + requestId + ": ISO " + iso);
             }
 
+            MediaCaptureService captureService = serviceManager.getMediaCaptureService();
+            if (captureService == null) {
+                logCommandResult("take_photo", false, "Media capture service not available");
+                return false;
+            }
+
             // Route SDK no-save captures into the sync-hidden _sdk_pending area so an in-flight
             // upload cannot be picked up by gallery_status or AsgCameraServer between capture and
             // post-upload delete. Permanent (save=true) captures keep their original layout.
@@ -110,12 +116,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                             : generateTransientCaptureFilePath(packageName, "IMG_", ".jpg");
             if (photoFilePath == null) {
                 logCommandResult("take_photo", false, "Failed to generate file path");
-                return false;
-            }
-
-            MediaCaptureService captureService = serviceManager.getMediaCaptureService();
-            if (captureService == null) {
-                logCommandResult("take_photo", false, "Media capture service not available");
+                captureService.sendPhotoErrorResponse(
+                        requestId, "PHOTO_FILE_PATH_FAILED", "Failed to generate file path");
                 return false;
             }
 
@@ -216,6 +218,13 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
         } catch (Exception e) {
             Log.e(TAG, "Error handling take photo command", e);
             logCommandResult("take_photo", false, "Exception: " + e.getMessage());
+            MediaCaptureService captureService = serviceManager.getMediaCaptureService();
+            if (captureService != null && !requestIdForLog.isEmpty()) {
+                captureService.sendPhotoErrorResponse(
+                        requestIdForLog,
+                        "PHOTO_COMMAND_FAILED",
+                        "Error handling photo command: " + e.getMessage());
+            }
             return false;
         }
     }
@@ -255,7 +264,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
         Log.d(TAG, "Processing photo capture with transfer method: " + transferMethod);
         switch (transferMethod) {
             case "ble":
-                captureService.takePhotoForBleTransfer(
+                return captureService.takePhotoForBleTransfer(
                         photoFilePath,
                         requestId,
                         bleImgId,
@@ -265,13 +274,12 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         sound,
                         exposureTimeNs,
                         iso);
-                return true;
             case "auto":
                 if (bleImgId.isEmpty()) {
                     Log.e(TAG, "Auto mode requires bleImgId for fallback");
                     return false;
                 }
-                captureService.takePhotoAutoTransfer(
+                return captureService.takePhotoAutoTransfer(
                         photoFilePath,
                         requestId,
                         webhookUrl,
@@ -284,9 +292,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         compress,
                         exposureTimeNs,
                         iso);
-                return true;
             default:
-                captureService.takePhotoAndUpload(
+                return captureService.takePhotoAndUpload(
                         photoFilePath,
                         requestId,
                         webhookUrl,
@@ -298,7 +305,6 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         compress,
                         exposureTimeNs,
                         iso);
-                return true;
         }
     }
 }

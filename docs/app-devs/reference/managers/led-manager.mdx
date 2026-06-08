@@ -4,7 +4,7 @@
 
 # LedModule API Reference
 
-The `LedModule` class provides comprehensive LED control functionality for MentraOS Apps, including RGB LED control and pattern methods. It automatically handles request tracking and provides fire-and-forget LED control with immediate resolution.
+The `LedModule` class provides comprehensive LED control functionality for MentraOS Apps, including RGB LED control and pattern methods. It automatically handles request tracking and resolves LED commands after the connected glasses acknowledge the RGB command.
 
 ## Import
 
@@ -39,13 +39,13 @@ The LedModule is automatically instantiated by the AppSession. You should not cr
 Turn on an LED with specified timing parameters.
 
 ```typescript
-async turnOn(options: LedControlOptions): Promise<void>
+async turnOn(options: LedControlOptions): Promise<LedControlResult>
 ```
 
 **Parameters:**
 - `options`: LED control configuration
 
-**Returns:** Promise that resolves immediately after sending the command (fire-and-forget)
+**Returns:** Promise that resolves with the LED command acknowledgement after the glasses apply or reject the command.
 
 **Example:**
 ```typescript
@@ -76,10 +76,10 @@ await session.led.turnOn({
 Turn off all LEDs on the connected glasses.
 
 ```typescript
-async turnOff(): Promise<void>
+async turnOff(): Promise<LedControlResult>
 ```
 
-**Returns:** Promise that resolves immediately after sending the command
+**Returns:** Promise that resolves with the LED command acknowledgement after the glasses turn the LED off or reject the command.
 
 **Example:**
 ```typescript
@@ -98,7 +98,7 @@ session.layouts.showTextWall('LEDs turned off');
 Blink an LED with specified timing.
 
 ```typescript
-async blink(color: LedColor, ontime: number, offtime: number, count: number): Promise<void>
+async blink(color: LedColor, ontime: number, offtime: number, count: number): Promise<LedControlResult>
 ```
 
 **Parameters:**
@@ -107,7 +107,7 @@ async blink(color: LedColor, ontime: number, offtime: number, count: number): Pr
 - `offtime`: How long LED stays off (ms)
 - `count`: Number of blink cycles
 
-**Returns:** Promise that resolves immediately after sending the command
+**Returns:** Promise that resolves with the LED command acknowledgement after the glasses apply or reject the command.
 
 **Example:**
 ```typescript
@@ -126,14 +126,14 @@ await session.led.blink('orange', 1000, 1000, 3);
 LED stays on continuously for specified duration.
 
 ```typescript
-async solid(color: LedColor, duration: number): Promise<void>
+async solid(color: LedColor, duration: number): Promise<LedControlResult>
 ```
 
 **Parameters:**
 - `color`: LED color to use
 - `duration`: How long LED stays on (ms)
 
-**Returns:** Promise that resolves immediately after sending the command
+**Returns:** Promise that resolves with the LED command acknowledgement after the glasses apply or reject the command.
 
 **Example:**
 ```typescript
@@ -193,6 +193,18 @@ interface LedControlOptions {
   offtime?: number;
   /** Number of on/off cycles */
   count?: number;
+}
+```
+
+### LedControlResult
+
+Command acknowledgement returned after the connected glasses apply the RGB LED command.
+
+```typescript
+interface LedControlResult {
+  type?: "rgb_led_control_response";
+  state: "success";
+  requestId: string;
 }
 ```
 
