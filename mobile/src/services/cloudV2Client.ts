@@ -16,6 +16,7 @@ import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentr
 import type {CloudRuntimeAdapter} from "@mentra/island"
 
 import mentraAuth from "@/utils/auth/authClient"
+import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {createCloudUdpSocket} from "@/utils/cloudClient/RnUdpAdapter"
 import {cloudSecureStore} from "@/utils/cloudClient/MmkvSecureStore"
 
@@ -24,15 +25,36 @@ const LOG_TAG = "cloudV2Client"
 // TODO(cloud-v2): these fallbacks are the dev laptop's LAN URLs. Set
 // EXPO_PUBLIC_CLOUD_V2_CORE_URL / EXPO_PUBLIC_CLOUD_V2_RUNTIME_URL in .env to
 // point at a real environment. Remove the hardcoded fallbacks before shipping.
-const DEFAULT_CORE_URL = "http://10.0.0.161:3000"
-const DEFAULT_RUNTIME_URL = "http://10.0.0.161:8010"
+export const DEFAULT_CORE_URL = "http://10.0.0.161:3000"
+export const DEFAULT_RUNTIME_URL = "http://10.0.0.161:8010"
+
+/**
+ * Resolve an endpoint URL with precedence: local dev store override -> env ->
+ * hardcoded default. The store override is read via the settings store's
+ * `getState()` accessor (not a hook) so this service stays React-free.
+ */
+function resolveUrl(settingKey: string, envValue: string | undefined, fallback: string): string {
+  const override = useSettingsStore.getState().getSetting(settingKey)
+  if (typeof override === "string" && override.trim().length > 0) {
+    return override
+  }
+  return envValue || fallback
+}
 
 function coreUrl(): string {
-  return (process.env.EXPO_PUBLIC_CLOUD_V2_CORE_URL as string) || DEFAULT_CORE_URL
+  return resolveUrl(
+    SETTINGS.cloud_v2_core_url.key,
+    process.env.EXPO_PUBLIC_CLOUD_V2_CORE_URL as string | undefined,
+    DEFAULT_CORE_URL,
+  )
 }
 
 function runtimeUrl(): string {
-  return (process.env.EXPO_PUBLIC_CLOUD_V2_RUNTIME_URL as string) || DEFAULT_RUNTIME_URL
+  return resolveUrl(
+    SETTINGS.cloud_v2_runtime_url.key,
+    process.env.EXPO_PUBLIC_CLOUD_V2_RUNTIME_URL as string | undefined,
+    DEFAULT_RUNTIME_URL,
+  )
 }
 
 /**
@@ -123,4 +145,26 @@ export function initCloudV2(): CloudRuntimeAdapter {
     .catch((err) => console.warn(`${LOG_TAG}: connect() failed: ${err?.message ?? err}`))
 
   return adapter
+}
+
+/**
+ * Tear down the current v2 client and re-init with freshly-resolved endpoint
+ * URLs. Used by the dev "Cloud V2" settings override so a new core/runtime URL
+ * takes effect without an app rebuild. The CloudClient exposes its teardown via
+ * `runtime.close()` (the top-level client has no `disconnect`/`close`), so we
+ * close that, drop the singletons, and call `initCloudV2()` to rebuild.
+ */
+export function reconnectCloudV2(): void {
+  try {
+    client?.runtime.close()
+  } catch (err) {
+    console.warn(`${LOG_TAG}: reconnect close() failed: ${(err as Error)?.message ?? err}`)
+  }
+
+  client = null
+  adapter = null
+  connected = false
+  audioSubscriptions = []
+
+  initCloudV2()
 }

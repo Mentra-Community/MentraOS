@@ -140,6 +140,20 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: true,
   },
+  cloud_v2_core_url: {
+    key: "cloud_v2_core_url",
+    defaultValue: () => process.env.EXPO_PUBLIC_CLOUD_V2_CORE_URL || "http://10.0.0.161:3000",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  cloud_v2_runtime_url: {
+    key: "cloud_v2_runtime_url",
+    defaultValue: () => process.env.EXPO_PUBLIC_CLOUD_V2_RUNTIME_URL || "http://10.0.0.161:8010",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   saved_backend_urls: {
     key: "saved_backend_urls",
     defaultValue: () => [],
