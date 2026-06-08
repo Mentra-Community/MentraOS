@@ -39,6 +39,39 @@ import type {
 
 const SONIOX_MODEL = process.env.SONIOX_MODEL ?? "stt-rt-v4";
 
+/**
+ * Self-heal backoff for an unexpected Soniox session drop.
+ *
+ * The underlying Soniox WebSocket can die WITHOUT our `close()` being called:
+ * a network blip, a Soniox-side idle timeout, or a transient upstream error.
+ * When that happens the provider object is still held (alive) in the worker's
+ * per-user provider map, keyed by subscription identity — and the worker's
+ * reconcile is idempotent by that key, so it will NEVER recreate the provider.
+ * Audio keeps flowing into a dead session and transcripts silently stop.
+ *
+ * This is exactly the "captions freeze after a hostile network drop" wedge: a
+ * clean pod-roll recovers (it DETACHes the user → the provider map is cleared →
+ * a fresh ATTACH recreates providers), but a same-pod reconnect keeps the same
+ * worker + the same (now-dead) provider, so only a full app restart recovers.
+ *
+ * The fix is for the provider to reconnect its OWN Soniox session in place on an
+ * unexpected drop, so its identity in the worker map stays valid and transcripts
+ * resume without any teardown/recreate. Bounded retries with capped backoff; we
+ * give up (and surface onError) only after exhausting them.
+ */
+/**
+ * Read the self-heal backoff tunables. Read per-provider (not at module load)
+ * so tests can shrink the delays via env before constructing a provider; in
+ * production these are stable for the process lifetime.
+ */
+function reconnectConfig(): { baseMs: number; maxMs: number; maxAttempts: number } {
+  return {
+    baseMs: Number(process.env.SONIOX_RECONNECT_BASE_MS ?? 500),
+    maxMs: Number(process.env.SONIOX_RECONNECT_MAX_MS ?? 8_000),
+    maxAttempts: Number(process.env.SONIOX_RECONNECT_MAX_ATTEMPTS ?? 10),
+  };
+}
+
 export interface CreateSonioxProviderOptions extends ProviderOptions {
   /** Provide the Soniox client to reuse a single client across multiple streams. */
   client?: SonioxNodeClient;
@@ -105,7 +138,22 @@ export async function createSonioxProvider(
   } as SttSessionConfig;
   const isTranslation = !!opts.targetLanguage;
 
-  const session: RealtimeSttSession = client.realtime.stt(sessionConfig);
+  // The live Soniox session. Mutable because we replace it on a self-heal
+  // reconnect (the old one is dead; a fresh `client.realtime.stt(...)` takes its
+  // place) while keeping THIS provider object — and therefore its identity in
+  // the worker's per-user provider map — stable.
+  let session: RealtimeSttSession = client.realtime.stt(sessionConfig);
+
+  // True once `close()` has run. Gates the self-heal path so an expected
+  // teardown (our own `session.finish()` → `disconnected`) does not trigger a
+  // reconnect, and so a frame written after close is dropped, not sent.
+  let closed = false;
+
+  // True while a self-heal reconnect is in flight. Audio written during this
+  // window is dropped (there is no live upstream session to take it); the rest
+  // of the pipeline already tolerates dropped frames during a reconnect.
+  let reconnecting = false;
+  let reconnectAttempts = 0;
 
   // === Per-utterance state (ports v1's SonioxTranscriptionProvider) ===
   //
@@ -280,24 +328,141 @@ export async function createSonioxProvider(
 
   const handleError = (err: Error) => {
     opts.onError?.(err);
+    // A provider-side error usually precedes (or accompanies) the socket dying.
+    // Treat it as a trigger for the self-heal path: if the session is no longer
+    // usable, `scheduleReconnect` brings up a fresh one; if it is still alive,
+    // the reconnect is a no-op once `connected` re-fires.
+    scheduleReconnect("error");
   };
 
-  // Visibility into the Soniox session lifecycle. Logged via console
-  // (worker stderr); pino-in-worker can come later. Each line prefixed
-  // with [soniox] for easy grep.
-  session.on("connected", () => {
-    console.log(`[soniox] connected scope=${opts.scope} lang=${opts.language}${opts.targetLanguage ? ` → ${opts.targetLanguage}` : ""}`);
-  });
-  session.on("disconnected", (reason: unknown) => {
-    console.log(`[soniox] disconnected scope=${opts.scope} reason=${typeof reason === "string" ? reason : JSON.stringify(reason)}`);
-  });
-  session.on("finished", () => {
-    console.log(`[soniox] finished scope=${opts.scope}`);
-  });
-  session.on("result", handleResult);
-  session.on("endpoint", handleEndpoint);
-  session.on("error", handleError);
+  // The `disconnected` handler is named so the same function is wired onto every
+  // session instance (original + each reconnect) and can be `off`-ed on close.
+  const handleDisconnected = (reason: unknown) => {
+    console.log(
+      `[soniox] disconnected scope=${opts.scope} reason=${typeof reason === "string" ? reason : JSON.stringify(reason)}`,
+    );
+    // An UNEXPECTED disconnect (not our own close()) means the upstream session
+    // is gone. Self-heal in place so the provider keeps producing transcripts
+    // for the audio that is still arriving. An expected disconnect (closed=true)
+    // is the normal teardown and must NOT reconnect.
+    scheduleReconnect("disconnected");
+  };
 
+  const handleConnected = () => {
+    console.log(
+      `[soniox] connected scope=${opts.scope} lang=${opts.language}${opts.targetLanguage ? ` → ${opts.targetLanguage}` : ""}`,
+    );
+  };
+
+  const handleFinished = () => {
+    console.log(`[soniox] finished scope=${opts.scope}`);
+  };
+
+  /**
+   * Wire our handlers onto a Soniox session instance. Visibility events
+   * (`connected`/`finished`) and the data/lifecycle events (`result`,
+   * `endpoint`, `error`, `disconnected`). Called for the initial session and
+   * for every replacement built on a self-heal reconnect.
+   */
+  const wireSession = (s: RealtimeSttSession): void => {
+    s.on("connected", handleConnected);
+    s.on("disconnected", handleDisconnected);
+    s.on("finished", handleFinished);
+    s.on("result", handleResult);
+    s.on("endpoint", handleEndpoint);
+    s.on("error", handleError);
+  };
+
+  /** Detach our handlers from a session instance (on replace or close). */
+  const unwireSession = (s: RealtimeSttSession): void => {
+    try {
+      s.off("connected", handleConnected);
+      s.off("disconnected", handleDisconnected);
+      s.off("finished", handleFinished);
+      s.off("result", handleResult);
+      s.off("endpoint", handleEndpoint);
+      s.off("error", handleError);
+    } catch {
+      /* best-effort */
+    }
+  };
+
+  /**
+   * Rebuild the underlying Soniox session in place after an unexpected drop.
+   *
+   * Reentrancy-guarded by `reconnecting`, so a burst of `disconnected` + `error`
+   * for the same drop schedules exactly one heal. Each attempt builds a fresh
+   * session, wires it, and connects; on failure it backs off and retries up to
+   * `SONIOX_RECONNECT_MAX_ATTEMPTS`, after which it surfaces the failure via
+   * `onError` and stops (the next provider recreate, e.g. a real detach, is the
+   * recovery path of last resort). We do NOT flush a final on the dead session's
+   * in-flight utterance — the rolling-window state is preserved so the resumed
+   * session continues the same card where possible.
+   */
+  const reconnect = reconnectConfig();
+  const scheduleReconnect = (trigger: string): void => {
+    if (closed || reconnecting) return;
+    reconnecting = true;
+
+    const attempt = async (): Promise<void> => {
+      while (!closed) {
+        reconnectAttempts += 1;
+        if (reconnectAttempts > reconnect.maxAttempts) {
+          console.error(
+            `[soniox] self-heal gave up scope=${opts.scope} after ${reconnect.maxAttempts} attempts (trigger=${trigger})`,
+          );
+          opts.onError?.(
+            new Error(`soniox session lost and could not reconnect (scope=${opts.scope})`),
+          );
+          reconnecting = false;
+          return;
+        }
+
+        const delay = Math.min(
+          reconnect.maxMs,
+          reconnect.baseMs * 2 ** (reconnectAttempts - 1),
+        );
+        console.log(
+          `[soniox] self-heal reconnect scope=${opts.scope} attempt=${reconnectAttempts} delayMs=${delay} trigger=${trigger}`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        if (closed) break;
+
+        // Drop the dead session's handlers so its late events can't drive us.
+        unwireSession(session);
+
+        const next = client.realtime.stt(sessionConfig);
+        wireSession(next);
+        try {
+          await next.connect();
+          // Connected: swap in the fresh session and clear the heal state.
+          session = next;
+          reconnecting = false;
+          reconnectAttempts = 0;
+          console.log(`[soniox] self-heal reconnected scope=${opts.scope}`);
+          return;
+        } catch (err) {
+          console.error(
+            `[soniox] self-heal connect failed scope=${opts.scope} attempt=${reconnectAttempts}:`,
+            err,
+          );
+          unwireSession(next);
+          try {
+            await next.close();
+          } catch {
+            /* best-effort */
+          }
+          // Loop and back off again.
+        }
+      }
+      reconnecting = false;
+    };
+
+    void attempt();
+  };
+
+  // Wire the initial session and connect it.
+  wireSession(session);
   try {
     await session.connect();
   } catch (err) {
@@ -309,15 +474,25 @@ export async function createSonioxProvider(
   return {
     name: "soniox",
     writeAudio(pcm: Int16Array): void {
+      // Drop frames while a self-heal reconnect is in flight (or after close):
+      // there is no live upstream session to take them, and the pipeline already
+      // tolerates a brief audio gap across a reconnect.
+      if (closed || reconnecting) return;
       // Soniox SDK accepts Uint8Array of raw PCM bytes.
       const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
       try {
         session.sendAudio(bytes);
       } catch (err) {
+        // A throw here usually means the socket died between checks: surface it
+        // and kick off self-heal so the next frames have somewhere to land.
         opts.onError?.(err as Error);
+        scheduleReconnect("writeAudio");
       }
     },
     async close(): Promise<void> {
+      // Mark closed FIRST so any disconnect/error fired by our own teardown does
+      // not spin up a self-heal reconnect.
+      closed = true;
       // Flush any in-flight utterance as a final so a card that was mid-update
       // gets committed instead of being left dangling on detach.
       try {
@@ -331,9 +506,7 @@ export async function createSonioxProvider(
         /* best-effort */
       }
       try {
-        session.off("result", handleResult);
-        session.off("endpoint", handleEndpoint);
-        session.off("error", handleError);
+        unwireSession(session);
         await session.close();
       } catch {
         /* best-effort */

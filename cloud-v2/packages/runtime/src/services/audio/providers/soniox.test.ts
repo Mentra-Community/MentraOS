@@ -13,6 +13,13 @@
  */
 import { describe, test, expect } from "bun:test";
 
+// Shrink the self-heal backoff so reconnect tests run in milliseconds. Read
+// per-provider inside createSonioxProvider, so setting it here (before any
+// provider is constructed) is sufficient.
+process.env.SONIOX_RECONNECT_BASE_MS = "1";
+process.env.SONIOX_RECONNECT_MAX_MS = "4";
+process.env.SONIOX_RECONNECT_MAX_ATTEMPTS = "5";
+
 import { createSonioxProvider } from "./soniox";
 import type { TranscriptEvent } from "./provider";
 
@@ -52,11 +59,33 @@ class FakeSession {
     for (const h of this.handlers.get(event) ?? []) h(arg);
   }
 
-  // Lifecycle methods the provider calls. All no-ops for the test.
-  async connect(): Promise<void> {}
-  sendAudio(): void {}
+  // Lifecycle methods the provider calls. Instrumented so self-heal tests can
+  // assert connect/sendAudio/close behavior and inject a connect failure.
+  connectCount = 0;
+  sendAudioCount = 0;
+  closeCount = 0;
+  /** When > 0, the next N connect() calls reject (simulate a flaky reconnect). */
+  failNextConnects = 0;
+
+  async connect(): Promise<void> {
+    this.connectCount += 1;
+    if (this.failNextConnects > 0) {
+      this.failNextConnects -= 1;
+      throw new Error("fake connect failure");
+    }
+  }
+  sendAudio(): void {
+    this.sendAudioCount += 1;
+  }
   async finish(): Promise<void> {}
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    this.closeCount += 1;
+  }
+
+  /** Simulate an unexpected upstream drop (not triggered by our close()). */
+  disconnect(reason = "upstream closed"): void {
+    this.emit("disconnected", reason);
+  }
 
   /** Convenience: push a Soniox result with the given rolling token window. */
   result(tokens: FakeToken[]): void {
@@ -76,6 +105,31 @@ function fakeClient(session: FakeSession): any {
       stt: () => session,
     },
   };
+}
+
+/**
+ * A fake client that hands out a NEW session per `realtime.stt()` call, in
+ * order. Mirrors the real client, which mints a fresh session each call — the
+ * self-heal path builds a replacement session, so the test needs more than one.
+ * Records every session it produced so the test can drive/inspect them.
+ */
+function multiSessionClient(): { client: any; sessions: FakeSession[] } {
+  const sessions: FakeSession[] = [];
+  const client = {
+    realtime: {
+      stt: () => {
+        const s = new FakeSession();
+        sessions.push(s);
+        return s;
+      },
+    },
+  };
+  return { client, sessions };
+}
+
+/** Resolve after `ms` of real time (kept small so tests stay fast). */
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function makeProvider(): Promise<{
@@ -179,5 +233,140 @@ describe("SonioxProvider utterance lifecycle", () => {
     const finals = events.filter((e) => e.isFinal);
     expect(finals.length).toBe(1);
     expect(finals[0]!.text).toBe("dangling text");
+  });
+});
+
+/**
+ * Self-heal: the "captions freeze after a hostile network drop" wedge.
+ *
+ * The underlying Soniox session can die WITHOUT our close() (network blip,
+ * Soniox idle timeout). The provider object stays in the worker's per-user
+ * provider map, keyed by subscription identity, and the worker's reconcile is
+ * idempotent by that key — so it never recreates the provider. Without
+ * self-heal, audio keeps flowing into the dead session and transcripts stop
+ * until a full app restart forces a real detach. These tests assert the
+ * provider reconnects its own session in place and resumes emitting.
+ */
+describe("SonioxProvider self-heal reconnect", () => {
+  test("resumes transcripts after an unexpected upstream disconnect", async () => {
+    const { client, sessions } = multiSessionClient();
+    const events: TranscriptEvent[] = [];
+    const provider = await createSonioxProvider({
+      scope: "user_heal",
+      language: "auto",
+      client: client as never,
+      onTranscript: (e) => events.push(e),
+    });
+
+    const first = sessions[0]!;
+    // Transcripts flow on the original session.
+    first.result([{ text: "hello", confidence: 0.9, is_final: false, speaker: "1" }]);
+    expect(events.at(-1)!.text).toBe("hello");
+
+    // The upstream session dies unexpectedly (the hostile-drop wedge).
+    first.disconnect();
+
+    // The provider should build + connect a replacement session.
+    await wait(50);
+    expect(sessions.length).toBe(2);
+    const second = sessions[1]!;
+    expect(second.connectCount).toBe(1);
+
+    // Audio that arrives after the heal must reach the NEW session, and its
+    // transcripts must reach the consumer — captions resume, no restart needed.
+    provider.writeAudio(new Int16Array([1, 2, 3, 4]));
+    expect(second.sendAudioCount).toBe(1);
+    second.result([{ text: "world", confidence: 0.9, is_final: false, speaker: "1" }]);
+    expect(events.at(-1)!.text).toBe("world");
+
+    await provider.close();
+  });
+
+  test("retries with backoff when a reconnect attempt fails, then succeeds", async () => {
+    // Mint sessions where the FIRST replacement's connect() rejects once, so the
+    // self-heal loop must back off and try again before it gets a live session.
+    const sessions: FakeSession[] = [];
+    let nextFailCount = 0;
+    const client = {
+      realtime: {
+        stt: () => {
+          const s = new FakeSession();
+          s.failNextConnects = nextFailCount;
+          nextFailCount = 0;
+          sessions.push(s);
+          return s;
+        },
+      },
+    };
+    const errors: Error[] = [];
+    const provider = await createSonioxProvider({
+      scope: "user_retry",
+      language: "auto",
+      client: client as never,
+      onTranscript: () => {},
+      onError: (e) => errors.push(e),
+    });
+
+    const first = sessions[0]!;
+    // Arm the next-built session to fail its first connect, then drop the live
+    // one. Heal builds replacement #1 (connect rejects) → backs off → builds
+    // replacement #2 (connect ok).
+    nextFailCount = 1;
+    first.disconnect();
+
+    await wait(80);
+
+    // At least two replacements were built (the failed one + the live one), and
+    // self-heal did NOT give up (no error surfaced).
+    expect(sessions.length).toBeGreaterThanOrEqual(3);
+    expect(errors.length).toBe(0);
+
+    // The final session is live and takes audio.
+    const last = sessions.at(-1)!;
+    provider.writeAudio(new Int16Array([1, 2]));
+    expect(last.sendAudioCount).toBe(1);
+
+    await provider.close();
+  });
+
+  test("does NOT reconnect on an expected close()", async () => {
+    const { client, sessions } = multiSessionClient();
+    const provider = await createSonioxProvider({
+      scope: "user_close",
+      language: "auto",
+      client: client as never,
+      onTranscript: () => {},
+    });
+
+    // close() finishes the session, which fires a `disconnected` on the real
+    // SDK. That expected disconnect must NOT spin up a replacement session.
+    await provider.close();
+    sessions[0]!.disconnect(); // late teardown event, post-close
+    await wait(30);
+
+    expect(sessions.length).toBe(1);
+  });
+
+  test("drops audio frames while a reconnect is in flight", async () => {
+    const { client, sessions } = multiSessionClient();
+    const provider = await createSonioxProvider({
+      scope: "user_gap",
+      language: "auto",
+      client: client as never,
+      onTranscript: () => {},
+      // Slow the heal so we can observe the in-flight window.
+      onError: () => {},
+    });
+
+    const first = sessions[0]!;
+    first.disconnect();
+    // Immediately after the drop, before the replacement connects, frames are
+    // dropped (no live session to take them) — no throw, no send on the dead one.
+    const beforeSends = first.sendAudioCount;
+    provider.writeAudio(new Int16Array([9, 9]));
+    expect(first.sendAudioCount).toBe(beforeSends);
+
+    await wait(50);
+    await provider.close();
   });
 });
