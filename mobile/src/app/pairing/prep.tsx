@@ -30,34 +30,25 @@ export default function PairingPrepScreen() {
       return
     }
 
-    // Always request Bluetooth permissions - required for Android 14+ foreground service
     let needsBluetoothPermissions = true
-    // we don't need bluetooth permissions for simulated glasses
     if (deviceModel.startsWith(DeviceTypes.SIMULATED) && Platform.OS === "ios") {
       needsBluetoothPermissions = false
     }
 
     try {
-      // Check for Android-specific permissions
       if (Platform.OS === "android") {
-        // Android-specific Phone State permission - request for ALL glasses including simulated
         console.log("Requesting PHONE_STATE permission...")
         const phoneStateGranted = await requestFeaturePermissions(PermissionFeatures.PHONE_STATE)
         console.log("PHONE_STATE permission result:", phoneStateGranted)
 
         if (!phoneStateGranted) {
-          // The specific alert for previously denied permission is already handled in requestFeaturePermissions
-          // We just need to stop the flow here
           return
         }
 
-        // Bluetooth permissions only for physical glasses
         if (needsBluetoothPermissions) {
           const bluetoothPermissions: BluetoothPermission[] = []
 
-          // Bluetooth permissions based on Android version
           if (typeof Platform.Version === "number" && Platform.Version < 31) {
-            // For Android 9, 10, and 11 (API 28-30), use legacy Bluetooth permissions
             bluetoothPermissions.push("android.permission.BLUETOOTH")
             bluetoothPermissions.push("android.permission.BLUETOOTH_ADMIN")
           }
@@ -67,44 +58,25 @@ export default function PairingPrepScreen() {
             bluetoothPermissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE)
           }
 
-          // Request Bluetooth permissions directly
           if (bluetoothPermissions.length > 0) {
-            console.log("RIGHT BEFORE ASKING FOR PERMS")
-            console.log("Bluetooth permissions array:", bluetoothPermissions)
-            console.log(
-              "Bluetooth permission values:",
-              bluetoothPermissions.map((p) => `${p} (${typeof p})`),
-            )
-
             const results = await PermissionsAndroid.requestMultiple(bluetoothPermissions as Permission[])
             const allGranted = Object.values(results).every((value) => value === PermissionsAndroid.RESULTS.GRANTED)
 
-            // Since we now handle NEVER_ASK_AGAIN in requestFeaturePermissions,
-            // we just need to check if all are granted
             if (!allGranted) {
-              // Check if any are NEVER_ASK_AGAIN to show proper dialog
               const anyNeverAskAgain = Object.values(results).some(
                 (value) => value === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN,
               )
 
               if (anyNeverAskAgain) {
-                // Show "previously denied" dialog for Bluetooth
                 showAlert(
                   translate("pairing:permissionRequired"),
                   translate("pairing:bluetoothPermissionPreviouslyDenied"),
                   [
-                    {
-                      text: translate("pairing:openSettings"),
-                      onPress: () => Linking.openSettings(),
-                    },
-                    {
-                      text: translate("common:cancel"),
-                      style: "cancel",
-                    },
+                    {text: translate("pairing:openSettings"), onPress: () => Linking.openSettings()},
+                    {text: translate("common:cancel"), style: "cancel"},
                   ],
                 )
               } else {
-                // Show standard permission required dialog
                 showAlert(
                   translate("pairing:bluetoothPermissionRequiredTitle"),
                   translate("pairing:bluetoothPermissionRequiredMessage"),
@@ -114,12 +86,9 @@ export default function PairingPrepScreen() {
               return
             }
           }
+        }
+      }
 
-          // Phone state permission already requested above for all Android devices
-        } // End of Bluetooth permissions block
-      } // End of Android-specific permissions block
-
-      // Check connectivity early for iOS (permissions work differently)
       console.log("DEBUG: needsBluetoothPermissions:", needsBluetoothPermissions, "Platform.OS:", Platform.OS)
       if (needsBluetoothPermissions && Platform.OS === "ios") {
         console.log("DEBUG: Running iOS connectivity check early")
@@ -129,7 +98,6 @@ export default function PairingPrepScreen() {
         }
       }
 
-      // Cross-platform permissions needed for both iOS and Android (only if connectivity check passed)
       if (needsBluetoothPermissions) {
         const hasBluetoothPermission = await requestFeaturePermissions(PermissionFeatures.BLUETOOTH)
         if (!hasBluetoothPermission) {
@@ -138,41 +106,27 @@ export default function PairingPrepScreen() {
             translate("pairing:bluetoothPermissionRequiredMessageAlt"),
             [{text: translate("common:ok")}],
           )
-          return // Stop the connection process
+          return
         }
       }
 
-      // Request microphone permission (needed for both platforms)
       console.log("Requesting microphone permission...")
-
-      // This now handles showing alerts for previously denied permissions internally
       const micGranted = await requestFeaturePermissions(PermissionFeatures.MICROPHONE)
-
       console.log("Microphone permission result:", micGranted)
 
       if (!micGranted) {
-        // The specific alert for previously denied permission is already handled in requestFeaturePermissions
-        // We just need to stop the flow here
         return
       }
 
-      // Request location permission (needed for Android BLE scanning)
       if (Platform.OS === "android") {
         console.log("Requesting location permission for Android BLE scanning...")
-
-        // This now handles showing alerts for previously denied permissions internally
         const locGranted = await requestFeaturePermissions(PermissionFeatures.LOCATION)
-
         console.log("Location permission result:", locGranted)
 
         if (!locGranted) {
-          // The specific alert for previously denied permission is already handled in requestFeaturePermissions
-          // We just need to stop the flow here
           return
         }
 
-        // Check connectivity for Android AFTER all permissions are granted
-        // This must be done after location permission is granted to avoid premature "Connection issue" popup
         if (needsBluetoothPermissions) {
           const requirementsCheck = await checkConnectivityRequirementsUI()
           if (!requirementsCheck) {
@@ -192,11 +146,8 @@ export default function PairingPrepScreen() {
 
     console.log("needsBluetoothPermissions", needsBluetoothPermissions)
 
-    // Stop any running apps from previous sessions to prevent mic race conditions
-    // This is symmetric with the logic in DeviceSettings that stops apps when unpairing
     await useAppStatusStore.getState().stopAll()
 
-    // skip pairing for simulated glasses:
     if (deviceModel.startsWith(DeviceTypes.SIMULATED)) {
       await CoreModule.connectSimulated()
       clearHistoryAndGoHome()
@@ -228,10 +179,10 @@ export default function PairingPrepScreen() {
         source: `${CDN_BASE}/ONB1_power_button_loop.mp4`,
         poster: require("@assets/onboarding/live/thumbnails/ONB0_power.png"),
         transition: false,
-        title: translate("pairing:powerOn"), // for spacing so it's consistent with the other steps
+        title: translate("pairing:powerOn"),
         subtitle: translate("onboarding:livePowerOnTutorial"),
         info: translate("onboarding:livePowerOnInfo"),
-        playCount: -1, // repeat forever
+        playCount: -1,
         showButtonImmediately: true,
       },
     ]
@@ -243,13 +194,9 @@ export default function PairingPrepScreen() {
         showCloseButton={false}
         showSkipButton={false}
         showHeader={false}
-        skipFn={() => {
-          advanceToPairing()
-        }}
+        skipFn={() => { advanceToPairing() }}
         endButtonText={translate("pairing:poweredOn")}
-        endButtonFn={() => {
-          advanceToPairing()
-        }}
+        endButtonFn={() => { advanceToPairing() }}
       />
     )
   }
@@ -257,18 +204,9 @@ export default function PairingPrepScreen() {
   const MentraMach1PairingGuide = () => {
     return (
       <View className="flex-1 flex-col justify-start mt-6">
-        <Text
-          className="text-lg text-secondary-foreground"
-          text="1. Make sure your Mach1 is fully charged and turned on."
-        />
-        <Text
-          className="text-lg text-secondary-foreground"
-          text="2. Make sure your device is running the latest firmware by using the Vuzix Connect app."
-        />
-        <Text
-          className="text-lg text-secondary-foreground"
-          text="3. Put your Mentra Mach1 in pairing mode: hold the power button until you see the Bluetooth icon, then release."
-        />
+        <Text className="text-lg text-secondary-foreground" text="1. Make sure your Mach1 is fully charged and turned on." />
+        <Text className="text-lg text-secondary-foreground" text="2. Make sure your device is running the latest firmware by using the Vuzix Connect app." />
+        <Text className="text-lg text-secondary-foreground" text="3. Put your Mentra Mach1 in pairing mode: hold the power button until you see the Bluetooth icon, then release." />
       </View>
     )
   }
@@ -276,18 +214,9 @@ export default function PairingPrepScreen() {
   const VuzixZ100PairingGuide = () => {
     return (
       <View className="flex-1 flex-col justify-start mt-6">
-        <Text
-          className="text-lg text-secondary-foreground"
-          text="1. Make sure your Mach1 is fully charged and turned on."
-        />
-        <Text
-          className="text-lg text-secondary-foreground"
-          text="2. Make sure your device is running the latest firmware by using the Vuzix Connect app."
-        />
-        <Text
-          className="text-lg text-secondary-foreground"
-          text="3. Put your Mentra Mach1 in pairing mode: hold the power button until you see the Bluetooth icon, then release."
-        />
+        <Text className="text-lg text-secondary-foreground" text="1. Make sure your Mach1 is fully charged and turned on." />
+        <Text className="text-lg text-secondary-foreground" text="2. Make sure your device is running the latest firmware by using the Vuzix Connect app." />
+        <Text className="text-lg text-secondary-foreground" text="3. Put your Mentra Mach1 in pairing mode: hold the power button until you see the Bluetooth icon, then release." />
       </View>
     )
   }
@@ -296,39 +225,24 @@ export default function PairingPrepScreen() {
     return (
       <View className="flex-1 flex-col justify-start mt-6">
         <Text text="Mentra Display" className="text-2xl font-bold mb-4 text-secondary-foreground" />
-        <Text
-          text="1. Make sure your Mentra Display is fully charged and turned on."
-          className="text-lg text-secondary-foreground"
-        />
+        <Text text="1. Make sure your Mentra Display is fully charged and turned on." className="text-lg text-secondary-foreground" />
       </View>
     )
   }
 
   const G1PairingGuide = () => {
     const {theme} = useAppTheme()
-
     return (
       <View className="flex-1 flex-col justify-start mt-6">
         <View className="flex-col items-center justify-center bg-primary-foreground rounded-xl mb-6">
           <Image source={require("../../../assets/glasses/g1.png")} resizeMode="contain" className="w-50 h-25" />
           <Icon name="chevron-down" size={36} color={theme.colors.text} />
-          <Image
-            source={require("../../../assets/guide/image_g1_pair.png")}
-            resizeMode="contain"
-            className="w-62 h-38"
-          />
+          <Image source={require("../../../assets/guide/image_g1_pair.png")} resizeMode="contain" className="w-62 h-38" />
         </View>
-
         <View style={{justifyContent: "flex-start", flexDirection: "column"}}>
           <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
-          <Text
-            className="text-lg text-secondary-foreground"
-            text="1. Disconnect your G1 from within the Even Realities app, or uninstall the Even Realities app"
-          />
-          <Text
-            className="text-lg text-secondary-foreground"
-            text="2. Place your G1 in the charging case with the lid open."
-          />
+          <Text className="text-lg text-secondary-foreground" text="1. Disconnect your G1 from within the Even Realities app, or uninstall the Even Realities app" />
+          <Text className="text-lg text-secondary-foreground" text="2. Place your G1 in the charging case with the lid open." />
         </View>
       </View>
     )
@@ -342,44 +256,24 @@ export default function PairingPrepScreen() {
           <Button tx="pairing:g1Ready" onPress={advanceToPairing} />
           <Button tx="pairing:g1NotReady" preset="secondary" onPress={() => setShowTroubleshootingModal(true)} />
         </View>
-        <GlassesTroubleshootingModal
-          isVisible={showTroubleshootingModal}
-          onClose={() => setShowTroubleshootingModal(false)}
-          deviceModel={deviceModel}
-        />
+        <GlassesTroubleshootingModal isVisible={showTroubleshootingModal} onClose={() => setShowTroubleshootingModal(false)} deviceModel={deviceModel} />
       </>
     )
   }
 
   const G2PairingGuide = () => {
     const {theme} = useAppTheme()
-
     return (
       <View className="flex-1 flex-col justify-start mt-6">
         <View className="flex-col items-center justify-center bg-primary-foreground rounded-xl mb-6">
-          <Image
-            source={require("../../../assets/glasses/even_realities_g2/even_realities_g2.png")}
-            resizeMode="contain"
-            className="w-50 h-25"
-          />
+          <Image source={require("../../../assets/glasses/even_realities_g2/even_realities_g2.png")} resizeMode="contain" className="w-50 h-25" />
           <Icon name="chevron-down" size={36} color={theme.colors.text} />
-          <Image
-            source={require("../../../assets/guide/image_g1_pair.png")}
-            resizeMode="contain"
-            className="w-62 h-38"
-          />
+          <Image source={require("../../../assets/guide/image_g1_pair.png")} resizeMode="contain" className="w-62 h-38" />
         </View>
-
         <View style={{justifyContent: "flex-start", flexDirection: "column"}}>
           <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
-          <Text
-            className="text-lg text-secondary-foreground"
-            text="1. Disconnect your G2 from within the Even Realities app, or uninstall the Even Realities app"
-          />
-          <Text
-            className="text-lg text-secondary-foreground"
-            text="2. Place your G2 in the charging case with the lid open."
-          />
+          <Text className="text-lg text-secondary-foreground" text="1. Disconnect your G2 from within the Even Realities app, or uninstall the Even Realities app" />
+          <Text className="text-lg text-secondary-foreground" text="2. Place your G2 in the charging case with the lid open." />
         </View>
       </View>
     )
@@ -393,12 +287,29 @@ export default function PairingPrepScreen() {
           <Button tx="pairing:g1Ready" onPress={advanceToPairing} />
           <Button tx="pairing:g1NotReady" preset="secondary" onPress={() => setShowTroubleshootingModal(true)} />
         </View>
-        <GlassesTroubleshootingModal
-          isVisible={showTroubleshootingModal}
-          onClose={() => setShowTroubleshootingModal(false)}
-          deviceModel={deviceModel}
-        />
+        <GlassesTroubleshootingModal isVisible={showTroubleshootingModal} onClose={() => setShowTroubleshootingModal(false)} deviceModel={deviceModel} />
       </>
+    )
+  }
+
+  // INMO Go2 pairing guide
+  const InmoGo2PairingGuide = () => {
+    return (
+      <View className="flex-1 flex-col justify-start mt-6">
+        <Text text="INMO Go2" className="text-2xl font-bold mb-4 text-secondary-foreground" />
+        <Text
+          className="text-lg text-secondary-foreground"
+          text="1. Make sure your INMO Go2 is fully charged and powered on."
+        />
+        <Text
+          className="text-lg text-secondary-foreground"
+          text="2. Put your INMO Go2 in pairing mode: press and hold the power button for 3 seconds until the LED flashes blue."
+        />
+        <Text
+          className="text-lg text-secondary-foreground"
+          text="3. Keep the glasses close to your phone during pairing."
+        />
+      </View>
     )
   }
 
@@ -418,9 +329,15 @@ export default function PairingPrepScreen() {
         return <VuzixZ100PairingGuide />
       case DeviceTypes.NEX:
         return <MentraDisplayGlassesPairingGuide />
+      case DeviceTypes.INMO_GO2:
+        return <InmoGo2PairingGuide />
+      default:
+        return (
+          <View className="flex-1 flex-col justify-start mt-6">
+            <Text text={`Prepare your ${deviceModel} for pairing.`} className="text-lg text-secondary-foreground" />
+          </View>
+        )
     }
-
-    throw new Error(`Unknown model name: ${deviceModel}`)
   }
 
   const renderButtons = () => {
