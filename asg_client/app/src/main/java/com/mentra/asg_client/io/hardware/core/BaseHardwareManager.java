@@ -2,91 +2,100 @@ package com.mentra.asg_client.io.hardware.core;
 
 import android.content.Context;
 import android.util.Log;
-
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+import com.mentra.asg_client.io.hardware.interfaces.Capability;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import java.util.Collections;
+import java.util.Set;
 
 /**
- * Base implementation of the IHardwareManager interface.
- * Provides default no-op implementations for devices without specific hardware support.
- * This is used when running on generic Android devices or emulators.
+ * Base implementation of the IHardwareManager interface. Provides default no-op implementations for
+ * devices without specific hardware support. This is used when running on generic Android devices
+ * or emulators.
  */
 public class BaseHardwareManager implements IHardwareManager {
     private static final String TAG = "BaseHardwareManager";
-    
+
     protected final Context context;
     protected boolean isInitialized = false;
-    
+
     /**
      * Create a new BaseHardwareManager
+     *
      * @param context The application context
      */
     public BaseHardwareManager(Context context) {
         this.context = context.getApplicationContext();
     }
-    
+
     @Override
     public void initialize() {
         Log.d(TAG, "Initializing BaseHardwareManager (no hardware-specific features)");
         isInitialized = true;
     }
-    
+
+    @Override
+    public Set<Capability> getCapabilities() {
+        return Collections.emptySet();
+    }
+
     @Override
     public boolean supportsRecordingLed() {
         // Base implementation doesn't support LED
         return false;
     }
-    
+
     @Override
     public void setRecordingLedOn() {
         Log.d(TAG, "setRecordingLedOn() called - no-op on base hardware");
     }
-    
+
     @Override
     public void setRecordingLedOff() {
         Log.d(TAG, "setRecordingLedOff() called - no-op on base hardware");
     }
-    
+
     @Override
     public void setRecordingLedBlinking() {
         Log.d(TAG, "setRecordingLedBlinking() called - no-op on base hardware");
     }
-    
+
     @Override
     public void setRecordingLedBlinking(long onDurationMs, long offDurationMs) {
-        Log.d(TAG, String.format("setRecordingLedBlinking(%d, %d) called - no-op on base hardware", 
-                                 onDurationMs, offDurationMs));
+        Log.d(
+                TAG,
+                String.format(
+                        "setRecordingLedBlinking(%d, %d) called - no-op on base hardware",
+                        onDurationMs, offDurationMs));
     }
-    
+
     @Override
     public void stopRecordingLedBlinking() {
         Log.d(TAG, "stopRecordingLedBlinking() called - no-op on base hardware");
     }
-    
+
     @Override
     public void flashRecordingLed(long durationMs) {
-        Log.d(TAG, String.format("flashRecordingLed(%d) called - no-op on base hardware", durationMs));
+        Log.d(
+                TAG,
+                String.format("flashRecordingLed(%d) called - no-op on base hardware", durationMs));
     }
-    
+
     @Override
     public boolean isRecordingLedOn() {
         // Always return false for base implementation
         return false;
     }
-    
+
     @Override
     public boolean isRecordingLedBlinking() {
         // Always return false for base implementation
         return false;
     }
-    
+
     @Override
     public String getDeviceModel() {
         return "GENERIC";
-    }
-    
-    @Override
-    public boolean isK900Device() {
-        return false;
     }
 
     @Override
@@ -105,8 +114,8 @@ public class BaseHardwareManager implements IHardwareManager {
     }
 
     @Override
-    public void setBluetoothManager(Object bluetoothManager) {
-        Log.d(TAG, "setBluetoothManager() called - no-op on base hardware");
+    public void setTransport(ICompanionTransport transport) {
+        Log.d(TAG, "setTransport() called - no-op on base hardware");
     }
 
     // ============================================
@@ -125,8 +134,11 @@ public class BaseHardwareManager implements IHardwareManager {
 
     @Override
     public void setRecordingLedBrightness(int percent, int durationMs) {
-        Log.d(TAG, String.format("setRecordingLedBrightness(%d, %d) called - no-op on base hardware",
-                                 percent, durationMs));
+        Log.d(
+                TAG,
+                String.format(
+                        "setRecordingLedBrightness(%d, %d) called - no-op on base hardware",
+                        percent, durationMs));
     }
 
     @Override
@@ -150,14 +162,20 @@ public class BaseHardwareManager implements IHardwareManager {
 
     @Override
     public void setRgbLedOn(int ledIndex, int ontime, int offtime, int count) {
-        Log.d(TAG, String.format("setRgbLedOn(%d, %d, %d, %d) called - no-op on base hardware",
-                ledIndex, ontime, offtime, count));
+        Log.d(
+                TAG,
+                String.format(
+                        "setRgbLedOn(%d, %d, %d, %d) called - no-op on base hardware",
+                        ledIndex, ontime, offtime, count));
     }
 
     @Override
     public void setRgbLedOn(int ledIndex, int ontime, int offtime, int count, int brightness) {
-        Log.d(TAG, String.format("setRgbLedOn(%d, %d, %d, %d, %d) called - no-op on base hardware",
-                ledIndex, ontime, offtime, count, brightness));
+        Log.d(
+                TAG,
+                String.format(
+                        "setRgbLedOn(%d, %d, %d, %d, %d) called - no-op on base hardware",
+                        ledIndex, ontime, offtime, count, brightness));
     }
 
     @Override
@@ -172,7 +190,13 @@ public class BaseHardwareManager implements IHardwareManager {
 
     @Override
     public void flashRgbLedWhite(int durationMs, int brightness) {
-        Log.d(TAG, "flashRgbLedWhite(" + durationMs + ", " + brightness + ") called - no-op on base hardware");
+        Log.d(
+                TAG,
+                "flashRgbLedWhite("
+                        + durationMs
+                        + ", "
+                        + brightness
+                        + ") called - no-op on base hardware");
     }
 
     @Override
@@ -197,8 +221,19 @@ public class BaseHardwareManager implements IHardwareManager {
     }
 
     @Override
+    public void notifyBatteryReading(int percent, int voltageMv) {
+        // No-op on base hardware
+    }
+
+    @Override
     public void setRgbLedSolidWhite(int durationMs, int brightness) {
-        Log.d(TAG, "setRgbLedSolidWhite(" + durationMs + ", " + brightness + ") called - no-op on base hardware");
+        Log.d(
+                TAG,
+                "setRgbLedSolidWhite("
+                        + durationMs
+                        + ", "
+                        + brightness
+                        + ") called - no-op on base hardware");
     }
 
     @Override

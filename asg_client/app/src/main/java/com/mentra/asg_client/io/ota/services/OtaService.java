@@ -23,16 +23,19 @@ import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+import dagger.hilt.android.AndroidEntryPoint;
+import javax.inject.Inject;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 
+@AndroidEntryPoint
 public class OtaService extends Service {
     private static final String TAG = OtaConstants.TAG;
     private static final String CHANNEL_ID = "ota_service_channel";
     private static final int NOTIFICATION_ID = 2001;
 
-    private OtaHelper otaHelper;
+    @Inject OtaHelper otaHelper;
 
     @Override
     public void onCreate() {
@@ -45,18 +48,7 @@ public class OtaService extends Service {
         // Start as foreground service
         startForeground(NOTIFICATION_ID, createNotification("OTA Service Running"));
 
-        // TEMPORARY: Kill external OTA updater app if it's running
-        // This prevents dual OTA checks when updating from older versions
-        try {
-            Log.w(TAG, "Stopping external OTA updater app to prevent conflicts");
-            SystemControllerFactory.get(this).stopApp("com.augmentos.otaupdater");
-            Log.i(TAG, "External OTA updater stopped");
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to stop external OTA updater", e);
-        }
-
-        // Initialize OTA helper singleton
-        otaHelper = OtaHelper.initialize(this);
+        stopLegacyOtaUpdaterIfPresent();
 
         // Clean up old firmware files from previous updates
         cleanupOldFirmwareFiles();
@@ -92,10 +84,8 @@ public class OtaService extends Service {
             EventBus.getDefault().unregister(this);
         }
 
-        // Clean up OTA helper
-        if (otaHelper != null) {
-            otaHelper.cleanup();
-        }
+        // OtaHelper is an app-scoped Hilt singleton shared by command handlers and debug
+        // receivers. Do not call cleanup() here; it tears down state that later OTA flows reuse.
     }
 
     @Override
@@ -131,6 +121,15 @@ public class OtaService extends Service {
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null) {
             manager.notify(NOTIFICATION_ID, createNotification(contentText));
+        }
+    }
+
+    private void stopLegacyOtaUpdaterIfPresent() {
+        try {
+            Log.i(TAG, "Stopping legacy OTA updater to prevent conflicts with internal OTA");
+            SystemControllerFactory.get(this).stopApp("com.augmentos.otaupdater");
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to stop legacy OTA updater", e);
         }
     }
 
@@ -384,6 +383,8 @@ public class OtaService extends Service {
                         "📱 First boot with version tracking - recording ASG version: "
                                 + currentVersion);
                 prefs.edit().putLong("last_seen_asg_version", currentVersion).apply();
+                // Clear any recovery heartbeat pause that may have been set before this install.
+                OtaHelper.notifyRecoveryInstallCompleted(this);
 
                 if (otaHelper != null) {
                     Log.i(
@@ -399,6 +400,7 @@ public class OtaService extends Service {
                                 + " to "
                                 + currentVersion);
                 prefs.edit().putLong("last_seen_asg_version", currentVersion).apply();
+                OtaHelper.notifyRecoveryInstallCompleted(this);
 
                 if (otaHelper != null) {
                     Log.i(
@@ -410,6 +412,8 @@ public class OtaService extends Service {
                 Log.d(
                         TAG,
                         "ASG version unchanged (" + currentVersion + ") - no auto-resume needed");
+                // Safety net: clear any recovery heartbeat pause from a same-version reinstall.
+                OtaHelper.notifyRecoveryInstallCompleted(this);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error checking for APK update auto-resume", e);
@@ -418,6 +422,8 @@ public class OtaService extends Service {
 
     private void resumeFromSession(OtaSessionManager sessionManager) {
         try {
+            // Clear any recovery heartbeat pause that was set before the APK install.
+            OtaHelper.notifyRecoveryInstallCompleted(this);
             sessionManager.clearRestartGuard();
             int nextStep = sessionManager.getCurrentStepIndex() + 1;
 

@@ -1,6 +1,8 @@
 package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import com.dev.api.DevApi;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
@@ -20,6 +22,9 @@ import org.json.JSONObject;
  */
 public class SettingsCommandHandler implements ICommandHandler {
     private static final String TAG = "SettingsCommandHandler";
+    private static final String STATUS_APPLIED = "applied";
+    private static final String STATUS_READY = "ready";
+    private static final String STATUS_ERROR = "error";
 
     private final AsgClientServiceManager serviceManager;
     private final ICommunicationManager communicationManager;
@@ -90,9 +95,11 @@ public class SettingsCommandHandler implements ICommandHandler {
     /** Handle button video recording setting command */
     public boolean handleButtonVideoRecordingSetting(JSONObject data) {
         try {
+            String requestId = getRequestId(data);
             JSONObject params = data.optJSONObject("params");
             if (params == null) {
                 Log.e(TAG, "Missing settings object in button_video_recording_setting");
+                sendSettingsError(requestId, "button_video_recording", "missing_params", "Missing video settings.");
                 return false;
             }
 
@@ -124,13 +131,28 @@ public class SettingsCommandHandler implements ICommandHandler {
                                     + "@"
                                     + fps
                                     + "fps");
+                    JSONObject values = new JSONObject();
+                    values.put("width", width);
+                    values.put("height", height);
+                    values.put("fps", fps);
+                    sendSettingsAck(requestId, "button_video_recording", STATUS_APPLIED, values);
                     return true;
                 } else {
                     Log.e(TAG, "[VIDEO_SYNC] Invalid video settings: " + videoSettings);
+                    sendSettingsError(
+                            requestId,
+                            "button_video_recording",
+                            "invalid_settings",
+                            "Invalid video settings.");
                     return false;
                 }
             } else {
                 Log.e(TAG, "[VIDEO_SYNC] Settings not available");
+                sendSettingsError(
+                        requestId,
+                        "button_video_recording",
+                        "settings_unavailable",
+                        "Settings are not available.");
                 return false;
             }
         } catch (Exception e) {
@@ -142,6 +164,7 @@ public class SettingsCommandHandler implements ICommandHandler {
     /** Handle button max recording time setting command */
     public boolean handleButtonMaxRecordingTime(JSONObject data) {
         try {
+            String requestId = getRequestId(data);
             int minutes = data.optInt("minutes", 10);
 
             Log.d(TAG, "📱 Received button max recording time setting: " + minutes + " minutes");
@@ -150,9 +173,17 @@ public class SettingsCommandHandler implements ICommandHandler {
             if (asgSettings != null) {
                 asgSettings.setButtonMaxRecordingTimeMinutes(minutes);
                 Log.d(TAG, "✅ Button max recording time saved: " + minutes + " minutes");
+                JSONObject values = new JSONObject();
+                values.put("minutes", minutes);
+                sendSettingsAck(requestId, "button_max_recording_time", STATUS_APPLIED, values);
                 return true;
             } else {
                 Log.e(TAG, "Settings not available");
+                sendSettingsError(
+                        requestId,
+                        "button_max_recording_time",
+                        "settings_unavailable",
+                        "Settings are not available.");
                 return false;
             }
         } catch (Exception e) {
@@ -164,6 +195,7 @@ public class SettingsCommandHandler implements ICommandHandler {
     /** Handle button photo setting command */
     public boolean handleButtonPhotoSetting(JSONObject data) {
         try {
+            String requestId = getRequestId(data);
             String size = data.optString("size", "medium");
 
             Log.d(TAG, "📱 Received button photo setting: " + size);
@@ -172,9 +204,17 @@ public class SettingsCommandHandler implements ICommandHandler {
             if (asgSettings != null) {
                 asgSettings.setButtonPhotoSize(size);
                 Log.d(TAG, "✅ Button photo size saved: " + size);
+                JSONObject values = new JSONObject();
+                values.put("size", size);
+                sendSettingsAck(requestId, "button_photo", STATUS_APPLIED, values);
                 return true;
             } else {
                 Log.e(TAG, "Settings not available");
+                sendSettingsError(
+                        requestId,
+                        "button_photo",
+                        "settings_unavailable",
+                        "Settings are not available.");
                 return false;
             }
         } catch (Exception e) {
@@ -186,6 +226,7 @@ public class SettingsCommandHandler implements ICommandHandler {
     /** Handle button camera LED setting command */
     public boolean handleButtonCameraLedSetting(JSONObject data) {
         try {
+            String requestId = getRequestId(data);
             boolean enabled = data.optBoolean("enabled", true);
 
             Log.d(TAG, "📱 Received button camera LED setting: " + enabled);
@@ -194,9 +235,17 @@ public class SettingsCommandHandler implements ICommandHandler {
             if (asgSettings != null) {
                 asgSettings.setButtonCameraLedEnabled(enabled);
                 Log.d(TAG, "✅ Button camera LED setting saved: " + enabled);
+                JSONObject values = new JSONObject();
+                values.put("enabled", enabled);
+                sendSettingsAck(requestId, "button_camera_led", STATUS_APPLIED, values);
                 return true;
             } else {
                 Log.e(TAG, "Settings not available");
+                sendSettingsError(
+                        requestId,
+                        "button_camera_led",
+                        "settings_unavailable",
+                        "Settings are not available.");
                 return false;
             }
         } catch (Exception e) {
@@ -211,9 +260,11 @@ public class SettingsCommandHandler implements ICommandHandler {
      */
     private boolean handleCameraFovSetting(JSONObject data) {
         try {
+            String requestId = getRequestId(data);
             JSONObject params = data.optJSONObject("params");
             if (params == null) {
                 Log.e(TAG, "Missing params in camera_fov_setting");
+                sendSettingsError(requestId, "camera_fov", "missing_params", "Missing camera FOV params.");
                 return false;
             }
             int fov = params.optInt("fov", 118);
@@ -222,6 +273,11 @@ public class SettingsCommandHandler implements ICommandHandler {
             AsgSettings asgSettings = serviceManager.getAsgSettings();
             if (asgSettings == null) {
                 Log.e(TAG, "Settings not available for camera_fov_setting");
+                sendSettingsError(
+                        requestId,
+                        "camera_fov",
+                        "settings_unavailable",
+                        "Settings are not available.");
                 return false;
             }
             asgSettings.setCameraFov(fov, roiPosition);
@@ -234,6 +290,11 @@ public class SettingsCommandHandler implements ICommandHandler {
             Context context = serviceManager.getContext();
             if (context == null) {
                 Log.w(TAG, "Context not available, FOV persisted but not applied to hardware");
+                JSONObject values = new JSONObject();
+                values.put("fov", fov);
+                values.put("roi_position", roiPosition);
+                values.put("hardware_applied", false);
+                sendSettingsAck(requestId, "camera_fov", STATUS_APPLIED, values);
                 return true;
             }
             try {
@@ -241,13 +302,83 @@ public class SettingsCommandHandler implements ICommandHandler {
                 SystemControllerFactory.get(context).restartCameraHal();
                 CameraRestartCooldown.setCooldown();
                 Log.d(TAG, "Camera FOV applied to hardware and HAL restarted");
+                sendCameraFovReadyAck(requestId, fov, roiPosition);
             } catch (UnsatisfiedLinkError e) {
                 Log.w(TAG, "libxydev not available (non-K900?), FOV persisted but not applied", e);
+                JSONObject values = new JSONObject();
+                values.put("fov", fov);
+                values.put("roi_position", roiPosition);
+                values.put("hardware_applied", false);
+                sendSettingsAck(requestId, "camera_fov", STATUS_APPLIED, values);
             }
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Error handling camera_fov_setting", e);
             return false;
+        }
+    }
+
+    private String getRequestId(JSONObject data) {
+        String requestId = data.optString("requestId", "");
+        if (requestId == null || requestId.isEmpty()) {
+            requestId = data.optString("request_id", "");
+        }
+        return requestId == null ? "" : requestId;
+    }
+
+    private void sendCameraFovReadyAck(String requestId, int fov, int roiPosition) {
+        if (requestId == null || requestId.isEmpty()) {
+            return;
+        }
+        new Handler(Looper.getMainLooper())
+                .postDelayed(
+                        () -> {
+                            try {
+                                JSONObject values = new JSONObject();
+                                values.put("fov", fov);
+                                values.put("roi_position", roiPosition);
+                                values.put("hardware_applied", true);
+                                sendSettingsAck(requestId, "camera_fov", STATUS_READY, values);
+                            } catch (Exception e) {
+                                Log.e(TAG, "Failed to send delayed camera FOV ready ack", e);
+                            }
+                        },
+                        CameraRestartCooldown.DEFAULT_COOLDOWN_DURATION_MS);
+    }
+
+    private void sendSettingsAck(String requestId, String setting, String status, JSONObject values) {
+        if (requestId == null || requestId.isEmpty()) {
+            return;
+        }
+        try {
+            JSONObject ack = values == null ? new JSONObject() : values;
+            ack.put("type", "settings_ack");
+            ack.put("request_id", requestId);
+            ack.put("setting", setting);
+            ack.put("status", status);
+            if (!ack.has("ready")) {
+                ack.put("ready", STATUS_READY.equals(status));
+            }
+            ack.put("timestamp", System.currentTimeMillis());
+            communicationManager.sendBluetoothResponse(ack);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send settings ack for " + setting, e);
+        }
+    }
+
+    private void sendSettingsError(
+            String requestId, String setting, String errorCode, String errorMessage) {
+        if (requestId == null || requestId.isEmpty()) {
+            return;
+        }
+        try {
+            JSONObject values = new JSONObject();
+            values.put("ready", false);
+            values.put("error_code", errorCode);
+            values.put("error_message", errorMessage);
+            sendSettingsAck(requestId, setting, STATUS_ERROR, values);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send settings error for " + setting, e);
         }
     }
 

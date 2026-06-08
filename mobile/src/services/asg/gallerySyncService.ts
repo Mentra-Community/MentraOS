@@ -674,8 +674,7 @@ class GallerySyncService {
     try {
       console.log("[GallerySyncService]   📤 Sending hotspot enable command to glasses...")
       await BluetoothSdk.setHotspotState(true)
-      console.log("[GallerySyncService]   ✅ Hotspot request sent successfully")
-      console.log("[GallerySyncService]   ⏳ Waiting for hotspot_status_change event (timeout: 30s)...")
+      console.log("[GallerySyncService]   ✅ Hotspot enabled by glasses")
     } catch (error) {
       // Clear the timeout since we got an immediate error
       if (this.hotspotRequestTimeout) {

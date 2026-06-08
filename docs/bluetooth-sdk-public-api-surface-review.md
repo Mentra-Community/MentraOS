@@ -111,18 +111,18 @@ setDashboardPosition(height: number, depth: number): Promise<void>
 setHeadUpAngle(angleDegrees: number): Promise<void>
 setScreenDisabled(disabled: boolean): Promise<void>
 
-requestWifiScan(): Promise<void>
-sendWifiCredentials(ssid: string, password: string): Promise<void>
-forgetWifiNetwork(ssid: string): Promise<void>
-setHotspotState(enabled: boolean): Promise<void>
+requestWifiScan(): Promise<WifiSearchResult[]>
+sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
+forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
+setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
 
-setGalleryModeEnabled(enabled: boolean): Promise<void>
-setButtonPhotoSettings(size: ButtonPhotoSize): Promise<void>
-setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<void>
-setButtonCameraLed(enabled: boolean): Promise<void>
-setButtonMaxRecordingTime(minutes: number): Promise<void>
-setCameraFov(fov: CameraFov): Promise<void>
-queryGalleryStatus(): Promise<void>
+setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckEvent>
+setButtonPhotoSettings(size: ButtonPhotoSize): Promise<SettingsAckEvent>
+setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckEvent>
+setButtonCameraLed(enabled: boolean): Promise<SettingsAckEvent>
+setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckEvent>
+setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+queryGalleryStatus(): Promise<GalleryStatusEvent>
 requestPhoto(
   requestId: string,
   appId: string,
@@ -131,9 +131,9 @@ requestPhoto(
   authToken: string | null,
   compress: PhotoCompression,
   sound: boolean,
-): Promise<void>
-startVideoRecording(requestId: string, save: boolean, sound: boolean): Promise<void>
-stopVideoRecording(requestId: string): Promise<void>
+): Promise<PhotoSuccessResponseEvent>
+startVideoRecording(requestId: string, save: boolean, sound: boolean): Promise<VideoRecordingStartedStatusEvent>
+stopVideoRecording(requestId: string): Promise<VideoRecordingStoppedStatusEvent>
 
 startStream(params: StreamStartRequest): Promise<void>
 stopStream(): Promise<void>
@@ -158,10 +158,15 @@ rgbLedControl(
   onDurationMs: number,
   offDurationMs: number,
   count: number,
-): Promise<void>
+): Promise<RgbLedControlSuccessResponseEvent>
 
-requestVersionInfo(): Promise<void>
+requestVersionInfo(): Promise<VersionInfoResult>
+checkForOtaUpdate(): Promise<OtaQueryResult>
+startOtaUpdate(): Promise<OtaStartAckEvent>
+retryOtaVersionCheck(): Promise<OtaQueryResult>
 ```
+
+Photo, video, RGB LED, and settings promises reject when the correlated ASG event reports explicit failure. The raw event listeners still receive the full success/error payloads.
 
 React hook signatures:
 
@@ -200,13 +205,15 @@ type PhotoCompression = "none" | "medium" | "heavy"
 const CAMERA_FOV_MIN = 62
 const CAMERA_FOV_MAX = 118
 const CAMERA_FOV_DEFAULT = 102
-type CameraRoiPosition = 0 | 1 | 2
+type CameraRoiPosition = "center" | "bottom" | "top"
 type CameraFovPreset = "narrow" | "standard" | "wide"
-type CameraFovValue = {
+type CameraFovRequest = { fov: number; roiPosition?: CameraRoiPosition } | { preset: CameraFovPreset }
+type CameraFovResult = {
+  requestId: string
   fov: number
-  roiPosition?: CameraRoiPosition
+  roiPosition: CameraRoiPosition
+  timestamp: number
 }
-type CameraFov = CameraFovValue | CameraFovPreset
 type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
 type RgbLedAction = "on" | "off"
 type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
@@ -271,13 +278,13 @@ fun setDashboardPosition(request: DashboardPositionRequest)
 fun setHeadUpAngle(angleDegrees: Int)
 fun setScreenDisabled(disabled: Boolean)
 
-fun setGalleryModeEnabled(enabled: Boolean)
-fun setButtonPhotoSettings(size: ButtonPhotoSize)
-fun setButtonPhotoSettings(settings: ButtonPhotoSettings)
-fun setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int)
-fun setButtonCameraLed(enabled: Boolean)
-fun setButtonMaxRecordingTime(minutes: Int)
-fun setCameraFov(fov: CameraFov)
+fun setGalleryModeEnabled(enabled: Boolean): SettingsAckEvent
+fun setButtonPhotoSettings(size: ButtonPhotoSize): SettingsAckEvent
+fun setButtonPhotoSettings(settings: ButtonPhotoSettings): SettingsAckEvent
+fun setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int): SettingsAckEvent
+fun setButtonCameraLed(enabled: Boolean): SettingsAckEvent
+fun setButtonMaxRecordingTime(minutes: Int): SettingsAckEvent
+fun setCameraFov(fov: CameraFov): CameraFovResult
 
 fun setMicState(
   enabled: Boolean,
@@ -291,22 +298,27 @@ fun setOwnAppAudioPlaying(playing: Boolean)
 fun getGlassesMediaVolume(): GlassesMediaVolumeGetResult
 fun setGlassesMediaVolume(level: Int): GlassesMediaVolumeSetResult
 
-fun requestWifiScan()
-fun sendWifiCredentials(ssid: String, password: String)
-fun forgetWifiNetwork(ssid: String)
-fun setHotspotState(enabled: Boolean)
+fun requestWifiScan(): List<WifiScanResult>
+fun sendWifiCredentials(ssid: String, password: String): WifiStatusEvent
+fun forgetWifiNetwork(ssid: String): WifiStatusEvent
+fun setHotspotState(enabled: Boolean): HotspotStatusEvent
 
-fun requestPhoto(request: PhotoRequest)
-fun queryGalleryStatus()
+fun requestPhoto(request: PhotoRequest): PhotoResponseEvent
+fun queryGalleryStatus(): GalleryStatusEvent
 fun startStream(request: StreamRequest)
-fun rgbLedControl(request: RgbLedRequest)
+fun rgbLedControl(request: RgbLedRequest): RgbLedControlResponseEvent
 fun stopStream()
-fun startVideoRecording(request: VideoRecordingRequest)
-fun stopVideoRecording(requestId: String)
-fun requestVersionInfo()
+fun startVideoRecording(request: VideoRecordingRequest): VideoRecordingStatusEvent
+fun stopVideoRecording(requestId: String): VideoRecordingStatusEvent
+fun requestVersionInfo(): VersionInfoResult
+fun checkForOtaUpdate(): OtaQueryResult
+fun startOtaUpdate(): OtaStartAckEvent
+fun retryOtaVersionCheck(): OtaQueryResult
 
 override fun close()
 ```
+
+Photo, video, RGB LED, and settings commands throw when the correlated ASG event reports explicit failure; the event listener callbacks still receive the raw success/error event payloads.
 
 Public Android callback/listener signatures:
 
@@ -398,14 +410,14 @@ public func setDashboardPosition(_ request: DashboardPositionRequest) async thro
 public func setHeadUpAngle(_ angleDegrees: Int) async throws
 public func setScreenDisabled(_ disabled: Bool) async throws
 
-public func setGalleryModeEnabled(_ enabled: Bool) async throws
-public func setButtonPhotoSettings(size: ButtonPhotoSize) async throws
-public func setButtonPhotoSettings(_ settings: ButtonPhotoSettings) async throws
-public func setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int) async throws
-public func setButtonVideoRecordingSettings(_ settings: ButtonVideoRecordingSettings) async throws
-public func setButtonCameraLed(enabled: Bool) async throws
-public func setButtonMaxRecordingTime(minutes: Int) async throws
-public func setCameraFov(_ fov: CameraFov) async throws
+public func setGalleryModeEnabled(_ enabled: Bool) async throws -> SettingsAckEvent
+public func setButtonPhotoSettings(size: ButtonPhotoSize) async throws -> SettingsAckEvent
+public func setButtonPhotoSettings(_ settings: ButtonPhotoSettings) async throws -> SettingsAckEvent
+public func setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int) async throws -> SettingsAckEvent
+public func setButtonVideoRecordingSettings(_ settings: ButtonVideoRecordingSettings) async throws -> SettingsAckEvent
+public func setButtonCameraLed(enabled: Bool) async throws -> SettingsAckEvent
+public func setButtonMaxRecordingTime(minutes: Int) async throws -> SettingsAckEvent
+public func setCameraFov(_ fov: CameraFov) async throws -> CameraFovResult
 
 public func setMicState(
   enabled: Bool,
@@ -419,22 +431,27 @@ public func setOwnAppAudioPlaying(_ playing: Bool)
 public func getGlassesMediaVolume() async throws -> GlassesMediaVolumeGetResult
 public func setGlassesMediaVolume(_ level: Int) async throws -> GlassesMediaVolumeSetResult
 
-public func requestWifiScan()
-public func sendWifiCredentials(ssid: String, password: String)
-public func forgetWifiNetwork(ssid: String)
-public func setHotspotState(enabled: Bool)
+public func requestWifiScan() async throws -> [WifiScanResult]
+public func sendWifiCredentials(ssid: String, password: String) async throws -> WifiStatusEvent
+public func forgetWifiNetwork(ssid: String) async throws -> WifiStatusEvent
+public func setHotspotState(enabled: Bool) async throws -> HotspotStatusEvent
 
-public func requestPhoto(_ request: PhotoRequest)
-public func queryGalleryStatus()
+public func requestPhoto(_ request: PhotoRequest) async throws -> PhotoResponseEvent
+public func queryGalleryStatus() async throws -> GalleryStatusEvent
 public func startStream(_ request: StreamRequest)
-public func rgbLedControl(_ request: RgbLedRequest)
+public func rgbLedControl(_ request: RgbLedRequest) async throws -> RgbLedControlResponseEvent
 public func stopStream()
-public func startVideoRecording(_ request: VideoRecordingRequest)
-public func stopVideoRecording(requestId: String)
-public func requestVersionInfo()
+public func startVideoRecording(_ request: VideoRecordingRequest) async throws -> VideoRecordingStatusEvent
+public func stopVideoRecording(requestId: String) async throws -> VideoRecordingStatusEvent
+public func requestVersionInfo() async throws -> VersionInfoResult
+public func checkForOtaUpdate() async throws -> OtaQueryResult
+public func startOtaUpdate() async throws -> OtaStartAckEvent
+public func retryOtaVersionCheck() async throws -> OtaQueryResult
 
 public func invalidate()
 ```
+
+Photo, video, RGB LED, and settings commands throw when the correlated ASG event reports explicit failure; delegates still receive the raw success/error event payloads.
 
 Public iOS delegate/callback signatures:
 

@@ -12,6 +12,7 @@ import com.mentra.asg_client.service.core.handlers.AuthTokenCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BatteryCommandHandler;
 import com.mentra.asg_client.service.core.handlers.BleConfigCommandHandler;
 import com.mentra.asg_client.service.core.handlers.GalleryCommandHandler;
+import com.mentra.asg_client.service.core.handlers.GalleryModeCommandHandler;
 import com.mentra.asg_client.service.core.handlers.I2SAudioCommandHandler;
 import com.mentra.asg_client.service.core.handlers.ImuCommandHandler;
 import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
@@ -20,9 +21,12 @@ import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
 import com.mentra.asg_client.service.core.handlers.PhoneReadyCommandHandler;
 import com.mentra.asg_client.service.core.handlers.PhotoCommandHandler;
 import com.mentra.asg_client.service.core.handlers.PingCommandHandler;
+import com.mentra.asg_client.service.core.handlers.PowerCommandHandler;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
+import com.mentra.asg_client.service.core.handlers.ServiceHeartbeatCommandHandler;
 import com.mentra.asg_client.service.core.handlers.SettingsCommandHandler;
 import com.mentra.asg_client.service.core.handlers.StreamCommandHandler;
+import com.mentra.asg_client.service.core.handlers.TransferCompleteCommandHandler;
 import com.mentra.asg_client.service.core.handlers.UploadIncidentLogsCommandHandler;
 import com.mentra.asg_client.service.core.handlers.UserEmailCommandHandler;
 import com.mentra.asg_client.service.core.handlers.VersionCommandHandler;
@@ -72,6 +76,8 @@ public class CommandProcessor {
     private final ChunkReassembler chunkReassembler;
     private final RgbLedCommandHandler rgbLedCommandHandler;
 
+    private final OtaCommandHandler otaCommandHandler;
+
     public CommandProcessor(
             Context context,
             ICommunicationManager communicationManager,
@@ -81,7 +87,8 @@ public class CommandProcessor {
             IConfigurationManager configurationManager,
             AsgClientServiceManager serviceManager,
             FileManager fileManager,
-            RgbLedCommandHandler rgbLedCommandHandler) {
+            RgbLedCommandHandler rgbLedCommandHandler,
+            OtaCommandHandler otaCommandHandler) {
         Log.d(TAG, "🔧 Initializing CommandProcessor with dependencies");
         this.context = context;
         this.communicationManager = communicationManager;
@@ -92,6 +99,7 @@ public class CommandProcessor {
         this.serviceManager = serviceManager;
         this.fileManager = fileManager;
         this.rgbLedCommandHandler = rgbLedCommandHandler;
+        this.otaCommandHandler = otaCommandHandler;
 
         // Initialize components (Single Responsibility Principle)
         Log.d(TAG, "📦 Creating command processing components");
@@ -108,13 +116,13 @@ public class CommandProcessor {
         this.protocolDetector.addChunkedMessageSupport(chunkReassembler);
         Log.d(TAG, "✅ Chunked message support initialized");
 
-        // Wire K900CommandHandler to BesOtaManager for authorization requests
-        com.mentra.asg_client.io.bes.BesOtaManager.setK900CommandHandler(this.k900CommandHandler);
-        Log.d(TAG, "✅ K900CommandHandler wired to BesOtaManager");
-
         // Register command handlers
         initializeCommandHandlers();
         Log.i(TAG, "✅ CommandProcessor initialization completed successfully");
+    }
+
+    public K900CommandHandler getK900CommandHandler() {
+        return k900CommandHandler;
     }
 
     /**
@@ -383,7 +391,7 @@ public class CommandProcessor {
                             serviceManager, communicationManager, responseBuilder));
             Log.d(TAG, "✅ Registered SettingsCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new OtaCommandHandler());
+            commandHandlerRegistry.registerHandler(otaCommandHandler);
             Log.d(TAG, "✅ Registered OtaCommandHandler");
 
             commandHandlerRegistry.registerHandler(
@@ -395,29 +403,25 @@ public class CommandProcessor {
             Log.d(TAG, "✅ Registered GalleryCommandHandler");
 
             commandHandlerRegistry.registerHandler(
-                    new com.mentra.asg_client.service.core.handlers.TransferCompleteCommandHandler(
-                            serviceManager));
+                    new TransferCompleteCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered TransferCompleteCommandHandler");
 
             commandHandlerRegistry.registerHandler(rgbLedCommandHandler);
             Log.d(TAG, "✅ Registered RgbLedCommandHandler");
 
             commandHandlerRegistry.registerHandler(
-                    new com.mentra.asg_client.service.core.handlers.GalleryModeCommandHandler(
-                            serviceManager));
+                    new GalleryModeCommandHandler(serviceManager, communicationManager));
             Log.d(TAG, "✅ Registered GalleryModeCommandHandler");
 
             commandHandlerRegistry.registerHandler(
-                    new com.mentra.asg_client.service.core.handlers.ServiceHeartbeatCommandHandler(
-                            serviceManager));
+                    new ServiceHeartbeatCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered ServiceHeartbeatCommandHandler");
 
             commandHandlerRegistry.registerHandler(new BleConfigCommandHandler());
             Log.d(TAG, "✅ Registered BleConfigCommandHandler");
 
             commandHandlerRegistry.registerHandler(
-                    new com.mentra.asg_client.service.core.handlers.PowerCommandHandler(
-                            context, serviceManager));
+                    new PowerCommandHandler(context, serviceManager));
             Log.d(TAG, "✅ Registered PowerCommandHandler");
 
             commandHandlerRegistry.registerHandler(
@@ -541,7 +545,7 @@ public class CommandProcessor {
     public void requestBesLogs(
             String incidentId,
             android.content.Context context,
-            com.mentra.asg_client.service.system.interfaces.IConfigurationManager configManager) {
+            IConfigurationManager configManager) {
         if (k900CommandHandler != null) {
             k900CommandHandler.requestBesLogs(incidentId, context, configManager);
         } else {
