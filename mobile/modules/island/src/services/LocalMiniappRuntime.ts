@@ -35,7 +35,18 @@ import localDisplayManager from "./LocalDisplayManager"
 import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
-import {getRuntimeHooks, ISLAND_SETTINGS_KEYS, type TtsSynthesisResult} from "../runtime/config"
+import {
+  getRuntimeHooks,
+  ISLAND_SETTINGS_KEYS,
+  type CloudRuntimeAdapter,
+  type TtsSynthesisResult,
+} from "../runtime/config"
+import type {
+  AudioSubscription,
+  LanguageSource,
+  TranscriptionData,
+  TranslationData,
+} from "@mentra/cloud-runtime/protocol"
 import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 
@@ -194,6 +205,9 @@ class LocalMiniappRuntime {
 
   /** Ref-counted stream subscriptions: stream → set of packageNames. */
   private streamSubscribers: Map<string, Set<string>> = new Map()
+
+  /** Guards one-time wiring of the cloud-v2 transcript/translation fan-out. */
+  private cloudV2ResultsWired = false
 
   /** Ping interval handle. */
   private pingIntervalId: number | null = null
@@ -2075,6 +2089,99 @@ class LocalMiniappRuntime {
     }
     getRuntimeHooks().socketComms?.updatePhoneSubscriptions(Array.from(cloudStreams))
     localSttFallbackCoordinator.onSubscriptionChange(transcriptionLang !== null, transcriptionLang)
+
+    // Cloud-v2 (additive): mirror the same set as typed AudioSubscription[] and
+    // push it to the v2 runtime. The v1 string path above is unchanged.
+    const cloud = getRuntimeHooks().cloud
+    if (cloud) {
+      this.ensureCloudV2ResultsWired(cloud)
+      const subs = this.buildV2AudioSubscriptions(cloudStreams)
+      cloud.setSubscriptions(subs).catch((err) => {
+        // Best-effort: the v2 cloud may not be connected yet (or at all during
+        // the transition). Logging is enough — v1 still drives delivery.
+        console.warn(`${LOG_TAG}: cloud-v2 setSubscriptions failed: ${(err as Error)?.message ?? err}`)
+      })
+    }
+  }
+
+  /**
+   * Build the v2 `AudioSubscription[]` from the v1 cloud-stream key set.
+   *
+   * v1 keys: `transcription:<lang>` (lang may be `auto`, `en-US`, …) and
+   * `translation:<source>:<target>` (3 colon-parts; source/target may be `*`
+   * or `auto` wildcards, target may also be `*`). The v2 protocol requires a
+   * concrete `target: string` for translation, so wildcard-target translation
+   * keys (`translation:<source>:*`, `translation:*:*`, `translation:auto`)
+   * have no v2 equivalent and are skipped — the matching v1 path still serves
+   * them. Wildcard/`auto` SOURCE maps to `{mode: "auto"}`.
+   */
+  private buildV2AudioSubscriptions(cloudStreams: Set<string>): AudioSubscription[] {
+    const subs: AudioSubscription[] = []
+    const langSource = (code: string): LanguageSource =>
+      code === "auto" || code === "*" ? {mode: "auto"} : {mode: "specific", code}
+    for (const stream of cloudStreams) {
+      if (stream.startsWith("transcription:")) {
+        const lang = stream.substring("transcription:".length)
+        subs.push({kind: "transcription", language: langSource(lang)})
+      } else if (stream.startsWith("translation:")) {
+        const parts = stream.split(":")
+        // Only `translation:<source>:<target>` maps cleanly; a concrete target
+        // is required by the v2 schema.
+        if (parts.length === 3) {
+          const [, source, target] = parts
+          if (target === "*") continue
+          subs.push({kind: "translation", source: langSource(source), target})
+        }
+      }
+    }
+    return subs
+  }
+
+  /**
+   * Wire the v2 cloud's transcription/translation results into the existing
+   * miniapp fan-out exactly once. Maps each v2 result back to the v1
+   * cloud-to-app data shape `forwardEvent` already forwards, keyed on the same
+   * `transcription:<lang>` / `translation:<source>:<target>` stream strings the
+   * v1 path uses, so subscribed miniapps receive identical envelopes.
+   */
+  private ensureCloudV2ResultsWired(cloud: CloudRuntimeAdapter): void {
+    if (this.cloudV2ResultsWired) return
+    this.cloudV2ResultsWired = true
+
+    cloud.onTranscript((d: TranscriptionData) => {
+      this.forwardEvent(`transcription:${d.resolvedLanguage}`, {
+        type: "transcription",
+        text: d.text,
+        isFinal: d.isFinal,
+        utteranceId: d.utteranceId,
+        transcribeLanguage: d.resolvedLanguage,
+        detectedLanguage: d.languageDetected ? d.resolvedLanguage : undefined,
+        startTime: d.startMs,
+        endTime: d.endMs,
+        speakerId: d.speakerId,
+        duration: d.durationMs,
+        provider: d.provider,
+        confidence: d.confidence,
+      })
+    })
+
+    cloud.onTranslation((d: TranslationData) => {
+      this.forwardEvent(`translation:${d.source.language}:${d.target.language}`, {
+        type: "translation",
+        text: d.text,
+        originalText: d.originalText,
+        isFinal: d.isFinal,
+        startTime: d.startMs,
+        endTime: d.endMs,
+        speakerId: d.speakerId,
+        duration: d.durationMs,
+        transcribeLanguage: d.source.language,
+        translateLanguage: d.target.language,
+        didTranslate: true,
+        provider: d.provider,
+        confidence: d.confidence,
+      })
+    })
   }
 
   // ===========================================================================

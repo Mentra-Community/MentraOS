@@ -11,6 +11,7 @@
  * the host and the runtime. Prefer pushing data IN over pulling it via a
  * getter when reasonable.
  */
+import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-runtime/protocol"
 
 /**
  * Snapshot the host exposes about the connected glasses. The host's full
@@ -32,6 +33,37 @@ export interface GlassesSnapshot {
 export interface SocketCommsAdapter {
   sendMessage: (message: object) => void
   updatePhoneSubscriptions: (subscriptions: string[]) => void
+}
+
+/**
+ * Cloud-v2 (`@mentra/cloud-client`) runtime surface, wired in alongside the v1
+ * `socketComms` path during the dual-cloud transition. The host owns the
+ * singleton CloudClient; this adapter is the thin slice the island runtime
+ * needs to drive transcription/translation subscriptions and fan results back
+ * to local miniapps.
+ *
+ * Typed against `@mentra/cloud-runtime/protocol` so the subscription/result
+ * shapes are the real wire types, not loosely-typed mirrors. Optional on
+ * `RuntimeHooks`: hosts still on v1-only leave it unset and the runtime keeps
+ * driving cloud transcription purely through `socketComms`.
+ */
+export interface CloudRuntimeAdapter {
+  /** Replace the v2 cloud's audio subscription set for the live session. */
+  setSubscriptions: (subs: AudioSubscription[]) => Promise<void>
+  /** Encrypt + send one LC3 (or PCM) audio frame over the v2 UDP path. */
+  sendAudioFrame: (frame: Uint8Array) => void
+  /** Subscribe to v2 transcription results. Returns an unsubscribe fn. */
+  onTranscript: (cb: (d: TranscriptionData) => void) => () => void
+  /** Subscribe to v2 translation results. Returns an unsubscribe fn. */
+  onTranslation: (cb: (d: TranslationData) => void) => () => void
+  /**
+   * Whether any transcription/translation subscription is currently set on v2.
+   * The host's audio-capture site gates `sendAudioFrame` on this so we don't
+   * burn UDP bandwidth when nobody is subscribed on the v2 cloud.
+   */
+  hasAudioSubscriptions: () => boolean
+  /** Whether the v2 live session is connected (handshake completed). */
+  isConnected: () => boolean
 }
 
 /**
@@ -280,6 +312,11 @@ export interface StreamingAdapter {
 
 export interface RuntimeHooks {
   socketComms?: SocketCommsAdapter
+  /**
+   * Cloud-v2 (`@mentra/cloud-client`) runtime adapter. Additive alongside
+   * `socketComms` during the dual-cloud transition; unset on v1-only hosts.
+   */
+  cloud?: CloudRuntimeAdapter
   audioPlayback?: AudioPlaybackAdapter
   /** Returns the connected glasses' status snapshot. */
   glassesStatus?: StoreAccessor<GlassesSnapshot>

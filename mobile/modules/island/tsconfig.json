@@ -2,7 +2,10 @@
 {
   "extends": "expo-module-scripts/tsconfig.base",
   "compilerOptions": {
-    "outDir": "./build"
+    "outDir": "./build",
+    "paths": {
+      "@mentra/cloud-runtime/protocol": ["../../../cloud-v2/packages/runtime/src/protocol/index.ts"]
+    }
   },
   "include": ["./src"],
   "exclude": ["**/__mocks__/*", "**/__tests__/*", "**/__rsc_tests__/*"]
