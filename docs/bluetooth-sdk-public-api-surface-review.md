@@ -132,8 +132,8 @@ requestPhoto(
   compress: PhotoCompression,
   sound: boolean,
 ): Promise<PhotoSuccessResponseEvent>
-startVideoRecording(requestId: string, save: boolean, sound: boolean): Promise<VideoRecordingSuccessStatusEvent>
-stopVideoRecording(requestId: string): Promise<VideoRecordingSuccessStatusEvent>
+startVideoRecording(requestId: string, save: boolean, sound: boolean): Promise<VideoRecordingStartedStatusEvent>
+stopVideoRecording(requestId: string): Promise<VideoRecordingStoppedStatusEvent>
 
 startStream(params: StreamStartRequest): Promise<void>
 stopStream(): Promise<void>

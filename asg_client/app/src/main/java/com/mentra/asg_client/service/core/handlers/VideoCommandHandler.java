@@ -264,6 +264,7 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
             boolean isRecording = captureService.isRecordingVideo();
             try {
                 JSONObject status = new JSONObject();
+                status.put("status", "recording_status");
                 status.put("recording", isRecording);
 
                 if (isRecording) {

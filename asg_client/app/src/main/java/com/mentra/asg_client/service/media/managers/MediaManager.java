@@ -188,6 +188,10 @@ public class MediaManager implements IMediaManager {
                 response.put("requestId", requestId);
             }
             response.put("success", success);
+            String status = statusObject.optString("status", "");
+            if (!status.isEmpty()) {
+                response.put("status", status);
+            }
             response.put("data", statusObject);
             response.put("timestamp", System.currentTimeMillis());
             String jsonString = response.toString();

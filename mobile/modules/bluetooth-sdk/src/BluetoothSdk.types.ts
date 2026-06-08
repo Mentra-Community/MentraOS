@@ -157,10 +157,8 @@ export type PhotoResponseEvent =
       uploadUrl: string
       photoUrl?: string
       statusUrl?: string
-      mimeType?: string
       contentType?: string
-      bytes?: number
-      size?: number
+      fileSizeBytes?: number
       timestamp: number
     }
   | {
@@ -274,13 +272,32 @@ export type VideoRecordingStatusEvent = {
 
 export type VideoRecordingStatusState =
   | "recording_started"
+  | "recording_status"
   | "already_recording"
   | "recording_stopped"
   | "not_recording"
+  | "request_id_mismatch"
+  | "service_unavailable"
+  | "json_error"
+  | "battery_low"
+  | "camera_busy"
+  | "storage_unavailable"
+  | "integrity_failed"
+  | "error"
 
-export type VideoRecordingSuccessStatusEvent = Omit<VideoRecordingStatusEvent, "success"> & {
+export type VideoRecordingStartedStatusEvent = Omit<VideoRecordingStatusEvent, "success" | "status"> & {
   success: true
+  status: "recording_started"
 }
+
+export type VideoRecordingStoppedStatusEvent = Omit<VideoRecordingStatusEvent, "success" | "status"> & {
+  success: true
+  status: "recording_stopped"
+}
+
+export type VideoRecordingSuccessStatusEvent =
+  | VideoRecordingStartedStatusEvent
+  | VideoRecordingStoppedStatusEvent
 
 export type GalleryStatusEvent = {
   type: "gallery_status"
@@ -869,8 +886,8 @@ export interface BluetoothSdkPublicModule {
     save: boolean,
     sound: boolean,
     settings?: VideoRecordingSettings,
-  ): Promise<VideoRecordingSuccessStatusEvent>
-  stopVideoRecording(requestId: string): Promise<VideoRecordingSuccessStatusEvent>
+  ): Promise<VideoRecordingStartedStatusEvent>
+  stopVideoRecording(requestId: string): Promise<VideoRecordingStoppedStatusEvent>
 
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
   stopStream(): Promise<StreamStatusEvent>

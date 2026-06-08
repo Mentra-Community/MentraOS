@@ -276,10 +276,8 @@ sealed interface PhotoResponse {
         val uploadUrl: String,
         val photoUrl: String?,
         val statusUrl: String?,
-        val mimeType: String?,
         val contentType: String?,
-        val bytes: Long?,
-        val size: Long?,
+        val fileSizeBytes: Long?,
         override val timestamp: Long,
     ) : PhotoResponse {
         override val state: String = "success"
@@ -307,10 +305,11 @@ sealed interface PhotoResponse {
                     uploadUrl = uploadUrl,
                     photoUrl = stringValue(values, "photoUrl"),
                     statusUrl = stringValue(values, "statusUrl"),
-                    mimeType = stringValue(values, "mimeType"),
-                    contentType = stringValue(values, "contentType"),
-                    bytes = longValue(values, "bytes"),
-                    size = longValue(values, "size"),
+                    contentType = stringValue(values, "contentType", "mimeType"),
+                    fileSizeBytes =
+                        longValue(values, "fileSizeBytes")
+                            ?: longValue(values, "bytes")
+                            ?: longValue(values, "size"),
                     timestamp = timestamp,
                 )
             } else {
@@ -332,10 +331,8 @@ private fun Map<String, Any>.withOptionalPhotoMetadata(
     toMutableMap().apply {
         success.photoUrl?.takeIf { it.isNotBlank() }?.let { this["photoUrl"] = it }
         success.statusUrl?.takeIf { it.isNotBlank() }?.let { this["statusUrl"] = it }
-        success.mimeType?.takeIf { it.isNotBlank() }?.let { this["mimeType"] = it }
         success.contentType?.takeIf { it.isNotBlank() }?.let { this["contentType"] = it }
-        success.bytes?.let { this["bytes"] = it }
-        success.size?.let { this["size"] = it }
+        success.fileSizeBytes?.let { this["fileSizeBytes"] = it }
     }
 
 data class PhotoResponseEvent(

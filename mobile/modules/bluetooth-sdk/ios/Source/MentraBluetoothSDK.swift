@@ -78,6 +78,17 @@ private final class PendingHotspotStatusRequest {
 }
 
 @MainActor
+private final class PendingVideoRecordingRequest {
+    let expectedStatus: String
+    let pending: PendingResponse<VideoRecordingStatusEvent>
+
+    init(expectedStatus: String, pending: PendingResponse<VideoRecordingStatusEvent>) {
+        self.expectedStatus = expectedStatus
+        self.pending = pending
+    }
+}
+
+@MainActor
 private final class PendingResponse<T> {
     private let operation: String
     private var continuation: CheckedContinuation<T, Error>?
@@ -144,7 +155,7 @@ public final class MentraBluetoothSDK {
     private var activeScanSessions: [UUID: ActiveScanSession] = [:]
     private var activeStreamKeepAlive: ActiveStreamKeepAlive?
     private var pendingPhotoRequests: [String: PendingResponse<PhotoResponseEvent>] = [:]
-    private var pendingVideoRecordingRequests: [String: PendingResponse<VideoRecordingStatusEvent>] = [:]
+    private var pendingVideoRecordingRequests: [String: PendingVideoRecordingRequest] = [:]
     private var pendingRgbLedRequests: [String: PendingResponse<RgbLedControlResponseEvent>] = [:]
     private var pendingSettingsRequests: [String: PendingResponse<SettingsAckEvent>] = [:]
     private var pendingStreamStarts: [String: PendingResponse<StreamStatusEvent>] = [:]
@@ -804,7 +815,10 @@ public final class MentraBluetoothSDK {
                 message: "A video recording command is already waiting for requestId \(request.requestId)."
             )
         }
-        pendingVideoRecordingRequests[request.requestId] = pending
+        pendingVideoRecordingRequests[request.requestId] = PendingVideoRecordingRequest(
+            expectedStatus: "recording_started",
+            pending: pending
+        )
         DeviceManager.shared.startVideoRecording(
             request.requestId,
             request.save,
@@ -834,7 +848,10 @@ public final class MentraBluetoothSDK {
                 message: "A video recording command is already waiting for requestId \(requestId)."
             )
         }
-        pendingVideoRecordingRequests[requestId] = pending
+        pendingVideoRecordingRequests[requestId] = PendingVideoRecordingRequest(
+            expectedStatus: "recording_stopped",
+            pending: pending
+        )
         DeviceManager.shared.stopVideoRecording(requestId)
         do {
             let event = try await pending.wait()
@@ -1142,11 +1159,13 @@ public final class MentraBluetoothSDK {
     }
 
     private func handleVideoRecordingStatusForRequests(_ event: VideoRecordingStatusEvent) {
-        guard let pending = pendingVideoRecordingRequests[event.requestId] else { return }
+        guard let request = pendingVideoRecordingRequests[event.requestId] else { return }
         if event.success {
-            pending.resolve(event)
+            if event.status == request.expectedStatus {
+                request.pending.resolve(event)
+            }
         } else {
-            pending.reject(
+            request.pending.reject(
                 BluetoothError(
                     code: event.status.isEmpty ? "video_recording_failed" : event.status,
                     message: event.details ?? "Video recording command failed."

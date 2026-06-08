@@ -290,10 +290,8 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
         uploadUrl: String,
         photoUrl: String?,
         statusUrl: String?,
-        mimeType: String?,
         contentType: String?,
-        bytes: Int?,
-        size: Int?,
+        fileSizeBytes: Int?,
         timestamp: Int
     )
     case error(requestId: String, errorCode: String?, errorMessage: String, timestamp: Int)
@@ -309,10 +307,9 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
                 uploadUrl: stringValue(values, "uploadUrl") ?? "",
                 photoUrl: stringValue(values, "photoUrl"),
                 statusUrl: stringValue(values, "statusUrl"),
-                mimeType: stringValue(values, "mimeType"),
-                contentType: stringValue(values, "contentType"),
-                bytes: intValue(values["bytes"]),
-                size: intValue(values["size"]),
+                contentType: stringValue(values, "contentType") ?? stringValue(values, "mimeType"),
+                fileSizeBytes: intValue(values["fileSizeBytes"]) ?? intValue(values["bytes"])
+                    ?? intValue(values["size"]),
                 timestamp: timestamp
             )
         } else {
@@ -337,24 +334,21 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
 
     public var requestId: String {
         switch self {
-        case let .success(requestId, _, _, _, _, _, _, _, _), let .error(requestId, _, _, _):
+        case let .success(requestId, _, _, _, _, _, _), let .error(requestId, _, _, _):
             requestId
         }
     }
 
     public var timestamp: Int {
         switch self {
-        case let .success(_, _, _, _, _, _, _, _, timestamp), let .error(_, _, _, timestamp):
+        case let .success(_, _, _, _, _, _, timestamp), let .error(_, _, _, timestamp):
             timestamp
         }
     }
 
     public var values: [String: Any] {
         switch self {
-        case let .success(
-            requestId, uploadUrl, photoUrl, statusUrl, mimeType, contentType, bytes, size,
-            timestamp
-        ):
+        case let .success(requestId, uploadUrl, photoUrl, statusUrl, contentType, fileSizeBytes, timestamp):
             var values: [String: Any] = [
                 "state": State.success.rawValue,
                 "requestId": requestId,
@@ -367,17 +361,11 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
             if let statusUrl, !statusUrl.isEmpty {
                 values["statusUrl"] = statusUrl
             }
-            if let mimeType, !mimeType.isEmpty {
-                values["mimeType"] = mimeType
-            }
             if let contentType, !contentType.isEmpty {
                 values["contentType"] = contentType
             }
-            if let bytes {
-                values["bytes"] = bytes
-            }
-            if let size {
-                values["size"] = size
+            if let fileSizeBytes {
+                values["fileSizeBytes"] = fileSizeBytes
             }
             return values
         case let .error(requestId, errorCode, errorMessage, timestamp):

@@ -3790,10 +3790,8 @@ public class MediaCaptureService {
             JSONObject response = new JSONObject(responseBody);
             copyJsonField(target, response, "photoUrl");
             copyJsonField(target, response, "statusUrl");
-            copyJsonField(target, response, "mimeType");
-            copyJsonField(target, response, "contentType");
-            copyJsonField(target, response, "bytes");
-            copyJsonField(target, response, "size");
+            copyFirstJsonField(target, response, "contentType", "contentType", "mimeType");
+            copyFirstJsonField(target, response, "fileSizeBytes", "fileSizeBytes", "bytes", "size");
         } catch (JSONException e) {
             Log.d(TAG, "Photo upload response body was not JSON metadata");
         }
@@ -3803,6 +3801,16 @@ public class MediaCaptureService {
             throws JSONException {
         if (source.has(key) && !source.isNull(key)) {
             target.put(key, source.get(key));
+        }
+    }
+
+    private void copyFirstJsonField(JSONObject target, JSONObject source, String targetKey, String... sourceKeys)
+            throws JSONException {
+        for (String sourceKey : sourceKeys) {
+            if (source.has(sourceKey) && !source.isNull(sourceKey)) {
+                target.put(targetKey, source.get(sourceKey));
+                return;
+            }
         }
     }
 

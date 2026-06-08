@@ -40,8 +40,9 @@ import {
   StreamKeepAliveRequest,
   StreamStartRequest,
   StreamStatusEvent,
-  VideoRecordingSuccessStatusEvent,
+  VideoRecordingStartedStatusEvent,
   VideoRecordingSettings,
+  VideoRecordingStoppedStatusEvent,
   VersionInfoResult,
   WifiSearchResult,
   WifiStatusChangeEvent,
@@ -145,8 +146,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     save: boolean,
     sound: boolean,
     settings?: VideoRecordingSettings,
-  ): Promise<VideoRecordingSuccessStatusEvent>
-  stopVideoRecording(requestId: string): Promise<VideoRecordingSuccessStatusEvent>
+  ): Promise<VideoRecordingStartedStatusEvent>
+  stopVideoRecording(requestId: string): Promise<VideoRecordingStoppedStatusEvent>
 
   // Stream Commands
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>

@@ -31,7 +31,7 @@ class MentraBluetoothSdk private constructor(
     private var activeStreamKeepAlive: ActiveStreamKeepAlive? = null
     private val pendingPhotoRequests = ConcurrentHashMap<String, PendingResponse<PhotoResponseEvent>>()
     private val pendingVideoRecordingRequests =
-        ConcurrentHashMap<String, PendingResponse<VideoRecordingStatusEvent>>()
+        ConcurrentHashMap<String, PendingVideoRecordingRequest>()
     private val pendingRgbLedRequests = ConcurrentHashMap<String, PendingResponse<RgbLedControlResponseEvent>>()
     private val pendingSettingsRequests = ConcurrentHashMap<String, PendingResponse<SettingsAckEvent>>()
     private val pendingStreamStarts = ConcurrentHashMap<String, PendingResponse<StreamStatusEvent>>()
@@ -92,6 +92,11 @@ class MentraBluetoothSdk private constructor(
     private data class PendingStreamStop(
         val streamId: String?,
         val pending: PendingResponse<StreamStatusEvent>,
+    )
+
+    private data class PendingVideoRecordingRequest(
+        val expectedStatus: String,
+        val pending: PendingResponse<VideoRecordingStatusEvent>,
     )
 
     private data class PendingWifiScan(
@@ -767,7 +772,8 @@ class MentraBluetoothSdk private constructor(
     fun startVideoRecording(request: VideoRecordingRequest): VideoRecordingStatusEvent {
         require(request.requestId.isNotBlank()) { "requestId is required to start video recording." }
         val pending = PendingResponse<VideoRecordingStatusEvent>("start video recording")
-        if (pendingVideoRecordingRequests.putIfAbsent(request.requestId, pending) != null) {
+        val pendingRequest = PendingVideoRecordingRequest("recording_started", pending)
+        if (pendingVideoRecordingRequests.putIfAbsent(request.requestId, pendingRequest) != null) {
             throw BluetoothException(
                 "request_in_flight",
                 "A video recording command is already waiting for requestId ${request.requestId}.",
@@ -784,14 +790,15 @@ class MentraBluetoothSdk private constructor(
             )
             return pending.await()
         } finally {
-            pendingVideoRecordingRequests.remove(request.requestId, pending)
+            pendingVideoRecordingRequests.remove(request.requestId, pendingRequest)
         }
     }
 
     fun stopVideoRecording(requestId: String): VideoRecordingStatusEvent {
         require(requestId.isNotBlank()) { "requestId is required to stop video recording." }
         val pending = PendingResponse<VideoRecordingStatusEvent>("stop video recording")
-        if (pendingVideoRecordingRequests.putIfAbsent(requestId, pending) != null) {
+        val pendingRequest = PendingVideoRecordingRequest("recording_stopped", pending)
+        if (pendingVideoRecordingRequests.putIfAbsent(requestId, pendingRequest) != null) {
             throw BluetoothException(
                 "request_in_flight",
                 "A video recording command is already waiting for requestId $requestId.",
@@ -801,7 +808,7 @@ class MentraBluetoothSdk private constructor(
             deviceManager.stopVideoRecording(requestId)
             return pending.await()
         } finally {
-            pendingVideoRecordingRequests.remove(requestId, pending)
+            pendingVideoRecordingRequests.remove(requestId, pendingRequest)
         }
     }
 
@@ -1331,11 +1338,13 @@ class MentraBluetoothSdk private constructor(
     }
 
     private fun handleVideoRecordingStatusForRequests(event: VideoRecordingStatusEvent) {
-        val pending = pendingVideoRecordingRequests[event.requestId] ?: return
+        val request = pendingVideoRecordingRequests[event.requestId] ?: return
         if (event.success) {
-            pending.resolve(event)
+            if (event.status == request.expectedStatus) {
+                request.pending.resolve(event)
+            }
         } else {
-            pending.reject(
+            request.pending.reject(
                 BluetoothException(
                     event.status.ifBlank { "video_recording_failed" },
                     event.details ?: "Video recording command failed.",

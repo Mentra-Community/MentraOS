@@ -111,7 +111,9 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
   "state": "success",
   "success": true,
   "uploadUrl": "https://api.example.com/mentra/photo",
-  "photoUrl": "https://cdn.example.com/photos/photo_001.jpg"
+  "photoUrl": "https://cdn.example.com/photos/photo_001.jpg",
+  "contentType": "image/jpeg",
+  "fileSizeBytes": 58489
 }
 ```
 
@@ -173,7 +175,7 @@ Status metadata is stage-specific:
 
 Action-button photos emitted by the glasses use the same `photo_status` shape while the phone SDK is connected. These local captures use a `local_<timestamp>` request ID and report `resolvedConfig.source: "button"` with `resolvedConfig.transferMethod: "local"`.
 
-`ble_photo_error` / `photo_error_response` — capture or transfer failed:
+`ble_photo_error` / `photo_error_response` — legacy BLE/photo failure notifications. The current request/response contract uses `photo_response` with `state: "error"` as the terminal failure for SDK callers; these legacy notifications may still appear in older diagnostic flows and should be treated as error progress, not as a second success/error contract:
 
 ```json
 {

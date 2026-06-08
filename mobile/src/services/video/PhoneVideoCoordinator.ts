@@ -126,9 +126,14 @@ export class PhoneVideoCoordinator {
         throw new VideoError(status.status || "VIDEO_STOP_FAILED", status.details || "Glasses did not stop recording")
       }
     } catch (err) {
+      const videoError = this.toVideoError(err, "BLE_SEND_FAILED")
+      if (this.isAlreadyStopped(videoError)) {
+        this.activeRecordings.delete(recordingId)
+        return
+      }
       // Leave the recording tracked so a retry (or unregister cleanup) can stop
       // it — only drop it once the glasses report a successful stop.
-      throw this.toVideoError(err, "BLE_SEND_FAILED")
+      throw videoError
     }
     this.activeRecordings.delete(recordingId)
   }
@@ -152,7 +157,12 @@ export class PhoneVideoCoordinator {
           this.activeRecordings.delete(rec.recordingId)
         }
       } catch (err) {
-        console.warn(`[PhoneVideoCoordinator] failed to stop ${rec.recordingId} for ${packageName} on cleanup`, err)
+        const videoError = this.toVideoError(err, "BLE_SEND_FAILED")
+        if (this.isAlreadyStopped(videoError)) {
+          this.activeRecordings.delete(rec.recordingId)
+          continue
+        }
+        console.warn(`[PhoneVideoCoordinator] failed to stop ${rec.recordingId} for ${packageName} on cleanup`, videoError)
       }
     }
   }
@@ -162,6 +172,10 @@ export class PhoneVideoCoordinator {
     const code = (err as {code?: string})?.code
     const message = err instanceof Error ? err.message : String(err)
     return new VideoError(code || fallbackCode, message)
+  }
+
+  private isAlreadyStopped(error: VideoError): boolean {
+    return error.code === "not_recording" || error.code === "recording_stopped"
   }
 }
 
