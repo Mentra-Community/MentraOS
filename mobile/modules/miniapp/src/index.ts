@@ -81,6 +81,10 @@ export type {
 } from "./modules/events"
 export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "./modules/speaker"
 export type {
+  CameraFovPreset,
+  CameraFovRequest,
+  CameraFovResult,
+  CameraRoiPosition,
   PhotoTaken,
   SetCameraFovOptions,
   StartVideoRecordingOptions,
@@ -89,7 +93,16 @@ export type {
 } from "./modules/camera"
 export type {DashboardMode} from "./modules/dashboard"
 export type {LedColor, LedControlOptions} from "./modules/led"
-export type {StartUnmanagedOptions, StartManagedOptions, ManagedStreamResult, StreamStatus} from "./modules/stream"
+export type {
+  ManagedStreamResult,
+  StartManagedOptions,
+  StartUnmanagedOptions,
+  StreamAudioConfig,
+  StreamPublisherStartResult,
+  StreamResolvedConfig,
+  StreamStatus,
+  StreamVideoConfig,
+} from "./modules/stream"
 export type {ShareOptions, ShareResult, DownloadOptions, DownloadResult} from "./modules/system"
 
 // Domain module types — exported so consumers can type module references

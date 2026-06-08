@@ -69,7 +69,9 @@ class BlePhotoUploadService {
         imageData: Data,
         requestId: String,
         webhookUrl: String,
-        authToken: String?
+        authToken: String?,
+        onSuccess: ((String, String) -> Void)? = nil,
+        onError: ((String, String) -> Void)? = nil
     ) {
         Task {
             do {
@@ -81,7 +83,7 @@ class BlePhotoUploadService {
                 Bridge.log("\(TAG): Converted to JPEG for upload. Size: \(jpegData.count) bytes")
 
                 // Upload to webhook
-                try await uploadToWebhook(
+                let responseBody = try await uploadToWebhook(
                     jpegData: jpegData,
                     requestId: requestId,
                     webhookUrl: webhookUrl,
@@ -89,19 +91,13 @@ class BlePhotoUploadService {
                 )
 
                 Bridge.log("\(TAG): Photo uploaded successfully for requestId: \(requestId)")
-
-                //        DispatchQueue.main.async {
-                //          callback.onSuccess(requestId: requestId)
-                //        }
+                onSuccess?(requestId, responseBody)
 
             } catch {
                 Bridge.log(
                     "\(TAG): Error processing BLE photo for requestId: \(requestId), error: \(error)"
                 )
-
-                //        DispatchQueue.main.async {
-                //          callback.onError(requestId: requestId, error: error.localizedDescription)
-                //        }
+                onError?(requestId, error.localizedDescription)
             }
         }
     }
@@ -409,10 +405,10 @@ class BlePhotoUploadService {
         requestId: String,
         webhookUrl: String,
         authToken: String?
-    ) async throws {
+    ) async throws -> String {
         guard let url = URL(string: webhookUrl) else {
             Bridge.log("LIVE: Invalid webhook URL: \(webhookUrl)")
-            return
+            throw PhotoUploadError.uploadFailed("Invalid webhook URL")
         }
 
         var request = URLRequest(url: url)
@@ -476,6 +472,7 @@ class BlePhotoUploadService {
             }
 
             print("LIVE: Upload successful. Response code: \(httpResponse.statusCode)")
+            return String(data: data, encoding: .utf8) ?? ""
 
         } catch {
             if error is PhotoUploadError {
@@ -2138,7 +2135,8 @@ class MentraLive: NSObject, SGCManager {
             updateBatteryStatus(level: level, isCharging: isCharging)
 
         case "voice_activity_detection_status":
-            let enabled = json["voiceActivityDetectionEnabled"] as? Bool ?? true
+            let enabled = json["voiceActivityDetectionEnabled"] as? Bool
+                ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
             handleVoiceActivityDetectionStatus(enabled: enabled)
 
         case "speaking_status":
@@ -2170,8 +2168,14 @@ class MentraLive: NSObject, SGCManager {
         case "stream_status":
             emitRtmpStreamStatus(json)
 
+        case "video_recording_status":
+            emitVideoRecordingStatus(json)
+
         case "photo_status":
             emitPhotoStatus(json)
+
+        case "photo_response":
+            emitPhotoResponse(json)
 
         case "gallery_status":
             let photoCount = json["photos"] as? Int ?? 0
@@ -2179,11 +2183,18 @@ class MentraLive: NSObject, SGCManager {
             let totalCount = json["total"] as? Int ?? 0
             let totalSize = json["total_size"] as? Int64 ?? 0
             let hasContent = json["has_content"] as? Bool ?? false
+            let cameraBusy = Self.galleryCameraBusy(json)
+            let cameraBusyReason = Self.galleryCameraBusyReason(json)
             handleGalleryStatus(
                 photoCount: photoCount, videoCount: videoCount,
                 totalCount: totalCount, totalSize: totalSize,
-                hasContent: hasContent
+                hasContent: hasContent,
+                cameraBusy: cameraBusy,
+                cameraBusyReason: cameraBusyReason
             )
+
+        case "settings_ack":
+            emitSettingsAck(json)
 
         case "button_press":
             handleButtonPress(json)
@@ -2431,11 +2442,7 @@ class MentraLive: NSObject, SGCManager {
                     DeviceStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
                 }
 
-                // Send fields immediately to RN - no waiting for other chunks
-                // All fields including mtk_fw_version are forwarded to RN
-                // Bridge.sendTypedMessage("version_info", body: fields)
-
-                // Bridge.log("LIVE: Processed version_info fields and sent to RN")
+                Bridge.sendVersionInfo(fields)
             } else {
                 Bridge.log("Unhandled message type: \(type)")
             }
@@ -2852,13 +2859,20 @@ class MentraLive: NSObject, SGCManager {
 
     func sendGalleryMode() {
         let active = DeviceStore.shared.get("bluetooth", "gallery_mode") as! Bool
+        sendGalleryMode(requestId: nil, active: active)
+    }
+
+    func sendGalleryMode(requestId: String?, active: Bool) {
         Bridge.log("LIVE: 📸 Sending gallery mode active to glasses: \(active)")
 
-        let json: [String: Any] = [
+        var json: [String: Any] = [
             "type": "save_in_gallery_mode",
             "active": active,
             "timestamp": Int(Date().timeIntervalSince1970 * 1000),
         ]
+        if let requestId, !requestId.isEmpty {
+            json["request_id"] = requestId
+        }
 
         sendJson(json, wakeUp: true)
     }
@@ -2971,7 +2985,8 @@ class MentraLive: NSObject, SGCManager {
             networks = networksNeoArray
         }
 
-        Bridge.updateWifiScanResults(networks)
+        let scanComplete = json["scan_complete"] as? Bool ?? json["scanComplete"] as? Bool ?? false
+        Bridge.updateWifiScanResults(networks, scanComplete: scanComplete)
     }
 
     private func handleButtonPress(_ json: [String: Any]) {
@@ -3553,7 +3568,53 @@ class MentraLive: NSObject, SGCManager {
         BlePhotoUploadService.processAndUploadPhoto(
             imageData: imageData, requestId: transfer.requestId, webhookUrl: transfer.webhookUrl,
             authToken: transfer.authToken
-        )
+        ) { [weak self] requestId, responseBody in
+            self?.sendPhotoTerminalSuccessResponse(
+                requestId: requestId,
+                uploadUrl: transfer.webhookUrl,
+                responseBody: responseBody
+            )
+        } onError: { requestId, error in
+            Bridge.sendPhotoError(
+                requestId: requestId,
+                errorCode: "PHONE_UPLOAD_FAILED",
+                errorMessage: "BLE photo upload failed: \(error)"
+            )
+        }
+    }
+
+    private func sendPhotoTerminalSuccessResponse(
+        requestId: String,
+        uploadUrl: String,
+        responseBody: String
+    ) {
+        var event: [String: Any] = [
+            "type": "photo_response",
+            "state": "success",
+            "success": true,
+            "requestId": requestId,
+            "uploadUrl": uploadUrl,
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+        ]
+        copyPhotoUploadResponseMetadata(into: &event, responseBody: responseBody)
+        Bridge.sendPhotoResponse(event)
+    }
+
+    private func copyPhotoUploadResponseMetadata(
+        into event: inout [String: Any],
+        responseBody: String
+    ) {
+        guard !responseBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let data = responseBody.data(using: .utf8),
+            let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return
+        }
+        for key in ["photoUrl", "statusUrl", "mimeType", "contentType", "bytes", "size"] {
+            if let value = response[key], !(value is NSNull) {
+                event[key] = value
+            }
+        }
     }
 
     private func sendAckToGlasses(messageId: Int) {
@@ -3992,22 +4053,53 @@ class MentraLive: NSObject, SGCManager {
 
     private func handleGalleryStatus(
         photoCount: Int, videoCount: Int, totalCount: Int,
-        totalSize: Int64, hasContent: Bool
+        totalSize: Int64, hasContent: Bool, cameraBusy: Bool,
+        cameraBusyReason: String?
     ) {
         Bridge.log(
             "LIVE: 📸 Received gallery status - photos: \(photoCount), videos: \(videoCount), total size: \(totalSize) bytes"
         )
 
         // Emit gallery status event like other status events
-        let eventBody =
+        var eventBody =
             [
+                "type": "gallery_status",
                 "photos": photoCount,
                 "videos": videoCount,
                 "total": totalCount,
                 "totalSize": totalSize,
                 "hasContent": hasContent,
+                "cameraBusy": cameraBusy,
             ] as [String: Any]
+        if let cameraBusyReason, !cameraBusyReason.isEmpty {
+            eventBody["cameraBusyReason"] = cameraBusyReason
+        }
         Bridge.sendTypedMessage("gallery_status", body: eventBody)
+    }
+
+    private static func galleryCameraBusy(_ json: [String: Any]) -> Bool {
+        if let busy = json["cameraBusy"] as? Bool {
+            return busy
+        }
+        if let busy = json["camera_busy"] as? Bool {
+            return busy
+        }
+        if let reason = json["camera_busy"] as? String {
+            let normalized = reason.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return !normalized.isEmpty && normalized != "false"
+        }
+        return false
+    }
+
+    private static func galleryCameraBusyReason(_ json: [String: Any]) -> String? {
+        if let reason = json["cameraBusyReason"] as? String, !reason.isEmpty {
+            return reason
+        }
+        if let reason = json["camera_busy"] as? String {
+            let normalized = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+            return normalized.isEmpty || normalized.lowercased() == "false" ? nil : normalized
+        }
+        return nil
     }
 
     // MARK: - Timers
@@ -4252,6 +4344,10 @@ class MentraLive: NSObject, SGCManager {
         Bridge.sendPhotoStatus(json)
     }
 
+    private func emitPhotoResponse(_ json: [String: Any]) {
+        Bridge.sendPhotoResponse(json)
+    }
+
     private func emitButtonPress(buttonId: String, pressType: String, timestamp: Int64) {
         let eventBody: [String: Any] = [
             "device_model": "Mentra Live",
@@ -4277,7 +4373,7 @@ class MentraLive: NSObject, SGCManager {
             "bt_mac_address": bluetoothMacAddress,
         ]
 
-        Bridge.sendTypedMessage("version_info", body: eventBody)
+        Bridge.sendVersionInfo(eventBody)
     }
 
     private func emitKeepAliveAck(_ json: [String: Any]) {
@@ -4876,6 +4972,50 @@ extension MentraLive {
         return Int64(Date().timeIntervalSince1970 * 1000)
     }
 
+    private func emitSettingsAck(_ json: [String: Any]) {
+        var body = json
+        if let requestId = body["request_id"], body["requestId"] == nil {
+            body["requestId"] = requestId
+        }
+        if let roiPosition = body["roi_position"], body["roiPosition"] == nil {
+            body["roiPosition"] = roiPosition
+        }
+        if let errorCode = body["error_code"], body["errorCode"] == nil {
+            body["errorCode"] = errorCode
+        }
+        if let errorMessage = body["error_message"], body["errorMessage"] == nil {
+            body["errorMessage"] = errorMessage
+        }
+        if let hardwareApplied = body["hardware_applied"], body["hardwareApplied"] == nil {
+            body["hardwareApplied"] = hardwareApplied
+        }
+        body.removeValue(forKey: "request_id")
+        body.removeValue(forKey: "roi_position")
+        body.removeValue(forKey: "error_code")
+        body.removeValue(forKey: "error_message")
+        body.removeValue(forKey: "hardware_applied")
+        if body["timestamp"] == nil {
+            body["timestamp"] = Int64(Date().timeIntervalSince1970 * 1000)
+        }
+        Bridge.sendSettingsAck(body)
+    }
+
+    private func emitVideoRecordingStatus(_ json: [String: Any]) {
+        var body = json
+        if let requestId = body["request_id"], body["requestId"] == nil {
+            body["requestId"] = requestId
+        }
+        if let details = body["error_details"], body["details"] == nil {
+            body["details"] = details
+        }
+        body.removeValue(forKey: "request_id")
+        body.removeValue(forKey: "error_details")
+        if body["timestamp"] == nil {
+            body["timestamp"] = Int64(Date().timeIntervalSince1970 * 1000)
+        }
+        Bridge.sendVideoRecordingStatus(body)
+    }
+
     /**
      * Check if a JSON string is already properly formatted for K900 protocol
      */
@@ -4956,7 +5096,8 @@ extension MentraLive {
     }
 
     func sendVoiceActivityDetectionSetting() {
-        let enabled = DeviceStore.shared.get("bluetooth", "voice_activity_detection_enabled") as? Bool ?? true
+        let enabled = DeviceStore.shared.get("bluetooth", "voice_activity_detection_enabled") as? Bool
+            ?? BluetoothSdkDefaults.voiceActivityDetectionEnabled
         Bridge.log("LIVE: 🎤 Sending Voice Activity Detection setting to glasses: \(enabled)")
 
         guard connectedPeripheral != nil, txCharacteristic != nil else {
@@ -5004,28 +5145,37 @@ extension MentraLive {
         let finalHeight = height > 0 ? height : 720
         let finalFps = fps > 0 ? fps : 30
 
-        Bridge.log(
-            "Sending button video recording settings: \(finalWidth)x\(finalHeight)@\(finalFps)fps"
-        )
+        sendButtonVideoRecordingSettings(requestId: nil, width: finalWidth, height: finalHeight, fps: finalFps)
+    }
+
+    func sendButtonVideoRecordingSettings(requestId: String?, width: Int, height: Int, fps: Int) {
+        Bridge.log("Sending button video recording settings: \(width)x\(height)@\(fps)fps")
 
         guard connectionState == ConnTypes.CONNECTED else {
             Bridge.log("Cannot send button video recording settings - not connected")
             return
         }
 
-        let json: [String: Any] = [
+        var json: [String: Any] = [
             "type": "button_video_recording_setting",
             "params": [
-                "width": finalWidth,
-                "height": finalHeight,
-                "fps": finalFps,
+                "width": width,
+                "height": height,
+                "fps": fps,
             ],
         ]
+        if let requestId, !requestId.isEmpty {
+            json["request_id"] = requestId
+        }
         sendJson(json, wakeUp: true)
     }
 
     func sendButtonMaxRecordingTime() {
         let maxTime = DeviceStore.shared.get("bluetooth", "button_max_recording_time") as? Int ?? 10
+        sendButtonMaxRecordingTime(requestId: nil, minutes: maxTime)
+    }
+
+    func sendButtonMaxRecordingTime(requestId: String?, minutes maxTime: Int) {
         Bridge.log("Sending button max recording time: \(maxTime) minutes")
 
         guard connectionState == ConnTypes.CONNECTED else {
@@ -5033,16 +5183,22 @@ extension MentraLive {
             return
         }
 
-        let json: [String: Any] = [
+        var json: [String: Any] = [
             "type": "button_max_recording_time",
             "minutes": maxTime,
         ]
+        if let requestId, !requestId.isEmpty {
+            json["request_id"] = requestId
+        }
         sendJson(json, wakeUp: true)
     }
 
     func sendButtonPhotoSettings() {
         let size = DeviceStore.shared.get("bluetooth", "button_photo_size") as! String
+        sendButtonPhotoSettings(requestId: nil, size: size)
+    }
 
+    func sendButtonPhotoSettings(requestId: String?, size: String) {
         Bridge.log("Sending button photo setting: \(size)")
 
         guard connectionState == ConnTypes.CONNECTED else {
@@ -5050,16 +5206,22 @@ extension MentraLive {
             return
         }
 
-        let json: [String: Any] = [
+        var json: [String: Any] = [
             "type": "button_photo_setting",
             "size": size,
         ]
+        if let requestId, !requestId.isEmpty {
+            json["request_id"] = requestId
+        }
         sendJson(json, wakeUp: true)
     }
 
     func sendButtonCameraLedSetting() {
         let enabled = DeviceStore.shared.get("bluetooth", "button_camera_led") as! Bool
+        sendButtonCameraLedSetting(requestId: nil, enabled: enabled)
+    }
 
+    func sendButtonCameraLedSetting(requestId: String?, enabled: Bool) {
         Bridge.log("Sending button camera LED setting: \(enabled)")
 
         guard connectionState == ConnTypes.CONNECTED else {
@@ -5067,10 +5229,13 @@ extension MentraLive {
             return
         }
 
-        let json: [String: Any] = [
+        var json: [String: Any] = [
             "type": "button_camera_led",
             "enabled": enabled,
         ]
+        if let requestId, !requestId.isEmpty {
+            json["request_id"] = requestId
+        }
         sendJson(json, wakeUp: true)
     }
 
@@ -5078,7 +5243,10 @@ extension MentraLive {
         let settings = DeviceStore.shared.get("bluetooth", "camera_fov") as? [String: Any] ?? ["fov": 118, "roi_position": 0]
         let fov = settings["fov"] as? Int ?? 118
         let roiPosition = settings["roi_position"] as? Int ?? 0
+        sendCameraFovSetting(requestId: nil, fov: fov, roiPosition: roiPosition)
+    }
 
+    func sendCameraFovSetting(requestId: String?, fov: Int, roiPosition: Int) {
         Bridge.log("Sending camera FOV setting: fov=\(fov), roiPosition=\(roiPosition)")
 
         guard connectionState == ConnTypes.CONNECTED else {
@@ -5086,13 +5254,16 @@ extension MentraLive {
             return
         }
 
-        let json: [String: Any] = [
+        var json: [String: Any] = [
             "type": "camera_fov_setting",
             "params": [
                 "fov": fov,
                 "roi_position": roiPosition,
             ],
         ]
+        if let requestId, !requestId.isEmpty {
+            json["request_id"] = requestId
+        }
         sendJson(json, wakeUp: true)
     }
 
@@ -5105,20 +5276,7 @@ extension MentraLive {
     // MARK: - SGCManager Protocol Compliance
 
     func sendButtonMaxRecordingTime(_ minutes: Int) {
-        let maxTime = minutes
-
-        Bridge.log("Sending button max recording time: \(maxTime) minutes")
-
-        guard connectionState == ConnTypes.CONNECTED else {
-            Bridge.log("Cannot send button max recording time - not connected")
-            return
-        }
-
-        let json: [String: Any] = [
-            "type": "button_max_recording_time",
-            "minutes": maxTime,
-        ]
-        sendJson(json, wakeUp: true)
+        sendButtonMaxRecordingTime(requestId: nil, minutes: minutes)
     }
 
     func startVideoRecording(

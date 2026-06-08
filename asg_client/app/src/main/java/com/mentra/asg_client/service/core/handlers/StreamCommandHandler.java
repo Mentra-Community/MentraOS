@@ -8,9 +8,9 @@ import android.util.Log;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.streaming.config.RtmpStreamConfig;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
-import com.mentra.asg_client.io.streaming.services.WhipCameraCapturer;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
+import com.mentra.asg_client.io.streaming.services.WhipCameraCapturer;
 import com.mentra.asg_client.io.streaming.services.WhipCameraFormatSelector;
 import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
@@ -300,7 +300,8 @@ public class StreamCommandHandler implements ICommandHandler {
      */
     private boolean preflightCameraCaptureForWhip(WhipStreamConfig config) {
         try {
-            CameraManager cameraManager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
+            CameraManager cameraManager =
+                    (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
             if (cameraManager == null) {
                 Log.w(TAG, "Rejecting WHIP stream request because camera manager is unavailable");
                 restoreEisAfterStreaming();
@@ -318,7 +319,8 @@ public class StreamCommandHandler implements ICommandHandler {
                 return false;
             }
 
-            CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(cameraId);
+            CameraCharacteristics characteristics =
+                    cameraManager.getCameraCharacteristics(cameraId);
             if (!WhipCameraFormatSelector.canSatisfyWithoutUpscale(
                     characteristics, config.getVideoWidth(), config.getVideoHeight())) {
                 Log.w(
@@ -335,9 +337,11 @@ public class StreamCommandHandler implements ICommandHandler {
 
             // Effective transmitted fps is the lower of the camera capture rate and the
             // output target (frames are dropped when the camera runs faster).
-            config.setStatusVideoFps(Math.min(
-                    WhipCameraCapturer.resolveCameraFps(characteristics, config.getVideoFps()),
-                    config.getVideoFps()));
+            config.setStatusVideoFps(
+                    Math.min(
+                            WhipCameraCapturer.resolveCameraFps(
+                                    characteristics, config.getVideoFps()),
+                            config.getVideoFps()));
             return true;
         } catch (Exception e) {
             Log.w(TAG, "Unable to validate WHIP stream resolution; allowing request", e);
@@ -350,23 +354,23 @@ public class StreamCommandHandler implements ICommandHandler {
     public boolean handleStopCommand() {
         try {
             if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
+                streamingManager.sendStreamStatusResponse(
+                        true, ServiceConstants.STATUS_STOPPING, null);
                 RtmpStreamingService.stopStreaming(context);
                 restoreEisAfterStreaming();
-                streamingManager.sendStreamStatusResponse(
-                        true, ServiceConstants.STATUS_STOPPING, null);
                 return true;
             } else if (SrtStreamingService.isStreaming() || SrtStreamingService.isReconnecting()) {
-                SrtStreamingService.stopStreaming(context);
-                restoreEisAfterStreaming();
                 streamingManager.sendStreamStatusResponse(
                         true, ServiceConstants.STATUS_STOPPING, null);
+                SrtStreamingService.stopStreaming(context);
+                restoreEisAfterStreaming();
                 return true;
             } else if (WhipStreamingService.isStreaming()
                     || WhipStreamingService.isReconnecting()) {
-                WhipStreamingService.stopStreaming(context);
-                restoreEisAfterStreaming();
                 streamingManager.sendStreamStatusResponse(
                         true, ServiceConstants.STATUS_STOPPING, null);
+                WhipStreamingService.stopStreaming(context);
+                restoreEisAfterStreaming();
                 return true;
             } else {
                 streamingManager.sendStreamStatusResponse(
@@ -403,7 +407,9 @@ public class StreamCommandHandler implements ICommandHandler {
                     "status",
                     isReconnecting
                             ? "reconnecting"
-                            : (isStarting ? "initializing" : (isStreaming ? "streaming" : "stopped")));
+                            : (isStarting
+                                    ? "initializing"
+                                    : (isStreaming ? "streaming" : "stopped")));
             status.put("streaming", isStreaming);
             status.put("reconnecting", isReconnecting);
 

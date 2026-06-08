@@ -70,7 +70,7 @@ Initiates a stream to the specified URL. The protocol is auto-detected from the 
       "captureWidth": 1920,
       "captureHeight": 1080,
       "bitrate": 1000000,
-      "fps": 15
+      "frameRate": 15
     },
     "audio": {
       "bitrate": 64000,
@@ -88,7 +88,7 @@ are the encoded output dimensions sent to the stream endpoint. `video.captureWid
 and `video.captureHeight` are the native camera buffer dimensions selected on the
 glasses before crop or downscale; when no separate capture mode is needed, they
 match `width` and `height`. `video.bitrate` is the encoded video bitrate in bits
-per second, and `video.fps` is the resolved capture/encode frame rate. The
+per second, and `video.frameRate` is the resolved capture/encode frame rate. The
 `audio` object reports the resolved audio bitrate, sample rate, echo cancellation,
 and noise suppression settings when audio is active.
 

@@ -102,14 +102,18 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 
 **Responses:** the handler can produce three different response types depending on the path taken.
 
-`photo_response` — direct/auto upload finished:
+`photo_response` — terminal success or failure for the full photo action. Camera-busy, low-battery, storage, FOV-restart, capture, direct-upload, and Bluetooth-fallback failures emit `state: "error"`. A success response means capture completed and the photo reached the configured upload target, either directly from the glasses or through the phone fallback relay. Capture, upload, and Bluetooth fallback progress continue through `photo_status` until this terminal response:
 
 ```json
 {
   "type": "photo_response",
   "requestId": "photo_001",
+  "state": "success",
   "success": true,
-  "mediaUrl": "/storage/.../IMG_001.jpg"
+  "uploadUrl": "https://api.example.com/mentra/photo",
+  "photoUrl": "https://cdn.example.com/photos/photo_001.jpg",
+  "contentType": "image/jpeg",
+  "fileSizeBytes": 58489
 }
 ```
 
@@ -171,7 +175,7 @@ Status metadata is stage-specific:
 
 Action-button photos emitted by the glasses use the same `photo_status` shape while the phone SDK is connected. These local captures use a `local_<timestamp>` request ID and report `resolvedConfig.source: "button"` with `resolvedConfig.transferMethod: "local"`.
 
-`ble_photo_error` / `photo_error_response` — capture or transfer failed:
+`ble_photo_error` / `photo_error_response` — legacy BLE/photo failure notifications. The current request/response contract uses `photo_response` with `state: "error"` as the terminal failure for SDK callers; these legacy notifications may still appear in older diagnostic flows and should be treated as error progress, not as a second success/error contract:
 
 ```json
 {
@@ -215,7 +219,7 @@ Wire response type for all video commands: `video_recording_status`.
 | `flash`           | boolean | `true`         | Privacy LED during recording |
 | `sound`           | boolean | `true`         | Start/stop tones             |
 
-Same battery constraint as photo. Status values emitted: `recording_started`, `already_recording`, `battery_low`, `service_unavailable`, `missing_request_id`, `error`.
+Same battery constraint as photo. `recording_started` is the successful start status. `already_recording`, `battery_low`, `service_unavailable`, `missing_request_id`, and `error` are emitted with `success: false`.
 
 ```json
 {"type": "video_recording_status", "success": true, "status": "recording_started", "timestamp": 1708963201234}
@@ -348,12 +352,21 @@ Response:
 {"type": "request_wifi_scan"}
 ```
 
-Streams results back over BLE as they're discovered:
+Streams results back over BLE as they're discovered. Intermediate payloads use `scan_complete: false`; a final payload with `scan_complete: true` is sent when the scan finishes, including an empty list when no networks are found.
 
 ```json
 {
   "type": "wifi_scan_result",
+  "scan_complete": false,
   "networks_neo": [{"ssid": "MyNetwork", "signal_strength": -45, "security": "WPA2"}]
+}
+```
+
+```json
+{
+  "type": "wifi_scan_result",
+  "scan_complete": true,
+  "networks_neo": []
 }
 ```
 
@@ -597,7 +610,7 @@ Returns counts via `FileManager`. If the camera is busy (recording or streaming)
 }
 ```
 
-When the camera is busy, an additional context field appears (`camera_busy`: `"video"` or `"stream"`).
+When the camera is busy, an additional context field appears (`camera_busy`: `"video"` or `"stream"`). The phone SDK exposes this as `cameraBusy: true` and `cameraBusyReason`.
 
 ---
 
@@ -653,7 +666,7 @@ Deprecated/reserved. Current ASG Client does not use this command to switch betw
 {"type": "camera_fov_setting", "params": {"fov": 118, "roi_position": 0}}
 ```
 
-Persists the FOV/ROI, applies them to the camera HAL via `DevApi.setCameraFov`, and restarts the HAL. A short cooldown (`CameraRestartCooldown`) blocks immediately-following capture commands. Falls back to persist-only on non-K900 hardware (no `libxydev`).
+Persists the FOV/ROI, applies them to the camera HAL via `DevApi.setCameraFov`, and restarts the HAL. After the restart cooldown (`CameraRestartCooldown`), ASG emits `settings_ack` with `status: "ready"` and `hardware_applied: true`. Persist-only fallbacks on non-K900 hardware emit `hardware_applied: false`.
 
 ---
 
