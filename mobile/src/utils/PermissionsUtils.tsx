@@ -861,13 +861,46 @@ async function isLocationPermissionGranted(): Promise<boolean> {
   }
 }
 
+const LOCATION_SERVICES_CHECK_TIMEOUT_MS = 5000
+const LOCATION_SERVICES_CACHE_MS = 3000
+
+let locationServicesCache: {value: boolean; at: number} | null = null
+let locationServicesCheckPromise: Promise<boolean> | null = null
+
+async function readLocationServicesEnabled(): Promise<boolean> {
+  const locationServicesEnabled = await Promise.race([
+    CrustModule.isLocationServicesEnabled(),
+    new Promise<boolean>((_, reject) => {
+      setTimeout(
+        () => reject(new Error("Location services check timed out")),
+        LOCATION_SERVICES_CHECK_TIMEOUT_MS,
+      )
+    }),
+  ])
+  console.log("Location services enabled (native check):", locationServicesEnabled)
+  return locationServicesEnabled
+}
+
 async function isLocationServicesEnabled(): Promise<boolean> {
   try {
     if (Platform.OS === "android") {
-      // Use our native module to check if location services are enabled
-      const locationServicesEnabled = await CrustModule.isLocationServicesEnabled()
-      console.log("Location services enabled (native check):", locationServicesEnabled)
-      return locationServicesEnabled
+      const now = Date.now()
+      if (locationServicesCache && now - locationServicesCache.at < LOCATION_SERVICES_CACHE_MS) {
+        return locationServicesCache.value
+      }
+
+      if (!locationServicesCheckPromise) {
+        locationServicesCheckPromise = readLocationServicesEnabled()
+          .then((enabled) => {
+            locationServicesCache = {value: enabled, at: Date.now()}
+            return enabled
+          })
+          .finally(() => {
+            locationServicesCheckPromise = null
+          })
+      }
+
+      return await locationServicesCheckPromise
     } else if (Platform.OS === "ios") {
       // iOS doesn't require location for BLE scanning since iOS 13
       return true
@@ -875,6 +908,11 @@ async function isLocationServicesEnabled(): Promise<boolean> {
     return true
   } catch (error) {
     console.error("Error checking if location services are enabled:", error)
+    if (error instanceof Error && error.message.includes("timed out")) {
+      console.warn("Location services check timed out — assuming enabled so sync can proceed")
+      locationServicesCache = {value: true, at: Date.now()}
+      return true
+    }
     return false
   }
 }
