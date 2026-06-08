@@ -403,7 +403,7 @@ public class CrustModule: Module {
         // MARK: - Media Library Commands
 
         AsyncFunction("saveToGalleryWithDate") {
-            (filePath: String, captureTimeMillis: Int64?) -> [String: Any] in
+            (filePath: String, captureTimeMillis: Int64?, displayName: String?) -> [String: Any] in
             let fileURL = URL(fileURLWithPath: filePath)
 
             guard FileManager.default.fileExists(atPath: filePath) else {

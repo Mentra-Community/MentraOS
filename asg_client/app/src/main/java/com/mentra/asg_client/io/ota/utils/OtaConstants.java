@@ -25,6 +25,8 @@ public class OtaConstants {
     public static final String BASE_DIR = "/storage/emulated/0/asg";
     public static final String BACKUP_APK_FILENAME = "asg_client_backup.apk";
     public static final String BACKUP_APK_PATH = BASE_DIR + "/" + BACKUP_APK_FILENAME;
+    public static final String ASG_UPDATE_APK_FILENAME = "asg_client_update.apk";
+    public static final String ASG_UPDATE_APK_PATH = BASE_DIR + "/" + ASG_UPDATE_APK_FILENAME;
 
     // BES firmware paths
     public static final String BES_FIRMWARE_FILENAME = "bes_firmware.bin";
@@ -56,4 +58,14 @@ public class OtaConstants {
     // Download socket timeouts (prevents downloads from hanging indefinitely)
     public static final int CONNECT_TIMEOUT_MS = 15000;  // 15 seconds to establish connection
     public static final int READ_TIMEOUT_MS = 20000;     // 20 seconds to receive data (stall / dead WiFi fail faster)
+
+    // Recovery worker cross-app signals
+    public static final String ASG_PACKAGE = "com.mentra.asg_client";
+    public static final String RECOVERY_PACKAGE = "com.mentra.recovery";
+    public static final String RECOVERY_INSTALL_IN_PROGRESS =
+            "com.mentra.recovery.ACTION_INSTALL_IN_PROGRESS";
+    public static final String RECOVERY_INSTALL_COMPLETED =
+            "com.mentra.recovery.ACTION_INSTALL_COMPLETED";
+    public static final String RECOVERY_CONTROL_PERMISSION =
+            "com.mentra.recovery.permission.CONTROL";
 }

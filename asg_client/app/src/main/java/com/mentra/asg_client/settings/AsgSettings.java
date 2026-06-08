@@ -115,7 +115,7 @@ public class AsgSettings {
 
     /**
      * Get the photo size setting for button-initiated photos
-     * @return Photo size ("small", "medium", or "large")
+     * @return Photo size ("small", "medium", "large", or "max")
      */
     public String getButtonPhotoSize() {
         String size = prefs.getString(KEY_BUTTON_PHOTO_SIZE, "large");
@@ -125,11 +125,11 @@ public class AsgSettings {
     
     /**
      * Set the photo size setting for button-initiated photos
-     * @param size Photo size ("small", "medium", or "large")
+     * @param size Photo size ("small", "medium", "large", or "max")
      */
     public void setButtonPhotoSize(String size) {
         // Validate size
-        if (!Arrays.asList("small", "medium", "large").contains(size)) {
+        if (!Arrays.asList("small", "medium", "large", "max").contains(size)) {
             Log.w(TAG, "Invalid photo size: " + size + ", using medium");
             size = "medium";
         }

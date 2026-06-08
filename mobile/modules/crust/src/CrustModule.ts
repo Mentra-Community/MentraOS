@@ -77,6 +77,7 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   saveToGalleryWithDate(
     filePath: string,
     captureTimeMillis?: number,
+    displayName?: string,
   ): Promise<{
     success: boolean
     uri?: string

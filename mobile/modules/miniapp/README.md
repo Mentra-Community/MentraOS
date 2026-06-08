@@ -119,14 +119,22 @@ All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: 
 | `session.phone.calendar`      | `on(handler)`, `stop()`, `hasPermission`                                                                                                 |
 | `session.phone`               | `onBattery(handler)`                                                                                                                     |
 | `session.system`              | `share(opts)`, `openUrl(url)`, `copyToClipboard(text)`, `download(opts)`                                                                 |
-| `session.camera`              | `takePhoto({size?, compress?, sound?, saveToGallery?})`, `setFov({horizontal, vertical})`, `hasPermission`                               |
-| `session.led`                 | `turnOn({color?, ontime?, offtime?, count?})`, `turnOff()`, `blink(color, ontime, offtime, count)`, `solid(color, duration)`             |
+| `session.camera`              | `takePhoto({size?, compress?, sound?, saveToGallery?})`, `setFov({fov, roiPosition?} \| {preset})`, `hasPermission`                     |
+| `session.led`                 | `turnOn({color?, ontime?, offtime?, count?})`, `turnOff()`, `blink(color, ontime, offtime, count)`, `solid(color, duration)` — resolve after the glasses acknowledge the RGB command |
 | `session.permissions`         | `has(type)`, `getAll()`, `onUpdate(handler)`, `onPermissionError(handler)`                                                               |
 | `session.storage`             | `get(key)`, `set(key, value)`, `delete(key)`, `list()` — strings only, scoped to `(userId, packageName)`                                 |
-| `session.stream`              | `startUnmanaged({streamUrl})`, `startManaged({restreamDestinations?})`, `stop(streamId?)`                                                |
+| `session.stream`              | `startUnmanaged({streamUrl, video?, audio?, sound?})`, `startManaged({restreamDestinations?, video?, audio?, sound?})`, `stop(streamId?)` — start resolves with `{streamId, status, resolvedConfig?}` after glasses report the publisher is streaming; managed starts also return playback URLs; stop is idempotent for an already-stopped stream |
 | `session.dashboard`           | `setContent(mode, content)` — **noop in v1**, prints a one-time `console.warn`. Cloud DashboardManager owns rendering.                   |
 
 `session.events` is **internal**. It exposes `subscribe(rawStreamType, handler)` only as a forward-compat escape hatch for new event types not yet wrapped on a domain module — prefer the typed module surface.
+
+### Camera FOV
+
+`await session.camera.setFov({fov, roiPosition})` applies camera FOV/ROI on the glasses and resolves with `CameraFovResult` after the ASG client reports the setting was applied to camera hardware after the restart cooldown. `roiPosition` accepts `"center"`, `"bottom"`, or `"top"` and defaults to `"center"`. You can also call `setFov({preset: "narrow" | "standard" | "wide"})`; presets map to 82, 102, and 118 degrees with center ROI. The call requires `CAMERA` in `miniapp.json` because it controls glasses camera hardware, and rejects with `MiniappRequestError` if the host cannot apply the setting, the glasses only persist it without hardware application, or the glasses report an error.
+
+### Camera Photos
+
+`await session.camera.takePhoto(...)` resolves only after the photo is delivered through the phone/cloud upload path. The result includes `{requestId, photoUrl, mimeType, size}`. Glasses-side or phone-relay failures such as `CAMERA_BUSY`, `BATTERY_LOW`, storage errors, or fallback upload failures reject before upload polling completes; intermediate `photo_status` progress and request acceptance alone do not resolve the miniapp photo promise.
 
 ### Transcription language convention
 

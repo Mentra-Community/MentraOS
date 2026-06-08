@@ -1179,6 +1179,37 @@ struct ViewState {
         (sgc as? MentraLive)?.sendOtaQueryStatus()
     }
 
+    private func liveSgc() throws -> MentraLive {
+        guard let live = sgc as? MentraLive else {
+            throw BluetoothError(code: "unsupported_device", message: "This command requires Mentra Live glasses.")
+        }
+        return live
+    }
+
+    func sendGalleryMode(requestId: String, enabled: Bool) throws {
+        try liveSgc().sendGalleryMode(requestId: requestId, active: enabled)
+    }
+
+    func sendButtonPhotoSettings(requestId: String, size: String) throws {
+        try liveSgc().sendButtonPhotoSettings(requestId: requestId, size: size)
+    }
+
+    func sendButtonVideoRecordingSettings(requestId: String, width: Int, height: Int, fps: Int) throws {
+        try liveSgc().sendButtonVideoRecordingSettings(requestId: requestId, width: width, height: height, fps: fps)
+    }
+
+    func sendButtonCameraLedSetting(requestId: String, enabled: Bool) throws {
+        try liveSgc().sendButtonCameraLedSetting(requestId: requestId, enabled: enabled)
+    }
+
+    func sendButtonMaxRecordingTime(requestId: String, minutes: Int) throws {
+        try liveSgc().sendButtonMaxRecordingTime(requestId: requestId, minutes: minutes)
+    }
+
+    func sendCameraFovSetting(requestId: String, fov: Int, roiPosition: Int) throws {
+        try liveSgc().sendCameraFovSetting(requestId: requestId, fov: fov, roiPosition: roiPosition)
+    }
+
     func retryOtaVersionCheck() {
         Bridge.log("MAN: ⏰ Retrying glasses OTA version check after clock sync")
         (sgc as? MentraLive)?.sendOtaRetryVersionCheck()

@@ -291,6 +291,35 @@ class Bridge {
         Bridge.sendTypedMessage("rgb_led_control_response", body: body)
     }
 
+    static func sendSettingsAck(_ values: [String: Any]) {
+        var body = values
+        body["type"] = "settings_ack"
+        Bridge.sendTypedMessage("settings_ack", body: body)
+    }
+
+    static func sendVideoRecordingStatus(_ values: [String: Any]) {
+        var body = values
+        body["type"] = "video_recording_status"
+        Bridge.sendTypedMessage("video_recording_status", body: body)
+    }
+
+    static func sendVersionInfo(_ values: [String: Any]) {
+        var body: [String: Any] = [
+            "type": "version_info",
+            "androidVersion": stringValue(values, "androidVersion", "android_version") ?? "",
+            "firmwareVersion": stringValue(values, "firmwareVersion", "firmware_version") ?? "",
+            "besFirmwareVersion": stringValue(values, "besFirmwareVersion", "bes_fw_version") ?? "",
+            "mtkFirmwareVersion": stringValue(values, "mtkFirmwareVersion", "mtk_fw_version") ?? "",
+            "buildNumber": stringValue(values, "buildNumber", "build_number") ?? "",
+            "otaVersionUrl": stringValue(values, "otaVersionUrl", "ota_version_url") ?? "",
+            "appVersion": stringValue(values, "appVersion", "app_version") ?? "",
+        ]
+        if let systemTimeMs = intValue(values["systemTimeMs"]) ?? intValue(values["system_time_ms"]) {
+            body["systemTimeMs"] = systemTimeMs
+        }
+        Bridge.sendTypedMessage("version_info", body: body)
+    }
+
     static func sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
         let timestamp = Int(Date().timeIntervalSince1970 * 1000)
         var event: [String: Any] = [
@@ -310,6 +339,10 @@ class Bridge {
 
     static func sendPhotoStatus(_ status: [String: Any]) {
         Bridge.sendTypedMessage("photo_status", body: status)
+    }
+
+    static func sendPhotoResponse(_ response: [String: Any]) {
+        Bridge.sendTypedMessage("photo_response", body: response)
     }
 
     static func sendMiniappSelected(packageName: String) {
@@ -357,7 +390,7 @@ class Bridge {
         Bridge.sendTypedMessage("wifi_status_change", body: status.values)
     }
 
-    static func updateWifiScanResults(_ networks: [[String: Any]]) {
+    static func updateWifiScanResults(_ networks: [[String: Any]], scanComplete: Bool) {
         Task {
             await MainActor.run {
                 var storedNetworks: [[String: Any]] =
@@ -371,6 +404,10 @@ class Bridge {
                     }
                 }
                 DeviceStore.shared.apply("bluetooth", "wifiScanResults", storedNetworks)
+                Bridge.sendTypedMessage(
+                    "wifi_scan_result",
+                    body: ["networks": storedNetworks, "scanComplete": scanComplete]
+                )
             }
         }
     }
