@@ -41,6 +41,30 @@ config.watchFolders = [
 // Resolve the core module from the parent directory
 config.resolver.nodeModulesPaths = [path.resolve(__dirname, "node_modules"), path.resolve(__dirname, "..")]
 
+// Resolve the v2 cloud-client + protocol types from the sibling cloud-v2
+// workspace by explicit alias. The two repos are separate bun workspaces, so a
+// normal dependency would hit cloud-client's `workspace:*` refs; aliasing the
+// exact import specifiers to their source files sidesteps that and the package
+// `exports` map. Only the pure client + protocol are bundled here; the runtime
+// server root (`@mentra/cloud-runtime`) is never imported, so its node-only
+// deps never reach the bundle.
+const CLOUD_V2_PACKAGES = path.resolve(__dirname, "../cloud-v2/packages")
+const CLOUD_V2_ALIASES = {
+  "@mentra/cloud-client": path.join(CLOUD_V2_PACKAGES, "cloud-client/src/index.ts"),
+  "@mentra/cloud-client/react-native": path.join(CLOUD_V2_PACKAGES, "cloud-client/react-native/index.ts"),
+  "@mentra/cloud-runtime/protocol": path.join(CLOUD_V2_PACKAGES, "runtime/src/protocol/index.ts"),
+}
+const baseResolveRequest = config.resolver.resolveRequest
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  const aliased = CLOUD_V2_ALIASES[moduleName]
+  if (aliased) return {type: "sourceFile", filePath: aliased}
+  return (baseResolveRequest ?? context.resolveRequest)(context, moduleName, platform)
+}
+config.watchFolders.push(
+  path.resolve(__dirname, "../cloud-v2/packages/cloud-client"),
+  path.resolve(__dirname, "../cloud-v2/packages/runtime/src/protocol"),
+)
+
 config = withUniwindConfig(config, {
   // relative path to your global.css file (from previous step)
   cssEntryFile: "./src/global.css",
