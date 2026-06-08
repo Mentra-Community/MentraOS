@@ -33,6 +33,7 @@ import { RevokedJtiModel } from "../models/revoked-jti.model";
 import { OemModel } from "../models/oem.model";
 import {
   InvalidGrant,
+  InvalidRequest,
   OauthServerError,
   UnauthorizedClient,
   type TokenResponse,
@@ -56,6 +57,12 @@ const MENTRA_ALG = "EdDSA";
 // their trust policy on this value and the spec pins it.
 const MINIAPP_ISSUER = "mentra";
 
+// The built-in "OEM zero". Mentra's own users (a phone logging in with a
+// Supabase session, or a legacy mentra-core token) resolve to this oemId. It
+// has no `oems` record and no JWKS: the subject token is verified with a shared
+// HS256 secret, not an OEM public key.
+const MENTRA_OEM_ID = "mentra";
+
 // Default miniapp-token lifetime. Env-overridable (MENTRA_MINIAPP_TOKEN_TTL_SEC)
 // so tests can shorten it without touching code.
 const MINIAPP_TOKEN_DEFAULT_TTL_SEC = 60 * 60; // 1 hour
@@ -70,39 +77,45 @@ const MINIAPP_TOKEN_KID = "mentra-miniapp-1";
 // === Public API ===
 
 /**
- * Token exchange. Verifies the OEM-signed JWT, resolves the user, mints a
- * fresh access + refresh token pair. Returns the RFC 6749 token-response
- * shape.
+ * Token exchange. Resolves the subject token to an (oemId, oemUserId) identity,
+ * finds/creates the user, and mints a fresh access + refresh token pair. Returns
+ * the RFC 6749 token-response shape.
+ *
+ * The subject token is one of three kinds, all presented under the single JWT
+ * token-type URN and dispatched by `resolveSubjectIdentity`:
+ *   - an OEM-signed JWT (verified against the OEM's JWKS), or
+ *   - a Mentra Supabase session / legacy mentra-core token (verified with a
+ *     shared HS256 secret; oemId "mentra").
  *
  * Step-by-step matches design.md "Lifecycles / Issue session":
- *   1–5. Delegated to `oem.verifyOemJwt`.
+ *   1–5. Delegated to `resolveSubjectIdentity`.
  *   6.   findOrCreateUser by (oemId, oemUserId).
  *   7–8. Mint access + refresh, persist refresh-token hash, return.
  */
 export async function createSession(args: {
-  oemJwt: string;
+  subjectToken: string;
 }): Promise<TokenResponse> {
-  const verified = await verifyOemJwt(args.oemJwt);
+  const identity = await resolveSubjectIdentity(args.subjectToken);
 
   const user = await findOrCreateUser({
-    oemId: verified.oemId,
-    oemUserId: verified.oemUserId,
+    oemId: identity.oemId,
+    oemUserId: identity.oemUserId,
   });
 
   const sessionId = `sess_${ulid()}`;
   const { token: accessToken } = await issueAccessToken({
     mentraUserId: user.mentraUserId,
-    oemId: verified.oemId,
+    oemId: identity.oemId,
     sessionId,
   });
   const refreshToken = await issueRefreshToken({
     sessionId,
     mentraUserId: user.mentraUserId,
-    oemId: verified.oemId,
+    oemId: identity.oemId,
   });
 
   logger.info(
-    { sessionId, mentraUserId: user.mentraUserId, oemId: verified.oemId },
+    { sessionId, mentraUserId: user.mentraUserId, oemId: identity.oemId },
     "session created",
   );
 
@@ -135,10 +148,14 @@ export async function refreshSession(args: {
   }
 
   // OEM-disabled mid-session check. If the OEM was terminated after this
-  // session was issued, refuse to re-up.
-  const oem = await OemModel.findOne({ oemId: oldDoc.oemId }).lean();
-  if (!oem || oem.disabled) {
-    throw new UnauthorizedClient(`oem ${oldDoc.oemId} unknown or disabled`);
+  // session was issued, refuse to re-up. The built-in "mentra" OEM has no oems
+  // record (its users authenticate with a shared secret, not a JWKS), so skip
+  // the lookup for it.
+  if (oldDoc.oemId !== MENTRA_OEM_ID) {
+    const oem = await OemModel.findOne({ oemId: oldDoc.oemId }).lean();
+    if (!oem || oem.disabled) {
+      throw new UnauthorizedClient(`oem ${oldDoc.oemId} unknown or disabled`);
+    }
   }
 
   // Mint fresh tokens. We reuse the existing sessionId so admin handles
@@ -284,6 +301,83 @@ function miniappTokenTtlSec(): number {
     return MINIAPP_TOKEN_DEFAULT_TTL_SEC;
   }
   return Math.floor(parsed);
+}
+
+// === Internals: subject-token identity resolution ===
+
+/**
+ * Resolve a subject token to an (oemId, oemUserId) identity. All three accepted
+ * subject tokens arrive as a JWT under the one RFC 8693 JWT token-type URN, so
+ * we dispatch on the token itself:
+ *   - HS* (symmetric) tokens are Mentra-internal. A Supabase session (its `iss`
+ *     points at Supabase) verifies with SUPABASE_JWT_SECRET; anything else
+ *     symmetric is treated as a legacy mentra-core token (MENTRA_CORE_JWT_SECRET).
+ *     Both resolve to oemId "mentra".
+ *   - Everything else is an OEM-signed JWT, verified against that OEM's JWKS.
+ */
+async function resolveSubjectIdentity(
+  subjectToken: string,
+): Promise<{ oemId: string; oemUserId: string }> {
+  let alg: string;
+  let iss: string | undefined;
+  try {
+    alg = jose.decodeProtectedHeader(subjectToken).alg ?? "";
+    const claims = jose.decodeJwt(subjectToken);
+    iss = typeof claims.iss === "string" ? claims.iss : undefined;
+  } catch {
+    throw new InvalidRequest("subject_token is not a parseable JWT");
+  }
+
+  if (alg.startsWith("HS")) {
+    const secretEnv = looksLikeSupabase(iss)
+      ? "SUPABASE_JWT_SECRET"
+      : "MENTRA_CORE_JWT_SECRET";
+    const oemUserId = await verifyHs256Subject(subjectToken, secretEnv);
+    return { oemId: MENTRA_OEM_ID, oemUserId };
+  }
+
+  const verified = await verifyOemJwt(subjectToken);
+  return { oemId: verified.oemId, oemUserId: verified.oemUserId };
+}
+
+/**
+ * A Supabase session JWT carries an `iss` pointing at the project's auth
+ * endpoint (e.g. https://<ref>.supabase.co/auth/v1). Match that, or the
+ * configured SUPABASE_URL, so we pick the Supabase secret rather than the
+ * mentra-core one.
+ */
+function looksLikeSupabase(iss: string | undefined): boolean {
+  if (!iss) return false;
+  if (iss.includes("supabase.")) return true;
+  const supabaseUrl = process.env.SUPABASE_URL;
+  return !!supabaseUrl && iss.startsWith(supabaseUrl);
+}
+
+/**
+ * Verify a symmetric (HS*) subject token with the named env secret and return
+ * its `sub`. Signature + expiry are enforced; we deliberately do not pin
+ * `aud`/`iss` (Supabase sets aud "authenticated"), as the shared secret is the
+ * trust anchor.
+ */
+async function verifyHs256Subject(
+  token: string,
+  secretEnv: string,
+): Promise<string> {
+  const secret = requireEnv(secretEnv);
+  const key = new TextEncoder().encode(secret);
+  let payload: jose.JWTPayload;
+  try {
+    ({ payload } = await jose.jwtVerify(token, key, {
+      algorithms: ["HS256", "HS384", "HS512"],
+    }));
+  } catch (err) {
+    throw new InvalidGrant(
+      `subject token verification failed: ${(err as Error).message}`,
+    );
+  }
+  const sub = typeof payload.sub === "string" ? payload.sub : "";
+  if (!sub) throw new InvalidGrant("subject token missing 'sub' claim");
+  return sub;
 }
 
 // === Internals: Mentra signing keys ===

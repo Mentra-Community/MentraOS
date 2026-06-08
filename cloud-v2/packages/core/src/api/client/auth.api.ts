@@ -76,7 +76,7 @@ async function postExchange(c: AppContext) {
     throw new InvalidRequest("subject_token is required");
   }
 
-  const tokens = await createSession({ oemJwt: subjectToken });
+  const tokens = await createSession({ subjectToken });
   return c.json<TokenResponse>(tokens);
 }
 
