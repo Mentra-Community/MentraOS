@@ -45,6 +45,7 @@ import com.mentra.asg_client.service.utils.SysProp;
 import dagger.hilt.android.AndroidEntryPoint;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.inject.Inject;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
@@ -93,12 +94,16 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     public static final String EXTRA_UVC_STREAMING = "extra_uvc_streaming";
     public static final String ACTION_START_OTA_UPDATER = "ACTION_START_OTA_UPDATER";
 
-    // OTA Update progress actions
-    public static final String ACTION_DOWNLOAD_PROGRESS =
+    // OTA Update progress actions (legacy updater + recovery namespace during migration)
+    public static final String LEGACY_ACTION_DOWNLOAD_PROGRESS =
             "com.augmentos.otaupdater.ACTION_DOWNLOAD_PROGRESS";
-    public static final String ACTION_INSTALLATION_PROGRESS =
+    public static final String LEGACY_ACTION_INSTALLATION_PROGRESS =
             "com.augmentos.otaupdater.ACTION_INSTALLATION_PROGRESS";
-    public static final String ACTION_OTA_HEARTBEAT = "com.augmentos.otaupdater.ACTION_HEARTBEAT";
+    public static final String ACTION_DOWNLOAD_PROGRESS =
+            "com.mentra.recovery.ACTION_DOWNLOAD_PROGRESS";
+    public static final String ACTION_INSTALLATION_PROGRESS =
+            "com.mentra.recovery.ACTION_INSTALLATION_PROGRESS";
+    public static final String ACTION_OTA_HEARTBEAT = "com.mentra.recovery.ACTION_PING";
 
     // Service health monitoring
     private static final String ACTION_HEARTBEAT = "com.mentra.asg_client.ACTION_HEARTBEAT";
@@ -126,6 +131,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     // Service State
     // ---------------------------------------------
     private static AsgClientService instance;
+    private static final AtomicBoolean serviceRunning = new AtomicBoolean(false);
     private boolean lastI2sPlaying = false;
     private boolean lastUvcStreaming = false;
     private boolean isConnected = false; // Track connection state based on heartbeat
@@ -171,6 +177,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
         BleTraceLogger.logLifecycle(this, "AsgClientService", "service_create");
 
         instance = this;
+        serviceRunning.set(true);
 
         // Must run before heavy onCreate() work: startForegroundService() deadline (~5s) is
         // measured until startForeground(), and onStartCommand() only runs after onCreate().
@@ -338,6 +345,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
         }
 
         instance = null;
+        serviceRunning.set(false);
         super.onDestroy();
     }
 
@@ -349,6 +357,10 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
     public static AsgClientService getInstance() {
         return instance;
+    }
+
+    public static boolean isServiceRunning() {
+        return serviceRunning.get();
     }
 
     /**
@@ -565,7 +577,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             if (!bluetoothManager.isConnected()) {
                 Log.w(
                         TAG,
-                        "⚠️ Bluetooth not connected; RGB LED authority will be sent when connected");
+                        "⚠️ Bluetooth not connected; RGB LED authority will be sent when"
+                                + " connected");
                 return;
             }
 
@@ -901,7 +914,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 } else {
                     Log.w(
                             TAG,
-                            "📡 🔥 Cannot send hotspot error - communication manager not available");
+                            "📡 🔥 Cannot send hotspot error - communication manager not"
+                                    + " available");
                 }
             }
         } catch (Exception e) {
@@ -1157,7 +1171,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             } else {
                 Log.w(
                         TAG,
-                        "⚠️ Bluetooth manager not available or not connected - cannot send version info");
+                        "⚠️ Bluetooth manager not available or not connected - cannot send version"
+                                + " info");
             }
         } catch (JSONException e) {
             Log.e(TAG, "💥 Error creating version info JSON", e);
@@ -1327,20 +1342,13 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                             String action = intent.getAction();
                             Log.d(TAG, "💓 Heartbeat receiver triggered - Action: " + action);
 
-                            if (ACTION_HEARTBEAT.equals(action)
-                                    || "com.augmentos.otaupdater.ACTION_HEARTBEAT".equals(action)) {
-
-                                Log.i(TAG, "💓 Heartbeat received - sending acknowledgment");
-
-                                try {
-                                    Intent ackIntent = new Intent(ACTION_HEARTBEAT_ACK);
-                                    ackIntent.setPackage("com.augmentos.otaupdater");
-                                    sendBroadcast(ackIntent);
-
-                                    Log.i(TAG, "✅ Heartbeat acknowledgment sent successfully");
-                                } catch (Exception e) {
-                                    Log.e(TAG, "💥 Error sending heartbeat acknowledgment", e);
-                                }
+                            if ("com.mentra.recovery.ACTION_PING".equals(action)) {
+                                // ServiceHeartbeatReceiver (manifest) is the sole PONG sender.
+                                Log.d(
+                                        TAG,
+                                        "💓 Recovery ping received;"
+                                                + " acknowledgment handled by"
+                                                + " ServiceHeartbeatReceiver");
                             } else {
                                 Log.d(TAG, "⏭️ Unknown action received: " + action);
                             }
@@ -1348,7 +1356,6 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                     };
 
             IntentFilter heartbeatFilter = new IntentFilter();
-            heartbeatFilter.addAction(ACTION_HEARTBEAT);
             heartbeatFilter.addAction(ACTION_OTA_HEARTBEAT);
 
             registerReceiver(heartbeatReceiver, heartbeatFilter);
@@ -1394,7 +1401,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                             isConnected = false;
                             Log.i(
                                     TAG,
-                                    "🔌 Connection state changed to DISCONNECTED due to heartbeat timeout");
+                                    "🔌 Connection state changed to DISCONNECTED due to heartbeat"
+                                            + " timeout");
                         };
             }
 
@@ -1405,7 +1413,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             isConnected = false;
             Log.d(
                     TAG,
-                    "🔌 Connection state initialized as DISCONNECTED - waiting for first heartbeat");
+                    "🔌 Connection state initialized as DISCONNECTED - waiting for first"
+                            + " heartbeat");
 
             // Schedule initial timeout to detect if no heartbeat comes
             heartbeatTimeoutHandler.postDelayed(heartbeatTimeoutRunnable, HEARTBEAT_TIMEOUT_MS);
@@ -1494,10 +1503,12 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
                             switch (Objects.requireNonNull(action)) {
                                 case ACTION_DOWNLOAD_PROGRESS:
+                                case LEGACY_ACTION_DOWNLOAD_PROGRESS:
                                     Log.d(TAG, "📥 Handling download progress");
                                     handleDownloadProgress(intent);
                                     break;
                                 case ACTION_INSTALLATION_PROGRESS:
+                                case LEGACY_ACTION_INSTALLATION_PROGRESS:
                                     Log.d(TAG, "🔧 Handling installation progress");
                                     handleInstallationProgress(intent);
                                     break;
@@ -1511,6 +1522,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             IntentFilter otaFilter = new IntentFilter();
             otaFilter.addAction(ACTION_DOWNLOAD_PROGRESS);
             otaFilter.addAction(ACTION_INSTALLATION_PROGRESS);
+            otaFilter.addAction(LEGACY_ACTION_DOWNLOAD_PROGRESS);
+            otaFilter.addAction(LEGACY_ACTION_INSTALLATION_PROGRESS);
             registerReceiver(otaProgressReceiver, otaFilter);
             Log.d(TAG, "✅ OTA progress receiver registered successfully");
         } catch (Exception e) {

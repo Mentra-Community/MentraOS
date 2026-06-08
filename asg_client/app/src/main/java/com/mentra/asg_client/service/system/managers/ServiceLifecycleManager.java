@@ -6,6 +6,8 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import com.mentra.asg_client.RecoveryWorkerManager;
+import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.services.OtaService;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
@@ -24,6 +26,8 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
     private final AsgClientServiceManager serviceManager;
     private final CommandProcessor commandProcessor;
     private final AsgNotificationManager notificationManager;
+    private final RecoveryWorkerManager recoveryWorkerManager;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private boolean isInitialized = false;
 
@@ -36,6 +40,7 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
         this.serviceManager = serviceManager;
         this.commandProcessor = commandProcessor;
         this.notificationManager = notificationManager;
+        this.recoveryWorkerManager = new RecoveryWorkerManager(context);
     }
 
     @Override
@@ -50,8 +55,10 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
         // Initialize managers (K900CommandHandler required for BesOtaManager on Mentra Live)
         serviceManager.initialize(commandProcessor.getK900CommandHandler());
 
-        // Schedule OTA service start
+        // Recovery sidecar is the crash watchdog — start before other delayed init work.
+        recoveryWorkerManager.initialize();
         scheduleOtaServiceStart();
+        scheduleRecoveryBackupRefresh();
 
         // Clean up system packages
         // cleanupSystemPackages(); Not needed anymore
@@ -97,11 +104,13 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
     @Override
     public void cleanup() {
         Log.d(TAG, "Cleaning up service lifecycle");
+        mainHandler.removeCallbacksAndMessages(null);
 
         // Clean up managers
         if (serviceManager != null) {
             serviceManager.cleanup();
         }
+        recoveryWorkerManager.cleanup();
 
         isInitialized = false;
         Log.d(TAG, "Service lifecycle cleanup completed");
@@ -113,19 +122,31 @@ public class ServiceLifecycleManager implements IServiceLifecycle {
     }
 
     private void scheduleOtaServiceStart() {
-        new Handler(Looper.getMainLooper())
-                .postDelayed(
-                        () -> {
-                            Log.d(TAG, "Starting internal OTA service after delay");
-                            Intent otaIntent = new Intent(context, OtaService.class);
-                            if (android.os.Build.VERSION.SDK_INT
-                                    >= android.os.Build.VERSION_CODES.O) {
-                                context.startForegroundService(otaIntent);
-                            } else {
-                                context.startService(otaIntent);
-                            }
-                        },
-                        5000);
+        mainHandler.postDelayed(
+                () -> {
+                    Log.d(TAG, "Starting internal OTA service after delay");
+                    Intent otaIntent = new Intent(context, OtaService.class);
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        context.startForegroundService(otaIntent);
+                    } else {
+                        context.startService(otaIntent);
+                    }
+                },
+                5000);
+    }
+
+    private void scheduleRecoveryBackupRefresh() {
+        mainHandler.postDelayed(
+                () -> {
+                    if (!isInitialized) {
+                        return;
+                    }
+                    new Thread(
+                                    () -> OtaHelper.ensureRecoveryBackupIfNeeded(context),
+                                    "recovery-backup-refresh")
+                            .start();
+                },
+                3000);
     }
 
     private void cleanupSystemPackages() {
