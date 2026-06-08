@@ -2,17 +2,7 @@
 import {setBuildEnv} from "./set-build-env.mjs"
 await setBuildEnv()
 
-// Build iOS archive
-
-const now = new Date()
-const date = now.toLocaleDateString("en-US", {month: "2-digit", day: "2-digit", year: "2-digit"})
-const time = now.toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", hour12: true})
-const archiveName = `Mentra ${date.replace(/\//g, "-")}, ${time}.xcarchive`
-
-const archiveDate = now.toISOString().split("T")[0]
-const archivePath = `${os.homedir()}/Library/Developer/Xcode/Archives/${archiveDate}/${archiveName}`
-
-console.log(chalk.blue(`Building archive: ${archiveName}`))
+console.log("Building iOS release...")
 
 // prebuild ios:
 await $({stdio: "inherit"})`bun expo prebuild --platform ios`
@@ -20,17 +10,47 @@ await $({stdio: "inherit"})`bun expo prebuild --platform ios`
 // copy .env to ios/.xcode.env.local:
 await $({stdio: "inherit"})`cp .env ios/.xcode.env.local`
 
-await $({
-  stdio: "inherit",
-  env: process.env,
-})`xcodebuild archive \
-  -workspace ios/Mentra.xcworkspace \
-  -scheme Mentra \
-  -configuration Release \
-  -destination generic/platform=iOS \
-  -archivePath ${archivePath}`
+// Sync CocoaPods after prebuild so new native source files are compiled
+await $({stdio: "inherit", cwd: "ios"})`pod install`
 
-// -arch arm64 \
+// Get connected iOS devices via devicectl
+const tmpFile = `/tmp/devicectl-${Date.now()}.json`
+await $`xcrun devicectl list devices --json-output ${tmpFile} --timeout 5`
+const json = JSON.parse(await fs.readFile(tmpFile, "utf-8"))
+await fs.remove(tmpFile)
 
-console.log(chalk.green("✓ Archive created!"))
-console.log(chalk.blue("Open: Xcode > Window > Organizer"))
+const device =
+  json.result?.devices?.find(
+    (d) => d.capabilities?.some((c) => c.name === "iPhone") || d.deviceProperties?.marketingName?.includes("iPhone"),
+  ) &&
+  json.result.devices.find(
+    (d) =>
+      (d.capabilities?.some((c) => c.name === "iPhone") || d.deviceProperties?.marketingName?.includes("iPhone")) &&
+      d.connectionProperties?.tunnelState === "connected",
+  )
+
+if (!device) {
+  // Fallback: find any available paired iPhone
+  const available = json.result?.devices?.find(
+    (d) =>
+      d.hardwareProperties?.deviceType === "iPhone" &&
+      d.connectionProperties?.pairingState === "paired" &&
+      d.connectionProperties?.tunnelState !== "unavailable",
+  )
+  if (!available) {
+    console.log("No physical iPhone connected — building release for iOS Simulator")
+    await $({stdio: "inherit"})`bun expo run:ios --configuration Release --no-bundler`
+    console.log("✅ iOS release built and installed on Simulator!")
+    process.exit(0)
+  }
+  var deviceName = available.deviceProperties.name
+} else {
+  var deviceName = device.deviceProperties.name
+}
+
+console.log(`Using device: ${deviceName}`)
+
+// Build and install release on device
+await $({stdio: "inherit"})`bun expo run:ios --device ${deviceName} --configuration Release --no-bundler`
+
+console.log("✅ iOS release built and installed successfully!")
