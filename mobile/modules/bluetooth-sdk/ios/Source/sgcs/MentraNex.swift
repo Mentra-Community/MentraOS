@@ -881,6 +881,10 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     @objc func stopScan() {
         centralManager?.stopScan()
         _isScanning = false
+        // The flag describes the scan that's currently running; once it stops (10s discovery
+        // timeout, manual stop, or the stop inside connect()), clear it so a later
+        // reconnect/autoconnect scan isn't wrongly treated as discovery and suppressed.
+        isDiscoveryScan = false
         Bridge.log("NEX-CONN: 🛑 Stopped scanning.")
     }
 
