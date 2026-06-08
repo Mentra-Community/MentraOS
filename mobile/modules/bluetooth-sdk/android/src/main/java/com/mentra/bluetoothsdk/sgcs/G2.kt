@@ -2170,6 +2170,9 @@ class G2 : SGCManager() {
         Bridge.log("G2: rebuildState()")
         // recreate the containers:
         createPageWithContainers()
+        
+        delay(300) // 300ms to settle
+
         // go through each image container and send the data:
         for (container in imageContainers) {
             sendImageData(container.id, container.name, container.bmpData)
@@ -2177,18 +2180,18 @@ class G2 : SGCManager() {
         }
 
         // go through each text container and re-send its content, otherwise text stays blank after a
-        // rebuild (e.g. on native-dashboard close) while images come back.
-        for (container in textContainers) {
-            val textMsg =
-                    EvenHubProto.updateTextMessage(
-                            containerID = container.id,
-                            contentOffset = 0,
-                            contentLength = container.content.toByteArray(Charsets.UTF_8).size,
-                            content = container.content
-                    )
-            sendEvenHubCommand(textMsg)
-            delay(100)
-        }
+        // disabled because text containers are initialized with their content:
+        // for (container in textContainers) {
+        //     val textMsg =
+        //             EvenHubProto.updateTextMessage(
+        //                     containerID = container.id,
+        //                     contentOffset = 0,
+        //                     contentLength = container.content.toByteArray(Charsets.UTF_8).size,
+        //                     content = container.content
+        //             )
+        //     sendEvenHubCommand(textMsg)
+        //     delay(100)
+        // }
     }
 
     private fun sendImageData(
@@ -2422,7 +2425,7 @@ class G2 : SGCManager() {
                         paddingLength = c.paddingLength,
                         containerID = c.id,
                         containerName = c.name,
-                        isEventCapture = i == 0,
+                        isEventCapture = i == 0,// the first container is the event capture container
                         content = c.content
                     )
                 )
@@ -2460,7 +2463,7 @@ class G2 : SGCManager() {
 
         val msg: ByteArray
         if (!pageCreated) {
-            Bridge.log("G2: createPageWithContainers() - using createPageMessage (first time)")
+            Bridge.log("G2: using createPageMessage (first time)")
             msg =
                     EvenHubProto.createPageMessage(
                             textContainers = textContainerProps,
@@ -2469,7 +2472,7 @@ class G2 : SGCManager() {
                             appId = activeMenuAppId
                     )
         } else {
-            Bridge.log("G2: createPageWithContainers() - using rebuildPageMessage")
+            Bridge.log("G2: using rebuildPageMessage")
             msg =
                     EvenHubProto.rebuildPageMessage(
                             textContainers = textContainerProps,
@@ -3658,11 +3661,14 @@ class G2 : SGCManager() {
                 Bridge.log("G2: Menu selection ignored — placeholder or unknown appId=$appId")
             }
         } else {
-            // response codes.
-            //
-            // Page-state-critical detection (a glasses-initiated shutdown) MUST run before the
-            // dedup debounce below: a single burst from L+R can carry several acks plus a shutdown,
-            // and dropping the shutdown would leave pageCreated=true after the page was torn down.
+            // Dedup only the non-critical logging path (img-success/error chatter), which L and R
+            // both deliver. Page-state resets above are intentionally outside this window.
+            val timestamp = System.currentTimeMillis()
+            val lastResponse = lastEvenHubResponseTimestamp
+            if (lastResponse != null && timestamp - lastResponse < 100) {
+                return
+            }
+            lastEvenHubResponseTimestamp = timestamp
 
             // If glasses sent a shutdown (cmd=9/10), our page is gone — reset state.
             if (cmdValue == 9 || cmdValue == 10) {
@@ -3688,15 +3694,6 @@ class G2 : SGCManager() {
                     }
                 }
             }
-
-            // Dedup only the non-critical logging path (img-success/error chatter), which L and R
-            // both deliver. Page-state resets above are intentionally outside this window.
-            val timestamp = System.currentTimeMillis()
-            val lastResponse = lastEvenHubResponseTimestamp
-            if (lastResponse != null && timestamp - lastResponse < 100) {
-                return
-            }
-            lastEvenHubResponseTimestamp = timestamp
 
             for (resField in listOf(4, 6, 8, 10)) {
                 val resData = fields[resField] as? ByteArray ?: continue
@@ -4080,7 +4077,7 @@ class G2 : SGCManager() {
         // Battery
         (fields[12] as? Int)?.let { battery ->
             if (battery in 0..100) {
-                Bridge.log("G2: Battery level: $battery%")
+                // Bridge.log("G2: Battery level: $battery%")
                 batteryLevel_ = battery
             }
         }
@@ -4097,13 +4094,13 @@ class G2 : SGCManager() {
         // Software versions
         (fields[5] as? ByteArray)?.let { leftVer ->
             val leftVersion = String(leftVer, Charsets.UTF_8)
-            Bridge.log("G2: Left firmware: $leftVersion")
+            // Bridge.log("G2: Left firmware: $leftVersion")
             DeviceStore.apply("glasses", "leftFirmwareVersion", leftVersion)
         }
 
         (fields[6] as? ByteArray)?.let { rightVer ->
             val rightVersion = String(rightVer, Charsets.UTF_8)
-            Bridge.log("G2: Right firmware: $rightVersion")
+            // Bridge.log("G2: Right firmware: $rightVersion")
             DeviceStore.apply("glasses", "rightFirmwareVersion", rightVersion)
             DeviceStore.apply("glasses", "firmwareVersion", rightVersion)
         }
@@ -4132,7 +4129,7 @@ class G2 : SGCManager() {
             return
         }
         lastAudioFrame = audioData
-        Bridge.log("G2: audio data from $sourceKey: ${data.take(10).joinToString("") { String.format("%02X", it) }}")
+        // Bridge.log("G2: audio data from $sourceKey: ${data.take(10).joinToString("") { String.format("%02X", it) }}")
         DeviceManager.getInstance().handleGlassesMicData(audioData, 40)
     }
 

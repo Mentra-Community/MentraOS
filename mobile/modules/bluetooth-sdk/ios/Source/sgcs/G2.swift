@@ -2156,19 +2156,20 @@ class G2: NSObject, SGCManager {
             await sendImageData(
                 containerID: container.id, containerName: container.name, bmpData: container.bmpData
             )
-            try? await Task.sleep(nanoseconds: 300_000_000) // 200ms between containers
+            try? await Task.sleep(nanoseconds: 300_000_000) // 300ms between containers
         }
 
         // go through each text container and send the data:
-        for container in textContainers {
-            // let msg = EvenHubProto.updateTextMessage(
-            //     containerID: container.id,
-            //     contentOffset: 0,
-            //     contentLength: Int32(container.content.utf8.count),
-            //     content: container.content
-            // )
-            // sendEvenHubCommand(msg)
-        }
+        // disabled because text containers are initialized with their content:
+        // for container in textContainers {
+        //     let msg = EvenHubProto.updateTextMessage(
+        //         containerID: container.id,
+        //         contentOffset: 0,
+        //         contentLength: Int32(container.content.utf8.count),
+        //         content: container.content
+        //     )
+        //     sendEvenHubCommand(msg)
+        // }
     }
 
     /// Upscale BMP pixel data by 2x (200x100 → 400x200) using nearest-neighbor
@@ -2567,7 +2568,7 @@ class G2: NSObject, SGCManager {
                 x: c.x, y: c.y, width: c.width, height: c.height,
                 borderWidth: c.borderWidth, borderColor: c.borderColor, borderRadius: c.borderRadius,
                 paddingLength: c.paddingLength, containerID: c.id,
-                containerName: c.name, isEventCapture: c.id == 0,
+                containerName: c.name, isEventCapture: index == 0,// the first container is the event capture container
                 content: c.content
             ))
         }
@@ -2604,7 +2605,6 @@ class G2: NSObject, SGCManager {
                 magicRandom: sendManager.nextMagicRandom(),
                 appId: activeMenuAppId
             )
-            pageCreated = true
         } else {
             Bridge.log("G2: createPageWithContainers() - using rebuildPageMessage")
             msg = EvenHubProto.rebuildPageMessage(
