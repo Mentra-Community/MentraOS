@@ -2,6 +2,7 @@ import Foundation
 
 public struct BluetoothSdkAnalyticsConfiguration {
     public static let disabled = BluetoothSdkAnalyticsConfiguration(enabled: false)
+    public static let defaultPostHogApiKey = "phc_FCweXVAxVgU7wZK4Fk3okOx4RmyNqVHJf62YpZSfJt5"
     public static let defaultPostHogHost = "https://us.i.posthog.com"
 
     public let enabled: Bool
@@ -11,7 +12,7 @@ public struct BluetoothSdkAnalyticsConfiguration {
 
     public init(
         enabled: Bool = true,
-        postHogApiKey: String? = nil,
+        postHogApiKey: String? = BluetoothSdkAnalyticsConfiguration.defaultPostHogApiKey,
         postHogHost: String = BluetoothSdkAnalyticsConfiguration.defaultPostHogHost
     ) {
         self.enabled = enabled
@@ -22,7 +23,8 @@ public struct BluetoothSdkAnalyticsConfiguration {
 
     init(dictionary: [String: Any], surface: String) {
         enabled = dictionary["enabled"] as? Bool ?? !((dictionary["disabled"] as? Bool) ?? false)
-        postHogApiKey = dictionary["postHogApiKey"] as? String
+        postHogApiKey = (dictionary["postHogApiKey"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            ?? BluetoothSdkAnalyticsConfiguration.defaultPostHogApiKey
         postHogHost = (dictionary["postHogHost"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             ?? BluetoothSdkAnalyticsConfiguration.defaultPostHogHost
         self.surface = surface
@@ -61,11 +63,11 @@ final class BluetoothSdkAnalytics {
     private var lastConnected = false
 
     init(configuration: BluetoothSdkAnalyticsConfiguration) {
-        self.configuration = configuration
+        self.configuration = configuration.resolvedForApp()
     }
 
     func configure(_ nextConfiguration: BluetoothSdkAnalyticsConfiguration) {
-        configuration = nextConfiguration
+        configuration = nextConfiguration.resolvedForApp()
         captureStarted()
     }
 
@@ -139,5 +141,33 @@ final class BluetoothSdkAnalytics {
     private func captureURL(host: String) -> URL? {
         let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         return URL(string: "\(normalized)/i/v0/e/")
+    }
+}
+
+private extension BluetoothSdkAnalyticsConfiguration {
+    func resolvedForApp() -> BluetoothSdkAnalyticsConfiguration {
+        let disabledByApp = Bundle.main.object(forInfoDictionaryKey: "MentraBluetoothSdkAnalyticsDisabled") as? Bool == true
+        let infoApiKey = (Bundle.main.object(forInfoDictionaryKey: "MentraBluetoothSdkPostHogApiKey") as? String)
+            .flatMap { $0.isEmpty ? nil : $0 }
+        let infoHost = (Bundle.main.object(forInfoDictionaryKey: "MentraBluetoothSdkPostHogHost") as? String)
+            .flatMap { $0.isEmpty ? nil : $0 }
+
+        return BluetoothSdkAnalyticsConfiguration(
+            enabled: enabled && !disabledByApp,
+            postHogApiKey: resolvedPostHogApiKey(infoApiKey: infoApiKey),
+            postHogHost: infoHost ?? postHogHost,
+            surface: surface
+        )
+    }
+
+    private func resolvedPostHogApiKey(infoApiKey: String?) -> String? {
+        let configuredApiKey = postHogApiKey.flatMap { $0.isEmpty ? nil : $0 }
+        if configuredApiKey == nil {
+            return infoApiKey ?? BluetoothSdkAnalyticsConfiguration.defaultPostHogApiKey
+        }
+        if configuredApiKey == BluetoothSdkAnalyticsConfiguration.defaultPostHogApiKey {
+            return infoApiKey ?? configuredApiKey
+        }
+        return configuredApiKey
     }
 }

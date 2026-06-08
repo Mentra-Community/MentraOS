@@ -5,7 +5,7 @@ public struct MentraBluetoothSDKConfiguration {
 
     public let analytics: BluetoothSdkAnalyticsConfiguration
 
-    public init(analytics: BluetoothSdkAnalyticsConfiguration = .disabled) {
+    public init(analytics: BluetoothSdkAnalyticsConfiguration = BluetoothSdkAnalyticsConfiguration()) {
         self.analytics = analytics
     }
 }

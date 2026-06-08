@@ -2,10 +2,15 @@ import {execSync} from "child_process"
 import fs from "fs"
 import path from "path"
 
-import {type ConfigPlugin, withDangerousMod, withPodfile} from "expo/config-plugins"
+import {type ConfigPlugin, withDangerousMod, withInfoPlist, withPodfile} from "expo/config-plugins"
+
+import {type BluetoothSdkPluginProps} from "./index"
 
 const BLUETOOTH_SDK_EXPO_ADAPTER_ENV = "MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER"
 const BLUETOOTH_SDK_EXPO_ADAPTER_LINE = `ENV['${BLUETOOTH_SDK_EXPO_ADAPTER_ENV}'] ||= '1'`
+const INFO_ANALYTICS_DISABLED = "MentraBluetoothSdkAnalyticsDisabled"
+const INFO_POSTHOG_API_KEY = "MentraBluetoothSdkPostHogApiKey"
+const INFO_POSTHOG_HOST = "MentraBluetoothSdkPostHogHost"
 
 const ensureBluetoothSdkExpoAdapterPodEnv = (podfile: string): string => {
   if (podfile.includes(BLUETOOTH_SDK_EXPO_ADAPTER_ENV)) {
@@ -54,11 +59,44 @@ const withXcodeEnvLocal: ConfigPlugin = (config) => {
   ])
 }
 
-export const withIosConfiguration: ConfigPlugin<{node?: boolean}> = (config, props) => {
+function resolveAnalyticsProps(props: BluetoothSdkPluginProps | undefined) {
+  const analytics = props?.analytics
+  const disabled =
+    props?.disableAnalytics === true ||
+    analytics === false ||
+    (typeof analytics === "object" ? analytics.disabled === true || analytics.enabled === false : undefined)
+
+  return {
+    disabled,
+    postHogApiKey: typeof analytics === "object" ? analytics.postHogApiKey : undefined,
+    postHogHost: typeof analytics === "object" ? analytics.postHogHost : undefined,
+  }
+}
+
+function withAnalyticsInfoPlist(config: any, props: BluetoothSdkPluginProps | undefined) {
+  return withInfoPlist(config, (config) => {
+    const analytics = resolveAnalyticsProps(props)
+
+    if (analytics.disabled !== undefined) {
+      config.modResults[INFO_ANALYTICS_DISABLED] = analytics.disabled
+    }
+    if (analytics.postHogApiKey) {
+      config.modResults[INFO_POSTHOG_API_KEY] = analytics.postHogApiKey
+    }
+    if (analytics.postHogHost) {
+      config.modResults[INFO_POSTHOG_HOST] = analytics.postHogHost
+    }
+
+    return config
+  })
+}
+
+export const withIosConfiguration: ConfigPlugin<BluetoothSdkPluginProps> = (config, props) => {
   config = withPodfile(config, (config) => {
     config.modResults.contents = ensureBluetoothSdkExpoAdapterPodEnv(config.modResults.contents)
     return config
   })
+  config = withAnalyticsInfoPlist(config, props)
 
   if (props?.node) {
     config = withXcodeEnvLocal(config)

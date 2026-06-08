@@ -5,7 +5,7 @@ import com.mentra.bluetoothsdk.utils.DeviceTypes
 
 data class MentraBluetoothSdkConfig @JvmOverloads constructor(
     val deliverCallbacksOnMainThread: Boolean = true,
-    val analytics: BluetoothSdkAnalyticsConfig = BluetoothSdkAnalyticsConfig.disabled(),
+    val analytics: BluetoothSdkAnalyticsConfig = BluetoothSdkAnalyticsConfig(),
 )
 
 class BluetoothException(

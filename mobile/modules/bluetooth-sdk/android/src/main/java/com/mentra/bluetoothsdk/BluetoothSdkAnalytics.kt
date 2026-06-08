@@ -1,6 +1,7 @@
 package com.mentra.bluetoothsdk
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -11,7 +12,7 @@ import java.util.concurrent.Executors
 
 data class BluetoothSdkAnalyticsConfig @JvmOverloads constructor(
     val enabled: Boolean = true,
-    val postHogApiKey: String? = null,
+    val postHogApiKey: String? = BluetoothSdkAnalytics.DEFAULT_POSTHOG_API_KEY,
     val postHogHost: String = BluetoothSdkAnalytics.DEFAULT_POSTHOG_HOST,
     val surface: String = "android",
 ) {
@@ -27,7 +28,10 @@ data class BluetoothSdkAnalyticsConfig @JvmOverloads constructor(
         internal fun fromMap(values: Map<String, Any?>, surface: String): BluetoothSdkAnalyticsConfig =
             BluetoothSdkAnalyticsConfig(
                 enabled = (values["enabled"] as? Boolean) ?: ((values["disabled"] as? Boolean)?.not() ?: true),
-                postHogApiKey = values["postHogApiKey"] as? String,
+                postHogApiKey =
+                    (values["postHogApiKey"] as? String)
+                        ?.takeIf { it.isNotBlank() }
+                        ?: BluetoothSdkAnalytics.DEFAULT_POSTHOG_API_KEY,
                 postHogHost =
                     (values["postHogHost"] as? String)
                         ?.takeIf { it.isNotBlank() }
@@ -45,12 +49,12 @@ internal class BluetoothSdkAnalytics(
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "MentraBluetoothSdkAnalytics").apply { isDaemon = true }
     }
-    private var config = initialConfig
+    private var config = initialConfig.resolvedForApp(appContext)
     private var startedCaptured = false
     private var lastConnected = false
 
     fun configure(nextConfig: BluetoothSdkAnalyticsConfig) {
-        config = nextConfig
+        config = nextConfig.resolvedForApp(appContext)
         captureStarted()
     }
 
@@ -140,8 +144,38 @@ internal class BluetoothSdkAnalytics(
     }
 
     companion object {
+        const val DEFAULT_POSTHOG_API_KEY = "phc_FCweXVAxVgU7wZK4Fk3okOx4RmyNqVHJf62YpZSfJt5"
         const val DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com"
+        internal const val META_ANALYTICS_DISABLED = "com.mentra.bluetoothsdk.analytics.disabled"
+        internal const val META_POSTHOG_API_KEY = "com.mentra.bluetoothsdk.analytics.posthog_api_key"
+        internal const val META_POSTHOG_HOST = "com.mentra.bluetoothsdk.analytics.posthog_host"
         private const val PREFS_NAME = "mentra_bluetooth_sdk_analytics"
         private const val PREFS_DISTINCT_ID = "distinct_id"
     }
+}
+
+private fun BluetoothSdkAnalyticsConfig.resolvedForApp(context: Context): BluetoothSdkAnalyticsConfig {
+    val metadata =
+        try {
+            context.packageManager
+                .getApplicationInfo(context.packageName, PackageManager.GET_META_DATA)
+                .metaData
+        } catch (_: Throwable) {
+            null
+        }
+
+    val disabledByApp = metadata?.getBoolean(BluetoothSdkAnalytics.META_ANALYTICS_DISABLED, false) == true
+    val metadataApiKey = metadata?.getString(BluetoothSdkAnalytics.META_POSTHOG_API_KEY)?.takeIf { it.isNotBlank() }
+    val metadataHost = metadata?.getString(BluetoothSdkAnalytics.META_POSTHOG_HOST)?.takeIf { it.isNotBlank() }
+
+    return copy(
+        enabled = enabled && !disabledByApp,
+        postHogApiKey =
+            when (val configuredApiKey = postHogApiKey?.takeIf { it.isNotBlank() }) {
+                null -> metadataApiKey ?: BluetoothSdkAnalytics.DEFAULT_POSTHOG_API_KEY
+                BluetoothSdkAnalytics.DEFAULT_POSTHOG_API_KEY -> metadataApiKey ?: configuredApiKey
+                else -> configuredApiKey
+            },
+        postHogHost = metadataHost ?: postHogHost,
+    )
 }

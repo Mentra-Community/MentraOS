@@ -2,11 +2,19 @@ import {execSync} from "child_process"
 import path from "path"
 
 import {
+  AndroidConfig,
   type ConfigPlugin,
+  withAndroidManifest,
   withGradleProperties,
   withProjectBuildGradle,
   withSettingsGradle,
 } from "expo/config-plugins"
+
+import {type BluetoothSdkPluginProps} from "./index"
+
+const META_ANALYTICS_DISABLED = "com.mentra.bluetoothsdk.analytics.disabled"
+const META_POSTHOG_API_KEY = "com.mentra.bluetoothsdk.analytics.posthog_api_key"
+const META_POSTHOG_HOST = "com.mentra.bluetoothsdk.analytics.posthog_host"
 
 function getBluetoothSdkRoot(): string {
   return path.dirname(require.resolve("../../package.json"))
@@ -151,9 +159,54 @@ function withSherpaOnnxLocalMavenRepo(config: any) {
   })
 }
 
-export const withAndroidConfiguration: ConfigPlugin<{node?: boolean}> = (config, props) => {
+function resolveAnalyticsProps(props: BluetoothSdkPluginProps | undefined) {
+  const analytics = props?.analytics
+  const disabled =
+    props?.disableAnalytics === true ||
+    analytics === false ||
+    (typeof analytics === "object" ? analytics.disabled === true || analytics.enabled === false : undefined)
+
+  return {
+    disabled,
+    postHogApiKey: typeof analytics === "object" ? analytics.postHogApiKey : undefined,
+    postHogHost: typeof analytics === "object" ? analytics.postHogHost : undefined,
+  }
+}
+
+function upsertMetaData(application: any, name: string, value: string) {
+  application["meta-data"] ??= []
+  const existing = application["meta-data"].find((item: any) => item.$?.["android:name"] === name)
+  const entry = existing ?? {$: {"android:name": name}}
+  entry.$["android:value"] = value
+
+  if (!existing) {
+    application["meta-data"].push(entry)
+  }
+}
+
+function withAnalyticsManifestMetadata(config: any, props: BluetoothSdkPluginProps | undefined) {
+  return withAndroidManifest(config, (config) => {
+    const analytics = resolveAnalyticsProps(props)
+    const application = AndroidConfig.Manifest.getMainApplicationOrThrow(config.modResults)
+
+    if (analytics.disabled !== undefined) {
+      upsertMetaData(application, META_ANALYTICS_DISABLED, analytics.disabled ? "true" : "false")
+    }
+    if (analytics.postHogApiKey) {
+      upsertMetaData(application, META_POSTHOG_API_KEY, analytics.postHogApiKey)
+    }
+    if (analytics.postHogHost) {
+      upsertMetaData(application, META_POSTHOG_HOST, analytics.postHogHost)
+    }
+
+    return config
+  })
+}
+
+export const withAndroidConfiguration: ConfigPlugin<BluetoothSdkPluginProps> = (config, props) => {
   config = withSettingsGradleModifications(config)
   config = withSherpaOnnxLocalMavenRepo(config)
+  config = withAnalyticsManifestMetadata(config, props)
 
   if (props?.node) {
     config = withGradlePropertiesModifications(config)

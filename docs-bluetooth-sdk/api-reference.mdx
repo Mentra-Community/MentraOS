@@ -70,31 +70,45 @@ sdk.invalidate()
 
 Keep one SDK instance per active app session. The SDK owns Bluetooth connection state, native event delivery, and cleanup. Your app owns user identity, UI state, and whether a default device record is persisted across app restarts.
 
-## Optional Analytics
+## Mentra SDK Usage Analytics
 
-The SDK can report anonymous, opt-in usage events to Mentra's PostHog project:
+The SDK reports anonymous usage events to Mentra's PostHog project by default
+so Mentra can understand SDK adoption and successful glasses connections:
 
 | Event | Fires When |
 | --- | --- |
-| `bluetooth_sdk_started` | Once per app runtime after analytics is configured for that SDK instance. |
+| `bluetooth_sdk_started` | Once per app runtime after the native SDK starts. |
 | `bluetooth_sdk_glasses_connected` | When SDK status transitions from not connected to connected. Failed scans and failed connection attempts are not counted. |
 
-Analytics is disabled by default. It starts only when the consuming app passes a
-PostHog project API key. The key is PostHog's public project write token, not a
-private PostHog personal API key.
+Mentra's PostHog project API key is embedded in the SDK as a public analytics
+write token, not a private PostHog personal API key. Apps do not need to
+configure PostHog to send these Mentra SDK usage events.
 
 <Tabs>
   <Tab title="React Native">
 
+Disable analytics before native SDK startup through the Expo config plugin:
+
+```json
+{
+  "expo": {
+    "plugins": [
+      [
+        "@mentra/bluetooth-sdk",
+        {
+          "analytics": false
+        }
+      ]
+    ]
+  }
+}
+```
+
+Disable analytics for the current native SDK runtime:
+
 ```ts
 import BluetoothSdk from '@mentra/bluetooth-sdk';
 
-await BluetoothSdk.configureAnalytics({
-  postHogApiKey: process.env.EXPO_PUBLIC_MENTRA_BLUETOOTH_POSTHOG_API_KEY,
-  postHogHost: process.env.EXPO_PUBLIC_MENTRA_BLUETOOTH_POSTHOG_HOST ?? 'https://us.i.posthog.com',
-});
-
-// Opt out explicitly:
 await BluetoothSdk.configureAnalytics({enabled: false});
 ```
 
@@ -105,16 +119,20 @@ await BluetoothSdk.configureAnalytics({enabled: false});
 val sdk = MentraBluetoothSdk.create(
     context = applicationContext,
     config = MentraBluetoothSdkConfig(
-        analytics = BluetoothSdkAnalyticsConfig(
-            postHogApiKey = BuildConfig.MENTRA_BLUETOOTH_POSTHOG_API_KEY,
-            postHogHost = BuildConfig.MENTRA_BLUETOOTH_POSTHOG_HOST,
-        )
+        analytics = BluetoothSdkAnalyticsConfig.disabled()
     ),
     listener = listener,
 )
 
-// Opt out explicitly:
 sdk.configureAnalytics(BluetoothSdkAnalyticsConfig.disabled())
+```
+
+Android apps can also set application metadata before SDK startup:
+
+```xml
+<meta-data
+    android:name="com.mentra.bluetoothsdk.analytics.disabled"
+    android:value="true" />
 ```
 
   </Tab>
@@ -123,23 +141,23 @@ sdk.configureAnalytics(BluetoothSdkAnalyticsConfig.disabled())
 ```swift
 let sdk = MentraBluetoothSDK(
     configuration: MentraBluetoothSDKConfiguration(
-        analytics: BluetoothSdkAnalyticsConfiguration(
-            postHogApiKey: Bundle.main.object(forInfoDictionaryKey: "MENTRA_BLUETOOTH_POSTHOG_API_KEY") as? String,
-            postHogHost: Bundle.main.object(forInfoDictionaryKey: "MENTRA_BLUETOOTH_POSTHOG_HOST") as? String
-                ?? BluetoothSdkAnalyticsConfiguration.defaultPostHogHost
-        )
+        analytics: .disabled
     )
 )
 
-// Opt out explicitly:
 sdk.configureAnalytics(.disabled)
 ```
+
+iOS apps can also set `MentraBluetoothSdkAnalyticsDisabled` to `true` in
+`Info.plist` before SDK startup.
 
   </Tab>
 </Tabs>
 
-Use `https://us.i.posthog.com` for US Cloud, `https://eu.i.posthog.com` for EU
-Cloud, or the ingestion host for a self-hosted PostHog instance.
+Advanced integrations can override the destination with `postHogApiKey` and
+`postHogHost`. Use `https://us.i.posthog.com` for US Cloud,
+`https://eu.i.posthog.com` for EU Cloud, or the ingestion host for a self-hosted
+PostHog instance.
 
 Captured properties are intentionally narrow:
 

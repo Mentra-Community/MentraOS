@@ -712,14 +712,15 @@ export type BluetoothSdkEvent = BluetoothSdkEventMap[BluetoothSdkEventName]
 
 export type BluetoothSdkAnalyticsOptions = {
   /**
-   * Set to false to leave SDK analytics disabled. `disabled` is also accepted
-   * for callers that prefer opt-out naming.
+   * Mentra SDK usage analytics are enabled by default. Set to false to disable
+   * them for the current native SDK runtime. `disabled` is also accepted for
+   * callers that prefer opt-out naming.
    */
   enabled?: boolean
   disabled?: boolean
-  /** PostHog project API key. This is PostHog's public write token, not a private API secret. */
+  /** Optional PostHog project API key override. This is PostHog's public write token, not a private API secret. */
   postHogApiKey?: string
-  /** PostHog ingestion host. Defaults to https://us.i.posthog.com. */
+  /** Optional PostHog ingestion host override. Defaults to Mentra's US PostHog Cloud host. */
   postHogHost?: string
 }
 
