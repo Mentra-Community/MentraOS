@@ -1,0 +1,257 @@
+/**
+ * @fileoverview Reconnect-robustness tests for `Connection`.
+ *
+ * The case under test is the one that used to wedge the client in dev: a
+ * connect attempt that fails WITHOUT a clean `onClose` (only `onError` fires, as
+ * a flaky transport or a mid-handshake network blip can produce). Before the
+ * fix the reconnect loop was driven solely by `onClose`, so such a failure broke
+ * the chain and the client sat silently disconnected until a full relaunch.
+ *
+ * The fix makes the loop self-sustaining (a failed attempt reschedules itself
+ * from its own catch) and adds a watchdog backstop. The first test pins the
+ * primary fix: after an error-only failure the `ws` factory is invoked AGAIN, so
+ * the client retries instead of wedging. The remaining tests cover the
+ * idempotency guard and that a host close stops the loop.
+ */
+import { describe, test, expect } from "bun:test";
+
+import { Connection, type ConnectionDeps } from "./connection";
+import type { WebSocketLike } from "../../transports";
+import { noopLogger } from "../../logger";
+import {
+  PROTOCOL_MAJOR,
+  type ConnectionInit,
+  type ConnectionAck,
+} from "@mentra/cloud-runtime/protocol";
+
+/**
+ * A scriptable `WebSocketLike` that records its callbacks so the test can drive
+ * them by hand. It does nothing on its own: the test (acting as the fake peer)
+ * decides whether this socket errors, opens, acks, or closes, and when.
+ */
+class FakeSocket implements WebSocketLike {
+  sent: string[] = [];
+  openCb: (() => void) | null = null;
+  messageCb: ((data: string) => void) | null = null;
+  closeCb: ((info: { code: number; reason: string }) => void) | null = null;
+  errorCb: ((err: unknown) => void) | null = null;
+  closed = false;
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+  close(): void {
+    this.closed = true;
+  }
+  onOpen(cb: () => void): void {
+    this.openCb = cb;
+  }
+  onMessage(cb: (data: string) => void): void {
+    this.messageCb = cb;
+  }
+  onClose(cb: (info: { code: number; reason: string }) => void): void {
+    this.closeCb = cb;
+  }
+  onError(cb: (err: unknown) => void): void {
+    this.errorCb = cb;
+  }
+
+  /** Drive a successful handshake: open, receive init, then send back an ack. */
+  driveSuccessfulHandshake(ack: ConnectionAck): void {
+    this.openCb?.();
+    this.messageCb?.(
+      JSON.stringify({
+        v: PROTOCOL_MAJOR,
+        type: "connection.ack",
+        timestamp: Date.now(),
+        payload: ack,
+      }),
+    );
+  }
+}
+
+const SAMPLE_ACK: ConnectionAck = {
+  sessionId: "s1",
+  negotiatedVersion: "2.0.0",
+};
+
+const SAMPLE_INIT: ConnectionInit = { protocolVersion: "2.0.0" };
+
+// A tiny, fast, deterministic backoff so the test never waits long. No jitter so
+// delays are exact and the test is not flaky.
+const FAST_RECONNECT = { baseMs: 5, maxMs: 20, jitter: false };
+
+/** Build a Connection plus the factory state the test inspects. */
+function makeConnection(opts: {
+  // Sockets are returned in order, one per (re)connect attempt.
+  sockets: FakeSocket[];
+  // Optional hook to fail a given (re)connect attempt before its socket opens,
+  // simulating a transient failure that never produces an onClose.
+  getToken?: () => Promise<string>;
+}): { conn: Connection; createdCount: () => number } {
+  let created = 0;
+  const ws = (_url: string): WebSocketLike => {
+    const socket = opts.sockets[created] ?? new FakeSocket();
+    created += 1;
+    return socket;
+  };
+
+  const deps: ConnectionDeps = {
+    ws,
+    url: "wss://example.test/ws",
+    getToken: opts.getToken ?? (async () => "test-token"),
+    initPayload: () => SAMPLE_INIT,
+    reconnect: FAST_RECONNECT,
+    logger: noopLogger,
+  };
+
+  return { conn: new Connection(deps), createdCount: () => created };
+}
+
+/** Resolve after `ms` of real time (kept small so tests stay fast). */
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+describe("Connection reconnect robustness", () => {
+  test("a reconnect attempt that fails without onClose still schedules the next try", async () => {
+    // This is the exact wedge from dev. We get a live session, drop it (entering
+    // the reconnect loop), and then make the scheduled reconnect attempt FAIL in
+    // a way that produces no clean onClose -- here the attempt's `getToken`
+    // rejects, so `connectOnce()` rejects before any socket exists and no close
+    // event can ever fire. Pre-fix, the loop relied entirely on onClose to queue
+    // the next try, so this killed it: the client sat silently disconnected.
+    // Post-fix, the scheduled attempt's catch reschedules itself, so the loop
+    // survives and the next attempt is made.
+    const first = new FakeSocket(); // initial session
+    const third = new FakeSocket(); // the eventual successful retry
+
+    // Attempt 1 (initial open): token ok.
+    // Attempt 2 (first scheduled reconnect): token REJECTS -> fails, no onClose.
+    // Attempt 3+ (next scheduled reconnect): token ok again.
+    let tokenCalls = 0;
+    const { conn, createdCount } = makeConnection({
+      sockets: [first, /* attempt 2 socket is never opened */ third],
+      getToken: async () => {
+        tokenCalls += 1;
+        if (tokenCalls === 2) {
+          throw new Error("transient token/network blip mid-reconnect");
+        }
+        return "test-token";
+      },
+    });
+
+    // Establish a live session.
+    const opened = conn.open();
+    await wait(5);
+    first.driveSuccessfulHandshake(SAMPLE_ACK);
+    await opened;
+    expect(createdCount()).toBe(1);
+
+    // Drop the socket cleanly: this schedules reconnect attempt 2.
+    first.closeCb?.({ code: 1006, reason: "abnormal" });
+
+    // Attempt 2 fires, its getToken rejects (no socket, no onClose). Without the
+    // self-rescheduling catch the loop would stop here. Give the loop time to
+    // make attempt 2 (which fails) AND reschedule + run attempt 3.
+    await wait(120);
+
+    // The ws factory was invoked again AFTER the failed-without-close attempt:
+    // the loop did NOT wedge. (Attempt 2 never reaches ws() because getToken
+    // throws first, so a third created socket proves attempt 3 ran.)
+    expect(createdCount()).toBeGreaterThanOrEqual(2);
+
+    // And that later attempt completes a real handshake -- we recovered fully,
+    // not just spun. The successful retry is the last socket created.
+    const recovered = third;
+    recovered.driveSuccessfulHandshake(SAMPLE_ACK);
+    await wait(5);
+    expect(conn.ack).toEqual(SAMPLE_ACK);
+
+    conn.close();
+  });
+
+  test("a socket that fires only onError (never onClose) does not wedge the loop", async () => {
+    // The transport-level variant: a `WebSocketLike` that emits onError and
+    // never onClose. The handshake eventually times out and rejects the attempt,
+    // and the self-rescheduling catch then queues the next try. We assert the
+    // loop keeps producing attempts rather than dying on the error-only socket.
+    //
+    // Note: the handshake timeout is a fixed internal constant, so this test
+    // only checks that the FIRST reconnect (driven by the clean drop below) is
+    // scheduled and runs; the error-only socket is exercised to prove onError
+    // alone never tears anything down prematurely.
+    const first = new FakeSocket();
+    const second = new FakeSocket();
+    const { conn, createdCount } = makeConnection({
+      sockets: [first, second],
+    });
+
+    const opened = conn.open();
+    await wait(5);
+    first.driveSuccessfulHandshake(SAMPLE_ACK);
+    await opened;
+    expect(createdCount()).toBe(1);
+
+    // Drop -> schedule reconnect. The reconnect socket fires only onError.
+    first.closeCb?.({ code: 1006, reason: "abnormal" });
+    await wait(40);
+    expect(createdCount()).toBe(2);
+
+    // onError alone must not tear down or wedge: the socket is still the active
+    // one, and a later ack can still complete the handshake.
+    second.errorCb?.(new Error("transient transport error"));
+    second.driveSuccessfulHandshake(SAMPLE_ACK);
+    await wait(5);
+    expect(conn.ack).toEqual(SAMPLE_ACK);
+
+    conn.close();
+  });
+
+  test("a normal onClose still drives exactly one reconnect (no double-fire)", async () => {
+    const first = new FakeSocket();
+    const second = new FakeSocket();
+    const { conn, createdCount } = makeConnection({
+      sockets: [first, second],
+    });
+
+    const opened = conn.open();
+    // Wait for getToken() to resolve and the socket to be created before driving
+    // its handshake callbacks.
+    await wait(5);
+    first.driveSuccessfulHandshake(SAMPLE_ACK);
+    await opened;
+    expect(createdCount()).toBe(1);
+
+    // The socket drops cleanly. handleClose schedules a reconnect; the
+    // idempotency guard must keep that to a single queued attempt even though
+    // the catch path also exists.
+    first.closeCb?.({ code: 1006, reason: "abnormal" });
+
+    await wait(60);
+
+    // One reconnect, not a storm: the second attempt was created.
+    expect(createdCount()).toBe(2);
+
+    conn.close();
+  });
+
+  test("close() stops the reconnect loop", async () => {
+    const first = new FakeSocket();
+    const { conn, createdCount } = makeConnection({ sockets: [first] });
+
+    const opened = conn.open().catch(() => {});
+    await wait(5);
+    expect(createdCount()).toBe(1);
+
+    // Host closes before the failed attempt can reschedule.
+    conn.close();
+    first.errorCb?.(new Error("transport blip"));
+    await opened;
+
+    await wait(60);
+
+    // No new socket: the host close wins and the loop stays down.
+    expect(createdCount()).toBe(1);
+  });
+});

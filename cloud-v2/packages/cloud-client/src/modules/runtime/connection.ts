@@ -12,6 +12,27 @@
  * It never imports a real socket: the platform supplies a `WebSocketLike`
  * factory, so the same code runs on the phone and in a Node/Bun test harness.
  *
+ * Reconnect robustness (why the loop is self-sustaining + watchdogged):
+ * The reconnect loop used to be driven ONLY by the socket's `onClose` event
+ * (`handleClose` -> `scheduleReconnect`), and a scheduled attempt's
+ * `connectOnce().catch()` just swallowed the rejection, trusting that a close
+ * event would always fire and schedule the next try. That assumption is the
+ * bug: a connect attempt can fail WITHOUT ever firing a clean `onClose` -- a
+ * transient network/DNS blip mid-handshake, or a `WebSocketLike` transport that
+ * emits only `onError` and no `onClose`. When that happens the chain breaks:
+ * nothing schedules the next retry, so the client sits SILENTLY disconnected
+ * forever until a full app relaunch. We hit this in dev (ADB/Metro flapping
+ * wedged the v2 socket; only a cold relaunch recovered it).
+ *
+ * Two changes close that gap, belt-and-suspenders:
+ *   1. The scheduled attempt's `.catch()` now reschedules itself, so a failure
+ *      that did NOT fire `onClose` still queues the next try. `scheduleReconnect`
+ *      is idempotent (guarded by `reconnectTimer`), so the double call from
+ *      `onClose` + this catch never stacks two timers.
+ *   2. A lightweight watchdog interval revives the loop if some unforeseen path
+ *      ever leaves us `closed`, not host-closed, with no reconnect pending. Even
+ *      if reasoning (1) misses a case, the watchdog guarantees we never sit dead.
+ *
  * See docs/issues/004-cloud-client/design.md ("src/modules/runtime/connection.ts")
  * and docs/issues/002-cloud-runtime/protocol.md (envelope, handshake, control).
  */
@@ -66,6 +87,19 @@ const PONG_TIMEOUT_MS = 10_000;
  * (a stalled or misbehaving peer) would leave `open()` pending forever.
  */
 const HANDSHAKE_TIMEOUT_MS = 15_000;
+
+/**
+ * How often the reconnect watchdog checks that the loop is still alive.
+ *
+ * This is the belt-and-suspenders backstop: if any path ever leaves the
+ * connection `closed` (not host-closed) with no reconnect timer pending, the
+ * watchdog notices within one interval and restarts the loop. It is deliberately
+ * coarse (slower than a single backoff step) because it is a safety net, not the
+ * primary driver -- the catch-reschedule in `scheduleReconnect` handles the
+ * common failed-attempt case directly; the watchdog only catches the cases that
+ * one somehow misses.
+ */
+const RECONNECT_WATCHDOG_MS = 20_000;
 
 export interface ConnectionDeps {
   // Factory, not an instance: a fresh socket is opened on every (re)connect.
@@ -144,6 +178,24 @@ export class Connection {
   // Reset to zero on a successful handshake.
   private reconnectAttempt = 0;
 
+  // The pending reconnect timer, or null when no retry is queued. This single
+  // field makes `scheduleReconnect` idempotent: a second call while a timer is
+  // already armed is a no-op, so the (intentional) double call from `onClose`
+  // and from a failed attempt's catch-reschedule can never stack two timers and
+  // double the reconnect rate.
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // The watchdog interval (started in open(), cleared in close()). It is the
+  // backstop that revives the reconnect loop if it ever stalls: see
+  // `tickWatchdog` and the file header for why a stall is possible at all.
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
+
+  // Mirror of the last state pushed through `setState`, so the watchdog can ask
+  // "are we currently closed?" without a separate subscription. The state
+  // handlers are fire-and-forget notifications; this is the authoritative copy
+  // the watchdog reads.
+  private currentState: ConnectionState = "closed";
+
   // Liveness timers. The interval drives the periodic ping; the pong-wait timer
   // is armed when a ping goes out and disarmed when its pong arrives.
   private pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -185,6 +237,18 @@ export class Connection {
     // A fresh open() means the host wants the socket up; clear any prior
     // host-close intent so a later drop reconnects normally.
     this.closedByHost = false;
+
+    // A fresh open() is a clean slate: cancel any stale reconnect left over from
+    // a previous session, and reset the backoff so we do not start this connect
+    // from a long delay inherited from an earlier outage.
+    this.clearReconnectTimer();
+    this.reconnectAttempt = 0;
+
+    // Arm the watchdog for the lifetime of this open() session. It is cleared in
+    // close(); restarting it here (after stopping any prior one) keeps exactly
+    // one interval running even if open() is called more than once.
+    this.startWatchdog();
+
     return this.connectOnce();
   }
 
@@ -195,6 +259,10 @@ export class Connection {
   close(): void {
     this.closedByHost = true;
     this.stopLiveness();
+    // Cancel any queued reconnect and stop the watchdog: the host wants us down,
+    // so neither the loop nor its backstop should bring the socket back up.
+    this.clearReconnectTimer();
+    this.stopWatchdog();
     this.failPendingAck(new Error("Connection closed by host"));
     this.teardownSocket();
     this.setState("closed");
@@ -391,10 +459,20 @@ export class Connection {
 
   /**
    * Wait out the backoff, then try again. Each failed attempt grows the delay
-   * (capped, jittered). A failed reconnect simply schedules the next one, so the
-   * loop keeps trying until the socket comes back or the host calls `close()`.
+   * (capped, jittered). The loop is self-sustaining: a failed attempt schedules
+   * the NEXT one from its own catch, so it keeps trying until the socket comes
+   * back or the host calls `close()`.
+   *
+   * Idempotent by design. `handleClose` calls this when a socket drops, and a
+   * failed attempt's catch (below) calls it too; the `reconnectTimer` guard
+   * means whichever fires first wins and the other is a no-op, so we never stack
+   * two timers and double the reconnect rate.
    */
   private scheduleReconnect(reason: string): void {
+    // Already a retry queued -> nothing to do. This is the guard that makes the
+    // double call from onClose + catch-reschedule (and the watchdog) harmless.
+    if (this.reconnectTimer !== null) return;
+
     const delay = backoffDelay(this.reconnectAttempt, this.deps.reconnect);
     this.reconnectAttempt += 1;
     this.deps.logger.info("ws scheduling reconnect", {
@@ -403,15 +481,78 @@ export class Connection {
       reason,
     });
 
-    setTimeout(() => {
+    this.reconnectTimer = setTimeout(() => {
+      // Null the timer first so this slot is free again: a connect that fails
+      // below must be able to schedule the next retry, and the watchdog must see
+      // "no reconnect pending" while the attempt is in flight.
+      this.reconnectTimer = null;
+
       // The host may have called close() during the wait; honor it.
       if (this.closedByHost) return;
+
       this.connectOnce().catch(() => {
-        // A failed reconnect attempt is expected during an outage. The attempt
-        // ends in a close event, which schedules the next try, so there is
-        // nothing to do here but swallow the rejection.
+        // The attempt failed. Historically we relied on the socket's close event
+        // to schedule the next try -- but a failure WITHOUT a clean onClose (a
+        // mid-handshake network blip, or a transport that emits only onError)
+        // never fires that event, which is exactly how the client used to wedge
+        // (see the file header). So reschedule from here unconditionally; the
+        // idempotency guard above means this is a no-op if onClose already
+        // queued the next retry.
+        if (!this.closedByHost) {
+          this.scheduleReconnect("retry after failed attempt");
+        }
       });
     }, delay);
+  }
+
+  /** Cancel a queued reconnect, if any. Safe to call when none is pending. */
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  /**
+   * Start the reconnect watchdog (one interval for the life of an open()
+   * session). Stops any prior interval first so open() can be called repeatedly
+   * without leaking intervals.
+   */
+  private startWatchdog(): void {
+    this.stopWatchdog();
+    this.watchdogTimer = setInterval(
+      () => this.tickWatchdog(),
+      RECONNECT_WATCHDOG_MS,
+    );
+  }
+
+  /** Stop the reconnect watchdog (on host close). */
+  private stopWatchdog(): void {
+    if (this.watchdogTimer !== null) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
+  }
+
+  /**
+   * Belt-and-suspenders: if we are sitting `closed`, the host did not close us,
+   * and yet no reconnect is queued, the loop has stalled -- revive it.
+   *
+   * In normal operation this never fires: either we are open/connecting, or a
+   * reconnect timer is already pending. It exists only to guarantee that no
+   * unforeseen path (a future refactor, an exotic transport) can leave the
+   * client silently and permanently disconnected, which is the exact failure the
+   * self-rescheduling catch was added to prevent. The watchdog is the last line
+   * of defense behind it.
+   */
+  private tickWatchdog(): void {
+    if (
+      this.currentState === "closed" &&
+      !this.closedByHost &&
+      this.reconnectTimer === null
+    ) {
+      this.scheduleReconnect("watchdog: no reconnect pending");
+    }
   }
 
   /**
@@ -500,6 +641,9 @@ export class Connection {
 
   /** Notify every state subscriber, isolating a throwing handler. */
   private setState(s: ConnectionState): void {
+    // Record the state before notifying so the watchdog reads the authoritative
+    // current value, independent of any (possibly throwing) subscriber.
+    this.currentState = s;
     for (const cb of [...this.stateHandlers]) {
       try {
         cb(s);
