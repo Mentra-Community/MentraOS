@@ -11,15 +11,42 @@ type NitroTimerApi = {
 
 let nitroTimer: NitroTimerApi | null | undefined
 let nitroDisabled = false
+let warnedUnavailable = false
+
+function warnUnavailable(reason: string) {
+  if (warnedUnavailable) {
+    return
+  }
+  warnedUnavailable = true
+  console.warn(`BgTimer: ${reason}, using JS timers`)
+}
 
 function getNitroTimer(): NitroTimerApi | null {
   if (nitroDisabled || Platform.OS !== "android") {
     return null
   }
+
+  // react-native-nitro-bg-timer calls createHybridObject() at require() time. On dev
+  // builds with a stale native binary that throws NPE, React Native still surfaces a
+  // red LogBox error even when the exception is caught. Skip nitro in __DEV__ unless
+  // explicitly enabled after a native rebuild (bun android).
+  if (__DEV__ && process.env.EXPO_PUBLIC_USE_NITRO_BG_TIMER !== "true") {
+    warnUnavailable("nitro bg-timer disabled in dev (set EXPO_PUBLIC_USE_NITRO_BG_TIMER=true after native rebuild)")
+    return null
+  }
+
   if (nitroTimer !== undefined) {
     return nitroTimer
   }
+
   try {
+    const {isRuntimeAlive} = require("react-native-nitro-modules") as {isRuntimeAlive?: () => boolean}
+    if (typeof isRuntimeAlive === "function" && !isRuntimeAlive()) {
+      nitroTimer = null
+      warnUnavailable("nitro runtime is not alive")
+      return nitroTimer
+    }
+
     const {BackgroundTimer} = require("react-native-nitro-bg-timer") as {BackgroundTimer?: NitroTimerApi}
     nitroTimer =
       BackgroundTimer &&
@@ -29,9 +56,11 @@ function getNitroTimer(): NitroTimerApi | null {
         : null
   } catch {
     nitroTimer = null
+    nitroDisabled = true
   }
+
   if (!nitroTimer) {
-    console.warn("BgTimer: react-native-nitro-bg-timer unavailable, using JS timers")
+    warnUnavailable("react-native-nitro-bg-timer unavailable")
   }
   return nitroTimer
 }
