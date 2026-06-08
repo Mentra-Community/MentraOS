@@ -76,6 +76,7 @@ class GallerySyncService {
   // Keyed by `${client_id}:${last_sync_time}` — same pair = already tried, skip.
   private lastFullSyncRetryKey: string | null = null
   private wifiSettingsOpenedAt: number | null = null // Timestamp when user was sent to WiFi settings
+  private syncStartPromise: Promise<void> | null = null
 
   private constructor() {}
 
@@ -148,6 +149,7 @@ class GallerySyncService {
       this.hotspotRequestTimeout = null
     }
 
+    this.syncStartPromise = null
     this.isInitialized = false
     console.log("[GallerySyncService] Cleaned up")
   }
@@ -354,6 +356,18 @@ class GallerySyncService {
    * Start the sync process
    */
   async startSync(): Promise<void> {
+    if (this.syncStartPromise) {
+      console.log("[GallerySyncService] ⚠️ Sync start already in progress, joining existing attempt")
+      return this.syncStartPromise
+    }
+
+    this.syncStartPromise = this.runStartSync().finally(() => {
+      this.syncStartPromise = null
+    })
+    return this.syncStartPromise
+  }
+
+  private async runStartSync(): Promise<void> {
     console.log("[GallerySyncService] ========================================")
     console.log("[GallerySyncService] 🚀 SYNC START INITIATED")
     console.log("[GallerySyncService] ========================================")
@@ -369,9 +383,6 @@ class GallerySyncService {
             ip: glassesStore.hotspot.localIp,
           }
         : null
-
-    // Reset processing queue for new sync session
-    mediaProcessingQueue.reset()
 
     // R1: Check if already syncing (including requesting_hotspot to prevent double-tap)
     if (
@@ -404,6 +415,9 @@ class GallerySyncService {
       connected: glassesConnected,
       hotspotEnabled: glassesHotspot !== null,
     })
+
+    // Reset processing queue only after pre-flight passes — avoids clobbering an active session
+    mediaProcessingQueue.reset()
 
     // Request all permissions upfront so user isn't interrupted during WiFi/download
     console.log("[GallerySyncService] 🔐 Step 1/6: Requesting permissions...")
@@ -2157,6 +2171,9 @@ class GallerySyncService {
    * Check if sync is currently in progress
    */
   isSyncing(): boolean {
+    if (this.syncStartPromise) {
+      return true
+    }
     const store = useGallerySyncStore.getState()
     return (
       store.syncState === "syncing" || store.syncState === "connecting_wifi" || store.syncState === "requesting_hotspot"
