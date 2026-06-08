@@ -3947,23 +3947,22 @@ class G2: NSObject, SGCManager {
             Bridge.log("G2: dashboard closed / shutdown - dashboardShowing=\(dashboardShowing)")
             let useNativeDashboard = DeviceStore.shared.get("bluetooth", "use_native_dashboard") as? Bool ?? false
             if !useNativeDashboard {
-                // make sure the container exists:
-                DeviceManager.shared.sendCurrentState()
-                // re-send mic on / if it's enabled:
-                let micEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
-                if micEnabled {
-                    restartMic()
+                dashboardShowing = 0
+                // rebuild state:
+                Task {
+                    await rebuildState()
+                    // set the mic back on if it should be on
+                    let micEnabled = DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
+                    if micEnabled {
+                        restartMic()
+                    }
                 }
-                // reset the text container (different from clearDisplay())
-                // sendTextWall(" ")
-                // createPageWithText(" ")
+                return
             } else {
                 // if we aren't trying to show the dashboard
                 // then we need to turn the mic back on and display the mentra main page:
                 if dashboardShowing <= 1 {
                     dashboardShowing = 0
-                    // make sure the container exists:
-                    // DeviceManager.shared.sendCurrentState()
                     // rebuild state:
                     Task {
                         await rebuildState()

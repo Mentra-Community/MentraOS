@@ -4021,13 +4021,20 @@ class G2 : SGCManager() {
             Bridge.log("G2: dashboard closed / shutdown - dashboardShowing=$dashboardShowing")
             val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
             if (!useNativeDashboard) {
-                // make sure the container exists:
-                DeviceManager.getInstance().sendCurrentState()
-                // re-send mic on / if it's enabled:
+                dashboardShowing = 0
+                // Rebuild the page from cached containers, then reconcile against
+                // DeviceManager's authoritative current view so the glasses match the phone
+                // (not just the last-cached G2 containers) after returning from the dashboard.
+                displayScope.launch {
+                    displayMutex.withLock { rebuildState() }
+                    DeviceManager.getInstance().sendCurrentState()
+                }
+                // set the mic back on if it should be on
                 val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
                 if (micEnabled) {
                     restartMic()
                 }
+                return
             } else {
                 // if we aren't trying to show the dashboard
                 // then we need to turn the mic back on and display the mentra main page:
