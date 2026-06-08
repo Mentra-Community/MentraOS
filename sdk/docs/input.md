@@ -58,6 +58,7 @@ Subscribes to physical button press events.
 
 ```ts
 interface ButtonPressData {
+  // Mentra Live's right action button reports "action".
   buttonId: string
   pressType: "short" | "long"
 }

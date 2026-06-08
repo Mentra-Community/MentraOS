@@ -67,7 +67,7 @@ export interface OpenDashboard extends BaseMessage {
 //===========================================================
 
 /**
- * Button press event from glasses
+ * Button press event from glasses. Mentra Live's right action button is "action".
  */
 export interface ButtonPress extends BaseMessage {
   type: GlassesToCloudMessageType.BUTTON_PRESS;

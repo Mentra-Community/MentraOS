@@ -9,6 +9,7 @@ export type GlassesNotReadyEvent = {
 // timestamp} (see BluetoothSdkModule on both iOS and Android). Consumers must
 // filter on `pressType` / the "button_press" listener name, never `event.type`.
 export type ButtonPressEvent = {
+  /** Mentra Live reports its right action button as "action". */
   buttonId: string
   pressType: "long" | "short"
   timestamp: number

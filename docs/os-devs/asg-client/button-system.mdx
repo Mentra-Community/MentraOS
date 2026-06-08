@@ -4,7 +4,7 @@ The button press system in ASG Client handles physical button interactions on th
 
 ## How It Works
 
-1. The user presses the camera button on the glasses.
+1. The user presses the right action button on the glasses.
 2. The BES microcontroller classifies the press and sends a K900 command:
    - `cs_pho` for short press
    - `cs_vdo` for long press
@@ -14,18 +14,18 @@ The button press system in ASG Client handles physical button interactions on th
 
 ## Button Press Event
 
-Every camera-button press is forwarded to the phone when Bluetooth is connected:
+Every action-button press is forwarded to the phone when Bluetooth is connected:
 
 ```json
 {
   "type": "button_press",
-  "buttonId": "camera",
+  "buttonId": "action",
   "pressType": "short",
   "timestamp": 1234567890
 }
 ```
 
-`pressType` is `"short"` or `"long"`. Apps can react to this event even when the glasses also capture locally.
+`buttonId` is `"action"` for the Mentra Live right action button. `pressType` is `"short"` or `"long"`. Apps can react to this event even when the glasses also capture locally.
 
 ## Local Capture Gate
 
@@ -58,7 +58,7 @@ Settings used:
 
 ## Other Button Commands
 
-Besides the camera button, ASG Client also handles:
+Besides the right action button, ASG Client also handles:
 
 - Swipe gestures from arm swipes
 - Battery status updates

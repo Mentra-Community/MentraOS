@@ -168,6 +168,7 @@ export function DeviceScreen() {
   })
 
   useBluetoothEvent('button_press', (event) => {
+    // Mentra Live's right action button reports event.buttonId === 'action'.
     console.log('Glasses button:', event.buttonId, event.pressType)
   })
 

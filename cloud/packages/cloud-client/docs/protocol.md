@@ -85,7 +85,7 @@ Messages that provide sensor data or user interactions.
 ```typescript
 {
   "type": "button_press",
-  "buttonId": "power",
+  "buttonId": "action",
   "pressType": "short",  // or "long"
   "timestamp": "2024-01-01T00:00:00.000Z"
 }

@@ -162,18 +162,18 @@ public class K900CommandHandler {
     }
 
     /**
-     * Handle camera button short press 1. Immediately send RGB LED authority claim 2. After 5
+     * Handle action button short press 1. Immediately send RGB LED authority claim 2. After 5
      * seconds, activate blue LED
      */
     private void handleCameraButtonShortPress() {
-        Log.d(TAG, "📸 Camera button short pressed - handling with configurable mode");
+        Log.d(TAG, "📸 Action button short pressed - handling with configurable mode");
 
         handleConfigurableButtonPress(false); // false = short press
     }
 
-    /** Handle camera button long press */
+    /** Handle action button long press */
     private void handleCameraButtonLongPress() {
-        Log.d(TAG, "📹 Camera button long pressed - handling with configurable mode");
+        Log.d(TAG, "📹 Action button long pressed - handling with configurable mode");
         handleConfigurableButtonPress(true); // true = long press
     }
 
@@ -1023,7 +1023,7 @@ public class K900CommandHandler {
             try {
                 JSONObject buttonObject = new JSONObject();
                 buttonObject.put("type", "button_press");
-                buttonObject.put("buttonId", "camera");
+                buttonObject.put("buttonId", "action");
                 buttonObject.put("pressType", isLongPress ? "long" : "short");
                 buttonObject.put("timestamp", System.currentTimeMillis());
 
@@ -1108,7 +1108,7 @@ public class K900CommandHandler {
                                     commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
             if (sent) {
-                Log.i(TAG, "✅ 💙 Blue RGB LED activated successfully via camera button");
+                Log.i(TAG, "✅ 💙 Blue RGB LED activated successfully via action button");
             } else {
                 Log.e(TAG, "❌ 💙 Failed to activate blue RGB LED");
             }

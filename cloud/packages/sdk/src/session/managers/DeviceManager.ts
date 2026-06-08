@@ -57,7 +57,7 @@ import type { PermissionsManager } from "./PermissionsManager";
  * Button press event from the glasses hardware.
  */
 export interface ButtonPressEvent {
-  /** Identifier of the button that was pressed. */
+  /** Identifier of the button that was pressed. Mentra Live's right action button is "action". */
   buttonId: string;
   /** Whether the press was short or long. */
   pressType: "short" | "long";
