@@ -20,6 +20,12 @@ The commands below assume the full MentraOS Android Gradle build layout, where
 the SDK module is included under `mobile/android` as `:mentra-bluetooth-sdk`.
 That is the layout used for the `0.1.7` Maven Central release.
 
+The public SDK publication uses `-PmentraPublicSdk=true`. Leave this property
+off for normal MentraOS Android app builds so the app keeps the optional local
+STT, VAD, and Vuzix integrations it needs. With the property enabled, those
+MentraOS-only integrations are compile-only for the SDK artifact and are not
+published as runtime transitive dependencies.
+
 ## Prerequisites
 
 - A clean MentraOS checkout on the release source branch.
@@ -56,7 +62,8 @@ cd mobile/android
 
 MENTRA_MAVEN_VERSION="${version}" ./gradlew \
   :lc3Lib:publishToMavenLocal \
-  :mentra-bluetooth-sdk:publishToMavenLocal
+  :mentra-bluetooth-sdk:publishToMavenLocal \
+  -PmentraPublicSdk=true
 ```
 
 Use this only as a local smoke check. Consumer validation for a Central release
@@ -74,7 +81,8 @@ From `mobile/android`:
 MENTRA_MAVEN_VERSION="${version}" ./gradlew \
   :lc3Lib:publishReleasePublicationToSonatypeCentralRepository \
   :mentra-bluetooth-sdk:publishReleasePublicationToSonatypeCentralRepository \
-  :mentra-bluetooth-sdk:uploadSonatypeCentralDeployment
+  :mentra-bluetooth-sdk:uploadSonatypeCentralDeployment \
+  -PmentraPublicSdk=true
 ```
 
 The upload task requests a Sonatype Central deployment upload for the
@@ -135,10 +143,9 @@ curl -fsS \
 ```
 
 Then build a consumer app against public repositories. The Partner Kit Android
-example keeps `google()`, `mavenCentral()`, and JitPack configured because the
-SDK has transitive runtime dependencies resolved from those repositories. Remove
-or bypass `mavenLocal()` when checking a completed Central release so the test
-cannot pick up stale local artifacts.
+example should only need `google()` and `mavenCentral()` for a completed public
+release. Remove or bypass `mavenLocal()` when checking a completed Central
+release so the test cannot pick up stale local artifacts.
 
 If the public release is not visible yet, Maven Central mirror propagation can
 lag briefly. Retry after the artifact appears under
