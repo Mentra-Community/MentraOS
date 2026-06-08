@@ -52,9 +52,11 @@ public final class MentraBluetoothSDK {
     private var defaultDeviceApplyGeneration = 0
     private var activeScanSessions: [UUID: ActiveScanSession] = [:]
     private var activeStreamKeepAlive: ActiveStreamKeepAlive?
+    private let analytics: BluetoothSdkAnalytics
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
         self.configuration = configuration
+        analytics = BluetoothSdkAnalytics(configuration: configuration.analytics.withSurface("ios"))
         _ = BluetoothAvailability.shared
         bridgeEventSinkId = Bridge.addEventSink { [weak self] eventName, data in
             Task { @MainActor [weak self] in
@@ -66,6 +68,7 @@ public final class MentraBluetoothSDK {
                 self?.dispatchStoreUpdate(category, changes)
             }
         }
+        analytics.captureStarted()
     }
 
     public var state: MentraBluetoothState {
@@ -98,6 +101,11 @@ public final class MentraBluetoothSDK {
 
     public func getDefaultDevice() -> Device? {
         currentDefaultDevice()
+    }
+
+    public func configureAnalytics(_ configuration: BluetoothSdkAnalyticsConfiguration) {
+        analytics.configure(configuration)
+        analytics.observeGlassesStatus(glassesStatus)
     }
 
     public func setDefaultDevice(_ device: Device?) {
@@ -618,6 +626,7 @@ public final class MentraBluetoothSDK {
     private func dispatchStoreUpdate(_ category: String, _ changes: [String: Any]) {
         switch ObservableStore.normalizeCategory(category) {
         case "glasses":
+            analytics.observeGlassesStatus(glassesStatus)
             let nextState = state
             delegate?.mentraBluetoothSDK(self, didUpdate: nextState)
             delegate?.mentraBluetoothSDK(self, didUpdateGlasses: nextState.glasses)

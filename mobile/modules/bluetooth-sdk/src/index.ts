@@ -54,6 +54,7 @@ const addListener: BluetoothSdkPublicModule["addListener"] = (eventName, listene
 
 export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   addListener,
+  configureAnalytics: PrivateBluetoothSdkModule.configureAnalytics.bind(PrivateBluetoothSdkModule),
   getDefaultDevice: PrivateBluetoothSdkModule.getDefaultDevice.bind(PrivateBluetoothSdkModule),
   setDefaultDevice: PrivateBluetoothSdkModule.setDefaultDevice.bind(PrivateBluetoothSdkModule),
   clearDefaultDevice: PrivateBluetoothSdkModule.clearDefaultDevice.bind(PrivateBluetoothSdkModule),
@@ -135,6 +136,7 @@ export type {
   BluetoothSdkEventListener,
   BluetoothSdkEventMap,
   BluetoothSdkEventName,
+  BluetoothSdkAnalyticsOptions,
   BluetoothSdkPublicModule as BluetoothSdkModule,
   BluetoothSdkSubscription,
   ButtonPhotoSize,

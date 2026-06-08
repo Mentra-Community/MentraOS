@@ -710,11 +710,26 @@ export type BluetoothSdkSubscription = {
 
 export type BluetoothSdkEvent = BluetoothSdkEventMap[BluetoothSdkEventName]
 
+export type BluetoothSdkAnalyticsOptions = {
+  /**
+   * Set to false to leave SDK analytics disabled. `disabled` is also accepted
+   * for callers that prefer opt-out naming.
+   */
+  enabled?: boolean
+  disabled?: boolean
+  /** PostHog project API key. This is PostHog's public write token, not a private API secret. */
+  postHogApiKey?: string
+  /** PostHog ingestion host. Defaults to https://us.i.posthog.com. */
+  postHogHost?: string
+}
+
 export interface BluetoothSdkPublicModule {
   addListener<EventName extends BluetoothSdkEventName>(
     eventName: EventName,
     listener: BluetoothSdkEventListener<EventName>,
   ): BluetoothSdkSubscription
+
+  configureAnalytics(options: BluetoothSdkAnalyticsOptions): Promise<void>
 
   getDefaultDevice(): Promise<Device | null>
   setDefaultDevice(device: Device | null): Promise<void>

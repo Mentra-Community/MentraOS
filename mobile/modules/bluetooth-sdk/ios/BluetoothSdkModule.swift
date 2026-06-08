@@ -94,6 +94,14 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
+        AsyncFunction("configureAnalytics") { (options: [String: Any]) in
+            await MainActor.run {
+                self.bluetoothSdk().configureAnalytics(
+                    BluetoothSdkAnalyticsConfiguration(dictionary: options, surface: "react_native")
+                )
+            }
+        }
+
         AsyncFunction("update") { (category: String, values: [String: Any]) in
             await MainActor.run {
                 let normalizedCategory = ObservableStore.normalizeCategory(category)

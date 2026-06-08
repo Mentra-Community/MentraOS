@@ -2,6 +2,7 @@ import {NativeModule, requireNativeModule} from "expo"
 
 import {
   BluetoothSettingsUpdate,
+  BluetoothSdkAnalyticsOptions,
   BluetoothSdkPublicModule,
   BluetoothSdkModuleEvents,
   BluetoothStatus,
@@ -53,6 +54,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   getBluetoothStatus(): Promise<PublicBluetoothStatus>
   getDefaultDevice(): Promise<Device | null>
   update(category: ObservableStoreCategory, values: object): Promise<void>
+  configureAnalytics(options: BluetoothSdkAnalyticsOptions): Promise<void>
 
   // Display Commands
   displayEvent(params: Record<string, unknown>): Promise<void>

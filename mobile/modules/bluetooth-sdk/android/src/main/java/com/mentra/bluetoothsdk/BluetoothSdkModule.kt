@@ -253,6 +253,10 @@ class BluetoothSdkModule : Module() {
 
         Function("getDefaultDevice") { sdk?.getDefaultDevice()?.toMap() }
 
+        AsyncFunction("configureAnalytics") { options: Map<String, Any?> ->
+            sdk?.configureAnalytics(BluetoothSdkAnalyticsConfig.fromMap(options, surface = "react_native"))
+        }
+
         Function("set") { category: String, key: String, value: Any? ->
             if (value != null) {
                 DeviceStore.apply(category, key, value)

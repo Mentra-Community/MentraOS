@@ -70,6 +70,98 @@ sdk.invalidate()
 
 Keep one SDK instance per active app session. The SDK owns Bluetooth connection state, native event delivery, and cleanup. Your app owns user identity, UI state, and whether a default device record is persisted across app restarts.
 
+## Optional Analytics
+
+The SDK can report anonymous, opt-in usage events to Mentra's PostHog project:
+
+| Event | Fires When |
+| --- | --- |
+| `bluetooth_sdk_started` | Once per app runtime after analytics is configured for that SDK instance. |
+| `bluetooth_sdk_glasses_connected` | When SDK status transitions from not connected to connected. Failed scans and failed connection attempts are not counted. |
+
+Analytics is disabled by default. It starts only when the consuming app passes a
+PostHog project API key. The key is PostHog's public project write token, not a
+private PostHog personal API key.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+import BluetoothSdk from '@mentra/bluetooth-sdk';
+
+await BluetoothSdk.configureAnalytics({
+  postHogApiKey: process.env.EXPO_PUBLIC_MENTRA_BLUETOOTH_POSTHOG_API_KEY,
+  postHogHost: process.env.EXPO_PUBLIC_MENTRA_BLUETOOTH_POSTHOG_HOST ?? 'https://us.i.posthog.com',
+});
+
+// Opt out explicitly:
+await BluetoothSdk.configureAnalytics({enabled: false});
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+val sdk = MentraBluetoothSdk.create(
+    context = applicationContext,
+    config = MentraBluetoothSdkConfig(
+        analytics = BluetoothSdkAnalyticsConfig(
+            postHogApiKey = BuildConfig.MENTRA_BLUETOOTH_POSTHOG_API_KEY,
+            postHogHost = BuildConfig.MENTRA_BLUETOOTH_POSTHOG_HOST,
+        )
+    ),
+    listener = listener,
+)
+
+// Opt out explicitly:
+sdk.configureAnalytics(BluetoothSdkAnalyticsConfig.disabled())
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+let sdk = MentraBluetoothSDK(
+    configuration: MentraBluetoothSDKConfiguration(
+        analytics: BluetoothSdkAnalyticsConfiguration(
+            postHogApiKey: Bundle.main.object(forInfoDictionaryKey: "MENTRA_BLUETOOTH_POSTHOG_API_KEY") as? String,
+            postHogHost: Bundle.main.object(forInfoDictionaryKey: "MENTRA_BLUETOOTH_POSTHOG_HOST") as? String
+                ?? BluetoothSdkAnalyticsConfiguration.defaultPostHogHost
+        )
+    )
+)
+
+// Opt out explicitly:
+sdk.configureAnalytics(.disabled)
+```
+
+  </Tab>
+</Tabs>
+
+Use `https://us.i.posthog.com` for US Cloud, `https://eu.i.posthog.com` for EU
+Cloud, or the ingestion host for a self-hosted PostHog instance.
+
+Captured properties are intentionally narrow:
+
+| Property | Meaning |
+| --- | --- |
+| `event_source` | Always `mentra_bluetooth_sdk`. |
+| `sdk_platform` | Native platform that sends the event: `android` or `ios`. |
+| `sdk_surface` | Public SDK surface: `react_native`, `android`, or `ios`. |
+| `sdk_version` | Bluetooth SDK version. |
+| `app_package` / `app_bundle_identifier` | Consuming app identifier. |
+| `os_platform`, `os_version` | Phone OS metadata. |
+| `event_kind` | `sdk_started` or `glasses_connected`. |
+| `fully_booted` | Connection event only; whether the connected status already reports fully booted. |
+| `glasses_model` | Connection event only; included only when the SDK has a non-empty model value. |
+
+The SDK does not upload BLE MAC addresses, CoreBluetooth identifiers, serial
+numbers, Bluetooth device names, user ids, tokens, Wi-Fi credentials,
+microphone data, photos, or transcripts. It stores a locally generated
+anonymous SDK install id and sends it as PostHog `distinct_id`; events include
+`$process_person_profile: false` so PostHog does not create person profiles for
+these SDK usage pings.
+
 ## Connection
 
 <Tabs>

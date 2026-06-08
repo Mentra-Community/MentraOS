@@ -149,6 +149,45 @@ uses a CoreBluetooth identifier when available, and the SDK falls back to
 platform reports RSSI, so picker UI should handle `undefined` and avoid
 reordering rows just because RSSI metadata arrives later.
 
+## Optional Mentra Analytics
+
+The SDK can send two opt-in, anonymous usage events to Mentra's PostHog project:
+
+- `bluetooth_sdk_started`: sent once per app runtime after SDK analytics is configured.
+- `bluetooth_sdk_glasses_connected`: sent when SDK status transitions from not connected to connected.
+
+Analytics is disabled by default. Configure it only after your app has a Mentra
+Bluetooth SDK PostHog project API key:
+
+```ts
+import BluetoothSdk from '@mentra/bluetooth-sdk'
+
+await BluetoothSdk.configureAnalytics({
+  postHogApiKey: process.env.EXPO_PUBLIC_MENTRA_BLUETOOTH_POSTHOG_API_KEY,
+  postHogHost: process.env.EXPO_PUBLIC_MENTRA_BLUETOOTH_POSTHOG_HOST ?? 'https://us.i.posthog.com',
+})
+```
+
+The PostHog project API key is a public analytics write token, not a private
+PostHog personal API key. Use `https://us.i.posthog.com` for US Cloud,
+`https://eu.i.posthog.com` for EU Cloud, or the ingestion host for a self-hosted
+PostHog instance.
+
+To explicitly disable analytics:
+
+```ts
+await BluetoothSdk.configureAnalytics({enabled: false})
+```
+
+Captured properties are limited to non-sensitive SDK/app metadata:
+`event_source`, `sdk_platform`, `sdk_surface`, `sdk_version`, the app package or
+bundle identifier, OS platform/version, `event_kind`, and for connection events
+only `fully_booted` plus a glasses model value when the SDK knows it. The SDK
+does not upload BLE MAC addresses, CoreBluetooth identifiers, serial numbers,
+Bluetooth device names, user ids, tokens, Wi-Fi credentials, microphone data,
+photos, or transcripts. PostHog receives a locally generated anonymous SDK
+install id as `distinct_id`, and events include `$process_person_profile: false`.
+
 ## React Hooks
 
 React Native apps can import optional lifecycle helpers from the `react`
