@@ -25,7 +25,7 @@ private struct GalleryServerCheck {
 }
 
 private func describeSettingsAck(_ ack: SettingsAckEvent) -> String {
-    var parts = ["\(ack.setting) \(ack.status)", ack.ready ? "ready" : "not ready"]
+    var parts = ["\(ack.setting) \(ack.status)"]
     if let fov = ack.values["fov"] {
         parts.append("fov=\(fov)")
     }

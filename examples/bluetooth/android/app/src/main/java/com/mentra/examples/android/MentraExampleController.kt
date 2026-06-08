@@ -2590,7 +2590,6 @@ fun summarize(values: Map<String, Any>): String =
 fun describeSettingsAck(ack: SettingsAckEvent): String =
     listOfNotNull(
         "${ack.setting} ${ack.status}",
-        if (ack.ready) "ready" else "not ready",
         ack.values.intValue("fov")?.let { "fov=$it" },
         ack.values.intValue("roiPosition")?.let { "roi=$it" },
         ack.errorCode,

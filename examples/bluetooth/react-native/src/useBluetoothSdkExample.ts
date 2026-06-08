@@ -3126,9 +3126,6 @@ function summarizeMap(values: object) {
 
 function describeSettingsAck(ack: SettingsAckEvent) {
   const parts = [`${ack.setting} ${ack.status}`];
-  if (ack.ready !== undefined) {
-    parts.push(ack.ready ? 'ready' : 'not ready');
-  }
   if (ack.fov !== undefined) {
     parts.push(`fov=${ack.fov}`);
   }
