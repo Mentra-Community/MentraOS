@@ -419,22 +419,23 @@ class MentraBluetoothSdk private constructor(
     fun setGalleryModeEnabled(enabled: Boolean): SettingsAckEvent =
         performSettingsCommand(
             setting = "gallery_mode",
-            updateStore = { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "gallery_mode", enabled) },
+            updateStore = { _ -> DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "gallery_mode", enabled) },
             send = { requestId -> deviceManager.sendGalleryMode(requestId, enabled) },
         )
 
     private fun performSettingsCommand(
         setting: String,
-        updateStore: () -> Unit,
+        updateStore: (SettingsAckEvent) -> Unit,
         send: (String) -> Unit,
     ): SettingsAckEvent {
         val requestId = "settings-$setting-${UUID.randomUUID()}"
         val pending = PendingResponse<SettingsAckEvent>("set $setting")
         pendingSettingsRequests[requestId] = pending
         try {
-            updateStore()
             send(requestId)
-            return pending.await()
+            val ack = pending.await()
+            updateStore(ack)
+            return ack
         } finally {
             pendingSettingsRequests.remove(requestId, pending)
         }
@@ -447,7 +448,7 @@ class MentraBluetoothSdk private constructor(
     fun setButtonPhotoSettings(size: ButtonPhotoSize): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_photo",
-            updateStore = { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", size.value) },
+            updateStore = { _ -> DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", size.value) },
             send = { requestId -> deviceManager.sendButtonPhotoSettings(requestId, size.value) },
         )
 
@@ -457,7 +458,7 @@ class MentraBluetoothSdk private constructor(
     fun setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_video_recording",
-            updateStore = {
+            updateStore = { _ ->
                 DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_width", width)
                 DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_height", height)
                 DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_fps", fps)
@@ -473,30 +474,32 @@ class MentraBluetoothSdk private constructor(
     fun setButtonCameraLed(enabled: Boolean): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_camera_led",
-            updateStore = { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_camera_led", enabled) },
+            updateStore = { _ -> DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_camera_led", enabled) },
             send = { requestId -> deviceManager.sendButtonCameraLedSetting(requestId, enabled) },
         )
 
     fun setButtonMaxRecordingTime(minutes: Int): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_max_recording_time",
-            updateStore = { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_max_recording_time", minutes) },
+            updateStore = { _ ->
+                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_max_recording_time", minutes)
+            },
             send = { requestId -> deviceManager.sendButtonMaxRecordingTime(requestId, minutes) },
         )
 
     fun setCameraFov(fov: CameraFov): CameraFovResult {
         val ack = performSettingsCommand(
             setting = "camera_fov",
-            updateStore = {
-                DeviceStore.set(
-                    ObservableStore.BLUETOOTH_CATEGORY,
-                    "camera_fov",
-                    mapOf("fov" to fov.fov, "roi_position" to fov.roiPosition.value),
-                )
-            },
+            updateStore = { _ -> },
             send = { requestId -> deviceManager.sendCameraFovSetting(requestId, fov.fov, fov.roiPosition.value) },
         )
-        return CameraFovResult.fromAck(ack, fov)
+        val result = CameraFovResult.fromAck(ack, fov)
+        DeviceStore.set(
+            ObservableStore.BLUETOOTH_CATEGORY,
+            "camera_fov",
+            mapOf("fov" to result.fov, "roi_position" to result.roiPosition.value),
+        )
+        return result
     }
 
     fun setMicState(

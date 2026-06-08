@@ -406,23 +406,23 @@ public final class MentraBluetoothSDK {
     public func setGalleryModeEnabled(_ enabled: Bool) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "gallery_mode",
-            updateStore: { DeviceStore.shared.set(ObservableStore.bluetoothCategory, "gallery_mode", enabled) },
+            updateStore: { _ in DeviceStore.shared.set(ObservableStore.bluetoothCategory, "gallery_mode", enabled) },
             send: { requestId in try DeviceManager.shared.sendGalleryMode(requestId: requestId, enabled: enabled) }
         )
     }
 
     private func performSettingsCommand(
         setting: String,
-        updateStore: () -> Void,
+        updateStore: (SettingsAckEvent) -> Void,
         send: (String) throws -> Void
     ) async throws -> SettingsAckEvent {
         let requestId = "settings-\(setting)-\(UUID().uuidString)"
         let pending = PendingResponse<SettingsAckEvent>(operation: "set \(setting)")
         pendingSettingsRequests[requestId] = pending
         do {
-            updateStore()
             try send(requestId)
             let ack = try await pending.wait()
+            updateStore(ack)
             pendingSettingsRequests.removeValue(forKey: requestId)
             return ack
         } catch {
@@ -438,7 +438,7 @@ public final class MentraBluetoothSDK {
     public func setButtonPhotoSettings(size: ButtonPhotoSize) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_photo",
-            updateStore: { DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_size", size.rawValue) },
+            updateStore: { _ in DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_size", size.rawValue) },
             send: { requestId in try DeviceManager.shared.sendButtonPhotoSettings(requestId: requestId, size: size.rawValue) }
         )
     }
@@ -450,7 +450,7 @@ public final class MentraBluetoothSDK {
     public func setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_video_recording",
-            updateStore: {
+            updateStore: { _ in
                 DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_width", width)
                 DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_height", height)
                 DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_video_fps", fps)
@@ -473,7 +473,7 @@ public final class MentraBluetoothSDK {
     public func setButtonCameraLed(enabled: Bool) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_camera_led",
-            updateStore: { DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_camera_led", enabled) },
+            updateStore: { _ in DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_camera_led", enabled) },
             send: { requestId in try DeviceManager.shared.sendButtonCameraLedSetting(requestId: requestId, enabled: enabled) }
         )
     }
@@ -481,7 +481,7 @@ public final class MentraBluetoothSDK {
     public func setButtonMaxRecordingTime(minutes: Int) async throws -> SettingsAckEvent {
         try await performSettingsCommand(
             setting: "button_max_recording_time",
-            updateStore: {
+            updateStore: { _ in
                 DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_max_recording_time", minutes)
             },
             send: { requestId in
@@ -493,7 +493,7 @@ public final class MentraBluetoothSDK {
     public func setCameraFov(_ fov: CameraFov) async throws -> CameraFovResult {
         let ack = try await performSettingsCommand(
             setting: "camera_fov",
-            updateStore: { DeviceStore.shared.set(ObservableStore.bluetoothCategory, "camera_fov", fov.value) },
+            updateStore: { _ in },
             send: { requestId in
                 try DeviceManager.shared.sendCameraFovSetting(
                     requestId: requestId,
@@ -502,7 +502,13 @@ public final class MentraBluetoothSDK {
                 )
             }
         )
-        return try CameraFovResult.from(ack: ack, fallback: fov)
+        let result = try CameraFovResult.from(ack: ack, fallback: fov)
+        DeviceStore.shared.set(
+            ObservableStore.bluetoothCategory,
+            "camera_fov",
+            ["fov": result.fov, "roi_position": result.roiPosition.rawValue]
+        )
+        return result
     }
 
     public func setMicState(
