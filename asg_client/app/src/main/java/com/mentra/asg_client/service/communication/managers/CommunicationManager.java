@@ -7,6 +7,7 @@ import com.mentra.asg_client.service.communication.interfaces.ICommunicationMana
 import com.mentra.asg_client.service.communication.reliability.ReliableMessageManager;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.List;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -162,15 +163,14 @@ public class CommunicationManager
             try {
                 // Send networks in chunks of 4 to avoid BLE message size issues
                 int CHUNK_SIZE = 4;
-
-                if (networks == null || networks.isEmpty()) {
-                    return;
-                }
+                List<String> scanNetworks =
+                        networks != null ? networks : Collections.emptyList();
 
                 // Split and send in chunks
-                for (int i = 0; i < networks.size(); i += CHUNK_SIZE) {
-                    int endIdx = Math.min(i + CHUNK_SIZE, networks.size());
-                    List<String> chunk = networks.subList(i, endIdx);
+                for (int i = 0; i < scanNetworks.size(); i += CHUNK_SIZE) {
+                    int endIdx = Math.min(i + CHUNK_SIZE, scanNetworks.size());
+                    List<String> chunk = scanNetworks.subList(i, endIdx);
+                    boolean scanComplete = endIdx >= scanNetworks.size();
 
                     JSONObject response = new JSONObject();
                     response.put("type", "wifi_scan_result");
@@ -182,6 +182,7 @@ public class CommunicationManager
                         Log.d(TAG, "📡 📶 Found network: " + network);
                     }
                     response.put("networks", networksArray);
+                    response.put("scan_complete", scanComplete);
 
                     String jsonString = response.toString();
                     Log.d(TAG, "📡 📤 Sending WiFi scan results chunk: " + jsonString);
@@ -203,13 +204,33 @@ public class CommunicationManager
                                             : "❌ Failed to send WiFi scan chunk"));
 
                     // Small delay between chunks
-                    if (i + CHUNK_SIZE < networks.size()) {
+                    if (i + CHUNK_SIZE < scanNetworks.size()) {
                         try {
                             Thread.sleep(100);
                         } catch (InterruptedException e) {
                             Log.e(TAG, "Interrupted while sending chunks", e);
                         }
                     }
+                }
+                if (scanNetworks.isEmpty()) {
+                    JSONObject response = new JSONObject();
+                    response.put("type", "wifi_scan_result");
+                    response.put("timestamp", System.currentTimeMillis());
+                    response.put("networks", new org.json.JSONArray());
+                    response.put("scan_complete", true);
+
+                    String jsonString = response.toString();
+                    Log.d(TAG, "📡 📤 Sending empty WiFi scan result: " + jsonString);
+                    boolean sent =
+                            serviceManager
+                                    .getBluetoothManager()
+                                    .sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                    Log.d(
+                            TAG,
+                            "📡 "
+                                    + (sent
+                                            ? "✅ Empty WiFi scan result sent successfully"
+                                            : "❌ Failed to send empty WiFi scan result"));
                 }
 
             } catch (JSONException e) {
@@ -229,7 +250,8 @@ public class CommunicationManager
     }
 
     @Override
-    public void sendWifiScanResultsOverBleEnhanced(List<NetworkInfo> networks) {
+    public void sendWifiScanResultsOverBleEnhanced(
+            List<NetworkInfo> networks, boolean scanComplete) {
         Log.d(TAG, "📡 =========================================");
         Log.d(TAG, "📡 SEND ENHANCED WIFI SCAN RESULTS OVER BLE");
         Log.d(TAG, "📡 =========================================");
@@ -241,15 +263,15 @@ public class CommunicationManager
             Log.d(TAG, "📡 ✅ Service manager and Bluetooth manager available");
 
             try {
-                if (networks == null || networks.isEmpty()) {
-                    return;
-                }
+                List<NetworkInfo> scanNetworks =
+                        networks != null ? networks : Collections.emptyList();
 
                 // Send one network at a time to keep message size minimal
-                for (NetworkInfo network : networks) {
+                for (NetworkInfo network : scanNetworks) {
                     JSONObject response = new JSONObject();
                     response.put("type", "wifi_scan_result");
                     response.put("timestamp", System.currentTimeMillis());
+                    response.put("scan_complete", false);
 
                     // Legacy format for backwards compatibility
                     org.json.JSONArray legacyArray = new org.json.JSONArray();
@@ -290,13 +312,34 @@ public class CommunicationManager
                                             : "❌ Failed to send enhanced WiFi scan result"));
 
                     // Small delay between individual network messages
-                    if (networks.size() > 1) {
+                    if (scanNetworks.size() > 1) {
                         try {
                             Thread.sleep(50);
                         } catch (InterruptedException e) {
                             Log.e(TAG, "Interrupted while sending individual networks", e);
                         }
                     }
+                }
+                if (scanComplete) {
+                    JSONObject response = new JSONObject();
+                    response.put("type", "wifi_scan_result");
+                    response.put("timestamp", System.currentTimeMillis());
+                    response.put("scan_complete", scanComplete);
+                    response.put("networks", new org.json.JSONArray());
+                    response.put("networks_neo", new org.json.JSONArray());
+
+                    String jsonString = response.toString();
+                    Log.d(TAG, "📡 📤 Sending empty enhanced WiFi scan result: " + jsonString);
+                    boolean sent =
+                            serviceManager
+                                    .getBluetoothManager()
+                                    .sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                    Log.d(
+                            TAG,
+                            "📡 "
+                                    + (sent
+                                            ? "✅ Empty enhanced WiFi scan result sent successfully"
+                                            : "❌ Failed to send empty enhanced WiFi scan result"));
                 }
 
             } catch (JSONException e) {

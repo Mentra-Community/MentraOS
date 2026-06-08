@@ -409,7 +409,8 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(rgbLedCommandHandler);
             Log.d(TAG, "✅ Registered RgbLedCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new GalleryModeCommandHandler(serviceManager));
+            commandHandlerRegistry.registerHandler(
+                    new GalleryModeCommandHandler(serviceManager, communicationManager));
             Log.d(TAG, "✅ Registered GalleryModeCommandHandler");
 
             commandHandlerRegistry.registerHandler(

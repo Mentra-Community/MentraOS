@@ -652,6 +652,12 @@ public class MediaCaptureService {
         // Check storage availability before recording
         if (!isExternalStorageAvailable()) {
             Log.e(TAG, "External storage is not available for video capture");
+            if (mMediaCaptureListener != null) {
+                mMediaCaptureListener.onMediaError(
+                        requestId,
+                        "External storage is not available",
+                        MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+            }
             return;
         }
 
@@ -1428,7 +1434,7 @@ public class MediaCaptureService {
      * @param iso optional sensor sensitivity for manual exposure captures only; {@code null} =
      *     derive ISO from preview metering
      */
-    public void takePhotoAndUpload(
+    public boolean takePhotoAndUpload(
             String photoFilePath,
             String requestId,
             String webhookUrl,
@@ -1457,14 +1463,14 @@ public class MediaCaptureService {
                 || WhipStreamingService.isStreaming()) {
             Log.e(TAG, "Cannot take photo - streaming active");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with streaming");
-            return;
+            return false;
         }
 
         // Check if camera HAL is restarting after FOV change
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
-            return;
+            return false;
         }
 
         // Check battery level before proceeding
@@ -1477,7 +1483,7 @@ public class MediaCaptureService {
                         requestId,
                         "BATTERY_LOW",
                         "Battery too low to take photo (" + batteryLevel + "%)");
-                return;
+                return false;
             }
         } else {
             Log.w(TAG, "⚠️ StateManager not initialized - skipping battery check for photo upload");
@@ -1492,7 +1498,7 @@ public class MediaCaptureService {
                     requestId,
                     "INSUFFICIENT_STORAGE",
                     "Insufficient storage space for photo capture");
-            return;
+            return false;
         }
 
         // Single-flight guard: reject if any photo job (capture or upload) is already in progress.
@@ -1500,7 +1506,7 @@ public class MediaCaptureService {
         if (!acquirePhotoJob(requestId)) {
             Log.w(TAG, "🚫 Photo job in flight - rejecting concurrent request: " + requestId);
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
-            return;
+            return false;
         }
         startCaptureSafetyTimeout(requestId);
         sendPhotoStatus(requestId, "accepted");
@@ -1531,7 +1537,7 @@ public class MediaCaptureService {
                     requestId,
                     PhotoCaptureTestHooks.getErrorCode(),
                     PhotoCaptureTestHooks.getErrorMessage());
-            return;
+            return false;
         } else {
             Log.d(TAG, "Camera capture failure not simulated");
         }
@@ -1655,6 +1661,7 @@ public class MediaCaptureService {
                                         filePath, requestId, webhookUrl, authToken, compress);
                             } else {
                                 // No webhook → no upload phase to run. Job ends here.
+                                sendPhotoSuccessResponse(requestId, "");
                                 releasePhotoJob(requestId);
                             }
                         }
@@ -1664,21 +1671,13 @@ public class MediaCaptureService {
                             releasePhotoJob(requestId);
 
                             Log.e(TAG, "Failed to capture photo: " + errorMessage);
-                            sendPhotoStatus(
-                                    requestId,
-                                    "failed",
-                                    null,
-                                    "CAMERA_CAPTURE_FAILED",
-                                    errorMessage);
+                            sendPhotoErrorResponse(
+                                    requestId, "CAMERA_CAPTURE_FAILED", errorMessage);
 
                             // LED is now managed by CameraNeoService and will turn off when camera
                             // closes
 
                             dumpTimings(requestId);
-                            sendMediaErrorResponse(
-                                    requestId,
-                                    errorMessage,
-                                    MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
 
                             if (mMediaCaptureListener != null) {
                                 mMediaCaptureListener.onMediaError(
@@ -1688,19 +1687,12 @@ public class MediaCaptureService {
                             }
                         }
                     });
+            return true;
         } catch (Exception e) {
             releasePhotoJob(requestId);
             Log.e(TAG, "Error taking photo", e);
-            sendPhotoStatus(
-                    requestId,
-                    "failed",
-                    null,
-                    "CAMERA_CAPTURE_FAILED",
-                    "Error taking photo: " + e.getMessage());
-            sendMediaErrorResponse(
-                    requestId,
-                    "Error taking photo: " + e.getMessage(),
-                    MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+            sendPhotoErrorResponse(
+                    requestId, "CAMERA_CAPTURE_FAILED", "Error taking photo: " + e.getMessage());
 
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
@@ -1708,6 +1700,7 @@ public class MediaCaptureService {
                         "Error taking photo: " + e.getMessage(),
                         MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
             }
+            return false;
         }
     }
 
@@ -2313,17 +2306,25 @@ public class MediaCaptureService {
                             try {
                                 if (!photoFile.exists()) {
                                     Log.e(TAG, "❌ Photo file does not exist: " + photoFilePath);
+                                    String errorMessage = "Photo file not found";
                                     tracePhotoUploadError(
                                             requestId,
                                             webhookUrl,
                                             photoFile,
                                             uploadStartTime,
-                                            new IllegalStateException("Photo file not found"),
+                                            new IllegalStateException(errorMessage),
                                             "file_missing");
+                                    sendPhotoErrorResponse(
+                                            requestId, "PHOTO_FILE_NOT_FOUND", errorMessage);
+                                    photoSaveFlags.remove(requestId);
+                                    photoBleIds.remove(requestId);
+                                    photoOriginalPaths.remove(requestId);
+                                    photoRequestedSizes.remove(requestId);
+                                    releasePhotoJob(requestId);
                                     if (mMediaCaptureListener != null) {
                                         mMediaCaptureListener.onMediaError(
                                                 requestId,
-                                                "Photo file not found",
+                                                errorMessage,
                                                 MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
                                     }
                                     return;
@@ -2447,6 +2448,7 @@ public class MediaCaptureService {
                                         mMediaCaptureListener.onPhotoUploaded(
                                                 requestId, webhookUrl);
                                     }
+                                    sendPhotoSuccessResponse(requestId, webhookUrl, responseBody);
 
                                     // Terminal success — release the photo job.
                                     releasePhotoJob(requestId);
@@ -2517,10 +2519,8 @@ public class MediaCaptureService {
 
                                     // No BLE fallback available
                                     dumpTimings(requestId);
-                                    sendPhotoStatus(
+                                    sendPhotoErrorResponse(
                                             requestId,
-                                            "failed",
-                                            null,
                                             "UPLOAD_FAILED",
                                             errorMessage);
                                     Log.d(
@@ -2634,10 +2634,8 @@ public class MediaCaptureService {
 
                                 // No BLE fallback available
                                 Log.d(TAG, "❌ No BLE fallback available, handling exception");
-                                sendPhotoStatus(
+                                sendPhotoErrorResponse(
                                         requestId,
-                                        "failed",
-                                        null,
                                         "UPLOAD_FAILED",
                                         "Upload error: " + e.getMessage());
 
@@ -2965,7 +2963,7 @@ public class MediaCaptureService {
      * @param iso optional sensor sensitivity for manual exposure captures only; {@code null} =
      *     derive ISO from preview metering
      */
-    public void takePhotoAutoTransfer(
+    public boolean takePhotoAutoTransfer(
             String photoFilePath,
             String requestId,
             String webhookUrl,
@@ -2982,7 +2980,7 @@ public class MediaCaptureService {
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
-            return;
+            return false;
         }
 
         // Check battery level before proceeding (defense-in-depth)
@@ -2995,7 +2993,7 @@ public class MediaCaptureService {
                         requestId,
                         "BATTERY_LOW",
                         "Battery too low to take photo (" + batteryLevel + "%)");
-                return;
+                return false;
             }
         } else {
             Log.w(
@@ -3013,7 +3011,7 @@ public class MediaCaptureService {
             tracePhotoWifiRoute(requestId, "direct_webhook", "wifi_connected", webhookUrl, null);
 
             Log.d(TAG, "📶 WiFi connected - attempting direct upload for " + requestId);
-            takePhotoAndUpload(
+            return takePhotoAndUpload(
                     photoFilePath,
                     requestId,
                     webhookUrl,
@@ -3029,7 +3027,7 @@ public class MediaCaptureService {
             // No WiFi - skip webhook entirely, go straight to BLE (saves 2-5s timeout wait)
             tracePhotoWifiRoute(requestId, "ble", "wifi_unavailable", webhookUrl, null);
             Log.d(TAG, "📵 No WiFi - skipping webhook, using BLE transfer for " + requestId);
-            takePhotoForBleTransfer(
+            return takePhotoForBleTransfer(
                     photoFilePath,
                     requestId,
                     bleImgId,
@@ -3054,7 +3052,7 @@ public class MediaCaptureService {
      * @param iso optional sensor sensitivity for manual exposure captures only; {@code null} =
      *     derive ISO from preview metering
      */
-    public void takePhotoForBleTransfer(
+    public boolean takePhotoForBleTransfer(
             String photoFilePath,
             String requestId,
             String bleImgId,
@@ -3077,14 +3075,14 @@ public class MediaCaptureService {
                 || WhipStreamingService.isStreaming()) {
             Log.e(TAG, "Cannot take photo - streaming active");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with streaming");
-            return;
+            return false;
         }
 
         // Check if camera HAL is restarting after FOV change
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera restarting after FOV change");
-            return;
+            return false;
         }
 
         // Check battery level before proceeding
@@ -3097,7 +3095,7 @@ public class MediaCaptureService {
                         requestId,
                         "BATTERY_LOW",
                         "Battery too low to take photo (" + batteryLevel + "%)");
-                return;
+                return false;
             }
         } else {
             Log.w(TAG, "⚠️ StateManager not initialized - skipping battery check for BLE transfer");
@@ -3112,7 +3110,7 @@ public class MediaCaptureService {
                     requestId,
                     "INSUFFICIENT_STORAGE",
                     "Insufficient storage space for photo capture");
-            return;
+            return false;
         }
 
         // Single-flight guard: reject if any photo job (capture or upload/BLE-handoff) is in
@@ -3122,7 +3120,7 @@ public class MediaCaptureService {
         if (!acquirePhotoJob(requestId)) {
             Log.w(TAG, "🚫 Photo job in flight - rejecting concurrent BLE request: " + requestId);
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
-            return;
+            return false;
         }
         startCaptureSafetyTimeout(requestId);
         sendPhotoStatus(requestId, "accepted");
@@ -3152,7 +3150,7 @@ public class MediaCaptureService {
                     requestId,
                     PhotoCaptureTestHooks.getErrorCode(),
                     PhotoCaptureTestHooks.getErrorMessage());
-            return;
+            return false;
         }
 
         // TESTING: Add fake delay for camera capture
@@ -3257,12 +3255,6 @@ public class MediaCaptureService {
                             releasePhotoJob(requestId);
 
                             Log.e(TAG, "Failed to capture photo for BLE: " + errorMessage);
-                            sendPhotoStatus(
-                                    requestId,
-                                    "failed",
-                                    null,
-                                    "CAMERA_CAPTURE_FAILED",
-                                    errorMessage);
 
                             // LED is now managed by CameraNeoService and will turn off when camera
                             // closes
@@ -3279,19 +3271,12 @@ public class MediaCaptureService {
                             }
                         }
                     });
+            return true;
         } catch (Exception e) {
             releasePhotoJob(requestId);
             Log.e(TAG, "Error taking photo for BLE", e);
-            sendPhotoStatus(
-                    requestId,
-                    "failed",
-                    null,
-                    "CAMERA_CAPTURE_FAILED",
-                    "Error taking photo: " + e.getMessage());
-            sendMediaErrorResponse(
-                    requestId,
-                    "Error taking photo: " + e.getMessage(),
-                    MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
+            sendPhotoErrorResponse(
+                    requestId, "CAMERA_CAPTURE_FAILED", "Error taking photo: " + e.getMessage());
 
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
@@ -3299,6 +3284,7 @@ public class MediaCaptureService {
                         "Error taking photo: " + e.getMessage(),
                         MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
             }
+            return false;
         }
     }
 
@@ -3740,9 +3726,11 @@ public class MediaCaptureService {
             JSONObject json = new JSONObject();
             json.put("type", "photo_response");
             json.put("requestId", requestId);
+            json.put("state", "error");
             json.put("success", false);
             json.put("errorCode", errorCode);
             json.put("errorMessage", errorMessage);
+            json.put("timestamp", System.currentTimeMillis());
 
             Log.e(
                     TAG,
@@ -3761,6 +3749,68 @@ public class MediaCaptureService {
             }
         } catch (JSONException e) {
             Log.e(TAG, "❌ Error creating photo error response", e);
+        }
+    }
+
+    /** Send terminal success once the photo action has completed. */
+    public void sendPhotoSuccessResponse(String requestId, String uploadUrl) {
+        sendPhotoSuccessResponse(requestId, uploadUrl, null);
+    }
+
+    /** Send terminal success once the photo action has completed. */
+    public void sendPhotoSuccessResponse(String requestId, String uploadUrl, String responseBody) {
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "photo_response");
+            json.put("requestId", requestId);
+            json.put("state", "success");
+            json.put("success", true);
+            json.put("uploadUrl", uploadUrl != null ? uploadUrl : "");
+            json.put("timestamp", System.currentTimeMillis());
+            copyPhotoUploadResponseMetadata(json, responseBody);
+
+            Log.i(TAG, "📸 SENDING PHOTO COMPLETE: requestId=" + requestId);
+
+            if (mServiceCallback != null) {
+                mServiceCallback.sendThroughBluetooth(json.toString().getBytes());
+                Log.i(TAG, "📸 SENT VIA BLE: " + json.toString());
+            } else {
+                Log.e(TAG, "❌ Service callback not available for photo success response");
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "❌ Error creating photo success response", e);
+        }
+    }
+
+    private void copyPhotoUploadResponseMetadata(JSONObject target, String responseBody) {
+        if (responseBody == null || responseBody.trim().isEmpty()) {
+            return;
+        }
+        try {
+            JSONObject response = new JSONObject(responseBody);
+            copyJsonField(target, response, "photoUrl");
+            copyJsonField(target, response, "statusUrl");
+            copyFirstJsonField(target, response, "contentType", "contentType", "mimeType");
+            copyFirstJsonField(target, response, "fileSizeBytes", "fileSizeBytes", "bytes", "size");
+        } catch (JSONException e) {
+            Log.d(TAG, "Photo upload response body was not JSON metadata");
+        }
+    }
+
+    private void copyJsonField(JSONObject target, JSONObject source, String key)
+            throws JSONException {
+        if (source.has(key) && !source.isNull(key)) {
+            target.put(key, source.get(key));
+        }
+    }
+
+    private void copyFirstJsonField(JSONObject target, JSONObject source, String targetKey, String... sourceKeys)
+            throws JSONException {
+        for (String sourceKey : sourceKeys) {
+            if (source.has(sourceKey) && !source.isNull(sourceKey)) {
+                target.put(targetKey, source.get(sourceKey));
+                return;
+            }
         }
     }
 

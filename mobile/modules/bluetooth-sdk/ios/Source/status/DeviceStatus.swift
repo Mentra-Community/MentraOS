@@ -350,6 +350,59 @@ struct GlassesStatus: CustomStringConvertible {
     }
 }
 
+public struct VersionInfoResult: CustomStringConvertible {
+    public let androidVersion: String
+    public let firmwareVersion: String
+    public let besFirmwareVersion: String
+    public let mtkFirmwareVersion: String
+    public let buildNumber: String
+    public let systemTimeMs: Int?
+    public let otaVersionUrl: String
+    public let appVersion: String
+
+    init(status: GlassesStatus) {
+        androidVersion = status.androidVersion
+        firmwareVersion = status.firmwareVersion
+        besFirmwareVersion = status.besFirmwareVersion
+        mtkFirmwareVersion = status.mtkFirmwareVersion
+        buildNumber = status.buildNumber
+        systemTimeMs = intValue(status.values["systemTimeMs"])
+        otaVersionUrl = status.otaVersionUrl
+        appVersion = status.appVersion
+    }
+
+    init(values: [String: Any]) {
+        androidVersion = stringValue(values, "androidVersion", "android_version") ?? ""
+        firmwareVersion = stringValue(values, "firmwareVersion", "firmware_version") ?? ""
+        besFirmwareVersion = stringValue(values, "besFirmwareVersion", "bes_fw_version") ?? ""
+        mtkFirmwareVersion = stringValue(values, "mtkFirmwareVersion", "mtk_fw_version") ?? ""
+        buildNumber = stringValue(values, "buildNumber", "build_number") ?? ""
+        systemTimeMs = intValue(values["systemTimeMs"]) ?? intValue(values["system_time_ms"])
+        otaVersionUrl = stringValue(values, "otaVersionUrl", "ota_version_url") ?? ""
+        appVersion = stringValue(values, "appVersion", "app_version") ?? ""
+    }
+
+    public var dictionary: [String: Any] {
+        var values: [String: Any] = [
+            "androidVersion": androidVersion,
+            "firmwareVersion": firmwareVersion,
+            "besFirmwareVersion": besFirmwareVersion,
+            "mtkFirmwareVersion": mtkFirmwareVersion,
+            "buildNumber": buildNumber,
+            "otaVersionUrl": otaVersionUrl,
+            "appVersion": appVersion,
+        ]
+        if let systemTimeMs {
+            values["systemTimeMs"] = systemTimeMs
+        }
+        return values
+    }
+
+    public var description: String {
+        "VersionInfoResult(buildNumber: \(buildNumber), appVersion: \(appVersion))"
+    }
+}
+
 struct BluetoothStatus: CustomStringConvertible {
     let values: [String: Any]
 
