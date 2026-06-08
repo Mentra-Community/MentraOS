@@ -73,12 +73,24 @@ export async function createSonioxProvider(
   // Build session config. For language="auto" we enable detection; for a
   // specific code we pass it as hint with detection still on. (Letting
   // Soniox identify even when hinted is robust to user accent / code-switch.)
+  //
+  // Endpoint detection + diarization mirror v1's SonioxTranscriptionProvider:
+  // `enable_endpoint_detection` makes Soniox emit an `<end>` (surfaced here as
+  // the `endpoint` event) at natural utterance boundaries, which is our signal
+  // to commit a single FINAL per utterance. `enable_speaker_diarization` tags
+  // tokens with a `speaker` id so a speaker change can also close an utterance.
+  // `max_endpoint_delay_ms` is the v2 SDK's analogue of v1's
+  // `max_non_final_tokens_duration_ms` (both bound how long Soniox waits before
+  // finalizing after speech ends); v1 used 2000ms.
   const sessionConfig: SttSessionConfig = {
     audio_format: "pcm_s16le",
     sample_rate: 16_000,
     num_channels: 1,
     model: SONIOX_MODEL,
     enable_language_identification: true,
+    enable_endpoint_detection: true,
+    enable_speaker_diarization: true,
+    max_endpoint_delay_ms: 2_000,
     language_hints:
       opts.language && opts.language !== "auto" ? [opts.language] : undefined,
     // For translation subs, configure Soniox's one-way translation. Result
@@ -92,12 +104,76 @@ export async function createSonioxProvider(
 
   const session: RealtimeSttSession = client.realtime.stt(sessionConfig);
 
-  // Stable-prefix accumulator: Soniox emits a rolling token window where
-  // finalized tokens accumulate then may be compacted (pruned). To avoid
-  // the interim text shrinking under us we capture finalized text into
-  // `stablePrefix` and prepend it to non-final tokens on each result.
+  // === Per-utterance state (ports v1's SonioxTranscriptionProvider) ===
+  //
+  // Soniox emits a rolling token window where finalized tokens accumulate then
+  // may be compacted (pruned). To avoid the interim text shrinking under us we
+  // capture finalized text into `stablePrefix` and prepend it to non-final
+  // tokens on each result. All of this state is scoped to ONE utterance and is
+  // reset by `startNewUtterance` at each boundary.
   let stablePrefix = "";
   let prevFinalLen = 0;
+  // Last interim string we emitted for this utterance. Doubles as the text we
+  // commit when an utterance closes (endpoint / speaker change), and as a
+  // dedupe guard so we don't re-emit an unchanged interim.
+  let lastSentInterim = "";
+
+  // Utterance correlation: interim + final events for one speech segment share
+  // a `utteranceId`, so the client (local-captions' `updateByUtteranceId`)
+  // keeps a single card and updates it in place, committing on the final.
+  let currentUtteranceId: string | null = null;
+  let currentSpeakerId: string | undefined = undefined;
+  let currentLanguage: string | undefined = undefined;
+
+  // Monotonic id minting: a worker-stable counter avoids any reliance on wall
+  // clock / RNG and is unique within this provider instance. `opts.scope`
+  // (user + sub identity) keeps ids distinct across providers in the worker.
+  let utteranceSeq = 0;
+  const mintUtteranceId = (): string => {
+    utteranceSeq += 1;
+    return `utt_${opts.scope}_${utteranceSeq}`;
+  };
+
+  const startNewUtterance = (speakerId?: string, language?: string): void => {
+    currentUtteranceId = mintUtteranceId();
+    currentSpeakerId = speakerId;
+    currentLanguage = language;
+    stablePrefix = "";
+    prevFinalLen = 0;
+    lastSentInterim = "";
+  };
+
+  /**
+   * Commit the current utterance as a single FINAL and reset for the next one.
+   * Called only at a real boundary (endpoint / speaker change). No-op if there
+   * is nothing buffered, so back-to-back boundaries don't emit empty finals.
+   */
+  const emitFinal = (startMs?: number, endMs?: number): void => {
+    if (!lastSentInterim) {
+      // Nothing to commit; still close the utterance so the next token batch
+      // starts fresh.
+      stablePrefix = "";
+      prevFinalLen = 0;
+      lastSentInterim = "";
+      currentUtteranceId = null;
+      return;
+    }
+    opts.onTranscript({
+      text: lastSentInterim,
+      isFinal: true,
+      utteranceId: currentUtteranceId ?? undefined,
+      speakerId: currentSpeakerId,
+      language: currentLanguage,
+      startMs,
+      endMs,
+    });
+    // Reset for the next utterance. A fresh id is minted lazily when the next
+    // token arrives (see handleResult).
+    stablePrefix = "";
+    prevFinalLen = 0;
+    lastSentInterim = "";
+    currentUtteranceId = null;
+  };
 
   const handleResult = (result: RealtimeResult) => {
     const allTokens = result.tokens ?? [];
@@ -118,14 +194,41 @@ export async function createSonioxProvider(
     let language: string | undefined;
     let startMs: number | undefined;
     let endMs: number | undefined;
-    let hasFinal = false;
     let currentFinalText = "";
 
     for (const t of tokens) {
-      if (t.language) language = t.language;
+      // Speaker change → close the previous utterance with a FINAL, then start
+      // a fresh one for the new speaker. Mirrors v1's behavior; keeps each
+      // speaker's turn as one card.
+      if (t.speaker && t.speaker !== currentSpeakerId) {
+        if (currentUtteranceId && lastSentInterim) {
+          emitFinal(startMs, endMs);
+        }
+        startNewUtterance(t.speaker, t.language ?? opts.language);
+        // A speaker change resets the per-utterance composite; restart the
+        // local accumulators for this batch so we don't carry the previous
+        // speaker's finalized text forward.
+        interimText = "";
+        currentFinalText = "";
+        startMs = undefined;
+        endMs = undefined;
+      }
+
+      // First token of the stream (or first after a commit): open an utterance.
+      if (!currentUtteranceId) {
+        startNewUtterance(t.speaker, t.language ?? opts.language);
+      }
+
+      if (t.speaker) currentSpeakerId = t.speaker;
+      // Track detected language for output but DON'T split the utterance on a
+      // language change — Soniox's per-token language can flap mid-utterance.
+      if (t.language) {
+        language = t.language;
+        currentLanguage = t.language;
+      }
+
       if (t.is_final) {
         currentFinalText += t.text;
-        hasFinal = true;
         if (t.start_ms != null && startMs == null) startMs = t.start_ms;
         if (t.end_ms != null) endMs = t.end_ms;
       } else {
@@ -143,41 +246,28 @@ export async function createSonioxProvider(
     const compositeText = stablePrefix + interimText;
     if (compositeText.length === 0) return;
 
-    const evt: TranscriptEvent = {
-      text: compositeText,
-      isFinal: false,
-      language,
-      startMs,
-      endMs,
-    } as TranscriptEvent;
-    opts.onTranscript(evt);
-
-    // If we have ANY finalized tokens this round, also emit a finalized
-    // event so downstream can commit. The SDK's `endpoint` / `finalized`
-    // events are more correct signals long-term; this naive approach is
-    // a starting point.
-    if (hasFinal && stablePrefix.length > 0) {
+    // Emit an INTERIM only. We deliberately do NOT emit a final on every round
+    // that has finalized tokens (v1 lesson: that piles up one card per partial
+    // on the client). The single final is emitted at an utterance boundary by
+    // `emitFinal`, driven by the endpoint event or a speaker change.
+    if (compositeText !== lastSentInterim) {
       opts.onTranscript({
-        text: stablePrefix,
-        isFinal: true,
+        text: compositeText,
+        isFinal: false,
+        utteranceId: currentUtteranceId ?? undefined,
+        speakerId: currentSpeakerId,
         language,
         startMs,
         endMs,
       });
+      lastSentInterim = compositeText;
     }
   };
 
   const handleEndpoint = () => {
-    // Endpoint fires when Soniox detects an utterance boundary. Commit
-    // whatever we have in stablePrefix as final and reset for next utterance.
-    if (stablePrefix.length > 0) {
-      opts.onTranscript({
-        text: stablePrefix,
-        isFinal: true,
-      });
-    }
-    stablePrefix = "";
-    prevFinalLen = 0;
+    // Endpoint fires when Soniox detects an utterance boundary (the `<end>`
+    // token). Commit the current utterance as a single FINAL and reset.
+    emitFinal();
   };
 
   const handleError = (err: Error) => {
@@ -220,6 +310,13 @@ export async function createSonioxProvider(
       }
     },
     async close(): Promise<void> {
+      // Flush any in-flight utterance as a final so a card that was mid-update
+      // gets committed instead of being left dangling on detach.
+      try {
+        emitFinal();
+      } catch {
+        /* best-effort */
+      }
       try {
         await session.finish();
       } catch {

@@ -103,6 +103,14 @@ export interface TranscriptMessage {
   mentraUserId: string
   text: string
   isFinal: boolean
+  /**
+   * Stable id correlating interim + final results for one utterance. The
+   * client updates a single card in place across interims and commits it on
+   * the final. Undefined for providers that don't track utterances.
+   */
+  utteranceId?: string
+  /** Speaker id if the provider reports diarization. */
+  speakerId?: string
   /** Language of the emitted text. */
   language?: string
   /** For translation: the source-audio language (may be `"auto"`). */
@@ -341,6 +349,8 @@ async function createProvider(mentraUserId: string, sub: AudioSubscription): Pro
       mentraUserId,
       text: event.text,
       isFinal: event.isFinal,
+      utteranceId: event.utteranceId,
+      speakerId: event.speakerId,
       // For transcription: text is in the source/auto language.
       // For translation: text is in the target language.
       language: event.language ?? providerLanguage,

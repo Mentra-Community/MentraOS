@@ -21,6 +21,15 @@ export interface TranscriptEvent {
   text: string;
   /** Whether the provider considers this finalized (vs. interim/in-progress). */
   isFinal: boolean;
+  /**
+   * Stable id for the utterance this event belongs to. Interim and final
+   * events for the same speech segment share one id so the client can
+   * correlate them and update a single card in place, then commit it on
+   * the final. Reset at each utterance boundary (endpoint / speaker change).
+   */
+  utteranceId?: string;
+  /** Speaker id if the provider reports diarization (e.g. `"1"`, `"2"`). */
+  speakerId?: string;
   /** Audio timeline window this transcript covers, in milliseconds. */
   startMs?: number;
   endMs?: number;
