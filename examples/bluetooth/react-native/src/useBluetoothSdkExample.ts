@@ -17,7 +17,7 @@ import BluetoothSdk, {
   type OtaQueryResult,
   type OtaStatusEvent,
   type OtaUpdateAvailableEvent,
-  type PhotoResponseEvent,
+  type PhotoSuccessResponseEvent,
   type PhotoStatusEvent,
   type SettingsAckEvent,
   type SpeakingStatusEvent,
@@ -146,9 +146,6 @@ export type PhotoPreviewDetails = {
   width?: number;
 };
 
-type PhotoResponseWithMetadata = PhotoResponseEvent & {
-  fileSizeBytes?: number;
-};
 export type BarcodeScanDetails = {
   barcodes: BarcodeScanResult[];
   error?: string;
@@ -1243,32 +1240,10 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }, 7000);
   }
 
-  function handlePhotoResponse(payload: PhotoResponseEvent) {
-    const response = payload as PhotoResponseWithMetadata;
+  function handlePhotoResponse(response: PhotoSuccessResponseEvent) {
     const activeRequestId = activePhotoRequestIdRef.current;
     if (activeRequestId && response.requestId !== activeRequestId) {
       addEvent('LIVE', `ignoring stale photo ${response.requestId}`);
-      return;
-    }
-    if (response.state === 'error') {
-      setPhotoStatus({
-        type: 'photo_status',
-        requestId: response.requestId,
-        status: 'failed',
-        timestamp: response.timestamp,
-        errorCode: response.errorCode,
-        errorMessage: response.errorMessage,
-      });
-      setPhotoPreviewDetails({
-        error: response.errorCode ?? response.errorMessage,
-        requestId: response.requestId,
-        source: photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver',
-        state: 'error',
-        timestamp: response.timestamp,
-      });
-      resetBarcodeScan();
-      setCameraStatus(`Camera: photo failed (${response.errorCode ?? response.errorMessage})`);
-      addEvent('LIVE', `photo response ${response.errorCode ?? response.errorMessage}`);
       return;
     }
     setCameraStatus(
