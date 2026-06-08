@@ -41,6 +41,21 @@ function resolveIconUrl(baseUrl: string, iconPath: string | undefined): string |
   return `${baseUrl.replace(/\/$/, "")}/${iconPath.replace(/^\//, "")}`
 }
 
+/**
+ * Derive the dev sidecar port from a `mentra-miniapp dev` user-server URL. The
+ * CLI starts the static user server on `port` and the bundle/live-reload sidecar
+ * on `port + 1`, so the sidecar is the URL's port plus one. Returns undefined if
+ * the URL has no explicit port (nothing to derive a sidecar from).
+ */
+function deriveDevPort(url: string): number | undefined {
+  try {
+    const port = Number(new URL(url).port)
+    return Number.isFinite(port) && port > 0 ? port + 1 : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export default function MiniappDeveloperUrlScreen() {
   const {theme} = useAppTheme()
   const {goBack, push} = useNavigationStore.getState()
@@ -154,6 +169,11 @@ export default function MiniappDeveloperUrlScreen() {
         name: entry.name,
         iconUrl: entry.iconUrl ?? `${entry.url}/icon.png`,
         devUrl: entry.url,
+        // Two-layer / background miniapps fetch their bundle from the CLI's
+        // sidecar, which `mentra-miniapp dev` starts on userPort + 1. The QR
+        // path carries this as `&dev=<port>`; derive the same here so manual-URL
+        // launches aren't rejected with "no dev port configured".
+        devPort: deriveDevPort(entry.url),
         permissions: manifest.permissions as DevAppRecord["permissions"],
         hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
       })
