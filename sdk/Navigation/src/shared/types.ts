@@ -73,6 +73,16 @@ export type TripState = {
    */
   routeSteps: NavRouteStep[] | null
   offRouteAt: number | null
+  /**
+   * Side of the final route segment the destination pin sits on, from
+   * the walker's perspective. Captured at the moment we fire arrival
+   * (either from the early ≤7m-remaining trigger or the SDK's own
+   * arrived event) and held alongside `status === "arrived"` so the
+   * HUD can render "You have arrived at X, on your left|right".
+   * Null while not arrived, or when the route was too short to derive
+   * a side.
+   */
+  arrivalSide: "left" | "right" | null
 }
 
 export type DevSettings = {

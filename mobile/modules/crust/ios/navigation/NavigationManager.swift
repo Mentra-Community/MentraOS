@@ -23,6 +23,27 @@ final class NavigationManager: NSObject {
   private var navigator: GMSNavigator?
   private var roadSnappedProvider: GMSRoadSnappedLocationProvider?
 
+  // Raw CoreLocation feed. The road-snapped provider above is what the
+  // Google Nav SDK uses internally (camera, navInfo, turn-by-turn audio),
+  // but its fixes on iOS are aggressively snapped onto the active route's
+  // polyline — distance-to-route ≈ 0 always, even when the user has
+  // physically walked onto the wrong street. That breaks every geometry
+  // check that compares user position to route polyline: the pivot
+  // engine's "entered radius" detection, the off-route advisory at >15m,
+  // the auto-rebuild at >30m, and the ≤7m-remaining arrival trigger.
+  //
+  // To restore ground truth, we run a parallel raw CLLocationManager and
+  // push its fixes (not the road-snapped ones) through `onLocation` to JS.
+  // The dot in the WebView and on the glasses minimap drifts a few meters
+  // wider than before, but every distance check now sees the user's real
+  // position. Android doesn't need this because its RoadSnappedLocationProvider
+  // snaps to the road network rather than to the active route.
+  private var rawLocationManager: CLLocationManager?
+  // Last raw fix; used by the native off-route check and the deviate
+  // walker. Replaces the role `lastReportedCoord` used to play with the
+  // snapped fixes.
+  private var lastRawCoord: CLLocationCoordinate2D?
+
   // Off-route detection: emit once per off-route episode, reset on reroute.
   private static let offRouteThresholdMeters: Double = 30
   private var offRouteEmitted = false
@@ -209,6 +230,16 @@ final class NavigationManager: NSObject {
       provider?.add(self)
       self.roadSnappedProvider = provider
 
+      // Spin up a raw CoreLocation stream alongside the snapped provider.
+      // Fixes from this manager (not the snapped ones above) are what the
+      // JS layer's geometry checks see, so the pivot engine and off-route
+      // logic operate on the user's real position. Simulation mode is the
+      // one exception — the Google sim doesn't move the device's actual
+      // GPS, so we still rely on the snapped/polled fallback there.
+      if !simulate {
+        self.startRawLocationUpdates()
+      }
+
       mapView.travelMode = self.gmsMode(from: mode)
 
       let waypoints = stops.compactMap {
@@ -255,6 +286,7 @@ final class NavigationManager: NSObject {
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
       self.stopSimulationPolling()
+      self.stopRawLocationUpdates()
       self.deviateTimer?.invalidate()
       self.deviateTimer = nil
       self.isSimulating = false
@@ -810,6 +842,56 @@ extension NavigationManager: GMSRoadSnappedLocationProviderListener {
     _ locationProvider: GMSRoadSnappedLocationProvider,
     didUpdate location: CLLocation
   ) {
+    // Snapped fixes used to be pushed to JS here, but Google's iOS
+    // RoadSnappedLocationProvider snaps to the active route's polyline
+    // (not the road network), so distance-to-route always read ≈ 0 and
+    // every JS-side off-route / pivot / 7m-arrival check was broken.
+    // The raw CLLocationManager delegate below now owns the JS feed and
+    // the off-route / missed-turn checks. This callback is kept alive
+    // because the Google Nav SDK requires the provider to be subscribed
+    // for its own internals (navInfo, camera, voice guidance routing),
+    // and the snapped coords are still a perfectly good signal for the
+    // deviate walker's bearing inference — it only needs a recent pair
+    // of points moving in the user's direction of travel, snap is fine.
+    prevReportedCoord = lastReportedCoord
+    lastReportedCoord = location.coordinate
+  }
+}
+
+// MARK: - Raw CoreLocation feed
+
+extension NavigationManager: CLLocationManagerDelegate {
+
+  fileprivate func startRawLocationUpdates() {
+    // Idempotent — guard against a second start() call (e.g. an
+    // immediate reroute) creating two managers.
+    if rawLocationManager != nil { return }
+    let mgr = CLLocationManager()
+    mgr.delegate = self
+    mgr.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+    // Fire on every meter of movement; pivot-radius checks need fine-
+    // grained updates near the corner, otherwise the "entered" transition
+    // can be missed entirely.
+    mgr.distanceFilter = 1
+    mgr.pausesLocationUpdatesAutomatically = false
+    // The Google Nav SDK has already prompted for "always" / "when in
+    // use" authorization via its own internals before start() is called,
+    // so we don't request permission again here — just begin updates.
+    mgr.startUpdatingLocation()
+    rawLocationManager = mgr
+  }
+
+  fileprivate func stopRawLocationUpdates() {
+    rawLocationManager?.stopUpdatingLocation()
+    rawLocationManager?.delegate = nil
+    rawLocationManager = nil
+    lastRawCoord = nil
+  }
+
+  func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+    guard let location = locations.last else { return }
+    lastRawCoord = location.coordinate
+
     onLocation?([
       "lat": location.coordinate.latitude,
       "lng": location.coordinate.longitude,
@@ -817,12 +899,10 @@ extension NavigationManager: GMSRoadSnappedLocationProviderListener {
       "timestamp": location.timestamp.timeIntervalSince1970 * 1000,
     ])
 
-    // Track the last two road-snapped coords so the deviate walker
-    // can derive the user's actual recent direction of travel.
-    prevReportedCoord = lastReportedCoord
-    lastReportedCoord = location.coordinate
-
-    // Off-route detection: measure distance from current position to the route polyline.
+    // Off-route detection runs on the raw coords, same shape as the old
+    // snapped-path check that used to live in GMSRoadSnappedLocationProvider's
+    // callback. Distance from the user's real position to the active
+    // route polyline; emit once per off-route episode until reroute.
     guard let path = navigator?.currentRouteLeg?.path, path.count() > 1 else { return }
     let distanceToRoute = minDistanceToPath(path, from: location.coordinate)
     if !offRouteEmitted, distanceToRoute > Self.offRouteThresholdMeters {
@@ -833,13 +913,10 @@ extension NavigationManager: GMSRoadSnappedLocationProviderListener {
       ])
     }
 
-    // Missed-turn reroute (opt-in). When the SDK user passed a
-    // missedTurnRerouteMeters value at start time, force a reroute as
-    // soon as they're that many meters past the last pivot they crossed
-    // AND they're not still hugging the planned polyline. The
-    // polyline-distance check rules out the "took the turn correctly"
-    // case where they're naturally walking away from the pivot along
-    // the new step. A small slack (8m) absorbs GPS noise at crosswalks.
+    // Missed-turn reroute (opt-in). Same logic as before — replanned
+    // from the user's *real* position so the next pivot lands ahead of
+    // them rather than behind. The 8m slack absorbs GPS noise at
+    // crosswalks where the raw fix can briefly cross the polyline.
     if let threshold = missedTurnRerouteMeters,
        let pivot = lastPassedPivot,
        !missedTurnRerouteInFlight,
@@ -854,7 +931,16 @@ extension NavigationManager: GMSRoadSnappedLocationProviderListener {
     }
   }
 
-  private func minDistanceToPath(_ path: GMSPath, from point: CLLocationCoordinate2D) -> Double {
+  func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+    // Non-fatal: the Google Nav SDK's snapped provider is still feeding
+    // the navigator internally. The JS layer just won't get coord
+    // updates until CoreLocation recovers.
+    print("[NavigationManager] raw CLLocationManager error: \(error)")
+  }
+}
+
+extension NavigationManager {
+  fileprivate func minDistanceToPath(_ path: GMSPath, from point: CLLocationCoordinate2D) -> Double {
     let count = path.count()
     guard count >= 2 else { return 0 }
 

@@ -27,7 +27,7 @@ import {NavigationManager} from "./managers/NavigationManager"
 import {PlacesManager} from "./managers/PlacesManager"
 import {SimpleStorageManager} from "./managers/SimpleStorageManager"
 import {formatDistance} from "./lib/formatDistance"
-import {distanceToPolylineMeters, haversineMeters} from "./lib/geometry"
+import {distanceToPolylineMeters, haversineMeters, remainingRouteMeters, sideOfFinalSegment} from "./lib/geometry"
 import {renderMinimap} from "./lib/MinimapRenderer"
 import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
 
@@ -91,6 +91,7 @@ export class NavigationController {
     routePoints: null,
     routeSteps: null,
     offRouteAt: null,
+    arrivalSide: null,
   }
   private activePivot: Pivot | null = null
   private upcomingPivot: Pivot | null = null
@@ -141,6 +142,7 @@ export class NavigationController {
         this.lastCoordsAt = Date.now()
         this.ui.send("nav:coords", this.coords)
         this.logOffRouteThresholds()
+        this.maybeFireEarlyArrival()
         this.refreshHUD()
       }),
     )
@@ -220,7 +222,12 @@ export class NavigationController {
           case "rerouting":
             this.trip = {...this.trip, status: "rerouting"}
             break
-          case "arrived":
+          case "arrived": {
+            // Compute side from the current route *before* nulling it,
+            // so the HUD's "on your left|right" line has data to render
+            // when the SDK is the trigger (rather than our early ≤7m
+            // path, which captures side the same way).
+            const side = sideOfFinalSegment(this.trip.routePoints, this.trip.activeDestination)
             this.trip = {
               ...this.trip,
               status: "arrived",
@@ -230,6 +237,7 @@ export class NavigationController {
               routePoints: null,
               routeSteps: null,
               offRouteAt: null,
+              arrivalSide: side,
             }
             this.hasCompletedTrip = true
             this.activePivot = null
@@ -240,6 +248,7 @@ export class NavigationController {
             this.lastAutoRebuildAt = 0
             this.lastOffRouteBucket = 0
             break
+          }
           case "error":
             this.trip = {...this.trip, status: "idle", running: false}
             this.cancelPendingRebuild()
@@ -355,6 +364,7 @@ export class NavigationController {
           routePoints: null,
           routeSteps: null,
           offRouteAt: null,
+          arrivalSide: null,
         }
         // Snapshot the trip-start context so an auto-rebuild can re-
         // fire start() with the same shape, and so we can gate
@@ -414,6 +424,7 @@ export class NavigationController {
           routePoints: null,
           routeSteps: null,
           offRouteAt: null,
+          arrivalSide: null,
         }
         this.hasCompletedTrip = true
         this.ui.send("nav:trip-state", this.trip)
@@ -522,7 +533,7 @@ export class NavigationController {
   }
 
   private refreshHUD(): void {
-    const {status, running, activeDestinationName, maneuver} = this.trip
+    const {status, running, activeDestinationName, maneuver, arrivalSide} = this.trip
 
     // Minimap runs first so heading-only updates still refresh the map
     // even when the text line below is unchanged (and short-circuits).
@@ -536,7 +547,8 @@ export class NavigationController {
     // one, tweak the other or they'll diverge.
     if (status === "arrived") {
       const at = activeDestinationName ? ` at ${activeDestinationName}` : ""
-      next = `You have arrived${at}`
+      const side = arrivalSide ? `, on your ${arrivalSide}` : ""
+      next = `You have arrived${at}${side}`
       durationMs = 10_000
     } else if (!running && !this.hasCompletedTrip) {
       next = "Welcome to Mentra Maps!\nPick a destination to get started."
@@ -604,9 +616,7 @@ export class NavigationController {
       coords: {lat: this.coords.lat, lng: this.coords.lng},
       heading: this.heading,
       routePoints: this.trip.routePoints,
-      upcomingPivot: this.upcomingPivot
-        ? {lat: this.upcomingPivot.lat, lng: this.upcomingPivot.lng}
-        : null,
+      upcomingPivot: this.upcomingPivot ? {lat: this.upcomingPivot.lat, lng: this.upcomingPivot.lng} : null,
     })
     if (!png || png === this.lastMinimapPng) return
     this.lastMinimapPng = png
@@ -621,7 +631,6 @@ export class NavigationController {
       .then(() => this.navigation.requestPermission())
       .then((r) => this.appendLog(`requestPermission: ${JSON.stringify(r)}`))
       .catch((err) => {
-        // eslint-disable-next-line no-console
         console.warn("[NavigationController] requestPermission failed", err)
       })
   }
@@ -771,14 +780,9 @@ export class NavigationController {
         this.refreshHUD()
         return
       }
-      const stillOff = distanceToPolylineMeters(
-        {lat: this.coords.lat, lng: this.coords.lng},
-        route,
-      )
+      const stillOff = distanceToPolylineMeters({lat: this.coords.lat, lng: this.coords.lng}, route)
       if (stillOff == null || stillOff < REBUILD_DISTANCE_M) {
-        this.appendLog(
-          `[NavOffRoute] rebuild cancelled — back within range (${stillOff?.toFixed(1) ?? "?"}m)`,
-        )
+        this.appendLog(`[NavOffRoute] rebuild cancelled — back within range (${stillOff?.toFixed(1) ?? "?"}m)`)
         this.trip = {...this.trip, status: "navigating"}
         this.ui.send("nav:trip-state", this.trip)
         this.refreshHUD()
@@ -801,6 +805,55 @@ export class NavigationController {
         }
       })
     }, REBUILD_DELAY_MS)
+  }
+
+  // ── Early arrival (≤7m of route remaining) ───────────────────────────
+
+  // The Nav SDK fires `arrived` based on its own threshold (straight-
+  // line to the destination pin). We fire earlier when the user has
+  // walked nearly the entire route polyline — the grey trail has
+  // reached the pin. Uses along-route distance, not perpendicular, so a
+  // pin sitting a few meters off the walkable polyline still triggers.
+  //
+  // Mirrors the SDK arrived handler's state mutation so downstream
+  // consumers (HUD, UI) see the same shape regardless of which trigger
+  // fired. Captures the side (left/right) of the pin relative to the
+  // final route segment *before* clearing routePoints so the HUD can
+  // render "on your left|right".
+  private maybeFireEarlyArrival(): void {
+    const ARRIVAL_REMAINING_M = 7
+    if (!this.coords) return
+    if (this.trip.status === "arrived" || !this.trip.running) return
+    const route = this.trip.routePoints
+    const remaining = remainingRouteMeters({lat: this.coords.lat, lng: this.coords.lng}, route)
+    if (remaining == null || remaining > ARRIVAL_REMAINING_M) return
+    const side = sideOfFinalSegment(route, this.trip.activeDestination)
+    this.appendLog(`ARRIVED (early, ${remaining.toFixed(1)}m of route remaining)`)
+    this.trip = {
+      ...this.trip,
+      status: "arrived",
+      running: false,
+      maneuver: null,
+      activeDestination: null,
+      routePoints: null,
+      routeSteps: null,
+      offRouteAt: null,
+      arrivalSide: side,
+    }
+    this.hasCompletedTrip = true
+    this.activePivot = null
+    this.upcomingPivot = null
+    this.cancelPendingRebuild()
+    this.tripStartCoords = null
+    this.lastStartOpts = null
+    this.lastAutoRebuildAt = 0
+    this.lastOffRouteBucket = 0
+    try {
+      this.navigation.stop()
+    } catch {
+      /* ignore */
+    }
+    this.ui.send("nav:trip-state", this.trip)
   }
 
   private cancelPendingRebuild(): void {
@@ -903,16 +956,12 @@ function logLiveRoute(route: NavRoute): void {
   }
   console.log(`[NavLive] roads: ${roads.join(" → ")}`)
   console.log(
-    `[NavLive] resolution:\n` +
-      annotated.map((a) => `  step ${a.stepIdx} → ${a.name ?? "(none)"}`).join("\n"),
+    `[NavLive] resolution:\n` + annotated.map((a) => `  step ${a.stepIdx} → ${a.name ?? "(none)"}`).join("\n"),
   )
   console.log(
     `[NavLive] steps:\n` +
       steps
-        .map(
-          (s, i) =>
-            `  step ${i}: ${s.road ?? "(unnamed)"} | ${s.maneuver ?? "—"} | ${s.distanceMeters}m`,
-        )
+        .map((s, i) => `  step ${i}: ${s.road ?? "(unnamed)"} | ${s.maneuver ?? "—"} | ${s.distanceMeters}m`)
         .join("\n"),
   )
   const stride = Math.max(1, Math.ceil(polyline.length / 30))
