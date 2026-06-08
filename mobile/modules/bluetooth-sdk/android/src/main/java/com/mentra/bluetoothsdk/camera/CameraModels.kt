@@ -16,7 +16,8 @@ enum class PhotoSize(val value: String) {
 enum class ButtonPhotoSize(val value: String) {
     SMALL("small"),
     MEDIUM("medium"),
-    LARGE("large");
+    LARGE("large"),
+    MAX("max");
 
     companion object {
         @JvmStatic
