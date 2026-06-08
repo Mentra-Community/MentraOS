@@ -11,6 +11,7 @@ icon: "lock"
 | **MICROPHONE** | Voice input, audio processing | Transcription, audio chunks |
 | **LOCATION** | GPS coordinates | Location tracking |
 | **BACKGROUND_LOCATION** | Location when app inactive | Background tracking |
+| **CAMERA** | Camera access | Camera features on supported glasses |
 | **CALENDAR** | Calendar events | Event notifications |
 | **READ_NOTIFICATIONS** | Phone notifications | Notification filtering |
 | **POST_NOTIFICATIONS** | Send notifications | Push notifications |
@@ -72,6 +73,10 @@ session.events.onVAD((data) => {});
 session.location.subscribeToStream({ accuracy: 'high' }, (data) => {});
 const location = await session.location.getLatestLocation();
 ```
+
+### CAMERA
+
+Camera features require the `CAMERA` permission. Camera capture, photo upload, and camera streaming are documented in the standalone [Mentra Bluetooth SDK docs](https://bluetooth-sdk-docs.mentra.glass/camera-streaming/).
 
 ### READ_NOTIFICATIONS
 
