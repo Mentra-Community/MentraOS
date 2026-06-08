@@ -448,6 +448,10 @@ class GallerySyncService {
     // 1. Notification permission (for background sync progress)
     console.log("[GallerySyncService]   📱 Requesting notification permission...")
     await gallerySyncNotifications.requestPermissions()
+    if (this.shouldAbortPreFlight()) {
+      console.log("[GallerySyncService] Pre-flight aborted after notification permission")
+      return
+    }
     console.log("[GallerySyncService]   ✅ Notification permission handled")
 
     // 2. Location permission (required to read WiFi SSID for hotspot verification)
@@ -464,6 +468,10 @@ class GallerySyncService {
       }
     } else {
       console.log("[GallerySyncService]   ✅ Location permission already granted")
+    }
+    if (this.shouldAbortPreFlight()) {
+      console.log("[GallerySyncService] Pre-flight aborted after location permission")
+      return
     }
 
     // 3. Camera roll permission (if auto-save is enabled)
@@ -486,6 +494,10 @@ class GallerySyncService {
         console.log("[GallerySyncService]   ✅ Camera roll permission already granted")
       }
     }
+    if (this.shouldAbortPreFlight()) {
+      console.log("[GallerySyncService] Pre-flight aborted after camera roll permission")
+      return
+    }
 
     // S1: Disk space check — abort early if insufficient space
     try {
@@ -505,6 +517,10 @@ class GallerySyncService {
     } catch (fsError) {
       console.warn("[GallerySyncService]   ⚠️ Could not check disk space:", fsError)
       // Continue — don't block sync if check fails
+    }
+    if (this.shouldAbortPreFlight()) {
+      console.log("[GallerySyncService] Pre-flight aborted after disk space check")
+      return
     }
 
     // Reset abort controller
@@ -596,6 +612,10 @@ class GallerySyncService {
         console.warn("[GallerySyncService]   ⚠️ Failed to check WiFi status:", error)
         // Continue with sync attempt - don't block if check fails
       }
+      if (this.shouldAbortPreFlight()) {
+        console.log("[GallerySyncService] Pre-flight aborted after WiFi check")
+        return
+      }
     } else {
       console.log("[GallerySyncService]   ℹ️ iOS - WiFi check not required")
     }
@@ -645,25 +665,51 @@ class GallerySyncService {
         console.warn("[GallerySyncService]   ⚠️ Failed to check Location Services status:", error)
         // Continue with sync attempt - don't block if check fails
       }
+      if (this.shouldAbortPreFlight()) {
+        console.log("[GallerySyncService] Pre-flight aborted after location services check")
+        return
+      }
     }
 
     // Check if already connected to hotspot
     // IMPORTANT: We must verify the phone's WiFi is actually connected to the hotspot SSID,
     // not just that the glasses reported hotspot is enabled (which persists across app restarts)
     console.log("[GallerySyncService] 🔌 Step 3/6: Checking hotspot connection status...")
+
+    // Re-read current glasses state from the store — the snapshot from the top of the function
+    // may be stale if glasses disconnected during one of the above awaits.
+    const currentGlassesConnected = isGlassesConnected(useGlassesStore.getState().connection)
+    if (!currentGlassesConnected) {
+      console.log("[GallerySyncService] Pre-flight aborted — glasses no longer connected at hotspot check")
+      return
+    }
+    const currentGlassesStore = useGlassesStore.getState()
+    const currentGlassesHotspot =
+      currentGlassesStore.hotspot.state === "enabled"
+        ? {
+            ssid: currentGlassesStore.hotspot.ssid,
+            password: currentGlassesStore.hotspot.password,
+            ip: currentGlassesStore.hotspot.localIp,
+          }
+        : null
+
     let isAlreadyConnected = false
-    if (glassesHotspot) {
+    if (currentGlassesHotspot) {
       console.log("[GallerySyncService]   📊 Glasses hotspot status:")
       console.log("[GallerySyncService]      - Enabled: true")
-      console.log(`[GallerySyncService]      - SSID: ${glassesHotspot.ssid}`)
-      console.log(`[GallerySyncService]      - IP: ${glassesHotspot.ip}`)
+      console.log(`[GallerySyncService]      - SSID: ${currentGlassesHotspot.ssid}`)
+      console.log(`[GallerySyncService]      - IP: ${currentGlassesHotspot.ip}`)
 
       try {
         const currentSSID = await WifiManager.getCurrentWifiSSID()
+        if (this.shouldAbortPreFlight()) {
+          console.log("[GallerySyncService] Pre-flight aborted after SSID check")
+          return
+        }
         console.log(`[GallerySyncService]   📱 Phone current WiFi SSID: "${currentSSID}"`)
-        console.log(`[GallerySyncService]   🔍 Comparing with glasses hotspot SSID: "${glassesHotspot.ssid}"`)
+        console.log(`[GallerySyncService]   🔍 Comparing with glasses hotspot SSID: "${currentGlassesHotspot.ssid}"`)
 
-        isAlreadyConnected = currentSSID === glassesHotspot.ssid
+        isAlreadyConnected = currentSSID === currentGlassesHotspot.ssid
         if (isAlreadyConnected) {
           console.log("[GallerySyncService]   ✅ Phone is already connected to glasses hotspot!")
         } else if (currentSSID) {
@@ -682,9 +728,9 @@ class GallerySyncService {
       console.log("[GallerySyncService]   ➡️ Will request hotspot activation")
     }
 
-    if (isAlreadyConnected && glassesHotspot) {
+    if (isAlreadyConnected && currentGlassesHotspot) {
       console.log("[GallerySyncService] 🚀 Skipping hotspot request - already connected!")
-      const hotspotInfo: HotspotInfo = glassesHotspot
+      const hotspotInfo: HotspotInfo = currentGlassesHotspot
       store.setHotspotInfo(hotspotInfo)
       store.setSyncState("connecting_wifi")
       await this.startFileDownload(hotspotInfo)
