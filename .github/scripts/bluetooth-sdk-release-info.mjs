@@ -66,8 +66,9 @@ if (!beforeSha || /^0+$/.test(beforeSha)) {
 }
 
 const previousPackage = beforeSha ? readJsonAt(beforeSha, packagePath) : null;
+const hasPreviousVersion = Boolean(previousPackage?.version);
 const previousVersion = previousPackage?.version || '';
-const versionChanged = previousVersion !== currentVersion;
+const versionChanged = hasPreviousVersion && previousVersion !== currentVersion;
 const runRelease = versionChanged || forceRelease || (eventName === 'workflow_dispatch' && dryRun);
 
 setOutput('package_name', currentPackage.name);
