@@ -211,6 +211,11 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     private let maxReconnectionAttempts = -1 // -1 for unlimited
     private let reconnectionInterval: TimeInterval = 2.0
     private var peripheralToConnectName: String?
+    /// True while the current scan is a user-initiated discovery scan (the "scan for devices"
+    /// list). Discovery must NOT short-circuit into reconnecting the last paired device by
+    /// stored UUID / saved name — otherwise, once a device has been connected, every later
+    /// discovery scan silently reconnects the old glasses instead of listing nearby devices.
+    private var isDiscoveryScan = false
     private let INITIAL_CONNECTION_DELAY_MS: UInt64 = 350
     private let DELAY_BETWEEN_CHUNKS_SEND_MS: UInt64 = 10
 
@@ -693,6 +698,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             stopScan()
         }
         peripheralToConnectName = name
+        isDiscoveryScan = false
         startScan()
     }
 
@@ -712,19 +718,36 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         )
         let peripherals = centralManager.retrievePeripherals(withIdentifiers: [uuid])
 
-        if let peripheralToConnect = peripherals.first {
-            Bridge.log(
-                "NEX-CONN: 🔵 Found peripheral by UUID: \(peripheralToConnect.name ?? "Unknown"). Initiating connection."
-            )
-            peripheral = peripheralToConnect
-            centralManager.connect(peripheralToConnect, options: nil)
-            return true
-        } else {
+        guard let peripheralToConnect = peripherals.first else {
             Bridge.log(
                 "NEX-CONN: 🔵 Could not find peripheral for stored UUID. Will proceed to scan."
             )
             return false
         }
+
+        // The stored UUID is a single "last connected" identifier. When the caller is
+        // targeting a specific device by name, only take this fast-path if the cached
+        // peripheral IS that device — otherwise we'd silently reconnect the *previously*
+        // paired glasses, and since iOS's connect() never times out and startScan()
+        // returns early on success, pairing the new device would hang forever.
+        // (Mirrors Android, which reconnects to the target device's own address, never a
+        // global "last" one. peripheralToConnectName == nil means an auto-reconnect with no
+        // specific target, so the cached device is exactly what we want — keep using it.)
+        if let targetName = peripheralToConnectName,
+           !(peripheralToConnect.name?.contains(targetName) ?? false)
+        {
+            Bridge.log(
+                "NEX-CONN: 🔵 Stored UUID is '\(peripheralToConnect.name ?? "unnamed")' but target is '\(targetName)'. Skipping UUID fast-path; will scan for the target."
+            )
+            return false
+        }
+
+        Bridge.log(
+            "NEX-CONN: 🔵 Found peripheral by UUID: \(peripheralToConnect.name ?? "Unknown"). Initiating connection."
+        )
+        peripheral = peripheralToConnect
+        centralManager.connect(peripheralToConnect, options: nil)
+        return true
     }
 
     private func startReconnectionTimer() {
@@ -766,6 +789,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
         reconnectionAttempts += 1
         Bridge.log("NEX-CONN: 🔄 Attempting reconnection (\(reconnectionAttempts))...")
+        isDiscoveryScan = false
         startScan()
     }
 
@@ -788,37 +812,42 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             return
         }
 
-        // First, try to reconnect using stored UUID (faster and works in background)
-        if connectByUUID() {
-            Bridge.log("NEX-CONN: 🔄 Attempting connection with stored UUID. Halting scan.")
-            return
-        }
-
-        // If that fails, check for already-connected system devices
-        let connectedPeripherals = centralManager.retrieveConnectedPeripherals(withServices: [
-            MAIN_SERVICE_UUID,
-        ])
-        if let targetName = peripheralToConnectName,
-           let existingPeripheral = connectedPeripherals.first(where: {
-               $0.name?.contains(targetName) == true
-           })
-        {
-            Bridge.log(
-                "NEX-CONN: 📱 Found already connected peripheral that matches target: \(existingPeripheral.name ?? "Unknown")"
-            )
-            if peripheral == nil {
-                peripheral = existingPeripheral
-                centralManager.connect(existingPeripheral, options: nil)
+        // Reconnect short-circuits below are for the targeted connect/reconnect paths only.
+        // A user-initiated discovery scan must fall through to scanForPeripherals so the
+        // device list populates even after we've previously paired (which persisted a UUID).
+        if !isDiscoveryScan {
+            // First, try to reconnect using stored UUID (faster and works in background)
+            if connectByUUID() {
+                Bridge.log("NEX-CONN: 🔄 Attempting connection with stored UUID. Halting scan.")
                 return
             }
-        }
 
-        // Check if we have a saved device name to reconnect to (like MentraLive)
-        if let savedDeviceName = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME),
-           !savedDeviceName.isEmpty
-        {
-            Bridge.log("NEX-CONN: 🔄 Looking for saved device: \(savedDeviceName)")
-            // This will be handled in didDiscover when the device is found
+            // If that fails, check for already-connected system devices
+            let connectedPeripherals = centralManager.retrieveConnectedPeripherals(withServices: [
+                MAIN_SERVICE_UUID,
+            ])
+            if let targetName = peripheralToConnectName,
+               let existingPeripheral = connectedPeripherals.first(where: {
+                   $0.name?.contains(targetName) == true
+               })
+            {
+                Bridge.log(
+                    "NEX-CONN: 📱 Found already connected peripheral that matches target: \(existingPeripheral.name ?? "Unknown")"
+                )
+                if peripheral == nil {
+                    peripheral = existingPeripheral
+                    centralManager.connect(existingPeripheral, options: nil)
+                    return
+                }
+            }
+
+            // Check if we have a saved device name to reconnect to (like MentraLive)
+            if let savedDeviceName = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME),
+               !savedDeviceName.isEmpty
+            {
+                Bridge.log("NEX-CONN: 🔄 Looking for saved device: \(savedDeviceName)")
+                // This will be handled in didDiscover when the device is found
+            }
         }
 
         Bridge.log("NEX-CONN: ✅ Bluetooth is powered on, starting scan...")
@@ -852,6 +881,10 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     @objc func stopScan() {
         centralManager?.stopScan()
         _isScanning = false
+        // The flag describes the scan that's currently running; once it stops (10s discovery
+        // timeout, manual stop, or the stop inside connect()), clear it so a later
+        // reconnect/autoconnect scan isn't wrongly treated as discovery and suppressed.
+        isDiscoveryScan = false
         Bridge.log("NEX-CONN: 🛑 Stopped scanning.")
     }
 
@@ -907,6 +940,9 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
         // Clear specific connect target, but keep saved pairing data like Android.
         peripheralToConnectName = nil
+        // Pure discovery: don't let startScan short-circuit into reconnecting the last
+        // paired device, and don't auto-connect a saved device found mid-scan.
+        isDiscoveryScan = true
 
         Task {
             if centralManager == nil {
@@ -2241,6 +2277,11 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         if let targetName = peripheralToConnectName, deviceName.contains(targetName) {
             shouldConnect = true
             connectionReason = "Target device name match: \(targetName)"
+        }
+        // During a user-initiated discovery scan, only list devices — never auto-connect a
+        // saved/preferred device, so the user can pick a different one.
+        else if isDiscoveryScan {
+            shouldConnect = false
         }
         // Check if this matches our saved device for reconnection
         else if let savedName = savedDeviceName, deviceName == savedName {
