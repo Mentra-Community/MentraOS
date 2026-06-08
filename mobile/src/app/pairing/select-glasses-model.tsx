@@ -17,14 +17,11 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 import GlassView from "@/components/ui/GlassView"
 
-// import {useLocalSearchParams} from "expo-router"
-
 export default function SelectGlassesModelScreen() {
   const {theme} = useAppTheme()
   const {push, goBack} = useNavigationStore.getState()
   const [superMode] = useSetting(SETTINGS.super_mode.key)
 
-  // when this screen is focused, forget any glasses that may be paired:
   useFocusEffect(
     useCallback(() => {
       CoreModule.forget()
@@ -32,7 +29,6 @@ export default function SelectGlassesModelScreen() {
     }, []),
   )
 
-  // Get logo component for manufacturer
   const getManufacturerLogo = (deviceModel: string) => {
     switch (deviceModel) {
       case DeviceTypes.G1:
@@ -49,32 +45,27 @@ export default function SelectGlassesModelScreen() {
     }
   }
 
-  // Glasses models that should only be visible in super mode.
   const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX])
 
-  // Platform-specific glasses options
   const glassesOptions =
     Platform.OS === "ios"
       ? [
-          // {deviceModel: DeviceTypes.SIMULATED, key: DeviceTypes.SIMULATED},
           {deviceModel: DeviceTypes.G1, key: "evenrealities_g1"},
           {deviceModel: DeviceTypes.G2, key: "evenrealities_g2"},
           {deviceModel: DeviceTypes.LIVE, key: "mentra_live"},
           {deviceModel: DeviceTypes.MACH1, key: "mentra_mach1"},
           {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
           {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
-          //{deviceModel: "Brilliant Labs Frame", key: "frame"},
+          {deviceModel: DeviceTypes.INMO_GO2, key: "inmo_go2"},
         ]
       : [
-          // Android:
-          // {deviceModel: DeviceTypes.SIMULATED, key: DeviceTypes.SIMULATED},
           {deviceModel: DeviceTypes.G1, key: "evenrealities_g1"},
           {deviceModel: DeviceTypes.G2, key: "evenrealities_g2"},
           {deviceModel: DeviceTypes.LIVE, key: "mentra_live"},
           {deviceModel: DeviceTypes.MACH1, key: "mentra_mach1"},
           {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
           {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
-          // {deviceModel: "Brilliant Labs Frame", key: "frame"},
+          {deviceModel: DeviceTypes.INMO_GO2, key: "inmo_go2"},
         ]
 
   const triggerGlassesPairingGuide = async (deviceModel: string) => {
