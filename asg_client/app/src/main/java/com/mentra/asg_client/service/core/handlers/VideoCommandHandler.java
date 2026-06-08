@@ -187,14 +187,13 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
             boolean save = data.optBoolean("save", false);
             boolean flash = data.optBoolean("flash", true);
             boolean sound = data.optBoolean("sound", true);
+            // Optional auto-stop after N minutes; 0 (the default) means record until
+            // stopped or interrupted (battery/storage/thermal/error). A null/invalid
+            // settings object passes through as defaults inside the capture service.
+            int maxRecordingTimeMinutes = data.optInt("maxRecordingTimeMinutes", 0);
 
-            if (videoSettings != null) {
-                captureService.handleStartVideoCommand(
-                        requestId, save, videoSettings, flash, sound);
-            } else {
-                captureService.handleStartVideoCommand(
-                        requestId, save, flash, sound); // Use default settings
-            }
+            captureService.handleStartVideoCommand(
+                    requestId, save, videoSettings, flash, sound, maxRecordingTimeMinutes);
 
             logCommandResult("start_video_recording", true, null);
             return true;
@@ -229,14 +228,20 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
                 return false;
             }
 
+            // Optional upload target supplied at STOP (not start) so the auth token is still
+            // fresh when the upload actually runs — a recording can last arbitrarily long.
+            // Empty webhook = no upload (video stays on device).
+            String webhookUrl = data != null ? data.optString("webhookUrl", "") : "";
+            String authToken = data != null ? data.optString("authToken", "") : "";
+
             // If requestId provided, use handleStopVideoCommand for validation
             // Otherwise use direct stopVideoRecording for backward compatibility
             if (requestId != null && !requestId.isEmpty()) {
                 Log.d(TAG, "Stopping video with requestId validation: " + requestId);
-                captureService.handleStopVideoCommand(requestId);
+                captureService.handleStopVideoCommand(requestId, webhookUrl, authToken);
             } else {
                 Log.d(TAG, "Stopping video without requestId (backward compatibility mode)");
-                captureService.stopVideoRecording();
+                captureService.stopVideoRecording(webhookUrl, authToken);
             }
 
             return true;
