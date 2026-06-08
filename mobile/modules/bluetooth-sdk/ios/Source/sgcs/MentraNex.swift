@@ -81,8 +81,8 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         updateGlassesAutoBrightness(autoMode)
     }
 
-    func sendDoubleTextWall(_ top: String, _ bottom: String) {
-        sendTextWall("\(top)\n\(bottom)")
+    func sendDoubleTextWall(_ top: String, _ bottom: String) async {
+        await sendTextWall("\(top)\n\(bottom)")
     }
 
     func displayBitmap(base64ImageData: String, x _: Int32? = nil, y _: Int32? = nil, width _: Int32? = nil, height _: Int32? = nil) async -> Bool {
@@ -972,7 +972,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         return normalized.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
     }
 
-    func sendTextWall(_ text: String) {
+    func sendTextWall(_ text: String) async {
         guard nexReady else {
             Bridge.log("NEX: Not ready to display text. Device not initialized.")
             return
@@ -1001,22 +1001,22 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     }
 
     @objc func displayTextLine(_ text: String) {
-        sendTextWall(text)
+        Task { await sendTextWall(text) }
     }
 
     @objc func displayDoubleTextWall(_ textTop: String, textBottom: String) {
         let combinedText = "\(textTop)\n\(textBottom)"
-        sendTextWall(combinedText)
+        Task { await sendTextWall(combinedText) }
     }
 
     @objc func displayReferenceCardSimple(_ title: String, body: String) {
         let combinedText = "\(title)\n\n\(body)"
-        sendTextWall(combinedText)
+        Task { await sendTextWall(combinedText) }
     }
 
     @objc func displayRowsCard(_ rowStrings: [String]) {
         let combinedText = rowStrings.joined(separator: "\n")
-        sendTextWall(combinedText)
+        Task { await sendTextWall(combinedText) }
     }
 
     @objc func displayBulletList(_ title: String, bullets: [String]) {
@@ -1025,7 +1025,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             text += "\n"
         }
         text += bullets.map { "• \($0)" }.joined(separator: "\n")
-        sendTextWall(text)
+        Task { await sendTextWall(text) }
     }
 
     @objc func displayScrollingText(_ text: String) {
@@ -1455,7 +1455,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     @objc func displayCustomContent(_ content: String) {
         // For now, treat custom content as regular text
-        sendTextWall(content)
+        Task { await sendTextWall(content) }
     }
 
     @objc func setUpdatingScreen(_ updating: Bool) {

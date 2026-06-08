@@ -1591,124 +1591,122 @@ class G2 : SGCManager() {
 
     // ---------- Authentication Sequence ----------
 
-    private fun runAuthSequence() {
+    private suspend fun runAuthSequence() {
         Bridge.log("G2: Running auth sequence")
 
-        CoroutineScope(Dispatchers.Main).launch {
-            // Auth to left side
-            if (leftGatt != null && leftWriteChar != null) {
-                val authL = DevSettingsProto.authCmd(sendManager.nextMagicRandom())
-                sendDevSettingsCommand(authL, left = true, right = false)
-            }
+        // Auth to left side
+        if (leftGatt != null && leftWriteChar != null) {
+            val authL = DevSettingsProto.authCmd(sendManager.nextMagicRandom())
+            sendDevSettingsCommand(authL, left = true, right = false)
+        }
 
-            // Small delay then auth right + pipe role change + time sync
-            delay(200)
-            val authR = DevSettingsProto.authCmd(sendManager.nextMagicRandom())
-            sendDevSettingsCommand(authR, left = false, right = true)
+        // Small delay then auth right + pipe role change + time sync
+        delay(200)
+        val authR = DevSettingsProto.authCmd(sendManager.nextMagicRandom())
+        sendDevSettingsCommand(authR, left = false, right = true)
 
-            delay(200)
-            val roleChange = DevSettingsProto.pipeRoleChange(sendManager.nextMagicRandom())
-            sendDevSettingsCommand(roleChange, left = false, right = true)
+        delay(200)
+        val roleChange = DevSettingsProto.pipeRoleChange(sendManager.nextMagicRandom())
+        sendDevSettingsCommand(roleChange, left = false, right = true)
 
-            delay(200)
-            val timeSync = DevSettingsProto.timeSync(sendManager.nextMagicRandom())
-            sendDevSettingsCommand(timeSync)
+        delay(200)
+        val timeSync = DevSettingsProto.timeSync(sendManager.nextMagicRandom())
+        sendDevSettingsCommand(timeSync)
 
-            // Skip onboarding on connect
-            delay(200)
-            val onboarding = OnboardingProto.skipOnboarding(sendManager.nextMagicRandom())
-            sendOnboardingCommand(onboarding)
-            Bridge.log("G2: Sent onboarding skip (FINISH)")
+        // Skip onboarding on connect
+        delay(200)
+        val onboarding = OnboardingProto.skipOnboarding(sendManager.nextMagicRandom())
+        sendOnboardingCommand(onboarding)
+        Bridge.log("G2: Sent onboarding skip (FINISH)")
 
-            // 1. gesture_ctrl init (field1=0, field2=magicRandom)
-            val gestureInitW = ProtobufWriter()
-            gestureInitW.writeInt32Field(1, 0)
-            gestureInitW.writeInt32Field(2, sendManager.nextMagicRandom())
-            sendGestureCtrlCommand(gestureInitW.toByteArray())
+        // 1. gesture_ctrl init (field1=0, field2=magicRandom)
+        val gestureInitW = ProtobufWriter()
+        gestureInitW.writeInt32Field(1, 0)
+        gestureInitW.writeInt32Field(2, sendManager.nextMagicRandom())
+        sendGestureCtrlCommand(gestureInitW.toByteArray())
 
-            // 2. ui_setting_app (0x0C) — query (cmd=2, field4={settingInfoType=1, autoBrightnessLevel=0})
-            val uiSettW = ProtobufWriter()
-            uiSettW.writeInt32Field(1, 2) // cmd = DeviceReceiveRequest
-            uiSettW.writeInt32Field(2, sendManager.nextMagicRandom())
-            uiSettW.writeMessageField(4, byteArrayOf(0x08, 0x01, 0x10, 0x00)) // {1:1, 2:0}
-            sendToGlasses(
-                    sendManager.buildPackets(
-                            serviceId = 0x0C,
-                            payload = uiSettW.toByteArray(),
-                            reserveFlag = true
-                    )
-            )
+        // 2. ui_setting_app (0x0C) — query (cmd=2, field4={settingInfoType=1, autoBrightnessLevel=0})
+        val uiSettW = ProtobufWriter()
+        uiSettW.writeInt32Field(1, 2) // cmd = DeviceReceiveRequest
+        uiSettW.writeInt32Field(2, sendManager.nextMagicRandom())
+        uiSettW.writeMessageField(4, byteArrayOf(0x08, 0x01, 0x10, 0x00)) // {1:1, 2:0}
+        sendToGlasses(
+                sendManager.buildPackets(
+                        serviceId = 0x0C,
+                        payload = uiSettW.toByteArray(),
+                        reserveFlag = true
+                )
+        )
 
-            // 6. Dashboard init (0x01) — display settings
-            // halfDayFormat: 1 = 12h, 0 = 24h
-            // temperatureUnit: 1 = Celsius (metric), 2 = Fahrenheit (imperial)
-            val dashDisplayW = ProtobufWriter()
-            dashDisplayW.writeInt32Field(1, 4) // displayMode
-            dashDisplayW.writeInt32Field(2, 3) // statusDisplayCount
-            dashDisplayW.writeMessageField(3, byteArrayOf(1, 2, 3)) // statusDisplayOrder
-            dashDisplayW.writeInt32Field(4, 4) // widgetDisplayCount
-            // WidgetType: 1=News, 2=Stock, 3=Schedule, 4=Quicklist, 5=Health
-            dashDisplayW.writeMessageField(
-                    5,
-                    byteArrayOf(3, 1, 2, 4, 5)
-            ) // widgetDisplayOrder: Schedule, News, Stock, Quicklist
-            dashDisplayW.writeInt32Field(6, dashboardHalfDayFormat()) // halfDayFormat
-            dashDisplayW.writeInt32Field(7, dashboardTemperatureUnit()) // temperatureUnit
+        // 6. Dashboard init (0x01) — display settings
+        // halfDayFormat: 1 = 12h, 0 = 24h
+        // temperatureUnit: 1 = Celsius (metric), 2 = Fahrenheit (imperial)
+        val dashDisplayW = ProtobufWriter()
+        dashDisplayW.writeInt32Field(1, 4) // displayMode
+        dashDisplayW.writeInt32Field(2, 3) // statusDisplayCount
+        dashDisplayW.writeMessageField(3, byteArrayOf(1, 2, 3)) // statusDisplayOrder
+        dashDisplayW.writeInt32Field(4, 4) // widgetDisplayCount
+        // WidgetType: 1=News, 2=Stock, 3=Schedule, 4=Quicklist, 5=Health
+        dashDisplayW.writeMessageField(
+                5,
+                byteArrayOf(3, 1, 2, 4, 5)
+        ) // widgetDisplayOrder: Schedule, News, Stock, Quicklist
+        dashDisplayW.writeInt32Field(6, dashboardHalfDayFormat()) // halfDayFormat
+        dashDisplayW.writeInt32Field(7, dashboardTemperatureUnit()) // temperatureUnit
 
-            val dashRecvW = ProtobufWriter()
-            dashRecvW.writeMessageField(2, dashDisplayW.toByteArray())
+        val dashRecvW = ProtobufWriter()
+        dashRecvW.writeMessageField(2, dashDisplayW.toByteArray())
 
-            val dashPkgW = ProtobufWriter()
-            dashPkgW.writeInt32Field(1, 2) // Dashboard_Receive
-            dashPkgW.writeInt32Field(2, sendManager.nextMagicRandom())
-            dashPkgW.writeMessageField(4, dashRecvW.toByteArray())
-            sendDashboardCommand(dashPkgW.toByteArray())
+        val dashPkgW = ProtobufWriter()
+        dashPkgW.writeInt32Field(1, 2) // Dashboard_Receive
+        dashPkgW.writeInt32Field(2, sendManager.nextMagicRandom())
+        dashPkgW.writeMessageField(4, dashRecvW.toByteArray())
+        sendDashboardCommand(dashPkgW.toByteArray())
 
-            // Disable "Hey Even" wakeword on connect
-            val heyEvenOff = EvenAIProto.setHeyEven(sendManager.nextMagicRandom(), false)
-            sendEvenAICommand(heyEvenOff)
-            Bridge.log("G2: Disabled Hey Even wakeword")
+        // Disable "Hey Even" wakeword on connect
+        val heyEvenOff = EvenAIProto.setHeyEven(sendManager.nextMagicRandom(), false)
+        sendEvenAICommand(heyEvenOff)
+        Bridge.log("G2: Disabled Hey Even wakeword")
 
-            Bridge.log("G2: Sent full Even-compatible init sequence")
+        Bridge.log("G2: Sent full Even-compatible init sequence")
 
-            // Start heartbeats after auth
-            startHeartbeats()
+        // Start heartbeats after auth
+        startHeartbeats()
 
-            reconnectionManager.stop()
-            Bridge.log("G2: Auth sequence complete, glasses ready")
+        reconnectionManager.stop()
+        Bridge.log("G2: Auth sequence complete, glasses ready")
 
-            // Set device_name so DeviceManager can save it for reconnection
-            val peripheralName = rightGatt?.device?.name ?: leftGatt?.device?.name
-            val serialNumber = peripheralName?.let { deviceNameToSerialNumber[it] }
-            if (serialNumber != null) {
-                DeviceStore.apply("bluetooth", "device_name", serialNumber)
-                Bridge.log("G2: Set device_name to $serialNumber")
-            }
+        // Set device_name so DeviceManager can save it for reconnection
+        val peripheralName = rightGatt?.device?.name ?: leftGatt?.device?.name
+        val serialNumber = peripheralName?.let { deviceNameToSerialNumber[it] }
+        if (serialNumber != null) {
+            DeviceStore.apply("bluetooth", "device_name", serialNumber)
+            Bridge.log("G2: Set device_name to $serialNumber")
+        }
 
-            // Set bluetooth name and device model for Device Info page
-            val btName = rightGatt?.device?.name ?: leftGatt?.device?.name ?: ""
-            DeviceStore.apply("glasses", "bluetoothName", btName)
-            DeviceStore.apply("glasses", "deviceModel", DeviceTypes.G2)
+        // Set bluetooth name and device model for Device Info page
+        val btName = rightGatt?.device?.name ?: leftGatt?.device?.name ?: ""
+        DeviceStore.apply("glasses", "bluetoothName", btName)
+        DeviceStore.apply("glasses", "deviceModel", DeviceTypes.G2)
 
-            setFullyConnected()
+        setFullyConnected()
 
-            // Connect a controller if we have one
-            connectController()
+        // Connect a controller if we have one
+        connectController()
 
-            // Query version + battery info from glasses
-            requestDeviceInfo()
+        // Query version + battery info from glasses
+        requestDeviceInfo()
 
-            sendMenuApps()
-            sendStoredCalendarEvents()
+        sendMenuApps()
+        sendStoredCalendarEvents()
 
-            // Re-apply the IMU preference: the store only pushes imu_enabled to the glasses when
-            // the value changes, so after a reconnect an already-on IMU would otherwise stay off
-            // (accel_event stops) until the user toggles the setting again.
-            val imuEnabled = DeviceStore.get("bluetooth", "imu_enabled") as? Boolean ?: false
-            if (imuEnabled) {
-                Bridge.log("G2: re-applying imu_enabled=true after connect")
-                setImuEnabled(true)
-            }
+        // Re-apply the IMU preference: the store only pushes imu_enabled to the glasses when
+        // the value changes, so after a reconnect an already-on IMU would otherwise stay off
+        // (accel_event stops) until the user toggles the setting again.
+        val imuEnabled = DeviceStore.get("bluetooth", "imu_enabled") as? Boolean ?: false
+        if (imuEnabled) {
+            Bridge.log("G2: re-applying imu_enabled=true after connect")
+            setImuEnabled(true)
         }
     }
 
@@ -4033,12 +4031,11 @@ class G2 : SGCManager() {
                     // (not just the last-cached G2 containers) after returning from the dashboard.
                     displayScope.launch {
                         displayMutex.withLock { rebuildState() }
-                        DeviceManager.getInstance().sendCurrentState()
-                    }
-                    // set the mic back on if it should be on
-                    val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
-                    if (micEnabled) {
-                        restartMic()
+                        // set the mic back on if it should be on
+                        val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
+                        if (micEnabled) {
+                            restartMic()
+                        }
                     }
                     return
                 }
