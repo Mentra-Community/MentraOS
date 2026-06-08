@@ -5,7 +5,7 @@ import {Button, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {DEFAULT_CORE_URL, DEFAULT_RUNTIME_URL, reconnectCloudV2} from "@/services/cloudV2Client"
+import {cloudClient, DEFAULT_CORE_URL, DEFAULT_RUNTIME_URL} from "@/services/cloudClient"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 
@@ -28,10 +28,10 @@ async function testEndpoint(url: string): Promise<{ok: boolean; status?: number;
   }
 }
 
-export default function CloudV2Url() {
+export default function CloudUrl() {
   const {theme, themed} = useAppTheme()
-  const [coreUrl, setCoreUrl] = useSetting(SETTINGS.cloud_v2_core_url.key)
-  const [runtimeUrl, setRuntimeUrl] = useSetting(SETTINGS.cloud_v2_runtime_url.key)
+  const [coreUrl, setCoreUrl] = useSetting(SETTINGS.cloud_core_url.key)
+  const [runtimeUrl, setRuntimeUrl] = useSetting(SETTINGS.cloud_runtime_url.key)
   const [coreInput, setCoreInput] = useState("")
   const [runtimeInput, setRuntimeInput] = useState("")
   const [isSaving, setIsSaving] = useState(false)
@@ -83,7 +83,7 @@ export default function CloudV2Url() {
 
       await setCoreUrl(core)
       await setRuntimeUrl(runtime)
-      reconnectCloudV2()
+      cloudClient.reconnect()
 
       showAlert("Success", "Cloud V2 endpoints saved and verified. Reconnecting with the new URLs.", [{text: "OK"}])
     } finally {
@@ -96,7 +96,7 @@ export default function CloudV2Url() {
     setRuntimeUrl(null)
     setCoreInput("")
     setRuntimeInput("")
-    reconnectCloudV2()
+    cloudClient.reconnect()
     showAlert("Success", "Reset Cloud V2 endpoints to env/default.", [{text: "OK"}])
   }
 

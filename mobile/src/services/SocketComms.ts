@@ -809,29 +809,14 @@ class SocketComms {
         this.handle_udp_ping_ack(msg)
         break
 
-      case "data_stream": {
-        const streamType = msg.streamType
-        // Local island miniapps are powered ONLY by Cloud V2. v1 cloud
-        // `transcription:*` streams must NOT reach local miniapps. V2 (the
-        // `@mentra/island` runtime + cloudV2Client adapter) owns transcript
-        // delivery to them, with on-device STT as the V2-down fallback. We also
-        // no longer let v1 transcripts signal "cloud alive" for the
-        // local-miniapp fallback; that liveness now tracks V2 (see
-        // MantleManager's cloudConnection wiring). All other (non-transcription)
-        // data_stream types still fan out to local miniapps as before.
-        if (typeof streamType === "string" && streamType.startsWith("transcription:")) {
-          break
-        }
-        localMiniappRuntime.forwardEvent(streamType, msg.data)
-        break
-      }
-
-      case "phone_stream_status":
-      case "phone_managed_stream_status":
-        // Forward cloud-1 streaming messages to LocalMiniappRuntime for
-        // any local miniapp that still has a pending cloud request (legacy
-        // path; phone-orchestrated v2 streaming doesn't register one).
-        localMiniappRuntime.handleCloudMessage(msg)
+      case "data_stream":
+        // Local island miniapps are powered ONLY by the cloud client and
+        // device-sourced events, never by the v1 cloud socket. The cloud client
+        // (the `@mentra/island` runtime + cloudClient adapter) owns transcript/
+        // translation delivery to them, with on-device STT as the cloud-down
+        // fallback. v1 cloud `data_stream` messages must NOT reach local
+        // miniapps, so there is no forward here. (Cloud SDK apps still receive
+        // their data via the v1 relay path, not this forward.)
         break
 
       default:

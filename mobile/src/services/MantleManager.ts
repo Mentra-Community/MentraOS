@@ -18,7 +18,7 @@ import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
-import {initCloudV2, isCloudV2Connected, onCloudV2ConnectionChange} from "@/services/cloudV2Client"
+import {cloudClient} from "@/services/cloudClient"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
 import {handleOtaClockSkewFromGlasses} from "@/services/asg/glassesClockSync"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
@@ -175,10 +175,9 @@ class MantleManager {
     // island service that reads settings / glasses status / sockets / audio
     // (LocalMiniappRuntime, LocalDisplayManager, LocalSttFallbackCoordinator,
     // DisplayProcessor) is touched.
-    // Construct + connect the v2 cloud client (best-effort) and wire its
-    // runtime adapter alongside the v1 socketComms path. Dual-cloud during the
-    // transition — the v1 path below is unchanged.
-    const cloud = initCloudV2()
+    // Construct + connect the cloud client (best-effort) and wire its runtime
+    // adapter. The island/local-miniapp path is powered by this client.
+    const cloud = cloudClient.init()
 
     configureRuntime({
       socketComms: {
@@ -216,16 +215,16 @@ class MantleManager {
           ),
       },
       cloudConnection: {
-        // Local island miniapps are powered ONLY by Cloud V2, so the on-device
-        // STT fallback for miniapps must track V2 liveness, not the v1
-        // WebSocket. When V2 is connected and delivering transcripts the
-        // fallback stays off (V2 powers captions); when V2 is down, local STT
-        // engages. This adapter is consumed exclusively by
+        // Local island miniapps are powered ONLY by the cloud client, so the
+        // on-device STT fallback for miniapps must track cloud liveness, not the
+        // v1 WebSocket. When the cloud is connected and delivering transcripts
+        // the fallback stays off (the cloud powers captions); when it is down,
+        // local STT engages. This adapter is consumed exclusively by
         // LocalSttFallbackCoordinator, whose only consumer is the local-miniapp
         // path. The glasses offline-captions display runs off its own
         // `offline_captions_running` setting and is unaffected.
-        isConnected: () => isCloudV2Connected(),
-        addListener: (l) => onCloudV2ConnectionChange(l),
+        isConnected: () => cloudClient.isConnected(),
+        addListener: (l) => cloudClient.onConnectionChange(l),
       },
       setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
       sendDisplayEvent: (event) => BluetoothSdk.displayEvent(event),

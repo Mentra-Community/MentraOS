@@ -3,7 +3,7 @@ import {useEffect, useRef, useState} from "react"
 import {ScrollView, View} from "react-native"
 
 import BackendUrl from "@/components/dev/BackendUrl"
-import CloudV2Url from "@/components/dev/CloudV2Url"
+import CloudUrl from "@/components/dev/CloudUrl"
 import StoreUrl from "@/components/dev/StoreUrl"
 import {Header, Icon, Screen, Text} from "@/components/ignite"
 import SelectSetting from "@/components/settings/SelectSetting"
@@ -288,7 +288,7 @@ export default function DeveloperSettingsScreen() {
           <BackendUrl />
 
           <Group title="Cloud V2 (core + runtime)">
-            <CloudV2Url />
+            <CloudUrl />
           </Group>
 
           <StoreUrl />

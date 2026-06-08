@@ -206,8 +206,8 @@ class LocalMiniappRuntime {
   /** Ref-counted stream subscriptions: stream → set of packageNames. */
   private streamSubscribers: Map<string, Set<string>> = new Map()
 
-  /** Guards one-time wiring of the cloud-v2 transcript/translation fan-out. */
-  private cloudV2ResultsWired = false
+  /** Guards one-time wiring of the cloud transcript/translation fan-out. */
+  private cloudResultsWired = false
 
   /** Ping interval handle. */
   private pingIntervalId: number | null = null
@@ -2090,32 +2090,31 @@ class LocalMiniappRuntime {
     getRuntimeHooks().socketComms?.updatePhoneSubscriptions(Array.from(cloudStreams))
     localSttFallbackCoordinator.onSubscriptionChange(transcriptionLang !== null, transcriptionLang)
 
-    // Cloud-v2 (additive): mirror the same set as typed AudioSubscription[] and
-    // push it to the v2 runtime. The v1 string path above is unchanged.
+    // Mirror the same set as typed AudioSubscription[] and push it to the cloud
+    // runtime.
     const cloud = getRuntimeHooks().cloud
     if (cloud) {
-      this.ensureCloudV2ResultsWired(cloud)
-      const subs = this.buildV2AudioSubscriptions(cloudStreams)
+      this.ensureCloudResultsWired(cloud)
+      const subs = this.buildCloudAudioSubscriptions(cloudStreams)
       cloud.setSubscriptions(subs).catch((err) => {
-        // Best-effort: the v2 cloud may not be connected yet (or at all during
-        // the transition). Logging is enough — v1 still drives delivery.
-        console.warn(`${LOG_TAG}: cloud-v2 setSubscriptions failed: ${(err as Error)?.message ?? err}`)
+        // Best-effort: the cloud may not be connected yet. Logging is enough.
+        console.warn(`${LOG_TAG}: cloud setSubscriptions failed: ${(err as Error)?.message ?? err}`)
       })
     }
   }
 
   /**
-   * Build the v2 `AudioSubscription[]` from the v1 cloud-stream key set.
+   * Build the cloud `AudioSubscription[]` from the miniapp cloud-stream key set.
    *
-   * v1 keys: `transcription:<lang>` (lang may be `auto`, `en-US`, …) and
+   * Stream keys: `transcription:<lang>` (lang may be `auto`, `en-US`, …) and
    * `translation:<source>:<target>` (3 colon-parts; source/target may be `*`
-   * or `auto` wildcards, target may also be `*`). The v2 protocol requires a
+   * or `auto` wildcards, target may also be `*`). The cloud protocol requires a
    * concrete `target: string` for translation, so wildcard-target translation
-   * keys (`translation:<source>:*`, `translation:*:*`, `translation:auto`)
-   * have no v2 equivalent and are skipped — the matching v1 path still serves
-   * them. Wildcard/`auto` SOURCE maps to `{mode: "auto"}`.
+   * keys (`translation:<source>:*`, `translation:*:*`, `translation:auto`) have
+   * no cloud equivalent and are skipped. Wildcard/`auto` SOURCE maps to
+   * `{mode: "auto"}`.
    */
-  private buildV2AudioSubscriptions(cloudStreams: Set<string>): AudioSubscription[] {
+  private buildCloudAudioSubscriptions(cloudStreams: Set<string>): AudioSubscription[] {
     const subs: AudioSubscription[] = []
     const langSource = (code: string): LanguageSource =>
       code === "auto" || code === "*" ? {mode: "auto"} : {mode: "specific", code}
@@ -2126,7 +2125,7 @@ class LocalMiniappRuntime {
       } else if (stream.startsWith("translation:")) {
         const parts = stream.split(":")
         // Only `translation:<source>:<target>` maps cleanly; a concrete target
-        // is required by the v2 schema.
+        // is required by the cloud schema.
         if (parts.length === 3) {
           const [, source, target] = parts
           if (target === "*") continue
@@ -2138,15 +2137,15 @@ class LocalMiniappRuntime {
   }
 
   /**
-   * Wire the v2 cloud's transcription/translation results into the existing
-   * miniapp fan-out exactly once. Maps each v2 result back to the v1
-   * cloud-to-app data shape `forwardEvent` already forwards, keyed on the same
-   * `transcription:<lang>` / `translation:<source>:<target>` stream strings the
-   * v1 path uses, so subscribed miniapps receive identical envelopes.
+   * Wire the cloud's transcription/translation results into the existing
+   * miniapp fan-out exactly once. Maps each cloud result back to the
+   * cloud-to-app data shape `forwardEvent` already forwards, keyed on the
+   * `transcription:<lang>` / `translation:<source>:<target>` stream strings, so
+   * subscribed miniapps receive identical envelopes.
    */
-  private ensureCloudV2ResultsWired(cloud: CloudRuntimeAdapter): void {
-    if (this.cloudV2ResultsWired) return
-    this.cloudV2ResultsWired = true
+  private ensureCloudResultsWired(cloud: CloudRuntimeAdapter): void {
+    if (this.cloudResultsWired) return
+    this.cloudResultsWired = true
 
     cloud.onTranscript((d: TranscriptionData) => {
       this.forwardEvent(`transcription:${d.resolvedLanguage}`, {
