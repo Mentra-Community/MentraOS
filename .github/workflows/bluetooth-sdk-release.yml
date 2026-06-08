@@ -3,7 +3,7 @@ name: Release Bluetooth SDK
 on:
   push:
     branches:
-      - dev
+      - codex/bluetooth-sdk-release-0.1.10-test
     paths:
       - ".github/scripts/bluetooth-sdk-release-info.mjs"
       - ".github/workflows/bluetooth-sdk-release.yml"
