@@ -247,6 +247,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [simulate, setSimulate] = useState(false)
   const [speedMultiplier, setSpeedMultiplier] = useState(5)
   const [wrongSidewalk, setWrongSidewalk] = useState(false)
+  const [useRawInstructions, setUseRawInstructions] = useState(true)
   const [travelMode, setTravelMode] = useState<TravelMode>("walking")
 
   const [previewRoutePoints, setPreviewRoutePoints] = useState<LatLng[] | null>(null)
@@ -1105,6 +1106,25 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   searchFrozen ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
                 }`}>
                 {searchFrozen ? "Frozen" : "Freeze"}
+              </button>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <div className="flex flex-col">
+                <span className="text-[13px] font-medium text-neutral-700">Use raw Google instructions</span>
+                <span className="text-[11px] text-neutral-500">Maneuver card + glasses HUD</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !useRawInstructions
+                  setUseRawInstructions(next)
+                  mentra.send("nav:set-dev-settings", {useRawInstructions: next})
+                  append(`raw-instructions → ${next ? "on" : "off"}`)
+                }}
+                className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${
+                  useRawInstructions ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
+                }`}>
+                {useRawInstructions ? "ON" : "OFF"}
               </button>
             </div>
             <LiveLog log={log} running={running} status={status} maneuver={maneuver} />
