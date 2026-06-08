@@ -8,7 +8,14 @@
  * UI's mentra.send / mentra.request bus declared in shared/channels.ts.
  */
 
-import type {MiniappSession, NavRoute, NavUpdate, Pivot, UIModule} from "@mentra/miniapp/background"
+import type {
+  MiniappSession,
+  NavRoute,
+  NavUpdate,
+  Pivot,
+  StartNavigationOptions,
+  UIModule,
+} from "@mentra/miniapp/background"
 
 import type {Channels} from "../shared/channels"
 import type {Coords, DevSettings, LogEntry, NavSnapshot, TripState} from "../shared/types"
@@ -20,7 +27,7 @@ import {NavigationManager} from "./managers/NavigationManager"
 import {PlacesManager} from "./managers/PlacesManager"
 import {SimpleStorageManager} from "./managers/SimpleStorageManager"
 import {formatDistance} from "./lib/formatDistance"
-import {haversineMeters} from "./lib/geometry"
+import {distanceToPolylineMeters, haversineMeters} from "./lib/geometry"
 import {renderMinimap} from "./lib/MinimapRenderer"
 import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
 
@@ -47,6 +54,30 @@ export class NavigationController {
   // the very start of the session, not every time the user finishes
   // and returns to idle.
   private hasCompletedTrip = false
+
+  // Last logged threshold bucket for the off-route diagnostic so we
+  // only print on crossings, not every coord update.
+  // 0 = under 15m, 1 = 15–30m, 2 = ≥30m.
+  private lastOffRouteBucket = 0
+
+  // Trip-start anchor: position recorded at trip start, used to gate
+  // auto-rebuilds. Suppresses the "user is inside a 50m-radius building"
+  // case where the initial fix is already >30m off-route — until the
+  // user has moved >REBUILD_MIN_MOVE_M from the start point, we won't
+  // auto-rebuild.
+  private tripStartCoords: {lat: number; lng: number} | null = null
+  // Last StartNavigationOptions so an auto-rebuild can re-fire the same
+  // mode / simulate / speedMultiplier without the UI having to re-send.
+  private lastStartOpts: (StartNavigationOptions & {destinationName?: string}) | null = null
+  // Cooldown: timestamp of the last auto-rebuild. Suppresses back-to-
+  // back rebuilds while a fresh route is still being computed.
+  private lastAutoRebuildAt = 0
+  // Pending auto-rebuild timer. When we cross >30m we don't rebuild
+  // immediately — we flip the HUD to "Rebuilding route…" and wait
+  // REBUILD_DELAY_MS, then re-check distance and either fire or
+  // cancel. Tracked so we can cancel it on stop/arrived/dispose and
+  // ignore further bucket-2 transitions while one is already pending.
+  private pendingRebuildTimer: ReturnType<typeof setTimeout> | null = null
 
   // Canonical state (mirrored to UI).
   private coords: Coords | null = null
@@ -109,6 +140,7 @@ export class NavigationController {
         }
         this.lastCoordsAt = Date.now()
         this.ui.send("nav:coords", this.coords)
+        this.logOffRouteThresholds()
         this.refreshHUD()
       }),
     )
@@ -200,9 +232,21 @@ export class NavigationController {
               offRouteAt: null,
             }
             this.hasCompletedTrip = true
+            this.activePivot = null
+            this.upcomingPivot = null
+            this.cancelPendingRebuild()
+            this.tripStartCoords = null
+            this.lastStartOpts = null
+            this.lastAutoRebuildAt = 0
+            this.lastOffRouteBucket = 0
             break
           case "error":
             this.trip = {...this.trip, status: "idle", running: false}
+            this.cancelPendingRebuild()
+            this.tripStartCoords = null
+            this.lastStartOpts = null
+            this.lastAutoRebuildAt = 0
+            this.lastOffRouteBucket = 0
             break
         }
         this.ui.send("nav:trip-state", this.trip)
@@ -234,6 +278,15 @@ export class NavigationController {
         // "arrived" are left untouched.
         const status = this.trip.status === "rerouting" ? "navigating" : this.trip.status
         this.trip = {...this.trip, status, routePoints: route.points, routeSteps: steps}
+        // Fresh route → reset the off-route bucket and re-anchor the
+        // trip-start point. Otherwise the first coord after the new
+        // polyline lands could compare against a stale bucket (the
+        // user might already have been "in" bucket 2 against the old
+        // route) and skip the threshold transition log.
+        this.lastOffRouteBucket = 0
+        if (this.coords) {
+          this.tripStartCoords = {lat: this.coords.lat, lng: this.coords.lng}
+        }
         this.ui.send("nav:route", {points: route.points, steps})
         this.ui.send("nav:trip-state", this.trip)
         logLiveRoute(route)
@@ -286,6 +339,12 @@ export class NavigationController {
     this.unsubs.push(
       this.ui.on("nav:start", async (opts) => {
         const {destinationName, ...startOpts} = opts
+        // Clear the previous trip's route polyline immediately so the
+        // off-route threshold check doesn't run against a stale route
+        // between nav:start and the new onRoute event landing. Without
+        // this, the user can be e.g. 500m from the prior route's
+        // polyline at start, instantly trigger the >30m bucket, flip
+        // status to "rerouting", and fire a redundant auto-rebuild.
         this.trip = {
           ...this.trip,
           status: "navigating",
@@ -293,8 +352,20 @@ export class NavigationController {
           activeDestination: startOpts.stops?.[startOpts.stops.length - 1] ?? null,
           activeDestinationName: destinationName ?? null,
           maneuver: null,
+          routePoints: null,
+          routeSteps: null,
           offRouteAt: null,
         }
+        // Snapshot the trip-start context so an auto-rebuild can re-
+        // fire start() with the same shape, and so we can gate
+        // rebuilds on "user has actually moved away from start".
+        this.lastStartOpts = opts
+        this.tripStartCoords = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
+        this.lastAutoRebuildAt = 0
+        this.lastOffRouteBucket = 0
+        // Cancel any in-flight delayed rebuild — a fresh start
+        // supersedes the old "are we still off-route?" timer.
+        this.cancelPendingRebuild()
         this.appendLog(`START ${destinationName ?? "(unnamed)"}`)
         this.ui.send("nav:trip-state", this.trip)
         try {
@@ -327,6 +398,13 @@ export class NavigationController {
         } catch {
           /* ignore */
         }
+        this.cancelPendingRebuild()
+        this.tripStartCoords = null
+        this.lastStartOpts = null
+        this.lastAutoRebuildAt = 0
+        this.lastOffRouteBucket = 0
+        this.activePivot = null
+        this.upcomingPivot = null
         this.trip = {
           ...this.trip,
           status: "idle",
@@ -483,7 +561,22 @@ export class NavigationController {
       next = "Arriving"
     }
 
-    if (next == null) return
+    if (next == null) {
+      // Nothing to display — wipe whatever frame was last on the
+      // glasses (the SDK's text HUD persists until cleared/replaced).
+      // Without this, after `nav:stop` the user keeps seeing the last
+      // "Arriving in Xm" frame indefinitely because the maneuver got
+      // cleared but no replacement HUD was ever pushed.
+      if (this.lastHudKey !== "") {
+        this.lastHudKey = ""
+        try {
+          this.display.clear()
+        } catch {
+          /* ignore */
+        }
+      }
+      return
+    }
     // Coalesce — don't spam the glasses with the same frame.
     const key = `${next} ${durationMs ?? 0}`
     if (key === this.lastHudKey) return
@@ -566,6 +659,149 @@ export class NavigationController {
       })
   }
 
+  // ── Off-route threshold + auto-rebuild ───────────────────────────────
+
+  // Compute perpendicular distance from the current fix to the active
+  // route polyline. Thresholds:
+  //   15m → log only (advisory: "consider returning to route")
+  //   30m → trigger an auto-rebuild to the same destination
+  //
+  // Bucket-based so a user wandering at 18m doesn't spam logs every
+  // tick — only bucket transitions emit. Rebuild gated by two filters
+  // (see triggerAutoRebuild):
+  //   - REBUILD_MIN_MOVE_M: user must have moved away from where the
+  //     trip started. Suppresses the "user is inside a 50m building"
+  //     case where the initial fix is already >30m off but the user
+  //     hasn't actually deviated yet.
+  //   - REBUILD_COOLDOWN_MS: no rebuild within N seconds of the last
+  //     one, so a fresh route can land before we'd consider firing
+  //     another.
+  private logOffRouteThresholds(): void {
+    if (!this.coords) return
+    const route = this.trip.routePoints
+    if (!route || route.length < 2) {
+      this.lastOffRouteBucket = 0
+      return
+    }
+    const here = {lat: this.coords.lat, lng: this.coords.lng}
+    const dist = distanceToPolylineMeters(here, route)
+    if (dist == null) return
+    const bucket = dist >= 30 ? 2 : dist >= 15 ? 1 : 0
+    if (bucket === this.lastOffRouteBucket) return
+    this.lastOffRouteBucket = bucket
+    if (bucket === 1) {
+      const msg = `> 15m off route (${dist.toFixed(1)}m) — return to route`
+      console.log(`[NavOffRoute] ${msg}`)
+      this.appendLog(`[NavOffRoute] ${msg}`)
+    } else if (bucket === 2) {
+      const msg = `> 30m off route (${dist.toFixed(1)}m) — rebuilding`
+      console.log(`[NavOffRoute] ${msg}`)
+      this.appendLog(`[NavOffRoute] ${msg}`)
+      this.triggerAutoRebuild(here, dist)
+    }
+  }
+
+  // Schedule a delayed auto-rebuild. Crossing >30m flips the HUD to
+  // "Rebuilding route…" immediately (via status="rerouting"), then we
+  // wait REBUILD_DELAY_MS and re-check distance. If the user is still
+  // >30m off, fire nav:start; if they've returned closer, cancel and
+  // revert HUD. The delay also doubles as the "min 3s HUD show" rule —
+  // since REBUILD_DELAY_MS > 3s, the rerouting card is always on screen
+  // for at least 3s before any outcome.
+  //
+  // No-ops if the user hasn't actually moved from where the trip
+  // started (building edge case) or if a previous rebuild is still
+  // within its cooldown window.
+  private triggerAutoRebuild(here: {lat: number; lng: number}, dist: number): void {
+    const REBUILD_MIN_MOVE_M = 10
+    const REBUILD_COOLDOWN_MS = 15_000
+    const REBUILD_DELAY_MS = 4_000
+    const REBUILD_DISTANCE_M = 30
+
+    const opts = this.lastStartOpts
+    if (!opts) return
+
+    // Already a delayed rebuild in flight — don't stack another.
+    if (this.pendingRebuildTimer) return
+
+    const now = Date.now()
+    if (now - this.lastAutoRebuildAt < REBUILD_COOLDOWN_MS) {
+      this.appendLog(`[NavOffRoute] rebuild skipped (cooldown)`)
+      return
+    }
+
+    const start = this.tripStartCoords
+    if (start) {
+      const moved = haversineMeters(start, here)
+      if (moved < REBUILD_MIN_MOVE_M) {
+        this.appendLog(
+          `[NavOffRoute] rebuild skipped (user hasn't moved: ${moved.toFixed(1)}m from start, ${dist.toFixed(1)}m off route)`,
+        )
+        return
+      }
+    }
+
+    // Flip HUD immediately so "Rebuilding route…" is visible during
+    // the delay window. If the trip ends or a new route lands during
+    // the delay, cancelPendingRebuild() / the existing route handlers
+    // will revert this.
+    this.appendLog(`[NavOffRoute] rebuild armed — re-checking in ${REBUILD_DELAY_MS / 1000}s`)
+    this.trip = {...this.trip, status: "rerouting"}
+    this.ui.send("nav:trip-state", this.trip)
+    this.refreshHUD()
+
+    this.pendingRebuildTimer = setTimeout(() => {
+      this.pendingRebuildTimer = null
+
+      // Trip may have ended or status changed during the delay.
+      if (!this.trip.running && this.trip.status !== "rerouting") return
+      const route = this.trip.routePoints
+      if (!route || route.length < 2 || !this.coords) {
+        // Route or fix went away — revert.
+        this.trip = {...this.trip, status: "navigating"}
+        this.ui.send("nav:trip-state", this.trip)
+        this.refreshHUD()
+        return
+      }
+      const stillOff = distanceToPolylineMeters(
+        {lat: this.coords.lat, lng: this.coords.lng},
+        route,
+      )
+      if (stillOff == null || stillOff < REBUILD_DISTANCE_M) {
+        this.appendLog(
+          `[NavOffRoute] rebuild cancelled — back within range (${stillOff?.toFixed(1) ?? "?"}m)`,
+        )
+        this.trip = {...this.trip, status: "navigating"}
+        this.ui.send("nav:trip-state", this.trip)
+        this.refreshHUD()
+        return
+      }
+
+      this.lastAutoRebuildAt = Date.now()
+      this.appendLog(
+        `[NavOffRoute] auto-rebuild firing (${stillOff.toFixed(1)}m off) → ${opts.destinationName ?? "(unnamed)"}`,
+      )
+      // Re-anchor trip-start to the current position so the moved-guard
+      // re-arms against this new starting point.
+      this.tripStartCoords = {lat: this.coords!.lat, lng: this.coords!.lng}
+      void this.navigation.start(opts).then((res) => {
+        if (!res.ok) {
+          this.appendLog(`[NavOffRoute] auto-rebuild failed: ${res.error ?? "unknown"}`)
+          this.trip = {...this.trip, status: "navigating"}
+          this.ui.send("nav:trip-state", this.trip)
+          this.refreshHUD()
+        }
+      })
+    }, REBUILD_DELAY_MS)
+  }
+
+  private cancelPendingRebuild(): void {
+    if (this.pendingRebuildTimer) {
+      clearTimeout(this.pendingRebuildTimer)
+      this.pendingRebuildTimer = null
+    }
+  }
+
   // ── Log + maneuver helpers ───────────────────────────────────────────
 
   private appendLog(line: string): void {
@@ -606,6 +842,7 @@ export class NavigationController {
   }
 
   private dispose(): void {
+    this.cancelPendingRebuild()
     try {
       this.navigation.stop()
     } catch {

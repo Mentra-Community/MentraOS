@@ -588,6 +588,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
       simulate,
       speedMultiplier,
       missedTurnRerouteMeters: 3,
+      pivots: {radiusMeters: 14},
       destinationName: destination.name || destination.address || undefined,
     })
   }
@@ -608,6 +609,28 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     mentra.send("nav:deviate", {})
   }
 
+  // Cancel the current trip and immediately re-start it to the same
+  // destination. Useful in dev for re-triggering route build / initial
+  // display logic without having to re-pick the destination.
+  function handleRebuildRoute() {
+    const dest = effectiveDestination
+    if (!dest) {
+      append("ERROR: no active destination to rebuild")
+      return
+    }
+    append(`rebuild → ${dest.name || `${dest.lat}, ${dest.lng}`}`)
+    mentra.send("nav:stop", {})
+    mentra.send("nav:start", {
+      stops: [{lat: dest.lat, lng: dest.lng}],
+      mode: "walking",
+      simulate,
+      speedMultiplier,
+      missedTurnRerouteMeters: 3,
+      pivots: {radiusMeters: 14},
+      destinationName: dest.name || dest.address || undefined,
+    })
+  }
+
   // Long-press on the map drops a destination pin at the pressed coord.
   // Mirrors Google Maps "drop pin" UX: the pin enters the same flow as
   // a search-result destination — preview drawer opens, route preview
@@ -616,6 +639,26 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   // a real street address in the background; no-op if it fails.
   // Disabled during active trips: re-routing mid-trip via long-press
   // would be too easy to do by accident.
+  // Google Maps-style POI tap: user tapped a built-in icon (Safeway, a
+  // cafe, etc). Resolve the placeId via the same `places:details` RPC
+  // search results use, then set it as the selected destination — the
+  // existing preview drawer takes care of the rest. No-op during a live
+  // trip (the parent gates this via the prop) so a mid-walk tap can't
+  // accidentally swap destinations.
+  function handleMapPoiTap(placeId: string) {
+    if (running) return
+    append(`POI tap → resolving ${placeId}`)
+    mentra
+      .request("places:details", {placeId})
+      .then((place) => {
+        setDestination(place)
+        append(`POI → ${place.name || place.address || placeId}`)
+      })
+      .catch((err) => {
+        append(`POI lookup failed: ${err instanceof Error ? err.message : String(err)}`)
+      })
+  }
+
   function handleMapLongPress(coord: LatLng) {
     if (running) return
     const coordStr = `${coord.lat.toFixed(6)}, ${coord.lng.toFixed(6)}`
@@ -708,6 +751,10 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           // open. Otherwise a press through the (semi-transparent) panel
           // edges or before the drawer animates in can drop a stray pin.
           onLongPress={isSearching ? undefined : handleMapLongPress}
+          // POI tap → preview drawer. Gated on the search overlay (same
+          // reason as long-press) and on a live trip (avoid swapping
+          // destinations mid-walk).
+          onPlaceTap={isSearching || running ? undefined : handleMapPoiTap}
         />
 
         {/* Top floating stack — search bar, then orientation card while running. */}
@@ -898,6 +945,16 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 onClick={() => setRawMapOpen(true)}
                 className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-neutral-800 text-white">
                 Open
+              </button>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700">Rebuild current route</span>
+              <button
+                type="button"
+                disabled={!effectiveDestination}
+                onClick={handleRebuildRoute}
+                className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-blue-600 text-white disabled:opacity-40">
+                Rebuild
               </button>
             </div>
             <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">

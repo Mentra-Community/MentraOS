@@ -68,6 +68,21 @@ export function perpDistanceMeters(p: LatLng, a: LatLng, b: LatLng): number {
 }
 
 /**
+ * Distance in meters from `p` to the nearest point on a polyline.
+ * Returns null for empty / single-point polylines. Walks every segment;
+ * fine for the segment counts we deal with (tens to low hundreds).
+ */
+export function distanceToPolylineMeters(p: LatLng, points: LatLng[] | null): number | null {
+  if (!points || points.length < 2) return null
+  let best = Infinity
+  for (let i = 0; i < points.length - 1; i++) {
+    const d = perpDistanceMeters(p, points[i], points[i + 1])
+    if (d < best) best = d
+  }
+  return best === Infinity ? null : best
+}
+
+/**
  * Bearing of the route at the user's current position. We find the
  * polyline segment closest to `me` and return its endpoint bearing —
  * i.e. which way the route wants you to face right now.
