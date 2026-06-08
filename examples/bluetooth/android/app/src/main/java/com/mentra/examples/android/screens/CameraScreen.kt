@@ -432,6 +432,7 @@ private fun ExposureSettingsCard(controller: MentraExampleController) {
 private fun CameraFovSettingsCard(controller: MentraExampleController) {
     val state = controller.state
     val roiDisabled = state.cameraFov == CAMERA_FOV_MAX
+    val controlsEnabled = !state.cameraSettingsApplying
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -451,30 +452,31 @@ private fun CameraFovSettingsCard(controller: MentraExampleController) {
                 )
             }
             Text(
-                "Apply",
-                color = AppColor.greenAccent,
+                if (state.cameraSettingsApplying) "Applying..." else "Apply",
+                color = if (controlsEnabled) AppColor.greenAccent else AppColor.muted,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .clip(RoundedCornerShape(999.dp))
                     .background(AppColor.greenAccent.copy(alpha = 0.16f))
                     .border(1.dp, AppColor.greenAccent.copy(alpha = 0.28f), RoundedCornerShape(999.dp))
-                    .clickable { controller.applyCameraSettings() }
+                    .clickable(enabled = controlsEnabled) { controller.applyCameraSettings() }
                     .padding(horizontal = 12.dp, vertical = 8.dp)
             )
         }
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            SliderNudgeButton("-", enabled = state.cameraFov > CAMERA_FOV_MIN) {
+            SliderNudgeButton("-", enabled = controlsEnabled && state.cameraFov > CAMERA_FOV_MIN) {
                 controller.setCameraFov(state.cameraFov - 1)
             }
             Slider(
+                enabled = controlsEnabled,
                 value = state.cameraFov.toFloat(),
                 onValueChange = { controller.setCameraFov(it.toInt()) },
                 valueRange = CAMERA_FOV_MIN.toFloat()..CAMERA_FOV_MAX.toFloat(),
                 steps = CAMERA_FOV_MAX - CAMERA_FOV_MIN - 1,
                 modifier = Modifier.weight(1f),
             )
-            SliderNudgeButton("+", enabled = state.cameraFov < CAMERA_FOV_MAX) {
+            SliderNudgeButton("+", enabled = controlsEnabled && state.cameraFov < CAMERA_FOV_MAX) {
                 controller.setCameraFov(state.cameraFov + 1)
             }
         }
@@ -482,22 +484,22 @@ private fun CameraFovSettingsCard(controller: MentraExampleController) {
             Text("${CAMERA_FOV_MIN}°", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             Text(
                 "Default ${CAMERA_FOV_DEFAULT}°",
-                color = AppColor.greenAccent,
+                color = if (controlsEnabled) AppColor.greenAccent else AppColor.muted,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.clickable { controller.setCameraFov(CAMERA_FOV_DEFAULT) }
+                modifier = Modifier.clickable(enabled = controlsEnabled) { controller.setCameraFov(CAMERA_FOV_DEFAULT) }
             )
             Text("${CAMERA_FOV_MAX}°", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         }
         CameraOptionGroup("crop position") {
             cameraRoiPositions.forEach { option ->
-                OptionChip(option.first, state.cameraRoiPosition == option.second, enabled = !roiDisabled) {
+                OptionChip(option.first, state.cameraRoiPosition == option.second, enabled = controlsEnabled && !roiDisabled) {
                     controller.setCameraRoiPosition(option.second)
                 }
             }
         }
         Text(
-            "${state.cameraSettingsStatus}. Applying FOV/ROI waits for the Mentra Live camera-ready ack.",
+            "${state.cameraSettingsStatus}. Applying FOV/ROI waits for the Mentra Live hardware-applied ack.",
             color = AppColor.muted,
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,

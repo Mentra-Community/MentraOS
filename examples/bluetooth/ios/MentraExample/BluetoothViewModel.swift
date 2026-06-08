@@ -39,7 +39,7 @@ private func describeSettingsAck(_ ack: SettingsAckEvent) -> String {
 }
 
 private func describeCameraFovResult(_ result: CameraFovResult) -> String {
-    "ready fov=\(result.fov) roi=\(result.roiPosition.label) request=\(result.requestId)"
+    "applied fov=\(result.fov) roi=\(result.roiPosition.label) request=\(result.requestId)"
 }
 
 private let defaultPhotoUploadUrl = "http://<computer-ip>:8787/upload"
@@ -201,6 +201,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var photoIso = photoIsoDefault
     @Published private(set) var cameraFov = cameraFovDefault
     @Published private(set) var cameraRoiPosition = 0
+    @Published private(set) var cameraSettingsApplying = false
     @Published private(set) var cameraSettingsStatus = "Camera settings: default"
     @Published private(set) var phonePhotoServerRunning = false
     @Published private(set) var phonePhotoUploadUrl = "Phone receiver not started"
@@ -506,16 +507,27 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func applyCameraSettings() {
+        guard !cameraSettingsApplying else {
+            append(tag: "TX", text: "camera_fov already applying")
+            return
+        }
         runAsyncAction("Apply camera settings") { [self] in
             try requireConnected("apply camera settings")
             let fov = cameraFov
             let roiPosition = fov == cameraFovMax ? 0 : cameraRoiPosition
-            cameraSettingsStatus = "Camera settings: waiting for glasses camera-ready ack"
-            let result = try await mentraBluetoothSdk.setCameraFov(
-                CameraFov(fov: fov, roiPosition: CameraRoiPosition.from(rawValue: roiPosition))
-            )
-            append(tag: "LIVE", text: "camera_fov \(describeCameraFovResult(result))")
-            cameraSettingsStatus = "Camera settings: camera ready; field of view \(result.fov)°, \(roiPositionLabel(result.roiPosition.rawValue)) crop"
+            cameraSettingsApplying = true
+            cameraSettingsStatus = "Camera settings: applying FOV/ROI on glasses"
+            defer { cameraSettingsApplying = false }
+            do {
+                let result = try await mentraBluetoothSdk.setCameraFov(
+                    CameraFov(fov: fov, roiPosition: CameraRoiPosition.from(rawValue: roiPosition))
+                )
+                append(tag: "LIVE", text: "camera_fov \(describeCameraFovResult(result))")
+                cameraSettingsStatus = "Camera settings: applied; field of view \(result.fov)°, \(roiPositionLabel(result.roiPosition.rawValue)) crop"
+            } catch {
+                cameraSettingsStatus = "Camera settings: failed - \(error.localizedDescription)"
+                throw error
+            }
         }
     }
 

@@ -25,7 +25,7 @@ private func cameraSdkCall(
     let cameraFovResult = try await mentraBluetoothSdk.setCameraFov(
         CameraFov(fov: \(cameraFov), roiPosition: CameraRoiPosition.from(rawValue: \(cameraRoiPosition)))
     )
-    print("Camera ready at \\(cameraFovResult.fov)°")
+    print("Camera FOV applied at \\(cameraFovResult.fov)°")
     let photo = try await mentraBluetoothSdk.requestPhoto(
         PhotoRequest(
           requestId: requestId,
@@ -462,6 +462,7 @@ private struct CameraFovSettingsCard: View {
 
     var body: some View {
         let roiDisabled = model.cameraFov == cameraFovMax
+        let controlsDisabled = model.cameraSettingsApplying
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -474,18 +475,19 @@ private struct CameraFovSettingsCard: View {
                         .foregroundColor(AppColor.greenAccent)
                 }
                 Spacer()
-                Button("Apply") { model.applyCameraSettings() }
+                Button(model.cameraSettingsApplying ? "Applying..." : "Apply") { model.applyCameraSettings() }
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(AppColor.greenAccent)
+                    .foregroundColor(controlsDisabled ? AppColor.muted : AppColor.greenAccent)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(AppColor.greenAccent.opacity(0.16))
                     .overlay(Capsule().stroke(AppColor.greenAccent.opacity(0.28), lineWidth: 1))
                     .clipShape(Capsule())
                     .buttonStyle(.plain)
+                    .disabled(controlsDisabled)
             }
             HStack(spacing: 10) {
-                CameraSliderNudgeButton(label: "-", disabled: model.cameraFov <= cameraFovMin) {
+                CameraSliderNudgeButton(label: "-", disabled: controlsDisabled || model.cameraFov <= cameraFovMin) {
                     model.setCameraFov(model.cameraFov - 1)
                 }
                 Slider(
@@ -497,7 +499,8 @@ private struct CameraFovSettingsCard: View {
                     step: 1
                 )
                 .tint(AppColor.greenAccent)
-                CameraSliderNudgeButton(label: "+", disabled: model.cameraFov >= cameraFovMax) {
+                .disabled(controlsDisabled)
+                CameraSliderNudgeButton(label: "+", disabled: controlsDisabled || model.cameraFov >= cameraFovMax) {
                     model.setCameraFov(model.cameraFov + 1)
                 }
             }
@@ -506,7 +509,8 @@ private struct CameraFovSettingsCard: View {
                 Spacer()
                 Button("Default \(cameraFovDefault)°") { model.setCameraFov(cameraFovDefault) }
                     .buttonStyle(.plain)
-                    .foregroundColor(AppColor.greenAccent)
+                    .foregroundColor(controlsDisabled ? AppColor.muted : AppColor.greenAccent)
+                    .disabled(controlsDisabled)
                 Spacer()
                 Text("\(cameraFovMax)°")
             }
@@ -516,15 +520,15 @@ private struct CameraFovSettingsCard: View {
             CameraOptionGroup(label: "crop position") {
                 ForEach(cameraRoiPositions, id: \.value) { option in
                     CameraOptionChip(value: option.label, highlight: model.cameraRoiPosition == option.value)
-                        .opacity(roiDisabled ? 0.45 : 1)
+                        .opacity((roiDisabled || controlsDisabled) ? 0.45 : 1)
                         .onTapGesture {
-                            if !roiDisabled {
+                            if !roiDisabled && !controlsDisabled {
                                 model.setCameraRoiPosition(option.value)
                             }
                         }
                 }
             }
-            Text("\(model.cameraSettingsStatus). Applying FOV/ROI waits for the Mentra Live camera-ready ack.")
+            Text("\(model.cameraSettingsStatus). Applying FOV/ROI waits for the Mentra Live hardware-applied ack.")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(AppColor.muted)
         }

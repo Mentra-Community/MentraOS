@@ -24,10 +24,12 @@ bun install
 The example depends on the SDK version pinned in `package.json`, for example:
 
 ```json
-"@mentra/bluetooth-sdk": "0.1.7"
+"@mentra/bluetooth-sdk": "0.1.9"
 ```
 
-Use the latest SDK version published by Mentra.
+Use the latest SDK version published by Mentra. When validating unreleased SDK
+changes, use the local source override below so JavaScript, Android, and iOS all
+resolve the same local package.
 
 ## Run On iOS
 
@@ -91,7 +93,10 @@ For production Expo apps that need BLE or microphone behavior while iOS is backg
 
 ## Local SDK Override
 
-Use this only when developing the SDK before a package release is published:
+Use this when developing SDK changes before the matching package release is
+published. The Camera tab disables FOV/ROI controls while `setCameraFov` is in
+flight, then re-enables them only after the glasses report that the hardware
+setting was applied or the SDK returns an error.
 
 ```bash
 cd examples/react-native

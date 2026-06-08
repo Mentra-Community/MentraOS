@@ -316,7 +316,7 @@ sdk.setButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
 sdk.setButtonCameraLed(enabled = true)
 sdk.setButtonMaxRecordingTime(minutes = 3)
 val cameraFov = sdk.setCameraFov(CameraFov(fov = 102, roiPosition = CameraRoiPosition.CENTER))
-println("Camera ready at ${cameraFov.fov}°")
+println("Camera FOV applied at ${cameraFov.fov}°")
 ```
 
 iOS:
@@ -334,7 +334,7 @@ try await sdk.setButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30)
 try await sdk.setButtonCameraLed(enabled: true)
 try await sdk.setButtonMaxRecordingTime(minutes: 3)
 let cameraFov = try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: .center))
-print("Camera ready at \(cameraFov.fov)°")
+print("Camera FOV applied at \(cameraFov.fov)°")
 ```
 
 React Native:
@@ -352,12 +352,12 @@ await BluetoothSdk.setButtonVideoRecordingSettings(1280, 720, 30);
 await BluetoothSdk.setButtonCameraLed(true);
 await BluetoothSdk.setButtonMaxRecordingTime(3);
 const cameraFov = await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 'center'});
-console.log(`Camera ready at ${cameraFov.fov}°`);
+console.log(`Camera FOV applied at ${cameraFov.fov}°`);
 ```
 
 Mentra Live gallery mode controls right-action-button capture. When gallery mode is enabled, a short press takes a photo, a long press starts video recording, and a short press stops the active video recording. `setGalleryModeEnabled(true)` enables local button capture; `setGalleryModeEnabled(false)` reports button and touch events to the host app without triggering local gallery capture while the glasses are connected. Button presses are always reported as SDK events.
 
-`setCameraFov` accepts FOV degrees from 62 to 118 and ROI position `"center"`, `"bottom"`, or `"top"` on React Native, `CameraRoiPosition` on Android, and `CameraRoiPosition` on iOS. React Native also accepts `{preset: "narrow" | "standard" | "wide"}`. On Mentra Live, applying FOV/ROI restarts the camera; the returned `CameraFovResult` resolves from the ASG client only when the camera is ready again, and the promise rejects on glasses-side error or missing readiness. Raw `settings_ack` events are still available for listeners.
+`setCameraFov` accepts FOV degrees from 62 to 118 and ROI position `"center"`, `"bottom"`, or `"top"` on React Native, `CameraRoiPosition` on Android, and `CameraRoiPosition` on iOS. React Native also accepts `{preset: "narrow" | "standard" | "wide"}`. On Mentra Live, applying FOV/ROI restarts the camera; the returned `CameraFovResult` resolves from the ASG client only after the glasses report that the hardware setting was applied, and the promise rejects on glasses-side error or if the hardware-applied acknowledgement does not arrive. Raw `settings_ack` events are still available for listeners.
 
 ## RGB LED
 
@@ -710,7 +710,7 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `photo_response` | `PhotoResponseEvent` | Terminal photo request success or failure event. `requestPhoto(...)` resolves after capture and webhook delivery finish, and rejects on glasses, phone-relay, send, or timeout failure. |
 | `video_recording_status` | `VideoRecordingStatusEvent` | Raw video recording start/stop success or failure event. `startVideoRecording(...)` and `stopVideoRecording(...)` resolve with successful status and reject on ASG failure. |
 | `gallery_status` | `GalleryStatusEvent` | Gallery content/camera-busy status changes. |
-| `settings_ack` | `SettingsAckEvent` | Raw gallery/button/FOV setting acknowledgements from the glasses. Gallery and button settings return this shape; `setCameraFov(...)` returns `CameraFovResult` after the raw ack reports camera readiness. |
+| `settings_ack` | `SettingsAckEvent` | Raw gallery/button/FOV setting acknowledgements from the glasses. Gallery and button settings return this shape; `setCameraFov(...)` returns `CameraFovResult` after the raw ack reports that the hardware setting was applied. |
 | `compatible_glasses_search_stop` | `CompatibleGlassesSearchStopEvent` | Compatible-glasses search stops for a model. |
 | `swipe_volume_status` | `SwipeVolumeStatusEvent` | Swipe-volume setting changes. |
 | `switch_status` | `SwitchStatusEvent` | Glasses switch status changes. |

@@ -263,6 +263,7 @@ export type BluetoothSdkExampleState = {
   photoSize: PhotoSize;
   cameraFov: number;
   cameraRoiPosition: CameraRoiPosition;
+  cameraSettingsApplying: boolean;
   cameraSettingsStatus: string;
   rawJsonExpanded: boolean;
   scanActive: boolean;
@@ -397,6 +398,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [photoIso, setPhotoIsoState] = useState(PHOTO_ISO_DEFAULT);
   const [cameraFov, setCameraFovState] = useState(CAMERA_FOV_DEFAULT);
   const [cameraRoiPosition, setCameraRoiPositionState] = useState<CameraRoiPosition>('center');
+  const [cameraSettingsApplying, setCameraSettingsApplying] = useState(false);
+  const cameraSettingsApplyingRef = useRef(false);
   const [cameraSettingsStatus, setCameraSettingsStatus] = useState('Camera settings: default');
   const [streamCloudServerEnabled, setStreamCloudServerEnabledState] = useState(false);
   const [directStreamReceiverRunning, setDirectStreamReceiverRunning] = useState(false);
@@ -1504,16 +1507,30 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
 
   async function applyCameraSettings() {
+    if (cameraSettingsApplyingRef.current) {
+      addEvent('TX', 'camera_fov already applying');
+      return;
+    }
     await runAction('Apply camera settings', async () => {
       requireConnected('apply camera settings');
       const fov = clampRounded(cameraFov, CAMERA_FOV_MIN, CAMERA_FOV_MAX);
       const roiPosition = fov === CAMERA_FOV_MAX ? 'center' : cameraRoiPosition;
-      setCameraSettingsStatus('Camera settings: waiting for glasses camera-ready ack');
-      const result = await BluetoothSdk.setCameraFov({fov, roiPosition});
-      addEvent('LIVE', `camera_fov ${describeCameraFovResult(result)}`);
-      setCameraSettingsStatus(
-        `Camera settings: camera ready; field of view ${result.fov}°, ${roiPositionLabel(result.roiPosition)} crop`,
-      );
+      cameraSettingsApplyingRef.current = true;
+      setCameraSettingsApplying(true);
+      setCameraSettingsStatus('Camera settings: applying FOV/ROI on glasses');
+      try {
+        const result = await BluetoothSdk.setCameraFov({fov, roiPosition});
+        addEvent('LIVE', `camera_fov ${describeCameraFovResult(result)}`);
+        setCameraSettingsStatus(
+          `Camera settings: applied; field of view ${result.fov}°, ${roiPositionLabel(result.roiPosition)} crop`,
+        );
+      } catch (error) {
+        setCameraSettingsStatus(`Camera settings: failed - ${formatError(error)}`);
+        throw error;
+      } finally {
+        cameraSettingsApplyingRef.current = false;
+        setCameraSettingsApplying(false);
+      }
     });
   }
 
@@ -2265,6 +2282,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     cameraStatus,
     cameraFov,
     cameraRoiPosition,
+    cameraSettingsApplying,
     cameraSettingsStatus,
     captureAndUpload,
     checkForOtaUpdate,
@@ -3124,7 +3142,7 @@ function describeSettingsAck(ack: SettingsAckEvent) {
 }
 
 function describeCameraFovResult(result: CameraFovResult) {
-  return `ready fov=${result.fov} roi=${result.roiPosition} request=${result.requestId}`;
+  return `applied fov=${result.fov} roi=${result.roiPosition} request=${result.requestId}`;
 }
 
 function delay(ms: number) {
