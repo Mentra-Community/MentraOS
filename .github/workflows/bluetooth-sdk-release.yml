@@ -1,0 +1,360 @@
+name: Release Bluetooth SDK
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - ".github/scripts/bluetooth-sdk-release-info.mjs"
+      - ".github/workflows/bluetooth-sdk-release.yml"
+      - "mobile/modules/bluetooth-sdk/**"
+      - "scripts/export-bluetooth-sdk-ios-spm.sh"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run build/export/publish dry-runs without uploading artifacts"
+        required: true
+        default: true
+        type: boolean
+      force_release:
+        description: "Run release jobs even if the SDK package version did not change"
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: bluetooth-sdk-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  SDK_PACKAGE_DIR: mobile/modules/bluetooth-sdk
+  SDK_PACKAGE_JSON: mobile/modules/bluetooth-sdk/package.json
+
+jobs:
+  detect:
+    name: Detect SDK version change
+    runs-on: ubuntu-latest
+    outputs:
+      package_name: ${{ steps.release-info.outputs.package_name }}
+      version: ${{ steps.release-info.outputs.version }}
+      previous_version: ${{ steps.release-info.outputs.previous_version }}
+      compare_sha: ${{ steps.release-info.outputs.compare_sha }}
+      version_changed: ${{ steps.release-info.outputs.version_changed }}
+      run_release: ${{ steps.release-info.outputs.run_release }}
+      dry_run: ${{ steps.release-info.outputs.dry_run }}
+      swiftpm_tag: ${{ steps.release-info.outputs.swiftpm_tag }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect package version change
+        id: release-info
+        run: node .github/scripts/bluetooth-sdk-release-info.mjs
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_release || false }}
+
+      - name: Summarize release decision
+        run: |
+          {
+            echo "## Bluetooth SDK release decision"
+            echo ""
+            echo "- Package: \`${{ steps.release-info.outputs.package_name }}\`"
+            echo "- Current version: \`${{ steps.release-info.outputs.version }}\`"
+            echo "- Previous version: \`${{ steps.release-info.outputs.previous_version || 'unavailable' }}\`"
+            echo "- Version changed: \`${{ steps.release-info.outputs.version_changed }}\`"
+            echo "- Dry run: \`${{ steps.release-info.outputs.dry_run }}\`"
+            echo "- Run release jobs: \`${{ steps.release-info.outputs.run_release }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  npm:
+    name: Stage npm package
+    needs: detect
+    if: needs.detect.outputs.run_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Use npm with staged publishing support
+        run: npm install -g npm@latest
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-cache-bluetooth-sdk-${{ hashFiles('mobile/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-cache-bluetooth-sdk-
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: bun install --frozen-lockfile
+
+      - name: Build package
+        working-directory: ${{ env.SDK_PACKAGE_DIR }}
+        run: bun run build
+
+      - name: Check npm registry
+        id: npm-registry
+        run: |
+          set -euo pipefail
+          if npm view "${{ needs.detect.outputs.package_name }}@${{ needs.detect.outputs.version }}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "npm already has ${{ needs.detect.outputs.package_name }}@${{ needs.detect.outputs.version }}."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dry-run npm package
+        if: steps.npm-registry.outputs.exists != 'true'
+        working-directory: ${{ env.SDK_PACKAGE_DIR }}
+        run: npm pack --dry-run
+
+      - name: Stage npm package
+        if: needs.detect.outputs.dry_run != 'true' && steps.npm-registry.outputs.exists != 'true'
+        working-directory: ${{ env.SDK_PACKAGE_DIR }}
+        run: npm stage publish
+
+      - name: Skip npm stage publish
+        if: steps.npm-registry.outputs.exists == 'true'
+        run: echo "Skipping npm stage publish because this version already exists on npm."
+
+  maven:
+    name: Publish Maven Central artifacts
+    needs: detect
+    if: needs.detect.outputs.run_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache Bun cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-cache-mobile-${{ hashFiles('mobile/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-cache-mobile-
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-bluetooth-sdk-${{ hashFiles('mobile/modules/bluetooth-sdk/android/**/*.gradle*') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-bluetooth-sdk-
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: bun install --frozen-lockfile
+
+      - name: Prepare generated Android project
+        working-directory: mobile
+        run: |
+          cp .env.example .env
+          bun expo prebuild --platform android
+
+      - name: Check Maven Central
+        id: maven-central
+        run: |
+          set -euo pipefail
+          version="${{ needs.detect.outputs.version }}"
+          base_url="https://repo.maven.apache.org/maven2/com/mentraglass"
+          sdk_url="${base_url}/bluetooth-sdk/${version}/bluetooth-sdk-${version}.pom"
+          lc3_url="${base_url}/lc3Lib/${version}/lc3Lib-${version}.pom"
+
+          sdk_exists=false
+          lc3_exists=false
+          if curl -fsI "$sdk_url" >/dev/null 2>&1; then
+            sdk_exists=true
+          fi
+          if curl -fsI "$lc3_url" >/dev/null 2>&1; then
+            lc3_exists=true
+          fi
+
+          echo "sdk_exists=${sdk_exists}" >> "$GITHUB_OUTPUT"
+          echo "lc3_exists=${lc3_exists}" >> "$GITHUB_OUTPUT"
+
+          if [[ "$sdk_exists" == "true" && "$lc3_exists" == "true" ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Maven Central already has both Android artifacts for ${version}."
+          elif [[ "$sdk_exists" == "false" && "$lc3_exists" == "false" ]]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Maven Central has only one Android artifact for ${version}; refusing to publish over a partial release." >&2
+            exit 1
+          fi
+
+      - name: Dry-run Maven local publication
+        if: steps.maven-central.outputs.exists != 'true'
+        working-directory: mobile/android
+        run: |
+          ./gradlew \
+            :lc3Lib:publishToMavenLocal \
+            :mentra-bluetooth-sdk:publishToMavenLocal \
+            --no-daemon \
+            --stacktrace
+        env:
+          MENTRA_MAVEN_VERSION: ${{ needs.detect.outputs.version }}
+
+      - name: Check Maven publish credentials
+        if: needs.detect.outputs.dry_run != 'true' && steps.maven-central.outputs.exists != 'true'
+        run: |
+          missing=0
+          if [[ -z "${MAVEN_CENTRAL_TOKEN_BASE64:-}" ]]; then
+            echo "::error::Set the MAVEN_CENTRAL_TOKEN_BASE64 repository secret."
+            missing=1
+          fi
+          if [[ -z "${SIGNING_KEY:-}" ]]; then
+            echo "::error::Set the MAVEN_SIGNING_KEY repository secret."
+            missing=1
+          fi
+          if [[ -z "${SIGNING_PASSWORD:-}" ]]; then
+            echo "::error::Set the MAVEN_SIGNING_PASSWORD repository secret."
+            missing=1
+          fi
+          exit "$missing"
+        env:
+          MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
+          SIGNING_KEY: ${{ secrets.MAVEN_SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.MAVEN_SIGNING_PASSWORD }}
+
+      - name: Publish Maven Central artifacts
+        if: needs.detect.outputs.dry_run != 'true' && steps.maven-central.outputs.exists != 'true'
+        working-directory: mobile/android
+        run: |
+          ./gradlew \
+            :lc3Lib:publishReleasePublicationToSonatypeCentralRepository \
+            :mentra-bluetooth-sdk:publishReleasePublicationToSonatypeCentralRepository \
+            :mentra-bluetooth-sdk:uploadSonatypeCentralDeployment \
+            --no-daemon \
+            --stacktrace
+        env:
+          MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
+          MENTRA_MAVEN_VERSION: ${{ needs.detect.outputs.version }}
+          SIGNING_KEY: ${{ secrets.MAVEN_SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.MAVEN_SIGNING_PASSWORD }}
+          SONATYPE_PUBLISHING_TYPE: ${{ vars.SONATYPE_PUBLISHING_TYPE || 'user_managed' }}
+
+      - name: Skip Maven publish
+        if: steps.maven-central.outputs.exists == 'true'
+        run: echo "Skipping Maven publish because both Android artifacts already exist."
+
+  ios-swiftpm:
+    name: Release iOS SwiftPM mirror
+    needs: detect
+    if: needs.detect.outputs.run_release == 'true'
+    runs-on: macos-15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          path: MentraOS
+
+      - name: Check SwiftPM push token
+        if: needs.detect.outputs.dry_run != 'true'
+        run: |
+          if [[ -z "${SWIFTPM_PUSH_TOKEN:-}" ]]; then
+            echo "::error::Set the MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN repository secret before pushing the SwiftPM mirror."
+            exit 1
+          fi
+        env:
+          SWIFTPM_PUSH_TOKEN: ${{ secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
+
+      - name: Checkout SwiftPM mirror
+        uses: actions/checkout@v4
+        with:
+          repository: Mentra-Community/mentra-bluetooth-sdk-ios
+          path: mentra-bluetooth-sdk-ios
+          token: ${{ secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN || github.token }}
+          fetch-depth: 0
+
+      - name: Check SwiftPM tag
+        id: swiftpm-tag
+        working-directory: mentra-bluetooth-sdk-ios
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+          if git rev-parse -q --verify "refs/tags/${{ needs.detect.outputs.swiftpm_tag }}" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "SwiftPM tag ${{ needs.detect.outputs.swiftpm_tag }} already exists."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Export and verify Swift package
+        if: steps.swiftpm-tag.outputs.exists != 'true'
+        working-directory: MentraOS
+        run: |
+          scripts/export-bluetooth-sdk-ios-spm.sh \
+            --target "$GITHUB_WORKSPACE/mentra-bluetooth-sdk-ios" \
+            --verify
+
+      - name: Show SwiftPM export diff
+        if: steps.swiftpm-tag.outputs.exists != 'true'
+        working-directory: mentra-bluetooth-sdk-ios
+        run: |
+          git status --short
+          git diff --stat
+
+      - name: Commit and tag SwiftPM mirror
+        if: needs.detect.outputs.dry_run != 'true' && steps.swiftpm-tag.outputs.exists != 'true'
+        working-directory: mentra-bluetooth-sdk-ios
+        run: |
+          set -euo pipefail
+          source_sha="$(git -C "$GITHUB_WORKSPACE/MentraOS" rev-parse --short HEAD)"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Package.swift README.md LICENSE ios .gitignore
+          if git diff --cached --quiet; then
+            echo "SwiftPM export produced no file changes; tagging the current mirror HEAD."
+          else
+            git commit -m "Release MentraBluetoothSDK ${{ needs.detect.outputs.version }}" \
+              -m "Exported from MentraOS ${source_sha}."
+            git push origin HEAD:main
+          fi
+          git tag "${{ needs.detect.outputs.swiftpm_tag }}"
+          git push origin "refs/tags/${{ needs.detect.outputs.swiftpm_tag }}"
+
+      - name: Skip SwiftPM release
+        if: steps.swiftpm-tag.outputs.exists == 'true'
+        run: echo "Skipping SwiftPM release because the version tag already exists."
