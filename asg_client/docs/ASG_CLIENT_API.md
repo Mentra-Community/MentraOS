@@ -664,7 +664,7 @@ Deprecated/reserved. Current ASG Client does not use this command to switch betw
 {"type": "camera_fov_setting", "params": {"fov": 118, "roi_position": 0}}
 ```
 
-Persists the FOV/ROI, applies them to the camera HAL via `DevApi.setCameraFov`, and restarts the HAL. A short cooldown (`CameraRestartCooldown`) blocks immediately-following capture commands. Falls back to persist-only on non-K900 hardware (no `libxydev`).
+Persists the FOV/ROI, applies them to the camera HAL via `DevApi.setCameraFov`, and restarts the HAL. After the restart cooldown (`CameraRestartCooldown`), ASG emits `settings_ack` with `status: "ready"` and `hardware_applied: true`. Persist-only fallbacks on non-K900 hardware emit `hardware_applied: false`.
 
 ---
 

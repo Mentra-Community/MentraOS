@@ -293,7 +293,6 @@ public class SettingsCommandHandler implements ICommandHandler {
                 JSONObject values = new JSONObject();
                 values.put("fov", fov);
                 values.put("roi_position", roiPosition);
-                values.put("ready", false);
                 values.put("hardware_applied", false);
                 sendSettingsAck(requestId, "camera_fov", STATUS_APPLIED, values);
                 return true;
@@ -309,7 +308,6 @@ public class SettingsCommandHandler implements ICommandHandler {
                 JSONObject values = new JSONObject();
                 values.put("fov", fov);
                 values.put("roi_position", roiPosition);
-                values.put("ready", false);
                 values.put("hardware_applied", false);
                 sendSettingsAck(requestId, "camera_fov", STATUS_APPLIED, values);
             }
@@ -339,7 +337,6 @@ public class SettingsCommandHandler implements ICommandHandler {
                                 JSONObject values = new JSONObject();
                                 values.put("fov", fov);
                                 values.put("roi_position", roiPosition);
-                                values.put("ready", true);
                                 values.put("hardware_applied", true);
                                 sendSettingsAck(requestId, "camera_fov", STATUS_READY, values);
                             } catch (Exception e) {
@@ -360,7 +357,7 @@ public class SettingsCommandHandler implements ICommandHandler {
             ack.put("setting", setting);
             ack.put("status", status);
             if (!ack.has("ready")) {
-                ack.put("ready", !STATUS_ERROR.equals(status));
+                ack.put("ready", STATUS_READY.equals(status));
             }
             ack.put("timestamp", System.currentTimeMillis());
             communicationManager.sendBluetoothResponse(ack);

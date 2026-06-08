@@ -99,8 +99,6 @@ public struct CameraFovResult: CustomStringConvertible {
     public let requestId: String
     public let fov: Int
     public let roiPosition: CameraRoiPosition
-    public let ready: Bool
-    public let hardwareApplied: Bool
     public let timestamp: Int
 
     public var values: [String: Any] {
@@ -108,14 +106,12 @@ public struct CameraFovResult: CustomStringConvertible {
             "requestId": requestId,
             "fov": fov,
             "roiPosition": roiPosition.label,
-            "ready": ready,
-            "hardwareApplied": hardwareApplied,
             "timestamp": timestamp,
         ]
     }
 
     public var description: String {
-        "CameraFovResult(fov: \(fov), roiPosition: \(roiPosition.label), ready: \(ready))"
+        "CameraFovResult(fov: \(fov), roiPosition: \(roiPosition.label))"
     }
 
     static func from(ack: SettingsAckEvent, fallback: CameraFov) throws -> CameraFovResult {
@@ -125,10 +121,10 @@ public struct CameraFovResult: CustomStringConvertible {
                 message: ack.errorMessage ?? "Camera FOV request failed."
             )
         }
-        if !ack.ready || ack.status != "ready" || !ack.hardwareApplied {
+        if !ack.hardwareApplied {
             throw BluetoothError(
-                code: "camera_not_ready",
-                message: "Camera FOV changed, but the glasses did not report camera readiness."
+                code: "camera_fov_not_applied",
+                message: "Camera FOV was saved but not applied to hardware."
             )
         }
 
@@ -136,8 +132,6 @@ public struct CameraFovResult: CustomStringConvertible {
             requestId: ack.requestId,
             fov: ack.fov ?? fallback.fov,
             roiPosition: CameraRoiPosition.from(rawValue: ack.roiPosition ?? fallback.roiPosition.rawValue),
-            ready: true,
-            hardwareApplied: true,
             timestamp: ack.timestamp
         )
     }

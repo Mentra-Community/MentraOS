@@ -90,8 +90,6 @@ data class CameraFovResult(
     val requestId: String,
     val fov: Int,
     val roiPosition: CameraRoiPosition,
-    val ready: Boolean,
-    val hardwareApplied: Boolean,
     val timestamp: Long,
 ) {
     val values: Map<String, Any>
@@ -100,8 +98,6 @@ data class CameraFovResult(
                 "requestId" to requestId,
                 "fov" to fov,
                 "roiPosition" to roiPosition.label,
-                "ready" to ready,
-                "hardwareApplied" to hardwareApplied,
                 "timestamp" to timestamp,
             )
 
@@ -117,10 +113,10 @@ data class CameraFovResult(
                     ack.errorMessage ?: "Camera FOV request failed.",
                 )
             }
-            if (!ack.ready || ack.status != "ready" || !ack.hardwareApplied) {
+            if (!ack.hardwareApplied) {
                 throw BluetoothException(
-                    "camera_not_ready",
-                    "Camera FOV changed, but the glasses did not report camera readiness.",
+                    "camera_fov_not_applied",
+                    "Camera FOV was saved but not applied to hardware.",
                 )
             }
 
@@ -128,8 +124,6 @@ data class CameraFovResult(
                 requestId = ack.requestId,
                 fov = ack.fov ?: fallback.fov,
                 roiPosition = CameraRoiPosition.fromValue(ack.roiPosition ?: fallback.roiPosition.value),
-                ready = true,
-                hardwareApplied = true,
                 timestamp = ack.timestamp,
             )
         }

@@ -435,8 +435,6 @@ export type CameraFovResult = {
   requestId: string
   fov: number
   roiPosition: CameraRoiPosition
-  ready: true
-  hardwareApplied: true
   timestamp: number
 }
 

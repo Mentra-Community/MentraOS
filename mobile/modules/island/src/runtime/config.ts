@@ -294,14 +294,12 @@ export interface CameraFovResult {
   requestId: string
   fov: number
   roiPosition: CameraRoiPosition
-  ready: true
-  hardwareApplied: true
   timestamp: number
 }
 
 /**
  * Camera settings adapter. Used for local miniapp camera.setFov so the
- * miniapp Promise resolves from the glasses-side settings_ack flow.
+ * miniapp Promise resolves from the glasses-side hardware-applied ack flow.
  */
 export interface CameraSettingsAdapter {
   setFov: (packageName: string, request: CameraFovRequest) => Promise<CameraFovResult>

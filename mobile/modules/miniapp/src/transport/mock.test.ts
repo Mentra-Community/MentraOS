@@ -92,8 +92,6 @@ describe("MockTransport", () => {
       requestId: "rid-fov",
       fov: 102,
       roiPosition: "top",
-      ready: true,
-      hardwareApplied: true,
     })
   })
 

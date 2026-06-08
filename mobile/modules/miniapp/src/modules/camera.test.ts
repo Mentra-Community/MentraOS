@@ -28,8 +28,6 @@ describe("CameraModule", () => {
       requestId: "fov-1",
       fov: 102,
       roiPosition: "bottom",
-      ready: true,
-      hardwareApplied: true,
       timestamp: 123,
     }
     const {session, requestCalls} = mockSession(result)

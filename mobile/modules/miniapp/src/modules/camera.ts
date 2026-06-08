@@ -26,8 +26,6 @@ export interface CameraFovResult {
   requestId: string
   fov: number
   roiPosition: CameraRoiPosition
-  ready: true
-  hardwareApplied: true
   timestamp: number
 }
 
@@ -85,8 +83,8 @@ export class CameraModule {
   /**
    * Apply camera FOV/ROI settings on the glasses.
    *
-   * Resolves after the ASG client reports that the setting was applied and the
-   * camera is ready again. Requires CAMERA permission declared in miniapp.json.
+   * Resolves after the ASG client reports that the setting was applied to camera
+   * hardware after the restart cooldown. Requires CAMERA permission declared in miniapp.json.
    */
   async setFov(request: CameraFovRequest): Promise<CameraFovResult> {
     return this.session.sendRequest<CameraFovResult>({

@@ -196,8 +196,6 @@ function syntheticDataFor(requestId: string, requestType: string, requestPayload
         requestId,
         fov,
         roiPosition,
-        ready: true,
-        hardwareApplied: true,
         timestamp: Date.now(),
       }
     }
