@@ -416,7 +416,7 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `device_discovered` | `Device` | A supported glasses device is discovered during scan. |
 | `default_device_changed` | `{device?: Device}` | The SDK default device changes. |
 | `glasses_not_ready` | `GlassesNotReadyEvent` | A command needs ready glasses but the connected device is not ready. |
-| `button_press` | `ButtonPressEvent` | Glasses button press. |
+| `button_press` | `ButtonPressEvent` | Glasses button press. Mentra Live uses `buttonId: "action"` for the right action button. |
 | `touch_event` | `TouchEvent` | Glasses touch or swipe gesture. |
 | `head_up` | `HeadUpEvent` | Head-up state changes. |
 | `voice_activity_detection_status` | `VoiceActivityDetectionStatusEvent` | Glasses-side Voice Activity Detection is enabled or disabled. |

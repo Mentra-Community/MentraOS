@@ -2597,7 +2597,7 @@ public class MentraLive extends SGCManager {
 
             case "button_press":
                 // Process button press event
-                String buttonId = json.optString("buttonId", "unknown");
+                String buttonId = normalizeButtonId(json.optString("buttonId", "unknown"));
                 String pressType = json.optString("pressType", "short");
 
                 Bridge.log("LIVE: Received button press - buttonId: " + buttonId + ", pressType: " + pressType);
@@ -7402,4 +7402,8 @@ public class MentraLive extends SGCManager {
              return "Error listing LC3 log files: " + e.getMessage();
          }
      }
+
+    private String normalizeButtonId(String buttonId) {
+        return "camera".equals(buttonId) ? "action" : buttonId;
+    }
 }

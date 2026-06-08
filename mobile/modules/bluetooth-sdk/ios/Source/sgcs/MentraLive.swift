@@ -2990,11 +2990,15 @@ class MentraLive: NSObject, SGCManager {
     }
 
     private func handleButtonPress(_ json: [String: Any]) {
-        let buttonId = json["buttonId"] as? String ?? "unknown"
+        let buttonId = normalizeButtonId(json["buttonId"] as? String ?? "unknown")
         let pressType = json["pressType"] as? String ?? "short"
 
         Bridge.log("LIVE: Received button press - buttonId: \(buttonId), pressType: \(pressType)")
         Bridge.sendButtonPress(buttonId: buttonId, pressType: pressType)
+    }
+
+    private func normalizeButtonId(_ buttonId: String) -> String {
+        buttonId == "camera" ? "action" : buttonId
     }
 
     private func handleVersionInfo(_ json: [String: Any]) {
