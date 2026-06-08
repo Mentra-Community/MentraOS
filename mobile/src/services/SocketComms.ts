@@ -1,12 +1,6 @@
 import {type RgbLedControlResponseEvent, type TouchEvent} from "@mentra/bluetooth-sdk"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import {
-  displayProcessor,
-  localMiniappRuntime,
-  localSttFallbackCoordinator,
-  micStateCoordinator,
-  throttle,
-} from "@mentra/island"
+import {displayProcessor, localMiniappRuntime, micStateCoordinator, throttle} from "@mentra/island"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
 import mantle from "@/services/MantleManager"
@@ -817,8 +811,16 @@ class SocketComms {
 
       case "data_stream": {
         const streamType = msg.streamType
+        // Local island miniapps are powered ONLY by Cloud V2. v1 cloud
+        // `transcription:*` streams must NOT reach local miniapps. V2 (the
+        // `@mentra/island` runtime + cloudV2Client adapter) owns transcript
+        // delivery to them, with on-device STT as the V2-down fallback. We also
+        // no longer let v1 transcripts signal "cloud alive" for the
+        // local-miniapp fallback; that liveness now tracks V2 (see
+        // MantleManager's cloudConnection wiring). All other (non-transcription)
+        // data_stream types still fan out to local miniapps as before.
         if (typeof streamType === "string" && streamType.startsWith("transcription:")) {
-          localSttFallbackCoordinator.onCloudTranscript()
+          break
         }
         localMiniappRuntime.forwardEvent(streamType, msg.data)
         break

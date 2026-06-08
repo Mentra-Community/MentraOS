@@ -81,6 +81,41 @@ let connected = false
 let audioSubscriptions: AudioSubscription[] = []
 let transportsReady = false
 
+/**
+ * Listeners that want to know when the v2 live session connects/disconnects.
+ * The host wires the LocalSttFallbackCoordinator's `cloudConnection` adapter to
+ * these so the local-miniapp on-device-STT fallback tracks V2 liveness (not the
+ * v1 WebSocket). Notified on every transition out of `onConnected`/
+ * `onDisconnected`.
+ */
+const connectionListeners = new Set<(connected: boolean) => void>()
+
+function notifyConnectionListeners(next: boolean): void {
+  for (const l of connectionListeners) {
+    try {
+      l(next)
+    } catch (err) {
+      console.warn(`${LOG_TAG}: connection listener threw: ${(err as Error)?.message ?? err}`)
+    }
+  }
+}
+
+/** Current v2 live-session connection state (handshake completed). */
+export function isCloudV2Connected(): boolean {
+  return connected
+}
+
+/**
+ * Subscribe to v2 connection-state transitions. Returns an unsubscribe fn.
+ * Used by the host to drive the local-miniapp STT fallback off V2 liveness.
+ */
+export function onCloudV2ConnectionChange(listener: (connected: boolean) => void): () => void {
+  connectionListeners.add(listener)
+  return () => {
+    connectionListeners.delete(listener)
+  }
+}
+
 function ensureTransports(): void {
   if (transportsReady) return
   transportsReady = true
@@ -91,8 +126,16 @@ function ensureTransports(): void {
 function buildAdapter(c: CloudClient): CloudRuntimeAdapter {
   return {
     setSubscriptions: async (subs: AudioSubscription[]): Promise<void> => {
+      // Cache the desired state unconditionally so it survives a not-yet-
+      // connected session and reconnects. Only push to the runtime when the
+      // session is actually connected. `c.runtime.setSubscriptions` throws
+      // "Cannot set subscriptions before the session is connected" otherwise,
+      // and nothing would retry. The `onConnected` handler re-applies the
+      // cached set, so subscribe-before-connect self-heals.
       audioSubscriptions = subs
-      await c.runtime.setSubscriptions(subs)
+      if (connected) {
+        await c.runtime.setSubscriptions(subs)
+      }
     },
     sendAudioFrame: (frame: Uint8Array): void => {
       c.runtime.sendAudioFrame(frame)
@@ -127,10 +170,23 @@ export function initCloudV2(): CloudRuntimeAdapter {
   c.runtime.onConnected(() => {
     connected = true
     console.log(`${LOG_TAG}: v2 runtime connected`)
+    // Re-apply any subscriptions queued before connect (or dropped across a
+    // reconnect). Without this the local miniapp's transcription subscription
+    // would never land on v2 and v2 would never power its captions. Best-
+    // effort: log on failure, never throw out of the connect handler.
+    if (audioSubscriptions.length > 0) {
+      try {
+        c.runtime.setSubscriptions(audioSubscriptions)
+      } catch (err) {
+        console.warn(`${LOG_TAG}: re-applying queued subscriptions failed: ${(err as Error)?.message ?? err}`)
+      }
+    }
+    notifyConnectionListeners(true)
   })
   c.runtime.onDisconnected((info) => {
     connected = false
     console.log(`${LOG_TAG}: v2 runtime disconnected (${info.reason})`)
+    notifyConnectionListeners(false)
   })
   c.runtime.onError((err) => {
     console.warn(`${LOG_TAG}: v2 runtime error: ${err.code}`)
@@ -161,10 +217,16 @@ export function reconnectCloudV2(): void {
     console.warn(`${LOG_TAG}: reconnect close() failed: ${(err as Error)?.message ?? err}`)
   }
 
+  const wasConnected = connected
   client = null
   adapter = null
   connected = false
   audioSubscriptions = []
+  // Notify so the local-miniapp STT fallback engages while v2 is torn down and
+  // before the rebuilt client completes its handshake.
+  if (wasConnected) {
+    notifyConnectionListeners(false)
+  }
 
   initCloudV2()
 }

@@ -83,9 +83,11 @@ class LocalSttFallbackCoordinator {
   }
 
   /**
-   * Called by SocketComms when a cloud transcript arrives. Informational
-   * hook — the cloud-connected listener is the authoritative switching
-   * signal. Kept for future hysteresis if connection-state alone proves too
+   * Informational hook, retained for API stability. No longer called: the
+   * authoritative switching signal is the `cloudConnection` adapter, which the
+   * host now wires to Cloud V2 liveness (local miniapps are powered only by
+   * V2). v1 cloud transcripts deliberately do NOT drive this coordinator
+   * anymore. Kept for future hysteresis if connection-state alone proves too
    * coarse.
    */
   onCloudTranscript(): void {}
