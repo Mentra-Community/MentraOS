@@ -43,6 +43,7 @@ const initialSnapshot: NavSnapshot = {
     speedMultiplier: 5,
     wrongSidewalk: false,
     skipCrossings: false,
+    useRawInstructions: true,
   },
 }
 

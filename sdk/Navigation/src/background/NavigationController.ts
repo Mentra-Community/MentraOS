@@ -101,7 +101,19 @@ export class NavigationController {
     speedMultiplier: 5,
     wrongSidewalk: false,
     skipCrossings: false,
+    useRawInstructions: true,
   }
+
+  // Cached raw Google `navigationInstruction.instructions` strings, in
+  // step order, from the most recent successful Routes API call. Drives
+  // the `useRawInstructions` debug toggle — the live SDK doesn't carry
+  // these through `NavStep`, so we zip the cached array into the live
+  // step list by index. Refetched on reroute (see onRoute handler) so
+  // the toggle keeps working after the route changes.
+  private cachedInstructions: string[] | null = null
+  // Guards against parallel refetches when the SDK fires multiple
+  // onRoute events in quick succession during a reroute.
+  private refetchingInstructions = false
 
   constructor(private readonly session: MiniappSession) {
     this.ui = session.ui as unknown as UIModule<Channels>
@@ -247,6 +259,7 @@ export class NavigationController {
             this.lastStartOpts = null
             this.lastAutoRebuildAt = 0
             this.lastOffRouteBucket = 0
+            this.cachedInstructions = null
             break
           }
           case "error":
@@ -256,6 +269,7 @@ export class NavigationController {
             this.lastStartOpts = null
             this.lastAutoRebuildAt = 0
             this.lastOffRouteBucket = 0
+            this.cachedInstructions = null
             break
         }
         this.ui.send("nav:trip-state", this.trip)
@@ -271,12 +285,22 @@ export class NavigationController {
         // to a plain string for the channel wire (see NavRouteStep).
         const steps =
           route.steps && route.steps.length > 0
-            ? route.steps.map((s) => ({
+            ? route.steps.map((s, i) => ({
                 lat: s.lat,
                 lng: s.lng,
                 road: s.road ?? null,
                 maneuver: s.maneuver,
                 distanceMeters: s.distanceMeters,
+                // Zip the cached preview-time Google instructions in by
+                // index. The SDK strips `instruction` from NavStep, so
+                // this is the only way the `useRawInstructions` toggle
+                // can find Google's verbatim text for the current step.
+                // Mismatched length (cache stale after reroute) is
+                // handled by the silent refetch below.
+                instruction:
+                  this.cachedInstructions && i < this.cachedInstructions.length
+                    ? this.cachedInstructions[i] || null
+                    : null,
               }))
             : null
         // A fresh route landing means any in-flight reroute is resolved.
@@ -299,6 +323,20 @@ export class NavigationController {
         this.ui.send("nav:route", {points: route.points, steps})
         this.ui.send("nav:trip-state", this.trip)
         logLiveRoute(route)
+        // After a reroute the cached preview instructions no longer line
+        // up with the new step list (different count or different roads).
+        // Refetch silently against the current origin so the
+        // `useRawInstructions` toggle keeps showing fresh Google text
+        // through reroutes. Gated behind the toggle so we don't burn a
+        // Routes API call when nobody's watching.
+        if (
+          this.devSettings.useRawInstructions &&
+          steps &&
+          steps.length > 0 &&
+          (this.cachedInstructions == null || this.cachedInstructions.length !== steps.length)
+        ) {
+          this.refetchInstructionsForLiveRoute(steps.length)
+        }
         // Push the initial pivot snapshot. The SDK's onPivot only fires
         // on approaching/entered/exited transitions — at trip start the
         // user can be far from every pivot, so no transition has fired
@@ -325,7 +363,19 @@ export class NavigationController {
   // ── RPC handlers ─────────────────────────────────────────────────────
 
   private wireRpcHandlers(): void {
-    this.unsubs.push(this.ui.handle("nav:compute-route", (opts) => this.navigation.computeRoute(opts)))
+    this.unsubs.push(
+      this.ui.handle("nav:compute-route", async (opts) => {
+        const result = await this.navigation.computeRoute(opts)
+        // Cache the raw Google instruction strings off the primary route
+        // so the `useRawInstructions` debug toggle can substitute them
+        // into the live maneuver card / glasses HUD by step index.
+        const steps = result.routes?.[0]?.steps
+        if (steps && steps.length > 0) {
+          this.cachedInstructions = steps.map((s) => s.instruction ?? "")
+        }
+        return result
+      }),
+    )
     this.unsubs.push(this.ui.handle("nav:request-permission", () => this.navigation.requestPermission()))
     this.unsubs.push(this.ui.handle("nav:get-snapshot", () => this.buildSnapshot()))
     this.unsubs.push(this.ui.handle("nav:get-pivots", () => this.navigation.getPivots()))
@@ -415,6 +465,7 @@ export class NavigationController {
         this.lastOffRouteBucket = 0
         this.activePivot = null
         this.upcomingPivot = null
+        this.cachedInstructions = null
         this.trip = {
           ...this.trip,
           status: "idle",
@@ -464,8 +515,24 @@ export class NavigationController {
         } catch (err) {
           this.appendLog(`dev-settings forward failed: ${err instanceof Error ? err.message : String(err)}`)
         }
+        const rawJustEnabled =
+          partial.useRawInstructions === true && !this.devSettings.useRawInstructions
         this.devSettings = next
         this.ui.send("nav:dev-settings-update", this.devSettings)
+        // Flipping the toggle changes what the maneuver card / HUD
+        // render, but neither re-runs until the next pivot / coord
+        // tick. Force a refresh so the swap is visible immediately.
+        this.refreshHUD()
+        // If the toggle was just turned on mid-trip and we have no
+        // cached instructions (or the cache is stale relative to the
+        // live route), kick off a silent refetch so the live trip gets
+        // the strings on the next render. No-op when idle.
+        if (rawJustEnabled && this.trip.running) {
+          const liveLen = this.trip.routeSteps?.length ?? 0
+          if (liveLen > 0 && (this.cachedInstructions == null || this.cachedInstructions.length !== liveLen)) {
+            this.refetchInstructionsForLiveRoute(liveLen)
+          }
+        }
       }),
     )
 
@@ -562,7 +629,10 @@ export class NavigationController {
       const verb = this.activePivot.direction === "right" ? "Turn right" : "Turn left"
       const onto = isRealRoadName(this.activePivot.toRoad)
       const topLine = onto ? `Onto ${onto}` : null
-      next = [topLine, verb].filter(Boolean).join("\n")
+      const rawTop = this.devSettings.useRawInstructions
+        ? this.lookupRawInstructionForPivot(this.activePivot)
+        : null
+      next = rawTop ? `${verb}\n${rawTop}` : [topLine, verb].filter(Boolean).join("\n")
     } else if (this.upcomingPivot?.direction && this.coords) {
       // Approaching the next turn. Layout:
       //   Onto <toRoad>
@@ -574,7 +644,17 @@ export class NavigationController {
       const verb = this.upcomingPivot.direction === "right" ? "Turn right" : "Turn left"
       const onto = isRealRoadName(this.upcomingPivot.toRoad)
       const topLine = onto ? `Onto ${onto}` : null
-      next = [topLine, `${verb} in ${formatDistance(dist)}`].filter(Boolean).join("\n")
+      // When the raw-instructions toggle is on, swap the road label for
+      // Google's verbatim instruction string but keep the distance line
+      // ("in 198 m") leading per the requested distance-first layout:
+      //   In 198 m
+      //   Head west on Hayes St toward Gough St
+      const rawTop = this.devSettings.useRawInstructions
+        ? this.lookupRawInstructionForPivot(this.upcomingPivot)
+        : null
+      next = rawTop
+        ? `In ${formatDistance(dist)}\n${rawTop}`
+        : [topLine, `${verb} in ${formatDistance(dist)}`].filter(Boolean).join("\n")
     } else if (maneuver?.distanceToDestinationMeters != null && maneuver.distanceToDestinationMeters >= 0) {
       next = `Arriving in ${formatDistance(maneuver.distanceToDestinationMeters)}`
     } else if (running) {
@@ -869,6 +949,78 @@ export class NavigationController {
     const entry: LogEntry = {id: ++this.logSeq, ts: Date.now(), line}
     this.log = [entry, ...this.log].slice(0, 100)
     this.ui.send("nav:log-append", entry)
+  }
+
+  /**
+   * Find the Google `navigationInstruction` string for the live step
+   * whose start coords match the given pivot, by index match on
+   * `(lat, lng)`. Returns null when the toggle is off, when no cached
+   * instructions are available, or when the pivot can't be matched to
+   * a step (rare — usually means a reroute landed and the silent
+   * refetch hasn't completed yet).
+   */
+  private lookupRawInstructionForPivot(pivot: Pivot): string | null {
+    const steps = this.trip.routeSteps
+    if (!steps || steps.length === 0) return null
+    // Pivots and steps share lat/lng to ≥5 decimal places (the SDK
+    // forwards them through unmodified). Match on a small epsilon
+    // rather than equality to absorb float reformatting.
+    const EPS = 1e-5
+    for (const s of steps) {
+      if (Math.abs(s.lat - pivot.lat) < EPS && Math.abs(s.lng - pivot.lng) < EPS) {
+        return s.instruction || null
+      }
+    }
+    return null
+  }
+
+  /**
+   * Silent Routes API refetch triggered after a reroute when the
+   * `useRawInstructions` debug toggle is on. Pulls fresh Google
+   * `navigationInstruction` strings against the current origin (live
+   * coords) and the active destination so the maneuver card / glasses
+   * HUD can keep showing Google's verbatim text through reroutes.
+   * Re-emits `nav:route` and `nav:trip-state` with the zipped steps so
+   * the UI picks up the refreshed strings.
+   */
+  private async refetchInstructionsForLiveRoute(expectedStepCount: number): Promise<void> {
+    if (this.refetchingInstructions) return
+    const origin = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
+    const dest = this.trip.activeDestination
+    if (!origin || !dest) return
+    this.refetchingInstructions = true
+    try {
+      const res = await this.navigation.computeRoute({
+        origin,
+        stops: [dest],
+        mode: this.lastStartOpts?.mode ?? "walking",
+      })
+      const steps = res.routes?.[0]?.steps
+      if (!steps || steps.length === 0) return
+      this.cachedInstructions = steps.map((s) => s.instruction ?? "")
+      // Re-zip into the current live routeSteps so the UI updates.
+      const live = this.trip.routeSteps
+      if (live && live.length > 0) {
+        const merged = live.map((s, i) => ({
+          ...s,
+          instruction:
+            this.cachedInstructions && i < this.cachedInstructions.length
+              ? this.cachedInstructions[i] || null
+              : null,
+        }))
+        this.trip = {...this.trip, routeSteps: merged}
+        this.ui.send("nav:route", {points: this.trip.routePoints ?? [], steps: merged})
+        this.ui.send("nav:trip-state", this.trip)
+        this.refreshHUD()
+      }
+      if (steps.length !== expectedStepCount) {
+        this.appendLog(`raw-instructions: refetch step count ${steps.length} ≠ live ${expectedStepCount}`)
+      }
+    } catch (err) {
+      this.appendLog(`raw-instructions refetch failed: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      this.refetchingInstructions = false
+    }
   }
 
   private formatUpdate(u: NavUpdate): string {

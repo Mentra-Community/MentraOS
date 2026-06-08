@@ -55,6 +55,14 @@ export type NavRouteStep = {
   road: string | null
   maneuver: string
   distanceMeters: number
+  /**
+   * Google's verbatim turn-by-turn text for this step (e.g. "Head west
+   * on Hayes St toward Gough St"). Populated from the preview-time
+   * Routes API response and refetched on reroute. Null when no cached
+   * preview is available — consumers fall back to the constructed
+   * "Turn left onto Octavia St" rendering.
+   */
+  instruction: string | null
 }
 
 export type TripState = {
@@ -90,6 +98,13 @@ export type DevSettings = {
   speedMultiplier: number
   wrongSidewalk: boolean
   skipCrossings: boolean
+  /**
+   * Debug toggle. When on, the maneuver card and glasses HUD swap their
+   * constructed "Turn right onto Octavia St" phrasing for Google's raw
+   * navigationInstruction string (e.g. "Head west on Hayes St toward
+   * Gough St"). The distance suffix ("in 198 m") is preserved.
+   */
+  useRawInstructions: boolean
 }
 
 export type NavSnapshot = {
