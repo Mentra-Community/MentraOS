@@ -8,7 +8,6 @@
  * Buffer wrap the native module needs.
  */
 import dgram from "react-native-udp"
-import {Buffer} from "@craftzdog/react-native-buffer"
 import type {UdpSocketLike} from "@mentra/cloud-client"
 
 export function createCloudUdpSocket(): UdpSocketLike {
@@ -18,7 +17,7 @@ export function createCloudUdpSocket(): UdpSocketLike {
   socket.on("error", (err: Error) => {
     console.warn(`[cloud-client udp] socket error: ${err.message}`)
   })
-  socket.on("message", (msg: Buffer) => {
+  socket.on("message", (msg: Uint8Array) => {
     onBytes?.(new Uint8Array(msg))
   })
   // Bind to any available port so the socket is ready to send.
@@ -26,8 +25,11 @@ export function createCloudUdpSocket(): UdpSocketLike {
 
   return {
     send(bytes: Uint8Array, host: string, port: number): void {
-      const buf = Buffer.from(bytes)
-      socket.send(buf, 0, buf.length, port, host, (err?: Error) => {
+      // react-native-udp accepts a Uint8Array directly and base64-encodes it
+      // internally via the pure-JS `buffer` package, so we avoid
+      // @craftzdog/react-native-buffer (which is backed by the QuickBase64 C++
+      // TurboModule). One less native dependency in the hot audio path.
+      socket.send(bytes, 0, bytes.length, port, host, (err?: Error) => {
         if (err) console.warn(`[cloud-client udp] send failed: ${err.message}`)
       })
     },
