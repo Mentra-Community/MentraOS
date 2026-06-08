@@ -1808,7 +1808,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             glassesValues = glassesValues?.withHotspot(.disabled)
             append(tag: "TX", text: "hotspot error \(summarize(values))")
         case "photo_response":
-            handlePhotoResponse(PhotoResponse(values: values))
+            break
         case "stream_status":
             handleStreamStatus(StreamStatus(values: values))
         default:
