@@ -934,7 +934,20 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 directStreamStartJob = scope.launch {
                     delay(1_000)
                     if (activeStreamId == streamId && state.directStreamReceiverRunning && state.streamRequested) {
-                        sendDirectPhoneStartStream(url, streamId)
+                        try {
+                            sendDirectPhoneStartStream(url, streamId)
+                        } catch (error: Throwable) {
+                            val message = error.message ?: error::class.java.simpleName
+                            activeStreamId = null
+                            stopDirectPhoneStreamReceiver("WebRTC direct phone start failed: $message")
+                            state = state.copy(
+                                lastAction = "Failed: Start stream - $message",
+                                streamRequested = false,
+                                streamResolvedConfig = null,
+                                streamStartedAt = null,
+                            )
+                            addEvent("TX", "stream failed: $message")
+                        }
                     }
                 }
                 return
