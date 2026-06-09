@@ -95,11 +95,61 @@ exist in release binaries. The connection is outbound from the device; the
 server is meant for a dev machine. Don't run the harness server on a box you
 share with strangers.
 
+## The captions e2e in one command
+
+```bash
+bun tools/mentra-agent/cli.ts set cloud_audio_codec '"pcm"'   # once per rig
+bun tools/mentra-agent/cli.ts reconnect
+bun tools/mentra-agent/cli.ts speak "The emerald falcon glides over the harbor" --expect "emerald falcon"
+# interim The Emerald Falcon ...
+# PASS: transcript contained "emerald falcon"
+```
+
+`speak` synthesizes the phrase on the dev machine (`say` + `afconvert` → 16 kHz
+mono s16 PCM), injects it into the app's real audio entry point in 20 ms
+frames at ~2x real time, and asserts on the transcripts streaming back.
+Non-zero exit on miss → drop it straight into CI. `cloud_audio_codec=pcm` is
+the dev/QA codec override (the harness needs no LC3 encoder); unset it for the
+production LC3 path.
+
+## MCP face (typed tools for agents)
+
+`mcp.ts` exposes the same control plane as MCP tools (`app_state`,
+`app_login`, `app_navigate`, `app_setting`, `app_cloud_reconnect`,
+`app_launch_miniapp`, `app_speak`, `app_events`):
+
+```json
+{"mcpServers": {"mentra-agent": {"command": "bun", "args": ["tools/mentra-agent/mcp.ts"]}}}
+```
+
+`app_speak` is the whole e2e as one tool call — subscribe, synthesize, inject,
+and return the interim + final transcripts.
+
+## Emulator golden snapshot
+
+A known-good state (QA user logged in, cloud on AWS us-west-2, codec=pcm) is
+frozen as the `qa-golden` snapshot:
+
+```bash
+adb -s emulator-5554 emu avd snapshot save qa-golden   # freeze current state
+adb -s emulator-5554 emu avd snapshot load qa-golden   # back to known state in ~2s
+```
+
 ## Roadmap
 
-- audio injection into the mic-capture path (deterministic "speak this WAV,
-  assert this transcript" — no speakers)
 - scenario runner for the audio fault-regression matrix (pod roll, network
   drop, UDP block, token expiry) asserting on both app + cloud sides
-- MCP server face so agents get typed tools instead of shelling the CLI
-- emulator golden-snapshot management (logged-in known state in ~2s)
+- `installMiniapp` RPC (serve local-miniapps bundles from the harness server,
+  install via appRegistry) for UI-level captions tests
+- iOS simulator lane (the bridge is pure JS; only the boot tooling differs)
+
+## Findings the harness has already produced
+
+- Soniox rejects BCP-47 region codes as language hints ("Invalid language
+  hint." for `en-US`); the runtime's soniox provider should normalize, and a
+  non-retryable invalid-config error currently spins the self-heal reconnect
+  loop forever instead of giving up.
+- App cold-boot lands on "Unmatched Route" (`com.mentra:///` resolves to no
+  route) before any navigation.
+- `/home` render error: `ScreenshotFeedbackPrompt` resolves to `undefined` in
+  `AllEffects.tsx` (module-init-order/circular-import).
