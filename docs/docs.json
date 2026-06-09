@@ -159,7 +159,6 @@
             "icon": "glasses",
             "pages": [
               "mentra-live/api-reference",
-              "mentra-live/display",
               "mentra-live/audio",
               "mentra-live/camera-streaming",
               "mentra-live/hardware"

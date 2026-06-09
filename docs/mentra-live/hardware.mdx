@@ -1,10 +1,10 @@
 ---
 title: "Hardware Integration"
-description: "Handle model differences and optional capabilities across smart glasses."
+description: "Handle Mentra Live capabilities and status-driven hardware behavior."
 icon: "microchip"
 ---
 
-The SDK presents a common native API over multiple glasses models. Capabilities differ by model and firmware, so apps should treat advanced features as optional.
+Mentra Live is the camera glasses model supported by this SDK tab. Apps should still treat hardware features as status-driven because firmware version, permissions, and connection state affect what is available at any moment.
 
 ## Recommended Flow
 
@@ -12,7 +12,7 @@ The SDK presents a common native API over multiple glasses models. Capabilities 
 2. Call `scan()` for that model.
 3. Present typed discovered devices from the progressive scan results.
 4. Connect using the discovered device or default-device helper.
-5. Read shaped glasses state, firmware fields, and capability-related status before enabling advanced features.
+5. Read shaped glasses state, firmware fields, and hardware-related status before enabling advanced features.
 6. Keep app UI derived from SDK status rather than from command success alone.
 
 <Tabs>
@@ -64,28 +64,17 @@ In multi-device environments, keep the picker explicit. Do not auto-connect to t
 
 ## Capability Areas
 
-- Display: text, dashboard, head-up angle, and screen enable/disable commands.
 - Input: button, touch, head-up, and switch events.
-- Audio: PCM, LC3, audio pairing, preferred microphone, and local transcription.
+- Audio: PCM, LC3, audio pairing, preferred microphone, speaker playback, and local transcription.
 - Camera: photo, gallery, video recording, and streaming.
 - Network: Wi-Fi scan, credentials, and hotspot state.
-- Maintenance: model-specific version info.
-
-## Model Differences
-
-Treat each advanced feature as optional. Your app should degrade gracefully if a model does not support camera, Wi-Fi, display batching, local transcription, streaming, RGB LEDs, or controller pairing.
-
-| Model | Display | Camera | Microphone | Speaker | Primary strengths |
-| --- | --- | --- | --- | --- | --- |
-| Mentra Live | No | Yes | Yes | Yes | Camera, microphone, speaker, Wi-Fi, streaming, phone-connected workflows |
-| G2 | Yes | No | Yes | No | Display and glanceable UI workflows |
+- Maintenance: Mentra Live version info and OTA status.
 
 ## Mentra Live Hardware
 
-Mentra Live is the camera glasses model supported by the Bluetooth SDK. It is built for visual capture, streaming, and audio-first interactions rather than display output.
+Mentra Live is built for visual capture, streaming, and audio-first interactions.
 
 - Camera: 1080p with streaming support.
-- Display: no display.
 - Microphone: yes.
 - Speaker: yes.
 - Buttons: yes, including press, double press, and long press events.
@@ -96,7 +85,6 @@ Mentra Live is the camera glasses model supported by the Bluetooth SDK. It is bu
 {
   modelName: "Mentra Live",
   hasCamera: true,
-  hasDisplay: false,
   hasMicrophone: true,
   hasSpeaker: true,
   hasButton: true,
