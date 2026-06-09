@@ -10,7 +10,7 @@ The Mentra Bluetooth SDK exposes the same core glasses lifecycle across Android,
 - Connect to a discovered `Device` or an app-restored default device.
 - Read typed lifecycle state through the public surface for your platform.
 - Subscribe to typed hardware events.
-- Send display, camera, stream, audio, Wi-Fi, hotspot, LED, and settings commands where supported by the connected model.
+- Send camera, stream, audio, Wi-Fi, hotspot, LED, and settings commands for Mentra Live.
 
 ## Packages And Imports
 
@@ -159,8 +159,8 @@ Do not parse `id` for model, name, or address information. Use the typed fields 
 
 | Field | Meaning |
 | --- | --- |
-| `model` | Supported glasses family, such as Mentra Live or G2. |
-| `name` | Bluetooth/display name reported during scan. |
+| `model` | Glasses family reported by the SDK, expected to be Mentra Live in these flows. |
+| `name` | Bluetooth name reported during scan. |
 | `address` / `identifier` | Platform device handle when available. Android commonly provides a Bluetooth address. iOS commonly provides a CoreBluetooth identifier. React Native exposes this value as `address`. |
 | `rssi` | Optional signal strength from scan results. It may be undefined at first discovery and appear in a later scan update when the platform reports RSSI metadata. |
 
@@ -240,7 +240,6 @@ These are the supported React Native app developer entrypoints:
 | Status and subscriptions | `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent` for React components; `addListener` is available as the lower-level non-React subscription API |
 | Default device | `getDefaultDevice`, `setDefaultDevice`, `clearDefaultDevice` |
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget` |
-| Display | `displayText`, `clearDisplay`, `showDashboard`, `setDashboardPosition`, `setHeadUpAngle`, `setScreenDisabled` |
 | Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
 | Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setButtonPhotoSettings`, `setButtonVideoRecordingSettings`, `setButtonCameraLed`, `setButtonMaxRecordingTime`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
 | Streaming | `startStream`, `stopStream` |
@@ -255,7 +254,6 @@ Important defaults:
 
 - `scan(model, options)` reports progressive results through `options.onResults`, resolves with the final matching `Device[]`, and times out after 15 seconds unless `options.timeoutMs` is set.
 - `connect` and `connectDefault` default `saveAsDefault` and `cancelExistingConnectionAttempt` to `true`.
-- `displayText(text, x, y, size)` defaults to `x = 0`, `y = 0`, and `size = 24`.
 - `setMicState(enabled)` defaults to glasses microphone on, transcript events off, and LC3 events off. Microphone audio events are continuous while capture is enabled. Use `setVoiceActivityDetectionEnabled(...)` for glasses-side Voice Activity Detection; `voice_activity_detection_status` reports whether it is enabled, and `speaking_status` reports speaking/not-speaking when supported. Microphone audio events include the latest `voiceActivityDetectionEnabled` value.
 - `requestPhoto({authToken, ...})` omits the `Authorization` header when `authToken` is `null` or empty.
 - `requestPhoto({exposureTimeNs, ...})` uses auto exposure when `exposureTimeNs` is omitted or `null`; pass a positive nanosecond value for one-shot manual exposure.
@@ -308,17 +306,16 @@ Use `setGalleryModeEnabled(true)` to enable local button capture, and `setGaller
 
 | Area | Commands |
 | --- | --- |
-| Display | `displayText`, `clearDisplay`, `showDashboard` |
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `disconnect`, `forget` |
 | Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
 | Camera | `requestPhoto`, gallery mode, button photo settings, button video settings, camera field of view |
 | Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, Voice Activity Detection setting and events, audio callbacks, local transcription, media volume |
-| Settings | Brightness, dashboard position, head-up angle, screen disabled, gallery mode |
+| Settings | Gallery mode, camera options, microphone route, Wi-Fi, hotspot, and OTA |
 | LEDs | `rgbLedControl` on supported glasses |
 | System | `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate`, `retryOtaVersionCheck` |
 
-Mentra Live has camera, microphone, and speaker hardware, but no display. G2 has display and microphone hardware, but no camera or speaker. Gate UI for display, camera, and speaker features by the connected model.
+Mentra Live has camera, microphone, speaker, Wi-Fi, LED, and OTA capabilities. Gate UI by connection readiness, permissions, and the latest SDK status.
 
 ## OTA Updates
 
