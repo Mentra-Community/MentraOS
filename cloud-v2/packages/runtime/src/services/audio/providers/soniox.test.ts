@@ -64,6 +64,8 @@ class FakeSession {
   connectCount = 0;
   sendAudioCount = 0;
   closeCount = 0;
+  pauseCount = 0;
+  resumeCount = 0;
   /** When > 0, the next N connect() calls reject (simulate a flaky reconnect). */
   failNextConnects = 0;
 
@@ -76,6 +78,13 @@ class FakeSession {
   }
   sendAudio(): void {
     this.sendAudioCount += 1;
+  }
+  pause(): void {
+    this.pauseCount += 1;
+    this.emit("finalized");
+  }
+  resume(): void {
+    this.resumeCount += 1;
   }
   async finish(): Promise<void> {}
   async close(): Promise<void> {
@@ -130,6 +139,27 @@ function multiSessionClient(): { client: any; sessions: FakeSession[] } {
 /** Resolve after `ms` of real time (kept small so tests stay fast). */
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withFastGapConfig<T>(fn: () => Promise<T>): Promise<T> {
+  const prevCheck = process.env.SONIOX_GAP_CHECK_INTERVAL_MS;
+  const prevThreshold = process.env.SONIOX_AUDIO_GAP_THRESHOLD_MS;
+  process.env.SONIOX_GAP_CHECK_INTERVAL_MS = "5";
+  process.env.SONIOX_AUDIO_GAP_THRESHOLD_MS = "20";
+  try {
+    return await fn();
+  } finally {
+    if (prevCheck == null) {
+      delete process.env.SONIOX_GAP_CHECK_INTERVAL_MS;
+    } else {
+      process.env.SONIOX_GAP_CHECK_INTERVAL_MS = prevCheck;
+    }
+    if (prevThreshold == null) {
+      delete process.env.SONIOX_AUDIO_GAP_THRESHOLD_MS;
+    } else {
+      process.env.SONIOX_AUDIO_GAP_THRESHOLD_MS = prevThreshold;
+    }
+  }
 }
 
 async function makeProvider(): Promise<{
@@ -220,6 +250,40 @@ describe("SonioxProvider utterance lifecycle", () => {
     await provider.close();
   });
 
+  test("does not reuse the first utterance id across provider instances with the same scope", async () => {
+    const sessionA = new FakeSession();
+    const eventsA: TranscriptEvent[] = [];
+    const providerA = await createSonioxProvider({
+      scope: "user_test",
+      language: "auto",
+      client: fakeClient(sessionA) as never,
+      onTranscript: (e) => eventsA.push(e),
+    });
+
+    const sessionB = new FakeSession();
+    const eventsB: TranscriptEvent[] = [];
+    const providerB = await createSonioxProvider({
+      scope: "user_test",
+      language: "auto",
+      client: fakeClient(sessionB) as never,
+      onTranscript: (e) => eventsB.push(e),
+    });
+
+    sessionA.result([
+      { text: "first provider", confidence: 0.9, is_final: false, speaker: "1" },
+    ]);
+    sessionB.result([
+      { text: "second provider", confidence: 0.9, is_final: false, speaker: "1" },
+    ]);
+
+    expect(eventsA[0]!.utteranceId).toBeDefined();
+    expect(eventsB[0]!.utteranceId).toBeDefined();
+    expect(eventsA[0]!.utteranceId).not.toBe(eventsB[0]!.utteranceId);
+
+    await providerA.close();
+    await providerB.close();
+  });
+
   test("close() flushes an in-flight utterance as a single final", async () => {
     const { session, events, provider } = await makeProvider();
 
@@ -233,6 +297,57 @@ describe("SonioxProvider utterance lifecycle", () => {
     const finals = events.filter((e) => e.isFinal);
     expect(finals.length).toBe(1);
     expect(finals[0]!.text).toBe("dangling text");
+  });
+});
+
+describe("SonioxProvider audio-gap pause/resume", () => {
+  test("auto-pauses after an idle audio gap and commits buffered interim text", async () => {
+    await withFastGapConfig(async () => {
+      const { session, events, provider } = await makeProvider();
+
+      session.result([
+        { text: "pending words", confidence: 0.9, is_final: false, speaker: "1" },
+      ]);
+      const utteranceId = events.at(-1)!.utteranceId;
+
+      await wait(50);
+
+      expect(session.pauseCount).toBe(1);
+      const finals = events.filter((e) => e.isFinal);
+      expect(finals.length).toBe(1);
+      expect(finals[0]!.text).toBe("pending words");
+      expect(finals[0]!.utteranceId).toBe(utteranceId);
+
+      await provider.close();
+    });
+  });
+
+  test("resumes before sending the first audio chunk after an idle pause", async () => {
+    await withFastGapConfig(async () => {
+      const { session, provider } = await makeProvider();
+
+      await wait(50);
+      expect(session.pauseCount).toBe(1);
+
+      provider.writeAudio(new Int16Array([1, 2, 3, 4]));
+
+      expect(session.resumeCount).toBe(1);
+      expect(session.sendAudioCount).toBe(1);
+
+      await provider.close();
+    });
+  });
+
+  test("does not auto-pause repeatedly while already paused", async () => {
+    await withFastGapConfig(async () => {
+      const { session, provider } = await makeProvider();
+
+      await wait(80);
+
+      expect(session.pauseCount).toBe(1);
+
+      await provider.close();
+    });
   });
 });
 

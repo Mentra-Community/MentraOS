@@ -29,6 +29,7 @@ import {
   parseAudioPacket,
 } from "../services/session/stream";
 import { getSessionByTag } from "./ws";
+import { PROTOCOL_MAJOR } from "../protocol/envelope";
 
 const logger = createLogger("audio").child({ service: "udp-ingress" });
 
@@ -112,6 +113,35 @@ async function handlePacket(data: Buffer | Uint8Array): Promise<void> {
   }
   const { origin, mentraUserId } = result;
   const localEntry = origin === "local" ? getSessionByTag(sessionTag) : undefined;
+
+  if (result.kind === "probe") {
+    if (localEntry) {
+      localEntry.ws.send(
+        JSON.stringify({
+          v: PROTOCOL_MAJOR,
+          type: "audio.udp_liveness_ack",
+          timestamp: Date.now(),
+          payload: {
+            sessionId: localEntry.data.audioSessionId,
+            sessionTag,
+            probeId: result.probeId ?? "",
+            receivedAt: Date.now(),
+          },
+        }),
+      );
+    }
+    logger.debug(
+      {
+        sessionTag,
+        sequence,
+        mentraUserId,
+        origin,
+        probeId: result.probeId,
+      },
+      "udp liveness probe received",
+    );
+    return;
+  }
 
   logger.debug(
     {

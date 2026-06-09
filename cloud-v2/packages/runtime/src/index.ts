@@ -72,6 +72,12 @@ export interface StartAudioOptions {
    * processing audio for a slice of assigned users.
    */
   workerCount?: number;
+  /**
+   * Forward worker routing stubs over WS for low-level audio integration tests.
+   * Real clients speak the public v2 protocol and should only receive
+   * `stream.transcript` / `stream.translation`.
+   */
+  forwardTranscriptStubs?: boolean;
 }
 
 export interface AudioHandle {
@@ -103,16 +109,24 @@ export async function startAudio(opts: StartAudioOptions = {}): Promise<AudioHan
   const workerCount =
     opts.workerCount ??
     Number.parseInt(process.env.AUDIO_WORKERS ?? "2", 10);
+  const forwardTranscriptStubs =
+    opts.forwardTranscriptStubs ??
+    (process.env.AUDIO_FORWARD_TRANSCRIPT_STUBS === "true" ||
+      process.env.AUDIO_DEBUG_ECHO === "true");
   startWorkerPool({ podId, count: workerCount });
   // Route worker-emitted transcripts to the user's WS sessions on this pod.
   // Real transcripts become v2 `stream.transcript` / `stream.translation`
-  // envelopes (see services/audio/result). Routing stubs (TRANSCRIPT_STUB)
-  // pass through untouched — only the integration tests read them; real
-  // clients ignore unknown message types.
+  // envelopes (see services/audio/result). Routing stubs (TRANSCRIPT_STUB) are
+  // internal/debug signals; only forward them when explicitly requested by
+  // low-level integration tests.
   onTranscript((msg) => {
-    const out =
-      msg.type === "TRANSCRIPT" ? transcriptToStreamMessage(msg) : msg;
-    forwardToUserSessions(msg.mentraUserId, out);
+    if (msg.type === "TRANSCRIPT_STUB") {
+      if (forwardTranscriptStubs) {
+        forwardToUserSessions(msg.mentraUserId, msg);
+      }
+      return;
+    }
+    forwardToUserSessions(msg.mentraUserId, transcriptToStreamMessage(msg));
   });
 
   // Refresh-owned-claims loop: keeps each owned user's Redis claim alive

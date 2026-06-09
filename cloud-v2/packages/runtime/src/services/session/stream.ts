@@ -18,6 +18,7 @@
 
 import nacl from "tweetnacl";
 import { getRedis } from "../../clients/redis.client";
+import { UDP_LIVENESS_PROBE_PREFIX } from "../../protocol/audio";
 
 // === Stream constants ===
 
@@ -66,10 +67,12 @@ export interface LocalSessionLookup {
 
 export interface IngestResult {
   ok: boolean;
+  kind?: "audio" | "probe";
   origin?: "local" | "redis";
   mentraUserId?: string;
   /** Bytes written to the stream (the decrypted length for UDP frames). */
   payloadLen?: number;
+  probeId?: string;
 }
 
 export interface IngestOptions {
@@ -102,6 +105,21 @@ function decryptUdpPayload(
   const nonce = payload.subarray(0, UDP_NONCE_BYTES);
   const ciphertext = payload.subarray(UDP_NONCE_BYTES);
   return nacl.secretbox.open(ciphertext, nonce, key);
+}
+
+function decodeProbeId(payload: Uint8Array): string | null {
+  const prefix = UDP_LIVENESS_PROBE_PREFIX;
+  if (payload.byteLength <= prefix.length) return null;
+  for (let i = 0; i < prefix.length; i += 1) {
+    if (payload[i] !== prefix.charCodeAt(i)) return null;
+  }
+  let id = "";
+  for (let i = prefix.length; i < payload.byteLength; i += 1) {
+    const c = payload[i];
+    if (c < 0x20 || c > 0x7e) return null;
+    id += String.fromCharCode(c);
+  }
+  return id || null;
 }
 
 /**
@@ -154,6 +172,18 @@ export async function ingestAudioPacket(
     payload = plaintext;
   }
 
+  const probeId = opts.encrypted ? decodeProbeId(payload) : null;
+  if (probeId) {
+    return {
+      ok: true,
+      kind: "probe",
+      origin,
+      mentraUserId,
+      payloadLen: payload.byteLength,
+      probeId,
+    };
+  }
+
   await appendAudioPacket(mentraUserId, {
     seq: packet.sequence,
     payload,
@@ -161,7 +191,7 @@ export async function ingestAudioPacket(
     audioSessionId,
   });
 
-  return { ok: true, origin, mentraUserId, payloadLen: payload.byteLength };
+  return { ok: true, kind: "audio", origin, mentraUserId, payloadLen: payload.byteLength };
 }
 
 /**

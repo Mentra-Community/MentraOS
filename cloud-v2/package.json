@@ -15,6 +15,7 @@
     "dev:audio": "bun --watch packages/runtime/src/index.ts",
     "dev:proxy": "bun --watch packages/proxy/src/index.ts",
     "dev:test-oem": "bun --watch test/test-oem/src/index.ts",
+    "fault:e2e": "bun scripts/audio-fault-e2e.ts",
     "typecheck": "tsc -b",
     "test": "bun test"
   },

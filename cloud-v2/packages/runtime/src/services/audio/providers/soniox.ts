@@ -13,7 +13,6 @@
  *
  * What this does NOT include (deferred from v1's SonioxSdkStream port):
  *   - Endpoint debounce / merge (mid-utterance endpoint suppression)
- *   - Auto-pause on 2s silence gap (Fix 044-3 in v1)
  *   - Token compaction handling beyond what the SDK does
  *
  * Those land as we hit them in real-traffic testing. The minimum here is
@@ -30,6 +29,7 @@ import {
   type RealtimeSttSession,
   type SttSessionConfig,
 } from "@soniox/node";
+import { randomUUID } from "node:crypto";
 
 import type {
   ProviderOptions,
@@ -38,6 +38,12 @@ import type {
 } from "./provider";
 
 const SONIOX_MODEL = process.env.SONIOX_MODEL ?? "stt-rt-v4";
+function audioGapConfig(): { checkIntervalMs: number; thresholdMs: number } {
+  return {
+    checkIntervalMs: Number(process.env.SONIOX_GAP_CHECK_INTERVAL_MS ?? 1_000),
+    thresholdMs: Number(process.env.SONIOX_AUDIO_GAP_THRESHOLD_MS ?? 2_000),
+  };
+}
 
 /**
  * Self-heal backoff for an unexpected Soniox session drop.
@@ -102,6 +108,7 @@ export async function createSonioxProvider(
   opts: CreateSonioxProviderOptions,
 ): Promise<TranscriptionProvider> {
   const client = opts.client ?? getClient();
+  const gapConfig = audioGapConfig();
 
   // Build session config. For language="auto" we enable detection; for a
   // specific code we pass it as hint with detection still on. (Letting
@@ -154,6 +161,9 @@ export async function createSonioxProvider(
   // of the pipeline already tolerates dropped frames during a reconnect.
   let reconnecting = false;
   let reconnectAttempts = 0;
+  let gapCheckInterval: ReturnType<typeof setInterval> | null = null;
+  let lastAudioWriteTime = Date.now();
+  let pausedForGap = false;
 
   // === Per-utterance state (ports v1's SonioxTranscriptionProvider) ===
   //
@@ -176,13 +186,14 @@ export async function createSonioxProvider(
   let currentSpeakerId: string | undefined = undefined;
   let currentLanguage: string | undefined = undefined;
 
-  // Monotonic id minting: a worker-stable counter avoids any reliance on wall
-  // clock / RNG and is unique within this provider instance. `opts.scope`
-  // (user + sub identity) keeps ids distinct across providers in the worker.
+  // Monotonic id minting: a provider-instance nonce prevents collisions when the
+  // cloud process/provider restarts with the same scope and sequence number.
+  // `opts.scope` (user + sub identity) keeps ids readable per subscription.
   let utteranceSeq = 0;
+  const providerInstanceId = randomUUID();
   const mintUtteranceId = (): string => {
     utteranceSeq += 1;
-    return `utt_${opts.scope}_${utteranceSeq}`;
+    return `utt_${opts.scope}_${providerInstanceId}_${utteranceSeq}`;
   };
 
   const startNewUtterance = (speakerId?: string, language?: string): void => {
@@ -326,7 +337,14 @@ export async function createSonioxProvider(
     emitFinal();
   };
 
+  const handleFinalized = () => {
+    // The SDK fires this after session.pause() or session.finalize(). For our
+    // audio-gap pause, it is the trusted "speech segment ended" signal.
+    emitFinal();
+  };
+
   const handleError = (err: Error) => {
+    stopGapDetection();
     opts.onError?.(err);
     // A provider-side error usually precedes (or accompanies) the socket dying.
     // Treat it as a trigger for the self-heal path: if the session is no longer
@@ -370,6 +388,7 @@ export async function createSonioxProvider(
     s.on("finished", handleFinished);
     s.on("result", handleResult);
     s.on("endpoint", handleEndpoint);
+    s.on("finalized", handleFinalized);
     s.on("error", handleError);
   };
 
@@ -381,10 +400,37 @@ export async function createSonioxProvider(
       s.off("finished", handleFinished);
       s.off("result", handleResult);
       s.off("endpoint", handleEndpoint);
+      s.off("finalized", handleFinalized);
       s.off("error", handleError);
     } catch {
       /* best-effort */
     }
+  };
+
+  const stopGapDetection = (): void => {
+    if (gapCheckInterval) {
+      clearInterval(gapCheckInterval);
+      gapCheckInterval = null;
+    }
+  };
+
+  const startGapDetection = (): void => {
+    stopGapDetection();
+    lastAudioWriteTime = Date.now();
+    pausedForGap = false;
+
+    gapCheckInterval = setInterval(() => {
+      if (closed || reconnecting || pausedForGap) return;
+      if (Date.now() - lastAudioWriteTime < gapConfig.thresholdMs) return;
+
+      try {
+        session.pause();
+        pausedForGap = true;
+        console.log(`[soniox] auto-paused scope=${opts.scope} after audio gap`);
+      } catch (err) {
+        console.warn(`[soniox] auto-pause failed scope=${opts.scope}:`, err);
+      }
+    }, gapConfig.checkIntervalMs);
   };
 
   /**
@@ -402,6 +448,8 @@ export async function createSonioxProvider(
   const reconnect = reconnectConfig();
   const scheduleReconnect = (trigger: string): void => {
     if (closed || reconnecting) return;
+    stopGapDetection();
+    pausedForGap = false;
     reconnecting = true;
 
     const attempt = async (): Promise<void> => {
@@ -439,6 +487,7 @@ export async function createSonioxProvider(
           session = next;
           reconnecting = false;
           reconnectAttempts = 0;
+          startGapDetection();
           console.log(`[soniox] self-heal reconnected scope=${opts.scope}`);
           return;
         } catch (err) {
@@ -465,6 +514,7 @@ export async function createSonioxProvider(
   wireSession(session);
   try {
     await session.connect();
+    startGapDetection();
   } catch (err) {
     console.error(`[soniox] connect failed scope=${opts.scope}:`, err);
     opts.onError?.(err as Error);
@@ -480,6 +530,20 @@ export async function createSonioxProvider(
       if (closed || reconnecting) return;
       // Soniox SDK accepts Uint8Array of raw PCM bytes.
       const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+      lastAudioWriteTime = Date.now();
+      if (pausedForGap) {
+        try {
+          session.resume();
+          pausedForGap = false;
+          stablePrefix = "";
+          prevFinalLen = 0;
+          lastSentInterim = "";
+          currentUtteranceId = null;
+          console.log(`[soniox] resumed scope=${opts.scope} after audio gap`);
+        } catch (err) {
+          console.warn(`[soniox] resume failed scope=${opts.scope}:`, err);
+        }
+      }
       try {
         session.sendAudio(bytes);
       } catch (err) {
@@ -493,6 +557,7 @@ export async function createSonioxProvider(
       // Mark closed FIRST so any disconnect/error fired by our own teardown does
       // not spin up a self-heal reconnect.
       closed = true;
+      stopGapDetection();
       // Flush any in-flight utterance as a final so a card that was mid-update
       // gets committed instead of being left dangling on detach.
       try {

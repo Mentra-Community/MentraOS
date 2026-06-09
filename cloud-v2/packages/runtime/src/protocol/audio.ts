@@ -42,6 +42,18 @@ export const audioSubscriptionSchema = z.discriminatedUnion("kind", [
 ]);
 export type AudioSubscription = z.infer<typeof audioSubscriptionSchema>;
 
+// --- UDP liveness -----------------------------------------------------------
+
+export const UDP_LIVENESS_PROBE_PREFIX = "mentra:udp-probe:";
+
+export const udpLivenessAckPayloadSchema = z.object({
+  sessionId: z.string(),
+  sessionTag: z.number().int(),
+  probeId: z.string(),
+  receivedAt: z.number().int(),
+});
+export type UdpLivenessAckPayload = z.infer<typeof udpLivenessAckPayloadSchema>;
+
 // --- Result types -----------------------------------------------------------
 
 export const transcriptionTokenSchema = z.object({

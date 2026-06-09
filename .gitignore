@@ -376,6 +376,8 @@ nicelogs.txt
 
 
 issues
+!cloud-v2/docs/issues/
+!cloud-v2/docs/issues/**
 
 # Local session notes
 MEMORY.md

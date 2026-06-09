@@ -14,7 +14,7 @@ import { envelope } from "./envelope";
 import { connectionInitPayloadSchema, connectionAckPayloadSchema } from "./handshake";
 import { controlPingPayloadSchema, controlPongPayloadSchema } from "./control";
 import { protocolErrorPayloadSchema } from "./errors";
-import { transcriptionDataSchema, translationDataSchema } from "./audio";
+import { transcriptionDataSchema, translationDataSchema, udpLivenessAckPayloadSchema } from "./audio";
 import { photoReadyPayloadSchema, photoErrorPayloadSchema } from "./camera";
 
 // --- Per-type enveloped message schemas -------------------------------------
@@ -28,6 +28,7 @@ export const errorMessage = envelope("error", protocolErrorPayloadSchema);
 // Audio service push events (registered in audio/protocol.md).
 export const streamTranscriptMessage = envelope("stream.transcript", transcriptionDataSchema);
 export const streamTranslationMessage = envelope("stream.translation", translationDataSchema);
+export const audioUdpLivenessAckMessage = envelope("audio.udp_liveness_ack", udpLivenessAckPayloadSchema);
 
 // Camera service push events (registered in camera/spec.md).
 export const photoReadyMessage = envelope("photo.ready", photoReadyPayloadSchema);
@@ -51,6 +52,7 @@ export const cloudToClientMessage = z.discriminatedUnion("type", [
   errorMessage,
   streamTranscriptMessage,
   streamTranslationMessage,
+  audioUdpLivenessAckMessage,
   photoReadyMessage,
   photoErrorMessage,
 ]);
@@ -65,6 +67,7 @@ export const anyMessage = z.discriminatedUnion("type", [
   errorMessage,
   streamTranscriptMessage,
   streamTranslationMessage,
+  audioUdpLivenessAckMessage,
   photoReadyMessage,
   photoErrorMessage,
 ]);

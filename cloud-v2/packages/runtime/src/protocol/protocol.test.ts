@@ -24,6 +24,7 @@ import {
   transcriptionTokenSchema,
   transcriptionDataSchema,
   translationDataSchema,
+  udpLivenessAckPayloadSchema,
   // handshake
   connectionInitPayloadSchema,
   connectionAckPayloadSchema,
@@ -41,6 +42,7 @@ import {
   errorMessage,
   streamTranscriptMessage,
   streamTranslationMessage,
+  audioUdpLivenessAckMessage,
   clientToCloudMessage,
   cloudToClientMessage,
   anyMessage,
@@ -184,6 +186,20 @@ describe("audio result types", () => {
   });
 });
 
+describe("audio liveness", () => {
+  test("udp liveness ack payload validates", () => {
+    expect(
+      udpLivenessAckPayloadSchema.safeParse({
+        sessionId: "s1",
+        sessionTag: 123,
+        probeId: "probe-1",
+        receivedAt: 1700000000000,
+      }).success,
+    ).toBe(true);
+    expect(udpLivenessAckPayloadSchema.safeParse({ sessionTag: 123 }).success).toBe(false);
+  });
+});
+
 // === handshake ===
 
 describe("handshake", () => {
@@ -194,12 +210,18 @@ describe("handshake", () => {
         token: "jwt",
         protocolVersion: "2.0.0",
         client: { platform: "ios", appVersion: "1.2.3" },
-        audio: { codec: "lc3", sampleRate: 16000, initialSubscriptions: [transcriptionSub, translationSub] },
+        audio: {
+          codec: "lc3",
+          sampleRate: 16000,
+          frameSizeBytes: 60,
+          initialSubscriptions: [transcriptionSub, translationSub],
+        },
       }).success,
     ).toBe(true);
     expect(connectionInitPayloadSchema.safeParse({}).success).toBe(false); // missing protocolVersion
     expect(connectionInitPayloadSchema.safeParse({ protocolVersion: "2.0.0", client: { platform: "web" } }).success).toBe(false); // bad platform
     expect(connectionInitPayloadSchema.safeParse({ protocolVersion: "2.0.0", audio: { codec: "opus", sampleRate: 16000 } }).success).toBe(false); // bad codec
+    expect(connectionInitPayloadSchema.safeParse({ protocolVersion: "2.0.0", audio: { codec: "lc3", sampleRate: 16000, frameSizeBytes: 30 } }).success).toBe(false); // bad frame size
   });
 
   test("connection.ack: minimal, with audio block, invalid", () => {
@@ -266,6 +288,16 @@ describe("messages", () => {
     expect(errorMessage.safeParse(wrap("error", { code: "INTERNAL", message: "boom", fatal: false })).success).toBe(true);
     expect(streamTranscriptMessage.safeParse(wrap("stream.transcript", transcriptionData)).success).toBe(true);
     expect(streamTranslationMessage.safeParse(wrap("stream.translation", translationData)).success).toBe(true);
+    expect(
+      audioUdpLivenessAckMessage.safeParse(
+        wrap("audio.udp_liveness_ack", {
+          sessionId: "s1",
+          sessionTag: 123,
+          probeId: "probe-1",
+          receivedAt: 1700000000000,
+        }),
+      ).success,
+    ).toBe(true);
   });
 
   test("clientToCloud union routes its variants and rejects others", () => {
@@ -283,6 +315,16 @@ describe("messages", () => {
     expect(cloudToClientMessage.safeParse(wrap("error", { code: "INTERNAL", message: "boom", fatal: false })).success).toBe(true);
     expect(cloudToClientMessage.safeParse(wrap("stream.transcript", transcriptionData)).success).toBe(true);
     expect(cloudToClientMessage.safeParse(wrap("stream.translation", translationData)).success).toBe(true);
+    expect(
+      cloudToClientMessage.safeParse(
+        wrap("audio.udp_liveness_ack", {
+          sessionId: "s1",
+          sessionTag: 123,
+          probeId: "probe-1",
+          receivedAt: 1700000000000,
+        }),
+      ).success,
+    ).toBe(true);
     // a client->cloud type is not a valid cloud->client message
     expect(cloudToClientMessage.safeParse(wrap("connection.init", { protocolVersion: "2.0.0" })).success).toBe(false);
   });

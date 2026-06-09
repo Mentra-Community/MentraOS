@@ -28,6 +28,7 @@
 import { createLogger } from "@mentra/cloud-shared";
 import type {
   AudioCodec,
+  SetCodecMessage,
   TranscriptMessage,
   TranscriptStubMessage,
   WorkerInMessage,
@@ -55,7 +56,7 @@ interface WorkerSlot {
    */
   pendingSubscriptions: Set<string>;
   /** SET_CODEC messages queued while waiting for WORKER_READY. */
-  pendingCodecs: Map<string, AudioCodec>;
+  pendingCodecs: Map<string, SetCodecMessage>;
 }
 
 interface WorkerPoolState {
@@ -194,15 +195,19 @@ export function reconcileSubscriptions(mentraUserId: string): void {
  * Called once per session from the connection.init handler, before audio
  * flows. No-op if the user isn't assigned to a worker on this pod.
  */
-export function setUserCodec(mentraUserId: string, codec: AudioCodec): void {
+export function setUserCodec(
+  mentraUserId: string,
+  codec: AudioCodec,
+  frameSizeBytes?: SetCodecMessage["frameSizeBytes"],
+): void {
   if (!pool) return;
   const slot = pool.userToWorker.get(mentraUserId);
   if (!slot) return;
-  const msg: WorkerInMessage = { type: "SET_CODEC", mentraUserId, codec };
+  const msg: WorkerInMessage = { type: "SET_CODEC", mentraUserId, codec, frameSizeBytes };
   if (slot.ready) {
     slot.worker.postMessage(msg);
   } else {
-    slot.pendingCodecs.set(mentraUserId, codec);
+    slot.pendingCodecs.set(mentraUserId, msg);
   }
 }
 
@@ -287,12 +292,8 @@ function spawnWorkerSlot(id: string): WorkerSlot {
         worker.postMessage({ type: "ATTACH_USER", mentraUserId: userId } satisfies WorkerInMessage);
       }
       slot.pendingAttaches.length = 0;
-      for (const [userId, codec] of slot.pendingCodecs) {
-        worker.postMessage({
-          type: "SET_CODEC",
-          mentraUserId: userId,
-          codec,
-        } satisfies WorkerInMessage);
+      for (const msg of slot.pendingCodecs.values()) {
+        worker.postMessage(msg);
       }
       slot.pendingCodecs.clear();
       for (const userId of slot.pendingSubscriptions) {

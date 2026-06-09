@@ -26,6 +26,9 @@ export const connectionInitPayloadSchema = z.object({
     .object({
       codec: z.enum(["lc3", "pcm"]),
       sampleRate: z.number().int(), // e.g. 16000
+      // LC3 bitrate / frame size in bytes. Only meaningful when codec is
+      // "lc3"; omitted PCM sessions keep treating payload bytes as PCM.
+      frameSizeBytes: z.union([z.literal(20), z.literal(40), z.literal(60)]).optional(),
       // Optional initial subscription set, seeded atomically with the session
       // so audio that starts before the first REST update is not transcribed
       // with an empty set.

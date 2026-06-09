@@ -58,10 +58,12 @@ export interface UpdateSubscriptionsMessage {
 }
 /** Audio codec for a user's stream. Set from the client's connection.init. */
 export type AudioCodec = "lc3" | "pcm"
+export type Lc3FrameSizeBytes = 20 | 40 | 60
 export interface SetCodecMessage {
   type: "SET_CODEC"
   mentraUserId: string
   codec: AudioCodec
+  frameSizeBytes?: Lc3FrameSizeBytes
 }
 export interface ShutdownMessage {
   type: "SHUTDOWN"
@@ -148,6 +150,7 @@ const decoders = new Map<string, LC3Decoder>()
  * provider — translation lands in a follow-up iteration.
  */
 const userProviders = new Map<string, Map<string, TranscriptionProvider>>()
+const userProviderCreates = new Map<string, Map<string, Promise<TranscriptionProvider>>>()
 /** Most recently received subscription list per user, for reconciliation. */
 const userSubs = new Map<string, AudioSubscription[]>()
 /**
@@ -156,6 +159,7 @@ const userSubs = new Map<string, AudioSubscription[]>()
  * providers without decoding. Set from the client's connection.init.
  */
 const userCodecs = new Map<string, AudioCodec>()
+const userLc3FrameSizes = new Map<string, Lc3FrameSizeBytes>()
 let running = true
 
 /**
@@ -226,7 +230,7 @@ async function handleAttach(mentraUserId: string): Promise<void> {
   // routing).
   if (!decoders.has(mentraUserId)) {
     try {
-      decoders.set(mentraUserId, await LC3Decoder.create(20))
+      decoders.set(mentraUserId, await LC3Decoder.create(userLc3FrameSizes.get(mentraUserId) ?? 20))
     } catch (err) {
       console.error("[audio-worker] LC3Decoder.create failed:", err)
     }
@@ -282,6 +286,8 @@ async function reconcileProviders(mentraUserId: string, subs: AudioSubscription[
 
   const existing = userProviders.get(mentraUserId) ?? new Map<string, TranscriptionProvider>()
   userProviders.set(mentraUserId, existing)
+  const creating = userProviderCreates.get(mentraUserId) ?? new Map<string, Promise<TranscriptionProvider>>()
+  userProviderCreates.set(mentraUserId, creating)
 
   // Compute desired set: one entry per subscription, transcription AND
   // translation. They share the provider interface; output messages
@@ -304,13 +310,48 @@ async function reconcileProviders(mentraUserId: string, subs: AudioSubscription[
   // Open providers for new subs.
   for (const [key, sub] of desired) {
     if (existing.has(key)) continue
+    const pending = creating.get(key)
+    if (pending) {
+      try {
+        const provider = await pending
+        if (shouldKeepProvider(mentraUserId, key) && !existing.has(key)) {
+          existing.set(key, provider)
+        } else if (!existing.has(key)) {
+          provider.close().catch((err) => {
+            console.error("[audio-worker] provider close failed:", err)
+          })
+        }
+      } catch (err) {
+        console.error("[audio-worker] provider create failed:", err)
+      }
+      continue
+    }
+
+    const creation = createProvider(mentraUserId, sub)
+    creating.set(key, creation)
     try {
-      const provider = await createProvider(mentraUserId, sub)
-      existing.set(key, provider)
+      const provider = await creation
+      if (shouldKeepProvider(mentraUserId, key) && !existing.has(key)) {
+        existing.set(key, provider)
+      } else {
+        provider.close().catch((err) => {
+          console.error("[audio-worker] provider close failed:", err)
+        })
+      }
     } catch (err) {
       console.error("[audio-worker] provider create failed:", err)
+    } finally {
+      if (creating.get(key) === creation) creating.delete(key)
+      if (creating.size === 0) userProviderCreates.delete(mentraUserId)
     }
   }
+}
+
+function shouldKeepProvider(mentraUserId: string, key: string): boolean {
+  if (!ownedUsers.has(mentraUserId)) return false
+  if (!userProviders.has(mentraUserId)) return false
+  const subs = userSubs.get(mentraUserId) ?? []
+  return subs.some((sub) => subscriptionKeyFor(sub) === key)
 }
 
 function subscriptionKeyFor(sub: AudioSubscription): string {
@@ -398,14 +439,29 @@ self.onmessage = (e: MessageEvent<WorkerInMessage>) => {
       break
     case "SET_CODEC":
       userCodecs.set(msg.mentraUserId, msg.codec)
+      if (msg.frameSizeBytes) {
+        userLc3FrameSizes.set(msg.mentraUserId, msg.frameSizeBytes)
+        const existing = decoders.get(msg.mentraUserId)
+        if (existing && existing.frameBytes !== msg.frameSizeBytes) {
+          void LC3Decoder.create(msg.frameSizeBytes)
+            .then((decoder) => {
+              decoders.set(msg.mentraUserId, decoder)
+            })
+            .catch((err) => {
+              console.error("[audio-worker] LC3Decoder.create failed:", err)
+            })
+        }
+      }
       break
     case "DETACH_USER": {
       ownedUsers.delete(msg.mentraUserId)
       readyUsers.delete(msg.mentraUserId)
       controlReadyUsers.delete(msg.mentraUserId)
       decoders.delete(msg.mentraUserId)
+      userLc3FrameSizes.delete(msg.mentraUserId)
       userSubs.delete(msg.mentraUserId)
       userCodecs.delete(msg.mentraUserId)
+      userProviderCreates.delete(msg.mentraUserId)
       const providers = userProviders.get(msg.mentraUserId)
       if (providers) {
         userProviders.delete(msg.mentraUserId)

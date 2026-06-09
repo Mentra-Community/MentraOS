@@ -18,6 +18,10 @@ folder is the audio service in depth.
   worker protocol, the failure walkthroughs, the packet header format.
 - [`wire.md`](./wire.md): the audio wire surface. The subscription REST endpoint, the
   transcript/translation push events, and the UDP frame format.
+- [`fault-regression-matrix.md`](./fault-regression-matrix.md): live QA checklist of
+  transcription faults, edge cases, expected behavior, and regression coverage.
+- [`e2e-fault-harness.md`](./e2e-fault-harness.md): repeatable phone E2E harness for
+  local and Porter fault injection runs, with logcat/screenshot artifacts.
 
 ## Related
 

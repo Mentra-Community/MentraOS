@@ -506,7 +506,11 @@ async function handleConnectionInit(
 ): Promise<void> {
   // Tell the worker this session's codec before any audio is processed, so it
   // knows whether to LC3-decode the stream entries or treat them as raw PCM.
-  setUserCodec(ws.data.mentraUserId, init.audio?.codec ?? "lc3");
+  setUserCodec(
+    ws.data.mentraUserId,
+    init.audio?.codec ?? "lc3",
+    init.audio?.frameSizeBytes,
+  );
 
   // Seed the subscription source-of-truth key atomically with session creation,
   // so audio that starts flowing right after the ack is transcribed against the
