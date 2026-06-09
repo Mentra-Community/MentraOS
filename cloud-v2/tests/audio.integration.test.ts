@@ -201,6 +201,32 @@ describe("audio e2e", () => {
     await client.close();
   });
 
+  test("UDP liveness probe acks over WS and does not enter audio stream", async () => {
+    const client = newClient("alice-udp-probe");
+    await client.connect();
+
+    client.sendUdpProbe("probe-1");
+
+    const ack = (await client.waitFor("audio.udp_liveness_ack")) as {
+      payload: {
+        sessionId: string;
+        sessionTag: number;
+        probeId: string;
+        receivedAt: number;
+      };
+    };
+    expect(ack.payload.sessionTag).toBe(client.sessionTag);
+    expect(ack.payload.probeId).toBe("probe-1");
+
+    const tagRecord = await lookupSessionTagInRedis(client.sessionTag);
+    expect(tagRecord).not.toBeNull();
+    const redis = getRedis();
+    const entries = await redis.xrange(audioStreamKey(tagRecord!.mentraUserId), "-", "+");
+    expect(entries).toHaveLength(0);
+
+    await client.close();
+  });
+
   test("sequence increments across packets", async () => {
     const client = newClient("alice-seq");
     await client.connect();

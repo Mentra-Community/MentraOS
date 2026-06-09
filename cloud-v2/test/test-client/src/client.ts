@@ -49,6 +49,7 @@ const JWT_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:jwt";
 const UDP_HEADER_SIZE = 6;
 const PROTOCOL_MAJOR = 2 as const;
 const PROTOCOL_VERSION = "2.0.0";
+const UDP_LIVENESS_PROBE_PREFIX = "mentra:udp-probe:";
 
 type UdpSocket = udp.Socket<"buffer">;
 
@@ -152,8 +153,19 @@ export interface StreamTranslation extends Envelope<TranslationData> {
   type: "stream.translation";
 }
 
+export interface UdpLivenessAck
+  extends Envelope<{
+    sessionId: string;
+    sessionTag: number;
+    probeId: string;
+    receivedAt: number;
+  }> {
+  type: "audio.udp_liveness_ack";
+}
+
 export type AnyServerMessage =
   | ConnectionAck
+  | UdpLivenessAck
   | { type: "UDP_PACKET_RECEIVED"; sequence: number; payloadLen: number }
   | TranscriptStub
   | StreamTranscript
@@ -257,6 +269,10 @@ export class TestClient {
     const udpInfo = this.ack?.payload.audio?.udp;
     if (!udpInfo) throw new Error("not connected");
     this.sendAudioTo({ host: udpInfo.host, port: udpInfo.port }, payload);
+  }
+
+  sendUdpProbe(probeId: string): void {
+    this.sendAudio(asciiBytes(`${UDP_LIVENESS_PROBE_PREFIX}${probeId}`));
   }
 
   /**
@@ -565,4 +581,12 @@ export class TestClient {
       this.pongDeadlineTimer = null;
     }
   }
+}
+
+function asciiBytes(text: string): Uint8Array {
+  const bytes = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i += 1) {
+    bytes[i] = text.charCodeAt(i) & 0x7f;
+  }
+  return bytes;
 }
