@@ -17,7 +17,7 @@ export default function SpeakerPage() {
   const [phrase, setPhrase] = useState("Hello from MentraJS")
   return (
     <Shell>
-      <MiniappHeader title="session.speaker" onBack={() => navigate("/tester")} />
+      <MiniappHeader title="session.speaker" onBack={() => navigate("/")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <Label htmlFor="speaker-phrase">phrase</Label>
         <Input id="speaker-phrase" value={phrase} onChange={(e) => setPhrase(e.target.value)} />

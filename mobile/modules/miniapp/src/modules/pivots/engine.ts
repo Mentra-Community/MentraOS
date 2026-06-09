@@ -25,12 +25,12 @@ import type {LatLng, ManeuverKind, NavRoute, NavStep, Pivot, PivotEvent, PivotOp
 import {
   bearingDeg,
   cumulativeDistances,
-  extractCrossings,
   extractPivots,
   haversineMeters,
   signedAngleDiff,
   type RawPivot,
 } from "./geometry"
+import {extractPivotsFromComputedSteps} from "./instructions"
 
 /**
  * Mode-aware defaults for `PivotOptions`. Tuned for typical
@@ -64,14 +64,6 @@ const NON_TURN_MANEUVERS = new Set(["STRAIGHT", "NAME_CHANGE", "DEPART", "ARRIVE
  * guessing.
  */
 const STEP_MATCH_MAX_INDEX_DELTA = 8
-
-/**
- * A crossing pivot within this along-route distance of an existing
- * turn pivot is dropped — the turn maneuver already implies the user
- * will cross the road as part of the turn, so a duplicate
- * "Cross the road" prompt right next to "Turn right" is noise.
- */
-const CROSS_MERGE_M = 15
 
 /**
  * Realized PivotOptions with all fields resolved (no undefined).
@@ -117,6 +109,24 @@ export class PivotEngine {
    */
   private points: LatLng[] = []
   private cumulative: number[] = []
+  /**
+   * Async road-name resolver injected by NavigationModule. Backs the
+   * engine's last-resort fallback: when a pivot's `fromRoad` or
+   * `toRoad` is null after Routes-API instruction parsing, the
+   * engine samples a coordinate ~SAMPLE_OFFSET_M behind/ahead along
+   * the polyline and asks the host to reverse-geocode it. Patched
+   * onto the pivot in place when the response lands. Null when no
+   * resolver is wired — the engine simply leaves the field null.
+   */
+  private roadNameResolver: ((coord: LatLng) => Promise<string | null>) | null = null
+  /**
+   * Generation counter bumped on every route rebuild. Geocode
+   * responses from a stale route are discarded by comparing the
+   * generation captured at request time against the current value.
+   * Without this, a slow geocode reply from a previous route can
+   * stamp a fresh route's pivot with the wrong road name.
+   */
+  private routeGeneration = 0
 
   private subscribers = new Set<Subscriber>()
 
@@ -132,6 +142,17 @@ export class PivotEngine {
     for (const p of this.pivots) {
       p.radiusMeters = this.opts.radiusMeters
     }
+  }
+
+  /**
+   * Install the host-backed reverse-geocode resolver. NavigationModule
+   * calls this once after constructing the engine, wiring through to
+   * the host's Geocoding REST adapter. When unset, the engine simply
+   * leaves null road names in place — geocoding is a best-effort
+   * enhancement, not a requirement.
+   */
+  setRoadNameResolver(resolver: ((coord: LatLng) => Promise<string | null>) | null): void {
+    this.roadNameResolver = resolver
   }
 
   /**
@@ -152,6 +173,132 @@ export class PivotEngine {
     this.activePivotIndex = null
     this.points = []
     this.cumulative = []
+  }
+
+  /**
+   * Rebuild the pivot list from a Routes-API computed step list. This
+   * is the high-accuracy path used during live trips: `instruction`
+   * strings on each step name the road being entered unambiguously
+   * ("Turn left onto Octavia Blvd"), and the explicit `endLat/endLng`
+   * gives us the exact corner location without polyline-walking math.
+   *
+   * NavigationModule calls this once per route lifecycle — at trip
+   * start (after firing NAVIGATION_COMPUTE_ROUTE), and again on every
+   * reroute. The cursor + state machinery (approaching / entered /
+   * exited) is identical to `setRoute` — only the pivot construction
+   * differs.
+   *
+   * If the computed-step list is empty or no pivots survive the
+   * filters in `extractPivotsFromComputedSteps`, this falls back to
+   * `setRoute(route)` so the geometry-derived pivots are still
+   * available. That keeps the engine working on platforms that don't
+   * yet have Routes API plumbing.
+   */
+  setRouteFromComputedSteps(
+    route: NavRoute,
+    computedSteps:
+      | Array<{
+          lat: number
+          lng: number
+          endLat: number
+          endLng: number
+          distanceMeters: number
+          maneuver?: ManeuverKind
+          instruction?: string
+          /** Host-resolved road name (Phase 1). Optional for backward
+           *  compat with callers that only supply `instruction`. */
+          road?: string | null
+        }>
+      | undefined,
+  ): void {
+    const points = route.points ?? []
+
+    // Close out an in-flight pivot before rebuilding so subscribers
+    // see a clean state transition.
+    if (this.activePivotIndex !== null) {
+      const active = this.pivots[this.activePivotIndex]
+      if (active) this.emit({kind: "exited", pivot: active})
+    }
+
+    if (points.length < 3 || !computedSteps || computedSteps.length < 2) {
+      // Fall back to the geometry-derived path. setRoute also handles
+      // the points<3 early-exit cleanup.
+      this.setRoute(route, null)
+      return
+    }
+
+    const cumulative = cumulativeDistances(points)
+    const instructionPivots = extractPivotsFromComputedSteps(computedSteps, points)
+    console.log(
+      `[PivotEngine] setRouteFromComputedSteps: steps=${computedSteps.length} instructionPivots=${instructionPivots.length}` +
+        (instructionPivots.length > 0
+          ? "\n" +
+            instructionPivots
+              .map(
+                (p, i) =>
+                  `  pivot[${i}] ${p.fromRoad ?? "—"} → ${p.toRoad ?? "—"} dir=${p.direction} @ (${p.lat.toFixed(5)}, ${p.lng.toFixed(5)})`,
+              )
+              .join("\n")
+          : ""),
+    )
+    if (instructionPivots.length === 0) {
+      // No survived turns from the instruction path — defer to geometry.
+      // eslint-disable-next-line no-console
+      console.log(
+        `[PivotEngine] falling back to setRoute (geometry) — input steps:\n` +
+          computedSteps
+            .map(
+              (s, i) =>
+                `  step[${i}] road=${s.road ?? "—"} maneuver=${s.maneuver ?? "—"} @ (${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}) → (${s.endLat.toFixed(5)}, ${s.endLng.toFixed(5)})`,
+            )
+            .join("\n"),
+      )
+      this.setRoute(route, null)
+      return
+    }
+
+    const pivots: Pivot[] = instructionPivots.map((p, i) => ({
+      index: i,
+      lat: p.lat,
+      lng: p.lng,
+      direction: p.direction === "left" ? "left" : "right",
+      fromRoad: p.fromRoad,
+      toRoad: p.toRoad,
+      maneuver: p.maneuver,
+      distanceAlongRouteMeters: alongRouteAtCoord(points, cumulative, {lat: p.lat, lng: p.lng}),
+      radiusMeters: this.opts.radiusMeters,
+    }))
+
+    // Crosswalk pivots intentionally NOT injected. Earlier the engine
+    // surfaced CROSS_STREET pivots from extractCrossings(points) so a
+    // "Cross the street" prompt would fire alongside turns — but in
+    // practice every block on a city walk has 1-4 crosswalks and the
+    // banner ended up flickering "Onto Gough St in 100m / 80m / 60m"
+    // across each one, even though Gough was still hundreds of meters
+    // away. The user perceives this as the destination jumping back
+    // each time they pass a crosswalk. Removing the injection means
+    // the only pivots in the list are real road→road turns from the
+    // Routes API, which gives a monotonic countdown to each turn —
+    // matching how Google Maps behaves. extractCrossings + CROSS_MERGE_M
+    // are kept in the codebase in case crossings get reintroduced as a
+    // separate (non-banner) signal later.
+
+    pivots.sort((a, b) => a.distanceAlongRouteMeters - b.distanceAlongRouteMeters)
+    for (let i = 0; i < pivots.length; i++) pivots[i].index = i
+
+    this.pivots = pivots
+    this.states = pivots.map(() => ({approachingFired: false, entered: false, exited: false}))
+    this.cursor = 0
+    this.activePivotIndex = null
+    this.points = points
+    this.cumulative = cumulative
+    this.routeGeneration++
+
+    // Kick off async reverse-geocode lookups for any pivot whose
+    // instruction-parse didn't yield a clean road name. Also fills
+    // toRoad for CROSS_STREET pivots so the label can read
+    // "Cross to X".
+    void this._resolveMissingRoadNames(this.routeGeneration)
   }
 
   /**
@@ -208,33 +355,12 @@ export class PivotEngine {
       })
     }
 
-    // Inject CROSS_STREET pivots for each detected crosswalk leg. The
-    // crossing's pivot lives at the START curb so the "approaching"
-    // event fires as the user nears the crosswalk on their current
-    // sidewalk. Drop any crossing whose along-route distance lands
-    // within CROSS_MERGE_M of an existing turn pivot — the turn-card
-    // already implies the user will cross at that intersection, and a
-    // duplicate "Cross the road" prompt right next to a "Turn right"
-    // is noise.
-    const crossings = extractCrossings(points)
-    for (const c of crossings) {
-      const along = distanceAtIndex(cumulative, c.startIndex)
-      const nearTurn = pivots.some((p) => Math.abs(p.distanceAlongRouteMeters - along) < CROSS_MERGE_M)
-      if (nearTurn) continue
-      pivots.push({
-        index: -1, // assigned after the sort below
-        lat: c.lat,
-        lng: c.lng,
-        // Crossings have no rotation direction; pick "right" so consumers
-        // expecting one of the two values don't see undefined.
-        direction: "right",
-        fromRoad: null,
-        toRoad: null,
-        maneuver: "CROSS_STREET",
-        distanceAlongRouteMeters: along,
-        radiusMeters: this.opts.radiusMeters,
-      })
-    }
+    // Crosswalk pivots intentionally NOT injected — see the matching
+    // comment in setRouteFromComputedSteps. Crossings created banner
+    // flicker on city walks where every block has multiple crosswalks
+    // labeled "Onto <next turn road>", making the destination appear
+    // to jump back each time the user crossed a side street.
+
     // Sort by along-route distance so the cursor walks them in
     // geographic order, then re-assign indices.
     pivots.sort((a, b) => a.distanceAlongRouteMeters - b.distanceAlongRouteMeters)
@@ -246,6 +372,130 @@ export class PivotEngine {
     this.activePivotIndex = null
     this.points = points
     this.cumulative = cumulative
+    this.routeGeneration++
+
+    // Geometry-fallback path: matchStep often leaves road names null
+    // for unmatched pivots. Try the reverse-geocode resolver as a
+    // last resort, same as setRouteFromComputedSteps.
+    void this._resolveMissingRoadNames(this.routeGeneration)
+  }
+
+  /**
+   * For every pivot in the current list that has a missing road
+   * label, fill it in. Two-stage strategy:
+   *
+   *   1. **Inherit from neighbors.** Adjacent pivots on the route
+   *      share roads by definition: between pivot N and pivot N+1
+   *      there are no turns, so pivot N's toRoad == pivot N+1's
+   *      fromRoad. If one side is known, copy it. This is free
+   *      (no network) and avoids the geocode-mismatch class of bug
+   *      where two different sample points return two different
+   *      strings for what is conceptually the same road.
+   *
+   *   2. **Reverse-geocode the remainder.** For any field still
+   *      null after inheritance, sample a coordinate ~18m behind
+   *      (fromRoad) or ahead (toRoad) along the polyline and ask
+   *      the host to reverse-geocode it. Best-effort — failures
+   *      leave the field null.
+   *
+   * The `generation` guard rejects geocode replies arriving after
+   * a fresh route rebuild superseded them.
+   */
+  private async _resolveMissingRoadNames(generation: number): Promise<void> {
+    const pivots = this.pivots
+    if (pivots.length === 0) return
+
+    // Stage 1: neighbor inheritance. Walk forward then backward so
+    // both directions of propagation happen in one pass. Same-road
+    // dedupe is also implicit here — if N.toRoad == N+1.fromRoad
+    // they already agree; if only one is known the other inherits.
+    for (let i = 0; i < pivots.length - 1; i++) {
+      const here = pivots[i]
+      const next = pivots[i + 1]
+      if (!here.toRoad && next.fromRoad) here.toRoad = next.fromRoad
+      if (!next.fromRoad && here.toRoad) next.fromRoad = here.toRoad
+    }
+    for (let i = pivots.length - 1; i > 0; i--) {
+      const here = pivots[i]
+      const prev = pivots[i - 1]
+      if (!prev.toRoad && here.fromRoad) prev.toRoad = here.fromRoad
+      if (!here.fromRoad && prev.toRoad) here.fromRoad = prev.toRoad
+    }
+
+    // Stage 2: geocode whatever's still null. The rule is strict:
+    // every pivot MUST end up with both fromRoad and toRoad. If a
+    // single geocode attempt fails (returns null), expand the sample
+    // distance and retry along the polyline until we either hit a
+    // road name or run out of route in that direction.
+    //
+    // The expansion sequence is tuned to typical urban geometry:
+    // 18m clears a sidewalk + crosswalk; 30m is mid-block; 50m is
+    // well past the next building entrance; 80m approaches the
+    // following intersection. Beyond ~80m we'd risk crossing into
+    // the next street segment, which would return the wrong road.
+    const resolver = this.roadNameResolver
+    if (!resolver) return
+    if (this.points.length < 2) return
+    const SAMPLE_OFFSETS_M = [18, 30, 50, 80]
+    const points = this.points
+    const cumulative = this.cumulative
+
+    /**
+     * Try each offset in sequence until one returns a road name.
+     * Direction is +1 for toRoad (sample ahead of pivot) or -1 for
+     * fromRoad (sample behind pivot). Returns null only when every
+     * offset failed.
+     */
+    const geocodeWithExpansion = async (pivotAlong: number, direction: 1 | -1): Promise<string | null> => {
+      for (const offset of SAMPLE_OFFSETS_M) {
+        const sample = sampleAlongRoute(points, cumulative, pivotAlong + direction * offset)
+        if (!sample) continue
+        try {
+          const road = await resolver(sample)
+          if (generation !== this.routeGeneration) return null
+          if (road) return road
+        } catch {
+          /* try the next offset */
+        }
+      }
+      return null
+    }
+
+    const tasks: Array<Promise<void>> = []
+    for (const pivot of pivots) {
+      if (pivot.fromRoad && pivot.toRoad) continue
+      const along = pivot.distanceAlongRouteMeters
+      if (!pivot.fromRoad) {
+        tasks.push(
+          geocodeWithExpansion(along, -1).then((road) => {
+            if (generation !== this.routeGeneration) return
+            if (road && !pivot.fromRoad) pivot.fromRoad = road
+          }),
+        )
+      }
+      if (!pivot.toRoad) {
+        tasks.push(
+          geocodeWithExpansion(along, 1).then((road) => {
+            if (generation !== this.routeGeneration) return
+            if (road && !pivot.toRoad) pivot.toRoad = road
+          }),
+        )
+      }
+    }
+    await Promise.all(tasks)
+    if (generation !== this.routeGeneration) return
+
+    // After geocoding lands, run one more pass of neighbor
+    // inheritance so a freshly-geocoded road can propagate to an
+    // adjacent pivot that's still null. Cheap and resolves the case
+    // where geocode succeeded on N.toRoad but failed on N+1.fromRoad
+    // (or vice versa).
+    for (let i = 0; i < pivots.length - 1; i++) {
+      const here = pivots[i]
+      const next = pivots[i + 1]
+      if (!here.toRoad && next.fromRoad) here.toRoad = next.fromRoad
+      if (!next.fromRoad && here.toRoad) next.fromRoad = here.toRoad
+    }
   }
 
   /**
@@ -462,6 +712,58 @@ function projectOntoPolyline(
   return {perpMeters: bestPerp, alongMeters: bestAlong}
 }
 
+/**
+ * Project a coordinate onto the route polyline and return the
+ * along-route distance in meters. Used for instruction-derived
+ * pivots whose anchor is a Routes-API `endLat/endLng` rather than a
+ * polyline-vertex index — we still need their `distanceAlongRouteMeters`
+ * for the cursor's along-path metric. Falls back to 0 when projection
+ * is undefined (degenerate polyline).
+ */
+function alongRouteAtCoord(points: LatLng[], cumulative: number[], coord: LatLng): number {
+  const projection = projectOntoPolyline(points, cumulative, coord)
+  return projection?.alongMeters ?? 0
+}
+
+/**
+ * Interpolate the LatLng at a given along-route distance. Walks the
+ * polyline segment-by-segment via the cumulative-distance array,
+ * linearly interpolating within whichever segment contains the
+ * target. Used by the reverse-geocode fallback to sample a
+ * coordinate slightly behind or ahead of a pivot — far enough to be
+ * cleanly on one road rather than at the ambiguous corner itself.
+ *
+ * Returns null when the target is outside [0, total] or the polyline
+ * has fewer than two points. Callers treat null as "no sample
+ * available" and skip the geocode lookup for that side.
+ */
+function sampleAlongRoute(points: LatLng[], cumulative: number[], targetMeters: number): LatLng | null {
+  if (points.length < 2 || cumulative.length !== points.length) return null
+  const total = cumulative[cumulative.length - 1]
+  if (!Number.isFinite(targetMeters)) return null
+  if (targetMeters <= 0) return {lat: points[0].lat, lng: points[0].lng}
+  if (targetMeters >= total) {
+    const last = points[points.length - 1]
+    return {lat: last.lat, lng: last.lng}
+  }
+  // Binary search the segment containing targetMeters. cumulative is
+  // monotonically increasing so we can find the segment in O(log n).
+  let lo = 0
+  let hi = cumulative.length - 1
+  while (lo + 1 < hi) {
+    const mid = (lo + hi) >>> 1
+    if (cumulative[mid] <= targetMeters) lo = mid
+    else hi = mid
+  }
+  const segStart = cumulative[lo]
+  const segEnd = cumulative[hi]
+  const segLen = segEnd - segStart
+  const t = segLen > 0 ? (targetMeters - segStart) / segLen : 0
+  const a = points[lo]
+  const b = points[hi]
+  return {lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t}
+}
+
 /** Cumulative-distance lookup. Clamps out-of-range indices. */
 function distanceAtIndex(cumulative: number[], idx: number): number {
   if (cumulative.length === 0) return 0
@@ -531,15 +833,22 @@ function matchStep(raw: RawPivot, stepIndex: NavStep[]): MatchedStep | null {
   // the destination road. Advance past short transitional steps so
   // `toRoad` is the meaningful destination, not the crossing in
   // between.
+  //
+  // Stop one short of the FINAL step. The last step in the SDK's list
+  // is the arrival leg — its `road` is typically a destination-anchor
+  // string (the placename, an empty string, or literally "Destination"
+  // on some hosts), not a real street name. Collapsing into it
+  // produces labels like "15th St → Destination" instead of the
+  // intended "Dolores St → 15th St". Keeping `j` strictly less than
+  // the final index preserves the real street the user is turning
+  // onto.
   const SHORT_TRANSIT_METERS = 25
+  const finalIndex = stepIndex.length - 1
   let j = bestJ
-  while (
-    j < stepIndex.length - 1 &&
-    stepIndex[j].distanceMeters > 0 &&
-    stepIndex[j].distanceMeters < SHORT_TRANSIT_METERS
-  ) {
+  while (j < finalIndex - 1 && stepIndex[j].distanceMeters > 0 && stepIndex[j].distanceMeters < SHORT_TRANSIT_METERS) {
     j++
   }
+  if (j >= finalIndex) j = finalIndex - 1
 
   const fromStep = stepIndex[bestJ - 1]
   const toStep = stepIndex[j]

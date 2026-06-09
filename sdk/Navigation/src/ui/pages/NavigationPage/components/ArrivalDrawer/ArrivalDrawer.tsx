@@ -1,4 +1,5 @@
 import {Drawer} from "@/ui/components/Drawer/Drawer"
+import {CheckIcon} from "@/ui/components/icons"
 
 type Props = {
   open: boolean
@@ -49,9 +50,7 @@ export function ArrivalDrawer({open, destinationName, destinationAddress, onDone
 function CheckBadge() {
   return (
     <div className="flex items-center justify-center rounded-full bg-[#34C759] [box-shadow:#34C75933_0px_4px_14px] shrink-0 size-12">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-        <path d="M5 12.5L10 17.5L19 7.5" stroke="#FFFFFF" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
+      <CheckIcon />
     </div>
   )
 }

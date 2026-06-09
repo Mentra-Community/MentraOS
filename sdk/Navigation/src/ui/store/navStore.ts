@@ -24,7 +24,6 @@ type NavStore = NavSnapshot & {
 const initialSnapshot: NavSnapshot = {
   coords: null,
   heading: null,
-  mapsReady: false,
   trip: {
     status: "idle",
     running: false,
@@ -32,7 +31,9 @@ const initialSnapshot: NavSnapshot = {
     activeDestination: null,
     activeDestinationName: null,
     routePoints: null,
+    routeSteps: null,
     offRouteAt: null,
+    arrivalSide: null,
   },
   activePivot: null,
   upcomingPivot: null,
@@ -42,6 +43,7 @@ const initialSnapshot: NavSnapshot = {
     speedMultiplier: 5,
     wrongSidewalk: false,
     skipCrossings: false,
+    useRawInstructions: true,
   },
 }
 
@@ -54,11 +56,6 @@ export const useNavStore = create<NavStore>((set) => ({
   clearLog: () => set({log: []}),
 }))
 
-/** Mark Google Maps as ready/failed from the UI side (background-agnostic). */
-export function setMapsReady(ready: boolean): void {
-  useNavStore.setState({mapsReady: ready})
-}
-
 let installed = false
 export function installChannelSubscribers(): void {
   if (installed) return
@@ -68,11 +65,9 @@ export function installChannelSubscribers(): void {
   mentra.on("nav:coords", (coords) => useNavStore.setState({coords}))
   mentra.on("nav:heading", ({degrees}) => useNavStore.setState({heading: degrees}))
   mentra.on("nav:trip-state", (trip) => useNavStore.getState().applyTrip(trip))
-  mentra.on("nav:pivots", ({active, upcoming}) =>
-    useNavStore.setState({activePivot: active, upcomingPivot: upcoming}),
-  )
-  mentra.on("nav:route", ({points}) => {
-    useNavStore.setState((s) => ({trip: {...s.trip, routePoints: points}}))
+  mentra.on("nav:pivots", ({active, upcoming}) => useNavStore.setState({activePivot: active, upcomingPivot: upcoming}))
+  mentra.on("nav:route", ({points, steps}) => {
+    useNavStore.setState((s) => ({trip: {...s.trip, routePoints: points, routeSteps: steps}}))
   })
   mentra.on("nav:log-append", (entry) => useNavStore.getState().appendLog(entry))
   mentra.on("nav:log-clear", () => useNavStore.getState().clearLog())

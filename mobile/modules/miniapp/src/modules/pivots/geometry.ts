@@ -27,7 +27,7 @@ export type RawPivot = {
   headingDelta: number
 }
 
-const TURN_THRESHOLD_DEG = 25
+const TURN_THRESHOLD_DEG = 15
 const SAME_DIR_MERGE_M = 25
 const RDP_EPSILON_M = 5
 const MIN_BEND_PER_POINT_DEG = 10

@@ -7,7 +7,16 @@ import "@/shared/channels"
 import type {Channels} from "@/shared/channels"
 import type {PlaceDetails, PlaceSuggestion, SavedPlace} from "@/shared/types"
 import {useNavStore} from "@/ui/store/navStore"
+import {suppressNextRouterPopOnce} from "@/ui/router"
 import { safeHeadingSearchPill, safeHeadingSearchResults } from "@/ui/components/SafeHeading/SafeHeading"
+import {
+  CloseIcon,
+  HomeIconFilled,
+  PinIconFilled,
+  PinIconOutline,
+  StarIcon,
+  WorkIconFilled,
+} from "@/ui/components/icons"
 
 type Props = {
   selected: PlaceDetails | null
@@ -21,25 +30,6 @@ type Props = {
 }
 
 const DEBOUNCE_MS = 200
-
-// ---- icons ------------------------------------------------------------------
-
-function PinIconFilled() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-      <path d="M12 2C7.58 2 4 5.58 4 10c0 6 8 12 8 12s8-6 8-12C20 5.58 16.42 2 12 2z" fill="#FFFFFF" />
-      <circle cx="12" cy="10" r="3" fill="#1A1A1A" />
-    </svg>
-  )
-}
-
-function PinIconOutline() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-      <path d="M12 2C7.58 2 4 5.58 4 10c0 6 8 12 8 12s8-6 8-12C20 5.58 16.42 2 12 2z" stroke="#000000A6" strokeWidth="1.8" fill="none" />
-    </svg>
-  )
-}
 
 // ---- component --------------------------------------------------------------
 
@@ -101,6 +91,17 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
       .catch(() => {})
   }, [focused, query, selected, refreshKey])
 
+  // Read coords via a ref inside the effect instead of as a dependency.
+  // `coords` ticks on every GPS update (every ~1-2s in the foreground),
+  // and including it in the deps re-fires the search every tick — the
+  // user sees their suggestions list rebuild itself every couple of
+  // seconds while they're not even typing. The location bias only
+  // matters at the moment the search is issued, so a ref read at
+  // call-time gives the same result without retriggering.
+  const coordsRef = useRef(coords)
+  useEffect(() => {
+    coordsRef.current = coords
+  }, [coords])
   useEffect(() => {
     if (selected || disabled || !focused) return
     const trimmed = query.trim()
@@ -113,7 +114,8 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
     setLoading(true)
     const t = setTimeout(() => {
       setError(null)
-      autocomplete({query: trimmed, near: coords ? {lat: coords.lat, lng: coords.lng} : undefined})
+      const c = coordsRef.current
+      autocomplete({query: trimmed, near: c ? {lat: c.lat, lng: c.lng} : undefined})
         .then((results) => {
           setSuggestions(results)
           setOpen(true)
@@ -127,7 +129,8 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
         })
     }, DEBOUNCE_MS)
     return () => clearTimeout(t)
-  }, [query, selected, disabled, focused, autocomplete, coords])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, selected, disabled, focused, autocomplete])
 
   async function pick(s: PlaceSuggestion) {
     setOpen(false)
@@ -170,20 +173,79 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
   // Show suggestions overlay whenever focused and no selection
   const showSuggestions = (focused || devFrozen) && !selected
 
+  // ── Back-button + tap-to-close coordination ──────────────────────────
+  // Android's first back press dismisses the soft keyboard on its own
+  // (OS-level, before popstate). To get the second back press to close
+  // *only* the search drawer (and leave the underlying map intact), we
+  // push a history entry while the drawer is open. The router's
+  // popstate handler is told via suppressNextRouterPopOnce() to skip
+  // its route-stack mutation when our entry is the one being consumed.
+  const searchEntryPushedRef = useRef(false)
+
+  function closeSearch() {
+    inputRef.current?.blur()
+    setFocused(false)
+    setOpen(false)
+  }
+
+  useEffect(() => {
+    if (showSuggestions && !searchEntryPushedRef.current) {
+      try {
+        history.pushState({searchDrawer: true}, "")
+        searchEntryPushedRef.current = true
+      } catch {
+        /* WebView may forbid pushState in some sandboxes — degrade
+           gracefully: the drawer will simply close on first back. */
+      }
+    } else if (!showSuggestions && searchEntryPushedRef.current) {
+      // Drawer closed programmatically (pick/clear/tap-outside). Pop
+      // our entry so history depth matches the drawer state.
+      searchEntryPushedRef.current = false
+      suppressNextRouterPopOnce()
+      try {
+        history.back()
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [showSuggestions])
+
+  useEffect(() => {
+    function onPopState() {
+      // Only react when *our* entry is the one being consumed.
+      if (!searchEntryPushedRef.current) return
+      searchEntryPushedRef.current = false
+      suppressNextRouterPopOnce()
+      closeSearch()
+    }
+    // Capture phase so the suppress flag is set before the router's
+    // bubble-phase listener checks it.
+    window.addEventListener("popstate", onPopState, true)
+    return () => window.removeEventListener("popstate", onPopState, true)
+  }, [])
+
+  function onBackdropMouseDown(e: React.MouseEvent<HTMLElement>) {
+    // Only fire when the user taps the panel background itself, not a
+    // bubbled click from the input, a suggestion row, or a saved chip.
+    if (e.target !== e.currentTarget) return
+    e.preventDefault()
+    closeSearch()
+  }
+
   return (
-    <div className="relative mt-4 mx-3 flex flex-col mr-14">
+    <div className="relative mt-4 mx-3 flex flex-col mr-26">
       <div className="relative flex flex-col">
         {/* Search pill */}
         <div className={`relative z-90 flex items-center h-[52px] rounded-[20px] px-3.5 gap-2.5 bg-[#FFFFFFA6] border border-[#FFFFFF99] [backdrop-filter:blur(30px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#0000001A_0px_6px_22px] ${safeHeadingSearchPill}`}>
           {/* Search icon */}
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
+          {/* <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
             <circle cx="11" cy="11" r="7" stroke="#0000008C" strokeWidth="2" />
             <path d="M20 20L16 16" stroke="#0000008C" strokeWidth="2" strokeLinecap="round" />
-          </svg>
+          </svg> */}
 
           <input
             ref={inputRef}
-            className="grow shrink basis-0 bg-transparent tracking-[-0.012em] text-[#0000008C] font-sans text-[15px] leading-[18px] placeholder-[#0000008C] focus:outline-none focus:ring-0 border-none"
+            className="grow shrink basis-0 min-w-0 bg-transparent font-sans text-[#000000E6] text-base/5 placeholder-[#0000008C] focus:outline-none border-none"
             value={query}
             onChange={(e) => handleChange(e.target.value)}
             onFocus={() => {
@@ -212,9 +274,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
               disabled={disabled}
               className="w-6.5 h-6.5 flex items-center justify-center shrink-0 rounded-full bg-[#00000014]"
               aria-label="Clear">
-              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10" fill="none">
-                <path d="M1 1L9 9M9 1L1 9" stroke="#737373" strokeWidth="1.75" strokeLinecap="round"/>
-              </svg>
+              <CloseIcon />
             </button>
           ) : null}
         </div>
@@ -228,7 +288,13 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
               animate={{opacity: 1, y: 0}}
               exit={{opacity: 0, y: -8}}
               transition={{duration: 0.15, ease: "easeOut"}}
-              className={`fixed z-40 inset-x-0 bottom-0 top-0 bg-white overflow-auto ${safeHeadingSearchResults}`}>
+              onMouseDown={onBackdropMouseDown}
+              // `select-none` + webkit-touch-callout block long-press
+              // selection / copy on place names and addresses. The
+              // <input> is exempt — browsers always allow selection
+              // inside form controls so the user can still edit their
+              // query normally.
+              className={`fixed z-40 inset-x-0 bottom-0 top-0 bg-white overflow-auto select-none [-webkit-touch-callout:none] [-webkit-user-select:none] ${safeHeadingSearchResults}`}>
               {loading ? (
                 <div className="flex items-center justify-center gap-2 px-3 py-8 text-neutral-500">
                   <Loader2 size={16} className="animate-spin" />
@@ -342,34 +408,12 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
   )
 }
 
-function SavedPlaceStarIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" fill="#FFFFFF" />
-    </svg>
-  )
-}
-
-function HomeIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M3 12 L12 4 L21 12 L21 20 H14 V14 H10 V20 H3 Z" fill="#FFFFFF" />
-    </svg>
-  )
-}
-
-function WorkIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect x="3" y="8" width="18" height="13" rx="1.5" fill="#FFFFFF" />
-      <path d="M9 8 V5 H15 V8" stroke="#FFFFFF" strokeWidth="2" fill="none" />
-    </svg>
-  )
-}
-
 /** Resolve the chip icon for a saved place by its tag ("home"/"work"/none). */
 function SavedPlaceIcon({type}: {type?: "home" | "work"}) {
-  if (type === "home") return <HomeIcon />
-  if (type === "work") return <WorkIcon />
-  return <SavedPlaceStarIcon />
+  // Saved-place chips sit on a dark surface, so all three variants use
+  // the filled-white form. Override the default 16px size to 18px for
+  // visual weight inside the larger chip.
+  if (type === "home") return <HomeIconFilled size={18} />
+  if (type === "work") return <WorkIconFilled size={18} />
+  return <StarIcon size={18} color="#FFFFFF" />
 }

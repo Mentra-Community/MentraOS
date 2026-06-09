@@ -27,6 +27,9 @@ import com.mentra.bluetoothsdk.utils.MicMap
 import com.mentra.bluetoothsdk.utils.MicTypes
 import com.mentra.lc3Lib.Lc3Cpp
 import com.mentra.bluetoothsdk.stt.SherpaOnnxTranscriber
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.CountDownLatch
@@ -1124,8 +1127,22 @@ class DeviceManager {
 
         syncSystemTimeOnceForConnection(readyKey)
 
-        // Apply dashboard position before any boot text so content doesn't jump.
-        sgc?.setDashboardPosition(dashboardHeight, dashboardDepth)
+        // re-apply display height/depth after reconnection
+        mainHandler.postDelayed(
+                {
+                    val h =
+                            (DeviceStore.store.get("bluetooth", "dashboard_height") as? Number)
+                                    ?.toInt()
+                                    ?: 4
+                    val rawDepth =
+                            (DeviceStore.store.get("bluetooth", "dashboard_depth") as? Number)
+                                    ?.toInt()
+                                    ?: dashboardDepth // canonical default (2), not 1
+                    val d = rawDepth.coerceIn(1, 4)
+                    sgc?.setDashboardPosition(h, d)
+                },
+                2000
+        )
 
         // Show welcome message on first connect for all display glasses
         if (shouldSendBootingMessage) {
@@ -1288,7 +1305,9 @@ class DeviceManager {
     }
 
     fun showNotificationsPanel() {
-        sgc?.showNotificationsPanel()
+        CoroutineScope(Dispatchers.Main).launch {
+            sgc?.showNotificationsPanel()
+        }
     }
 
     fun ping() {

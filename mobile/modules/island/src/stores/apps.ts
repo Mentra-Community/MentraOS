@@ -27,6 +27,7 @@ import {HardwareCompatibility} from "../utils/hardware/hardware"
 import {storage} from "../utils/storage/storage"
 import appRegistry from "../services/AppRegistry"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 // ---------------------------------------------------------------------------
 // Configuration / hooks
@@ -318,6 +319,12 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       ),
     }))
 
+    // if there are no apps running, call clearDisplay():
+    // read fresh state via get() — `state` was captured before the set() above, so it still shows
+    // this app as running and would never reach 0 when stopping the last app.
+    if (get().apps.filter((a) => a.running).length === 0) {
+      BluetoothSdk.clearDisplay()
+    }
     await startStopApp(app, false)
   },
 

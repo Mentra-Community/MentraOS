@@ -55,6 +55,7 @@ describe("MiniappStreamType wire values", () => {
   test("BUTTON_PRESS", () => expect(MiniappStreamType.BUTTON_PRESS).toBe("button_press"))
   test("TOUCH_EVENT", () => expect(MiniappStreamType.TOUCH_EVENT).toBe("touch_event"))
   test("HEAD_POSITION", () => expect(MiniappStreamType.HEAD_POSITION).toBe("head_position"))
+  test("ACCEL_DATA", () => expect(MiniappStreamType.ACCEL_DATA).toBe("accel_data"))
   test("GLASSES_BATTERY", () => expect(MiniappStreamType.GLASSES_BATTERY).toBe("glasses_battery"))
   test("PHONE_BATTERY", () => expect(MiniappStreamType.PHONE_BATTERY).toBe("phone_battery"))
   test("GLASSES_CONNECTION", () => expect(MiniappStreamType.GLASSES_CONNECTION).toBe("glasses_connection"))

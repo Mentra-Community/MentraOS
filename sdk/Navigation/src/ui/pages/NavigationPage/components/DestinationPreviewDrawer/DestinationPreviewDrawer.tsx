@@ -1,6 +1,9 @@
 import {Drawer} from "@/ui/components/Drawer/Drawer"
 import {formatDistance} from "@/ui/lib/formatDistance"
 import {haversineMeters} from "@/ui/lib/geometry"
+import {parseAddress} from "@/ui/lib/parseAddress"
+import {useToast} from "@/ui/components/Toast/Toast"
+import {CopyIcon} from "@/ui/components/icons"
 import type {LatLng, PlaceDetails} from "@/shared/types"
 
 type Props = {
@@ -31,6 +34,8 @@ export function DestinationPreviewDrawer({
   onStart,
   onClose,
 }: Props) {
+  const toast = useToast()
+
   // Prefer real route totals from computeRoute; fall back to straight-line
   // haversine + walking-speed only while waiting for the API response.
   const haversineDistance = destination && me ? haversineMeters(me, destination) : null
@@ -66,11 +71,45 @@ export function DestinationPreviewDrawer({
               </>
             ) : (
               <>
-                <div className="tracking-[-0.02em] text-[#000000E6] font-sans font-semibold text-[22px]/7 truncate">
-                  {destination.name || "Unnamed place"}
-                </div>
-                <div className="text-[#00000099] font-sans text-sm/4.5 truncate">
-                  {destination.address}
+                <div className="flex items-start gap-2">
+                  <div className="grow min-w-0">
+                    <div className="tracking-[-0.02em] text-[#000000E6] font-sans font-semibold text-[22px]/7 truncate">
+                      {destination.name || "Unnamed place"}
+                    </div>
+                    {(() => {
+                      const {street, locality, country} = parseAddress(destination.address)
+                      // Drop the street line when it just repeats the
+                      // name (common for dropped pins, where the name is
+                      // derived from the street segment). Remaining lines
+                      // step down in size for a clear visual hierarchy.
+                      const showStreet = street && street !== destination.name
+                      return (
+                        <div className="text-[#00000099] font-sans mt-1">
+                          {showStreet ? (
+                            <div className="text-[15px]/5 truncate">{street}</div>
+                          ) : null}
+                          {locality ? <div className="text-[13px]/4.5 truncate">{locality}</div> : null}
+                          {country ? <div className="text-[11px]/4 text-[#0000007A] truncate">{country}</div> : null}
+                        </div>
+                      )
+                    })()}
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Copy address"
+                    onClick={() => {
+                      // `address` is already the full formatted string for
+                      // both searched places and geocoded pins, so copy it
+                      // directly — prepending `name` would duplicate the
+                      // street segment.
+                      navigator.clipboard
+                        ?.writeText(destination.address)
+                        .then(() => toast("Address copied"))
+                        .catch(() => toast("Couldn’t copy address"))
+                    }}
+                    className="shrink-0 flex items-center justify-center size-12 rounded-full bg-[#0000000A] active:bg-[#0000001A] mt-1">
+                    <CopyIcon size={22} />
+                  </button>
                 </div>
               </>
             )}

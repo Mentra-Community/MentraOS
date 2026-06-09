@@ -12,15 +12,16 @@ import {Input} from "../../components/input"
 import {Label} from "../../components/label"
 import {ErrorRow} from "./_TesterRow"
 
-// Encode an ImageData's pixels as a base64 1-bit BMP (no data: prefix).
-// The glasses render 1-bit monochrome, and the phone decodes via iOS
-// UIImage / Android BitmapFactory — an uncompressed 1-bit BMP is decoded
+// Encode an ImageData's pixels as a base64 4-bit grayscale BMP (no data:
+// prefix). The glasses render grayscale, and the phone decodes via iOS
+// UIImage / Android BitmapFactory — an uncompressed 4-bit BMP is decoded
 // reliably by both, whereas some PNG variants are rejected by ImageIO.
-// A pixel is white when any RGB channel > 128, else black.
-function imageDataToBmp1Bit(img: ImageData): string {
+// Each pixel's RGB is reduced to luminance and quantized to one of 16 gray
+// levels via a 16-entry grayscale palette; pixels are packed 2 px/byte.
+function imageDataToBmp4Bit(img: ImageData): string {
   const {width, height, data} = img
-  const rowSize = Math.ceil(width / 32) * 4 // 1 bit/px, 4-byte aligned rows
-  const pixelOffset = 62 // 14 (file) + 40 (DIB) + 8 (2-color table)
+  const rowSize = Math.ceil(width / 8) * 4 // 4 bits/px, 4-byte aligned rows
+  const pixelOffset = 118 // 14 (file) + 40 (DIB) + 64 (16-color table)
   const fileSize = pixelOffset + rowSize * height
   const buf = new Uint8Array(fileSize)
 
@@ -45,25 +46,33 @@ function imageDataToBmp1Bit(img: ImageData): string {
   u32(18, width)
   u32(22, height) // positive = bottom-up
   u16(26, 1) // planes
-  u16(28, 1) // bits per pixel
+  u16(28, 4) // bits per pixel
   u32(30, 0) // BI_RGB (no compression)
   u32(34, rowSize * height)
   u32(38, 2835) // X px/meter
   u32(42, 2835) // Y px/meter
-  u32(46, 2) // colors used
-  u32(50, 2) // important colors
-  // Color table: index 0 = black (zeroed), index 1 = white (BGRA)
-  buf[58] = 0xff
-  buf[59] = 0xff
-  buf[60] = 0xff
+  u32(46, 16) // colors used
+  u32(50, 16) // important colors
+  // Color table: 16 grayscale entries (BGRA), level i scaled across 0..255.
+  for (let i = 0; i < 16; i++) {
+    const off = 54 + i * 4
+    const gray = Math.round((i / 15) * 255)
+    buf[off] = gray // B
+    buf[off + 1] = gray // G
+    buf[off + 2] = gray // R
+  }
 
   for (let y = 0; y < height; y++) {
     const srcRow = y * width * 4 // RGBA, top-down
     const destRow = pixelOffset + (height - 1 - y) * rowSize // write bottom-up
     for (let x = 0; x < width; x++) {
       const s = srcRow + x * 4
-      const isWhite = data[s] > 128 || data[s + 1] > 128 || data[s + 2] > 128
-      if (isWhite) buf[destRow + (x >> 3)] |= 1 << (7 - (x & 7))
+      // Rec. 601 luma, quantized to 4 bits (0..15).
+      const lum = 0.299 * data[s] + 0.587 * data[s + 1] + 0.114 * data[s + 2]
+      const level = Math.min(15, lum / 16) | 0
+      // Two pixels per byte: even x → high nibble, odd x → low nibble.
+      if ((x & 1) === 0) buf[destRow + (x >> 1)] |= level << 4
+      else buf[destRow + (x >> 1)] |= level
     }
   }
 
@@ -73,7 +82,7 @@ function imageDataToBmp1Bit(img: ImageData): string {
 }
 
 // Draw a labeled rectangle to an offscreen canvas and return it as a
-// base64 1-bit BMP (no data: prefix), the glasses-native bitmap format.
+// base64 4-bit grayscale BMP (no data: prefix), the glasses-native bitmap format.
 function makeBitmap(width: number, height: number, label: string): string {
   const canvas = document.createElement("canvas")
   canvas.width = width
@@ -89,7 +98,7 @@ function makeBitmap(width: number, height: number, label: string): string {
   ctx.textAlign = "center"
   ctx.textBaseline = "middle"
   ctx.fillText(label, width / 2, height / 2)
-  return imageDataToBmp1Bit(ctx.getImageData(0, 0, width, height))
+  return imageDataToBmp4Bit(ctx.getImageData(0, 0, width, height))
 }
 
 // The four 100×100 corner containers on the 576×288 display, keyed by rect.
@@ -102,7 +111,7 @@ const CORNERS = [
   {code: "BL", x: 0, y: 188},
 ] as const
 
-type CornerCode = (typeof CORNERS)[number]["code"]
+type CornerCode = "TL" | "TR" | "BR" | "BL" | "CE" | "full"
 
 export default function DisplayPage() {
   const navigate = useNavigate()
@@ -116,59 +125,82 @@ export default function DisplayPage() {
     TR: 0,
     BR: 0,
     BL: 0,
+    CE: 0,
+    full: 0,
   })
 
   const pressCorner = (code: CornerCode, x: number, y: number) => {
+    const next = incrementCount(code)
+    // First press: just the corner code. Subsequent presses: code + count.
+    const label = `${code} ${next}`
+    invoke("showBitmapView", [makeBitmap(100, 100, label), {x, y, width: 100, height: 100}])
+  }
+
+  const incrementCount = (code: CornerCode) => {
     const next = counts[code] + 1
     setCounts((c) => ({...c, [code]: next}))
-    // First press: just the corner code. Subsequent presses: code + count.
-    const label = next === 1 ? code : `${code} #${next - 1}`
-    invoke("showBitmapView", [makeBitmap(100, 100, label), {x, y, width: 100, height: 100}])
+    return next
   }
 
   return (
     <Shell>
-      <MiniappHeader title="session.display" onBack={() => navigate("/tester")} />
+      <MiniappHeader title="session.display" onBack={() => navigate("/")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
-          Render text on the glasses display. Tap a button to invoke the
-          corresponding `session.display.*` method in background.
+          Render text on the glasses display. Tap a button to invoke the corresponding `session.display.*` method in
+          background.
         </p>
         <Label htmlFor="display-text">text</Label>
         <Input id="display-text" value={text} onChange={(e) => setText(e.target.value)} />
         <div className="mt-3 flex flex-col gap-2">
           <Button onClick={() => invoke("showTextWall", [text])}>showTextWall(text)</Button>
-          <Button onClick={() => invoke("showReferenceCard", ["Title", text])}>
-            showReferenceCard(title, text)
-          </Button>
-          <Button onClick={() => invoke("showDoubleTextWall", ["Top", text])}>
-            showDoubleTextWall(top, bottom)
-          </Button>
+          <Button onClick={() => invoke("showReferenceCard", ["Title", text])}>showReferenceCard(title, text)</Button>
+          <Button onClick={() => invoke("showDoubleTextWall", ["Top", text])}>showDoubleTextWall(top, bottom)</Button>
         </div>
 
         <p className="mb-2 mt-5 text-[13px] text-muted-foreground">
-          Bitmaps. `showBitmapView(data, options)` accepts optional `x`/`y`/`width`/`height`.
-          On G2 the page tracks up to 4 image containers, keyed by rect: a new rect adds a
-          container (evicting the oldest past 4), an existing rect updates in place. Each corner
-          button sends its code on first press, then increments a count in place on later presses.
+          Bitmaps. `showBitmapView(data, options)` accepts optional `x`/`y`/`width`/`height`. On G2 the page tracks up
+          to 4 image containers, keyed by rect: a new rect adds a container (evicting the oldest past 4), an existing
+          rect updates in place. Each corner button sends its code on first press, then increments a count in place on
+          later presses.
         </p>
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-row gap-2">
           {CORNERS.map(({code, x, y}) => (
-            <Button key={code} onClick={() => pressCorner(code, x, y)}>
-              showBitmapView — 100×100 {code}
-              {counts[code] > 0 ? ` (#${counts[code] - 1})` : ""}
+            <Button key={code} onClick={() => pressCorner(code, x, y)} className="w-1/5">
+              {code}
+              {` ${counts[code]}`}
             </Button>
           ))}
+        </div>
+
+        <div className="flex flex-row gap-2 mt-5">
+          <Button
+            onClick={() => {
+              let next = incrementCount("CE")
+              invoke("showBitmapView", [makeBitmap(100, 100, `CE ${next}`), {x: 288 - 100 / 2, y: 144 - 100 / 2, width: 100, height: 100}])
+            }}>
+            Center
+          </Button>
+          <Button
+            onClick={() => {
+              let next = incrementCount("full")
+              invoke("showBitmapView", [
+                makeBitmap(288, 144, `full ${next}`),
+                {x: 288 - 288 / 2, y: 144 - 144 / 2, width: 288, height: 144},
+              ])
+            }}>
+            Large
+          </Button>
         </div>
 
         <div className="mt-5 flex flex-col gap-2">
           <Button
             variant="destructive"
             onClick={() => {
-              setCounts({TL: 0, TR: 0, BR: 0, BL: 0})
-              invoke("clearView", [])
+              setCounts({TL: 0, TR: 0, BR: 0, BL: 0, CE: 0, full: 0})
+              invoke("clear", [])
             }}>
-            clearView()
+            clearDisplay()
           </Button>
         </div>
         <ErrorRow event={lastError} />

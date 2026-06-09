@@ -14,6 +14,7 @@
 import CrustModule from "crust"
 
 import {decodePolyline, parseDurationSeconds} from "./navigation/routesApiCodec"
+import {resolveStepRoads} from "./navigation/roadNameResolver"
 
 const LOG_TAG = "NAV_SERVICE"
 
@@ -269,6 +270,14 @@ class NavigationService {
     return await CrustModule.requestNavigationPermission()
   }
 
+  // Dev-only: clear the cached "terms accepted" flags so the next
+  // requestPermission() call re-shows Google's dialog. Android only;
+  // iOS bridge returns {ok: false, error: "not supported on iOS"}.
+  public async resetPermission(): Promise<{ok: boolean; error?: string}> {
+    console.log(`${LOG_TAG}: resetPermission`)
+    return await CrustModule.resetNavigationPermission()
+  }
+
   /**
    * Dev-only: nudge the simulator off-route to trigger an actual reroute
    * from the Nav SDK. Useful for verifying the rerouting pipeline (UI
@@ -321,6 +330,22 @@ class NavigationService {
     }>
   }> {
     return computeRouteViaRoutesApi(payload)
+  }
+
+  /**
+   * Reverse-geocode a coordinate into a short road/route name via
+   * Google's Geocoding REST API. Backs the SDK pivot engine's
+   * last-resort fallback when a Routes-API instruction didn't carry a
+   * parseable road. Returns `{ok: true, road: null}` when the
+   * coordinate is genuinely off-grid (mid-park, water) — that's a
+   * successful query with no road component, distinct from a failure.
+   */
+  public async reverseGeocodeRoad(coord: {lat: number; lng: number}): Promise<{
+    ok: boolean
+    road?: string | null
+    error?: string
+  }> {
+    return reverseGeocodeRoadViaGeocodingApi(coord)
   }
 
   private attachNativeSubs(): void {
@@ -435,6 +460,7 @@ async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promi
       distanceMeters: number
       maneuver?: string
       instruction?: string
+      road?: string | null
     }>
   }>
 }> {
@@ -472,6 +498,11 @@ async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promi
       avoidTolls: avoid.tolls === true,
       avoidFerries: avoid.ferries === true,
     },
+    // Without this Google defaults to OVERVIEW — sparse polyline with
+    // vertices that drift 10-20m from actual road centerlines at
+    // intersections, putting our turn-pivot dots off the visible roads.
+    // HIGH_QUALITY traces the road tightly.
+    polylineQuality: "HIGH_QUALITY",
   }
   if (intermediates.length > 0) body.intermediates = intermediates
 
@@ -513,26 +544,35 @@ async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promi
         }>
       }>
     }
-    const routes = (json.routes ?? []).slice(0, alternatives).map((r) => {
-      const steps = (r.legs ?? []).flatMap((leg) =>
-        (leg.steps ?? []).map((s) => ({
-          lat: s.startLocation?.latLng?.latitude ?? Number.NaN,
-          lng: s.startLocation?.latLng?.longitude ?? Number.NaN,
-          endLat: s.endLocation?.latLng?.latitude ?? Number.NaN,
-          endLng: s.endLocation?.latLng?.longitude ?? Number.NaN,
-          distanceMeters: s.distanceMeters ?? 0,
-          maneuver: s.navigationInstruction?.maneuver,
-          instruction: s.navigationInstruction?.instructions,
-        })),
-      )
-      return {
-        points: decodePolyline(r.polyline?.encodedPolyline ?? ""),
-        totalDistanceMeters: r.distanceMeters ?? 0,
-        totalDurationSeconds: parseDurationSeconds(r.duration ?? ""),
-        summary: r.description,
-        steps: steps.length > 0 ? steps : undefined,
-      }
-    })
+    // Resolve `road` for every step in each route before returning. The
+    // resolver hits Geocoding API for steps whose instruction had no
+    // road name (slip lanes, "Slight right", "Destination ahead"). All
+    // resolutions per route fire concurrently; alternates resolve in
+    // parallel too. Adds latency proportional to the number of unnamed
+    // steps — typically 1-3 per walking route in dense urban areas.
+    const routes = await Promise.all(
+      (json.routes ?? []).slice(0, alternatives).map(async (r) => {
+        const rawSteps = (r.legs ?? []).flatMap((leg) =>
+          (leg.steps ?? []).map((s) => ({
+            lat: s.startLocation?.latLng?.latitude ?? Number.NaN,
+            lng: s.startLocation?.latLng?.longitude ?? Number.NaN,
+            endLat: s.endLocation?.latLng?.latitude ?? Number.NaN,
+            endLng: s.endLocation?.latLng?.longitude ?? Number.NaN,
+            distanceMeters: s.distanceMeters ?? 0,
+            maneuver: s.navigationInstruction?.maneuver,
+            instruction: s.navigationInstruction?.instructions,
+          })),
+        )
+        const steps = await resolveStepRoads(rawSteps, reverseGeocodeRoadViaGeocodingApi)
+        return {
+          points: decodePolyline(r.polyline?.encodedPolyline ?? ""),
+          totalDistanceMeters: r.distanceMeters ?? 0,
+          totalDurationSeconds: parseDurationSeconds(r.duration ?? ""),
+          summary: r.description,
+          steps: steps.length > 0 ? steps : undefined,
+        }
+      }),
+    )
     if (routes.length === 0) return {ok: false, error: "no routes returned"}
     return {ok: true, routes}
   } catch (err) {
@@ -552,3 +592,61 @@ function routesApiTravelMode(mode: string): string {
       return "DRIVE"
   }
 }
+
+const GEOCODING_API_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+
+/**
+ * Reverse-geocode a coordinate via Google's Geocoding REST API and
+ * return the short name of the `route` address component (e.g.
+ * "Octavia Blvd"). When no route component is present in any of the
+ * returned results — the coordinate is genuinely off-grid (water,
+ * park interior) — resolves with `{ok: true, road: null}`. Network
+ * failures and missing API keys resolve with `{ok: false, error}`.
+ *
+ * The Geocoding REST API doesn't require the same field-mask discipline
+ * as Routes; we keep the response cheap by relying on Google to
+ * default-order results from most-specific to least, then taking the
+ * first `route` we encounter.
+ */
+async function reverseGeocodeRoadViaGeocodingApi(coord: {lat: number; lng: number}): Promise<{
+  ok: boolean
+  road?: string | null
+  error?: string
+}> {
+  const apiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY ?? ""
+  if (!apiKey) return {ok: false, error: "reverseGeocode: missing API key"}
+  if (!Number.isFinite(coord.lat) || !Number.isFinite(coord.lng)) {
+    return {ok: false, error: "reverseGeocode: invalid coord"}
+  }
+  // Geocoding API accepts lat,lng as a query param. result_type=route
+  // filters to street/route components, dropping building-level hits
+  // we don't care about for a pivot-corner lookup.
+  const url = `${GEOCODING_API_URL}?latlng=${coord.lat},${coord.lng}&result_type=route&key=${apiKey}`
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return {ok: false, error: `Geocoding API ${res.status}`}
+    const json = (await res.json()) as {
+      status?: string
+      results?: Array<{
+        address_components?: Array<{short_name?: string; long_name?: string; types?: string[]}>
+      }>
+    }
+    if (json.status && json.status !== "OK" && json.status !== "ZERO_RESULTS") {
+      return {ok: false, error: `Geocoding API status ${json.status}`}
+    }
+    // First "route" component in the first result is the road name we want.
+    // Prefer short_name ("Octavia Blvd" over "Octavia Boulevard").
+    for (const result of json.results ?? []) {
+      for (const comp of result.address_components ?? []) {
+        if ((comp.types ?? []).includes("route")) {
+          const name = (comp.short_name ?? comp.long_name ?? "").trim()
+          if (name) return {ok: true, road: name}
+        }
+      }
+    }
+    return {ok: true, road: null}
+  } catch (err) {
+    return {ok: false, error: err instanceof Error ? err.message : "reverseGeocode failed"}
+  }
+}
+

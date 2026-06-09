@@ -53,6 +53,10 @@ export enum MiniappRequestType {
   NAVIGATION_GET_STATE = "miniapp_navigation_get_state",
   /** Compute a route without starting a trip. Replaces hand-rolled Directions calls. */
   NAVIGATION_COMPUTE_ROUTE = "miniapp_navigation_compute_route",
+  /** Reverse-geocode a coordinate to a road name. Backs the engine's
+   *  fallback for pivots whose Routes-API instruction didn't include a
+   *  parseable road. Host calls Google's Geocoding REST API. */
+  NAVIGATION_REVERSE_GEOCODE = "miniapp_navigation_reverse_geocode",
   /** Trigger the Google Nav SDK T&C dialog up-front so start() doesn't have to. */
   NAVIGATION_REQUEST_PERMISSION = "miniapp_navigation_request_permission",
 
@@ -69,6 +73,13 @@ export enum MiniappRequestType {
 
   /** Write camera FOV settings. */
   CAMERA_FOV = "miniapp_camera_fov",
+
+  /**
+   * Enable/disable raw accelerometer (IMU) streaming on the glasses. The
+   * accel stream also auto-enables on subscribe; this is an explicit override
+   * for callers who want to control the sensor directly. G2 only today.
+   */
+  IMU_SET_ENABLED = "miniapp_imu_set_enabled",
 
   /** Share content via the OS share sheet. */
   SHARE = "miniapp_share",
@@ -165,6 +176,12 @@ export enum MiniappStreamType {
   BUTTON_PRESS = "button_press",
   TOUCH_EVENT = "touch_event",
   HEAD_POSITION = "head_position",
+  /**
+   * Raw accelerometer reading from the glasses IMU — `{x, y, z}` in g, plus a
+   * timestamp. G2 only today. A richer combined IMU stream (accel + gyro +
+   * magnetometer) is future work; this is the single-sensor precursor.
+   */
+  ACCEL_DATA = "accel_data",
 
   // Status
   GLASSES_BATTERY = "glasses_battery",
