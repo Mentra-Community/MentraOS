@@ -24,7 +24,7 @@
         ]
       },
       {
-        "tab": "App Devs",
+        "tab": "Display glasses",
         "groups": [
           {
             "group": "Getting Started",
@@ -141,6 +141,10 @@
             ]
           }
         ]
+      },
+      {
+        "tab": "Camera glasses",
+        "href": "https://bluetooth-sdk-docs.mentra.glass"
       },
       {
         "tab": "OS Devs",
