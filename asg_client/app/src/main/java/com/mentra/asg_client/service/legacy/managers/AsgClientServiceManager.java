@@ -74,7 +74,9 @@ public class AsgClientServiceManager {
             @NonNull AsgClientService service,
             ICommunicationManager communicationManager,
             FileManager fileManager,
-            BesOtaRegistry besOtaRegistry) {
+            BesOtaRegistry besOtaRegistry,
+            ICompanionTransport transport,
+            INetworkManager networkManager) {
         AsgClientService requiredService = Objects.requireNonNull(service, "service");
 
         Log.d(TAG, "🔧 AsgClientServiceManager constructor called");
@@ -93,6 +95,8 @@ public class AsgClientServiceManager {
         this.fileManager = fileManager;
         this.communicationManager = communicationManager;
         this.besOtaRegistry = besOtaRegistry;
+        this.bluetoothManager = transport;
+        this.networkManager = networkManager;
 
         Log.d(TAG, "✅ AsgClientServiceManager instance created successfully");
     }
@@ -280,8 +284,12 @@ public class AsgClientServiceManager {
         Log.d(TAG, "🌐 initializeNetworkManager() started");
 
         try {
-            networkManager = NetworkManagerFactory.getNetworkManager(context);
-            Log.d(TAG, "📦 Network manager created: " + networkManager.getClass().getSimpleName());
+            if (networkManager == null) {
+                networkManager = NetworkManagerFactory.getNetworkManager(context);
+                Log.d(TAG, "📦 Network manager created from factory: " + networkManager.getClass().getSimpleName());
+            } else {
+                Log.d(TAG, "📦 Network manager pre-injected: " + networkManager.getClass().getSimpleName());
+            }
 
             networkManager.addWifiListener(service);
             Log.d(TAG, "📡 WiFi listener added to network manager");
@@ -298,10 +306,12 @@ public class AsgClientServiceManager {
         Log.d(TAG, "📶 initializeBluetoothManager() started");
 
         try {
-            bluetoothManager = BluetoothManagerFactory.getBluetoothManager(context);
-            Log.d(
-                    TAG,
-                    "📦 Bluetooth manager created: " + bluetoothManager.getClass().getSimpleName());
+            if (bluetoothManager == null) {
+                bluetoothManager = BluetoothManagerFactory.getBluetoothManager(context);
+                Log.d(TAG, "📦 Bluetooth manager created from factory: " + bluetoothManager.getClass().getSimpleName());
+            } else {
+                Log.d(TAG, "📦 Bluetooth manager pre-injected: " + bluetoothManager.getClass().getSimpleName());
+            }
 
             isK900Device = DeviceProfile.detect(context).isK900();
             Log.d(TAG, "🔍 Device type detection - K900: " + isK900Device);

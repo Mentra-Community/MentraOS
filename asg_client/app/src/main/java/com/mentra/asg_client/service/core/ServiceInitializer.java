@@ -3,8 +3,12 @@ package com.mentra.asg_client.service.core;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import com.mentra.asg_client.io.bes.BesOtaRegistry;
+import com.mentra.asg_client.io.bluetooth.core.BluetoothManagerFactory;
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.io.network.core.NetworkManagerFactory;
+import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
@@ -47,14 +51,18 @@ public final class ServiceInitializer {
             @NonNull BesOtaRegistry besOtaRegistry) {
         android.content.Context context = service;
 
-        this.communicationManager = new CommunicationManager(null);
+        // Create transport and network first — both are passed to CommunicationManager and
+        // AsgClientServiceManager so neither holds a circular reference to the other.
+        ICompanionTransport transport = BluetoothManagerFactory.getBluetoothManager(context);
+        INetworkManager network = NetworkManagerFactory.getNetworkManager(context);
+
+        this.communicationManager = new CommunicationManager(transport, network);
 
         this.serviceManager =
                 new AsgClientServiceManager(
-                        context, service, communicationManager, fileManager, besOtaRegistry);
+                        context, service, communicationManager, fileManager, besOtaRegistry,
+                        transport, network);
         this.notificationManager = new AsgNotificationManager(context);
-
-        ((CommunicationManager) this.communicationManager).setServiceManager(serviceManager);
         this.configurationManager = new ConfigurationManager(context);
         this.stateManager = new StateManager(serviceManager);
         serviceManager.setStateManager(this.stateManager);

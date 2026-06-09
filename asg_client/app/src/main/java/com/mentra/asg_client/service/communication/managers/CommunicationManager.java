@@ -1,11 +1,12 @@
 package com.mentra.asg_client.service.communication.managers;
 
 import android.util.Log;
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.models.NetworkInfo;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.reliability.ReliableMessageManager;
-import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
@@ -23,20 +24,19 @@ public class CommunicationManager
 
     private static final String TAG = "CommunicationManager";
 
-    private AsgClientServiceManager serviceManager;
+    private final ICompanionTransport transport;
+    private final INetworkManager networkManager;
     private ReliableMessageManager reliableManager;
 
-    public CommunicationManager(AsgClientServiceManager serviceManager) {
-        this.serviceManager = serviceManager;
+    public CommunicationManager(ICompanionTransport transport, INetworkManager networkManager) {
+        this.transport = transport;
+        this.networkManager = networkManager;
 
-        // Initialize reliability manager - use 'this.serviceManager' to always get current
-        // reference
         this.reliableManager =
                 new ReliableMessageManager(
                         data -> {
-                            if (this.serviceManager != null
-                                    && this.serviceManager.getBluetoothManager() != null) {
-                                return this.serviceManager.getBluetoothManager().sendMessage(data);
+                            if (this.transport != null) {
+                                return this.transport.sendMessage(data);
                             }
                             return false;
                         });
@@ -54,10 +54,6 @@ public class CommunicationManager
         return reliableManager;
     }
 
-    public void setServiceManager(AsgClientServiceManager serviceManager) {
-        this.serviceManager = serviceManager;
-    }
-
     @Override
     public void sendWifiStatusOverBle(boolean isConnected) {
         Log.d(TAG, "🔄 =========================================");
@@ -65,19 +61,17 @@ public class CommunicationManager
         Log.d(TAG, "🔄 =========================================");
         Log.d(TAG, "🔄 WiFi connected: " + isConnected);
 
-        if (serviceManager != null
-                && serviceManager.getBluetoothManager() != null
-                && serviceManager.getBluetoothManager().isConnected()) {
-            Log.d(TAG, "🔄 ✅ Service manager and Bluetooth manager available");
+        if (transport != null && transport.isConnected()) {
+            Log.d(TAG, "🔄 ✅ Transport available and connected");
 
             try {
                 JSONObject wifiStatus = new JSONObject();
                 // Use proper type for reliable sending
                 wifiStatus.put("type", "wifi_status");
                 wifiStatus.put("connected", isConnected);
-                if (isConnected && serviceManager.getNetworkManager() != null) {
-                    String ssid = serviceManager.getNetworkManager().getCurrentWifiSsid();
-                    String localIp = serviceManager.getNetworkManager().getLocalIpAddress();
+                if (isConnected && networkManager != null) {
+                    String ssid = networkManager.getCurrentWifiSsid();
+                    String localIp = networkManager.getLocalIpAddress();
 
                     Log.d(TAG, "🔄 📡 WiFi SSID: " + (ssid != null ? ssid : "unknown"));
                     Log.d(TAG, "🔄 🌐 Local IP: " + (localIp != null ? localIp : "unknown"));
@@ -96,15 +90,9 @@ public class CommunicationManager
                 Log.e(TAG, "🔄 💥 Error creating WiFi status JSON", e);
             }
         } else {
-            Log.w(TAG, "🔄 ❌ Cannot send WiFi status - service manager or Bluetooth not available");
-            if (serviceManager == null) Log.w(TAG, "🔄 ❌ Service manager is null");
-            if (serviceManager != null && serviceManager.getBluetoothManager() == null)
-                Log.w(TAG, "🔄 ❌ Bluetooth manager is null");
-            if (serviceManager != null
-                    && serviceManager.getBluetoothManager() != null
-                    && !serviceManager.getBluetoothManager().isConnected()) {
-                Log.w(TAG, "🔄 ❌ Bluetooth not connected");
-            }
+            Log.w(TAG, "🔄 ❌ Cannot send WiFi status - transport not available or not connected");
+            if (transport == null) Log.w(TAG, "🔄 ❌ Transport is null");
+            else Log.w(TAG, "🔄 ❌ Transport not connected");
         }
     }
 
@@ -114,10 +102,8 @@ public class CommunicationManager
         Log.d(TAG, "🔋 SEND BATTERY STATUS OVER BLE");
         Log.d(TAG, "🔋 =========================================");
 
-        if (serviceManager != null
-                && serviceManager.getBluetoothManager() != null
-                && serviceManager.getBluetoothManager().isConnected()) {
-            Log.d(TAG, "🔋 ✅ Service manager and Bluetooth manager available");
+        if (transport != null && transport.isConnected()) {
+            Log.d(TAG, "🔋 ✅ Transport available and connected");
 
             try {
                 JSONObject response = new JSONObject();
@@ -137,14 +123,8 @@ public class CommunicationManager
             }
         } else {
             Log.w(TAG, "🔋 ❌ Cannot send battery status - not connected to BLE device");
-            if (serviceManager == null) Log.w(TAG, "🔋 ❌ Service manager is null");
-            if (serviceManager != null && serviceManager.getBluetoothManager() == null)
-                Log.w(TAG, "🔋 ❌ Bluetooth manager is null");
-            if (serviceManager != null
-                    && serviceManager.getBluetoothManager() != null
-                    && !serviceManager.getBluetoothManager().isConnected()) {
-                Log.w(TAG, "🔋 ❌ Bluetooth not connected");
-            }
+            if (transport == null) Log.w(TAG, "🔋 ❌ Transport is null");
+            else Log.w(TAG, "🔋 ❌ Transport not connected");
         }
     }
 
@@ -155,10 +135,8 @@ public class CommunicationManager
         Log.d(TAG, "📡 =========================================");
         Log.d(TAG, "📡 Networks found: " + (networks != null ? networks.size() : 0));
 
-        if (serviceManager != null
-                && serviceManager.getBluetoothManager() != null
-                && serviceManager.getBluetoothManager().isConnected()) {
-            Log.d(TAG, "📡 ✅ Service manager and Bluetooth manager available");
+        if (transport != null && transport.isConnected()) {
+            Log.d(TAG, "📡 ✅ Transport available and connected");
 
             try {
                 // Send networks in chunks of 4 to avoid BLE message size issues
@@ -192,10 +170,7 @@ public class CommunicationManager
                                     + jsonString.getBytes(StandardCharsets.UTF_8).length
                                     + " bytes");
 
-                    boolean sent =
-                            serviceManager
-                                    .getBluetoothManager()
-                                    .sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                    boolean sent = transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                     Log.d(
                             TAG,
                             "📡 "
@@ -221,10 +196,7 @@ public class CommunicationManager
 
                     String jsonString = response.toString();
                     Log.d(TAG, "📡 📤 Sending empty WiFi scan result: " + jsonString);
-                    boolean sent =
-                            serviceManager
-                                    .getBluetoothManager()
-                                    .sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                    boolean sent = transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                     Log.d(
                             TAG,
                             "📡 "
@@ -238,14 +210,8 @@ public class CommunicationManager
             }
         } else {
             Log.w(TAG, "📡 ❌ Cannot send WiFi scan results - not connected to BLE device");
-            if (serviceManager == null) Log.w(TAG, "📡 ❌ Service manager is null");
-            if (serviceManager != null && serviceManager.getBluetoothManager() == null)
-                Log.w(TAG, "📡 ❌ Bluetooth manager is null");
-            if (serviceManager != null
-                    && serviceManager.getBluetoothManager() != null
-                    && !serviceManager.getBluetoothManager().isConnected()) {
-                Log.w(TAG, "📡 ❌ Bluetooth not connected");
-            }
+            if (transport == null) Log.w(TAG, "📡 ❌ Transport is null");
+            else Log.w(TAG, "📡 ❌ Transport not connected");
         }
     }
 
@@ -257,10 +223,8 @@ public class CommunicationManager
         Log.d(TAG, "📡 =========================================");
         Log.d(TAG, "📡 Enhanced networks found: " + (networks != null ? networks.size() : 0));
 
-        if (serviceManager != null
-                && serviceManager.getBluetoothManager() != null
-                && serviceManager.getBluetoothManager().isConnected()) {
-            Log.d(TAG, "📡 ✅ Service manager and Bluetooth manager available");
+        if (transport != null && transport.isConnected()) {
+            Log.d(TAG, "📡 ✅ Transport available and connected");
 
             try {
                 List<NetworkInfo> scanNetworks =
@@ -300,10 +264,7 @@ public class CommunicationManager
                                     + network.getSignalStrength()
                                     + "dBm)");
 
-                    boolean sent =
-                            serviceManager
-                                    .getBluetoothManager()
-                                    .sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                    boolean sent = transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                     Log.d(
                             TAG,
                             "📡 "
@@ -330,10 +291,7 @@ public class CommunicationManager
 
                     String jsonString = response.toString();
                     Log.d(TAG, "📡 📤 Sending empty enhanced WiFi scan result: " + jsonString);
-                    boolean sent =
-                            serviceManager
-                                    .getBluetoothManager()
-                                    .sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                    boolean sent = transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                     Log.d(
                             TAG,
                             "📡 "
@@ -347,14 +305,8 @@ public class CommunicationManager
             }
         } else {
             Log.w(TAG, "📡 ❌ Cannot send enhanced WiFi scan results - not connected to BLE device");
-            if (serviceManager == null) Log.w(TAG, "📡 ❌ Service manager is null");
-            if (serviceManager != null && serviceManager.getBluetoothManager() == null)
-                Log.w(TAG, "📡 ❌ Bluetooth manager is null");
-            if (serviceManager != null
-                    && serviceManager.getBluetoothManager() != null
-                    && !serviceManager.getBluetoothManager().isConnected()) {
-                Log.w(TAG, "📡 ❌ Bluetooth not connected");
-            }
+            if (transport == null) Log.w(TAG, "📡 ❌ Transport is null");
+            else Log.w(TAG, "📡 ❌ Transport not connected");
         }
     }
 
@@ -365,10 +317,8 @@ public class CommunicationManager
         Log.d(TAG, "✅ =========================================");
         Log.d(TAG, "✅ Message ID: " + messageId);
 
-        if (serviceManager != null
-                && serviceManager.getBluetoothManager() != null
-                && serviceManager.getBluetoothManager().isConnected()) {
-            Log.d(TAG, "✅ ✅ Service manager and Bluetooth manager available");
+        if (transport != null && transport.isConnected()) {
+            Log.d(TAG, "✅ ✅ Transport available and connected");
 
             try {
                 JSONObject ackResponse = new JSONObject();
@@ -379,10 +329,7 @@ public class CommunicationManager
                 String jsonString = ackResponse.toString();
                 Log.d(TAG, "✅ 📤 Sending ACK response: " + jsonString);
 
-                boolean sent =
-                        serviceManager
-                                .getBluetoothManager()
-                                .sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                boolean sent = transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                 Log.d(
                         TAG,
                         "✅ "
@@ -395,14 +342,8 @@ public class CommunicationManager
             }
         } else {
             Log.w(TAG, "✅ ❌ Cannot send ACK response - not connected to BLE device");
-            if (serviceManager == null) Log.w(TAG, "✅ ❌ Service manager is null");
-            if (serviceManager != null && serviceManager.getBluetoothManager() == null)
-                Log.w(TAG, "✅ ❌ Bluetooth manager is null");
-            if (serviceManager != null
-                    && serviceManager.getBluetoothManager() != null
-                    && !serviceManager.getBluetoothManager().isConnected()) {
-                Log.w(TAG, "✅ ❌ Bluetooth not connected");
-            }
+            if (transport == null) Log.w(TAG, "✅ ❌ Transport is null");
+            else Log.w(TAG, "✅ ❌ Transport not connected");
         }
     }
 
@@ -413,10 +354,8 @@ public class CommunicationManager
         Log.d(TAG, "🔑 =========================================");
         Log.d(TAG, "🔑 Token status: " + (success ? "SUCCESS" : "FAILED"));
 
-        if (serviceManager != null
-                && serviceManager.getBluetoothManager() != null
-                && serviceManager.getBluetoothManager().isConnected()) {
-            Log.d(TAG, "🔑 ✅ Service manager and Bluetooth manager available");
+        if (transport != null && transport.isConnected()) {
+            Log.d(TAG, "🔑 ✅ Transport available and connected");
 
             try {
                 JSONObject response = new JSONObject();
@@ -427,8 +366,7 @@ public class CommunicationManager
                 String jsonString = response.toString();
                 Log.d(TAG, "🔑 📤 Sending token status response: " + jsonString);
 
-                boolean sent =
-                        serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes());
+                boolean sent = transport.sendMessage(jsonString.getBytes());
                 Log.d(
                         TAG,
                         "🔑 "
@@ -441,14 +379,8 @@ public class CommunicationManager
             }
         } else {
             Log.w(TAG, "🔑 ❌ Cannot send token status response - not connected to BLE device");
-            if (serviceManager == null) Log.w(TAG, "🔑 ❌ Service manager is null");
-            if (serviceManager != null && serviceManager.getBluetoothManager() == null)
-                Log.w(TAG, "🔑 ❌ Bluetooth manager is null");
-            if (serviceManager != null
-                    && serviceManager.getBluetoothManager() != null
-                    && !serviceManager.getBluetoothManager().isConnected()) {
-                Log.w(TAG, "🔑 ❌ Bluetooth not connected");
-            }
+            if (transport == null) Log.w(TAG, "🔑 ❌ Transport is null");
+            else Log.w(TAG, "🔑 ❌ Transport not connected");
         }
     }
 
@@ -461,10 +393,8 @@ public class CommunicationManager
         Log.d(TAG, "📸 Media URL: " + mediaUrl);
         Log.d(TAG, "📸 Media Type: " + mediaType);
 
-        if (serviceManager != null
-                && serviceManager.getBluetoothManager() != null
-                && serviceManager.getBluetoothManager().isConnected()) {
-            Log.d(TAG, "📸 ✅ Service manager and Bluetooth manager available");
+        if (transport != null && transport.isConnected()) {
+            Log.d(TAG, "📸 ✅ Transport available and connected");
 
             try {
                 JSONObject response = new JSONObject();
@@ -477,10 +407,7 @@ public class CommunicationManager
                 String jsonString = response.toString();
                 Log.d(TAG, "📸 📤 Sending media success response: " + jsonString);
 
-                boolean sent =
-                        serviceManager
-                                .getBluetoothManager()
-                                .sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                boolean sent = transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                 Log.d(
                         TAG,
                         "📸 "
@@ -493,14 +420,8 @@ public class CommunicationManager
             }
         } else {
             Log.w(TAG, "📸 ❌ Cannot send media success response - not connected to BLE device");
-            if (serviceManager == null) Log.w(TAG, "📸 ❌ Service manager is null");
-            if (serviceManager != null && serviceManager.getBluetoothManager() == null)
-                Log.w(TAG, "📸 ❌ Bluetooth manager is null");
-            if (serviceManager != null
-                    && serviceManager.getBluetoothManager() != null
-                    && !serviceManager.getBluetoothManager().isConnected()) {
-                Log.w(TAG, "📸 ❌ Bluetooth not connected");
-            }
+            if (transport == null) Log.w(TAG, "📸 ❌ Transport is null");
+            else Log.w(TAG, "📸 ❌ Transport not connected");
         }
     }
 
@@ -513,10 +434,8 @@ public class CommunicationManager
         Log.d(TAG, "❌ Error Message: " + errorMessage);
         Log.d(TAG, "❌ Media Type: " + mediaType);
 
-        if (serviceManager != null
-                && serviceManager.getBluetoothManager() != null
-                && serviceManager.getBluetoothManager().isConnected()) {
-            Log.d(TAG, "❌ ✅ Service manager and Bluetooth manager available");
+        if (transport != null && transport.isConnected()) {
+            Log.d(TAG, "❌ ✅ Transport available and connected");
 
             try {
                 JSONObject response = new JSONObject();
@@ -529,10 +448,7 @@ public class CommunicationManager
                 String jsonString = response.toString();
                 Log.d(TAG, "❌ 📤 Sending media error response: " + jsonString);
 
-                boolean sent =
-                        serviceManager
-                                .getBluetoothManager()
-                                .sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                boolean sent = transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                 Log.d(
                         TAG,
                         "❌ "
@@ -545,14 +461,8 @@ public class CommunicationManager
             }
         } else {
             Log.w(TAG, "❌ ❌ Cannot send media error response - not connected to BLE device");
-            if (serviceManager == null) Log.w(TAG, "❌ ❌ Service manager is null");
-            if (serviceManager != null && serviceManager.getBluetoothManager() == null)
-                Log.w(TAG, "❌ ❌ Bluetooth manager is null");
-            if (serviceManager != null
-                    && serviceManager.getBluetoothManager() != null
-                    && !serviceManager.getBluetoothManager().isConnected()) {
-                Log.w(TAG, "❌ ❌ Bluetooth not connected");
-            }
+            if (transport == null) Log.w(TAG, "❌ ❌ Transport is null");
+            else Log.w(TAG, "❌ ❌ Transport not connected");
         }
     }
 
@@ -564,10 +474,8 @@ public class CommunicationManager
         Log.d(TAG, "💓 Stream ID: " + streamId);
         Log.d(TAG, "💓 ACK ID: " + ackId);
 
-        if (serviceManager != null
-                && serviceManager.getBluetoothManager() != null
-                && serviceManager.getBluetoothManager().isConnected()) {
-            Log.d(TAG, "💓 ✅ Service manager and Bluetooth manager available");
+        if (transport != null && transport.isConnected()) {
+            Log.d(TAG, "💓 ✅ Transport available and connected");
 
             try {
                 JSONObject keepAliveResponse = new JSONObject();
@@ -579,10 +487,7 @@ public class CommunicationManager
                 String jsonString = keepAliveResponse.toString();
                 Log.d(TAG, "💓 📤 Sending keep-alive ACK: " + jsonString);
 
-                boolean sent =
-                        serviceManager
-                                .getBluetoothManager()
-                                .sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                boolean sent = transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                 Log.d(
                         TAG,
                         "💓 "
@@ -595,14 +500,8 @@ public class CommunicationManager
             }
         } else {
             Log.w(TAG, "💓 ❌ Cannot send keep-alive ACK - not connected to BLE device");
-            if (serviceManager == null) Log.w(TAG, "💓 ❌ Service manager is null");
-            if (serviceManager != null && serviceManager.getBluetoothManager() == null)
-                Log.w(TAG, "💓 ❌ Bluetooth manager is null");
-            if (serviceManager != null
-                    && serviceManager.getBluetoothManager() != null
-                    && !serviceManager.getBluetoothManager().isConnected()) {
-                Log.w(TAG, "💓 ❌ Bluetooth not connected");
-            }
+            if (transport == null) Log.w(TAG, "💓 ❌ Transport is null");
+            else Log.w(TAG, "💓 ❌ Transport not connected");
         }
     }
 
@@ -613,12 +512,10 @@ public class CommunicationManager
         Log.d(TAG, "📡 =========================================");
         Log.d(TAG, "📡 Data length: " + (data != null ? data.length : 0) + " bytes");
 
-        if (serviceManager != null
-                && serviceManager.getBluetoothManager() != null
-                && serviceManager.getBluetoothManager().isConnected()) {
-            Log.d(TAG, "📡 ✅ Service manager and Bluetooth manager available");
+        if (transport != null && transport.isConnected()) {
+            Log.d(TAG, "📡 ✅ Transport available and connected");
 
-            boolean sent = serviceManager.getBluetoothManager().sendMessage(data);
+            boolean sent = transport.sendMessage(data);
             Log.d(
                     TAG,
                     "📡 "
@@ -628,14 +525,8 @@ public class CommunicationManager
             return sent;
         } else {
             Log.w(TAG, "📡 ❌ Cannot send Bluetooth data - not connected to BLE device");
-            if (serviceManager == null) Log.w(TAG, "📡 ❌ Service manager is null");
-            if (serviceManager != null && serviceManager.getBluetoothManager() == null)
-                Log.w(TAG, "📡 ❌ Bluetooth manager is null");
-            if (serviceManager != null
-                    && serviceManager.getBluetoothManager() != null
-                    && !serviceManager.getBluetoothManager().isConnected()) {
-                Log.w(TAG, "📡 ❌ Bluetooth not connected");
-            }
+            if (transport == null) Log.w(TAG, "📡 ❌ Transport is null");
+            else Log.w(TAG, "📡 ❌ Transport not connected");
             return false;
         }
     }
@@ -647,19 +538,14 @@ public class CommunicationManager
         Log.d(TAG, "📤 =========================================");
         Log.d(TAG, "📤 Response: " + (response != null ? response.toString() : "null"));
 
-        if (serviceManager != null
-                && serviceManager.getBluetoothManager() != null
-                && serviceManager.getBluetoothManager().isConnected()) {
-            Log.d(TAG, "📤 ✅ Service manager and Bluetooth manager available");
+        if (transport != null && transport.isConnected()) {
+            Log.d(TAG, "📤 ✅ Transport available and connected");
 
             try {
                 String jsonString = response.toString();
                 Log.d(TAG, "📤 📤 Sending JSON response: " + jsonString);
 
-                boolean sent =
-                        serviceManager
-                                .getBluetoothManager()
-                                .sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                boolean sent = transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                 Log.d(
                         TAG,
                         "📤 "
@@ -673,14 +559,8 @@ public class CommunicationManager
             }
         } else {
             Log.w(TAG, "📤 ❌ Cannot send Bluetooth response - not connected to BLE device");
-            if (serviceManager == null) Log.w(TAG, "📤 ❌ Service manager is null");
-            if (serviceManager != null && serviceManager.getBluetoothManager() == null)
-                Log.w(TAG, "📤 ❌ Bluetooth manager is null");
-            if (serviceManager != null
-                    && serviceManager.getBluetoothManager() != null
-                    && !serviceManager.getBluetoothManager().isConnected()) {
-                Log.w(TAG, "📤 ❌ Bluetooth not connected");
-            }
+            if (transport == null) Log.w(TAG, "📤 ❌ Transport is null");
+            else Log.w(TAG, "📤 ❌ Transport not connected");
             return false;
         }
     }
@@ -693,9 +573,7 @@ public class CommunicationManager
      */
     @Override
     public boolean isPhoneConnected() {
-        return serviceManager != null
-                && serviceManager.getBluetoothManager() != null
-                && serviceManager.getBluetoothManager().isConnected();
+        return transport != null && transport.isConnected();
     }
 
     /**
@@ -734,9 +612,7 @@ public class CommunicationManager
         if (!isPhoneConnected()) return;
         try {
             String jsonString = message.toString();
-            serviceManager
-                    .getBluetoothManager()
-                    .sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+            transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
             Log.d(TAG, "📱 OTA message sent: " + message.optString("type", "?"));
         } catch (Exception e) {
             Log.e(TAG, "📱 Error sending OTA message", e);
@@ -760,9 +636,7 @@ public class CommunicationManager
                 Log.i(TAG, "📱 OTA Status (reliable): " + statusValue + " sent=" + sent);
             } else {
                 String jsonString = status.toString();
-                serviceManager
-                        .getBluetoothManager()
-                        .sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
+                transport.sendMessage(jsonString.getBytes(StandardCharsets.UTF_8));
                 Log.d(TAG, "📱 OTA Status: " + statusValue);
             }
         } catch (Exception e) {
