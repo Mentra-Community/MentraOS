@@ -270,6 +270,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var volumeRefreshJob: Job? = null
     private var actionSequence = 0L
     private val activeActions = linkedMapOf<Long, String>()
+    private var streamConfigurationChangeInProgress = false
 
     private val micSampleRate = 16_000
     private val micChannelCount = 1
@@ -711,7 +712,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (state.streamProtocol == protocol) {
             return
         }
-        scope.launch {
+        runStreamConfigurationChange {
             val currentUrl = state.streamUrl.trim()
             val shouldUseDefault = currentUrl.isEmpty() || currentUrl in streamDefaultUrls.values
             val stoppedStream = stopStreamForConfigurationChange("Stopped before changing stream protocol")
@@ -728,7 +729,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (state.streamCloudServerEnabled == enabled) {
             return
         }
-        scope.launch {
+        runStreamConfigurationChange {
             stopStreamForConfigurationChange("Stopped before changing stream destination")
             if (enabled) {
                 val currentUrl = state.streamUrl.trim()
@@ -741,7 +742,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                     streamResolvedConfig = null,
                     directStreamFrame = null,
                 )
-                return@launch
+                return@runStreamConfigurationChange
             }
 
             state = state.copy(
@@ -758,7 +759,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (state.streamUrl == url) {
             return
         }
-        scope.launch {
+        runStreamConfigurationChange {
             val stoppedStream = stopStreamForConfigurationChange("Stopped before changing stream URL")
             state = state.copy(
                 streamUrl = url,
@@ -775,34 +776,53 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(streamFps = fps.coerceIn(1, 24))
     }
 
-    fun toggleStream() = runAction(if (!state.streamRequested && state.streamStartedAt == null) "Start stream" else "Stop stream") {
-        if (state.streamRequested || state.streamStartedAt != null) {
-            stopPreviewHealthPoll()
-            stopDirectStreamFrameWatchdog()
-            if (isDirectPhoneWebRtcSelected()) {
-                directStreamStartJob?.cancel()
-                directStreamStartJob = null
+    fun toggleStream() {
+        if (streamConfigurationChangeInProgress) {
+            state = state.copy(streamStatus = "Waiting for stream configuration update")
+            addEvent("TX", "stream action ignored while configuration update is running")
+            return
+        }
+        runAction(if (!state.streamRequested && state.streamStartedAt == null) "Start stream" else "Stop stream") {
+            if (state.streamRequested || state.streamStartedAt != null) {
+                stopPreviewHealthPoll()
+                stopDirectStreamFrameWatchdog()
+                if (isDirectPhoneWebRtcSelected()) {
+                    directStreamStartJob?.cancel()
+                    directStreamStartJob = null
+                    if (isGlassesConnected()) {
+                        val status = withContext(Dispatchers.IO) { mentraBluetoothSdk.stopStream() }
+                        addEvent("LIVE", "stream ${summarize(status.values)}")
+                        state = state.copy(streamStatus = "Stopping WebRTC direct phone stream")
+                        directStreamStopJob?.cancel()
+                        directStreamStopJob = scope.launch {
+                            delay(5_000)
+                            if (isDirectPhoneWebRtcSelected() && state.directStreamReceiverRunning) {
+                                activeStreamId = null
+                                stopDirectPhoneStreamReceiver("WebRTC direct phone stopped")
+                                state = state.copy(
+                                    streamRequested = false,
+                                    streamResolvedConfig = null,
+                                    streamStartedAt = null,
+                                )
+                            }
+                        }
+                        return@runAction
+                    }
+                    stopDirectPhoneStreamReceiver("Stopped")
+                    activeStreamId = null
+                    state = state.copy(
+                        streamRequested = false,
+                        streamPreviewReady = false,
+                        streamResolvedConfig = null,
+                        streamStartedAt = null,
+                        streamStatus = "Stopped",
+                    )
+                    return@runAction
+                }
                 if (isGlassesConnected()) {
                     val status = withContext(Dispatchers.IO) { mentraBluetoothSdk.stopStream() }
                     addEvent("LIVE", "stream ${summarize(status.values)}")
-                    state = state.copy(streamStatus = "Stopping WebRTC direct phone stream")
-                    directStreamStopJob?.cancel()
-                    directStreamStopJob = scope.launch {
-                        delay(5_000)
-                        if (isDirectPhoneWebRtcSelected() && state.directStreamReceiverRunning) {
-                            activeStreamId = null
-                            stopDirectPhoneStreamReceiver("WebRTC direct phone stopped")
-                            state = state.copy(
-                                streamRequested = false,
-                                streamResolvedConfig = null,
-                                streamStartedAt = null,
-                            )
-                        }
-                    }
-                    return@runAction
                 }
-                stopDirectPhoneStreamReceiver("Stopped")
-                activeStreamId = null
                 state = state.copy(
                     streamRequested = false,
                     streamPreviewReady = false,
@@ -812,52 +832,40 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 )
                 return@runAction
             }
-            if (isGlassesConnected()) {
-                val status = withContext(Dispatchers.IO) { mentraBluetoothSdk.stopStream() }
-                addEvent("LIVE", "stream ${summarize(status.values)}")
+            requireConnected("start streaming")
+            requireGlassesWifi("start streaming")
+            if (isDirectPhoneWebRtcSelected()) {
+                startDirectPhoneWebRtcStream()
+                return@runAction
             }
-            state = state.copy(
-                streamRequested = false,
-                streamPreviewReady = false,
-                streamResolvedConfig = null,
-                streamStartedAt = null,
-                streamStatus = "Stopped",
-            )
-            return@runAction
-        }
-        requireConnected("start streaming")
-        requireGlassesWifi("start streaming")
-        if (isDirectPhoneWebRtcSelected()) {
-            startDirectPhoneWebRtcStream()
-            return@runAction
-        }
-        val streamUrl = state.streamUrl.trim()
-        streamUrlValidationMessage(streamUrl)?.let { message ->
-            state = state.copy(streamStatus = message)
-            throw IllegalArgumentException(message)
-        }
-        val streamId = "android-${System.currentTimeMillis()}"
-        val selectedProtocol = state.streamProtocol
-        if (selectedProtocol == "rtmp" || selectedProtocol == "srt" || selectedProtocol == "webrtc") {
-            state = state.copy(streamStatus = "Checking local ${selectedProtocol.uppercase()} server")
-            scope.launch(Dispatchers.IO) {
-                val reachabilityMessage = when (selectedProtocol) {
-                    "rtmp" -> localRtmpReachabilityMessage(streamUrl)
-                    "srt" -> localSrtReachabilityMessage(streamUrl)
-                    else -> localWebrtcReachabilityMessage(streamUrl)
-                }
-                scope.launch {
-                    if (reachabilityMessage != null) {
-                        state = state.copy(streamStatus = reachabilityMessage)
-                        addEvent("TX", "stream failed: $reachabilityMessage")
-                        return@launch
+            val streamUrl = state.streamUrl.trim()
+            streamUrlValidationMessage(streamUrl)?.let { message ->
+                state = state.copy(streamStatus = message)
+                throw IllegalArgumentException(message)
+            }
+            val streamId = "android-${System.currentTimeMillis()}"
+            val selectedProtocol = state.streamProtocol
+            if (selectedProtocol == "rtmp" || selectedProtocol == "srt" || selectedProtocol == "webrtc") {
+                state = state.copy(streamStatus = "Checking local ${selectedProtocol.uppercase()} server")
+                scope.launch(Dispatchers.IO) {
+                    val reachabilityMessage = when (selectedProtocol) {
+                        "rtmp" -> localRtmpReachabilityMessage(streamUrl)
+                        "srt" -> localSrtReachabilityMessage(streamUrl)
+                        else -> localWebrtcReachabilityMessage(streamUrl)
                     }
-                    startStream(streamUrl, streamId, selectedProtocol)
+                    scope.launch {
+                        if (reachabilityMessage != null) {
+                            state = state.copy(streamStatus = reachabilityMessage)
+                            addEvent("TX", "stream failed: $reachabilityMessage")
+                            return@launch
+                        }
+                        startStream(streamUrl, streamId, selectedProtocol)
+                    }
                 }
+                return@runAction
             }
-            return@runAction
+            startStream(streamUrl, streamId, selectedProtocol)
         }
-        startStream(streamUrl, streamId, selectedProtocol)
     }
 
     private suspend fun startStream(streamUrl: String, streamId: String, protocol: String) {
@@ -1011,6 +1019,22 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             streamStatus = status,
         )
         return true
+    }
+
+    private fun runStreamConfigurationChange(action: suspend () -> Unit) {
+        if (streamConfigurationChangeInProgress) {
+            state = state.copy(streamStatus = "Waiting for stream configuration update")
+            return
+        }
+        streamConfigurationChangeInProgress = true
+        state = state.copy(streamStatus = "Updating stream configuration")
+        scope.launch {
+            try {
+                action()
+            } finally {
+                streamConfigurationChangeInProgress = false
+            }
+        }
     }
 
     private fun directWhipReceiver(): GStreamerWhipReceiver {

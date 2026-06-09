@@ -191,6 +191,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var actionSequence = 0
     private var activeActions: [Int: String] = [:]
     private var activeActionOrder: [Int] = []
+    private var streamConfigurationChangeInProgress = false
     @Published private(set) var cameraStatus = "Camera: phone receiver will start before capture"
     @Published var webhookUrl = defaultPhotoUploadUrl
     @Published private(set) var photoPreviewDetails: PhotoPreviewDetails?
@@ -747,6 +748,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func toggleStream() {
+        guard !streamConfigurationChangeInProgress else {
+            streamStatus = "Waiting for stream configuration update"
+            append(tag: "TX", text: "stream action ignored while configuration update is running")
+            return
+        }
         if streamRequested || streamStartedAt != nil {
             runAsyncAction("Stop stream") { [self] in
                 stopPreviewHealthPoll()
@@ -1062,8 +1068,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func selectStreamProtocol(_ nextProtocol: ExampleStreamProtocol) {
         guard streamProtocol != nextProtocol else { return }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
+        runStreamConfigurationChange { [self] in
             let currentUrl = self.streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
             let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
             let stoppedStream = await self.stopStreamForConfigurationChange(status: "Stopped before changing stream protocol")
@@ -1080,8 +1085,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func setStreamCloudServerEnabled(_ enabled: Bool) {
         guard streamCloudServerEnabled != enabled else { return }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
+        runStreamConfigurationChange { [self] in
             await self.stopStreamForConfigurationChange(status: "Stopped before changing stream destination")
             self.streamResolvedConfig = nil
             if enabled {
@@ -1106,14 +1110,27 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func setStreamUrl(_ nextUrl: String) {
         guard streamUrl != nextUrl else { return }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
+        runStreamConfigurationChange { [self] in
             let stoppedStream = await self.stopStreamForConfigurationChange(status: "Stopped before changing stream URL")
             self.streamUrl = nextUrl
             self.streamResolvedConfig = nil
             if stoppedStream {
                 self.streamStatus = "Ready to start stream"
             }
+        }
+    }
+
+    private func runStreamConfigurationChange(_ action: @escaping () async -> Void) {
+        guard !streamConfigurationChangeInProgress else {
+            streamStatus = "Waiting for stream configuration update"
+            return
+        }
+        streamConfigurationChangeInProgress = true
+        streamStatus = "Updating stream configuration"
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.streamConfigurationChangeInProgress = false }
+            await action()
         }
     }
 
