@@ -24,7 +24,7 @@
         ]
       },
       {
-        "tab": "Display glasses",
+        "tab": "Display Glasses",
         "groups": [
           {
             "group": "Getting Started",
@@ -72,11 +72,6 @@
                   "app-devs/core-concepts/speakers/text-to-speech",
                   "app-devs/core-concepts/speakers/playing-audio-files"
                 ]
-              },
-              {
-                "group": "Camera",
-                "icon": "camera",
-                "pages": ["app-devs/core-concepts/camera/README"]
               },
               {
                 "group": "Webviews",
@@ -143,8 +138,8 @@
         ]
       },
       {
-        "tab": "Camera glasses",
-        "href": "https://bluetooth-sdk-docs.mentra.glass"
+        "tab": "Camera Glasses",
+        "pages": ["app-devs/core-concepts/camera/README"]
       },
       {
         "tab": "OS Devs",
