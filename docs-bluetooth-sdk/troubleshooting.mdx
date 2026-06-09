@@ -6,9 +6,8 @@ icon: "circle-question"
 
 ## Android Dependency Resolution Fails
 
-- Confirm your app has `google()`, `mavenCentral()`, and `maven("https://www.jitpack.io")` configured.
+- Confirm your app has `google()` and `mavenCentral()` configured.
 - Confirm `com.mentraglass:bluetooth-sdk:<version>` matches the SDK version you are integrating.
-- Confirm JitPack is reachable if Gradle cannot resolve runtime dependencies such as the Vuzix Ultralite SDK; these are transitive runtime dependencies and are not exposed by the SDK's public Android API.
 - Confirm Gradle can resolve the companion `com.mentraglass:lc3Lib` artifact transitively.
 - If a version was just published, Maven Central mirror propagation can lag briefly. Retry after the artifact appears under `https://repo.maven.apache.org/maven2/com/mentraglass/`.
 - If you are testing an unreleased SDK, publish the SDK and companion artifacts to `mavenLocal()` and include `mavenLocal()` in the app repositories.
@@ -17,8 +16,8 @@ icon: "circle-question"
 
 - Confirm Android min SDK is at least `28`.
 - Confirm Java 17 is used by Gradle.
-- Confirm your app includes `pickFirsts += "**/libonnxruntime.so"` under `android.packaging.jniLibs`.
-- Confirm no app-level packaging rule excludes `libc++_shared.so`, ONNX Runtime, or SDK native libraries.
+- If your app also includes native media or camera dependencies, add `pickFirsts += "**/libc++_shared.so"` under `android.packaging.jniLibs`.
+- Confirm no app-level packaging rule excludes `libc++_shared.so` or SDK native libraries.
 - Clean only the app build output first. Do not delete SDK source artifacts unless you are intentionally resetting your workspace.
 
 ## iOS Swift Package Resolution Fails

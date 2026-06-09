@@ -22,7 +22,6 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven("https://www.jitpack.io")
     }
 }
 ```
@@ -37,8 +36,6 @@ android {
     packaging {
         jniLibs {
             pickFirsts += "**/libc++_shared.so"
-            pickFirsts += "**/libonnxruntime.so"
-            pickFirsts += "**/libonnxruntime4j_jni.so"
         }
     }
 }
@@ -48,9 +45,9 @@ dependencies {
 }
 ```
 
-The SDK is published to Maven Central. Keep `google()` and `maven("https://www.jitpack.io")` configured so Gradle can resolve the SDK's transitive runtime dependencies. These repositories are for dependency resolution; the SDK's public Android API does not expose Google Play Services or JitPack-only types. The SDK POM pulls in the companion `com.mentraglass:lc3Lib` codec artifact automatically; do not add it manually unless you have a specific override reason.
+The SDK is published to Maven Central. Keep `google()` and `mavenCentral()` configured. The SDK POM pulls in the companion `com.mentraglass:lc3Lib` codec artifact automatically; do not add it manually unless you have a specific override reason.
 
-The packaging rules avoid duplicate native library conflicts from the SDK audio and transcription stack.
+The packaging rule avoids duplicate `libc++_shared.so` conflicts when your app also includes native media or camera dependencies.
 
 ## Permissions
 
@@ -124,7 +121,7 @@ Use this when testing SDK source changes locally:
 
 ```bash
 cd /path/to/MentraOS/mobile/android
-./gradlew :lc3Lib:publishToMavenLocal :mentra-bluetooth-sdk:publishToMavenLocal
+./gradlew :lc3Lib:publishToMavenLocal :mentra-bluetooth-sdk:publishToMavenLocal -PmentraPublicSdk=true
 ```
 
 Then include `mavenLocal()` before `mavenCentral()` in the app's repositories while testing the local artifact.
