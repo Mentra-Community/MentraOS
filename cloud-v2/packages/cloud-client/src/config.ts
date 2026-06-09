@@ -29,9 +29,10 @@ export interface CloudClientConfig {
   /**
    * Audio format announced in `connection.init`. Defaults to LC3 at 16 kHz (the
    * glasses' on-device codec). A host that feeds raw PCM frames (no on-device
-   * LC3 encoder) sets `codec: "pcm"`.
+   * LC3 encoder) sets `codec: "pcm"`. LC3 hosts should pass the frame size
+   * their encoder emits so the runtime decodes with the same bitrate.
    */
-  audio?: { codec?: "lc3" | "pcm"; sampleRate?: number };
+  audio?: { codec?: "lc3" | "pcm"; sampleRate?: number; frameSizeBytes?: 20 | 40 | 60 };
 }
 
 /**

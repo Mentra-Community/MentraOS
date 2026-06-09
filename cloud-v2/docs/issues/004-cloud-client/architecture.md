@@ -300,6 +300,12 @@ change small and reviewable.
 are owned by the cloud-client; miniapps receive only the scoped token. See
 [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md).
 
+**D6. Runtime status is a cloud-client concept, not a protocol enum.** The package
+exposes `RuntimeStatus`, `RuntimeAudioTransport`, and `RuntimeSnapshot` so the host
+can render accurate debug UI and make fallback decisions. These names stay generic
+inside cloud-client; "Cloud V2" is a mobile/debug label, not part of the SDK's type
+surface.
+
 ## 8. Current vs proposed v2: the code that changes
 
 The host-injected transport hook (`mobile/modules/island/src/runtime/config.ts`),

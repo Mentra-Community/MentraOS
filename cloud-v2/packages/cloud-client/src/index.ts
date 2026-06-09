@@ -39,3 +39,10 @@ export { CloudClientError, HttpError, AuthExpiredError } from "./errors";
 // The logging hook a host can implement to route library logs.
 export { noopLogger } from "./logger";
 export type { Logger } from "./logger";
+
+// Runtime lifecycle state exposed to hosts for UI/debugging and fallback policy.
+export type {
+  RuntimeAudioTransport,
+  RuntimeSnapshot,
+  RuntimeStatus,
+} from "./modules/runtime/runtime";

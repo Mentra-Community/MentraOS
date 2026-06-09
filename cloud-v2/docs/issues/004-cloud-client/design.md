@@ -426,6 +426,12 @@ implements the locked protocol in
   On every successful reconnect, redo the handshake and **re-send the full
   subscription set** at the current version, because the cloud may have a fresh
   session.
+- **Runtime status.** Hosts can read `cloud.runtime.getStatus()` and subscribe with
+  `cloud.runtime.onStatusChanged(cb)`. Initial open reports `connecting`; a drop
+  after at least one successful open reports `reconnecting`; a completed handshake
+  reports `connected`; an explicit host close reports `disconnected`. The snapshot
+  also carries `audioTransport` so debug UI can say whether audio is currently
+  configured for `udp`, future `ws`, or `none`.
 - **Liveness.** The client sends a `control.ping` every N seconds and expects a
   `control.pong`. No pong in time means the connection is dead even if the socket
   looks open, so reconnect. (The cloud stays passive on liveness; the client owns
@@ -467,6 +473,13 @@ so it's identical on phone and server and testable on a server) into the frame
 `[ sessionTag(4) | seq(2) | nonce(24) | ciphertext ]`, and the injected `udp`
 transport just sends the bytes. On the WebSocket audio fallback there's no UDP and no
 secretbox key; the frames ride the per-user WebSocket, which is already encrypted.
+
+**Known transport-selection gap:** the cloud/runtime side accepts WS binary fallback
+frames, but the current cloud-client mobile path only sends audio through `UdpAudio`.
+That means a UDP-blocked network can show a healthy WebSocket session while audio
+never reaches Redis/Soniox. Client-side fallback still needs active transport
+selection: detect missing UDP progress, switch `audioTransport` to `ws`, and send the
+same audio frames over the live WebSocket as the last-resort cloud path.
 
 ## `cloud.core`
 

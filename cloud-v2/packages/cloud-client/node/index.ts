@@ -40,6 +40,9 @@ export type {
   UdpSocketLike,
   KeyValueStore,
   Logger,
+  RuntimeAudioTransport,
+  RuntimeSnapshot,
+  RuntimeStatus,
 } from "@mentra/cloud-client";
 export {
   CloudClientError,

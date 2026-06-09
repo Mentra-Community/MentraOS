@@ -24,7 +24,7 @@
  */
 import nacl from "tweetnacl";
 import type { UdpSocketLike } from "../../transports";
-import type { ConnectionAck } from "@mentra/cloud-runtime/protocol";
+import { UDP_LIVENESS_PROBE_PREFIX, type ConnectionAck } from "@mentra/cloud-runtime/protocol";
 
 /** The audio block of `connection.ack`, present only when UDP audio is offered. */
 type AudioConfig = NonNullable<ConnectionAck["audio"]>;
@@ -33,7 +33,7 @@ type AudioConfig = NonNullable<ConnectionAck["audio"]>;
 const SESSION_TAG_OFFSET = 0;
 const SEQ_OFFSET = 4;
 const NONCE_OFFSET = 6;
-const HEADER_LENGTH = NONCE_OFFSET + nacl.secretbox.nonceLength; // 6 + 24 = 30
+const AUDIO_PACKET_HEADER_SIZE = NONCE_OFFSET;
 
 /** The seq field is a u16, so it wraps at 65536; the cloud expects that wrap. */
 const SEQ_MODULO = 0x10000;
@@ -41,6 +41,8 @@ const SEQ_MODULO = 0x10000;
 export interface UdpAudioDeps {
   udp: () => UdpSocketLike;
 }
+
+export type RuntimeAudioTransport = "udp" | "ws" | "none";
 
 /**
  * Holds the live UDP socket plus the per-session crypto/routing material.
@@ -65,6 +67,15 @@ export class UdpAudio {
 
   constructor(deps: UdpAudioDeps) {
     this.udpFactory = deps.udp;
+  }
+
+  /** The audio transport currently configured for outbound frames. */
+  get transport(): RuntimeAudioTransport {
+    return this.session ? "udp" : "none";
+  }
+
+  get sessionTag(): number | null {
+    return this.session?.sessionTag ?? null;
   }
 
   /**
@@ -100,28 +111,47 @@ export class UdpAudio {
    * frame sent before/after a session is not worth crashing the caller over; the
    * absence is observable through the missing session, not an exception per frame.
    */
-  sendFrame(payload: Uint8Array): void {
+  sendFrame(payload: Uint8Array): boolean {
     const session = this.session;
-    if (!session) return;
+    if (!session) return false;
 
+    session.socket.send(this.buildEncryptedPacket(session, payload), session.host, session.port);
+    return true;
+  }
+
+  sendProbe(probeId: string): boolean {
+    return this.sendFrame(asciiBytes(`${UDP_LIVENESS_PROBE_PREFIX}${probeId}`));
+  }
+
+  buildPlainFrame(payload: Uint8Array): Uint8Array | null {
+    const session = this.session;
+    if (!session) return null;
+    return this.buildPacket(session, payload);
+  }
+
+  private buildEncryptedPacket(session: UdpSession, payload: Uint8Array): Uint8Array {
     const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
     // secretbox returns ciphertext with the 16-byte Poly1305 tag appended.
     const ciphertext = nacl.secretbox(payload, nonce, session.key);
+    const encrypted = new Uint8Array(nonce.byteLength + ciphertext.byteLength);
+    encrypted.set(nonce, 0);
+    encrypted.set(ciphertext, nonce.byteLength);
+    return this.buildPacket(session, encrypted);
+  }
 
-    const frame = new Uint8Array(HEADER_LENGTH + ciphertext.length);
+  private buildPacket(session: UdpSession, payload: Uint8Array): Uint8Array {
+    const frame = new Uint8Array(AUDIO_PACKET_HEADER_SIZE + payload.length);
     const view = new DataView(frame.buffer);
 
     // Header in the clear so the stateless ingress can route before decrypting.
     view.setUint32(SESSION_TAG_OFFSET, session.sessionTag, /* littleEndian */ false);
     view.setUint16(SEQ_OFFSET, session.seq, /* littleEndian */ false);
-    frame.set(nonce, NONCE_OFFSET);
-    frame.set(ciphertext, HEADER_LENGTH);
+    frame.set(payload, AUDIO_PACKET_HEADER_SIZE);
 
     // Advance the per-session counter, wrapping at the u16 boundary the cloud
     // expects, so a long session does not overflow the field.
     session.seq = (session.seq + 1) % SEQ_MODULO;
-
-    session.socket.send(frame, session.host, session.port);
+    return frame;
   }
 
   /**
@@ -149,6 +179,14 @@ function decodeBase64(b64: string): Uint8Array {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function asciiBytes(text: string): Uint8Array {
+  const bytes = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i += 1) {
+    bytes[i] = text.charCodeAt(i) & 0x7f;
   }
   return bytes;
 }

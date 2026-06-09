@@ -36,7 +36,7 @@ import type {
  * React Native's built-in `WebSocket` and the browser's both satisfy this.
  */
 interface GlobalWebSocket {
-  send(data: string): void;
+  send(data: string | ArrayBuffer): void;
   close(): void;
   onopen: ((ev: unknown) => void) | null;
   onmessage: ((ev: { data: unknown }) => void) | null;
@@ -59,6 +59,11 @@ function adaptWebSocket(raw: GlobalWebSocket): WebSocketLike {
   return {
     send(data: string): void {
       raw.send(data);
+    },
+    sendBinary(data: Uint8Array): void {
+      const copy = new Uint8Array(data.byteLength);
+      copy.set(data);
+      raw.send(copy.buffer);
     },
     close(): void {
       raw.close();

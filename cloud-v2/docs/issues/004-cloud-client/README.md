@@ -17,6 +17,8 @@ Docs:
 - [`design.md`](./design.md): how it's built behind that API (the connection
   lifecycle, token refresh, the transports, the mechanics behind each method). The
   build plan.
+- [`udp-liveness-fallback/`](./udp-liveness-fallback/): spike/spec/design/testing
+  for UDP liveness, WebSocket audio fallback, and automatic switchback to UDP.
 
 ## What makes it worth a separate library
 
@@ -46,8 +48,8 @@ state, and exposes three areas (full API in [`spec.md`](./spec.md)):
   APIs but is never handed to a miniapp. The client half of
   [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md#miniapp-auto-auth).
 - **`cloud.runtime`:** the live audio and event session. Connection handshake,
-  subscriptions, transcript/translation events, managed photo/stream, UDP audio.
-  Implements [`../002-cloud-runtime/protocol.md`](../002-cloud-runtime/protocol.md).
+  status, subscriptions, transcript/translation events, managed photo/stream, UDP
+  audio. Implements [`../002-cloud-runtime/protocol.md`](../002-cloud-runtime/protocol.md).
 - **`cloud.core`:** the other v2 REST calls the device makes (miniapp bundles +
   catalog). Calls [`../001-cloud-core/`](../001-cloud-core/) services. Device-facing
   only, no Dev Console / OEM Portal / store web UI.
@@ -63,6 +65,8 @@ state, and exposes three areas (full API in [`spec.md`](./spec.md)):
 
 - [`../002-cloud-runtime/protocol.md`](../002-cloud-runtime/protocol.md): the v2
   protocol `cloud.runtime` implements.
+- [`udp-liveness-fallback/`](./udp-liveness-fallback/): the dedicated issue for
+  UDP liveness and reversible WebSocket audio fallback.
 - [`../001-cloud-core/auth/design.md`](../001-cloud-core/auth/design.md): the auth
   design `cloud.auth` consumes.
 - [`../../mentra-overhaul-plan.md`](../../mentra-overhaul-plan.md)

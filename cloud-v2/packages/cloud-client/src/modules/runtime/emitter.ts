@@ -14,6 +14,7 @@ import type {
   TranslationData,
   ProtocolError,
 } from "@mentra/cloud-runtime/protocol";
+import type { RuntimeSnapshot } from "./status";
 
 /**
  * The runtime event map: event name to payload type.
@@ -29,6 +30,7 @@ export interface RuntimeEvents {
   translation: TranslationData;
   connected: void;
   disconnected: { reason: string };
+  status: RuntimeSnapshot;
   error: ProtocolError;
 }
 

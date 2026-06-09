@@ -37,6 +37,7 @@ import {
 /** A scriptable WebSocket the test drives by hand (peer = the test). */
 class FakeSocket implements WebSocketLike {
   sent: string[] = [];
+  sentBinary: Uint8Array[] = [];
   openCb: (() => void) | null = null;
   messageCb: ((data: string) => void) | null = null;
   closeCb: ((info: { code: number; reason: string }) => void) | null = null;
@@ -44,6 +45,9 @@ class FakeSocket implements WebSocketLike {
 
   send(data: string): void {
     this.sent.push(data);
+  }
+  sendBinary(data: Uint8Array): void {
+    this.sentBinary.push(data);
   }
   close(): void {}
   onOpen(cb: () => void): void {
@@ -105,6 +109,18 @@ class FakeSocket implements WebSocketLike {
 }
 
 const ACK: ConnectionAck = { sessionId: "sess-1", negotiatedVersion: "2.0.0" };
+const ACK_WITH_AUDIO: ConnectionAck = {
+  sessionId: "sess-udp",
+  negotiatedVersion: "2.0.0",
+  audio: {
+    sessionTag: 42,
+    udp: { host: "127.0.0.1", port: 8000 },
+    encryption: {
+      algorithm: "xsalsa20-poly1305",
+      key: Buffer.alloc(32).toString("base64"),
+    },
+  },
+};
 const FAST_RECONNECT = { baseMs: 3, maxMs: 10, jitter: false };
 
 function wait(ms: number): Promise<void> {
@@ -137,7 +153,258 @@ function fakeUdp(): UdpSocketLike {
   };
 }
 
+function recordingUdp(sent: Uint8Array[]): UdpSocketLike {
+  return {
+    send: (bytes) => {
+      sent.push(bytes);
+    },
+    onMessage: () => {},
+    close: () => {},
+  };
+}
+
 describe("Runtime transcript delivery survives a multi-attempt reconnect", () => {
+  test("status tracks runtime liveness and the configured audio transport", async () => {
+    const socket = new FakeSocket();
+    let created = 0;
+    const ws = (_url: string): WebSocketLike => {
+      created += 1;
+      return socket;
+    };
+
+    const emitter = new RuntimeEmitter();
+    const subscriptions = new Subscriptions({ http: fakeHttp() });
+    const connection = new Connection({
+      ws,
+      url: "wss://example.test/ws",
+      getToken: async () => "tok",
+      initPayload: () => ({
+        protocolVersion: "2.0.0",
+        audio: {
+          codec: "lc3",
+          sampleRate: 16000,
+          initialSubscriptions: subscriptions.currentSet(),
+        },
+      }),
+      reconnect: FAST_RECONNECT,
+      logger: noopLogger,
+    });
+    const runtime = new Runtime({
+      connection,
+      emitter,
+      subscriptions,
+      camera: new Camera({ http: fakeHttp() }),
+      audio: new UdpAudio({ udp: fakeUdp }),
+      logger: noopLogger,
+      forceRefreshToken: async () => "tok",
+    });
+
+    const statuses: Array<ReturnType<typeof runtime.getStatus>> = [];
+    runtime.onStatusChanged((status) => {
+      statuses.push(status);
+    });
+
+    expect(runtime.getStatus()).toEqual({ status: "disconnected", audioTransport: "none" });
+
+    const connectedPromise = runtime.connect();
+    await waitUntil(() => created === 1);
+    expect(runtime.getStatus()).toEqual({ status: "connecting", audioTransport: "none" });
+
+    socket.handshake(ACK_WITH_AUDIO);
+    await connectedPromise;
+    expect(runtime.getStatus()).toEqual({ status: "connected", audioTransport: "udp" });
+
+    socket.closeCb?.({ code: 1006, reason: "network lost" });
+    await waitUntil(() => runtime.getStatus().status === "reconnecting");
+    expect(runtime.getStatus()).toEqual({ status: "reconnecting", audioTransport: "none" });
+
+    runtime.close();
+    expect(runtime.getStatus()).toEqual({ status: "disconnected", audioTransport: "none" });
+    expect(statuses).toContainEqual({ status: "connected", audioTransport: "udp" });
+    expect(statuses).toContainEqual({ status: "reconnecting", audioTransport: "none" });
+  });
+
+  test("falls back to WS when UDP liveness dies, then switches back on one UDP ack", async () => {
+    const socket = new FakeSocket();
+    let created = 0;
+    const ws = (_url: string): WebSocketLike => {
+      created += 1;
+      return socket;
+    };
+    const udpSent: Uint8Array[] = [];
+
+    const emitter = new RuntimeEmitter();
+    const subscriptions = new Subscriptions({ http: fakeHttp() });
+    const connection = new Connection({
+      ws,
+      url: "wss://example.test/ws",
+      getToken: async () => "tok",
+      initPayload: () => ({
+        protocolVersion: "2.0.0",
+        audio: {
+          codec: "lc3",
+          sampleRate: 16000,
+          initialSubscriptions: subscriptions.currentSet(),
+        },
+      }),
+      reconnect: FAST_RECONNECT,
+      logger: noopLogger,
+    });
+    const runtime = new Runtime({
+      connection,
+      emitter,
+      subscriptions,
+      camera: new Camera({ http: fakeHttp() }),
+      audio: new UdpAudio({ udp: () => recordingUdp(udpSent) }),
+      logger: noopLogger,
+      forceRefreshToken: async () => "tok",
+    });
+
+    const connectedPromise = runtime.connect();
+    await waitUntil(() => created === 1);
+    socket.handshake(ACK_WITH_AUDIO);
+    await connectedPromise;
+
+    expect(runtime.getStatus()).toEqual({ status: "connected", audioTransport: "udp" });
+    await waitUntil(() => runtime.getStatus().audioTransport === "ws", 4_000);
+    expect(runtime.getStatus()).toEqual({ status: "connected", audioTransport: "ws" });
+
+    runtime.sendAudioFrame(new Uint8Array([1, 2, 3]));
+    expect(socket.sentBinary.length).toBe(1);
+
+    socket.messageCb?.(
+      JSON.stringify({
+        v: PROTOCOL_MAJOR,
+        type: "audio.udp_liveness_ack",
+        timestamp: Date.now(),
+        payload: {
+          sessionId: ACK_WITH_AUDIO.sessionId,
+          sessionTag: ACK_WITH_AUDIO.audio?.sessionTag,
+          probeId: "probe-1",
+          receivedAt: Date.now(),
+        },
+      }),
+    );
+
+    await waitUntil(() => runtime.getStatus().audioTransport === "udp");
+    const wsFramesBeforeUdpSend = socket.sentBinary.length;
+    const udpFramesBeforeRealAudio = udpSent.length;
+    runtime.sendAudioFrame(new Uint8Array([4, 5, 6]));
+
+    expect(runtime.getStatus()).toEqual({ status: "connected", audioTransport: "udp" });
+    expect(socket.sentBinary.length).toBe(wsFramesBeforeUdpSend);
+    expect(udpSent.length).toBeGreaterThan(udpFramesBeforeRealAudio);
+    runtime.close();
+  });
+
+  test("connected event fires once on a normal initial open", async () => {
+    const socket = new FakeSocket();
+    let created = 0;
+    const ws = (_url: string): WebSocketLike => {
+      created += 1;
+      return socket;
+    };
+
+    const emitter = new RuntimeEmitter();
+    const subscriptions = new Subscriptions({ http: fakeHttp() });
+    const connection = new Connection({
+      ws,
+      url: "wss://example.test/ws",
+      getToken: async () => "tok",
+      initPayload: () => ({
+        protocolVersion: "2.0.0",
+        audio: {
+          codec: "lc3",
+          sampleRate: 16000,
+          initialSubscriptions: subscriptions.currentSet(),
+        },
+      }),
+      reconnect: FAST_RECONNECT,
+      logger: noopLogger,
+    });
+    const runtime = new Runtime({
+      connection,
+      emitter,
+      subscriptions,
+      camera: new Camera({ http: fakeHttp() }),
+      audio: new UdpAudio({ udp: fakeUdp }),
+      logger: noopLogger,
+      forceRefreshToken: async () => "tok",
+    });
+
+    let connected = 0;
+    runtime.onConnected(() => {
+      connected += 1;
+    });
+
+    const connectedPromise = runtime.connect();
+    await waitUntil(() => created === 1);
+    socket.handshake(ACK);
+    await connectedPromise;
+
+    expect(connected).toBe(1);
+    runtime.close();
+  });
+
+  test("connected event fires when the first successful open is a retry after initial failure", async () => {
+    const retrySocket = new FakeSocket();
+    let created = 0;
+    const ws = (_url: string): WebSocketLike => {
+      created += 1;
+      return retrySocket;
+    };
+
+    let tokenCalls = 0;
+    const emitter = new RuntimeEmitter();
+    const subscriptions = new Subscriptions({ http: fakeHttp() });
+    const connection = new Connection({
+      ws,
+      url: "wss://example.test/ws",
+      getToken: async () => {
+        tokenCalls += 1;
+        if (tokenCalls === 1) {
+          throw new Error("cloud unavailable during initial app boot");
+        }
+        return "tok";
+      },
+      initPayload: () => ({
+        protocolVersion: "2.0.0",
+        audio: {
+          codec: "lc3",
+          sampleRate: 16000,
+          initialSubscriptions: subscriptions.currentSet(),
+        },
+      }),
+      reconnect: FAST_RECONNECT,
+      logger: noopLogger,
+    });
+    const runtime = new Runtime({
+      connection,
+      emitter,
+      subscriptions,
+      camera: new Camera({ http: fakeHttp() }),
+      audio: new UdpAudio({ udp: fakeUdp }),
+      logger: noopLogger,
+      forceRefreshToken: async () => "tok",
+    });
+
+    let connected = 0;
+    runtime.onConnected(() => {
+      connected += 1;
+    });
+
+    await runtime.connect().catch(() => undefined);
+    expect(created).toBe(0);
+    expect(connected).toBe(0);
+
+    await waitUntil(() => created >= 1);
+    retrySocket.handshake(ACK);
+    await waitUntil(() => connected === 1);
+
+    expect(connected).toBe(1);
+    runtime.close();
+  });
+
   test("onTranscript registered once still fires after drop → N failed retries → reconnect", async () => {
     // Socket #1 = initial session. #2, #3 = failed reconnect attempts. #4 = the
     // eventual successful reconnect.

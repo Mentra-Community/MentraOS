@@ -55,6 +55,7 @@ const DEFAULT_RECONNECT = { baseMs: 500, maxMs: 5_000, jitter: true };
  */
 const DEFAULT_AUDIO_CODEC = "lc3" as const;
 const DEFAULT_AUDIO_SAMPLE_RATE = 16_000;
+const DEFAULT_LC3_FRAME_SIZE_BYTES = 20 as const;
 
 /**
  * The protocol semver this client build speaks, announced in `connection.init`.
@@ -182,6 +183,7 @@ export class CloudClient {
       audio: {
         codec: config.audio?.codec ?? DEFAULT_AUDIO_CODEC,
         sampleRate: config.audio?.sampleRate ?? DEFAULT_AUDIO_SAMPLE_RATE,
+        frameSizeBytes: config.audio?.frameSizeBytes ?? DEFAULT_LC3_FRAME_SIZE_BYTES,
         initialSubscriptions: subscriptions.currentSet(),
       },
     });
@@ -193,6 +195,9 @@ export class CloudClient {
       getToken: getAccessToken,
       initPayload,
       reconnect,
+      onAuthRejected: async () => {
+        await auth.getAccessToken({ forceRefresh: true });
+      },
       logger,
     });
     const camera = new Camera({ http: runtimeHttp });

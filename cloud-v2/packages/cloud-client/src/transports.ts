@@ -19,6 +19,7 @@
  */
 export interface WebSocketLike {
   send(data: string): void;
+  sendBinary(data: Uint8Array): void;
   close(): void;
   onOpen(cb: () => void): void;
   onMessage(cb: (data: string) => void): void;

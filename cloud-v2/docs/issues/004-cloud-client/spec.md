@@ -67,6 +67,9 @@ interface RuntimeModule {
   close(): void
 
   setSubscriptions(subs: AudioSubscription[]): Promise<void>   // full-replace, PUT /api/audio/subscriptions
+  sendAudioFrame(frame: Uint8Array): void
+
+  getStatus(): RuntimeSnapshot
 
   onTranscript(handler: (data: TranscriptionData) => void): () => void
   onTranslation(handler: (data: TranslationData) => void): () => void
@@ -77,12 +80,21 @@ interface RuntimeModule {
 
   onConnected(handler: () => void): () => void
   onDisconnected(handler: (info: { reason: string }) => void): () => void
+  onStatusChanged(handler: (status: RuntimeSnapshot) => void): () => void
   onError(handler: (err: ProtocolError) => void): () => void
 
   // generic surface for forwarding / iteration / logging (typed via the event map)
   on<K extends keyof RuntimeEvents>(event: K, handler: (data: RuntimeEvents[K]) => void): () => void
   off<K extends keyof RuntimeEvents>(event: K, handler: (data: RuntimeEvents[K]) => void): void
   onAny(handler: (event: keyof RuntimeEvents, data: unknown) => void): () => void
+}
+
+type RuntimeStatus = "connecting" | "connected" | "reconnecting" | "disconnected"
+type RuntimeAudioTransport = "udp" | "ws" | "none"
+
+interface RuntimeSnapshot {
+  status: RuntimeStatus
+  audioTransport: RuntimeAudioTransport
 }
 ```
 
@@ -100,6 +112,15 @@ interface RuntimeModule {
 - `setSubscriptions` sends `{ subscriptions, sessionId, version }` (full-replace).
   The client owns `version` (monotonic) and echoes the `sessionId` from
   `connection.ack`.
+- `getStatus()` / `onStatusChanged(cb)` expose client lifecycle state for host UI
+  and fallback policy. `status` is the WebSocket/runtime session state:
+  initial open is `connecting`, a post-open retry loop is `reconnecting`,
+  successful handshake is `connected`, and host teardown is `disconnected`.
+  `audioTransport` is the outbound cloud audio path the client has configured:
+  `udp` when `connection.ack.audio` configured UDP, `none` before/after a session
+  or when the ack does not include audio, and `ws` once client-side WS binary
+  audio fallback is implemented. Mobile/offline transcription fallback is host
+  state, not a cloud-client transport value.
 - `requestManagedPhoto` resolves when the cloud pushes `photo.ready`; rejects on
   `photo.error`. The UDP audio path receives `sessionTag`, the udp host/port, and
   the encryption key from `connection.ack.audio` and hands them to the injected

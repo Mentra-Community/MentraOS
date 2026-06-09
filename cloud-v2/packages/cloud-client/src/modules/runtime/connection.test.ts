@@ -31,6 +31,7 @@ import {
  */
 class FakeSocket implements WebSocketLike {
   sent: string[] = [];
+  sentBinary: Uint8Array[] = [];
   openCb: (() => void) | null = null;
   messageCb: ((data: string) => void) | null = null;
   closeCb: ((info: { code: number; reason: string }) => void) | null = null;
@@ -39,6 +40,9 @@ class FakeSocket implements WebSocketLike {
 
   send(data: string): void {
     this.sent.push(data);
+  }
+  sendBinary(data: Uint8Array): void {
+    this.sentBinary.push(data);
   }
   close(): void {
     this.closed = true;
@@ -114,6 +118,33 @@ function wait(ms: number): Promise<void> {
 }
 
 describe("Connection reconnect robustness", () => {
+  test("a failed initial open still enters the reconnect loop", async () => {
+    const retry = new FakeSocket();
+    let tokenCalls = 0;
+    const { conn, createdCount } = makeConnection({
+      sockets: [retry],
+      getToken: async () => {
+        tokenCalls += 1;
+        if (tokenCalls === 1) {
+          throw new Error("cloud temporarily unavailable during app boot");
+        }
+        return "test-token";
+      },
+    });
+
+    await conn.open().catch(() => undefined);
+    expect(createdCount()).toBe(0);
+
+    await wait(60);
+    expect(createdCount()).toBe(1);
+
+    retry.driveSuccessfulHandshake(SAMPLE_ACK);
+    await wait(5);
+    expect(conn.ack).toEqual(SAMPLE_ACK);
+
+    conn.close();
+  });
+
   test("a reconnect attempt that fails without onClose still schedules the next try", async () => {
     // This is the exact wedge from dev. We get a live session, drop it (entering
     // the reconnect loop), and then make the scheduled reconnect attempt FAIL in
@@ -236,6 +267,96 @@ describe("Connection reconnect robustness", () => {
     conn.close();
   });
 
+  test("a stale close from a previous socket cannot close the recovered socket", async () => {
+    const first = new FakeSocket();
+    const second = new FakeSocket();
+    const { conn, createdCount } = makeConnection({
+      sockets: [first, second],
+    });
+
+    const opened = conn.open();
+    await wait(5);
+    first.driveSuccessfulHandshake(SAMPLE_ACK);
+    await opened;
+
+    first.closeCb?.({ code: 1006, reason: "network lost" });
+    await wait(40);
+    expect(createdCount()).toBe(2);
+
+    const recoveredAck = { ...SAMPLE_ACK, sessionId: "s2" };
+    second.driveSuccessfulHandshake(recoveredAck);
+    await wait(5);
+    expect(conn.ack).toEqual(recoveredAck);
+
+    // Some transports can deliver a late/duplicate close for an old socket
+    // after a newer socket is already current. That stale event must not mark
+    // the recovered connection closed or schedule a third socket.
+    first.closeCb?.({ code: 1006, reason: "late duplicate close" });
+    await wait(60);
+
+    expect(conn.ack).toEqual(recoveredAck);
+    expect(createdCount()).toBe(2);
+
+    conn.close();
+  });
+
+  test("an unauthorized WebSocket upgrade refreshes auth before reconnecting", async () => {
+    const first = new FakeSocket();
+    const second = new FakeSocket();
+    let created = 0;
+    let refreshed = false;
+    let refreshCalls = 0;
+
+    const ws = (_url: string): WebSocketLike => {
+      const socket = [first, second][created] ?? new FakeSocket();
+      created += 1;
+      return socket;
+    };
+
+    const conn = new Connection({
+      ws,
+      url: "wss://example.test/ws",
+      getToken: async () => (refreshed ? "fresh-token" : "stale-token"),
+      initPayload: () => SAMPLE_INIT,
+      reconnect: FAST_RECONNECT,
+      onAuthRejected: async () => {
+        refreshCalls += 1;
+        await wait(10);
+        refreshed = true;
+      },
+      logger: noopLogger,
+    });
+
+    const readInitToken = (sock: FakeSocket): string => {
+      const frame = sock.sent
+        .map((s) => JSON.parse(s) as { type: string; payload: ConnectionInit & { token?: string } })
+        .find((m) => m.type === "connection.init");
+      if (!frame?.payload.token) throw new Error("no connection.init token");
+      return frame.payload.token;
+    };
+
+    const opened = conn.open();
+    await wait(5);
+    first.driveSuccessfulHandshake(SAMPLE_ACK);
+    await opened;
+    expect(readInitToken(first)).toBe("stale-token");
+
+    first.closeCb?.({
+      code: 1006,
+      reason: "Expected HTTP 101 response but was '401 Unauthorized'",
+    });
+
+    await wait(40);
+    expect(refreshCalls).toBe(1);
+    expect(created).toBe(2);
+
+    second.driveSuccessfulHandshake({ ...SAMPLE_ACK, sessionId: "s2" });
+    await wait(5);
+    expect(readInitToken(second)).toBe("fresh-token");
+
+    conn.close();
+  });
+
   test("each (re)connect's connection.init carries the live initPayload (initialSubscriptions)", async () => {
     // Regression: a reconnect's new cloud session is brand-new and starts with an
     // empty subscription set. If `connection.init` does not carry the live
@@ -269,7 +390,7 @@ describe("Connection reconnect robustness", () => {
       // Factory re-read on every open, mirroring client.ts.
       initPayload: () => ({
         protocolVersion: "2.0.0",
-        audio: { codec: "lc3", sampleRate: 16000, initialSubscriptions: liveSubs },
+        audio: { codec: "lc3", sampleRate: 16000, frameSizeBytes: 60, initialSubscriptions: liveSubs },
       }),
       reconnect: FAST_RECONNECT,
       logger: noopLogger,

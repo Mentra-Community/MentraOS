@@ -30,10 +30,16 @@ import type { RuntimeEmitter, RuntimeEvents } from "./emitter";
 import type { Subscriptions } from "./subscriptions";
 import type { Camera, PhotoOptions, StreamOptions, ManagedStream } from "./camera";
 import type { UdpAudio } from "./audio-udp";
+import type { RuntimeSnapshot } from "./status";
+
+const UDP_PROBE_INTERVAL_MS = 1_000;
+const UDP_LIVENESS_TIMEOUT_MS = 3_000;
 
 // Re-export the camera option/result types so a host importing the runtime gets
 // them from one place alongside the module that produces them.
 export type { PhotoOptions, StreamOptions, ManagedStream } from "./camera";
+export type { RuntimeAudioTransport } from "./audio-udp";
+export type { RuntimeStatus, RuntimeSnapshot } from "./status";
 
 /**
  * The public runtime surface, implemented by `Runtime` below.
@@ -59,6 +65,8 @@ export interface RuntimeModule {
    */
   sendAudioFrame(frame: Uint8Array): void;
 
+  getStatus(): RuntimeSnapshot;
+
   onTranscript(handler: (data: TranscriptionData) => void): () => void;
   onTranslation(handler: (data: TranslationData) => void): () => void;
 
@@ -68,6 +76,7 @@ export interface RuntimeModule {
 
   onConnected(handler: () => void): () => void;
   onDisconnected(handler: (info: { reason: string }) => void): () => void;
+  onStatusChanged(handler: (status: RuntimeSnapshot) => void): () => void;
   onError(handler: (err: ProtocolError) => void): () => void;
 
   on<K extends keyof RuntimeEvents>(event: K, handler: (data: RuntimeEvents[K]) => void): () => void;
@@ -105,6 +114,14 @@ export class Runtime implements RuntimeModule {
   private readonly audio: UdpAudio;
   private readonly logger: Logger;
   private readonly forceRefreshToken: () => Promise<string>;
+  private status: RuntimeSnapshot = {
+    status: "disconnected",
+    audioTransport: "none",
+  };
+  private hostClosed = true;
+  private udpProbeTimer: ReturnType<typeof setInterval> | null = null;
+  private udpProbeStartedAt = 0;
+  private lastUdpAckAt = 0;
 
   /**
    * Whether the inbound-message routing has been wired to the connection yet.
@@ -154,9 +171,12 @@ export class Runtime implements RuntimeModule {
    * would not help.
    */
   async connect(): Promise<void> {
+    this.hostClosed = false;
     this.wireRouting();
     const ack = await this.openWithAuthRetry();
-    this.onOpened(ack);
+    if (!this.opened) {
+      this.onOpened(ack);
+    }
   }
 
   /**
@@ -211,6 +231,9 @@ export class Runtime implements RuntimeModule {
         case "stream.translation":
           this.emitter.emit("translation", msg.payload);
           break;
+        case "audio.udp_liveness_ack":
+          this.handleUdpLivenessAck(msg.payload);
+          break;
         case "error":
           this.emitter.emit("error", msg.payload);
           break;
@@ -225,10 +248,22 @@ export class Runtime implements RuntimeModule {
     });
 
     this.connection.onState((state) => {
+      if (state === "connecting") {
+        this.updateStatus({
+          status: this.opened ? "reconnecting" : "connecting",
+        });
+        return;
+      }
+
       if (state === "open") {
         if (!this.opened) {
-          // The first open is driven by `connect()` itself; ignore it here so we
-          // do not configure audio twice or re-send before the initial set lands.
+          // Usually the first open is handled by connect() directly. If that
+          // initial attempt failed, Connection still keeps retrying underneath;
+          // the first later successful retry reaches us only through this state
+          // callback, so it must become the initial open instead of being
+          // ignored.
+          const ack = this.connection.ack;
+          if (ack) this.onOpened(ack);
           return;
         }
         // A reconnect re-opened the socket and redid the handshake. The cloud may
@@ -236,6 +271,15 @@ export class Runtime implements RuntimeModule {
         // current set (at the current version) to restore live transcription.
         void this.handleReopen();
       } else if (state === "closed") {
+        this.stopUdpLiveness();
+        this.updateStatus({
+          status: this.hostClosed
+            ? "disconnected"
+            : this.opened
+              ? "reconnecting"
+              : "connecting",
+          audioTransport: "none",
+        });
         this.emitter.emit("disconnected", { reason: "socket closed" });
       }
     });
@@ -254,6 +298,7 @@ export class Runtime implements RuntimeModule {
     const ack = this.connection.ack;
     if (!ack) return;
     this.configureAudio(ack);
+    this.updateStatus({ status: "connected" });
     // Announce the reconnection the same way the first open does. Without this,
     // a host that tracks liveness via `onConnected`/`onDisconnected` would stay
     // stuck "disconnected" after every reconnect (its flag never flips back),
@@ -281,6 +326,7 @@ export class Runtime implements RuntimeModule {
   private onOpened(ack: ConnectionAck): void {
     this.opened = true;
     this.configureAudio(ack);
+    this.updateStatus({ status: "connected" });
     this.emitter.emit("connected", undefined);
   }
 
@@ -294,7 +340,13 @@ export class Runtime implements RuntimeModule {
   private configureAudio(ack: ConnectionAck): void {
     if (ack.audio) {
       this.audio.configure(ack.audio);
+      this.updateStatus({ audioTransport: "udp" });
+      this.startUdpLiveness();
+      return;
     }
+    this.audio.close();
+    this.stopUdpLiveness();
+    this.updateStatus({ audioTransport: "none" });
   }
 
   /**
@@ -303,7 +355,11 @@ export class Runtime implements RuntimeModule {
    * Audio is closed first so no frame is sent on a socket that is going away.
    */
   close(): void {
+    this.hostClosed = true;
+    this.opened = false;
+    this.stopUdpLiveness();
     this.audio.close();
+    this.updateStatus({ status: "disconnected", audioTransport: "none" });
     this.connection.close();
   }
 
@@ -325,7 +381,21 @@ export class Runtime implements RuntimeModule {
 
   /** Encrypt and send one audio frame over the UDP path (see RuntimeModule). */
   sendAudioFrame(frame: Uint8Array): void {
-    this.audio.sendFrame(frame);
+    if (this.status.audioTransport === "ws") {
+      const packet = this.audio.buildPlainFrame(frame);
+      if (packet) {
+        this.connection.sendBinary(packet);
+      }
+      return;
+    }
+
+    if (this.status.audioTransport === "udp") {
+      this.audio.sendFrame(frame);
+    }
+  }
+
+  getStatus(): RuntimeSnapshot {
+    return { ...this.status };
   }
 
   // --- Camera: managed photo/stream (delegated) -----------------------------
@@ -362,6 +432,10 @@ export class Runtime implements RuntimeModule {
     return this.emitter.on("disconnected", handler);
   }
 
+  onStatusChanged(handler: (status: RuntimeSnapshot) => void): () => void {
+    return this.emitter.on("status", handler);
+  }
+
   onError(handler: (err: ProtocolError) => void): () => void {
     return this.emitter.on("error", handler);
   }
@@ -376,5 +450,64 @@ export class Runtime implements RuntimeModule {
 
   onAny(handler: (event: keyof RuntimeEvents, data: unknown) => void): () => void {
     return this.emitter.onAny(handler);
+  }
+
+  private updateStatus(next: Partial<RuntimeSnapshot>): void {
+    const snapshot = { ...this.status, ...next };
+    if (
+      snapshot.status === this.status.status &&
+      snapshot.audioTransport === this.status.audioTransport
+    ) {
+      return;
+    }
+    this.status = snapshot;
+    this.emitter.emit("status", { ...snapshot });
+  }
+
+  private startUdpLiveness(): void {
+    this.stopUdpLiveness();
+    this.udpProbeStartedAt = Date.now();
+    this.lastUdpAckAt = 0;
+    this.sendUdpProbe();
+    this.udpProbeTimer = setInterval(() => {
+      this.sendUdpProbe();
+      this.checkUdpLiveness();
+    }, UDP_PROBE_INTERVAL_MS);
+  }
+
+  private stopUdpLiveness(): void {
+    if (this.udpProbeTimer) {
+      clearInterval(this.udpProbeTimer);
+      this.udpProbeTimer = null;
+    }
+    this.udpProbeStartedAt = 0;
+    this.lastUdpAckAt = 0;
+  }
+
+  private sendUdpProbe(): void {
+    const tag = this.audio.sessionTag;
+    if (tag === null) return;
+    const probeId = `${tag}-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+    this.audio.sendProbe(probeId);
+  }
+
+  private checkUdpLiveness(): void {
+    if (this.status.status !== "connected") return;
+    const since = this.lastUdpAckAt || this.udpProbeStartedAt;
+    if (since === 0 || Date.now() - since < UDP_LIVENESS_TIMEOUT_MS) return;
+    this.updateStatus({ audioTransport: this.connection.isOpen ? "ws" : "none" });
+  }
+
+  private handleUdpLivenessAck(payload: {
+    sessionId: string;
+    sessionTag: number;
+    probeId: string;
+    receivedAt: number;
+  }): void {
+    if (payload.sessionTag !== this.audio.sessionTag) return;
+    this.lastUdpAckAt = Date.now();
+    if (this.status.status === "connected") {
+      this.updateStatus({ audioTransport: "udp" });
+    }
   }
 }

@@ -36,6 +36,9 @@ function nodeWebSocket(url: string): WebSocketLike {
     send(data: string): void {
       socket.send(data);
     },
+    sendBinary(data: Uint8Array): void {
+      socket.send(Buffer.from(data.buffer, data.byteOffset, data.byteLength));
+    },
     close(): void {
       socket.close();
     },

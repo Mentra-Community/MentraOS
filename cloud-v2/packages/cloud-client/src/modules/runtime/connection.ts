@@ -24,7 +24,11 @@
  * forever until a full app relaunch. We hit this in dev (ADB/Metro flapping
  * wedged the v2 socket; only a cold relaunch recovered it).
  *
- * Two changes close that gap, belt-and-suspenders:
+ * Three changes close that gap, belt-and-suspenders:
+ *   0. A failed initial `open()` now also enters the reconnect loop. Before
+ *      this, reconnect was robust only AFTER the first successful session had
+ *      dropped; if the app booted while cloud was down, `open()` rejected and no
+ *      retry was queued.
  *   1. The scheduled attempt's `.catch()` now reschedules itself, so a failure
  *      that did NOT fire `onClose` still queues the next try. `scheduleReconnect`
  *      is idempotent (guarded by `reconnectTimer`), so the double call from
@@ -113,6 +117,11 @@ export interface ConnectionDeps {
   // what rides in the handshake beyond the token it stamps in.
   initPayload: () => ConnectionInit;
   reconnect: { baseMs: number; maxMs: number; jitter: boolean };
+  // Called when the WebSocket upgrade itself is rejected as unauthorized. That
+  // happens before a protocol `error` frame can exist, so runtime's normal
+  // AUTH_EXPIRED handshake retry cannot see it. The host uses this to invalidate
+  // a cached access token before the next reconnect attempt asks for one.
+  onAuthRejected?: () => Promise<void> | void;
   logger: Logger;
 }
 
@@ -149,6 +158,10 @@ function backoffDelay(
   // Full jitter: a uniform random point in [0, exponential]. Spreads retries
   // across the whole window instead of clustering at its edge.
   return Math.random() * exponential;
+}
+
+function isUnauthorizedUpgrade(reason: string): boolean {
+  return /\b401\b|unauthorized/i.test(reason);
 }
 
 export class Connection {
@@ -249,7 +262,13 @@ export class Connection {
     // one interval running even if open() is called more than once.
     this.startWatchdog();
 
-    return this.connectOnce();
+    return this.connectOnce().catch((err) => {
+      if (!this.closedByHost) {
+        this.setState("closed");
+        this.scheduleReconnect("initial open failed");
+      }
+      throw err;
+    });
   }
 
   /**
@@ -284,6 +303,25 @@ export class Connection {
       return;
     }
     this.socket.send(JSON.stringify(msg));
+  }
+
+  /**
+   * Send one binary frame on the live WebSocket.
+   *
+   * Used only for the audio fallback path. A missing socket is a soft drop for
+   * the same reason text sends are: audio is continuous and reconnect is owned
+   * by the connection state machine.
+   */
+  sendBinary(bytes: Uint8Array): void {
+    if (!this.socket || this.currentState !== "open") {
+      this.deps.logger.warn("ws binary send dropped: socket not open");
+      return;
+    }
+    this.socket.sendBinary(bytes);
+  }
+
+  get isOpen(): boolean {
+    return this.currentState === "open" && this.socket !== null;
   }
 
   /** Register the single handler for validated inbound messages. */
@@ -324,15 +362,20 @@ export class Connection {
     });
 
     socket.onOpen(() => {
+      if (socket !== this.socket) return;
       // The socket is up; send the handshake. The token rides in the payload as
       // the primary auth path (the ?token= parameter above is only a fallback).
       const init = { ...this.deps.initPayload(), token };
       socket.send(JSON.stringify(envelope("connection.init", init)));
     });
 
-    socket.onMessage((data) => this.handleRawMessage(data));
+    socket.onMessage((data) => {
+      if (socket !== this.socket) return;
+      this.handleRawMessage(data);
+    });
 
     socket.onError((err) => {
+      if (socket !== this.socket) return;
       // A transport error is logged but not acted on directly: the socket's own
       // close event (which follows) drives reconnect, so we have one path for
       // "the connection ended" rather than two competing ones. We never log the
@@ -341,7 +384,7 @@ export class Connection {
       void err;
     });
 
-    socket.onClose((info) => this.handleClose(info));
+    socket.onClose((info) => this.handleClose(socket, info));
 
     return acked;
   }
@@ -371,7 +414,15 @@ export class Connection {
     if (!result.success) {
       // Unknown or malformed type. Non-fatal by the protocol: log and ignore so
       // adding message types stays backward compatible within this major.
-      this.deps.logger.warn("ws dropped: frame failed validation");
+      const issue = result.error.issues[0];
+      this.deps.logger.warn("ws dropped: frame failed validation", {
+        type:
+          parsed && typeof parsed === "object" && "type" in parsed
+            ? String((parsed as { type?: unknown }).type)
+            : "unknown",
+        path: issue?.path.join(".") ?? "",
+        issue: issue?.message ?? "unknown validation error",
+      });
       return;
     }
 
@@ -438,7 +489,12 @@ export class Connection {
    * the network dropped, so reconnect with backoff: this also covers a liveness
    * timeout, which closes the socket on purpose to funnel through this one path.
    */
-  private handleClose(info: { code: number; reason: string }): void {
+  private handleClose(
+    socket: WebSocketLike,
+    info: { code: number; reason: string },
+  ): void {
+    if (socket !== this.socket) return;
+
     this.stopLiveness();
     this.socket = null;
 
@@ -454,7 +510,24 @@ export class Connection {
     }
 
     this.setState("closed");
-    this.scheduleReconnect(info.reason || `code ${info.code}`);
+
+    const reason = info.reason || `code ${info.code}`;
+    if (isUnauthorizedUpgrade(reason)) {
+      void Promise.resolve(this.deps.onAuthRejected?.())
+        .catch((err) => {
+          this.deps.logger.warn("ws auth refresh after unauthorized upgrade failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        })
+        .finally(() => {
+          if (!this.closedByHost) {
+            this.scheduleReconnect(reason);
+          }
+        });
+      return;
+    }
+
+    this.scheduleReconnect(reason);
   }
 
   /**
@@ -583,8 +656,15 @@ export class Connection {
       // existing socket's eventual close.
       this.deps.logger.warn("ws liveness timeout: no pong, reconnecting");
       this.pongTimer = null;
-      this.teardownSocket();
-      this.handleClose({ code: 4000, reason: "liveness timeout" });
+      const socket = this.socket;
+      if (!socket) return;
+      try {
+        socket.close();
+      } catch {
+        // The close event below is the desired path; if close throws, run it
+        // ourselves so liveness still recovers the session.
+      }
+      this.handleClose(socket, { code: 4000, reason: "liveness timeout" });
     }, PONG_TIMEOUT_MS);
   }
 
