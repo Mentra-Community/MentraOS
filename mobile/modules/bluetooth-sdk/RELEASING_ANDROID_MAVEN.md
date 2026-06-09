@@ -24,7 +24,7 @@ after the SDK package version bump has merged.
 
 The commands below assume the full MentraOS Android Gradle build layout, where
 the SDK module is included under `mobile/android` as `:mentra-bluetooth-sdk`.
-That is the layout used for the `0.1.7` Maven Central release. In a fresh
+That is the layout used for Maven Central releases. In a fresh
 checkout where `mobile/android` is not present yet, run
 `cd mobile && cp .env.example .env && bun expo prebuild --platform android`
 after installing dependencies.
