@@ -138,7 +138,39 @@
       },
       {
         "tab": "Mentra Live",
-        "pages": ["app-devs/core-concepts/camera/README"]
+        "groups": [
+          {
+            "group": "Getting Started",
+            "icon": "bluetooth",
+            "pages": [
+              "mentra-live/index",
+              "app-devs/getting-started/ai-ide-integration",
+              "mentra-live/quickstart",
+              "mentra-live/examples"
+            ]
+          },
+          {
+            "group": "Platform Setup",
+            "icon": "mobile",
+            "pages": ["mentra-live/react-native-expo", "mentra-live/android", "mentra-live/ios"]
+          },
+          {
+            "group": "Core APIs",
+            "icon": "glasses",
+            "pages": [
+              "mentra-live/api-reference",
+              "mentra-live/display",
+              "mentra-live/audio",
+              "mentra-live/camera-streaming",
+              "mentra-live/hardware"
+            ]
+          },
+          {
+            "group": "Release",
+            "icon": "clipboard-check",
+            "pages": ["mentra-live/troubleshooting", "mentra-live/production-checklist"]
+          }
+        ]
       },
       {
         "tab": "OS Devs",
