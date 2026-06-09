@@ -5,12 +5,26 @@ import {Button, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {cloudClient, DEFAULT_CORE_URL, DEFAULT_RUNTIME_URL} from "@/services/cloudClient"
+import {cloudClient, resolvedEndpoints} from "@/services/cloudClient"
+import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 
 const AWS_DEV_CORE_URL = "https://core.us-west-2.dev.mentraglass.com"
 const AWS_DEV_RUNTIME_URL = "https://runtime.us-west-2.dev.mentraglass.com"
+
+const LOCAL_CORE_PORT = 3000
+const LOCAL_RUNTIME_PORT = 3001
+
+/**
+ * What a saved value means for the healthz test: the METRO_AUTO sentinel
+ * resolves to the CURRENT Metro host (the laptop serving this dev bundle), so
+ * the sentinel is what gets persisted while the probe hits the live address.
+ */
+function resolveForTest(value: string, port: number, metroHost: string | undefined): string | null {
+  if (value !== METRO_AUTO) return value
+  return metroHost ? `http://${metroHost}:${port}` : null
+}
 
 async function testEndpoint(url: string): Promise<{ok: boolean; status?: number; error?: string}> {
   const controller = new AbortController()
@@ -36,6 +50,17 @@ export default function CloudUrl() {
   const [runtimeInput, setRuntimeInput] = useState("")
   const [isSaving, setIsSaving] = useState(false)
 
+  // The dev laptop's live address (only present in Metro-served dev builds).
+  // Drives the "Local (auto)" preset; when absent the preset is hidden.
+  const metroHost = devServerHost()
+  // What the client will actually connect to with every layer applied (the
+  // override settings may be empty or hold the metro-auto sentinel).
+  const active = resolvedEndpoints()
+  const describeOverride = (value: unknown): string => {
+    if (typeof value !== "string" || value.trim().length === 0) return ""
+    return value.trim() === METRO_AUTO ? " (auto: this laptop)" : ""
+  }
+
   const handleSave = async () => {
     const core = coreInput.trim().replace(/\/+$/, "")
     const runtime = runtimeInput.trim().replace(/\/+$/, "")
@@ -46,18 +71,28 @@ export default function CloudUrl() {
     }
 
     const isHttp = (u: string) => u.startsWith("http://") || u.startsWith("https://")
-    if (!isHttp(core) || !isHttp(runtime)) {
-      showAlert("Invalid URL", "Both URLs must start with http:// or https://", [{text: "OK"}])
+    const isValid = (u: string) => u === METRO_AUTO || isHttp(u)
+    if (!isValid(core) || !isValid(runtime)) {
+      showAlert("Invalid URL", `Both URLs must start with http:// or https:// (or be "${METRO_AUTO}").`, [
+        {text: "OK"},
+      ])
+      return
+    }
+
+    const coreTestUrl = resolveForTest(core, LOCAL_CORE_PORT, metroHost)
+    const runtimeTestUrl = resolveForTest(runtime, LOCAL_RUNTIME_PORT, metroHost)
+    if (!coreTestUrl || !runtimeTestUrl) {
+      showAlert("No Metro host", "metro-auto needs a Metro-served dev build (no dev server detected).", [{text: "OK"}])
       return
     }
 
     setIsSaving(true)
     try {
-      const coreResult = await testEndpoint(core)
+      const coreResult = await testEndpoint(coreTestUrl)
       if (!coreResult.ok) {
         showAlert(
           "Core Failed",
-          `Could not verify Core at ${core}/healthz${
+          `Could not verify Core at ${coreTestUrl}/healthz${
             coreResult.status ? ` (status ${coreResult.status})` : coreResult.error ? `: ${coreResult.error}` : ""
           }.`,
           [{text: "OK"}],
@@ -65,11 +100,11 @@ export default function CloudUrl() {
         return
       }
 
-      const runtimeResult = await testEndpoint(runtime)
+      const runtimeResult = await testEndpoint(runtimeTestUrl)
       if (!runtimeResult.ok) {
         showAlert(
           "Runtime Failed",
-          `Could not verify Runtime at ${runtime}/healthz${
+          `Could not verify Runtime at ${runtimeTestUrl}/healthz${
             runtimeResult.status
               ? ` (status ${runtimeResult.status})`
               : runtimeResult.error
@@ -81,6 +116,9 @@ export default function CloudUrl() {
         return
       }
 
+      // Persist what the user chose, not what it resolved to: saving the
+      // METRO_AUTO sentinel is what lets "my laptop" keep working when the
+      // laptop's LAN IP changes — resolution happens live on every connect.
       await setCoreUrl(core)
       await setRuntimeUrl(runtime)
       cloudClient.reconnect()
@@ -115,7 +153,10 @@ export default function CloudUrl() {
         </Text>
 
         <Text style={themed($fieldLabel)}>Core URL</Text>
-        <Text style={themed($subtitle)}>Currently using: {coreUrl}</Text>
+        <Text style={themed($subtitle)}>
+          Currently using: {active.core}
+          {describeOverride(coreUrl)}
+        </Text>
         <TextInput
           style={themed($urlInput)}
           placeholder="e.g., http://192.168.1.100:3000"
@@ -129,10 +170,13 @@ export default function CloudUrl() {
         />
 
         <Text style={themed($fieldLabel)}>Runtime URL</Text>
-        <Text style={themed($subtitle)}>Currently using: {runtimeUrl}</Text>
+        <Text style={themed($subtitle)}>
+          Currently using: {active.runtime}
+          {describeOverride(runtimeUrl)}
+        </Text>
         <TextInput
           style={themed($urlInput)}
-          placeholder="e.g., http://192.168.1.100:8010"
+          placeholder="e.g., http://192.168.1.100:3001"
           placeholderTextColor={theme.colors.textDim}
           value={runtimeInput}
           onChangeText={setRuntimeInput}
@@ -162,13 +206,19 @@ export default function CloudUrl() {
             flexContainer={false}
             flex
           />
-          <Button
-            compact
-            text="Local (laptop)"
-            onPress={() => applyPreset(DEFAULT_CORE_URL, DEFAULT_RUNTIME_URL)}
-            flexContainer={false}
-            flex
-          />
+          {/* Only offered when a Metro dev server is actually detectable.
+              Fills both fields with the metro-auto sentinel: the SAVED value
+              is "my laptop", resolved live on every connect, so it follows
+              the laptop across networks instead of freezing today's IP. */}
+          {metroHost && (
+            <Button
+              compact
+              text={`Local (auto: ${metroHost})`}
+              onPress={() => applyPreset(METRO_AUTO, METRO_AUTO)}
+              flexContainer={false}
+              flex
+            />
+          )}
         </View>
       </View>
     </GlassView>

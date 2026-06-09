@@ -19,6 +19,7 @@ import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {cloudClient} from "@/services/cloudClient"
+import {devServerHost} from "@/utils/cloudClient/devHost"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
 import {handleOtaClockSkewFromGlasses} from "@/services/asg/glassesClockSync"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
@@ -226,6 +227,10 @@ class MantleManager {
         isConnected: () => cloudClient.isConnected(),
         addListener: (l) => cloudClient.onConnectionChange(l),
       },
+      // The dev laptop's live address, from Metro. The island runtime uses it
+      // to repair persisted dev-miniapp URLs that froze a previous network's
+      // IP (the bundle host is, by construction, reachable right now).
+      devServerHost: () => devServerHost(),
       setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
       sendDisplayEvent: (event) => BluetoothSdk.displayEvent(event),
       subscribeGlassesStatus: (onChange) => BluetoothSdk.onGlassesStatus(onChange),
@@ -454,9 +459,12 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(() => {
-      this.sendCalendarEvents()
-    }, 60 * 60 * 1000) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(
+      () => {
+        this.sendCalendarEvents()
+      },
+      60 * 60 * 1000,
+    ) // 1 hour
 
     try {
       // only start location updates if we have the location permission:
@@ -792,12 +800,6 @@ class MantleManager {
       this.subs.push(
         BluetoothSdk.addListener("battery_status", (event) => {
           socketComms.sendBatteryStatus(event.level, event.charging, event.timestamp)
-        }),
-      )
-
-      this.subs.push(
-        BluetoothSdk.addListener("local_transcription", (event) => {
-          mantle.handle_local_transcription(event)
         }),
       )
 
@@ -1238,7 +1240,7 @@ class MantleManager {
           endDate: Math.floor(end.getTime() / 1000),
         }
       })
-      void BluetoothSdk.setCalendarEvents(shapedEvents).catch(error => {
+      void BluetoothSdk.setCalendarEvents(shapedEvents).catch((error) => {
         console.warn("MANTLE: Failed to sync calendar events to glasses", error)
       })
       restComms.sendCalendarData({events, calendars})

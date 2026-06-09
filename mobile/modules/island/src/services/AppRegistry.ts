@@ -24,6 +24,7 @@ import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
 import type {AppletPermission, AppPermissionType, ClientApp} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
+import {getRuntimeHooks} from "../runtime/config"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
 import {checkManifestVersions} from "./manifestVersionGate"
@@ -469,10 +470,10 @@ class AppRegistry {
     this.notify()
   }
 
-  public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string, version: string, name: string}, Error> {
+  public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string; version: string; name: string}, Error> {
     return Res.try_async(async () => {
       const trimmed = baseUrl.replace(/\/$/, "")
-  
+
       const manifestRes = await fetch(`${trimmed}/miniapp.json`)
       if (!manifestRes.ok) {
         throw new Error(`Failed to fetch miniapp.json: ${manifestRes.status}`)
@@ -483,10 +484,10 @@ class AppRegistry {
       const name = (manifest.name as string | undefined) ?? packageName ?? "Mini app"
       if (!packageName) throw new Error("miniapp.json missing packageName")
       if (!version) throw new Error("miniapp.json missing version")
-  
+
       const installRes = await appRegistry.installFromUrl(`${trimmed}/bundle.zip`)
       if (installRes.is_error()) throw installRes.error
-  
+
       return {packageName, version, name}
     })
   }
@@ -805,7 +806,7 @@ class AppRegistry {
     return this.offlineApps.map((a) => {
       const running = getLocalAppRunningState(a.packageName)
       const screenshot = getLocalAppScreenshot(a.packageName)
-      
+
       return {...a, running, screenshot}
     })
   }
@@ -878,6 +879,53 @@ export interface DevAppRecord {
 }
 
 const DEV_APPS_INDEX_KEY = "dev_apps_index"
+
+function configuredDevHost(): string | undefined {
+  // Explicit escape hatch first; otherwise the host-injected Metro host (the
+  // address this dev bundle was served from — always current for the network
+  // the phone is on). Deliberately NOT the EXPO_PUBLIC_CLOUD_* URLs: those are
+  // cloud endpoints, a different machine entirely from the laptop running the
+  // miniapp dev server, and rewriting a dev URL to a cloud host would break it.
+  const explicit = process.env.EXPO_PUBLIC_LOCAL_MINIAPP_HOST
+  if (explicit) {
+    try {
+      return new URL(explicit).hostname
+    } catch {
+      if (/^[\w.-]+$/.test(explicit)) return explicit
+    }
+  }
+  return getRuntimeHooks().devServerHost?.()
+}
+
+function isPrivateLanHost(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname.startsWith("192.168.") ||
+    hostname.startsWith("10.") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+  )
+}
+
+function rewriteStaleDevUrl(value: string): string {
+  if (!__DEV__) return value
+  const host = configuredDevHost()
+  if (!host) return value
+
+  try {
+    const url = new URL(value)
+    if (url.hostname === host || !isPrivateLanHost(url.hostname)) return value
+    url.hostname = host
+    return url.toString().replace(/\/$/, "")
+  } catch {
+    return value
+  }
+}
+
+function normalizeDevAppRecord(record: DevAppRecord): DevAppRecord {
+  const devUrl = rewriteStaleDevUrl(record.devUrl)
+  const iconUrl = rewriteStaleDevUrl(record.iconUrl)
+  return devUrl === record.devUrl && iconUrl === record.iconUrl ? record : {...record, devUrl, iconUrl}
+}
 
 /**
  * The one and only package name a dev miniapp is registered under.
@@ -972,7 +1020,13 @@ export function getDevAppRecords(): DevAppRecord[] {
     const res = storage.load<string>(`${pkg}_dev_meta`)
     if (!res.is_ok()) continue
     try {
-      out.push(JSON.parse(res.value) as DevAppRecord)
+      const record = JSON.parse(res.value) as DevAppRecord
+      const normalized = normalizeDevAppRecord(record)
+      if (normalized !== record) {
+        storage.save(`${pkg}_dev_meta`, JSON.stringify(normalized))
+        storage.save(`${pkg}_dev_url`, normalized.devUrl)
+      }
+      out.push(normalized)
     } catch {
       /* corrupt record — skip */
     }

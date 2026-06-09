@@ -330,6 +330,14 @@ export interface RuntimeHooks {
   /** Cloud WebSocket connection state surface. */
   cloudConnection?: CloudConnectionAdapter
   /**
+   * The dev machine's live LAN host (no port), derived by the host from
+   * Metro's `hostUri` — the address this dev bundle was actually served from,
+   * so it is always current for whatever network the phone is on. Used to
+   * repair persisted dev-miniapp URLs that froze a previous network's IP.
+   * Unset outside Metro-served dev builds.
+   */
+  devServerHost?: () => string | undefined
+  /**
    * Forward processed display events into the host's mirror store. The
    * default no-op skips the mirror — installed-only hosts (no UI mirror)
    * can leave this unset.

@@ -10,40 +10,71 @@
  * via `setNativeUdp` / `setSecureStorage` BEFORE the client is constructed.
  */
 import {CloudClient, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
+import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-runtime/protocol"
 import type {CloudRuntimeAdapter} from "@mentra/island"
 
 import mentraAuth from "@/utils/auth/authClient"
+import {useCloudClientStatusStore} from "@/stores/cloudClientStatus"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
 import {createCloudUdpSocket} from "@/utils/cloudClient/RnUdpAdapter"
 import {cloudSecureStore} from "@/utils/cloudClient/MmkvSecureStore"
 
 const LOG_TAG = "cloudClient"
 
-// TODO: these fallbacks are the dev laptop's LAN URLs. Set
-// EXPO_PUBLIC_CLOUD_CORE_URL / EXPO_PUBLIC_CLOUD_RUNTIME_URL in .env to point at
-// a real environment. Remove the hardcoded fallbacks before shipping.
-export const DEFAULT_CORE_URL = "http://10.0.0.161:3000"
-export const DEFAULT_RUNTIME_URL = "http://10.0.0.161:8010"
+type Lc3FrameSizeBytes = 20 | 40 | 60
+
+// Neutral last-ditch fallbacks (reachable under `adb reverse`). Deliberately
+// NOT a personal LAN IP: those go stale the moment the laptop changes networks
+// and must never live in code or .env. The dev-laptop case is covered by the
+// METRO_AUTO sentinel / Metro-derived default below.
+const FALLBACK_CORE_URL = "http://localhost:3000"
+const FALLBACK_RUNTIME_URL = "http://localhost:3001"
+
+const CORE_PORT = 3000
+const RUNTIME_PORT = 3001
+
+function metroUrl(port: number): string | undefined {
+  const host = devServerHost()
+  return host ? `http://${host}:${port}` : undefined
+}
 
 /**
- * Resolve an endpoint URL with precedence: local dev store override -> env ->
- * hardcoded default. The store override is read via the settings store's
- * `getState()` accessor (not a hook) so this service stays React-free.
+ * Resolve an endpoint URL. Precedence (the user's in-app choice always wins —
+ * that is the point of the rebuild-free Dev Settings switcher):
+ *   1. store override — an explicit URL, or the METRO_AUTO sentinel, which
+ *      resolves to the CURRENT Metro host so "my laptop" survives the laptop
+ *      changing networks;
+ *   2. env (EXPO_PUBLIC_CLOUD_*) — for CI/staging builds, never personal IPs;
+ *   3. in dev, the Metro host (the machine serving this bundle);
+ *   4. a neutral localhost fallback.
+ * Read via the settings store's `getState()` accessor (not a hook) so this
+ * service stays React-free.
  */
-function resolveUrl(settingKey: string, envValue: string | undefined, fallback: string): string {
+function resolveUrl(settingKey: string, envValue: string | undefined, port: number, fallback: string): string {
   const override = useSettingsStore.getState().getSetting(settingKey)
   if (typeof override === "string" && override.trim().length > 0) {
-    return override
+    const trimmed = override.trim()
+    if (trimmed !== METRO_AUTO) return trimmed
+    // Sentinel: "my dev laptop", resolved live. If Metro is not detectable
+    // (e.g. a release build), fall through to env/default instead of failing.
+    const auto = metroUrl(port)
+    if (auto) return auto
   }
-  return envValue || fallback
+
+  const envUrl = envValue?.trim()
+  if (envUrl) return envUrl
+
+  return (__DEV__ ? metroUrl(port) : undefined) ?? fallback
 }
 
 function coreUrl(): string {
   return resolveUrl(
     SETTINGS.cloud_core_url.key,
     process.env.EXPO_PUBLIC_CLOUD_CORE_URL as string | undefined,
-    DEFAULT_CORE_URL,
+    CORE_PORT,
+    FALLBACK_CORE_URL,
   )
 }
 
@@ -51,8 +82,14 @@ function runtimeUrl(): string {
   return resolveUrl(
     SETTINGS.cloud_runtime_url.key,
     process.env.EXPO_PUBLIC_CLOUD_RUNTIME_URL as string | undefined,
-    DEFAULT_RUNTIME_URL,
+    RUNTIME_PORT,
+    FALLBACK_RUNTIME_URL,
   )
+}
+
+/** The endpoint URLs the client would use right now, every layer applied. */
+export function resolvedEndpoints(): {core: string; runtime: string} {
+  return {core: coreUrl(), runtime: runtimeUrl()}
 }
 
 /**
@@ -78,6 +115,31 @@ let adapter: CloudRuntimeAdapter | null = null
 let connected = false
 let audioSubscriptions: AudioSubscription[] = []
 let transportsReady = false
+let runtimeStatusUnsubscribe: (() => void) | null = null
+
+function setRuntimeStatus(snapshot: RuntimeSnapshot): void {
+  useCloudClientStatusStore.getState().setSnapshot(snapshot)
+}
+
+function resetRuntimeStatus(): void {
+  useCloudClientStatusStore.getState().reset()
+}
+
+function stringifyMeta(meta: unknown): string {
+  if (!meta || typeof meta !== "object") return ""
+  try {
+    return ` ${JSON.stringify(meta)}`
+  } catch {
+    return ""
+  }
+}
+
+const cloudLogger = {
+  debug: (msg: string, meta?: unknown) => console.log(`${LOG_TAG}: debug: ${msg}${stringifyMeta(meta)}`),
+  info: (msg: string, meta?: unknown) => console.log(`${LOG_TAG}: info: ${msg}${stringifyMeta(meta)}`),
+  warn: (msg: string, meta?: unknown) => console.warn(`${LOG_TAG}: warn: ${msg}${stringifyMeta(meta)}`),
+  error: (msg: string, meta?: unknown) => console.warn(`${LOG_TAG}: error: ${msg}${stringifyMeta(meta)}`),
+}
 
 /**
  * Listeners that want to know when the live session connects/disconnects. The
@@ -103,6 +165,11 @@ function ensureTransports(): void {
   transportsReady = true
   setNativeUdp(() => createCloudUdpSocket())
   setSecureStorage(cloudSecureStore)
+}
+
+function lc3FrameSizeBytes(): Lc3FrameSizeBytes {
+  const frameSize = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key)
+  return frameSize === 20 || frameSize === 40 || frameSize === 60 ? frameSize : 20
 }
 
 function buildAdapter(c: CloudClient): CloudRuntimeAdapter {
@@ -146,16 +213,28 @@ export const cloudClient = {
 
     ensureTransports()
 
+    const endpoints = {core: coreUrl(), runtime: runtimeUrl()}
+    console.log(`${LOG_TAG}: endpoints ${JSON.stringify(endpoints)}`)
+
     client = new CloudClient({
-      endpoints: {core: coreUrl(), runtime: runtimeUrl()},
+      endpoints,
       // The phone LC3-encodes mic audio (even in phone/simulated mode), so we
-      // announce LC3 at 16 kHz to match what the capture site sends.
-      audio: {codec: "lc3", sampleRate: 16000},
+      // announce LC3 at 16 kHz with the same frame size the encoder emits.
+      audio: {codec: "lc3", sampleRate: 16000, frameSizeBytes: lc3FrameSizeBytes()},
       auth: {getSubjectToken: getSupabaseSubjectToken},
+      logger: cloudLogger,
     })
 
     const c = client
+    runtimeStatusUnsubscribe?.()
+    runtimeStatusUnsubscribe = c.runtime.onStatusChanged((status) => {
+      if (c !== client) return
+      setRuntimeStatus(status)
+    })
+    setRuntimeStatus(c.runtime.getStatus())
+
     c.runtime.onConnected(() => {
+      if (c !== client) return
       connected = true
       console.log(`${LOG_TAG}: runtime connected`)
       // Re-apply any subscriptions queued before connect (or dropped across a
@@ -163,15 +242,16 @@ export const cloudClient = {
       // would never land and the cloud would never power its captions. Best-
       // effort: log on failure, never throw out of the connect handler.
       if (audioSubscriptions.length > 0) {
-        try {
-          c.runtime.setSubscriptions(audioSubscriptions)
-        } catch (err) {
-          console.warn(`${LOG_TAG}: re-applying queued subscriptions failed: ${(err as Error)?.message ?? err}`)
-        }
+        c.runtime
+          .setSubscriptions(audioSubscriptions)
+          .catch((err) =>
+            console.warn(`${LOG_TAG}: re-applying queued subscriptions failed: ${(err as Error)?.message ?? err}`),
+          )
       }
       notifyConnectionListeners(true)
     })
     c.runtime.onDisconnected((info) => {
+      if (c !== client) return
       connected = false
       console.log(`${LOG_TAG}: runtime disconnected (${info.reason})`)
       notifyConnectionListeners(false)
@@ -204,12 +284,14 @@ export const cloudClient = {
     } catch (err) {
       console.warn(`${LOG_TAG}: reconnect close() failed: ${(err as Error)?.message ?? err}`)
     }
+    runtimeStatusUnsubscribe?.()
+    runtimeStatusUnsubscribe = null
 
     const wasConnected = connected
     client = null
     adapter = null
     connected = false
-    audioSubscriptions = []
+    resetRuntimeStatus()
     // Notify so the local-miniapp STT fallback engages while the client is torn
     // down and before the rebuilt client completes its handshake.
     if (wasConnected) {
