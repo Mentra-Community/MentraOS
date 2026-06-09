@@ -2388,8 +2388,23 @@ func streamPreviewIsReady(streamUrl: String, protocol selectedProtocol: ExampleS
         guard let previewUrl = srtHlsPreviewUrl(streamUrl) else { return false }
         return await hlsPreviewIsReady(previewUrl)
     case .webrtc:
-        guard let previewUrl = webrtcHlsPreviewUrl(streamUrl) else { return false }
-        return await hlsPreviewIsReady(previewUrl)
+        guard let previewUrl = webrtcPreviewUrl(streamUrl) else { return false }
+        return await webPreviewIsReady(previewUrl)
+    }
+}
+
+private func webPreviewIsReady(_ url: URL) async -> Bool {
+    var request = URLRequest(url: url)
+    request.cachePolicy = .reloadIgnoringLocalCacheData
+    request.timeoutInterval = 2
+    do {
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            return false
+        }
+        return (200 ... 299).contains(http.statusCode)
+    } catch {
+        return false
     }
 }
 
@@ -2498,26 +2513,6 @@ func webrtcPreviewUrl(_ whipUrlText: String) -> URL? {
     if components.path.isEmpty {
         components.path = "/"
     }
-    components.query = nil
-    return components.url
-}
-
-func webrtcHlsPreviewUrl(_ whipUrlText: String) -> URL? {
-    guard var components = URLComponents(string: whipUrlText),
-          components.scheme == "http" || components.scheme == "https",
-          let host = components.host,
-          isLocalPreviewHost(host)
-    else { return nil }
-    var path = components.path
-    if path.hasSuffix("/whip") {
-        path = String(path.dropLast("/whip".count))
-    } else if path.hasSuffix("/whep") {
-        path = String(path.dropLast("/whep".count))
-    }
-    let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    components.scheme = "http"
-    components.port = 8888
-    components.path = trimmedPath.isEmpty ? "/index.m3u8" : "/\(trimmedPath)/index.m3u8"
     components.query = nil
     return components.url
 }

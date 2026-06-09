@@ -2503,9 +2503,22 @@ fun streamPreviewIsReady(streamUrl: String, protocol: String): Boolean {
         when (protocol) {
             "rtmp" -> rtmpHlsPreviewUrl(streamUrl)?.let(::hlsPreviewIsReady) == true
             "srt" -> srtHlsPreviewUrl(streamUrl)?.let(::hlsPreviewIsReady) == true
-            "webrtc" -> webrtcHlsPreviewUrl(streamUrl)?.let(::hlsPreviewIsReady) == true
+            "webrtc" -> webPreviewIsReady(webrtcPreviewUrl(streamUrl))
             else -> false
         }
+    } catch (_: Exception) {
+        false
+    }
+}
+
+private fun webPreviewIsReady(previewUrl: String): Boolean {
+    return try {
+        val connection = URL(previewUrl).openConnection() as HttpURLConnection
+        connection.connectTimeout = 1500
+        connection.readTimeout = 1500
+        val code = connection.responseCode
+        connection.disconnect()
+        code in 200..299
     } catch (_: Exception) {
         false
     }
@@ -2605,21 +2618,6 @@ fun webrtcPreviewUrl(whipUrlText: String): String {
     val port = url.port.takeIf { it >= 0 }?.let { ":$it" } ?: ""
     val path = url.path.removeSuffix("/whip").ifBlank { "/" }
     return "${url.protocol}://${url.host}$port$path"
-}
-
-fun webrtcHlsPreviewUrl(whipUrlText: String): String? {
-    val url = URL(whipUrlText)
-    if (url.protocol != "http" && url.protocol != "https") {
-        throw IllegalArgumentException("Only http and https WHIP URLs are supported.")
-    }
-    if (!isLocalPreviewHost(url.host)) {
-        return null
-    }
-    val basePath = url.path
-        .removeSuffix("/whip")
-        .removeSuffix("/whep")
-        .trim('/')
-    return "http://${url.host}:8888/${if (basePath.isBlank()) "index.m3u8" else "$basePath/index.m3u8"}"
 }
 
 fun localRtmpSetupMessage(detail: String): String =

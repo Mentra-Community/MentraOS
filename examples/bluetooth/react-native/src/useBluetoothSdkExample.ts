@@ -2691,8 +2691,19 @@ async function streamPreviewIsReady(streamUrl: string, protocol: StreamProtocol)
       const previewUrl = srtHlsPreviewUrl(streamUrl);
       return previewUrl ? hlsPreviewIsReady(previewUrl) : false;
     }
-    const previewUrl = webrtcHlsPreviewUrl(streamUrl);
-    return previewUrl ? hlsPreviewIsReady(previewUrl) : false;
+    return webPreviewIsReady(webrtcPreviewUrl(streamUrl));
+  } catch {
+    return false;
+  }
+}
+
+async function webPreviewIsReady(previewUrl: string) {
+  try {
+    const response = await fetch(cacheBustedUrl(previewUrl), {
+      cache: 'no-store',
+      headers: {'Cache-Control': 'no-cache', Pragma: 'no-cache'},
+    });
+    return response.ok;
   } catch {
     return false;
   }
@@ -2782,28 +2793,6 @@ function webrtcPreviewUrl(whipUrlText: string) {
   if (whipUrl.pathname.endsWith('/whip')) {
     whipUrl.pathname = whipUrl.pathname.slice(0, -'/whip'.length) || '/';
   }
-  whipUrl.search = '';
-  return whipUrl.toString();
-}
-
-function webrtcHlsPreviewUrl(whipUrlText: string) {
-  const whipUrl = new URL(whipUrlText);
-  if (whipUrl.protocol !== 'http:' && whipUrl.protocol !== 'https:') {
-    throw new Error('Only http and https WHIP URLs are supported.');
-  }
-  if (!isLocalPreviewHost(whipUrl.hostname)) {
-    return null;
-  }
-  let path = whipUrl.pathname;
-  if (path.endsWith('/whip')) {
-    path = path.slice(0, -'/whip'.length);
-  } else if (path.endsWith('/whep')) {
-    path = path.slice(0, -'/whep'.length);
-  }
-  const trimmed = path.replace(/^\/+|\/+$/g, '');
-  whipUrl.protocol = 'http:';
-  whipUrl.port = '8888';
-  whipUrl.pathname = trimmed ? `/${trimmed}/index.m3u8` : '/index.m3u8';
   whipUrl.search = '';
   return whipUrl.toString();
 }
