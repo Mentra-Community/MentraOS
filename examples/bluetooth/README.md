@@ -12,6 +12,10 @@ The SDK is available in three first-class forms:
 
 Use the latest SDK version published by Mentra for your app. This repo can be cloned and used without any local path to the MentraOS source tree.
 
+## Documentation
+
+Checkout the full [Mentra Bluetooth SDK documentation here](https://bluetooth-sdk-docs.mentra.glass).
+
 ## Start Here
 
 1. Read [Getting Started](docs/getting-started.md) for install, permissions, and minimal connection flows.
