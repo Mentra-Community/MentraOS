@@ -915,6 +915,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         });
         handlePhotoResponse(response);
       } catch (error) {
+        if (activePhotoRequestIdRef.current === requestId) {
+          activePhotoRequestIdRef.current = null;
+        }
         markPhotoRequestFailed(requestId, 'REQUEST_FAILED', formatError(error));
         throw error;
       }
@@ -958,6 +961,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       handlePhotoResponse(response);
     } catch (error) {
       clearPhotoUploadTimeout();
+      if (activePhotoRequestIdRef.current === requestId) {
+        activePhotoRequestIdRef.current = null;
+      }
       markPhotoRequestFailed(requestId, 'REQUEST_FAILED', formatError(error));
       throw error;
     }

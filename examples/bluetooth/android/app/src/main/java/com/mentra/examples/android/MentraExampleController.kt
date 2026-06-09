@@ -268,6 +268,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var bluetoothA2dp: BluetoothA2dp? = null
     private var audioObserversRegistered = false
     private var volumeRefreshJob: Job? = null
+    private var actionSequence = 0L
+    private var activeActionId: Long? = null
 
     private val micSampleRate = 16_000
     private val micChannelCount = 1
@@ -532,19 +534,26 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             photoPreviewDetails = null,
             photoPreviewUrl = null,
         )
-        val responseEvent = withContext(Dispatchers.IO) {
-            mentraBluetoothSdk.requestPhoto(
-                PhotoRequest(
-                    requestId = requestId,
-                    appId = "com.mentra.examples.android",
-                    size = PhotoSize.fromValue(state.photoSize),
-                    webhookUrl = uploadUrl,
-                    compress = PhotoCompression.fromValue(state.photoCompression),
-                    sound = true,
-                    exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
-                    iso = if (state.photoExposureManual) state.photoIso else null,
+        val responseEvent = try {
+            withContext(Dispatchers.IO) {
+                mentraBluetoothSdk.requestPhoto(
+                    PhotoRequest(
+                        requestId = requestId,
+                        appId = "com.mentra.examples.android",
+                        size = PhotoSize.fromValue(state.photoSize),
+                        webhookUrl = uploadUrl,
+                        compress = PhotoCompression.fromValue(state.photoCompression),
+                        sound = true,
+                        exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
+                        iso = if (state.photoExposureManual) state.photoIso else null,
+                    )
                 )
-            )
+            }
+        } catch (error: Throwable) {
+            if (activePhotoRequestId == requestId) {
+                activePhotoRequestId = null
+            }
+            throw error
         }
         handlePhotoResponse(responseEvent)
         pollPhotoPreview(requestId, statusUrl, generation)
@@ -569,19 +578,28 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             photoPreviewDetails = null,
             photoPreviewUrl = null,
         )
-        val responseEvent = withContext(Dispatchers.IO) {
-            mentraBluetoothSdk.requestPhoto(
-                PhotoRequest(
-                    requestId = requestId,
-                    appId = "com.mentra.examples.android",
-                    size = PhotoSize.fromValue(state.photoSize),
-                    webhookUrl = uploadUrl,
-                    compress = PhotoCompression.fromValue(state.photoCompression),
-                    sound = true,
-                    exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
-                    iso = if (state.photoExposureManual) state.photoIso else null,
+        val responseEvent = try {
+            withContext(Dispatchers.IO) {
+                mentraBluetoothSdk.requestPhoto(
+                    PhotoRequest(
+                        requestId = requestId,
+                        appId = "com.mentra.examples.android",
+                        size = PhotoSize.fromValue(state.photoSize),
+                        webhookUrl = uploadUrl,
+                        compress = PhotoCompression.fromValue(state.photoCompression),
+                        sound = true,
+                        exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
+                        iso = if (state.photoExposureManual) state.photoIso else null,
+                    )
                 )
-            )
+            }
+        } catch (error: Throwable) {
+            directPhotoTimeoutJob?.cancel()
+            directPhotoTimeoutJob = null
+            if (activePhotoRequestId == requestId) {
+                activePhotoRequestId = null
+            }
+            throw error
         }
         handlePhotoResponse(responseEvent)
         addEvent("TX", "requestPhoto requestId=$requestId webhookUrl=$uploadUrl")
@@ -693,55 +711,61 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (state.streamProtocol == protocol) {
             return
         }
-        val currentUrl = state.streamUrl.trim()
-        val shouldUseDefault = currentUrl.isEmpty() || currentUrl in streamDefaultUrls.values
-        val stoppedStream = stopStreamForConfigurationChange("Stopped before changing stream protocol")
-        state = state.copy(
-            streamProtocol = protocol,
-            streamUrl = if (shouldUseDefault) defaultStreamUrl(protocol) else state.streamUrl,
-            streamStatus = if (stoppedStream) "Ready to start stream" else state.streamStatus,
-            streamResolvedConfig = null,
-        )
+        scope.launch {
+            val currentUrl = state.streamUrl.trim()
+            val shouldUseDefault = currentUrl.isEmpty() || currentUrl in streamDefaultUrls.values
+            val stoppedStream = stopStreamForConfigurationChange("Stopped before changing stream protocol")
+            state = state.copy(
+                streamProtocol = protocol,
+                streamUrl = if (shouldUseDefault) defaultStreamUrl(protocol) else state.streamUrl,
+                streamStatus = if (stoppedStream) "Ready to start stream" else state.streamStatus,
+                streamResolvedConfig = null,
+            )
+        }
     }
 
     fun setStreamCloudServerEnabled(enabled: Boolean) {
         if (state.streamCloudServerEnabled == enabled) {
             return
         }
-        stopStreamForConfigurationChange("Stopped before changing stream destination")
-        if (enabled) {
-            val currentUrl = state.streamUrl.trim()
-            val shouldUseDefault = currentUrl.isEmpty() || currentUrl in streamDefaultUrls.values
+        scope.launch {
+            stopStreamForConfigurationChange("Stopped before changing stream destination")
+            if (enabled) {
+                val currentUrl = state.streamUrl.trim()
+                val shouldUseDefault = currentUrl.isEmpty() || currentUrl in streamDefaultUrls.values
+                state = state.copy(
+                    streamCloudServerEnabled = true,
+                    streamUrl = if (shouldUseDefault) defaultStreamUrl(state.streamProtocol) else state.streamUrl,
+                    streamStatus = "Ready to start stream",
+                    streamPreviewReady = false,
+                    streamResolvedConfig = null,
+                    directStreamFrame = null,
+                )
+                return@launch
+            }
+
             state = state.copy(
-                streamCloudServerEnabled = true,
-                streamUrl = if (shouldUseDefault) defaultStreamUrl(state.streamProtocol) else state.streamUrl,
-                streamStatus = "Ready to start stream",
+                streamCloudServerEnabled = false,
+                streamStatus = "Ready to stream WebRTC to this phone",
                 streamPreviewReady = false,
                 streamResolvedConfig = null,
                 directStreamFrame = null,
             )
-            return
         }
-
-        state = state.copy(
-            streamCloudServerEnabled = false,
-            streamStatus = "Ready to stream WebRTC to this phone",
-            streamPreviewReady = false,
-            streamResolvedConfig = null,
-            directStreamFrame = null,
-        )
     }
 
     fun setStreamUrl(url: String) {
         if (state.streamUrl == url) {
             return
         }
-        val stoppedStream = stopStreamForConfigurationChange("Stopped before changing stream URL")
-        state = state.copy(
-            streamUrl = url,
-            streamStatus = if (stoppedStream) "Ready to start stream" else state.streamStatus,
-            streamResolvedConfig = null,
-        )
+        scope.launch {
+            val stoppedStream = stopStreamForConfigurationChange("Stopped before changing stream URL")
+            state = state.copy(
+                streamUrl = url,
+                streamStatus = if (stoppedStream) "Ready to start stream" else state.streamStatus,
+                streamResolvedConfig = null,
+            )
+        }
     }
 
     fun setStreamFps(fps: Int) {
@@ -955,7 +979,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         )
     }
 
-    private fun stopStreamForConfigurationChange(status: String): Boolean {
+    private suspend fun stopStreamForConfigurationChange(status: String): Boolean {
         val streamActive = state.streamRequested || state.streamStartedAt != null || state.directStreamReceiverRunning
         if (!streamActive) {
             return false
@@ -968,13 +992,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         directStreamStopJob?.cancel()
         directStreamStopJob = null
         if (isGlassesConnected()) {
-            scope.launch {
-                try {
-                    val status = withContext(Dispatchers.IO) { mentraBluetoothSdk.stopStream() }
-                    addEvent("LIVE", "stream ${summarize(status.values)}")
-                } catch (error: Throwable) {
-                    addEvent("TX", "stopStream before configuration change failed: ${error.message ?: error::class.java.simpleName}")
-                }
+            try {
+                val stopStatus = withContext(Dispatchers.IO) { mentraBluetoothSdk.stopStream() }
+                addEvent("LIVE", "stream ${summarize(stopStatus.values)}")
+            } catch (error: Throwable) {
+                addEvent("TX", "stopStream before configuration change failed: ${error.message ?: error::class.java.simpleName}")
             }
             addEvent("TX", "stopStream before stream configuration change")
         }
@@ -1716,6 +1738,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     private fun runAction(label: String, action: suspend () -> Unit) {
+        val actionId = ++actionSequence
+        activeActionId = actionId
         state = state.copy(activeAction = label, lastAction = "Running: $label")
         addEvent("TX", label)
         scope.launch {
@@ -1726,7 +1750,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 state = state.copy(lastAction = "Failed: $label - ${error.message}")
                 addEvent("TX", "$label failed: ${error.message}")
             } finally {
-                state = state.copy(activeAction = state.activeAction.takeUnless { it == label })
+                if (activeActionId == actionId) {
+                    activeActionId = null
+                    state = state.copy(activeAction = null)
+                }
             }
         }
     }
@@ -2249,7 +2276,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                         val body = connection.inputStream.bufferedReader().use { it.readText() }
                         val photoUrl = Regex("\"photoUrl\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
                         if (photoUrl != null) {
-                            val bytes = Regex("\"bytes\"\\s*:\\s*(\\d+)").find(body)?.groupValues?.get(1)?.toIntOrNull()
+                            val bytes = Regex("\"fileSizeBytes\"\\s*:\\s*(\\d+)").find(body)?.groupValues?.get(1)?.toIntOrNull()
                             val contentType = Regex("\"contentType\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
                             val uploadedAt = Regex("\"uploadedAt\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
                             scope.launch {

@@ -93,6 +93,9 @@ internal class StillImageBarcodeScanner(
       return fullImageResults
     }
 
+    if (scanBudgetExceeded("ZXing-C++ crop ranking")) {
+      return emptyList()
+    }
     val fallbackVariants = zxingFallbackVariants(bitmap)
     Log.d(TAG, "ZXing-C++ fallback trying ${fallbackVariants.size} ranked crops")
 

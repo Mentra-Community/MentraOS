@@ -325,7 +325,7 @@ function formatBytes(bytes: number) {
     return 'unknown size';
   }
   if (bytes < 1024 * 1024) {
-    return `${Math.round(bytes / 1024)} KB`;
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   }
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

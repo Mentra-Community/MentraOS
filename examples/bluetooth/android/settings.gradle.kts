@@ -16,7 +16,7 @@ dependencyResolutionManagement {
         if (mentraBluetoothSdkRoot.isNullOrBlank()) {
             RepositoriesMode.FAIL_ON_PROJECT_REPOS
         } else {
-            RepositoriesMode.PREFER_PROJECT
+            RepositoriesMode.PREFER_SETTINGS
         }
     )
     repositories {

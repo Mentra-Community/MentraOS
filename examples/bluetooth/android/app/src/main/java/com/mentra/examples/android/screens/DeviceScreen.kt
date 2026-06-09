@@ -324,7 +324,7 @@ private fun otaCardDetail(state: com.mentra.examples.android.MentraExampleState)
 private fun formatBytes(bytes: Long): String =
     when {
         bytes <= 0 -> "unknown size"
-        bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+        bytes < 1024 * 1024 -> if (bytes < 1024) "$bytes B" else "${bytes / 1024} KB"
         else -> String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
     }
 

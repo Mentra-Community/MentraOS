@@ -557,18 +557,26 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             photoPreviewUrl = nil
             photoPreviewImage = nil
             cameraStatus = "Camera: webhook upload requested (\(requestId))"
-            let responseEvent = try await mentraBluetoothSdk.requestPhoto(
-                PhotoRequest(
-                    requestId: requestId,
-                    appId: "com.mentra.examples.ios",
-                    size: photoSize,
-                    webhookUrl: uploadUrl,
-                    compress: photoCompression,
-                    sound: true,
-                    exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
-                    iso: photoExposureManual ? photoIso : nil
+            let responseEvent: PhotoResponseEvent
+            do {
+                responseEvent = try await mentraBluetoothSdk.requestPhoto(
+                    PhotoRequest(
+                        requestId: requestId,
+                        appId: "com.mentra.examples.ios",
+                        size: photoSize,
+                        webhookUrl: uploadUrl,
+                        compress: photoCompression,
+                        sound: true,
+                        exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
+                        iso: photoExposureManual ? photoIso : nil
+                    )
                 )
-            )
+            } catch {
+                if activePhotoRequestId == requestId {
+                    activePhotoRequestId = nil
+                }
+                throw error
+            }
             handlePhotoResponse(responseEvent.response)
             pollPhotoPreview(requestId: requestId, statusUrl: statusUrl.deletingLastPathComponent().appendingPathComponent("\(requestId).json"), generation: generation)
         }
@@ -593,18 +601,28 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         photoPreviewUrl = nil
         photoPreviewImage = nil
         cameraStatus = "Camera: requested phone upload (\(requestId))"
-        let responseEvent = try await mentraBluetoothSdk.requestPhoto(
-            PhotoRequest(
-                requestId: requestId,
-                appId: "com.mentra.examples.ios",
-                size: photoSize,
-                webhookUrl: uploadUrl,
-                compress: photoCompression,
-                sound: true,
-                exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
-                iso: photoExposureManual ? photoIso : nil
+        let responseEvent: PhotoResponseEvent
+        do {
+            responseEvent = try await mentraBluetoothSdk.requestPhoto(
+                PhotoRequest(
+                    requestId: requestId,
+                    appId: "com.mentra.examples.ios",
+                    size: photoSize,
+                    webhookUrl: uploadUrl,
+                    compress: photoCompression,
+                    sound: true,
+                    exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
+                    iso: photoExposureManual ? photoIso : nil
+                )
             )
-        )
+        } catch {
+            directPhotoTimeoutTask?.cancel()
+            directPhotoTimeoutTask = nil
+            if activePhotoRequestId == requestId {
+                activePhotoRequestId = nil
+            }
+            throw error
+        }
         handlePhotoResponse(responseEvent.response)
         append(tag: "TX", text: "requestPhoto requestId=\(requestId) webhookUrl=\(uploadUrl)")
     }
@@ -1006,7 +1024,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     @discardableResult
-    private func stopStreamForConfigurationChange(status: String) -> Bool {
+    private func stopStreamForConfigurationChange(status: String) async -> Bool {
         let streamActive = streamRequested || streamStartedAt != nil || directStreamReceiverRunning
         guard streamActive else { return false }
 
@@ -1016,14 +1034,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         directStreamStopTask?.cancel()
         directStreamStopTask = nil
         if glassesConnected {
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                do {
-                    let status = try await self.mentraBluetoothSdk.stopStream()
-                    self.append(tag: "LIVE", text: "stream \(summarize(status.values))")
-                } catch {
-                    self.append(tag: "TX", text: "stopStream before configuration change failed: \(error.localizedDescription)")
-                }
+            do {
+                let stopStatus = try await mentraBluetoothSdk.stopStream()
+                append(tag: "LIVE", text: "stream \(summarize(stopStatus.values))")
+            } catch {
+                append(tag: "TX", text: "stopStream before configuration change failed: \(error.localizedDescription)")
             }
             append(tag: "TX", text: "stopStream before stream configuration change")
         }
@@ -1044,49 +1059,58 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func selectStreamProtocol(_ nextProtocol: ExampleStreamProtocol) {
         guard streamProtocol != nextProtocol else { return }
-        let currentUrl = streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
-        let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
-        let stoppedStream = stopStreamForConfigurationChange(status: "Stopped before changing stream protocol")
-        streamProtocol = nextProtocol
-        streamResolvedConfig = nil
-        if shouldUseDefault {
-            streamUrl = nextProtocol.defaultUrl
-        }
-        if stoppedStream {
-            streamStatus = "Ready to start stream"
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let currentUrl = self.streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
+            let stoppedStream = await self.stopStreamForConfigurationChange(status: "Stopped before changing stream protocol")
+            self.streamProtocol = nextProtocol
+            self.streamResolvedConfig = nil
+            if shouldUseDefault {
+                self.streamUrl = nextProtocol.defaultUrl
+            }
+            if stoppedStream {
+                self.streamStatus = "Ready to start stream"
+            }
         }
     }
 
     func setStreamCloudServerEnabled(_ enabled: Bool) {
         guard streamCloudServerEnabled != enabled else { return }
-        stopStreamForConfigurationChange(status: "Stopped before changing stream destination")
-        streamResolvedConfig = nil
-        if enabled {
-            let currentUrl = streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
-            let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
-            streamCloudServerEnabled = true
-            if shouldUseDefault {
-                streamUrl = streamProtocol.defaultUrl
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.stopStreamForConfigurationChange(status: "Stopped before changing stream destination")
+            self.streamResolvedConfig = nil
+            if enabled {
+                let currentUrl = self.streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+                let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
+                self.streamCloudServerEnabled = true
+                if shouldUseDefault {
+                    self.streamUrl = self.streamProtocol.defaultUrl
+                }
+                self.streamStatus = "Ready to start stream"
+                self.streamPreviewReady = false
+                self.streamResolvedConfig = nil
+                return
             }
-            streamStatus = "Ready to start stream"
-            streamPreviewReady = false
-            streamResolvedConfig = nil
-            return
-        }
 
-        streamCloudServerEnabled = false
-        streamStatus = "Ready to stream WebRTC to this phone"
-        streamPreviewReady = false
-        streamResolvedConfig = nil
+            self.streamCloudServerEnabled = false
+            self.streamStatus = "Ready to stream WebRTC to this phone"
+            self.streamPreviewReady = false
+            self.streamResolvedConfig = nil
+        }
     }
 
     func setStreamUrl(_ nextUrl: String) {
         guard streamUrl != nextUrl else { return }
-        let stoppedStream = stopStreamForConfigurationChange(status: "Stopped before changing stream URL")
-        streamUrl = nextUrl
-        streamResolvedConfig = nil
-        if stoppedStream {
-            streamStatus = "Ready to start stream"
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let stoppedStream = await self.stopStreamForConfigurationChange(status: "Stopped before changing stream URL")
+            self.streamUrl = nextUrl
+            self.streamResolvedConfig = nil
+            if stoppedStream {
+                self.streamStatus = "Ready to start stream"
+            }
         }
     }
 
@@ -1905,7 +1929,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                         photoPreviewUrl = url
                         photoPreviewImage = nil
                         photoPreviewDetails = (photoPreviewDetails ?? .waiting(source: "Cloud server")).uploaded(
-                            byteCount: intValue(json, "bytes"),
+                            byteCount: intValue(json, "fileSizeBytes"),
                             contentType: stringValue(json, "contentType"),
                             previewUrl: photoUrl,
                             requestId: stringValue(json, "requestId") ?? requestId,
