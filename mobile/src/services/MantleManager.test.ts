@@ -9,7 +9,12 @@ import {useDisplayStore} from "@/stores/display"
 import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
-import {coreModuleMock, emitCoreModuleEvent, resetCoreModuleMock} from "@/test-utils/mockCoreModule"
+import {
+  coreModuleMock,
+  emitCoreModuleEvent,
+  getCoreModuleListenerCount,
+  resetCoreModuleMock,
+} from "@/test-utils/mockCoreModule"
 
 jest.mock("@mentra/bluetooth-sdk-internal", () => {
   const {coreModuleMock} = require("@/test-utils/mockCoreModule")
@@ -226,6 +231,7 @@ describe("MantleManager", () => {
       }),
     )
     expect(crustModuleMock.setNotificationConfig).toHaveBeenCalledWith(true, [])
+    expect(getCoreModuleListenerCount("local_transcription")).toBe(1)
 
     emitCoreModuleEvent("bluetooth_status", {searching: true, otherBtConnected: true})
     emitCoreModuleEvent("glasses_status", {
@@ -303,7 +309,6 @@ describe("MantleManager", () => {
         core_token: "new-token",
       }),
     )
-
     ;(coreModuleMock.updateBluetoothSettings as jest.Mock).mockClear()
     await useSettingsStore.getState().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, false)
     expect(coreModuleMock.updateBluetoothSettings).toHaveBeenCalledWith(

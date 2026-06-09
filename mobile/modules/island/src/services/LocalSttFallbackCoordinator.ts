@@ -109,10 +109,18 @@ class LocalSttFallbackCoordinator {
       this.log("local stt model is not available yet — skipping activation")
       return
     }
+    if (!this.hasTranscriptionSubscription || this.cloudConnected) {
+      this.log("local stt activation skipped: cloud recovered before start completed")
+      return
+    }
     try {
       await getRuntimeHooks().restartTranscriber?.()
     } catch (err) {
       this.log(`restartTranscriber failed: ${err}`)
+    }
+    if (!this.hasTranscriptionSubscription || this.cloudConnected) {
+      this.log("local stt activation skipped: cloud recovered during transcriber restart")
+      return
     }
     getRuntimeHooks().settings?.setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, true)
     this.localActive = true
