@@ -269,7 +269,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var audioObserversRegistered = false
     private var volumeRefreshJob: Job? = null
     private var actionSequence = 0L
-    private var activeActionId: Long? = null
+    private val activeActions = linkedMapOf<Long, String>()
 
     private val micSampleRate = 16_000
     private val micChannelCount = 1
@@ -1739,7 +1739,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     private fun runAction(label: String, action: suspend () -> Unit) {
         val actionId = ++actionSequence
-        activeActionId = actionId
+        activeActions[actionId] = label
         state = state.copy(activeAction = label, lastAction = "Running: $label")
         addEvent("TX", label)
         scope.launch {
@@ -1750,10 +1750,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 state = state.copy(lastAction = "Failed: $label - ${error.message}")
                 addEvent("TX", "$label failed: ${error.message}")
             } finally {
-                if (activeActionId == actionId) {
-                    activeActionId = null
-                    state = state.copy(activeAction = null)
-                }
+                activeActions.remove(actionId)
+                state = state.copy(activeAction = activeActions.values.lastOrNull())
             }
         }
     }
@@ -1925,7 +1923,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             state = state.copy(
                 otaStatus = null,
                 otaStatusMessage = "No active OTA",
-                otaUpdateAvailable = null,
             )
             addEvent("LIVE", "OTA idle")
             return

@@ -188,6 +188,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var events: [ExampleEvent] = [ExampleEvent.make(tag: "LIVE", text: "SDK ready. Scan to discover glasses.")]
     @Published private(set) var activeAction: String?
     @Published private(set) var lastAction = "No actions yet."
+    private var actionSequence = 0
+    private var activeActions: [Int: String] = [:]
+    private var activeActionOrder: [Int] = []
     @Published private(set) var cameraStatus = "Camera: phone receiver will start before capture"
     @Published var webhookUrl = defaultPhotoUploadUrl
     @Published private(set) var photoPreviewDetails: PhotoPreviewDetails?
@@ -392,7 +395,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func disconnect() {
         let label = "Disconnect"
         guard activeAction != label else { return }
-        activeAction = label
+        let actionId = beginAction(label)
         lastAction = "Running: \(label)"
         append(tag: "TX", text: label)
         activeStreamId = nil
@@ -402,7 +405,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             guard let self else { return }
             self.mentraBluetoothSdk.disconnect()
             self.lastAction = "Requested: \(label)"
-            self.activeAction = nil
+            self.endAction(actionId)
         }
     }
 
@@ -1367,7 +1370,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         guard isDisplayableOtaStatus(event) else {
             otaStatus = nil
             otaStatusMessage = "No active OTA"
-            otaUpdateAvailable = nil
             append(tag: "LIVE", text: "OTA idle")
             return
         }
@@ -1417,7 +1419,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     private func runAction(_ label: String, _ action: () throws -> Void) {
-        activeAction = label
+        let actionId = beginAction(label)
         lastAction = "Running: \(label)"
         append(tag: "TX", text: label)
         do {
@@ -1427,11 +1429,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             lastAction = "Failed: \(label) - \(error.localizedDescription)"
             append(tag: "TX", text: "\(label) failed: \(error.localizedDescription)")
         }
-        activeAction = nil
+        endAction(actionId)
     }
 
     private func runAsyncAction(_ label: String, _ action: @escaping () async throws -> Void) {
-        activeAction = label
+        let actionId = beginAction(label)
         lastAction = "Running: \(label)"
         append(tag: "TX", text: label)
         Task { @MainActor [weak self] in
@@ -1443,10 +1445,23 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 lastAction = "Failed: \(label) - \(error.localizedDescription)"
                 append(tag: "TX", text: "\(label) failed: \(error.localizedDescription)")
             }
-            if activeAction == label {
-                activeAction = nil
-            }
+            endAction(actionId)
         }
+    }
+
+    private func beginAction(_ label: String) -> Int {
+        actionSequence += 1
+        let actionId = actionSequence
+        activeActions[actionId] = label
+        activeActionOrder.append(actionId)
+        activeAction = label
+        return actionId
+    }
+
+    private func endAction(_ actionId: Int) {
+        activeActions[actionId] = nil
+        activeActionOrder.removeAll { $0 == actionId }
+        activeAction = activeActionOrder.last.flatMap { activeActions[$0] }
     }
 
     private func scheduleAutoConnectDefaultOnStartup() {
