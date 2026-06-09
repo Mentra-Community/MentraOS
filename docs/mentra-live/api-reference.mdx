@@ -106,7 +106,7 @@ val scanSession = sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { nextDe
     renderDevicePicker(nextDevices)
 }
 
-val device = chooseDevice(devices)
+val device = waitForUserSelection()
 sdk.connect(device)
 sdk.setDefaultDevice(device)
 val defaultDevice = sdk.getDefaultDevice()
@@ -128,7 +128,7 @@ let scanSession = try sdk.scan(model: .mentraLive, timeout: 10) { nextDevices in
     renderDevicePicker(nextDevices)
 }
 
-let device = chooseDevice(devices)
+let device = await waitForUserSelection()
 try sdk.connect(to: device)
 sdk.setDefaultDevice(device)
 let defaultDevice = sdk.getDefaultDevice()

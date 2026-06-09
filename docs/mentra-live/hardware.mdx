@@ -40,7 +40,7 @@ sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { nextDevices ->
     renderDevicePicker(nextDevices)
 }
 
-sdk.connect(chooseDevice(devices))
+sdk.connect(waitForUserSelection())
 ```
 
   </Tab>
@@ -53,7 +53,7 @@ try sdk.scan(model: .mentraLive, timeout: 10) { nextDevices in
     renderDevicePicker(nextDevices)
 }
 
-try sdk.connect(to: chooseDevice(devices))
+try sdk.connect(to: await waitForUserSelection())
 ```
 
   </Tab>
