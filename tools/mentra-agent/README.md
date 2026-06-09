@@ -39,19 +39,46 @@ adb -s emulator-5554 reverse tcp:8787 tcp:8787   # bridge
 
 # 3. launch the dev-build app; the bridge connects automatically. Then:
 bun tools/mentra-agent/cli.ts devices
+bun tools/mentra-agent/cli.ts login                  # sign in as the QA user, no human
 bun tools/mentra-agent/cli.ts state
 bun tools/mentra-agent/cli.ts nav /miniapps/settings/developer
-bun tools/mentra-agent/cli.ts set cloud_core_url metro-auto
+bun tools/mentra-agent/cli.ts set cloud_core_url '"https://core.us-west-2.dev.mentraglass.com"'
+bun tools/mentra-agent/cli.ts reconnect
 bun tools/mentra-agent/cli.ts launch com.mentra.local-captions
 bun tools/mentra-agent/cli.ts watch transcript
 ```
 
-## RPC surface (phase 1)
+## Autonomous auth (no human login)
+
+The harness logs the app in by itself, so e2e runs need no person at the
+keyboard:
+
+- The QA test account lives in **Doppler `cloud-v2/dev`** as `QA_TEST_EMAIL` /
+  `QA_TEST_PASSWORD`. `cli.ts login` reads them (or env vars of the same name)
+  and drives the app's real Supabase password sign-in over the bridge — the
+  credentials only ever travel the loopback connection.
+- The account was minted via the Supabase **admin API** (service-role key in
+  Doppler `mentraos-cloud/dev`, `email_confirm: true`), so no email step. To
+  recreate / rotate:
+
+  ```bash
+  SVC=$(doppler secrets get SUPABASE_SERVICE_ROLE_KEY --project mentraos-cloud --config dev --plain)
+  SUPA=$(grep EXPO_PUBLIC_SUPABASE_URL mobile/.env | cut -d= -f2)
+  curl -s -X POST "$SUPA/auth/v1/admin/users" -H "apikey: $SVC" -H "Authorization: Bearer $SVC" \
+    -H "Content-Type: application/json" \
+    -d '{"email":"mentra-agent-qa@mentra.glass","password":"...","email_confirm":true}'
+  ```
+
+The session persists across restarts (Supabase `persistSession`), so once
+logged in the emulator stays logged in — ideal for a golden snapshot.
+
+## RPC surface
 
 | method | params | does |
 | --- | --- | --- |
 | `ping` | — | liveness + bundle build time (kills stale-bundle confusion) |
 | `getState` | — | cloud status, audio transport, resolved endpoints |
+| `login` / `logout` / `isLoggedIn` | `{email, password}` for login | drive the app's real Supabase auth |
 | `navigate` | `{path, params?}` | expo-router push |
 | `goBack` / `goHome` | — | navigation |
 | `getSetting` / `setSetting` | `{key, value?}` | settings store |

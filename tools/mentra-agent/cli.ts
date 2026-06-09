@@ -11,6 +11,7 @@
  *   bun cli.ts nav /miniapps/settings/developer   # navigate anywhere
  *   bun cli.ts set cloud_core_url metro-auto      # write a setting
  *   bun cli.ts get cloud_core_url                 # read a setting
+ *   bun cli.ts login                              # sign in as the QA test user
  *   bun cli.ts launch com.mentra.local-captions   # launch a local miniapp
  *   bun cli.ts reconnect                          # bounce the cloud client
  *   bun cli.ts devices                            # connected app instances
@@ -42,6 +43,32 @@ async function getEvents(since: number, filter?: string): Promise<{seq: number; 
 
 function out(value: unknown): void {
   console.log(JSON.stringify(value, null, 2))
+}
+
+/**
+ * Resolve QA test credentials WITHOUT putting secrets on the command line:
+ * explicit env first, else Doppler (cloud-v2/dev). The password reaches the
+ * app only over the loopback bridge, and only in dev builds.
+ */
+async function qaCredentials(): Promise<{email: string; password: string}> {
+  let email = process.env.QA_TEST_EMAIL
+  let password = process.env.QA_TEST_PASSWORD
+  if (!email || !password) {
+    const proc = Bun.spawn(
+      ["doppler", "secrets", "download", "--project", "cloud-v2", "--config", "dev", "--no-file", "--format", "json"],
+      {stdout: "pipe", stderr: "pipe"},
+    )
+    const text = await new Response(proc.stdout).text()
+    if ((await proc.exited) === 0) {
+      const secrets = JSON.parse(text) as Record<string, string>
+      email = email ?? secrets.QA_TEST_EMAIL
+      password = password ?? secrets.QA_TEST_PASSWORD
+    }
+  }
+  if (!email || !password) {
+    throw new Error("QA creds not found (set QA_TEST_EMAIL/QA_TEST_PASSWORD or Doppler cloud-v2/dev)")
+  }
+  return {email, password}
 }
 
 const [cmd, ...args] = process.argv.slice(2)
@@ -79,6 +106,15 @@ try {
     case "launch":
       out(await rpc("launchMiniapp", {packageName: args[0]}))
       break
+    case "login":
+      out(await rpc("login", await qaCredentials()))
+      break
+    case "logout":
+      out(await rpc("logout"))
+      break
+    case "whoami":
+      out(await rpc("isLoggedIn"))
+      break
     case "reconnect":
       out(await rpc("cloudReconnect"))
       break
@@ -108,7 +144,9 @@ try {
       out(await rpc(args[0], args[1] ? JSON.parse(args[1]) : undefined))
       break
     default:
-      console.log("usage: mentra-agent <state|ping|nav|back|home|get|set|launch|reconnect|devices|events|watch|rpc>")
+      console.log(
+        "usage: mentra-agent <state|ping|login|logout|whoami|nav|back|home|get|set|launch|reconnect|devices|events|watch|rpc>",
+      )
       process.exit(cmd ? 1 : 0)
   }
 } catch (err) {

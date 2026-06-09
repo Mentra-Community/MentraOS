@@ -29,6 +29,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {useSettingsStore} from "@/stores/settings"
 import {cloudClient, resolvedEndpoints} from "@/services/cloudClient"
 import {devServerHost} from "@/utils/cloudClient/devHost"
+import mentraAuth from "@/utils/auth/authClient"
 
 const LOG_TAG = "agentBridge"
 const BRIDGE_PORT = 8787
@@ -140,6 +141,32 @@ async function handle(req: RpcRequest): Promise<unknown> {
     case "cloudReconnect":
       cloudClient.reconnect()
       return {ok: true}
+
+    case "login": {
+      // Drive the app's real Supabase password sign-in (same path a human
+      // taps through). On success Supabase fires onAuthStateChange, which the
+      // AuthContext listens to, so the app advances past the login screen and
+      // MantleManager initializes the cloud client on its own. Credentials
+      // arrive over the loopback bridge from the harness (which reads them from
+      // Doppler) — never embedded in the app.
+      const email = String(params.email ?? "")
+      const password = String(params.password ?? "")
+      if (!email || !password) throw new Error("email and password required")
+      const res = await mentraAuth.signInWithPassword({email, password})
+      if (res.is_error()) throw new Error(res.error.message)
+      return {loggedIn: true, email}
+    }
+
+    case "logout": {
+      const res = await mentraAuth.signOut()
+      if (res.is_error()) throw new Error(res.error.message)
+      return {ok: true}
+    }
+
+    case "isLoggedIn": {
+      const res = await mentraAuth.getSession()
+      return {loggedIn: !res.is_error() && !!res.value?.token}
+    }
 
     case "launchMiniapp": {
       // Local island miniapps mount at /applet/local keyed by packageName; the
