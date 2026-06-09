@@ -54,7 +54,7 @@ function pushEvent(deviceId: string, event: string, data: unknown): void {
   }
 }
 
-function callDevice(deviceId: string, method: string, params?: unknown): Promise<unknown> {
+function callDevice(deviceId: string, method: string, params?: unknown, timeoutMs?: number): Promise<unknown> {
   const ws = sockets.get(deviceId)
   if (!ws) return Promise.reject(new Error(`no connected device: ${deviceId}`))
   const id = nextRpcId++
@@ -62,7 +62,7 @@ function callDevice(deviceId: string, method: string, params?: unknown): Promise
     const timer = setTimeout(() => {
       pending.delete(id)
       reject(new Error(`rpc timeout: ${method}`))
-    }, RPC_TIMEOUT_MS)
+    }, timeoutMs ?? RPC_TIMEOUT_MS)
     pending.set(id, {resolve, reject, timer})
     ws.send(JSON.stringify({id, method, params}))
   })
@@ -101,11 +101,11 @@ const server = Bun.serve<{deviceId: string}>({
 
     if (url.pathname === "/rpc" && req.method === "POST") {
       return (async () => {
-        const body = (await req.json()) as {device?: string; method: string; params?: unknown}
+        const body = (await req.json()) as {device?: string; method: string; params?: unknown; timeoutMs?: number}
         const deviceId = pickDevice(body.device)
         if (!deviceId) return Response.json({ok: false, error: "no device connected"}, {status: 503})
         try {
-          const result = await callDevice(deviceId, body.method, body.params)
+          const result = await callDevice(deviceId, body.method, body.params, body.timeoutMs)
           return Response.json({ok: true, device: deviceId, result})
         } catch (err) {
           return Response.json({ok: false, device: deviceId, error: (err as Error).message}, {status: 500})
@@ -118,6 +118,11 @@ const server = Bun.serve<{deviceId: string}>({
   },
 
   websocket: {
+    // Reap half-open bridge sockets: a device-side network drop can leave the
+    // socket ESTABLISHED here forever. The app heartbeats every 5s; 16s of
+    // silence means the socket is dead — closing it frees the device slot so
+    // the app's reconnect (over adb-reverse localhost) can take over.
+    idleTimeout: 16,
     open(ws) {
       sockets.set(ws.data.deviceId, ws)
       console.log(`[bridge] ${ws.data.deviceId} connected (${sockets.size} total)`)
@@ -139,6 +144,7 @@ const server = Bun.serve<{deviceId: string}>({
         return
       }
       if (typeof msg.event === "string") {
+        if (msg.event === "hb") return // liveness only; Bun's idleTimeout sees the traffic
         if (msg.event === "hello") deviceInfo.set(ws.data.deviceId, (msg.data as Record<string, unknown>) ?? {})
         pushEvent(ws.data.deviceId, msg.event, msg.data)
       }

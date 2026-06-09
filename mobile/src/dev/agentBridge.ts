@@ -248,6 +248,13 @@ function connect(candidates: string[], index: number): void {
 
   socket.onopen = () => {
     console.log(`${LOG_TAG}: connected to harness at ${url}`)
+    // Heartbeat so the server can reap half-open sockets (a network drop can
+    // leave both ends believing the socket is alive); the server closes any
+    // bridge socket silent for >15s, which fires our onclose -> rotate.
+    const hb = setInterval(() => {
+      if (socket?.readyState === WebSocket.OPEN) emit("hb", null)
+      else clearInterval(hb)
+    }, 5_000)
     emit("hello", {
       platform: "android",
       buildTime: process.env.EXPO_PUBLIC_BUILD_TIME ?? null,
@@ -295,7 +302,11 @@ export function startAgentBridge(): void {
   // emulator's host loopback; localhost works under `adb reverse`. The
   // reconnect loop tries the next candidate on every retry, so whichever is
   // reachable wins and a wrong guess costs one retry interval.
-  const candidates = [...new Set([lazyDevServerHost()(), "10.0.2.2", "localhost"].filter((h): h is string => !!h))]
+  // localhost FIRST: it rides adb-reverse (the adb transport itself), which
+  // survives airplane mode / network drops on both emulators and USB phones —
+  // exactly when a fault-injection scenario most needs the bridge alive.
+  // 10.0.2.2 (emulator NAT) and the detected bundle host die with the network.
+  const candidates = [...new Set(["localhost", "10.0.2.2", lazyDevServerHost()()].filter((h): h is string => !!h))]
   console.log(`${LOG_TAG}: starting (harness candidates: ${candidates.join(", ")} port ${BRIDGE_PORT})`)
   connect(candidates, 0)
 }

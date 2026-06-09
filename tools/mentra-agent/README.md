@@ -135,21 +135,61 @@ adb -s emulator-5554 emu avd snapshot save qa-golden   # freeze current state
 adb -s emulator-5554 emu avd snapshot load qa-golden   # back to known state in ~2s
 ```
 
+## Scenario runner (fault-injection suite)
+
+```bash
+bun tools/mentra-agent/scenarios.ts list
+bun tools/mentra-agent/scenarios.ts all          # CI-ready: non-zero exit on failure
+```
+
+- `captions` — baseline pipeline (subscribe -> inject -> transcript), ~3s.
+- `reconnect` — cuts the emulator's network mid-session (adb survives on the
+  emulator transport; the bridge stays alive over adb-reverse localhost),
+  asserts the app reports disconnected, restores the network, asserts the
+  cloud self-heals WITHOUT app interaction and transcription resumes, ~10s.
+  This single test covers the connection retry loop, initialSubscriptions on
+  the recovery handshake, and server-side STT re-attach.
+- `endpoint-switch` — bogus endpoint disconnects, switching back recovers and
+  transcribes.
+
 ## Roadmap
 
-- scenario runner for the audio fault-regression matrix (pod roll, network
-  drop, UDP block, token expiry) asserting on both app + cloud sides
+- more fault scenarios: pod roll (server-side), UDP-block -> WS fallback,
+  token expiry
 - `installMiniapp` RPC (serve local-miniapps bundles from the harness server,
   install via appRegistry) for UI-level captions tests
 - iOS simulator lane (the bridge is pure JS; only the boot tooling differs)
 
 ## Findings the harness has already produced
 
+Fixed on this branch (cherry-pick to cloud-v2 — the other checkout has the
+same landmines):
+
+- **Duplicate react-native/expo in the Metro bundle** (bun nests copies under
+  local expo-modules; Metro resolved crust's imports to the nested copy ->
+  TurboModule registry mismatch -> expo-router silently dropped every route
+  whose import chain touched it: cold boots on "Unmatched Route", /home render
+  crash). Fixed with the metro.config.js singleton dedupe.
+- **Subscriptions silently dead for fresh clients** (server version high-water
+  mark outlives the app; reinstall -> client restarts at version 1 -> PUTs
+  rejected as stale -> transcription never starts). Fixed in cloud-client:
+  fast-forward to the server's returned version and replay.
+
+Open (cloud-v2 runtime follow-ups — found by the scenario suite):
+
+- **Soniox auto-pause wedge.** After repeated silence -> auto-pause ->
+  resume cycles (every `speak` separated by >2s triggers one), the soniox
+  provider reaches a state where it stays `connected`, audio still appends to
+  the stream, subscriptions still apply — but it emits NO transcripts. A
+  client reconnect does not clear it (the provider is keyed by mentraUserId
+  and survives the client's new session). Repro: `scenarios.ts all` — the
+  first `captions` passes from clean state, then later utterances time out
+  with `cloud=connected/udp` and `[soniox] auto-paused`/`resumed` churning in
+  the server logs but no `result`. The auto-pause feature (Fix 044-3 port)
+  almost certainly needs the resume to verify the Soniox session actually
+  accepts audio again after `finalize()`, or to rebuild the session instead of
+  resuming a finalized one. Run scenarios individually until fixed.
 - Soniox rejects BCP-47 region codes as language hints ("Invalid language
   hint." for `en-US`); the runtime's soniox provider should normalize, and a
   non-retryable invalid-config error currently spins the self-heal reconnect
   loop forever instead of giving up.
-- App cold-boot lands on "Unmatched Route" (`com.mentra:///` resolves to no
-  route) before any navigation.
-- `/home` render error: `ScreenshotFeedbackPrompt` resolves to `undefined` in
-  `AllEffects.tsx` (module-init-order/circular-import).
