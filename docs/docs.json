@@ -144,7 +144,7 @@
             "icon": "bluetooth",
             "pages": [
               "mentra-live/index",
-              "app-devs/getting-started/ai-ide-integration",
+              "mentra-live/ai-ide-integration",
               "mentra-live/quickstart",
               "mentra-live/examples"
             ]
