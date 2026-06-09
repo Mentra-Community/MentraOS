@@ -342,6 +342,29 @@ public final class PhotoSession {
         return baseline.differsFrom(request);
     }
 
+    /**
+     * Predicts whether a photo with the given parameters would reuse the currently configured HAL
+     * session (a "warm" capture) instead of triggering a close + reopen reconfiguration.
+     *
+     * <p>The camera is reconfigured (and therefore effectively cold) when the requested size, SDK
+     * flag, or manual exposure differs from the open session — see {@link
+     * #needsReconfigurationForQueued}. When there is no configured baseline (camera never opened or
+     * already torn down) this returns {@code false}: a fresh open is a cold start.
+     *
+     * @return true if a capture with these params would reuse the open session, false otherwise.
+     */
+    public boolean willReuseConfiguredCamera(
+            @Nullable String size, boolean isFromSdk, @Nullable Long exposureTimeNs) {
+        ConfiguredCameraConfig baseline = configuredCameraConfig;
+        if (baseline == null && activeCapture != null) {
+            baseline = ConfiguredCameraConfig.from(activeCapture);
+        }
+        if (baseline == null) {
+            return false;
+        }
+        return !baseline.differsFrom(size, isFromSdk, exposureTimeNs);
+    }
+
     public void dispatchNextPhotoRequest() {
         synchronized (hooks.serviceLock()) {
             QueuedPhotoRequestQueue queue = QueuedPhotoRequestQueue.getInstance();
@@ -1465,13 +1488,20 @@ public final class PhotoSession {
         }
 
         boolean differsFrom(QueuedPhotoRequest request) {
-            if (!Objects.equals(size, request.size)) {
+            return differsFrom(request.size, request.isFromSdk, request.exposureTimeNs);
+        }
+
+        boolean differsFrom(
+                @Nullable String otherSize,
+                boolean otherIsFromSdk,
+                @Nullable Long otherExposureTimeNs) {
+            if (!Objects.equals(size, otherSize)) {
                 return true;
             }
-            if (isFromSdk != request.isFromSdk) {
+            if (isFromSdk != otherIsFromSdk) {
                 return true;
             }
-            return !Objects.equals(exposureTimeNs, request.exposureTimeNs);
+            return !Objects.equals(exposureTimeNs, otherExposureTimeNs);
         }
     }
 

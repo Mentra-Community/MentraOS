@@ -328,6 +328,43 @@ public class CameraNeoService extends LifecycleService {
     }
 
     /**
+     * Predicts whether a photo with the given parameters would be a "warm" capture — one that
+     * reuses the already-open camera/ISP instead of paying the 1–2s cold startup cost on Mentra
+     * Live. Callers use this to choose between a short feedback sound (warm, capture is quick) and
+     * a long one (cold, capture lags behind the button press while the camera spins up).
+     *
+     * <p>A capture is warm when both hold:
+     *
+     * <ul>
+     *   <li>The HAL session is already open. This includes the case where a previous capture is
+     *       still in progress — a rapid second press simply queues behind it (see {@code
+     *       enqueuePhotoRequest}) and runs without a cold ISP start, so we must NOT gate on the
+     *       shot state being idle.
+     *   <li>The open session won't be reconfigured for this request. A differing size, SDK flag,
+     *       or manual exposure forces a close + reopen (see {@code
+     *       PhotoSession#willReuseConfiguredCamera}), which is effectively a cold start.
+     * </ul>
+     *
+     * @param size requested photo size for the upcoming capture (nullable)
+     * @param isFromSdk whether the upcoming capture is an SDK request (vs. a button photo)
+     * @param exposureTimeNs requested manual exposure for the upcoming capture, or null for auto
+     * @return true if the upcoming capture would reuse the open camera; false otherwise.
+     */
+    public static boolean isCameraWarm(String size, boolean isFromSdk, Long exposureTimeNs) {
+        // Read the open-session state under SERVICE_LOCK — the same lock enqueuePhotoRequest()
+        // holds — so this prediction is consistent with the state that request will actually see.
+        // Without it, a keep-alive expiry / closeCamera() on the background thread could tear down
+        // the HAL session between this read and the enqueue, making the short "hot" cue play for a
+        // capture that ends up cold-starting.
+        synchronized (SERVICE_LOCK) {
+            return sInstance != null
+                    && sInstance.cameraCoordinator.hasConfiguredCamera()
+                    && sInstance.photoSession.willReuseConfiguredCamera(
+                            size, isFromSdk, exposureTimeNs);
+        }
+    }
+
+    /**
      * Force close the camera if it's only kept alive (not actively in use). This is called when
      * other operations like video/streaming need the camera.
      *
@@ -1183,8 +1220,16 @@ public class CameraNeoService extends LifecycleService {
                 CAMERA_KEEP_ALIVE_MS,
                 () -> photoSession.shotState() != AeStateMachine.ShotState.IDLE,
                 () -> {
-                    closeCamera();
-                    stopSelf();
+                    // Tear down under SERVICE_LOCK so this background-thread close is atomic with
+                    // respect to isCameraWarm() and enqueuePhotoRequest(), which both take the same
+                    // lock. Otherwise the close could land between a warm read and the enqueue,
+                    // making the short "hot" cue play for a capture that actually cold-starts.
+                    // Lock order is SERVICE_LOCK -> openCloseLock (closeCamera takes openCloseLock
+                    // internally), matching every other path, so this cannot deadlock.
+                    synchronized (SERVICE_LOCK) {
+                        closeCamera();
+                        stopSelf();
+                    }
                 });
     }
 
