@@ -146,6 +146,16 @@ export const SETTINGS: Record<string, Setting> = {
   // laptop", resolved live from Metro so it survives network changes). Never
   // bake an env var or a personal LAN IP into the default here: that makes the
   // override branch always-truthy and strands devs on a stale address.
+  // Dev/QA-only: force the codec announced in connection.init. "pcm" lets the
+  // test harness inject raw PCM frames (no LC3 encoder on the laptop side);
+  // anything else means the normal on-device LC3 path. Never set in production.
+  cloud_audio_codec: {
+    key: "cloud_audio_codec",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   cloud_core_url: {
     key: "cloud_core_url",
     defaultValue: () => "",

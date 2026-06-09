@@ -167,6 +167,13 @@ function ensureTransports(): void {
   setSecureStorage(cloudSecureStore)
 }
 
+function audioCodec(): "lc3" | "pcm" {
+  // QA harness override: "pcm" lets tests inject raw PCM frames. Anything
+  // else (unset, garbage) is the production LC3 path.
+  const v = useSettingsStore.getState().getSetting(SETTINGS.cloud_audio_codec.key)
+  return v === "pcm" ? "pcm" : "lc3"
+}
+
 function lc3FrameSizeBytes(): Lc3FrameSizeBytes {
   const frameSize = useSettingsStore.getState().getSetting(SETTINGS.lc3_frame_size.key)
   return frameSize === 20 || frameSize === 40 || frameSize === 60 ? frameSize : 20
@@ -220,7 +227,7 @@ export const cloudClient = {
       endpoints,
       // The phone LC3-encodes mic audio (even in phone/simulated mode), so we
       // announce LC3 at 16 kHz with the same frame size the encoder emits.
-      audio: {codec: "lc3", sampleRate: 16000, frameSizeBytes: lc3FrameSizeBytes()},
+      audio: {codec: audioCodec(), sampleRate: 16000, frameSizeBytes: lc3FrameSizeBytes()},
       auth: {getSubjectToken: getSupabaseSubjectToken},
       logger: cloudLogger,
     })

@@ -46,6 +46,80 @@ function out(value: unknown): void {
 }
 
 /**
+ * Text -> 16 kHz mono signed-16 PCM via macOS `say` + `afconvert` (the same
+ * recipe the cloud-v2 soniox e2e uses). Deterministic input audio with a known
+ * transcript, no speakers or air gap involved.
+ */
+async function speechPcm(phrase: string): Promise<Uint8Array> {
+  const stamp = `${process.pid}-${phrase.replace(/\W+/g, "").slice(0, 16)}`
+  const aiff = `/tmp/mentra-agent-say-${stamp}.aiff`
+  const wav = `/tmp/mentra-agent-say-${stamp}.wav`
+  const say = Bun.spawnSync(["/usr/bin/say", "-o", aiff, phrase])
+  if (say.exitCode !== 0) throw new Error(`say failed: ${say.stderr}`)
+  const conv = Bun.spawnSync(["/usr/bin/afconvert", aiff, wav, "-d", "LEI16@16000", "-c", "1", "-f", "WAVE"])
+  if (conv.exitCode !== 0) throw new Error(`afconvert failed: ${conv.stderr}`)
+  const buf = new Uint8Array(await Bun.file(wav).arrayBuffer())
+  // Locate the WAV "data" chunk; PCM follows the 8-byte chunk header.
+  const idx = Buffer.from(buf).indexOf("data")
+  if (idx < 0) throw new Error("no data chunk in WAV")
+  return buf.subarray(idx + 8)
+}
+
+function b64(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("base64")
+}
+
+/**
+ * The pipeline test in one command: subscribe -> inject spoken audio -> wait
+ * for a transcript containing the expectation. Exits non-zero on miss, so it
+ * doubles as a CI check.
+ */
+async function speak(args: string[]): Promise<void> {
+  const phrase = args[0]
+  if (!phrase) throw new Error('usage: speak "<text>" [--expect "<substring>"] [--lang en-US] [--timeout 30]')
+  const expectIdx = args.indexOf("--expect")
+  const expect = expectIdx >= 0 ? args[expectIdx + 1] : undefined
+  const langIdx = args.indexOf("--lang")
+  // Bare ISO 639-1 code: Soniox rejects BCP-47 region hints ("Invalid
+  // language hint." for en-US). The captions miniapp sends bare codes too.
+  const lang = langIdx >= 0 ? args[langIdx + 1] : "en"
+  const timeoutIdx = args.indexOf("--timeout")
+  const timeoutS = timeoutIdx >= 0 ? Number(args[timeoutIdx + 1]) : 30
+
+  console.error(`subscribing transcription:${lang} ...`)
+  await rpc("setSubscriptions", {subs: [{kind: "transcription", language: {mode: "specific", code: lang}}]})
+
+  const baseline = (await getEvents(0)).at(-1)?.seq ?? 0
+  console.error(`speaking: "${phrase}"`)
+  const pcm = await speechPcm(phrase)
+  const injected = (await rpc("injectAudio", {pcmBase64: b64(pcm)})) as {framesSent: number; seconds: number}
+  console.error(`injected ${injected.framesSent} frames (${injected.seconds}s of audio); waiting for transcript...`)
+
+  const deadline = Date.now() + timeoutS * 1000
+  let since = baseline
+  const seen: string[] = []
+  while (Date.now() < deadline) {
+    const fresh = await getEvents(since, "transcript")
+    for (const e of fresh) {
+      since = e.seq
+      const data = e.data as {text?: string; isFinal?: boolean}
+      const line = `${data.isFinal ? "FINAL  " : "interim"} ${data.text ?? ""}`
+      console.log(line)
+      if (data.text) seen.push(data.text)
+      if (expect && data.text?.toLowerCase().includes(expect.toLowerCase())) {
+        console.log(`\nPASS: transcript contained "${expect}"`)
+        return
+      }
+    }
+    await Bun.sleep(500)
+  }
+  if (expect) {
+    console.error(`\nFAIL: "${expect}" not found within ${timeoutS}s. Saw: ${seen.join(" | ") || "(nothing)"}`)
+    process.exit(1)
+  }
+}
+
+/**
  * Resolve QA test credentials WITHOUT putting secrets on the command line:
  * explicit env first, else Doppler (cloud-v2/dev). The password reaches the
  * app only over the loopback bridge, and only in dev builds.
@@ -105,6 +179,16 @@ try {
     }
     case "launch":
       out(await rpc("launchMiniapp", {packageName: args[0]}))
+      break
+    case "speak":
+      await speak(args)
+      break
+    case "subscribe":
+      out(
+        await rpc("setSubscriptions", {
+          subs: [{kind: "transcription", language: {mode: "specific", code: args[0] ?? "en"}}],
+        }),
+      )
       break
     case "login":
       out(await rpc("login", await qaCredentials()))

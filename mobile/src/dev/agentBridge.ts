@@ -177,6 +177,46 @@ async function handle(req: RpcRequest): Promise<unknown> {
       return {launched: packageName}
     }
 
+    case "setSubscriptions": {
+      // Drive the cloud's transcription directly (no miniapp UI needed) — the
+      // pipeline test subscribes, injects audio, and asserts the transcript
+      // events that stream back through the bridge.
+      const subs = params.subs
+      if (!Array.isArray(subs)) throw new Error("subs array required")
+      const adapter = cloudClient.init()
+      wireTranscriptTap()
+      await adapter.setSubscriptions(subs as never)
+      return {subscribed: subs.length}
+    }
+
+    case "injectAudio": {
+      // Deterministic audio: the harness sends 16 kHz mono signed-16 PCM
+      // (base64); we slice it into 20 ms frames and feed the SAME entry point
+      // the mic capture uses (adapter.sendAudioFrame), paced near real time so
+      // the STT provider sees a natural stream. Requires the session to have
+      // announced codec "pcm" (set cloud_audio_codec=pcm + reconnect first).
+      const b64 = String(params.pcmBase64 ?? "")
+      if (!b64) throw new Error("pcmBase64 required")
+      const binary = globalThis.atob(b64)
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+
+      const adapter = cloudClient.init()
+      wireTranscriptTap()
+      const FRAME_BYTES = 640 // 20 ms @ 16 kHz, 16-bit mono
+      const frames: Uint8Array[] = []
+      for (let off = 0; off < bytes.length; off += FRAME_BYTES) {
+        frames.push(bytes.subarray(off, Math.min(off + FRAME_BYTES, bytes.length)))
+      }
+      // ~2x real time (10 ms per 20 ms frame): fast tests, still stream-shaped.
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+      for (const frame of frames) {
+        adapter.sendAudioFrame(frame)
+        await sleep(10)
+      }
+      return {framesSent: frames.length, seconds: (frames.length * 20) / 1000}
+    }
+
     default:
       throw new Error(`unknown method: ${req.method}`)
   }

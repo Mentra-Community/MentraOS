@@ -35,7 +35,7 @@ interface BridgeEvent {
 }
 
 const PORT = Number(process.env.MENTRA_AGENT_PORT ?? 8787)
-const RPC_TIMEOUT_MS = 15_000
+const RPC_TIMEOUT_MS = 120_000 // injectAudio streams near real time; long utterances take a while
 const EVENT_RING_MAX = 5_000
 
 const sockets = new Map<string, BridgeSocket>()
