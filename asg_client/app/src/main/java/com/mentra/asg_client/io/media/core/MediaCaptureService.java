@@ -21,7 +21,6 @@ import com.mentra.asg_client.io.storage.StorageManager;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
 import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
-import com.mentra.asg_client.io.bluetooth.managers.BleTransferMode;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
@@ -3577,9 +3576,8 @@ public class MediaCaptureService {
                 // packets start
                 // This prevents packet interleaving at the BLE MTU boundary
                 try {
-                    int preDelay = BleTransferMode.preTransferDelayMs();
-                    Thread.sleep(preDelay);
-                    Log.d(TAG, "⏱️ Waited " + preDelay + "ms for JSON packet [" + BleTransferMode.get() + "]");
+                    Thread.sleep(200); // 200ms delay for JSON packet to fully transmit over BLE
+                    Log.d(TAG, "⏱️ Waited 200ms for JSON packet to complete BLE transmission");
                 } catch (InterruptedException e) {
                     Log.w(TAG, "Delay interrupted", e);
                 }

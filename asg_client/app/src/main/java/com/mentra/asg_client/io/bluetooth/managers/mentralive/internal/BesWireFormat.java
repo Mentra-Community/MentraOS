@@ -713,54 +713,24 @@ public class BesWireFormat {
             String fileName,
             int flags,
             byte fileType) {
-        if (fileData == null || packSize < 0 || packSize > getFilePackSize()) {
+        if (fileData == null || packSize > getFilePackSize()) {
             return null;
         }
-        int totalSize = getFilePacketSize(packSize);
+
+        // Calculate total packet size
+        int totalSize =
+                LENGTH_FILE_START
+                        + LENGTH_FILE_TYPE
+                        + LENGTH_FILE_PACKSIZE
+                        + LENGTH_FILE_PACKINDEX
+                        + LENGTH_FILE_SIZE
+                        + LENGTH_FILE_NAME
+                        + LENGTH_FILE_FLAG
+                        + packSize
+                        + LENGTH_FILE_VERIFY
+                        + LENGTH_FILE_END;
+
         byte[] packet = new byte[totalSize];
-        int packedSize =
-                packFilePacketInto(
-                        packet, fileData, 0, packIndex, packSize, fileSize, fileName, flags, fileType);
-        return packedSize > 0 ? packet : null;
-    }
-
-    public static int getFilePacketSize(int packSize) {
-        return LENGTH_FILE_START
-                + LENGTH_FILE_TYPE
-                + LENGTH_FILE_PACKSIZE
-                + LENGTH_FILE_PACKINDEX
-                + LENGTH_FILE_SIZE
-                + LENGTH_FILE_NAME
-                + LENGTH_FILE_FLAG
-                + packSize
-                + LENGTH_FILE_VERIFY
-                + LENGTH_FILE_END;
-    }
-
-    public static int packFilePacketInto(
-            byte[] packet,
-            byte[] fileData,
-            int dataOffset,
-            int packIndex,
-            int packSize,
-            int fileSize,
-            String fileName,
-            int flags,
-            byte fileType) {
-        if (packet == null
-                || fileData == null
-                || packSize > getFilePackSize()
-                || packSize < 0
-                || dataOffset < 0
-                || dataOffset + packSize > fileData.length) {
-            return -1;
-        }
-
-        int totalSize = getFilePacketSize(packSize);
-        if (packet.length < totalSize) {
-            return -1;
-        }
-
         int pos = 0;
 
         // Start code ##
@@ -804,13 +774,13 @@ public class BesWireFormat {
         pos += LENGTH_FILE_FLAG;
 
         // Data
-        System.arraycopy(fileData, dataOffset, packet, pos, packSize);
+        System.arraycopy(fileData, 0, packet, pos, packSize);
         pos += packSize;
 
         // Calculate verify code (checksum of data bytes)
         int checkSum = 0;
         for (int i = 0; i < packSize; i++) {
-            checkSum += (fileData[dataOffset + i] & 0xFF);
+            checkSum += (fileData[i] & 0xFF);
         }
         packet[pos] = (byte) (checkSum & 0xFF);
         pos += LENGTH_FILE_VERIFY;
@@ -818,7 +788,7 @@ public class BesWireFormat {
         // End code $$
         System.arraycopy(CMD_END_CODE, 0, packet, pos, LENGTH_FILE_END);
 
-        return totalSize;
+        return packet;
     }
 
     /**
