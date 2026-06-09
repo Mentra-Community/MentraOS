@@ -100,13 +100,14 @@ await BluetoothSdk.forget();
 
 ```kotlin
 val devices = mutableListOf<Device>()
+var selectedDevice: Device? = null
 val scanSession = sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { nextDevices ->
     devices.clear()
     devices.addAll(nextDevices)
-    renderDevicePicker(nextDevices)
+    renderDevicePicker(nextDevices, onSelect = { selectedDevice = it })
 }
 
-val device = waitForUserSelection()
+val device = selectedDevice ?: return
 sdk.connect(device)
 sdk.setDefaultDevice(device)
 val defaultDevice = sdk.getDefaultDevice()
@@ -123,12 +124,15 @@ sdk.forget()
 
 ```swift
 var devices: [Device] = []
+var selectedDevice: Device? = nil
 let scanSession = try sdk.scan(model: .mentraLive, timeout: 10) { nextDevices in
     devices = nextDevices
-    renderDevicePicker(nextDevices)
+    renderDevicePicker(nextDevices) { device in
+        selectedDevice = device
+    }
 }
 
-let device = await waitForUserSelection()
+guard let device = selectedDevice else { return }
 try sdk.connect(to: device)
 sdk.setDefaultDevice(device)
 let defaultDevice = sdk.getDefaultDevice()
