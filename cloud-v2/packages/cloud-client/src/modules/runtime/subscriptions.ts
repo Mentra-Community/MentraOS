@@ -76,7 +76,7 @@ export class Subscriptions {
 
     // The full-replace PUT is idempotent: replaying it lands the same state, so
     // the HTTP helper is allowed to retry it on a transient network failure.
-    await this.http.put<void>(
+    const result = await this.http.put<{ applied?: boolean; version?: number }>(
       SUBSCRIPTIONS_PATH,
       {
         subscriptions: this.current,
@@ -85,6 +85,25 @@ export class Subscriptions {
       },
       { idempotent: true },
     );
+
+    // The cloud's version high-water mark is per USER and outlives this client:
+    // a fresh client (app reinstall, storage clear, rebuilt CloudClient) starts
+    // its counter at 1, so its first writes are silently rejected as stale
+    // (applied:false) and live transcription never starts — found live by the
+    // QA harness. The response carries the stored version; fast-forward past it
+    // and replay once so the write lands.
+    if (result && result.applied === false && typeof result.version === "number") {
+      this.version = result.version + 1;
+      await this.http.put<void>(
+        SUBSCRIPTIONS_PATH,
+        {
+          subscriptions: this.current,
+          sessionId,
+          version: this.version,
+        },
+        { idempotent: true },
+      );
+    }
   }
 
   /**

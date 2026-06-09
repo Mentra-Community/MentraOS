@@ -49,23 +49,6 @@ function isLoopback(host: string): boolean {
   return host === "localhost" || host === "127.0.0.1" || host === "10.0.2.2"
 }
 
-function devServerUrl(): string | undefined {
-  // The canonical answer: RN's debug runtime records exactly where it loaded
-  // the bundle from (including a user-set debug_http_host). Internal module,
-  // but stable across RN versions and what devtools (Reactotron etc.) use.
-  try {
-    const mod = require("react-native/Libraries/Core/Devtools/getDevServer") as
-      | {default?: () => {url?: string; bundleLoadedFromServer?: boolean}}
-      | (() => {url?: string; bundleLoadedFromServer?: boolean})
-    const getDevServer = typeof mod === "function" ? mod : mod.default
-    const info = getDevServer?.()
-    if (info?.bundleLoadedFromServer && info.url) return info.url
-  } catch {
-    /* fall through */
-  }
-  return undefined
-}
-
 function scriptURL(): string | undefined {
   // New architecture (bridgeless): SourceCode is a TurboModule and is NOT
   // mirrored onto NativeModules (verified on-device: NativeModules.SourceCode
@@ -96,7 +79,6 @@ function scriptURL(): string | undefined {
  */
 export function devServerHost(): string | undefined {
   const candidates = [
-    hostOf(devServerUrl()),
     hostOf(scriptURL()),
     hostOf(Constants.expoConfig?.hostUri),
     hostOf((Constants as {expoGoConfig?: {debuggerHost?: string}}).expoGoConfig?.debuggerHost),

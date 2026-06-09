@@ -86,6 +86,20 @@ async function speak(args: string[]): Promise<void> {
   const timeoutIdx = args.indexOf("--timeout")
   const timeoutS = timeoutIdx >= 0 ? Number(args[timeoutIdx + 1]) : 30
 
+  // Injected audio is raw PCM; the session must announce codec "pcm" or the
+  // server LC3-decodes the frames into garbage. Self-heal: set + reconnect.
+  const codec = (await rpc("getSetting", {key: "cloud_audio_codec"})) as {value?: unknown}
+  if (codec.value !== "pcm") {
+    console.error('cloud_audio_codec is not "pcm" — setting it and reconnecting...')
+    await rpc("setSetting", {key: "cloud_audio_codec", value: "pcm"})
+    await rpc("cloudReconnect")
+    for (let i = 0; i < 20; i++) {
+      await Bun.sleep(1000)
+      const st = (await rpc("getState")) as {cloud: {connected: boolean}}
+      if (st.cloud.connected) break
+    }
+  }
+
   console.error(`subscribing transcription:${lang} ...`)
   await rpc("setSubscriptions", {subs: [{kind: "transcription", language: {mode: "specific", code: lang}}]})
 

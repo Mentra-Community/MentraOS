@@ -24,12 +24,26 @@
  *   app  -> harness {id, ok, result?, error?}        (response)
  *   app  -> harness {event, data}                    (unsolicited stream)
  */
-import {useCloudClientStatusStore} from "@/stores/cloudClientStatus"
-import {useNavigationStore} from "@/stores/navigation"
-import {useSettingsStore} from "@/stores/settings"
-import {cloudClient, resolvedEndpoints} from "@/services/cloudClient"
-import {devServerHost} from "@/utils/cloudClient/devHost"
-import mentraAuth from "@/utils/auth/authClient"
+// EVERY app-module import here is lazy (require at call time, helpers below).
+// This module is started from the root layout; importing the navigation store
+// (which imports expo-router's `router`) or other app singletons at root-
+// layout module scope runs them BEFORE expo-router initializes and corrupts
+// route registration — "/" stops matching and cold boots land on "Unmatched
+// Route". Found the hard way; do not add top-level app imports back.
+/* eslint-disable @typescript-eslint/no-require-imports */
+import type {useCloudClientStatusStore as CloudStatusStore} from "@/stores/cloudClientStatus"
+import type {useNavigationStore as NavStore} from "@/stores/navigation"
+import type {useSettingsStore as SettingsStoreT} from "@/stores/settings"
+import type {cloudClient as CloudClientT, resolvedEndpoints as ResolvedEndpointsT} from "@/services/cloudClient"
+import type mentraAuthT from "@/utils/auth/authClient"
+
+const lazyNav = (): typeof NavStore => require("@/stores/navigation").useNavigationStore
+const lazySettings = (): typeof SettingsStoreT => require("@/stores/settings").useSettingsStore
+const lazyCloudStatus = (): typeof CloudStatusStore => require("@/stores/cloudClientStatus").useCloudClientStatusStore
+const lazyCloudClient = (): typeof CloudClientT => require("@/services/cloudClient").cloudClient
+const lazyResolvedEndpoints = (): typeof ResolvedEndpointsT => require("@/services/cloudClient").resolvedEndpoints
+const lazyAuth = (): typeof mentraAuthT => require("@/utils/auth/authClient").default
+const lazyDevServerHost = (): (() => string | undefined) => require("@/utils/cloudClient/devHost").devServerHost
 
 const LOG_TAG = "agentBridge"
 const BRIDGE_PORT = 8787
@@ -63,10 +77,10 @@ let eventTapsWired = false
 function wireTranscriptTap(): void {
   if (transcriptTapWired) return
   transcriptTapWired = true
-  // cloudClient.init() is idempotent and returns the island adapter; tapping
+  // lazyCloudClient().init() is idempotent and returns the island adapter; tapping
   // its onTranscript does not disturb the island runtime's own wiring.
   try {
-    const adapter = cloudClient.init()
+    const adapter = lazyCloudClient().init()
     adapter.onTranscript((t) => emit("transcript", t))
     adapter.onTranslation((t) => emit("translation", t))
   } catch (err) {
@@ -84,14 +98,14 @@ function wireEventTaps(): void {
   // the host (MantleManager) to have initialized the client — first connection
   // transition is the signal. The store/listener taps are module-level and
   // safe immediately.
-  cloudClient.onConnectionChange((connected) => {
+  lazyCloudClient().onConnectionChange((connected) => {
     emit("cloudConnection", {connected})
     if (connected) wireTranscriptTap()
   })
-  useCloudClientStatusStore.subscribe((state) =>
+  lazyCloudStatus().subscribe((state) =>
     emit("cloudStatus", {status: state.status, audioTransport: state.audioTransport}),
   )
-  if (cloudClient.isConnected()) wireTranscriptTap()
+  if (lazyCloudClient().isConnected()) wireTranscriptTap()
 }
 
 async function handle(req: RpcRequest): Promise<unknown> {
@@ -105,13 +119,13 @@ async function handle(req: RpcRequest): Promise<unknown> {
       }
 
     case "getState": {
-      const status = useCloudClientStatusStore.getState()
+      const status = lazyCloudStatus().getState()
       return {
         cloud: {
-          connected: cloudClient.isConnected(),
+          connected: lazyCloudClient().isConnected(),
           status: status.status,
           audioTransport: status.audioTransport,
-          endpoints: resolvedEndpoints(),
+          endpoints: lazyResolvedEndpoints()(),
         },
       }
     }
@@ -119,27 +133,27 @@ async function handle(req: RpcRequest): Promise<unknown> {
     case "navigate": {
       const path = String(params.path ?? "")
       if (!path.startsWith("/")) throw new Error("path must start with /")
-      useNavigationStore.getState().push(path, params.params as never)
+      lazyNav().getState().push(path, params.params as never)
       return {navigated: path}
     }
 
     case "goBack":
-      useNavigationStore.getState().goBack()
+      lazyNav().getState().goBack()
       return {ok: true}
 
     case "goHome":
-      useNavigationStore.getState().replaceAll("/")
+      lazyNav().getState().replaceAll("/")
       return {ok: true}
 
     case "getSetting":
-      return {value: useSettingsStore.getState().getSetting(String(params.key))}
+      return {value: lazySettings().getState().getSetting(String(params.key))}
 
     case "setSetting":
-      await useSettingsStore.getState().setSetting(String(params.key), params.value, true)
+      await lazySettings().getState().setSetting(String(params.key), params.value, true)
       return {ok: true}
 
     case "cloudReconnect":
-      cloudClient.reconnect()
+      lazyCloudClient().reconnect()
       return {ok: true}
 
     case "login": {
@@ -152,19 +166,19 @@ async function handle(req: RpcRequest): Promise<unknown> {
       const email = String(params.email ?? "")
       const password = String(params.password ?? "")
       if (!email || !password) throw new Error("email and password required")
-      const res = await mentraAuth.signInWithPassword({email, password})
+      const res = await lazyAuth().signInWithPassword({email, password})
       if (res.is_error()) throw new Error(res.error.message)
       return {loggedIn: true, email}
     }
 
     case "logout": {
-      const res = await mentraAuth.signOut()
+      const res = await lazyAuth().signOut()
       if (res.is_error()) throw new Error(res.error.message)
       return {ok: true}
     }
 
     case "isLoggedIn": {
-      const res = await mentraAuth.getSession()
+      const res = await lazyAuth().getSession()
       return {loggedIn: !res.is_error() && !!res.value?.token}
     }
 
@@ -173,7 +187,7 @@ async function handle(req: RpcRequest): Promise<unknown> {
       // route runs the same launch chain a home-tile tap does.
       const packageName = String(params.packageName ?? "")
       if (!packageName) throw new Error("packageName required")
-      useNavigationStore.getState().push("/applet/local", {packageName})
+      lazyNav().getState().push("/applet/local", {packageName})
       return {launched: packageName}
     }
 
@@ -183,7 +197,7 @@ async function handle(req: RpcRequest): Promise<unknown> {
       // events that stream back through the bridge.
       const subs = params.subs
       if (!Array.isArray(subs)) throw new Error("subs array required")
-      const adapter = cloudClient.init()
+      const adapter = lazyCloudClient().init()
       wireTranscriptTap()
       await adapter.setSubscriptions(subs as never)
       return {subscribed: subs.length}
@@ -201,7 +215,7 @@ async function handle(req: RpcRequest): Promise<unknown> {
       const bytes = new Uint8Array(binary.length)
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
 
-      const adapter = cloudClient.init()
+      const adapter = lazyCloudClient().init()
       wireTranscriptTap()
       const FRAME_BYTES = 640 // 20 ms @ 16 kHz, 16-bit mono
       const frames: Uint8Array[] = []
@@ -274,18 +288,6 @@ function scheduleReconnect(candidates: string[], nextIndex: number): void {
 export function startAgentBridge(): void {
   if (!__DEV__ || started) return
   started = true
-  // Some builds do not register the SourceCode TurboModule (observed on the
-  // emulator debug build; RN's own dev internals — getDevServer, LogBox
-  // symbolication — then throw "SourceCode could not be found" repeatedly).
-  // The app is unaffected; the LogBox overlays it spawns make the screen
-  // unusable for QA. Filter that one known-benign message. Root cause (why
-  // SourceCode is absent under this new-arch config) tracked separately.
-  try {
-    const {LogBox} = require("react-native")
-    LogBox.ignoreLogs([/'SourceCode' could not be found/])
-  } catch {
-    /* LogBox unavailable: nothing to silence */
-  }
   // Candidate hosts for the harness, most-specific first. Some builds cannot
   // introspect their bundle origin at all (no SourceCode module, no expo
   // manifest), so rather than depend on detection we rotate through the
@@ -293,7 +295,7 @@ export function startAgentBridge(): void {
   // emulator's host loopback; localhost works under `adb reverse`. The
   // reconnect loop tries the next candidate on every retry, so whichever is
   // reachable wins and a wrong guess costs one retry interval.
-  const candidates = [...new Set([devServerHost(), "10.0.2.2", "localhost"].filter((h): h is string => !!h))]
+  const candidates = [...new Set([lazyDevServerHost()(), "10.0.2.2", "localhost"].filter((h): h is string => !!h))]
   console.log(`${LOG_TAG}: starting (harness candidates: ${candidates.join(", ")} port ${BRIDGE_PORT})`)
   connect(candidates, 0)
 }

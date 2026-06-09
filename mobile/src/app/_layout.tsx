@@ -9,10 +9,11 @@ import {useEffect, useState} from "react"
 
 import {startAgentBridge} from "@/dev/agentBridge"
 
-// Dev-only agent bridge: started at module load (the earliest reliable
-// point) so the QA/test harness can drive the app from any state, including
-// the login screen. No-op in release builds.
-startAgentBridge()
+// Dev-only agent bridge: deferred a tick so NOTHING runs at root-layout
+// module scope — evaluating app singletons (navigation store -> expo-router's
+// router) before the router initializes corrupts route registration ("/"
+// stops matching). The bridge still starts pre-login. No-op in release.
+setTimeout(() => startAgentBridge(), 0)
 
 import {SentryNavigationIntegration, SentrySetup} from "@/effects/SentrySetup"
 import {initI18n} from "@/i18n"

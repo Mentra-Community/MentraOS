@@ -74,10 +74,30 @@ const CLOUD_V2_ALIASES = {
 // only local dev bundling is redirected here.)
 const ISLAND_SRC = path.resolve(__dirname, "./modules/island/src")
 
+// Singleton packages that must NEVER resolve to a nested copy. bun installs
+// duplicate react-native/expo under local expo-modules (e.g.
+// modules/crust/node_modules/react-native) because they declare them as peer
+// deps; if Metro resolves an import from inside such a module to the nested
+// copy, the bundle carries a SECOND react-native whose TurboModule specs are
+// not wired to the host registry. Symptom (found the hard way): module-eval
+// throws "TurboModuleRegistry.getEnforcing('SourceCode') could not be found",
+// which silently DROPS any expo-router route whose import chain touches the
+// module (cold boots land on "Unmatched Route") and breaks components into
+// `undefined`. Forcing these to the app's own copy makes resolution immune to
+// install-layout drift.
+const SINGLETONS = ["react-native", "expo", "react"]
+const singletonPath = Object.fromEntries(SINGLETONS.map((name) => [name, path.resolve(__dirname, "node_modules", name)]))
+
 const baseResolveRequest = config.resolver.resolveRequest
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   const aliased = CLOUD_V2_ALIASES[moduleName]
   if (aliased) return {type: "sourceFile", filePath: aliased}
+  for (const name of SINGLETONS) {
+    if (moduleName === name || moduleName.startsWith(`${name}/`)) {
+      const target = moduleName === name ? singletonPath[name] : path.join(singletonPath[name], moduleName.slice(name.length + 1))
+      return (baseResolveRequest ?? context.resolveRequest)(context, target, platform)
+    }
+  }
   // @mentra/island -> src/index.ts; @mentra/island/foo -> src/foo. Let Metro's
   // default resolver (via sourceExts) pick the .ts/.tsx extension off the
   // resulting path so we don't hardcode file extensions here.
