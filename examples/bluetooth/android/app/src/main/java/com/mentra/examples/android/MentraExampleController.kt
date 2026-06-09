@@ -859,7 +859,16 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                             addEvent("TX", "stream failed: $reachabilityMessage")
                             return@launch
                         }
-                        startStream(streamUrl, streamId, selectedProtocol)
+                        try {
+                            startStream(streamUrl, streamId, selectedProtocol)
+                        } catch (error: Throwable) {
+                            val message = error.message ?: error::class.java.simpleName
+                            state = state.copy(
+                                lastAction = "Failed: Start stream - $message",
+                                streamStatus = message,
+                            )
+                            addEvent("TX", "stream failed: $message")
+                        }
                     }
                 }
                 return@runAction
