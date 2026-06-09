@@ -37,8 +37,8 @@ Add this to your `settings.json` (open with `Cmd+,` or `zed: open settings`):
 {
   "context_servers": {
     "mentraos-docs": {
-      "command": "bunx",
-      "args": ["mcp-remote", "https://docs.mentraglass.com/mcp"],
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://docs.mentraglass.com/mcp"],
       "env": {}
     }
   }
@@ -61,8 +61,8 @@ Add this to your Cursor MCP config file at `~/.cursor/mcp.json` (create it if it
 {
   "mcpServers": {
     "mentraos-docs": {
-      "command": "bunx",
-      "args": ["mcp-remote", "https://docs.mentraglass.com/mcp"]
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://docs.mentraglass.com/mcp"]
     }
   }
 }
@@ -114,8 +114,8 @@ Add to your VS Code `settings.json`:
 {
   "mcpServers": {
     "mentraos-docs": {
-      "command": "bunx",
-      "args": ["mcp-remote", "https://docs.mentraglass.com/mcp"]
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://docs.mentraglass.com/mcp"]
     }
   }
 }
@@ -149,7 +149,7 @@ Run `claude mcp list` to see your connected servers. You should see `mentraos-do
 For any tool that supports MCP, use `mcp-remote` to connect to our HTTP endpoint:
 
 ```bash
-bunx mcp-remote https://docs.mentraglass.com/mcp
+npx -y mcp-remote https://docs.mentraglass.com/mcp
 ```
 
 Or if your tool supports HTTP MCP servers directly, use the URL:
@@ -177,19 +177,19 @@ Your AI should now give you accurate, up-to-date answers using our docs.
 
 <AccordionGroup>
   <Accordion title="Server not connecting">
-    Make sure you have Bun installed. The `mcp-remote` package runs through `bunx`.
+    Make sure you have Node.js 18+ installed. The `mcp-remote` package requires it.
 
     ```bash
-    bun --version
+    node --version  # Should be v18.0.0 or higher
     ```
   </Accordion>
 
-  <Accordion title="bunx command not found">
-    Install Bun from [bun.sh](https://bun.sh/).
+  <Accordion title="npx command not found">
+    Install Node.js from [nodejs.org](https://nodejs.org/) which includes npm and npx.
   </Accordion>
 
   <Accordion title="Permission errors">
-    Try running the `bunx` command from a terminal where Bun is on your `PATH`.
+    Try running the npx command with `sudo` on macOS/Linux, or run your terminal as Administrator on Windows.
   </Accordion>
 </AccordionGroup>
 
