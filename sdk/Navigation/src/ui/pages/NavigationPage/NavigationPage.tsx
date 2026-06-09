@@ -974,6 +974,31 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     Start
                   </button>
                 </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Arrow glyph on glasses</span>
+                  <div className="flex gap-1.5">
+                    {(
+                      [
+                        {label: "←", glyph: "←"},
+                        {label: "↑", glyph: "↑"},
+                        {label: "→", glyph: "→"},
+                      ] as const
+                    ).map((arrow) => (
+                      <button
+                        key={arrow.glyph}
+                        type="button"
+                        onClick={() =>
+                          mentra.request("test:show-text-test", {
+                            text: arrow.glyph,
+                            durationMs: 3000,
+                          })
+                        }
+                        className="text-[14px] leading-none w-8 h-7 rounded-lg font-semibold bg-red-600 text-white">
+                        {arrow.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </>
             ) : null}
             {devTab === "nav" ? <>

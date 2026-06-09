@@ -654,6 +654,7 @@ export class NavigationController {
       next = d != null ? `Go back\n${formatDistance(d)}` : "Go back\nto route"
     } else if (this.activePivot?.direction) {
       // At the turn. Layout:
+      //   ←|→
       //   Onto <toRoad>
       //   Turn left|right
       const verb = this.activePivot.direction === "right" ? "Turn right" : "Turn left"
@@ -662,12 +663,16 @@ export class NavigationController {
       const rawTop = this.devSettings.useRawInstructions
         ? this.lookupRawInstructionForPivot(this.activePivot)
         : null
+      // Directional arrow on the top line. Mirrors the approaching-
+      // pivot branch, but since we're AT the corner there's no distance
+      // gate to apply — it's always the turn arrow, never ↑.
+      const arrow = arrowFor(this.activePivot.maneuver, this.activePivot.direction)
       // At the pivot. With raw instructions on, Google's text already
       // contains the verb ("Turn right onto X St"), so prepending our
       // own "Turn right" line duplicates the verb. Use "Now" as the
       // top line instead — same hierarchy as "In 198 m" above the
       // line just before the turn fires.
-      next = rawTop ? `Now\n${rawTop}` : [topLine, verb].filter(Boolean).join("\n")
+      next = rawTop ? `${arrow}\nNow\n${rawTop}` : [arrow, topLine, verb].filter(Boolean).join("\n")
     } else if (this.upcomingPivot?.direction && this.coords) {
       // Approaching the next turn. Layout:
       //   Onto <toRoad>
@@ -704,9 +709,14 @@ export class NavigationController {
         ? `${arrow}\nIn ${formatDistance(dist)}\n${rawTop}`
         : [arrow, topLine, `${verb} in ${formatDistance(dist)}`].filter(Boolean).join("\n")
     } else if (maneuver?.distanceToDestinationMeters != null && maneuver.distanceToDestinationMeters >= 0) {
-      next = `Arriving in ${formatDistance(maneuver.distanceToDestinationMeters)}`
+      // Final-leg "Arriving in Xm" — no more pivots between here and
+      // the destination, so the directional arrow stays ↑ (straight
+      // ahead) until the ≤7m-remaining trigger flips status to
+      // "arrived". Matches the approach-pivot HUD's arrow-on-top
+      // layout for visual continuity.
+      next = `↑\nArriving in ${formatDistance(maneuver.distanceToDestinationMeters)}`
     } else if (running) {
-      next = "Arriving"
+      next = `↑\nArriving`
     }
 
     if (next == null) {
