@@ -1,4 +1,5 @@
 import {AnimatePresence, motion} from "motion/react"
+import {useLayoutEffect, useRef, useState} from "react"
 import type {NavManeuver} from "@mentra/miniapp"
 
 import type {Pivot} from "@mentra/miniapp"
@@ -109,8 +110,8 @@ export function OrientationCard({
               animate={{opacity: 1, y: 0}}
               exit={{opacity: 0, y: -6}}
               transition={SPRING}
-              className="tracking-[-0.02em] self-stretch text-[#111111] font-sans font-semibold text-[28px]/8.5 wrap-break-word">
-              {label}
+              className="self-stretch">
+              <AutoFitLabel text={label} />
             </motion.div>
           </AnimatePresence>
           
@@ -121,6 +122,55 @@ export function OrientationCard({
   )
 }
 
+
+/**
+ * Single-line / two-line label that auto-shrinks its font size until
+ * the text fits in ≤ 2 lines. The default size matches the original
+ * card (text-[28px]/8.5 → 28px font, ~34px line). On each text change
+ * we reset to the max, measure, and step down through a fixed ladder
+ * until `scrollHeight <= 2 * lineHeight` or we hit the floor.
+ *
+ * Measurement runs in useLayoutEffect so the shrink commits before the
+ * browser paints, avoiding a one-frame flash of overflowing text.
+ */
+function AutoFitLabel({text}: {text: string}) {
+  // Font-size ladder (px). The line-height is held proportional at
+  // ~1.22× so the two-line ceiling tracks the font size cleanly.
+  const SIZES = [28, 24, 22, 20, 18, 16, 14] as const
+  const LINE_RATIO = 1.22
+  const [sizeIdx, setSizeIdx] = useState(0)
+  const ref = useRef<HTMLDivElement | null>(null)
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    // Reset to the largest size and measure. If it overflows two lines,
+    // step down until it fits or we hit the smallest tier.
+    let i = 0
+    while (i < SIZES.length) {
+      const fontPx = SIZES[i]
+      const linePx = Math.round(fontPx * LINE_RATIO)
+      el.style.fontSize = `${fontPx}px`
+      el.style.lineHeight = `${linePx}px`
+      // +1px slack for sub-pixel rounding so we don't step down for a
+      // ghost half-pixel of overflow.
+      if (el.scrollHeight <= linePx * 2 + 1) break
+      i++
+    }
+    setSizeIdx(Math.min(i, SIZES.length - 1))
+  }, [text])
+
+  const fontPx = SIZES[sizeIdx]
+  const linePx = Math.round(fontPx * LINE_RATIO)
+  return (
+    <div
+      ref={ref}
+      style={{fontSize: `${fontPx}px`, lineHeight: `${linePx}px`}}
+      className="tracking-[-0.02em] text-[#111111] font-sans font-semibold wrap-break-word">
+      {text}
+    </div>
+  )
+}
 
 /* -------------------------------------------------------------------------- */
 /* Snapshot + maneuver -> display fields                                       */
@@ -226,8 +276,11 @@ function pickDisplay(
   if (snap.activeDirection) {
     const verb = snap.activeDirection === "right" ? "Turn right" : "Turn left"
     const icon = snap.activeDirection === "right" ? "TURN_RIGHT" : "TURN_LEFT"
+    // At the pivot. Google's raw text already contains the verb
+    // ("Turn right onto X St"); show "Now" as the top line instead of
+    // duplicating our own "Turn right" line.
     if (raw.useRawInstructions && raw.activeInstruction) {
-      return {label: raw.activeInstruction, icon, nextRoad: null, road: null}
+      return {label: raw.activeInstruction, icon, nextRoad: "Now", road: null}
     }
     const label = snap.activeToRoad ? `${verb} onto ${snap.activeToRoad}` : verb
     return {label, icon, nextRoad: null, road: null}

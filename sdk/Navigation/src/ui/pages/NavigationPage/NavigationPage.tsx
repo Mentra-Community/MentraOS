@@ -250,6 +250,21 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [useRawInstructions, setUseRawInstructions] = useState(true)
   const [travelMode, setTravelMode] = useState<TravelMode>("walking")
 
+  // Sticky off-route banner. The upstream `offRouteAt` flag only lives
+  // for the ~100ms gap between the SDK's `off_route` event and the
+  // controller flipping status to "rerouting" — too short to read.
+  // Latch it for OFF_ROUTE_STICKY_MS on the rising edge so the user
+  // sees the recalculating notice (plus spinner) even after the
+  // controller has moved on to actually rebuilding the route.
+  const OFF_ROUTE_STICKY_MS = 5_000
+  const [offRouteSticky, setOffRouteSticky] = useState(false)
+  useEffect(() => {
+    if (offRouteAt == null) return
+    setOffRouteSticky(true)
+    const t = setTimeout(() => setOffRouteSticky(false), OFF_ROUTE_STICKY_MS)
+    return () => clearTimeout(t)
+  }, [offRouteAt])
+
   const [previewRoutePoints, setPreviewRoutePoints] = useState<LatLng[] | null>(null)
   // Dev-only: turn points along the previewed route, used to draw red
   // debug dots (with a road-name label) on the map. Derived from the
@@ -818,7 +833,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
             </div>
           )}
           {(running || devDrawer === "running") && (
-            <div className={`"pointer-events-auto ${safeHeadingManuverCard}`}>
+            <div className={`"pointer-events-auto ${safeHeadingManuverCard} px-1.5`}>
               <OrientationCard
                 me={me}
                 heading={heading}
@@ -828,9 +843,23 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
               />
             </div>
           )}
-          {offRouteAt != null && status !== "rerouting" ? (
-            <div className="pointer-events-none mx-3 px-3 py-2 rounded-lg bg-amber-500/95 text-white text-sm font-semibold shadow">
-              Off route — recalculating…
+          {offRouteSticky ? (
+            <div className="pointer-events-none mx-3 px-3 py-2 rounded-lg bg-amber-500/95 text-white text-sm font-semibold shadow flex items-center gap-2">
+              <svg
+                className="size-4 animate-spin shrink-0"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.3" strokeWidth="3" />
+                <path
+                  d="M21 12 A9 9 0 0 0 12 3"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  fill="none"
+                />
+              </svg>
+              <span>Off route — recalculating…</span>
             </div>
           ) : null}
         </div>

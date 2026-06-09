@@ -57,8 +57,20 @@ export class NavigationController {
 
   // Last logged threshold bucket for the off-route diagnostic so we
   // only print on crossings, not every coord update.
-  // 0 = under 15m, 1 = 15–30m, 2 = ≥30m.
+  // 0 = under OFF_ROUTE_ADVISORY_M, 1 = advisory band, 2 = ≥OFF_ROUTE_TRIGGER_M.
   private lastOffRouteBucket = 0
+
+  // True while the user is in the 15–30m advisory band. Drives the
+  // glasses HUD's "Go back to route" frame between the moment we
+  // notice the drift and the moment auto-rebuild kicks in at 30m.
+  // Cleared when we return under 15m or when status flips to
+  // rerouting (>=30m crossing).
+  private offRouteAdvisory = false
+  // Live perpendicular distance to the route while in the advisory
+  // band. Refreshed on every coord tick (not just bucket transitions)
+  // so the HUD's "Go back 10m" countdown ticks down as the user
+  // moves toward the route. Null when not in the band.
+  private offRouteAdvisoryDistanceM: number | null = null
 
   // Trip-start anchor: position recorded at trip start, used to gate
   // auto-rebuilds. Suppresses the "user is inside a 50m-radius building"
@@ -259,6 +271,8 @@ export class NavigationController {
             this.lastStartOpts = null
             this.lastAutoRebuildAt = 0
             this.lastOffRouteBucket = 0
+            this.offRouteAdvisory = false
+            this.offRouteAdvisoryDistanceM = null
             this.cachedInstructions = null
             break
           }
@@ -269,6 +283,8 @@ export class NavigationController {
             this.lastStartOpts = null
             this.lastAutoRebuildAt = 0
             this.lastOffRouteBucket = 0
+            this.offRouteAdvisory = false
+            this.offRouteAdvisoryDistanceM = null
             this.cachedInstructions = null
             break
         }
@@ -317,6 +333,8 @@ export class NavigationController {
         // user might already have been "in" bucket 2 against the old
         // route) and skip the threshold transition log.
         this.lastOffRouteBucket = 0
+        this.offRouteAdvisory = false
+        this.offRouteAdvisoryDistanceM = null
         if (this.coords) {
           this.tripStartCoords = {lat: this.coords.lat, lng: this.coords.lng}
         }
@@ -371,7 +389,7 @@ export class NavigationController {
         // into the live maneuver card / glasses HUD by step index.
         const steps = result.routes?.[0]?.steps
         if (steps && steps.length > 0) {
-          this.cachedInstructions = steps.map((s) => s.instruction ?? "")
+          this.cachedInstructions = steps.map((s) => cleanInstruction(s.instruction))
         }
         return result
       }),
@@ -423,6 +441,8 @@ export class NavigationController {
         this.tripStartCoords = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
         this.lastAutoRebuildAt = 0
         this.lastOffRouteBucket = 0
+        this.offRouteAdvisory = false
+        this.offRouteAdvisoryDistanceM = null
         // Cancel any in-flight delayed rebuild — a fresh start
         // supersedes the old "are we still off-route?" timer.
         this.cancelPendingRebuild()
@@ -435,7 +455,7 @@ export class NavigationController {
           // so we must roll the optimistic "navigating" state set above
           // back to idle. Inspecting only `catch` left the UI stuck on a
           // routeless trip with no recovery but a manual stop.
-          const res = await this.navigation.start(startOpts)
+          const res = await this.navigation.start(withPivotDefaults(startOpts))
           if (!res.ok) {
             this.appendLog(`START failed: ${res.error ?? "unknown"}`)
             this.trip = {...this.trip, status: "idle", running: false}
@@ -463,6 +483,8 @@ export class NavigationController {
         this.lastStartOpts = null
         this.lastAutoRebuildAt = 0
         this.lastOffRouteBucket = 0
+        this.offRouteAdvisory = false
+        this.offRouteAdvisoryDistanceM = null
         this.activePivot = null
         this.upcomingPivot = null
         this.cachedInstructions = null
@@ -622,6 +644,14 @@ export class NavigationController {
       durationMs = 5_000
     } else if (status === "rerouting") {
       next = "Rebuilding route…"
+    } else if (this.offRouteAdvisory && running) {
+      // 15–30m advisory band. Replace the (now stale) maneuver text
+      // with a return-to-route prompt + live distance back to the
+      // path until the user either gets back on (cleared in
+      // logOffRouteThresholds) or crosses 30m and the auto-rebuild
+      // flow takes over.
+      const d = this.offRouteAdvisoryDistanceM
+      next = d != null ? `Go back\n${formatDistance(d)}` : "Go back\nto route"
     } else if (this.activePivot?.direction) {
       // At the turn. Layout:
       //   Onto <toRoad>
@@ -632,7 +662,12 @@ export class NavigationController {
       const rawTop = this.devSettings.useRawInstructions
         ? this.lookupRawInstructionForPivot(this.activePivot)
         : null
-      next = rawTop ? `${verb}\n${rawTop}` : [topLine, verb].filter(Boolean).join("\n")
+      // At the pivot. With raw instructions on, Google's text already
+      // contains the verb ("Turn right onto X St"), so prepending our
+      // own "Turn right" line duplicates the verb. Use "Now" as the
+      // top line instead — same hierarchy as "In 198 m" above the
+      // line just before the turn fires.
+      next = rawTop ? `Now\n${rawTop}` : [topLine, verb].filter(Boolean).join("\n")
     } else if (this.upcomingPivot?.direction && this.coords) {
       // Approaching the next turn. Layout:
       //   Onto <toRoad>
@@ -644,17 +679,30 @@ export class NavigationController {
       const verb = this.upcomingPivot.direction === "right" ? "Turn right" : "Turn left"
       const onto = isRealRoadName(this.upcomingPivot.toRoad)
       const topLine = onto ? `Onto ${onto}` : null
-      // When the raw-instructions toggle is on, swap the road label for
-      // Google's verbatim instruction string but keep the distance line
-      // ("in 198 m") leading per the requested distance-first layout:
+      // Direction arrow as its own top line so the user can read the
+      // turn at a glance before parsing the rest of the HUD. Pulled
+      // from the pivot's `maneuver` (richer than `direction`, includes
+      // SLIGHT_/SHARP_ variants) with `direction` as fallback.
+      //
+      // Gated on distance: while still walking down the current street
+      // (>100m from the upcoming pivot) the arrow stays ↑ so it doesn't
+      // claim to be turning when there's nothing to turn at yet. Inside
+      // the approach threshold, the arrow flips to the actual turn
+      // direction.
+      //
+      //   ←|→|↑
       //   In 198 m
-      //   Head west on Hayes St toward Gough St
+      //   Turn right onto Octavia St   (or Google's raw text)
+      const arrow =
+        dist < ARROW_APPROACH_M_WALKING
+          ? arrowFor(this.upcomingPivot.maneuver, this.upcomingPivot.direction)
+          : "↑"
       const rawTop = this.devSettings.useRawInstructions
         ? this.lookupRawInstructionForPivot(this.upcomingPivot)
         : null
       next = rawTop
-        ? `In ${formatDistance(dist)}\n${rawTop}`
-        : [topLine, `${verb} in ${formatDistance(dist)}`].filter(Boolean).join("\n")
+        ? `${arrow}\nIn ${formatDistance(dist)}\n${rawTop}`
+        : [arrow, topLine, `${verb} in ${formatDistance(dist)}`].filter(Boolean).join("\n")
     } else if (maneuver?.distanceToDestinationMeters != null && maneuver.distanceToDestinationMeters >= 0) {
       next = `Arriving in ${formatDistance(maneuver.distanceToDestinationMeters)}`
     } else if (running) {
@@ -778,20 +826,46 @@ export class NavigationController {
     const route = this.trip.routePoints
     if (!route || route.length < 2) {
       this.lastOffRouteBucket = 0
+      this.offRouteAdvisory = false
+      this.offRouteAdvisoryDistanceM = null
       return
     }
     const here = {lat: this.coords.lat, lng: this.coords.lng}
     const dist = distanceToPolylineMeters(here, route)
     if (dist == null) return
-    const bucket = dist >= 30 ? 2 : dist >= 15 ? 1 : 0
+    const bucket = dist >= OFF_ROUTE_TRIGGER_M ? 2 : dist >= OFF_ROUTE_ADVISORY_M ? 1 : 0
+    // Keep the advisory distance live so the HUD's "Go back 10m" line
+    // ticks down as the user moves. Done every coord update — only
+    // the bucket-transition log + rebuild trigger below run on edges.
+    const prevDistance = this.offRouteAdvisoryDistanceM
+    this.offRouteAdvisoryDistanceM = bucket === 1 ? dist : null
+    if (
+      bucket === this.lastOffRouteBucket &&
+      bucket === 1 &&
+      prevDistance != null &&
+      Math.round(prevDistance) !== Math.round(dist)
+    ) {
+      // Same bucket, distance label would change — refresh so the HUD
+      // text follows the user. Coalescing in refreshHUD swallows
+      // identical frames so this is cheap.
+      this.refreshHUD()
+    }
     if (bucket === this.lastOffRouteBucket) return
     this.lastOffRouteBucket = bucket
-    if (bucket === 1) {
-      const msg = `> 15m off route (${dist.toFixed(1)}m) — return to route`
+    // Track the advisory band so refreshHUD() can show "Go back to
+    // route" while we wait for either a return-to-path (bucket 0) or
+    // a rebuild trigger (bucket 2).
+    this.offRouteAdvisory = bucket === 1
+    if (bucket === 0) {
+      // Returned within the route — back to maneuver text on the HUD.
+      this.refreshHUD()
+    } else if (bucket === 1) {
+      const msg = `> ${OFF_ROUTE_ADVISORY_M}m off route (${dist.toFixed(1)}m) — return to route`
       console.log(`[NavOffRoute] ${msg}`)
       this.appendLog(`[NavOffRoute] ${msg}`)
+      this.refreshHUD()
     } else if (bucket === 2) {
-      const msg = `> 30m off route (${dist.toFixed(1)}m) — rebuilding`
+      const msg = `> ${OFF_ROUTE_TRIGGER_M}m off route (${dist.toFixed(1)}m) — rebuilding`
       console.log(`[NavOffRoute] ${msg}`)
       this.appendLog(`[NavOffRoute] ${msg}`)
       this.triggerAutoRebuild(here, dist)
@@ -811,9 +885,9 @@ export class NavigationController {
   // within its cooldown window.
   private triggerAutoRebuild(here: {lat: number; lng: number}, dist: number): void {
     const REBUILD_MIN_MOVE_M = 10
-    const REBUILD_COOLDOWN_MS = 15_000
+    const REBUILD_COOLDOWN_MS = 5_000
     const REBUILD_DELAY_MS = 4_000
-    const REBUILD_DISTANCE_M = 30
+    const REBUILD_DISTANCE_M = OFF_ROUTE_TRIGGER_M
 
     const opts = this.lastStartOpts
     if (!opts) return
@@ -876,7 +950,7 @@ export class NavigationController {
       // Re-anchor trip-start to the current position so the moved-guard
       // re-arms against this new starting point.
       this.tripStartCoords = {lat: this.coords!.lat, lng: this.coords!.lng}
-      void this.navigation.start(opts).then((res) => {
+      void this.navigation.start(withPivotDefaults(opts)).then((res) => {
         if (!res.ok) {
           this.appendLog(`[NavOffRoute] auto-rebuild failed: ${res.error ?? "unknown"}`)
           this.trip = {...this.trip, status: "navigating"}
@@ -928,6 +1002,8 @@ export class NavigationController {
     this.lastStartOpts = null
     this.lastAutoRebuildAt = 0
     this.lastOffRouteBucket = 0
+    this.offRouteAdvisory = false
+    this.offRouteAdvisoryDistanceM = null
     try {
       this.navigation.stop()
     } catch {
@@ -1083,6 +1159,92 @@ function isRealRoadName(s: string | undefined | null): string | null {
   if (!s) return null
   if (/^Pivot \d+$/i.test(s)) return null
   return s
+}
+
+/**
+ * Glasses HUD direction arrow for a maneuver. Picks a Unicode glyph
+ * that visually matches the upcoming turn — sharper bends get the
+ * curved arrows, gentle turns get the diagonals, U-turns get the
+ * loopback. Falls back to the pivot's `direction` field (left/right)
+ * when the maneuver string isn't one we recognize, and ultimately to
+ * a straight-ahead `↑`.
+ */
+function arrowFor(maneuver: string | null | undefined, direction: "left" | "right" | null | undefined): string {
+  // Plain arrow glyphs only — the corner-curve variants (↰ ↱) don't
+  // render on the glasses font. Anything left-ish → ←, right-ish → →,
+  // straight / continue / depart / unknown → ↑.
+  const m = (maneuver ?? "").toUpperCase()
+  if (m.includes("LEFT")) return "←"
+  if (m.includes("RIGHT")) return "→"
+  if (direction === "left") return "←"
+  if (direction === "right") return "→"
+  return "↑"
+}
+
+/**
+ * Walking pivot radius (meters). Default SDK walking radius is 7m,
+ * which is tight enough that crossing to the opposite sidewalk at a
+ * 4-way puts you outside the at-turn zone and `onPivot.entered`
+ * never fires. 14m covers all four corners of a typical urban
+ * intersection without being so wide it misfires on adjacent blocks
+ * (block length ≈ 80m). Set as a single static value because the SDK
+ * has no runtime radius setter — same value used for enter and exit.
+ */
+const PIVOT_RADIUS_M_WALKING = 14
+
+// Distance at which the HUD's directional arrow flips from ↑
+// (straight ahead) to ←/→ (the actual turn). Locked to the pivot
+// radius itself so the arrow never claims "turn now" further out
+// than the SDK considers you to be at the turn. Note: in practice
+// crossing this threshold also lands the user in the at-pivot
+// "Now / Turn right onto X" HUD frame, which doesn't render the
+// arrow line — so the ←/→ glyph effectively never shows on screen
+// at this setting. ↑ is what the user sees the entire approach.
+const ARROW_APPROACH_M_WALKING = PIVOT_RADIUS_M_WALKING
+
+/**
+ * Merge the trip-wide pivot radius default into a StartNavigationOptions
+ * payload. Preserves any caller-supplied `pivots` block so an explicit
+ * override from the UI still wins.
+ */
+function withPivotDefaults<T extends {pivots?: {radiusMeters?: number; approachThresholdMeters?: number}}>(opts: T): T {
+  return {
+    ...opts,
+    pivots: {
+      radiusMeters: PIVOT_RADIUS_M_WALKING,
+      ...(opts.pivots ?? {}),
+    },
+  }
+}
+
+// Off-route distance thresholds (meters). Widened from 15/30 to 20/35
+// so opposite-sidewalk crossings at typical urban 4-way intersections
+// don't read as deviations. Walking the far curb across a 4-lane road
+// (~15m wide including parking) lands you ~12-18m from Google's
+// route polyline — narrow enough to fall under the advisory band
+// instead of triggering a spurious rebuild.
+const OFF_ROUTE_ADVISORY_M = 20
+const OFF_ROUTE_TRIGGER_M = 35
+
+/**
+ * Strip the trailing arrival-side hint Google's Routes API appends to
+ * the final step's instruction string (e.g.
+ *   "Turn right onto Octavia St | Destination will be on the left"
+ * becomes
+ *   "Turn right onto Octavia St"
+ * ). The pipe is the canonical delimiter, but we also handle the
+ * occasional period-separated variant. Returns empty string for null
+ * / undefined so the cache zip stays length-aligned with the SDK's
+ * live step list.
+ */
+function cleanInstruction(raw: string | null | undefined): string {
+  if (!raw) return ""
+  // Remove "Destination will be on the left/right" (with or without
+  // a preceding " | " or ". " delimiter). Trim trailing whitespace
+  // and stray punctuation left behind by the removal.
+  return raw
+    .replace(/\s*[|.]?\s*destination will be on the (left|right)\s*\.?\s*$/i, "")
+    .trim()
 }
 
 /**

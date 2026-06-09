@@ -369,12 +369,13 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
               className="grow shrink basis-0 bg-transparent font-sans text-[#000000E6] text-base/5 placeholder-[#0000008C] focus:outline-none border-none"
               value={customName}
               onChange={(e) => {
-                setCustomName(e.target.value)
-                // User is typing their own name — they're no longer
-                // editing the slot we may have loaded; drop the tag so
-                // Save creates a regular (untyped) entry instead of
-                // overwriting Home/Work.
-                if (editingType && !presetType) setEditingType(null)
+                // Auto-capitalize the first letter so "work" → "Work"
+                // and "Home" stays "Home". Saved label and slot
+                // detection both read this value, so capitalizing
+                // here keeps storage + UI consistent.
+                const raw = e.target.value
+                const next = raw.length > 0 ? raw[0].toUpperCase() + raw.slice(1) : raw
+                setCustomName(next)
               }}
               onFocus={() => setNameFocused(true)}
               // 150ms blur delay mirrors LocationInput: lets a tap on a
@@ -437,7 +438,20 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
       <div className="absolute bottom-8 inset-x-4">
         <button
           type="button"
-          onClick={() => selectedPlace && onSave(selectedPlace, customName.trim(), editingType ?? undefined)}
+          onClick={() => {
+            if (!selectedPlace) return
+            const trimmedName = customName.trim()
+            // Slot is determined by the final label the user chose, not
+            // by which preset opened the page. Lets the user start in
+            // the "Home" flow and end up saving as "Work" (or vice
+            // versa) by renaming the label. Falls back to the explicit
+            // editingType (when they picked a slot from the dropdown)
+            // so the dedup logic keeps overwriting the right entry.
+            const lower = trimmedName.toLowerCase()
+            const resolvedType: "home" | "work" | undefined =
+              lower === "home" ? "home" : lower === "work" ? "work" : (editingType ?? undefined)
+            onSave(selectedPlace, trimmedName, resolvedType)
+          }}
           disabled={!selectedPlace}
           className="h-14 w-full flex items-center justify-center rounded-[28px] px-4 [box-shadow:#00000033_0px_6px_22px] bg-[#1A1A1A] disabled:opacity-40 transition-opacity">
           <div className="tracking-[-0.005em] font-sans font-semibold text-white text-base/5">Save place</div>

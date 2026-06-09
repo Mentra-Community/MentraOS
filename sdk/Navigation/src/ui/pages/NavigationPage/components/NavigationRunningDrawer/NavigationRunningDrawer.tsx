@@ -1,5 +1,5 @@
 import {AnimatePresence, motion} from "motion/react"
-import {useLayoutEffect, useRef} from "react"
+import {useLayoutEffect, useRef, useState} from "react"
 
 import {useDrawerOffset} from "@/ui/components/Drawer/DrawerOffsetContext"
 import {formatDistance} from "@/ui/lib/formatDistance"
@@ -76,11 +76,13 @@ export function NavigationRunningDrawer({
           transition={{type: "spring", stiffness: 320, damping: 42}}
           className="fixed left-0 right-0 bottom-0 z-40 pointer-events-none">
           <div ref={measureRef} className="[font-synthesis:none] pointer-events-auto mx-auto max-w-md flex items-center pt-4 pb-8.5 gap-2 bg-[#FFFFFFA6] border-t border-t-solid border-t-[#FFFFFF80] [backdrop-filter:blur(40px)_saturate(180%)] antialiased px-4 rounded-t-[28px]">
-            <Stat label={arrivalLabel} sub="Arrival" />
-            <div className="w-px h-7 bg-[#0000001A] shrink-0" />
-            <Stat label={etaLabel} sub="Time" />
-            <div className="w-px h-7 bg-[#0000001A] shrink-0" />
-            <Stat label={distanceLabel} sub="Distance" />
+            <StatRow
+              items={[
+                {label: arrivalLabel, sub: "Arrival"},
+                {label: etaLabel, sub: "Time"},
+                {label: distanceLabel, sub: "Distance"},
+              ]}
+            />
             <button
               type="button"
               onClick={onStop}
@@ -96,12 +98,69 @@ export function NavigationRunningDrawer({
   )
 }
 
-function Stat({label, sub}: {label: string; sub: string}) {
+/**
+ * Three stats sharing a single font size: each stat measures itself at
+ * the max size, then the row picks the smallest size any one stat
+ * needed to fit on a single line, and renders all three at that size.
+ * Keeps the values visually balanced — no one stat shrinks below the
+ * others when, e.g., "3:25 PM" is narrower than "59 min".
+ */
+function StatRow({items}: {items: {label: string; sub: string}[]}) {
+  // Font-size ladder for the value (px). The sub-label stays at its
+  // original 13px regardless. Picking 18 as the max matches the
+  // original `text-lg/5.5` (~18px) the design started at.
+  const SIZES = [18, 16, 14, 13, 12] as const
+  const LINE_RATIO = 1.22
+  const [sizeIdx, setSizeIdx] = useState(0)
+  const labelRefs = useRef<Array<HTMLDivElement | null>>([])
+
+  useLayoutEffect(() => {
+    // For each stat, find the smallest size index in SIZES that lets
+    // the label fit without overflowing its column. The row then picks
+    // the largest of those indices (= smallest font) so every stat
+    // ends up at the same size.
+    let worstIdx = 0
+    for (const el of labelRefs.current) {
+      if (!el) continue
+      let i = 0
+      while (i < SIZES.length) {
+        const fontPx = SIZES[i]
+        const linePx = Math.round(fontPx * LINE_RATIO)
+        el.style.fontSize = `${fontPx}px`
+        el.style.lineHeight = `${linePx}px`
+        // +1px slack absorbs sub-pixel rounding.
+        if (el.scrollWidth <= el.clientWidth + 1) break
+        i++
+      }
+      if (i > worstIdx) worstIdx = i
+    }
+    setSizeIdx(Math.min(worstIdx, SIZES.length - 1))
+  }, [items.map((i) => i.label).join("|")])
+
+  const fontPx = SIZES[sizeIdx]
+  const linePx = Math.round(fontPx * LINE_RATIO)
+
   return (
-    <div className="grow shrink basis-[0%] flex flex-col items-center gap-0.5">
-      <div className="tracking-[-0.01em] text-[#000000E6] font-sans font-bold text-lg/5.5">{label}</div>
-      <div className="text-[#0000008C] font-sans text-[13px]/4">{sub}</div>
-    </div>
+    <>
+      {items.map((it, i) => (
+        <>
+          {i > 0 ? <div key={`sep-${i}`} className="w-px h-7 bg-[#0000001A] shrink-0" /> : null}
+          <div
+            key={`stat-${i}`}
+            className="grow shrink basis-[0%] min-w-0 flex flex-col items-center gap-0.5">
+            <div
+              ref={(el) => {
+                labelRefs.current[i] = el
+              }}
+              style={{fontSize: `${fontPx}px`, lineHeight: `${linePx}px`}}
+              className="tracking-[-0.01em] text-[#000000E6] font-sans font-bold whitespace-nowrap self-stretch text-center overflow-hidden">
+              {it.label}
+            </div>
+            <div className="text-[#0000008C] font-sans text-[13px]/4 whitespace-nowrap">{it.sub}</div>
+          </div>
+        </>
+      ))}
+    </>
   )
 }
 
