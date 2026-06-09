@@ -27,6 +27,9 @@ import com.mentra.bluetoothsdk.utils.MicMap
 import com.mentra.bluetoothsdk.utils.MicTypes
 import com.mentra.lc3Lib.Lc3Cpp
 import com.mentra.bluetoothsdk.stt.SherpaOnnxTranscriber
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.CountDownLatch
@@ -1284,7 +1287,9 @@ class DeviceManager {
     }
 
     fun showNotificationsPanel() {
-        sgc?.showNotificationsPanel()
+        CoroutineScope(Dispatchers.Main).launch {
+            sgc?.showNotificationsPanel()
+        }
     }
 
     fun ping() {

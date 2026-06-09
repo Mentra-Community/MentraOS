@@ -1710,48 +1710,6 @@ class G2 : SGCManager() {
         }
     }
 
-    private fun runDashboardSequence() {
-        Bridge.log("G2: Running dashboard sequence")
-
-        // Send the shutdown command to the glasses
-        val msg = EvenHubProto.shutdownMessage()
-        sendEvenHubCommand(msg)
-        pageCreated = false
-        currentTextContent = ""
-
-        mainHandler.postDelayed(
-                {
-                    // 1. gesture_ctrl init (field1=0, field2=magicRandom)
-                    val gestureInitW = ProtobufWriter()
-                    gestureInitW.writeInt32Field(1, 0)
-                    gestureInitW.writeInt32Field(2, sendManager.nextMagicRandom())
-                    sendGestureCtrlCommand(gestureInitW.toByteArray())
-
-                    // 6. Dashboard init (0x01) — display settings
-                    val dashDisplayW = ProtobufWriter()
-                    dashDisplayW.writeInt32Field(1, 4) // displayMode
-                    dashDisplayW.writeInt32Field(2, 3) // statusDisplayCount
-                    dashDisplayW.writeMessageField(3, byteArrayOf(1, 2, 3)) // statusDisplayOrder
-                    dashDisplayW.writeInt32Field(4, 4) // widgetDisplayCount
-                    dashDisplayW.writeMessageField(5, byteArrayOf(1, 3, 2, 2)) // widgetDisplayOrder
-                    dashDisplayW.writeInt32Field(6, dashboardHalfDayFormat()) // halfDayFormat
-                    dashDisplayW.writeInt32Field(7, dashboardTemperatureUnit()) // temperatureUnit
-
-                    val dashRecvW = ProtobufWriter()
-                    dashRecvW.writeMessageField(2, dashDisplayW.toByteArray())
-
-                    val dashPkgW = ProtobufWriter()
-                    dashPkgW.writeInt32Field(1, 2) // Dashboard_Receive
-                    dashPkgW.writeInt32Field(2, sendManager.nextMagicRandom())
-                    dashPkgW.writeMessageField(4, dashRecvW.toByteArray())
-                    sendDashboardCommand(dashPkgW.toByteArray())
-
-                    Bridge.log("G2: Sent full Even-compatible init sequence")
-                },
-                1000
-        )
-    }
-
     private fun dashboardHalfDayFormat(): Int {
         val twelveHour = DeviceStore.get("bluetooth", "twelve_hour_time") as? Boolean ?: true
         return if (twelveHour) 1 else 0
@@ -2189,11 +2147,17 @@ class G2 : SGCManager() {
         // }
     }
 
-    private fun sendImageData(
+    /**
+     * Send a bitmap to an image container as fragmented updateImageRawData packets.
+     *
+     * Suspends until every fragment has been sent, mirroring iOS `sendImageData` (which awaits
+     * 200ms after every fragment, including the last). Callers therefore get the same serialized
+     * timing window: the 300ms settle in [rebuildState] only runs once all fragments are out.
+     */
+    private suspend fun sendImageData(
             containerID: Int,
             containerName: String,
-            bmpData: ByteArray,
-            onComplete: (() -> Unit)? = null
+            bmpData: ByteArray
     ) {
         val fragmentSize = 4096
         imageSessionCounter++
@@ -2202,15 +2166,9 @@ class G2 : SGCManager() {
         var fragmentIndex = 0
         var offset = 0
 
-        fun sendNextFragment() {
-            if (offset >= bmpData.size) {
-                Bridge.log(
-                        "G2: sendImageData($containerName) - $fragmentIndex fragments, ${bmpData.size} bytes"
-                )
-                onComplete?.invoke()
-                return
-            }
+        Bridge.log("G2: sendImageData($containerName) - $fragmentIndex fragments, ${bmpData.size} bytes")
 
+        while (offset < bmpData.size) {
             val end = minOf(offset + fragmentSize, bmpData.size)
             val fragment = bmpData.copyOfRange(offset, end)
 
@@ -2230,20 +2188,8 @@ class G2 : SGCManager() {
 
             fragmentIndex++
             offset = end
-
-            // 200ms between fragments — and also before onComplete (matches iOS, which awaits
-            // 200ms after every fragment including the last).
-            if (offset < bmpData.size) {
-                mainHandler.postDelayed({ sendNextFragment() }, 200)
-            } else {
-                Bridge.log(
-                        "G2: sendImageData($containerName) - $fragmentIndex fragments, ${bmpData.size} bytes"
-                )
-                mainHandler.postDelayed({ onComplete?.invoke() }, 200)
-            }
+            delay(200) // 200ms between fragments (and after the last, matching iOS)
         }
-
-        sendNextFragment()
     }
 
     /// Bring the Even Realities dashboard (the OS-level home/idle screen) to
@@ -2360,7 +2306,7 @@ class G2 : SGCManager() {
      * The SKILL step alone is ignored by firmware; the preceding ENTER+ASK
      * supply the session context that lets the glasses act on the SKILL.
      */
-    override fun showNotificationsPanel() {
+    override suspend fun showNotificationsPanel() {
         Bridge.log("G2: showNotificationsPanel()")
         val enterPayload = EvenAIProto.aiCtrl(
                 magicRandom = sendManager.nextMagicRandom(),
@@ -2368,26 +2314,24 @@ class G2 : SGCManager() {
         )
         sendEvenAICommand(enterPayload)
 
-        mainHandler.postDelayed({
-            val askPayload = EvenAIProto.aiAsk(
-                    magicRandom = sendManager.nextMagicRandom(),
-                    text = " ",
-                    streamEnable = 0
-            )
-            sendEvenAICommand(askPayload)
+        delay(400)
+        val askPayload = EvenAIProto.aiAsk(
+                magicRandom = sendManager.nextMagicRandom(),
+                text = " ",
+                streamEnable = 0
+        )
+        sendEvenAICommand(askPayload)
 
-            mainHandler.postDelayed({
-                val skillPayload = EvenAIProto.triggerSkill(
-                        magicRandom = sendManager.nextMagicRandom(),
-                        skillId = 3, // NOTIFICATION
-                        skillParam = 1, // show
-                        text = " ",
-                        streamEnable = 1,
-                        fTextEnd = 1
-                )
-                sendEvenAICommand(skillPayload)
-            }, 400)
-        }, 400)
+        delay(400)
+        val skillPayload = EvenAIProto.triggerSkill(
+                magicRandom = sendManager.nextMagicRandom(),
+                skillId = 3, // NOTIFICATION
+                skillParam = 1, // show
+                text = " ",
+                streamEnable = 1,
+                fTextEnd = 1
+        )
+        sendEvenAICommand(skillPayload)
     }
 
     override fun setBrightness(level: Int, autoMode: Boolean) {
@@ -2887,7 +2831,7 @@ class G2 : SGCManager() {
         sendNavigationCommand(w.toByteArray())
     }
 
-    override fun setImuEnabled(enabled: Boolean) {
+    override suspend fun setImuEnabled(enabled: Boolean) {
         setImuEnabled(enabled, reportFrq = EvenHubProto.IMU_PACE_P100)
     }
 
@@ -2900,27 +2844,25 @@ class G2 : SGCManager() {
      * `Bridge.sendAccelEvent` (a single accelerometer reading; a richer combined IMU event
      * covering gyro + magnetometer is future work).
      */
-    fun setImuEnabled(enabled: Boolean, reportFrq: Int) {
+    suspend fun setImuEnabled(enabled: Boolean, reportFrq: Int) {
         Bridge.log("G2: setImuEnabled($enabled, frq=$reportFrq)")
 
-        displayScope.launch {
-            displayMutex.withLock {
-                // IMU requires an active EvenHub page (same prerequisite as the mic). Await the
-                // rebuild so the control packet is sent only after the page actually exists — page
-                // creation is async with variable delays, so a fixed wait could send too early and
-                // reporting would never start.
-                if (enabled && !pageCreated) {
-                    rebuildState()
-                }
-
-                val msg =
-                        EvenHubProto.imuControlMessage(
-                                enable = enabled,
-                                reportFrq = reportFrq,
-                                magicRandom = sendManager.nextMagicRandom()
-                        )
-                sendEvenHubCommand(msg)
+        displayMutex.withLock {
+            // IMU requires an active EvenHub page (same prerequisite as the mic). Await the
+            // rebuild so the control packet is sent only after the page actually exists — page
+            // creation is async with variable delays, so a fixed wait could send too early and
+            // reporting would never start.
+            if (enabled && !pageCreated) {
+                rebuildState()
             }
+
+            val msg =
+                    EvenHubProto.imuControlMessage(
+                            enable = enabled,
+                            reportFrq = reportFrq,
+                            magicRandom = sendManager.nextMagicRandom()
+                    )
+            sendEvenHubCommand(msg)
         }
     }
 
@@ -3450,7 +3392,7 @@ class G2 : SGCManager() {
                         stopScan()
                         authStarted = true
                         Bridge.log("G2: Both sides initialized, starting auth sequence")
-                        runAuthSequence()
+                        displayScope.launch { runAuthSequence() }
                     }
                 }
             }
@@ -4014,11 +3956,12 @@ class G2 : SGCManager() {
                 displayScope.launch {
                     displayMutex.withLock { rebuildState() }
                     DeviceManager.getInstance().sendCurrentState()
-                }
-                // set the mic back on if it should be on
-                val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
-                if (micEnabled) {
-                    restartMic()
+                    // set the mic back on if it should be on — only after the rebuild
+                    // completes, matching iOS (which awaits rebuildState before restartMic).
+                    val micEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
+                    if (micEnabled) {
+                        restartMic()
+                    }
                 }
                 return
             } else {

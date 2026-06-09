@@ -3685,7 +3685,6 @@ class G2: NSObject, SGCManager {
 
                 // toggle head up:
                 // DeviceStore.shared.apply("glasses", "headUp", true)
-                // runDashboardSequence()
             }
 
             // if eventType == .foregroundEnter {
