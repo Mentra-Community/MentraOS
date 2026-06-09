@@ -1,0 +1,117 @@
+#!/usr/bin/env bun
+/**
+ * @fileoverview mentra-agent CLI: drive the running MentraOS app from a shell.
+ *
+ * Talks to the harness server (server.ts) over its local HTTP control plane;
+ * the server relays to the app's dev-only bridge over the reverse WebSocket.
+ * Designed so an agent (or a human) can replace minutes of screen-driving
+ * with sub-second calls:
+ *
+ *   bun cli.ts state                              # cloud status, endpoints, transport
+ *   bun cli.ts nav /miniapps/settings/developer   # navigate anywhere
+ *   bun cli.ts set cloud_core_url metro-auto      # write a setting
+ *   bun cli.ts get cloud_core_url                 # read a setting
+ *   bun cli.ts launch com.mentra.local-captions   # launch a local miniapp
+ *   bun cli.ts reconnect                          # bounce the cloud client
+ *   bun cli.ts devices                            # connected app instances
+ *   bun cli.ts events --filter transcript         # dump recent events
+ *   bun cli.ts watch transcript                   # follow events live
+ *   bun cli.ts rpc <method> '<json-params>'       # raw escape hatch
+ */
+
+const BASE = process.env.MENTRA_AGENT_URL ?? "http://localhost:8787"
+
+async function rpc(method: string, params?: unknown): Promise<unknown> {
+  const res = await fetch(`${BASE}/rpc`, {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({method, params}),
+  })
+  const body = (await res.json()) as {ok: boolean; result?: unknown; error?: string}
+  if (!body.ok) throw new Error(body.error ?? `rpc ${method} failed`)
+  return body.result
+}
+
+async function getEvents(since: number, filter?: string): Promise<{seq: number; event: string; data: unknown; receivedAt: string}[]> {
+  const url = new URL(`${BASE}/events`)
+  url.searchParams.set("since", String(since))
+  if (filter) url.searchParams.set("filter", filter)
+  const res = await fetch(url)
+  return (await res.json()) as never
+}
+
+function out(value: unknown): void {
+  console.log(JSON.stringify(value, null, 2))
+}
+
+const [cmd, ...args] = process.argv.slice(2)
+
+try {
+  switch (cmd) {
+    case "state":
+      out(await rpc("getState"))
+      break
+    case "ping":
+      out(await rpc("ping"))
+      break
+    case "nav":
+      out(await rpc("navigate", {path: args[0]}))
+      break
+    case "back":
+      out(await rpc("goBack"))
+      break
+    case "home":
+      out(await rpc("goHome"))
+      break
+    case "get":
+      out(await rpc("getSetting", {key: args[0]}))
+      break
+    case "set": {
+      let value: unknown = args[1]
+      try {
+        value = JSON.parse(args[1])
+      } catch {
+        /* keep as string */
+      }
+      out(await rpc("setSetting", {key: args[0], value}))
+      break
+    }
+    case "launch":
+      out(await rpc("launchMiniapp", {packageName: args[0]}))
+      break
+    case "reconnect":
+      out(await rpc("cloudReconnect"))
+      break
+    case "devices":
+      out(await (await fetch(`${BASE}/devices`)).json())
+      break
+    case "events": {
+      const filter = args[0] === "--filter" ? args[1] : undefined
+      out(await getEvents(0, filter))
+      break
+    }
+    case "watch": {
+      // Poll-follow the event ring (1s cadence is plenty for a dev harness).
+      const filter = args[0]
+      let since = (await getEvents(0)).at(-1)?.seq ?? 0
+      console.error(`watching${filter ? ` filter=${filter}` : ""} (ctrl-c to stop)`)
+      for (;;) {
+        const fresh = await getEvents(since, filter)
+        for (const e of fresh) {
+          since = e.seq
+          console.log(`${e.receivedAt} ${e.event} ${JSON.stringify(e.data)}`)
+        }
+        await Bun.sleep(1000)
+      }
+    }
+    case "rpc":
+      out(await rpc(args[0], args[1] ? JSON.parse(args[1]) : undefined))
+      break
+    default:
+      console.log("usage: mentra-agent <state|ping|nav|back|home|get|set|launch|reconnect|devices|events|watch|rpc>")
+      process.exit(cmd ? 1 : 0)
+  }
+} catch (err) {
+  console.error(`error: ${(err as Error).message}`)
+  process.exit(1)
+}

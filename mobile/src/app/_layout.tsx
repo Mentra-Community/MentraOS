@@ -7,6 +7,13 @@ import {useNavigationContainerRef} from "expo-router"
 import * as SplashScreen from "expo-splash-screen"
 import {useEffect, useState} from "react"
 
+import {startAgentBridge} from "@/dev/agentBridge"
+
+// Dev-only agent bridge: started at module load (the earliest reliable
+// point) so the QA/test harness can drive the app from any state, including
+// the login screen. No-op in release builds.
+startAgentBridge()
+
 import {SentryNavigationIntegration, SentrySetup} from "@/effects/SentrySetup"
 import {initI18n} from "@/i18n"
 import {useSettingsStore} from "@/stores/settings"
