@@ -36,6 +36,7 @@
               "app-devs/getting-started/example-apps",
               {
                 "group": "Deployment",
+                "icon": "cloud-arrow-up",
                 "pages": [
                   "app-devs/getting-started/deployment/overview",
                   "app-devs/getting-started/deployment/local-development",
@@ -106,7 +107,6 @@
               "app-devs/reference/app-session",
               {
                 "group": "Managers",
-                "icon": "gear",
                 "pages": [
                   "app-devs/reference/managers/event-manager",
                   "app-devs/reference/managers/layout-manager",
@@ -119,7 +119,6 @@
               "app-devs/reference/enums",
               {
                 "group": "Interfaces",
-                "icon": "shapes",
                 "pages": [
                   "app-devs/reference/interfaces/config-types",
                   "app-devs/reference/interfaces/event-types",
