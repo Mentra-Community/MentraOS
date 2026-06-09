@@ -14,11 +14,11 @@ await $({stdio: "inherit"})`cp .env ios/.xcode.env.local`
 await $({stdio: "inherit", cwd: "ios"})`pod install`
 
 function isConnectedIphone(device) {
-  return (
-    (device.capabilities?.some((c) => c.name === "iPhone") ||
-      device.deviceProperties?.marketingName?.includes("iPhone")) &&
-    device.connectionProperties?.tunnelState === "connected"
-  )
+  const isIphone =
+    device.hardwareProperties?.deviceType === "iPhone" ||
+    device.capabilities?.some((c) => c.name === "iPhone") ||
+    device.deviceProperties?.marketingName?.includes("iPhone")
+  return isIphone && device.connectionProperties?.tunnelState === "connected"
 }
 
 async function listDevicesViaDevicectl() {
