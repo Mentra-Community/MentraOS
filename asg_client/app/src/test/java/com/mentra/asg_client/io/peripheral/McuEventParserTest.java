@@ -257,4 +257,14 @@ public class McuEventParserTest {
     public void nullInput_returnsNull() {
         assertThat(McuEventParser.parse(null)).isNull();
     }
+
+    @Test
+    public void missingBBody_returnsNull_forBodyRequiredCommands() throws Exception {
+        // Match legacy K900CommandHandler: handlers only ran when bData was non-null.
+        assertThat(McuEventParser.parse(cmd("hm_batv"))).isNull();
+        assertThat(McuEventParser.parse(cmd("sr_swst"))).isNull();
+        assertThat(McuEventParser.parse(cmd("sr_tpevt"))).isNull();
+        assertThat(McuEventParser.parse(cmd("sr_fbvol"))).isNull();
+        assertThat(McuEventParser.parse(cmd("hs_syvr"))).isNull();
+    }
 }

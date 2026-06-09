@@ -54,30 +54,28 @@ public final class McuEventParser {
                 return new ShutdownEvent();
 
             case "hm_batv":
-                {
-                    int pct = b != null ? b.optInt("pt", -1) : -1;
-                    int mv = b != null ? b.optInt("vt", -1) : -1;
-                    return new BatteryEvent(pct, mv);
+                if (b == null) {
+                    return null;
                 }
+                return new BatteryEvent(b.optInt("pt", -1), b.optInt("vt", -1));
 
             case "sr_swst":
-                {
-                    int swType = b != null ? b.optInt("type", -1) : -1;
-                    int swVal = b != null ? b.optInt("switch", -1) : -1;
-                    return new SwitchEvent(swType, swVal);
+                if (b == null) {
+                    return null;
                 }
+                return new SwitchEvent(b.optInt("type", -1), b.optInt("switch", -1));
 
             case "sr_tpevt":
-                {
-                    int gesture = b != null ? b.optInt("type", -1) : -1;
-                    return new TouchEvent(gesture);
+                if (b == null) {
+                    return null;
                 }
+                return new TouchEvent(b.optInt("type", -1));
 
             case "sr_fbvol":
-                {
-                    boolean enabled = b != null && b.optInt("switch", 0) == 1;
-                    return new SwipeVolumeEvent(enabled);
+                if (b == null) {
+                    return null;
                 }
+                return new SwipeVolumeEvent(b.optInt("switch", 0) == 1);
 
             case "sr_keyevt":
                 {
@@ -154,7 +152,7 @@ public final class McuEventParser {
 
     private static McuEvent parseVersionReport(JSONObject b) {
         if (b == null) {
-            return new BesVersionEvent("unknown", "unknown", "unknown", "unknown", "unknown");
+            return null;
         }
         return new BesVersionEvent(
                 b.optString("version", "unknown"),
