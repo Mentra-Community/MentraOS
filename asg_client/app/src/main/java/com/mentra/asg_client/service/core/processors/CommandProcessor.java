@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 import com.mentra.asg_client.io.bes.log.BesTracePoller;
 import com.mentra.asg_client.io.file.core.FileManager;
+import com.mentra.asg_client.io.peripheral.IPeripheralBus;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.reporting.core.ReportManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
@@ -88,7 +89,8 @@ public class CommandProcessor {
             AsgClientServiceManager serviceManager,
             FileManager fileManager,
             RgbLedCommandHandler rgbLedCommandHandler,
-            OtaCommandHandler otaCommandHandler) {
+            OtaCommandHandler otaCommandHandler,
+            IPeripheralBus peripheralBus) {
         Log.d(TAG, "🔧 Initializing CommandProcessor with dependencies");
         this.context = context;
         this.communicationManager = communicationManager;
@@ -107,7 +109,8 @@ public class CommandProcessor {
         this.commandParser = new CommandParser();
         this.protocolDetector = new CommandProtocolDetector();
         this.k900CommandHandler =
-                new K900CommandHandler(serviceManager, stateManager, communicationManager);
+                new K900CommandHandler(
+                        serviceManager, stateManager, communicationManager, peripheralBus);
         this.besTracePoller = new BesTracePoller();
         this.responseSender = new ResponseSender(serviceManager);
         this.chunkReassembler = new ChunkReassembler();
