@@ -409,7 +409,7 @@ For bare native iOS apps, use the public SwiftPM repository:
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Add the `MentraBluetoothSDK` product to your app target at version `0.1.7` or newer.
+Add the `MentraBluetoothSDK` product to your app target at version `0.1.10` or newer.
 
 For local SDK development, add this package folder directly in Xcode:
 

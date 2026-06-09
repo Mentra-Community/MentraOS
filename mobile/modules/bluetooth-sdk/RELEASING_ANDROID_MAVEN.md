@@ -18,7 +18,7 @@ companion library expected in the public artifacts.
 
 The commands below assume the full MentraOS Android Gradle build layout, where
 the SDK module is included under `mobile/android` as `:mentra-bluetooth-sdk`.
-That is the layout used for the `0.1.7` Maven Central release.
+That is the layout used for Maven Central releases.
 
 ## Prerequisites
 
