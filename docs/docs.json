@@ -24,7 +24,7 @@
         ]
       },
       {
-        "tab": "App Devs",
+        "tab": "Display Glasses",
         "groups": [
           {
             "group": "Getting Started",
@@ -36,6 +36,7 @@
               "app-devs/getting-started/example-apps",
               {
                 "group": "Deployment",
+                "icon": "cloud-arrow-up",
                 "pages": [
                   "app-devs/getting-started/deployment/overview",
                   "app-devs/getting-started/deployment/local-development",
@@ -74,15 +75,6 @@
                 ]
               },
               {
-                "group": "Camera",
-                "icon": "camera",
-                "pages": [
-                  "app-devs/core-concepts/camera/README",
-                  "app-devs/core-concepts/camera/photo-capture",
-                  "app-devs/core-concepts/camera/streaming"
-                ]
-              },
-              {
                 "group": "Webviews",
                 "icon": "browser",
                 "pages": [
@@ -115,21 +107,18 @@
               "app-devs/reference/app-session",
               {
                 "group": "Managers",
-                "icon": "gear",
                 "pages": [
                   "app-devs/reference/managers/event-manager",
                   "app-devs/reference/managers/layout-manager",
                   "app-devs/reference/managers/settings-manager",
                   "app-devs/reference/managers/audio-manager",
                   "app-devs/reference/managers/led-manager",
-                  "app-devs/reference/managers/camera",
                   "app-devs/reference/managers/location-manager"
                 ]
               },
               "app-devs/reference/enums",
               {
                 "group": "Interfaces",
-                "icon": "shapes",
                 "pages": [
                   "app-devs/reference/interfaces/config-types",
                   "app-devs/reference/interfaces/event-types",
@@ -146,6 +135,10 @@
             ]
           }
         ]
+      },
+      {
+        "tab": "Mentra Live",
+        "pages": ["app-devs/core-concepts/camera/README"]
       },
       {
         "tab": "OS Devs",

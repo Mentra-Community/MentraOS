@@ -1,6 +1,7 @@
 ---
 title: "Hardware & Capabilities Overview"
 description: "Detect and adapt to different smart glasses hardware"
+icon: microchip
 ---
 
 **Check what hardware is available using `session.capabilities`.** Different glasses have different features—displays, cameras, speakers, buttons, LEDs. Your app can detect and adapt to each device.
@@ -116,11 +117,6 @@ protected async onSession(session: AppSession, sessionId: string, userId: string
     this.useAudioMode(session);
   }
 
-  // Enable features based on hardware
-  if (caps.hasCamera) {
-    this.enablePhotoFeatures(session);
-  }
-
   if (caps.hasButton) {
     this.enableButtonControls(session);
   }
@@ -166,11 +162,11 @@ interface Capabilities {
 ```typescript
 // ✅ Good
 if (session.capabilities?.hasCamera) {
-  await session.camera.requestPhoto();
+  session.logger.info('Camera hardware is available');
 }
 
-// ❌ Avoid - may crash
-await session.camera.requestPhoto();
+// ❌ Avoid - assuming every glasses model has the same hardware
+this.enableEveryHardwareFeature();
 ```
 
 **Provide fallbacks:**
@@ -200,7 +196,7 @@ if (!caps) {
     G1, Vuzix - display-specific features
   </Card>
   <Card title="Camera Glasses" icon="camera" href="/app-devs/core-concepts/hardware-capabilities/camera-glasses">
-    Mentra Live - camera-specific features
+    Mentra Live hardware capabilities
   </Card>
   <Card title="Capabilities Reference" icon="book" href="/app-devs/reference/interfaces/capabilities">
     Complete capabilities types

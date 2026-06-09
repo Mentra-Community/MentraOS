@@ -11,7 +11,7 @@ icon: "lock"
 | **MICROPHONE** | Voice input, audio processing | Transcription, audio chunks |
 | **LOCATION** | GPS coordinates | Location tracking |
 | **BACKGROUND_LOCATION** | Location when app inactive | Background tracking |
-| **CAMERA** | Photos, video streaming | Photo capture, RTMP streaming |
+| **CAMERA** | Camera access | Camera features on supported glasses |
 | **CALENDAR** | Calendar events | Event notifications |
 | **READ_NOTIFICATIONS** | Phone notifications | Notification filtering |
 | **POST_NOTIFICATIONS** | Send notifications | Push notifications |
@@ -76,11 +76,7 @@ const location = await session.location.getLatestLocation();
 
 ### CAMERA
 
-```typescript
-// These require CAMERA permission:
-const photo = await session.camera.requestPhoto();
-await session.camera.startLocalLivestream({ streamUrl: 'srt://...' });
-```
+Camera features require the `CAMERA` permission. Camera capture, photo upload, and camera streaming are documented in the standalone [Mentra Bluetooth SDK docs](https://bluetooth-sdk-docs.mentra.glass/camera-streaming/).
 
 ### READ_NOTIFICATIONS
 
@@ -129,8 +125,8 @@ session.events.on(StreamType.CALENDAR_EVENT, (data) => {});
 {
   "permissions": [
     { "type": "MICROPHONE", ... },
-    { "type": "CAMERA", ... },
-    { "type": "LOCATION", ... }
+    { "type": "LOCATION", ... },
+    { "type": "READ_NOTIFICATIONS", ... }
     // User less likely to install
   ]
 }
