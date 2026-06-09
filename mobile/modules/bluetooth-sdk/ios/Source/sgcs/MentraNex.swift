@@ -671,6 +671,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             "Mentra_([0-9A-Fa-f]+)",
             "NEX_([0-9A-Fa-f]+)",
             "MENTRA_NEX_([0-9A-Fa-f]+)",
+            "MENTRA_DISPLAY_([0-9A-Fa-f]+)",
         ]
 
         for pattern in patterns {
@@ -2222,7 +2223,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         switch central.state {
         case .poweredOn:
             Bridge.log("NEX: ✅ Bluetooth is On and ready for scanning")
-            if scanOnPowerOn {
+            if scanOnPowerOn || peripheralToConnectName != nil {
                 Bridge.log("NEX: 🚀 Triggering scan after power on.")
                 scanOnPowerOn = false
                 startScan()
