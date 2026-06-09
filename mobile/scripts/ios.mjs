@@ -14,15 +14,14 @@ await $`xcrun devicectl list devices --json-output ${tmpFile} --timeout 5`
 const json = JSON.parse(await fs.readFile(tmpFile, "utf-8"))
 await fs.remove(tmpFile)
 
-const device =
-  json.result?.devices?.find(
-    (d) => d.capabilities?.some((c) => c.name === "iPhone") || d.deviceProperties?.marketingName?.includes("iPhone"),
-  ) &&
-  json.result.devices.find(
-    (d) =>
-      (d.capabilities?.some((c) => c.name === "iPhone") || d.deviceProperties?.marketingName?.includes("iPhone")) &&
-      d.connectionProperties?.tunnelState === "connected",
-  )
+const isIphone = (d) =>
+  d.hardwareProperties?.deviceType === "iPhone" ||
+  d.capabilities?.some((c) => c.name === "iPhone") ||
+  d.deviceProperties?.marketingName?.includes("iPhone")
+
+const device = json.result?.devices?.find(
+  (d) => isIphone(d) && d.connectionProperties?.tunnelState === "connected",
+)
 
 if (!device) {
   // Fallback: find any available paired iPhone
