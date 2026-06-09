@@ -1,9 +1,14 @@
 # Releasing the Android Maven Artifacts
 
-This is the current manual process for publishing the public Android artifacts:
+The normal release path is the GitHub Actions workflow documented in
+`RELEASING_CI.md`. It publishes these public Android artifacts when
+`mobile/modules/bluetooth-sdk/package.json` changes on `dev`:
 
 - `com.mentraglass:bluetooth-sdk`
 - `com.mentraglass:lc3Lib`
+
+Use the manual process below for local smoke checks, emergency recovery, or when
+you need to inspect a Sonatype deployment outside CI.
 
 The source of truth stays in this monorepo under
 `mobile/modules/bluetooth-sdk`. Maven Central is the public artifact mirror, not
@@ -14,18 +19,23 @@ a second source tree.
 Run the release from the branch or commit that contains the complete Android SDK
 feature set for the release. Do not run the publish from a partial split PR
 branch unless that branch intentionally contains every Android source file and
-companion library expected in the public artifacts.
+companion library expected in the public artifacts. In CI, that branch is `dev`
+after the SDK package version bump has merged.
 
 The commands below assume the full MentraOS Android Gradle build layout, where
 the SDK module is included under `mobile/android` as `:mentra-bluetooth-sdk`.
-That is the layout used for Maven Central releases.
+That is the layout used for Maven Central releases. In a fresh
+checkout where `mobile/android` is not present yet, run
+`cd mobile && cp .env.example .env && bun expo prebuild --platform android`
+after installing dependencies.
 
 ## Prerequisites
 
 - A clean MentraOS checkout on the release source branch.
 - Java 17 and the Android SDK installed.
 - Push or release approval for publishing `com.mentraglass` artifacts.
-- Sonatype Central credentials and GPG signing configured locally or in CI.
+- Sonatype Central credentials and GPG signing configured locally or in CI. For
+  CI, see `RELEASING_CI.md` for the exact GitHub secret names.
 
 Use `android/gradle.properties.example` as the template. Put real values in
 `~/.gradle/gradle.properties` or CI secrets, not in the repository:
