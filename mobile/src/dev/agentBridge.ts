@@ -207,6 +207,18 @@ function scheduleReconnect(candidates: string[], nextIndex: number): void {
 export function startAgentBridge(): void {
   if (!__DEV__ || started) return
   started = true
+  // Some builds do not register the SourceCode TurboModule (observed on the
+  // emulator debug build; RN's own dev internals — getDevServer, LogBox
+  // symbolication — then throw "SourceCode could not be found" repeatedly).
+  // The app is unaffected; the LogBox overlays it spawns make the screen
+  // unusable for QA. Filter that one known-benign message. Root cause (why
+  // SourceCode is absent under this new-arch config) tracked separately.
+  try {
+    const {LogBox} = require("react-native")
+    LogBox.ignoreLogs([/'SourceCode' could not be found/])
+  } catch {
+    /* LogBox unavailable: nothing to silence */
+  }
   // Candidate hosts for the harness, most-specific first. Some builds cannot
   // introspect their bundle origin at all (no SourceCode module, no expo
   // manifest), so rather than depend on detection we rotate through the
