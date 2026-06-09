@@ -68,14 +68,14 @@ Add the public Swift package in Xcode or `Package.swift`:
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Use version `0.1.7` or newer, then add the `MentraBluetoothSDK` product to your app target.
+Use version `0.1.10` or newer, then add the `MentraBluetoothSDK` product to your app target.
 
 For `Package.swift` consumers:
 
 ```swift
 .package(
   url: "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git",
-  from: "0.1.7"
+  from: "0.1.10"
 )
 ```
 
@@ -247,12 +247,12 @@ class GlassesController(context: Context) : MentraBluetoothSdkCallback() {
     }
 
     fun refreshStatus() {
-        sdk.requestVersionInfo()
+        val versionInfo = sdk.requestVersionInfo()
         val glasses = sdk.getGlasses()
         if (glasses is GlassesRuntimeState.Connected) {
             val model = glasses.device.deviceModel?.deviceType ?: "glasses"
             val battery = glasses.battery.level?.toString() ?: "unknown"
-            println("Connected to $model, battery=$battery%")
+            println("Connected to $model, battery=$battery%, build=${versionInfo.buildNumber}")
         }
     }
 
@@ -299,12 +299,12 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
         try sdk.connect(to: selectedDevice)
     }
 
-    func refreshStatus() {
-        sdk.requestVersionInfo()
+    func refreshStatus() async throws {
+        let versionInfo = try await sdk.requestVersionInfo()
         let glasses = sdk.glasses
         if let device = glasses.device {
             let battery = glasses.battery?.level.map(String.init) ?? "unknown"
-            print("Connected to \(device.deviceModel?.deviceType ?? "glasses"), battery=\(battery)%")
+            print("Connected to \(device.deviceModel?.deviceType ?? "glasses"), battery=\(battery)%, build=\(versionInfo.buildNumber)")
         }
     }
 
@@ -335,7 +335,8 @@ const devices = await BluetoothSdk.scan(DeviceModels.MentraLive, {
 });
 const device = await chooseDevice(devices);
 await BluetoothSdk.connect(device);
-await BluetoothSdk.requestVersionInfo();
+const versionInfo = await BluetoothSdk.requestVersionInfo();
+console.log('Build:', versionInfo.buildNumber);
 
 function DeviceStatus() {
   const mentra = useMentraBluetooth();

@@ -25,20 +25,22 @@ function streamSdkCall(useCloudServer: boolean, fps: number) {
   if (!useCloudServer) {
     return `const receiver = await MentraVideoStreamReceiver.startWebRtcReceiver();
 const streamId = \`rn-\${Date.now()}\`;
-await BluetoothSdk.startStream({
+const started = await BluetoothSdk.startStream({
   type: 'start_stream',
   streamId,
   streamUrl: receiver.streamUrl,
   video: { fps: ${fps} },
-})`;
+});
+console.log('Stream started', started.status)`;
   }
   return `const streamId = \`rn-\${Date.now()}\`;
-await BluetoothSdk.startStream({
+const started = await BluetoothSdk.startStream({
   type: 'start_stream',
   streamId,
   streamUrl,
   video: { fps: ${fps} },
-})`;
+});
+console.log('Stream started', started.status)`;
 }
 
 export function StreamScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {

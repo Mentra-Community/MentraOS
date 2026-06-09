@@ -180,13 +180,16 @@ class PhotoWebhookHandler(BaseHTTPRequestHandler):
                 "success": True,
                 "requestId": request_id,
                 "filename": filename,
-                "bytes": photo_path.stat().st_size,
+                "fileSizeBytes": photo_path.stat().st_size,
                 "contentType": photo.get("content_type", "image/jpeg"),
                 "uploadedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
             self.write_metadata(metadata)
             self.send_json(self.metadata_for_response(metadata), HTTPStatus.OK)
-            print(f"Received photo requestId={request_id} bytes={metadata['bytes']} file={photo_path}")
+            print(
+                f"Received photo requestId={request_id} "
+                f"fileSizeBytes={metadata['fileSizeBytes']} file={photo_path}"
+            )
         except Exception as error:  # noqa: BLE001 - demo server should return readable errors.
             self.send_json({"success": False, "error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 

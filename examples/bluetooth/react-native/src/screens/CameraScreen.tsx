@@ -38,16 +38,16 @@ function cameraSdkCall(
   exposureTimeNs: number,
   iso: number,
   cameraFov: number,
-  cameraRoiPosition: number,
+  cameraRoiPosition: (typeof CAMERA_ROI_POSITIONS)[number]['value'],
 ) {
   const exposureLine = exposureManual ? `  exposureTimeNs: ${exposureTimeNs},` : '  exposureTimeNs: null, // auto exposure';
   const isoLine = exposureManual ? `  iso: ${iso},` : '  iso: null, // auto ISO';
-  const prefix = `await BluetoothSdk.setCameraFov({ fov: ${cameraFov}, roiPosition: ${cameraRoiPosition} });
-// Mentra Live restarts the camera for about 5s after FOV/ROI changes.
+  const prefix = `const cameraFov = await BluetoothSdk.setCameraFov({ fov: ${cameraFov}, roiPosition: "${cameraRoiPosition}" });
+console.log(\`Camera FOV applied at \${cameraFov.fov}°\`);
 `;
   if (!useCloudServer) {
     return `${prefix}const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();
-await BluetoothSdk.requestPhoto({
+const photo = await BluetoothSdk.requestPhoto({
   requestId,
   appId: PHOTO_APP_ID,
   size: "${size}",
@@ -57,9 +57,10 @@ await BluetoothSdk.requestPhoto({
   sound: true,
 ${exposureLine}
 ${isoLine}
-})`;
+})
+console.log("Photo delivered", photo.photoUrl ?? photo.uploadUrl)`;
   }
-  return `${prefix}await BluetoothSdk.requestPhoto({
+  return `${prefix}const photo = await BluetoothSdk.requestPhoto({
   requestId,
   appId: PHOTO_APP_ID,
   size: "${size}",
@@ -69,7 +70,8 @@ ${isoLine}
   sound: true,
 ${exposureLine}
 ${isoLine}
-})`;
+})
+console.log("Photo delivered", photo.photoUrl ?? photo.uploadUrl)`;
 }
 
 export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
@@ -330,6 +332,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           value={sdk.photoExposureTimeNs}
         />
         <CameraSettingsControl
+          applying={sdk.cameraSettingsApplying}
           fov={sdk.cameraFov}
           onApply={sdk.applyCameraSettings}
           onFovChange={sdk.setCameraFov}
@@ -605,6 +608,7 @@ function ExposureControl({
 }
 
 function CameraSettingsControl({
+  applying,
   fov,
   onApply,
   onFovChange,
@@ -612,6 +616,7 @@ function CameraSettingsControl({
   roiPosition,
   status,
 }: {
+  applying: boolean;
   fov: number;
   onApply: () => Promise<void>;
   onFovChange: (fov: number) => void;
@@ -620,6 +625,7 @@ function CameraSettingsControl({
   status: string;
 }) {
   const roiDisabled = fov === CAMERA_FOV_MAX;
+  const controlsDisabled = applying;
   return (
     <View style={styles.settingCard}>
       <View style={styles.settingHeader}>
@@ -627,12 +633,18 @@ function CameraSettingsControl({
           <Text style={styles.settingLabel}>FIELD OF VIEW</Text>
           <Text style={styles.settingHint}>{fov}° · {roiDisabled ? 'full sensor' : `${roiLabel(roiPosition)} crop`}</Text>
         </View>
-        <Pressable onPress={() => void onApply()} style={({pressed}) => [styles.applyChip, pressed && styles.copyChipPressed]}>
-          <Text style={styles.applyChipText}>Apply</Text>
+        <Pressable
+          disabled={controlsDisabled}
+          onPress={() => void onApply()}
+          style={({pressed}) => [styles.applyChip, pressed && !controlsDisabled && styles.copyChipPressed]}
+        >
+          <Text style={[styles.applyChipText, controlsDisabled && styles.settingRangeText]}>
+            {applying ? 'Applying...' : 'Apply'}
+          </Text>
         </Pressable>
       </View>
       <RangeSlider
-        disabled={false}
+        disabled={controlsDisabled}
         max={CAMERA_FOV_MAX}
         min={CAMERA_FOV_MIN}
         onChange={onFovChange}
@@ -641,8 +653,10 @@ function CameraSettingsControl({
       />
       <View style={styles.settingRangeRow}>
         <Text style={styles.settingRangeText}>{CAMERA_FOV_MIN}°</Text>
-        <Pressable onPress={() => onFovChange(CAMERA_FOV_DEFAULT)}>
-          <Text style={styles.settingHint}>Default {CAMERA_FOV_DEFAULT}°</Text>
+        <Pressable disabled={controlsDisabled} onPress={() => onFovChange(CAMERA_FOV_DEFAULT)}>
+          <Text style={[styles.settingHint, controlsDisabled && styles.settingRangeText]}>
+            Default {CAMERA_FOV_DEFAULT}°
+          </Text>
         </Pressable>
         <Text style={styles.settingRangeText}>{CAMERA_FOV_MAX}°</Text>
       </View>
@@ -651,13 +665,13 @@ function CameraSettingsControl({
           <Chip
             key={option.value}
             active={roiPosition === option.value}
-            disabled={roiDisabled}
+            disabled={controlsDisabled || roiDisabled}
             value={option.label}
             onPress={() => onRoiChange(option.value)}
           />
         ))}
       </OptionGroup>
-      <Text style={styles.settingDescription}>{status}. Applying FOV/ROI restarts the Mentra Live camera for about 5 seconds.</Text>
+      <Text style={styles.settingDescription}>{status}</Text>
     </View>
   );
 }

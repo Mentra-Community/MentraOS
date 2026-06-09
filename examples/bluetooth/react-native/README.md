@@ -24,10 +24,12 @@ bun install
 The example depends on the SDK version pinned in `package.json`, for example:
 
 ```json
-"@mentra/bluetooth-sdk": "0.1.7"
+"@mentra/bluetooth-sdk": "0.1.10"
 ```
 
-Use the latest SDK version published by Mentra.
+Use the latest SDK version published by Mentra. When validating unreleased SDK
+changes, use the local source override below so JavaScript, Android, and iOS all
+resolve the same local package.
 
 ## Run On iOS
 
@@ -91,7 +93,10 @@ For production Expo apps that need BLE or microphone behavior while iOS is backg
 
 ## Local SDK Override
 
-Use this only when developing the SDK before a package release is published:
+Use this when developing SDK changes before the matching package release is
+published. The Camera tab disables FOV/ROI controls while `setCameraFov` is in
+flight, then re-enables them only after the glasses report that the hardware
+setting was applied or the SDK returns an error.
 
 ```bash
 cd examples/react-native
@@ -108,7 +113,7 @@ MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk
 
 The example has five tabs:
 
-- **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, and inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state.
+- **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state, and explicitly check/start OTA updates once the glasses are connected to Wi-Fi.
 - **Camera**: request photo upload to the local demo cloud or directly to this phone, tune manual exposure and ISO, preview the received JPEG, and scan the preview for barcodes. Direct phone photo is provided by the SDK, while barcode scanning is implemented in a companion local native module.
 - **Stream**: start RTMP, SRT, or WebRTC streams with SDK-managed keep-alives and preview HLS/WebRTC output. Android and iOS can receive WebRTC directly on the phone through the app-hosted GStreamer WHIP receiver.
 - **System**: scan/connect/forget Wi-Fi, toggle hotspot, change gallery mode, receive microphone PCM, and send RGB LED controls.

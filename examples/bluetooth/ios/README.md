@@ -13,13 +13,25 @@ This example installs the SDK as the `MentraBluetoothSDK` Swift package. No path
 
 ## SDK Version
 
-The Xcode project pins the public Swift package to `0.1.7`:
+The Xcode project pins the public Swift package to `0.1.10`:
 
 ```text
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
 Use Xcode's package dependency editor to update the version when a newer SDK is published.
+
+When validating unreleased SDK changes from a local MentraOS checkout, replace
+that package dependency with a local package pointing at:
+
+```text
+/path/to/MentraOS/mobile/modules/bluetooth-sdk
+```
+
+The camera FOV controls in this example use the new `setCameraFov` result:
+they disable repeated applies while the command is in flight, then re-enable
+only after the glasses report that the hardware FOV/ROI setting was applied or
+the SDK throws an error.
 
 ## Run
 
@@ -43,7 +55,7 @@ For production iOS apps that need BLE or microphone behavior while backgrounded 
 
 The example has five tabs:
 
-- **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, and inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state.
+- **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state, and explicitly check/start OTA updates once the glasses are connected to Wi-Fi.
 - **Camera**: request photo upload to the local demo cloud or directly to this iPhone, tune manual exposure and ISO, then preview the received JPEG.
 - **Stream**: start RTMP, SRT, or WebRTC streams with SDK-managed keep-alives and preview HLS/WebRTC output. WebRTC can be received directly on the iPhone through the app-hosted GStreamer WHIP receiver.
 - **System**: scan/connect/forget Wi-Fi, toggle hotspot, change gallery mode, receive microphone PCM, and send RGB LED controls.

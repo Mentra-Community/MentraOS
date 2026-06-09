@@ -24,6 +24,24 @@ private struct GalleryServerCheck {
     let eventText: String
 }
 
+private func describeSettingsAck(_ ack: SettingsAckEvent) -> String {
+    var parts = ["\(ack.setting) \(ack.status)"]
+    if let fov = ack.values["fov"] {
+        parts.append("fov=\(fov)")
+    }
+    if let roiPosition = ack.values["roiPosition"] {
+        parts.append("roi=\(roiPosition)")
+    }
+    if let errorCode = ack.errorCode {
+        parts.append(errorCode)
+    }
+    return parts.joined(separator: " ")
+}
+
+private func describeCameraFovResult(_ result: CameraFovResult) -> String {
+    "applied fov=\(result.fov) roi=\(result.roiPosition.label) request=\(result.requestId)"
+}
+
 private let defaultPhotoUploadUrl = "http://<computer-ip>:8787/upload"
 let scanModelOptions: [DeviceModel] = [.mentraLive, .g2]
 let photoExposureMinNs = 1_000_000
@@ -32,7 +50,7 @@ let photoExposureDefaultNs = 8_333_333
 let photoIsoMin = 100
 let photoIsoMax = 6400
 let photoIsoDefault = 200
-let cameraFovMin = 50
+let cameraFovMin = 62
 let cameraFovMax = 118
 let cameraFovDefault = 102
 let cameraRoiPositions: [(label: String, value: Int)] = [("Center", 0), ("Bottom", 1), ("Top", 2)]
@@ -170,6 +188,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var events: [ExampleEvent] = [ExampleEvent.make(tag: "LIVE", text: "SDK ready. Scan to discover glasses.")]
     @Published private(set) var activeAction: String?
     @Published private(set) var lastAction = "No actions yet."
+    private var actionSequence = 0
+    private var activeActions: [Int: String] = [:]
+    private var activeActionOrder: [Int] = []
+    private var streamConfigurationChangeInProgress = false
     @Published private(set) var cameraStatus = "Camera: phone receiver will start before capture"
     @Published var webhookUrl = defaultPhotoUploadUrl
     @Published private(set) var photoPreviewDetails: PhotoPreviewDetails?
@@ -183,6 +205,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var photoIso = photoIsoDefault
     @Published private(set) var cameraFov = cameraFovDefault
     @Published private(set) var cameraRoiPosition = 0
+    @Published private(set) var cameraSettingsApplying = false
     @Published private(set) var cameraSettingsStatus = "Camera settings: default"
     @Published private(set) var phonePhotoServerRunning = false
     @Published private(set) var phonePhotoUploadUrl = "Phone receiver not started"
@@ -207,10 +230,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var pcmFrames = 0
     @Published private(set) var pcmBytes = 0
     @Published private(set) var speaking: Bool?
-    @Published private(set) var voiceActivityDetectionEnabled = true
+    @Published private(set) var voiceActivityDetectionEnabled = false
     @Published private(set) var lastMicDurationSeconds: Int?
     @Published private(set) var lastMicBytes = 0
     @Published private(set) var micPlaybackHint: String?
+    @Published private(set) var otaStatus: OtaStatusEvent?
+    @Published private(set) var otaStatusMessage: String?
+    @Published private(set) var otaUpdateAvailable: OtaUpdateAvailableEvent?
     @Published private(set) var ledColor = "green"
     @Published private(set) var ledMode = "Off"
     @Published var rawJsonExpanded = false
@@ -370,7 +396,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func disconnect() {
         let label = "Disconnect"
         guard activeAction != label else { return }
-        activeAction = label
+        let actionId = beginAction(label)
         lastAction = "Running: \(label)"
         append(tag: "TX", text: label)
         activeStreamId = nil
@@ -380,7 +406,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             guard let self else { return }
             self.mentraBluetoothSdk.disconnect()
             self.lastAction = "Requested: \(label)"
-            self.activeAction = nil
+            self.endAction(actionId)
         }
     }
 
@@ -408,11 +434,29 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
+    func checkForOtaUpdate() {
+        runAsyncAction("Check OTA") { [self] in
+            try requireConnected("check OTA")
+            try requireGlassesWifi("check for OTA updates")
+            handleOtaQueryResult(try await mentraBluetoothSdk.checkForOtaUpdate())
+        }
+    }
+
+    func startOtaUpdate() {
+        runAsyncAction("Start OTA") { [self] in
+            try requireConnected("start OTA")
+            try requireGlassesWifi("start OTA updates")
+            _ = try await mentraBluetoothSdk.startOtaUpdate()
+            append(tag: "LIVE", text: "OTA start acknowledged")
+        }
+    }
+
     func setGalleryModeEnabled(_ enabled: Bool) {
-        runAction(enabled ? "Save in gallery mode" : "Report button events") {
+        runAsyncAction(enabled ? "Save in gallery mode" : "Report button events") { [self] in
             try requireConnected("change gallery mode")
+            let ack = try await mentraBluetoothSdk.setGalleryModeEnabled(enabled)
+            append(tag: "LIVE", text: "settings_ack \(describeSettingsAck(ack))")
             galleryModeEnabled = enabled
-            Task { try? await mentraBluetoothSdk.setGalleryModeEnabled(enabled) }
         }
     }
 
@@ -467,36 +511,36 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func applyCameraSettings() {
-        runAction("Apply camera settings") {
+        guard !cameraSettingsApplying else {
+            append(tag: "TX", text: "camera_fov already applying")
+            return
+        }
+        runAsyncAction("Apply camera settings") { [self] in
             try requireConnected("apply camera settings")
             let fov = cameraFov
             let roiPosition = fov == cameraFovMax ? 0 : cameraRoiPosition
-            cameraSettingsStatus = "Camera settings: applying; camera restarts for about 5s"
-            Task { [weak self] in
-                do {
-                    try await self?.mentraBluetoothSdk.setCameraFov(CameraFov(fov: fov, roiPosition: roiPosition))
-                    await MainActor.run {
-                        self?.append(tag: "TX", text: "setCameraFov fov=\(fov) roiPosition=\(roiPosition)")
-                    }
-                    try await Task.sleep(nanoseconds: 5_000_000_000)
-                    await MainActor.run {
-                        self?.cameraSettingsStatus = "Camera settings: field of view \(fov)°, \(roiPositionLabel(roiPosition)) crop"
-                    }
-                } catch {
-                    await MainActor.run {
-                        self?.cameraSettingsStatus = "Camera settings failed: \(error.localizedDescription)"
-                    }
-                }
+            cameraSettingsApplying = true
+            cameraSettingsStatus = "Camera settings: applying FOV/ROI on glasses"
+            defer { cameraSettingsApplying = false }
+            do {
+                let result = try await mentraBluetoothSdk.setCameraFov(
+                    CameraFov(fov: fov, roiPosition: CameraRoiPosition.from(rawValue: roiPosition))
+                )
+                append(tag: "LIVE", text: "camera_fov \(describeCameraFovResult(result))")
+                cameraSettingsStatus = "Camera settings: applied; field of view \(result.fov)°, \(roiPositionLabel(result.roiPosition.rawValue)) crop"
+            } catch {
+                cameraSettingsStatus = "Camera settings: failed - \(error.localizedDescription)"
+                throw error
             }
         }
     }
 
     func captureAndUpload() {
-        runAction("Capture & upload") {
+        runAsyncAction("Capture & upload") { [self] in
             try requireConnected("capture photos")
             try requireGlassesWifi("capture photos")
             if photoDestination == .thisPhone {
-                try captureAndUploadToPhone()
+                try await captureAndUploadToPhone()
                 return
             }
             let uploadUrl = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -517,23 +561,32 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             photoPreviewUrl = nil
             photoPreviewImage = nil
             cameraStatus = "Camera: webhook upload requested (\(requestId))"
-            mentraBluetoothSdk.requestPhoto(
-                PhotoRequest(
-                    requestId: requestId,
-                    appId: "com.mentra.examples.ios",
-                    size: photoSize,
-                    webhookUrl: uploadUrl,
-                    compress: photoCompression,
-                    sound: true,
-                    exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
-                    iso: photoExposureManual ? photoIso : nil
+            let responseEvent: PhotoResponseEvent
+            do {
+                responseEvent = try await mentraBluetoothSdk.requestPhoto(
+                    PhotoRequest(
+                        requestId: requestId,
+                        appId: "com.mentra.examples.ios",
+                        size: photoSize,
+                        webhookUrl: uploadUrl,
+                        compress: photoCompression,
+                        sound: true,
+                        exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
+                        iso: photoExposureManual ? photoIso : nil
+                    )
                 )
-            )
+            } catch {
+                if activePhotoRequestId == requestId {
+                    activePhotoRequestId = nil
+                }
+                throw error
+            }
+            handlePhotoResponse(responseEvent.response)
             pollPhotoPreview(requestId: requestId, statusUrl: statusUrl.deletingLastPathComponent().appendingPathComponent("\(requestId).json"), generation: generation)
         }
     }
 
-    private func captureAndUploadToPhone() throws {
+    private func captureAndUploadToPhone() async throws {
         let uploadUrl = try startPhonePhotoServer()
         let requestId = "photo-\(Int(Date().timeIntervalSince1970 * 1000))"
         activePhotoRequestId = requestId
@@ -552,18 +605,29 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         photoPreviewUrl = nil
         photoPreviewImage = nil
         cameraStatus = "Camera: requested phone upload (\(requestId))"
-        mentraBluetoothSdk.requestPhoto(
-            PhotoRequest(
-                requestId: requestId,
-                appId: "com.mentra.examples.ios",
-                size: photoSize,
-                webhookUrl: uploadUrl,
-                compress: photoCompression,
-                sound: true,
-                exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
-                iso: photoExposureManual ? photoIso : nil
+        let responseEvent: PhotoResponseEvent
+        do {
+            responseEvent = try await mentraBluetoothSdk.requestPhoto(
+                PhotoRequest(
+                    requestId: requestId,
+                    appId: "com.mentra.examples.ios",
+                    size: photoSize,
+                    webhookUrl: uploadUrl,
+                    compress: photoCompression,
+                    sound: true,
+                    exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
+                    iso: photoExposureManual ? photoIso : nil
+                )
             )
-        )
+        } catch {
+            directPhotoTimeoutTask?.cancel()
+            directPhotoTimeoutTask = nil
+            if activePhotoRequestId == requestId {
+                activePhotoRequestId = nil
+            }
+            throw error
+        }
+        handlePhotoResponse(responseEvent.response)
         append(tag: "TX", text: "requestPhoto requestId=\(requestId) webhookUrl=\(uploadUrl)")
     }
 
@@ -684,14 +748,20 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func toggleStream() {
+        guard !streamConfigurationChangeInProgress else {
+            streamStatus = "Waiting for stream configuration update"
+            append(tag: "TX", text: "stream action ignored while configuration update is running")
+            return
+        }
         if streamRequested || streamStartedAt != nil {
-            runAction("Stop stream") {
+            runAsyncAction("Stop stream") { [self] in
                 stopPreviewHealthPoll()
                 if isDirectPhoneWebRtcSelected {
                     directStreamStartTask?.cancel()
                     directStreamStartTask = nil
                     if glassesConnected {
-                        mentraBluetoothSdk.stopStream()
+                        let status = try await mentraBluetoothSdk.stopStream()
+                        append(tag: "LIVE", text: "stream \(summarize(status.values))")
                         streamStatus = "Stopping WebRTC direct phone stream"
                         directStreamStopTask?.cancel()
                         directStreamStopTask = Task { [weak self] in
@@ -722,7 +792,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                     return
                 }
                 if glassesConnected {
-                    mentraBluetoothSdk.stopStream()
+                    let status = try await mentraBluetoothSdk.stopStream()
+                    append(tag: "LIVE", text: "stream \(summarize(status.values))")
                 }
                 activeStreamId = nil
                 streamRequested = false
@@ -734,7 +805,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             return
         }
 
-        runAction("Start stream") {
+        runAsyncAction("Start stream") { [self] in
             try requireConnected("start streaming")
             try requireGlassesWifi("start streaming")
             if isDirectPhoneWebRtcSelected {
@@ -764,7 +835,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                               !streamRequested,
                               streamStartedAt == nil
                         else { return }
-                        startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
+                        try await startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
                     } catch {
                         let message = error.localizedDescription
                         streamStatus = message
@@ -773,7 +844,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 }
                 return
             }
-            startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
+            try await startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
         }
     }
 
@@ -806,17 +877,20 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 streamStatus = "WebRTC phone receiver ready; starting stream"
                 append(tag: "STREAM", text: "phone WHIP receiver \(url) -> GStreamer \(ports.backendPort)")
                 directStreamStartTask?.cancel()
-                directStreamStartTask = Task { [weak self] in
+                directStreamStartTask = Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
-                    await MainActor.run {
-                        guard let self,
-                              self.activeStreamId == streamId,
-                              self.directStreamReceiverRunning,
-                              self.streamRequested
-                        else {
-                            return
-                        }
-                        self.sendDirectPhoneStartStream(streamUrl: url, streamId: streamId)
+                    guard let self,
+                          self.activeStreamId == streamId,
+                          self.directStreamReceiverRunning,
+                          self.streamRequested
+                    else {
+                        return
+                    }
+                    do {
+                        try await self.sendDirectPhoneStartStream(streamUrl: url, streamId: streamId)
+                    } catch {
+                        self.streamStatus = "WebRTC stream failed: \(error.localizedDescription)"
+                        self.append(tag: "TX", text: "direct phone stream failed: \(error.localizedDescription)")
                     }
                 }
                 return
@@ -838,14 +912,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         throw ExampleActionError(message: "WebRTC phone receiver failed: \(message)")
     }
 
-    private func sendDirectPhoneStartStream(streamUrl: String, streamId: String) {
-        mentraBluetoothSdk.startStream(
+    private func sendDirectPhoneStartStream(streamUrl: String, streamId: String) async throws {
+        let status = try await mentraBluetoothSdk.startStream(
             StreamRequest(
                 streamUrl: streamUrl,
                 streamId: streamId,
                 video: StreamVideoConfig(fps: streamFps)
             )
         )
+        append(tag: "LIVE", text: "stream \(summarize(status.values))")
         streamRequested = true
         streamStartedAt = streamStartedAt ?? Date()
         streamStatus = "WebRTC stream requested; waiting for phone preview"
@@ -894,14 +969,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         lastDirectStreamFrameStatusRefresh = now
     }
 
-    private func startStream(streamUrl: String, streamId: String, protocol selectedProtocol: ExampleStreamProtocol) {
-        mentraBluetoothSdk.startStream(
+    private func startStream(streamUrl: String, streamId: String, protocol selectedProtocol: ExampleStreamProtocol) async throws {
+        let status = try await mentraBluetoothSdk.startStream(
             StreamRequest(
                 streamUrl: streamUrl,
                 streamId: streamId,
                 video: StreamVideoConfig(fps: streamFps)
             )
         )
+        append(tag: "LIVE", text: "stream \(summarize(status.values))")
         activeStreamId = streamId
         streamRequested = true
         streamPreviewReady = false
@@ -957,7 +1033,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     @discardableResult
-    private func stopStreamForConfigurationChange(status: String) -> Bool {
+    private func stopStreamForConfigurationChange(status: String) async -> Bool {
         let streamActive = streamRequested || streamStartedAt != nil || directStreamReceiverRunning
         guard streamActive else { return false }
 
@@ -967,7 +1043,12 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         directStreamStopTask?.cancel()
         directStreamStopTask = nil
         if glassesConnected {
-            mentraBluetoothSdk.stopStream()
+            do {
+                let stopStatus = try await mentraBluetoothSdk.stopStream()
+                append(tag: "LIVE", text: "stream \(summarize(stopStatus.values))")
+            } catch {
+                append(tag: "TX", text: "stopStream before configuration change failed: \(error.localizedDescription)")
+            }
             append(tag: "TX", text: "stopStream before stream configuration change")
         }
         activeStreamId = nil
@@ -987,49 +1068,69 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func selectStreamProtocol(_ nextProtocol: ExampleStreamProtocol) {
         guard streamProtocol != nextProtocol else { return }
-        let currentUrl = streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
-        let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
-        let stoppedStream = stopStreamForConfigurationChange(status: "Stopped before changing stream protocol")
-        streamProtocol = nextProtocol
-        streamResolvedConfig = nil
-        if shouldUseDefault {
-            streamUrl = nextProtocol.defaultUrl
-        }
-        if stoppedStream {
-            streamStatus = "Ready to start stream"
+        runStreamConfigurationChange { [self] in
+            let currentUrl = self.streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
+            let stoppedStream = await self.stopStreamForConfigurationChange(status: "Stopped before changing stream protocol")
+            self.streamProtocol = nextProtocol
+            self.streamResolvedConfig = nil
+            if shouldUseDefault {
+                self.streamUrl = nextProtocol.defaultUrl
+            }
+            if stoppedStream {
+                self.streamStatus = "Ready to start stream"
+            }
         }
     }
 
     func setStreamCloudServerEnabled(_ enabled: Bool) {
         guard streamCloudServerEnabled != enabled else { return }
-        stopStreamForConfigurationChange(status: "Stopped before changing stream destination")
-        streamResolvedConfig = nil
-        if enabled {
-            let currentUrl = streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
-            let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
-            streamCloudServerEnabled = true
-            if shouldUseDefault {
-                streamUrl = streamProtocol.defaultUrl
+        runStreamConfigurationChange { [self] in
+            await self.stopStreamForConfigurationChange(status: "Stopped before changing stream destination")
+            self.streamResolvedConfig = nil
+            if enabled {
+                let currentUrl = self.streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+                let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
+                self.streamCloudServerEnabled = true
+                if shouldUseDefault {
+                    self.streamUrl = self.streamProtocol.defaultUrl
+                }
+                self.streamStatus = "Ready to start stream"
+                self.streamPreviewReady = false
+                self.streamResolvedConfig = nil
+                return
             }
-            streamStatus = "Ready to start stream"
-            streamPreviewReady = false
-            streamResolvedConfig = nil
-            return
-        }
 
-        streamCloudServerEnabled = false
-        streamStatus = "Ready to stream WebRTC to this phone"
-        streamPreviewReady = false
-        streamResolvedConfig = nil
+            self.streamCloudServerEnabled = false
+            self.streamStatus = "Ready to stream WebRTC to this phone"
+            self.streamPreviewReady = false
+            self.streamResolvedConfig = nil
+        }
     }
 
     func setStreamUrl(_ nextUrl: String) {
         guard streamUrl != nextUrl else { return }
-        let stoppedStream = stopStreamForConfigurationChange(status: "Stopped before changing stream URL")
-        streamUrl = nextUrl
-        streamResolvedConfig = nil
-        if stoppedStream {
-            streamStatus = "Ready to start stream"
+        runStreamConfigurationChange { [self] in
+            let stoppedStream = await self.stopStreamForConfigurationChange(status: "Stopped before changing stream URL")
+            self.streamUrl = nextUrl
+            self.streamResolvedConfig = nil
+            if stoppedStream {
+                self.streamStatus = "Ready to start stream"
+            }
+        }
+    }
+
+    private func runStreamConfigurationChange(_ action: @escaping () async -> Void) {
+        guard !streamConfigurationChangeInProgress else {
+            streamStatus = "Waiting for stream configuration update"
+            return
+        }
+        streamConfigurationChangeInProgress = true
+        streamStatus = "Updating stream configuration"
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.streamConfigurationChangeInProgress = false }
+            await action()
         }
     }
 
@@ -1039,38 +1140,42 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func requestWifiScan() {
-        runAction("Scan Wi-Fi") {
+        runAsyncAction("Scan Wi-Fi") { [self] in
             try requireConnected("scan Wi-Fi")
-            mentraBluetoothSdk.requestWifiScan()
+            let networks = try await mentraBluetoothSdk.requestWifiScan()
+            append(tag: "LIVE", text: "Wi-Fi scan returned \(networks.count) network\(networks.count == 1 ? "" : "s")")
         }
     }
 
     func sendWifiCredentials(ssid: String, password: String, requiresPassword: Bool) {
-        runAction("Connect Wi-Fi \(ssid)") {
+        runAsyncAction("Connect Wi-Fi \(ssid)") { [self] in
             try requireConnected("send Wi-Fi credentials")
             if requiresPassword, password.isEmpty {
                 throw ExampleActionError(message: "Enter the Wi-Fi password before connecting to \(ssid).")
             }
-            mentraBluetoothSdk.sendWifiCredentials(ssid: ssid, password: requiresPassword ? password : "")
+            let status = try await mentraBluetoothSdk.sendWifiCredentials(ssid: ssid, password: requiresPassword ? password : "")
+            append(tag: "LIVE", text: "Wi-Fi \(summarize(status.values))")
         }
     }
 
     func forgetCurrentWifiNetwork() {
-        runAction("Forget current Wi-Fi") {
+        runAsyncAction("Forget current Wi-Fi") { [self] in
             try requireConnected("forget Wi-Fi network")
             guard let wifi = connectedWifiStatus(glassesValues) else {
                 throw ExampleActionError(message: "No connected Wi-Fi network to forget.")
             }
-            mentraBluetoothSdk.forgetWifiNetwork(ssid: wifi.ssid)
+            let status = try await mentraBluetoothSdk.forgetWifiNetwork(ssid: wifi.ssid)
+            append(tag: "LIVE", text: "Wi-Fi \(summarize(status.values))")
         }
     }
 
     func toggleHotspot() {
-        runAction(hotspotEnabled ? "Disable hotspot" : "Enable hotspot") {
+        runAsyncAction(hotspotEnabled ? "Disable hotspot" : "Enable hotspot") { [self] in
             try requireConnected("toggle hotspot")
             let current = enabledHotspotStatus(glassesValues) != nil || (glassesValues == nil && hotspotEnabled)
             let next = !current
-            mentraBluetoothSdk.setHotspotState(enabled: next)
+            let status = try await mentraBluetoothSdk.setHotspotState(enabled: next)
+            append(tag: "LIVE", text: "hotspot \(summarize(status.values))")
         }
     }
 
@@ -1151,29 +1256,29 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func selectLedMode(_ mode: String) {
-        runAction("RGB LED \(mode)") {
+        runAsyncAction("RGB LED \(mode)") { [self] in
             try requireConnected("control the RGB LED")
             ledMode = mode
-            sendRgbLedRequest(mode: mode, color: ledColor)
+            try await sendRgbLedRequest(mode: mode, color: ledColor)
         }
     }
 
     func selectLedColor(_ color: String) {
-        runAction("RGB LED color \(color.uppercased())") {
+        runAsyncAction("RGB LED color \(color.uppercased())") { [self] in
             try requireConnected("control the RGB LED")
             guard validLedColors.contains(color) else {
                 throw ExampleActionError(message: "Unsupported RGB LED color: \(color)")
             }
             ledColor = color
             if ledMode != "Off" {
-                sendRgbLedRequest(mode: ledMode, color: color)
+                try await sendRgbLedRequest(mode: ledMode, color: color)
             }
         }
     }
 
-    private func sendRgbLedRequest(mode: String, color: String) {
+    private func sendRgbLedRequest(mode: String, color: String) async throws {
         let request = rgbLedRequest(for: mode, color: color)
-        mentraBluetoothSdk.rgbLedControl(
+        let response = try await mentraBluetoothSdk.rgbLedControl(
             RgbLedRequest(
                 requestId: "rgb-\(Int(Date().timeIntervalSince1970 * 1000))",
                 packageName: "com.mentra.examples.ios",
@@ -1184,6 +1289,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 count: request.count
             )
         )
+        append(tag: "LIVE", text: "RGB LED ack \(response.requestId)")
     }
 
     private func rgbLedRequest(for mode: String, color: String) -> (action: RgbLedAction, color: RgbLedColor?, onDurationMs: Int, offDurationMs: Int, count: Int) {
@@ -1248,15 +1354,49 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             handleRawEvent(name: "hotspot_status_change", values: status.values)
         case let .hotspotError(error):
             handleRawEvent(name: "hotspot_error", values: error.values)
-        case let .photoResponse(response):
-            handlePhotoResponse(response.response)
+        case .photoResponse:
+            break
         case let .streamStatus(status):
             handleStreamStatus(status.status)
+        case .otaUpdateAvailable, .otaStartAck, .settingsAck, .rgbLedControlResponse:
+            break
+        case let .otaStatus(event):
+            applyOtaStatus(event)
         case let .raw(name, values):
             handleRawEvent(name: name, values: values)
         default:
             append(tag: "LIVE", text: event.description)
         }
+    }
+
+    private func handleOtaQueryResult(_ result: OtaQueryResult) {
+        if result.type == "ota_update_available" {
+            let event = OtaUpdateAvailableEvent(values: result.values)
+            otaStatus = nil
+            otaStatusMessage = nil
+            otaUpdateAvailable = event
+            append(tag: "LIVE", text: "OTA available \(event.versionName ?? "unknown") (\(event.updates.joined(separator: ", ")))")
+            return
+        }
+
+        let event = OtaStatusEvent(values: result.values)
+        applyOtaStatus(event)
+    }
+
+    private func applyOtaStatus(_ event: OtaStatusEvent) {
+        guard isDisplayableOtaStatus(event) else {
+            otaStatus = nil
+            otaStatusMessage = "No active OTA"
+            append(tag: "LIVE", text: "OTA idle")
+            return
+        }
+
+        otaStatus = event
+        otaStatusMessage = nil
+        if event.status == "complete" || event.status == "failed" {
+            otaUpdateAvailable = nil
+        }
+        append(tag: "LIVE", text: "OTA \(event.status.isEmpty ? "status" : event.status) \(event.overallPercent)%")
     }
 
     private func applyWifiStatus(_ event: WifiStatusEvent) {
@@ -1296,7 +1436,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     private func runAction(_ label: String, _ action: () throws -> Void) {
-        activeAction = label
+        let actionId = beginAction(label)
         lastAction = "Running: \(label)"
         append(tag: "TX", text: label)
         do {
@@ -1306,7 +1446,39 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             lastAction = "Failed: \(label) - \(error.localizedDescription)"
             append(tag: "TX", text: "\(label) failed: \(error.localizedDescription)")
         }
-        activeAction = nil
+        endAction(actionId)
+    }
+
+    private func runAsyncAction(_ label: String, _ action: @escaping () async throws -> Void) {
+        let actionId = beginAction(label)
+        lastAction = "Running: \(label)"
+        append(tag: "TX", text: label)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await action()
+                lastAction = "Requested: \(label)"
+            } catch {
+                lastAction = "Failed: \(label) - \(error.localizedDescription)"
+                append(tag: "TX", text: "\(label) failed: \(error.localizedDescription)")
+            }
+            endAction(actionId)
+        }
+    }
+
+    private func beginAction(_ label: String) -> Int {
+        actionSequence += 1
+        let actionId = actionSequence
+        activeActions[actionId] = label
+        activeActionOrder.append(actionId)
+        activeAction = label
+        return actionId
+    }
+
+    private func endAction(_ actionId: Int) {
+        activeActions[actionId] = nil
+        activeActionOrder.removeAll { $0 == actionId }
+        activeAction = activeActionOrder.last.flatMap { activeActions[$0] }
     }
 
     private func scheduleAutoConnectDefaultOnStartup() {
@@ -1471,6 +1643,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         hotspotEnabled = false
         galleryServerReachable = nil
         galleryServerStatus = "Gallery server: connect glasses first"
+        otaStatus = nil
+        otaStatusMessage = nil
+        otaUpdateAvailable = nil
         if activePhotoRequestId != nil {
             activePhotoRequestId = nil
             pollGeneration += 1
@@ -1689,7 +1864,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             glassesValues = glassesValues?.withHotspot(.disabled)
             append(tag: "TX", text: "hotspot error \(summarize(values))")
         case "photo_response":
-            handlePhotoResponse(PhotoResponse(values: values))
+            break
         case "stream_status":
             handleStreamStatus(StreamStatus(values: values))
         default:
@@ -1748,17 +1923,17 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             append(tag: "LIVE", text: "ignoring stale photo \(requestId)")
             return
         }
-        let uploadTarget = photoDestination == .thisPhone ? "phone upload" : "local upload"
+        let uploadTarget = photoDestination == .thisPhone ? "phone receiver" : "cloud webhook"
         let source = photoDestination == .thisPhone ? "Phone receiver" : "Cloud server"
         switch response {
-        case let .success(requestId, uploadUrl, timestamp):
+        case let .success(requestId, uploadUrl, _, _, _, _, timestamp):
             photoPreviewDetails = (photoPreviewDetails ?? .waiting(source: source)).acknowledged(
                 requestId: requestId,
                 source: source,
                 timestamp: timestamp,
                 uploadUrl: uploadUrl
             )
-            cameraStatus = "Camera: photo acknowledged; waiting for \(uploadTarget)"
+            cameraStatus = "Camera: photo delivered to \(uploadTarget)"
         case let .error(requestId, errorCode, errorMessage, timestamp):
             photoPreviewDetails = .failed(
                 requestId: requestId,
@@ -1766,7 +1941,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 error: errorCode ?? errorMessage,
                 timestamp: timestamp
             )
-            cameraStatus = "Camera: glasses reported \(errorCode ?? errorMessage); waiting for \(uploadTarget)"
+            cameraStatus = "Camera: photo failed (\(errorCode ?? errorMessage))"
         }
         append(tag: "LIVE", text: "photo response \(requestId)")
     }
@@ -1786,7 +1961,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                         photoPreviewUrl = url
                         photoPreviewImage = nil
                         photoPreviewDetails = (photoPreviewDetails ?? .waiting(source: "Cloud server")).uploaded(
-                            byteCount: intValue(json, "bytes"),
+                            byteCount: intValue(json, "fileSizeBytes"),
                             contentType: stringValue(json, "contentType"),
                             previewUrl: photoUrl,
                             requestId: stringValue(json, "requestId") ?? requestId,
@@ -1943,6 +2118,10 @@ func connectedWifiStatus(_ status: GlassesRuntimeState?) -> (ssid: String, local
         return nil
     }
     return (ssid, localIp)
+}
+
+func isDisplayableOtaStatus(_ status: OtaStatusEvent) -> Bool {
+    status.status != "idle" || !(status.errorMessage ?? "").isEmpty
 }
 
 func enabledHotspotStatus(_ hotspot: HotspotStatus) -> (ssid: String, password: String, localIp: String)? {

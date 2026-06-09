@@ -17,7 +17,7 @@ This example installs the SDK as `com.mentraglass:bluetooth-sdk` and is intended
 The example reads the SDK version from `gradle.properties`:
 
 ```properties
-mentraSdkVersion=0.1.7
+mentraSdkVersion=0.1.10
 ```
 
 Use the latest SDK version published by Mentra. If a future release note lists an additional Maven repository, add it to `settings.gradle.kts` beside `google()` and `mavenCentral()`.
@@ -51,23 +51,39 @@ export GSTREAMER_ROOT_ANDROID=/path/to/Android.sdk
 
 ## Local SDK Override
 
-Use this only when developing the SDK before a Maven release is published:
+Use this when developing SDK changes before the matching Maven release is
+published. This example branch uses the new camera FOV promise result, so prefer
+the source override when working from a local MentraOS checkout:
+
+```bash
+cd /path/to/mentra-bluetooth-sdk-starter-kit/examples/android
+MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk ./gradlew installDebug
+```
+
+The source override includes the SDK Android project directly, plus its `lc3Lib`
+and `silero` modules. The Camera tab disables FOV/ROI controls while
+`setCameraFov` is in flight, then re-enables them only after the glasses report
+that the hardware setting was applied or the SDK returns an error.
+
+If you need Maven-local validation instead:
 
 ```bash
 cd /path/to/MentraOS/mobile/android
 ./gradlew :lc3Lib:publishToMavenLocal :mentra-bluetooth-sdk:publishToMavenLocal
 
 cd /path/to/mentra-bluetooth-sdk-starter-kit/examples/android
-./gradlew installDebug
+./gradlew installDebug -PmentraUseMavenLocal=true
 ```
 
-`settings.gradle.kts` already includes `mavenLocal()` so the local artifact overrides the published version when the version numbers match.
+`settings.gradle.kts` only includes `mavenLocal()` when explicitly requested,
+so the default command line path validates the published Maven Central
+artifacts instead of a stale local copy.
 
 ## App Walkthrough
 
 The example has five tabs:
 
-- **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, and inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state.
+- **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state, and explicitly check/start OTA updates once the glasses are connected to Wi-Fi.
 - **Camera**: request photo upload to the local demo cloud or directly to this phone, tune manual exposure and ISO, then preview the received JPEG.
 - **Stream**: start RTMP, SRT, or WebRTC streams with SDK-managed keep-alives and preview HLS/WebRTC output. WebRTC can be received directly on the phone through the app-hosted GStreamer WHIP receiver.
 - **System**: scan/connect/forget Wi-Fi, toggle hotspot, change gallery mode, receive microphone PCM, and send RGB LED controls.
@@ -109,4 +125,4 @@ adb -s <glasses-serial> logcat -v threadtime | rg -i "WhipStreamingService|WHIP|
 - `app/src/main/java/com/mentra/examples/android/screens/`: Compose screens for the five tabs.
 - `app/src/main/java/com/mentra/examples/android/media/`: direct phone photo and WebRTC receivers.
 - `app/build.gradle.kts`: SDK, Compose, Media3, Coil, GStreamer, and coroutine dependencies.
-- `settings.gradle.kts`: Maven repositories, including `mavenLocal()` for SDK development.
+- `settings.gradle.kts`: Maven repositories for public and local SDK development.

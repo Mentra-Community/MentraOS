@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Point
 import android.graphics.Rect
+import android.os.SystemClock
 import android.util.Log
 import androidx.exifinterface.media.ExifInterface
 import com.google.android.gms.tasks.Tasks
@@ -12,6 +13,7 @@ import com.google.mlkit.vision.barcode.BarcodeScanner
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import java.io.ByteArrayInputStream
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -22,8 +24,11 @@ internal class StillImageBarcodeScanner(
   private val imageBytes: ByteArray,
 ) {
   private val rotationDegrees = rotationDegrees(imageBytes)
+  private var scanStartedAtMs = 0L
+  private var scanBudgetLogged = false
 
   fun scan(scanner: BarcodeScanner): List<Map<String, Any?>> {
+    scanStartedAtMs = SystemClock.elapsedRealtime()
     val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
       ?: throw IllegalStateException("Could not decode image")
 
@@ -46,6 +51,9 @@ internal class StillImageBarcodeScanner(
 
   private fun scanFallbackVariants(scanner: BarcodeScanner, bitmap: Bitmap): List<Map<String, Any?>> {
     for (variant in FALLBACK_VARIANTS) {
+      if (scanBudgetExceeded("ML Kit fallback")) {
+        return emptyList()
+      }
       val cropRect = variant.cropRect(bitmap.width, bitmap.height)
       if (cropRect.width() < MIN_CROP_SIZE_PX || cropRect.height() < MIN_CROP_SIZE_PX) {
         continue
@@ -77,12 +85,24 @@ internal class StillImageBarcodeScanner(
 
   private fun scanZxingFallbackVariants(bitmap: Bitmap): List<Map<String, Any?>> {
     val reader = createZxingReader() ?: return emptyList()
+    if (scanBudgetExceeded("ZXing-C++ full-image fallback")) {
+      return emptyList()
+    }
     val fullImageResults = readZxing(reader, bitmap, ScanTransform(), "full-image")
     if (fullImageResults.isNotEmpty()) {
       return fullImageResults
     }
 
-    for (variant in ZXING_FALLBACK_VARIANTS) {
+    if (scanBudgetExceeded("ZXing-C++ crop ranking")) {
+      return emptyList()
+    }
+    val fallbackVariants = zxingFallbackVariants(bitmap)
+    Log.d(TAG, "ZXing-C++ fallback trying ${fallbackVariants.size} ranked crops")
+
+    for (variant in fallbackVariants) {
+      if (scanBudgetExceeded("ZXing-C++ crop fallback")) {
+        return emptyList()
+      }
       val cropRect = variant.cropRect(bitmap.width, bitmap.height)
       if (cropRect.width() < MIN_CROP_SIZE_PX || cropRect.height() < MIN_CROP_SIZE_PX) {
         continue
@@ -139,7 +159,7 @@ internal class StillImageBarcodeScanner(
     tryContrast: Boolean = false,
   ): List<Map<String, Any?>> {
     val mapped = readZxingOnce(reader, bitmap, transform, variantName)
-    if (mapped.isNotEmpty() || !tryContrast) {
+    if (mapped.isNotEmpty() || !tryContrast || scanBudgetExceeded("ZXing-C++ contrast fallback")) {
       return mapped
     }
 
@@ -182,6 +202,81 @@ internal class StillImageBarcodeScanner(
     return mapped
   }
 
+  private fun zxingFallbackVariants(bitmap: Bitmap): List<CropVariant> {
+    val rankedCandidates = ZXING_CANDIDATE_VARIANTS
+      .asSequence()
+      .mapNotNull { variant ->
+        val cropRect = variant.cropRect(bitmap.width, bitmap.height)
+        if (cropRect.width() < MIN_CROP_SIZE_PX || cropRect.height() < MIN_CROP_SIZE_PX) {
+          null
+        } else {
+          variant to barcodeTextureScore(bitmap, cropRect)
+        }
+      }
+      .filter { (_, score) -> score > 0f }
+      .sortedByDescending { (_, score) -> score }
+      .take(MAX_DYNAMIC_ZXING_CROPS)
+      .map { (variant, _) -> variant }
+      .toList()
+
+    return (ZXING_SEED_VARIANTS + rankedCandidates).distinctBy {
+      "${it.left}:${it.top}:${it.width}:${it.height}:${it.scale}"
+    }
+  }
+
+  private fun barcodeTextureScore(bitmap: Bitmap, rect: Rect): Float {
+    val stepX = max(1, rect.width() / TEXTURE_SAMPLE_COLUMNS)
+    val stepY = max(1, rect.height() / TEXTURE_SAMPLE_ROWS)
+    var xEdges = 0
+    var xComparisons = 0
+    var yEdges = 0
+    var yComparisons = 0
+
+    var y = rect.top
+    while (y < rect.bottom) {
+      var previous = gray(bitmap.getPixel(rect.left, y))
+      var x = rect.left + stepX
+      while (x < rect.right) {
+        val current = gray(bitmap.getPixel(x, y))
+        if (abs(current - previous) >= TEXTURE_EDGE_THRESHOLD) {
+          xEdges += 1
+        }
+        xComparisons += 1
+        previous = current
+        x += stepX
+      }
+      y += stepY
+    }
+
+    var x = rect.left
+    while (x < rect.right) {
+      var previous = gray(bitmap.getPixel(x, rect.top))
+      y = rect.top + stepY
+      while (y < rect.bottom) {
+        val current = gray(bitmap.getPixel(x, y))
+        if (abs(current - previous) >= TEXTURE_EDGE_THRESHOLD) {
+          yEdges += 1
+        }
+        yComparisons += 1
+        previous = current
+        y += stepY
+      }
+      x += stepX
+    }
+
+    val horizontalBarScore = xEdges.toFloat() / max(1, xComparisons).toFloat()
+    val verticalBarScore = yEdges.toFloat() / max(1, yComparisons).toFloat()
+    return max(horizontalBarScore, verticalBarScore)
+  }
+
+  private fun gray(color: Int): Int {
+    return (
+      (Color.red(color) * 0.299f) +
+        (Color.green(color) * 0.587f) +
+        (Color.blue(color) * 0.114f)
+      ).roundToInt()
+  }
+
   private fun createContrastBitmap(bitmap: Bitmap): Bitmap {
     val width = bitmap.width
     val height = bitmap.height
@@ -200,6 +295,19 @@ internal class StillImageBarcodeScanner(
     return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
       setPixels(pixels, 0, width, 0, 0, width, height)
     }
+  }
+
+  private fun scanBudgetExceeded(stage: String): Boolean {
+    if (scanStartedAtMs <= 0) {
+      return false
+    }
+    val elapsedMs = SystemClock.elapsedRealtime() - scanStartedAtMs
+    val exceeded = elapsedMs >= MAX_SCAN_ELAPSED_MS
+    if (exceeded && !scanBudgetLogged) {
+      scanBudgetLogged = true
+      Log.d(TAG, "Barcode scan miss budget reached after ${elapsedMs}ms; skipping $stage")
+    }
+    return exceeded
   }
 
   private fun process(
@@ -381,6 +489,11 @@ internal class StillImageBarcodeScanner(
     const val MIN_CROP_SIZE_PX = 160
     const val MAX_ZXING_SCALED_PIXELS = 12_000_000
     const val MAX_ZXING_SYMBOLS = 4
+    const val MAX_SCAN_ELAPSED_MS = 2_500L
+    const val MAX_DYNAMIC_ZXING_CROPS = 16
+    const val TEXTURE_SAMPLE_COLUMNS = 32
+    const val TEXTURE_SAMPLE_ROWS = 18
+    const val TEXTURE_EDGE_THRESHOLD = 28
     const val ZXING_CONTRAST = 1.8f
 
     // Keep this fallback plan isolated: the normal API stays scanImage(uri), and these
@@ -415,11 +528,13 @@ internal class StillImageBarcodeScanner(
       ZxingCppBarcodeReader.Format.UPC_E,
     )
 
-    val ZXING_FALLBACK_VARIANTS = mutableListOf<CropVariant>().apply {
-      add(CropVariant("tight-center-label-strip-10x", 0.36f, 0.38f, 0.12f, 0.05f, 10))
-      add(CropVariant("lower-left-label-strip-8x", 0.25f, 0.56f, 0.24f, 0.08f, 8))
-      add(CropVariant("lower-center-product-label-8x", 0.22f, 0.54f, 0.32f, 0.11f, 8))
+    val ZXING_SEED_VARIANTS = listOf(
+      CropVariant("tight-center-label-strip-10x", 0.36f, 0.38f, 0.12f, 0.05f, 10),
+      CropVariant("lower-left-label-strip-8x", 0.25f, 0.56f, 0.24f, 0.08f, 8),
+      CropVariant("lower-center-product-label-8x", 0.22f, 0.54f, 0.32f, 0.11f, 8),
+    )
 
+    val ZXING_CANDIDATE_VARIANTS = mutableListOf<CropVariant>().apply {
       val tightHorizontalLefts = listOf(0.24f, 0.30f, 0.36f, 0.42f, 0.48f)
       val tightHorizontalTops = listOf(0.34f, 0.38f, 0.42f, 0.46f, 0.50f, 0.54f, 0.58f)
       for (top in tightHorizontalTops) {

@@ -192,7 +192,7 @@ import {useMentraBluetooth} from '@mentra/bluetooth-sdk/react';
 const mentra = useMentraBluetooth();
 ```
 
-Status snapshots are safe to read at any time. Treat command success as "command accepted"; keep UI state derived from status callbacks or hook state.
+Status snapshots are safe to read at any time. For continuous subsystems, keep UI state derived from status callbacks or hook state. Request/response commands document their exact promise resolution and error criteria below.
 
 Public status is grouped the same way across platforms:
 
@@ -233,7 +233,7 @@ These are the supported React Native app developer entrypoints:
 | Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setButtonPhotoSettings`, `setButtonVideoRecordingSettings`, `setButtonCameraLed`, `setButtonMaxRecordingTime`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
 | Streaming | `startStream`, `keepStreamAlive`, `stopStream` |
 | Audio | `setMicState`, `setPreferredMic`, `setVoiceActivityDetectionEnabled`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
-| LED and version | `rgbLedControl`, `requestVersionInfo` |
+| LED, version, and OTA | `rgbLedControl`, `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate`, `retryOtaVersionCheck` |
 
 React Native helper exports include `DeviceModels`, `isConnectedGlassesConnectionStatus`, `isReadyGlassesConnectionStatus`, `isBusyGlassesConnectionStatus`, `isConnectedWifiStatus`, and `isEnabledHotspotStatus`. The React subpath exports `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent`.
 
@@ -241,7 +241,7 @@ For React Native status UI, use `useMentraBluetooth()` from `@mentra/bluetooth-s
 
 ### Version Fields
 
-Call `requestVersionInfo()` after connection when your app wants the glasses to refresh version metadata. Updated values arrive through the normal status callback and are also available in the next status snapshot.
+Call `requestVersionInfo()` after connection when your app wants the glasses to refresh version metadata. The method resolves with the updated version metadata from the ASG response path; updated values also arrive through the normal status callback and are available in the next status snapshot.
 
 | Field | Meaning |
 | --- | --- |
@@ -254,6 +254,20 @@ Call `requestVersionInfo()` after connection when your app wants the glasses to 
 | `androidVersion` | Android OS version on Android-based glasses. This is not firmware. |
 
 Different glasses models expose different version fields, so apps should prefer the generic firmware field when present, then fall back to model-specific firmware fields. Keep app and OS versions visibly labeled as app/OS versions.
+
+## OTA Updates
+
+Mentra Live OTA is owned by the glasses firmware. The SDK exposes the same command and event semantics used by the MentraOS app, so host apps can check availability, ask the user before starting an update, and render progress without inventing a separate protocol.
+
+| Method | Glasses command | Use |
+| --- | --- | --- |
+| `checkForOtaUpdate()` | `ota_query_status` | Ask connected Mentra Live glasses to report update availability or current progress. Resolves with the ASG query result. |
+| `startOtaUpdate()` | `ota_start` | Start OTA after your app presents the available update and the user accepts it. Resolves with the ASG start ack. |
+| `retryOtaVersionCheck()` | `ota_retry_version_check` | Re-run the glasses-side version check after fixing a known clock-skew or TLS failure. Resolves with the same query result shape as `checkForOtaUpdate()`. |
+
+Use the returned query/start values for one-shot UI. Keep `ota_status` listeners/delegates for install progress and terminal `complete` / `failed` state.
+
+OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until the OTA status is `complete` or `failed`.
 
 ## Display
 
@@ -301,7 +315,8 @@ sdk.setButtonPhotoSettings(size = ButtonPhotoSize.MEDIUM)
 sdk.setButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
 sdk.setButtonCameraLed(enabled = true)
 sdk.setButtonMaxRecordingTime(minutes = 3)
-sdk.setCameraFov(CameraFov(fov = 102, roiPosition = 0))
+val cameraFov = sdk.setCameraFov(CameraFov(fov = 102, roiPosition = CameraRoiPosition.CENTER))
+println("Camera FOV applied at ${cameraFov.fov}°")
 ```
 
 iOS:
@@ -318,7 +333,8 @@ try await sdk.setButtonPhotoSettings(size: .medium)
 try await sdk.setButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30)
 try await sdk.setButtonCameraLed(enabled: true)
 try await sdk.setButtonMaxRecordingTime(minutes: 3)
-try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: 0))
+let cameraFov = try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: .center))
+print("Camera FOV applied at \(cameraFov.fov)°")
 ```
 
 React Native:
@@ -335,19 +351,20 @@ await BluetoothSdk.setButtonPhotoSettings('medium');
 await BluetoothSdk.setButtonVideoRecordingSettings(1280, 720, 30);
 await BluetoothSdk.setButtonCameraLed(true);
 await BluetoothSdk.setButtonMaxRecordingTime(3);
-await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 0});
+const cameraFov = await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 'center'});
+console.log(`Camera FOV applied at ${cameraFov.fov}°`);
 ```
 
 Mentra Live gallery mode controls right-action-button capture. When gallery mode is enabled, a short press takes a photo, a long press starts video recording, and a short press stops the active video recording. `setGalleryModeEnabled(true)` enables local button capture; `setGalleryModeEnabled(false)` reports button and touch events to the host app without triggering local gallery capture while the glasses are connected. Button presses are always reported as SDK events.
 
-`setCameraFov` accepts FOV degrees from 50 to 118 and ROI position `0` center, `1` bottom, or `2` top. On Mentra Live, applying FOV/ROI restarts the camera for about 5 seconds; wait for that restart before requesting a photo.
+`setCameraFov` accepts FOV degrees from 62 to 118 and ROI position `"center"`, `"bottom"`, or `"top"` on React Native, `CameraRoiPosition` on Android, and `CameraRoiPosition` on iOS. React Native also accepts `{preset: "narrow" | "standard" | "wide"}`. On Mentra Live, applying FOV/ROI restarts the camera; the returned `CameraFovResult` resolves from the ASG client only after the glasses report that the hardware setting was applied, and the promise rejects on glasses-side error or if the hardware-applied acknowledgement does not arrive. Raw `settings_ack` events are still available for listeners.
 
 ## RGB LED
 
 Android:
 
 ```kotlin
-sdk.rgbLedControl(
+val ledAck = sdk.rgbLedControl(
     RgbLedRequest(
         requestId = "led-${System.currentTimeMillis()}",
         packageName = "com.example.assistant",
@@ -358,12 +375,13 @@ sdk.rgbLedControl(
         count = 3,
     )
 )
+println("RGB LED acknowledged: ${ledAck.requestId}")
 ```
 
 iOS:
 
 ```swift
-sdk.rgbLedControl(
+let ledAck = try await sdk.rgbLedControl(
     RgbLedRequest(
         requestId: "led-\(Date().timeIntervalSince1970)",
         packageName: "com.example.assistant",
@@ -374,12 +392,13 @@ sdk.rgbLedControl(
         count: 3
     )
 )
+print("RGB LED acknowledged: \(ledAck.requestId)")
 ```
 
 React Native:
 
 ```ts
-await BluetoothSdk.rgbLedControl(
+const ledAck = await BluetoothSdk.rgbLedControl(
   `led-${Date.now()}`,
   'com.example.assistant',
   'on',
@@ -388,6 +407,7 @@ await BluetoothSdk.rgbLedControl(
   500,
   3,
 );
+console.log('RGB LED acknowledged', ledAck.requestId);
 ```
 
 RGB LED support is hardware-dependent. Unsupported glasses should report an SDK error or capability status.
@@ -446,7 +466,7 @@ Use photo requests when your app needs the glasses to capture a photo and upload
 Android:
 
 ```kotlin
-sdk.requestPhoto(
+val photo = sdk.requestPhoto(
     PhotoRequest(
         requestId = "assistant-${System.currentTimeMillis()}",
         appId = "com.example.assistant",
@@ -459,12 +479,13 @@ sdk.requestPhoto(
         iso = null,
     )
 )
+println("Photo delivered: ${photo.response.requestId}")
 ```
 
 iOS:
 
 ```swift
-sdk.requestPhoto(
+let photo = try await sdk.requestPhoto(
     PhotoRequest(
         requestId: "assistant-\(Date().timeIntervalSince1970)",
         appId: "com.example.assistant",
@@ -477,12 +498,13 @@ sdk.requestPhoto(
         iso: nil
     )
 )
+print("Photo delivered: \(photo.requestId)")
 ```
 
 React Native:
 
 ```ts
-await BluetoothSdk.requestPhoto({
+const photo = await BluetoothSdk.requestPhoto({
   requestId: `assistant-${Date.now()}`,
   appId: 'com.example.assistant',
   size: 'medium',
@@ -493,9 +515,10 @@ await BluetoothSdk.requestPhoto({
   exposureTimeNs: null,
   iso: null,
 });
+console.log('Photo delivered', photo.photoUrl ?? photo.uploadUrl);
 ```
 
-Omit `exposureTimeNs` or pass `null` for auto exposure. Pass a positive nanosecond value for one-shot manual exposure, for example `8_333_333` for about 1/120s. Pass `iso` with manual exposure when you want a specific sensor gain; `iso` is ignored when auto exposure is active. The camera light is always enabled for photo capture and streaming as a privacy indicator.
+`requestPhoto(...)` resolves after capture and webhook delivery finish. It rejects when the glasses reject the request, phone-side Bluetooth fallback upload fails, the SDK cannot send the command, or the terminal photo response times out. Omit `exposureTimeNs` or pass `null` for auto exposure. Pass a positive nanosecond value for one-shot manual exposure, for example `8_333_333` for about 1/120s. Pass `iso` with manual exposure when you want a specific sensor gain; `iso` is ignored when auto exposure is active. The camera light is always enabled for photo capture and streaming as a privacy indicator.
 
 Your webhook should accept multipart form data with a `photo` file and `requestId`. If you include `authToken`, the uploader adds `Authorization: Bearer <token>` on the webhook request.
 
@@ -516,9 +539,11 @@ Android:
 ```kotlin
 val streamId = "stream-${System.currentTimeMillis()}"
 
-sdk.startStream(StreamRequest(streamUrl = streamUrl, streamId = streamId))
+val started = sdk.startStream(StreamRequest(streamUrl = streamUrl, streamId = streamId))
+println("Stream started: ${started.status}")
 sdk.keepStreamAlive(StreamKeepAliveRequest(streamId = streamId, ackId = "ack-${System.currentTimeMillis()}"))
-sdk.stopStream()
+val stopped = sdk.stopStream()
+println("Stream stopped: ${stopped.status}")
 ```
 
 iOS:
@@ -526,9 +551,11 @@ iOS:
 ```swift
 let streamId = "stream-\(Int(Date().timeIntervalSince1970 * 1000))"
 
-sdk.startStream(StreamRequest(streamUrl: streamUrl, streamId: streamId))
+let started = try await sdk.startStream(StreamRequest(streamUrl: streamUrl, streamId: streamId))
+print("Stream started: \(started.status)")
 sdk.keepStreamAlive(StreamKeepAliveRequest(streamId: streamId, ackId: "ack-\(Int(Date().timeIntervalSince1970 * 1000))"))
-sdk.stopStream()
+let stopped = try await sdk.stopStream()
+print("Stream stopped: \(stopped.status)")
 ```
 
 React Native:
@@ -536,9 +563,11 @@ React Native:
 ```ts
 const streamId = `stream-${Date.now()}`;
 
-await BluetoothSdk.startStream({type: 'start_stream', streamUrl, streamId});
+const started = await BluetoothSdk.startStream({type: 'start_stream', streamUrl, streamId});
+console.log('Stream started', started.status);
 await BluetoothSdk.keepStreamAlive({type: 'keep_stream_alive', streamId, ackId: `ack-${Date.now()}`});
-await BluetoothSdk.stopStream();
+const stopped = await BluetoothSdk.stopStream();
+console.log('Stream stopped', stopped.status);
 ```
 
 When `keepAlive` is enabled, call `keepStreamAlive` about every 15 seconds while the stream is active. For local streaming development, use `examples/local-demo-cloud` and paste the printed RTMP, SRT, or WHIP publish URL into the example app.
@@ -548,28 +577,28 @@ When `keepAlive` is enabled, call `keepStreamAlive` about every 15 seconds while
 Android:
 
 ```kotlin
-sdk.requestWifiScan()
-sdk.sendWifiCredentials(ssid = "Office WiFi", password = "secret")
-sdk.forgetWifiNetwork("Office WiFi")
-sdk.setHotspotState(enabled = true)
+val networks = sdk.requestWifiScan()
+val wifiStatus = sdk.sendWifiCredentials(ssid = "Office WiFi", password = "secret")
+val forgetStatus = sdk.forgetWifiNetwork("Office WiFi")
+val hotspotStatus = sdk.setHotspotState(enabled = true)
 ```
 
 iOS:
 
 ```swift
-sdk.requestWifiScan()
-sdk.sendWifiCredentials(ssid: "Office WiFi", password: "secret")
-sdk.forgetWifiNetwork(ssid: "Office WiFi")
-sdk.setHotspotState(enabled: true)
+let networks = try await sdk.requestWifiScan()
+let wifiStatus = try await sdk.sendWifiCredentials(ssid: "Office WiFi", password: "secret")
+let forgetStatus = try await sdk.forgetWifiNetwork(ssid: "Office WiFi")
+let hotspotStatus = try await sdk.setHotspotState(enabled: true)
 ```
 
 React Native:
 
 ```ts
-await BluetoothSdk.requestWifiScan();
-await BluetoothSdk.sendWifiCredentials('Office WiFi', 'secret');
-await BluetoothSdk.forgetWifiNetwork('Office WiFi');
-await BluetoothSdk.setHotspotState(true);
+const networks = await BluetoothSdk.requestWifiScan();
+const wifiStatus = await BluetoothSdk.sendWifiCredentials('Office WiFi', 'secret');
+const forgetStatus = await BluetoothSdk.forgetWifiNetwork('Office WiFi');
+const hotspotStatus = await BluetoothSdk.setHotspotState(true);
 ```
 
 ## Version, Maintenance, And Diagnostics
@@ -648,7 +677,6 @@ import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
 export function HardwareEventLogger() {
   useBluetoothEvent('button_press', (event) => console.log(event));
   useBluetoothEvent('touch_event', (event) => console.log(event));
-  useBluetoothEvent('photo_response', (event) => console.log(event));
   useBluetoothEvent('stream_status', (event) => console.log(event));
   useBluetoothEvent('mic_pcm', (event) => {
     console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding);
@@ -679,12 +707,14 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `wifi_status_change` | `WifiStatusChangeEvent` | Glasses Wi-Fi connection state changes. |
 | `hotspot_status_change` | `HotspotStatusChangeEvent` | Glasses hotspot state changes. |
 | `hotspot_error` | `HotspotErrorEvent` | Hotspot operation fails. |
-| `photo_response` | `PhotoResponseEvent` | Photo request succeeds or fails. |
+| `photo_response` | `PhotoResponseEvent` | Terminal photo request success or failure event. `requestPhoto(...)` resolves after capture and webhook delivery finish, and rejects on glasses, phone-relay, send, or timeout failure. |
+| `video_recording_status` | `VideoRecordingStatusEvent` | Raw video recording start/stop success or failure event. `startVideoRecording(...)` and `stopVideoRecording(...)` resolve with successful status and reject on ASG failure. |
 | `gallery_status` | `GalleryStatusEvent` | Gallery content/camera-busy status changes. |
+| `settings_ack` | `SettingsAckEvent` | Raw gallery/button/FOV setting acknowledgements from the glasses. Gallery and button settings return this shape; `setCameraFov(...)` returns `CameraFovResult` after the raw ack reports that the hardware setting was applied. |
 | `compatible_glasses_search_stop` | `CompatibleGlassesSearchStopEvent` | Compatible-glasses search stops for a model. |
 | `swipe_volume_status` | `SwipeVolumeStatusEvent` | Swipe-volume setting changes. |
 | `switch_status` | `SwitchStatusEvent` | Glasses switch status changes. |
-| `rgb_led_control_response` | `RgbLedControlResponseEvent` | RGB LED command succeeds or fails. |
+| `rgb_led_control_response` | `RgbLedControlResponseEvent` | Raw RGB LED command success or failure event. `rgbLedControl(...)` resolves with a successful response and rejects on ASG failure. |
 | `pair_failure` | `PairFailureEvent` | Bluetooth pairing fails. |
 | `audio_pairing_needed` | `AudioPairingNeededEvent` | The phone needs Bluetooth audio pairing for the device. |
 | `audio_connected` | `AudioConnectedEvent` | Bluetooth audio connects. |
@@ -694,7 +724,7 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `stream_status` | `StreamStatusEvent` | Camera stream lifecycle, reconnect, or error state changes. |
 | `keep_alive_ack` | `KeepAliveAckEvent` | Glasses acknowledge a stream keep-alive request. |
 
-React Native event payload fields use camelCase. For example, `touch_event` includes `deviceModel` and `gestureName`, successful `photo_response` events include `uploadUrl`, hotspot errors include `errorMessage`, and `gallery_status` includes `hasContent` and `cameraBusy`. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
+For request/response commands, prefer the value returned by the method. Use listeners for ongoing hardware streams and status updates. React Native event payload fields use camelCase: `touch_event` includes `deviceModel` and `gestureName`, successful `photo_response` events include `uploadUrl` and may include webhook-returned `photoUrl`, `statusUrl`, `contentType`, or `fileSizeBytes`, hotspot errors include `errorMessage`, and `gallery_status` includes `hasContent` and `cameraBusy`. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
 
 Android and iOS expose typed callbacks/delegate methods instead of the React Native string event API. Android uses `MentraBluetoothSdkListener` methods such as `onStateChanged`, `onGlassesChanged`, `onSdkStateChanged`, `onScanChanged`, `onDeviceDiscovered`, `onButtonPress`, `onVoiceActivityDetectionStatus`, `onSpeakingStatus`, `onPhotoResponse`, `onMicPcm`, and `onStreamStatus`. iOS uses `MentraBluetoothSDKDelegate` methods such as `mentraBluetoothSDK(_:didUpdate:)`, `mentraBluetoothSDK(_:didUpdateGlasses:)`, `mentraBluetoothSDK(_:didUpdateSdkState:)`, `mentraBluetoothSDK(_:didUpdateScan:)`, `mentraBluetoothSDK(_:didDiscover:)`, `mentraBluetoothSDK(_:didReceive:)`, `mentraBluetoothSDK(_:didReceiveMicPcm:)`, and `mentraBluetoothSDK(_:didReceiveMicLc3:)`. Microphone audio callbacks use `MicPcmEvent` and `MicLc3Event` objects with the same metadata as React Native.
 
@@ -721,6 +751,7 @@ Android and iOS expose typed callbacks/delegate methods instead of the React Nat
 | `displayText` | Defaults to `x = 0`, `y = 0`, `size = 24` when supported by the platform call. |
 | `setMicState` | `useGlassesMic = true`, `sendTranscript = false`, and `sendLc3Data = false` unless explicitly set. |
 | `PhotoRequest` / `requestPhoto` | Pass explicit size, compression, and sound. `exposureTimeNs` is optional; omitted or `null` means auto exposure. `iso` is only used with manual `exposureTimeNs`. The camera light is always enabled by the SDK. |
+| `startVideoRecording` / `stopVideoRecording` | Resolve with successful `VideoRecordingStatusEvent` values from the ASG client and reject when the ASG reports failure. Check `status` before updating recording UI. |
 | `StreamRequest` / `startStream` | `keepAlive = true`, `keepAliveIntervalSeconds = 15`, and `sound = true` by default in native SDK calls. The camera light is always enabled by the SDK. |
 
 ## Error Handling
