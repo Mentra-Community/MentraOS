@@ -16,24 +16,56 @@ MentraOS is an open-source operating system, app store, and development framewor
 - **Miniapps** are the third-party apps users install. They run **on the phone**, inside the Mentra App's runtime.
 - **Mentra's cloud** provides the shared store and developer ecosystem, plus the services the runtime relies on (transcription, translation, streaming, photos).
 
-The direction of the platform is **on-device**: miniapps run locally in the phone app rather than on remote servers, so most features work with no cloud round-trip and the cloud gets smaller and more scalable. The deep design lives in the [Mentra Overhaul Plan](https://github.com/Mentra-Community/MentraOS/blob/cloud-v2/cloud-v2/docs/mentra-overhaul-plan.md).
-
 ```mermaid
-flowchart TB
-  subgraph Phone["The Mentra App (phone)"]
-    Runtime["Miniapp runtime<br/>(runs miniapps on-device)"]
-    Glasses_IO["Glasses I/O<br/>(display, mic, audio, camera)"]
+flowchart LR
+  subgraph DevToolkit["Dev Toolkit"]
+    LocalSDK["Mentra Local SDK"]
+    CLI["Mentra CLI"]
   end
 
-  Glasses["Smart Glasses"]
-  subgraph Cloud["Mentra Cloud"]
-    Core["Cloud Core Services<br/>(Mentra Miniapp Store, Dev Console, accounts)"]
-    RuntimeSvc["Runtime Services<br/>(STT, TTS, translation, streaming, photo)"]
+  subgraph MobileClient["Mobile Client"]
+    subgraph IntegrationToolkit["OEM Integration Toolkit"]
+      Runtime["Mentra Runtime (bundle executor)"]
+      InstallAuth["Install + OEM-auth APIs"]
+      BluetoothSDK["Mentra Bluetooth SDK"]
+    end
+    UIToolkit["Mentra OEM UI Toolkit"]
   end
 
-  Glasses <--> Glasses_IO
-  Runtime <--> RuntimeSvc
-  Phone <--> Core
+  subgraph Glasses["Glasses Clients"]
+    ASG["ASG_Client"]
+    Zephyr["Zephyr_Client"]
+  end
+
+  subgraph RuntimeServices["Mentra Runtime Services"]
+    STT
+    TTS
+    Translation
+    Streaming
+    Photo
+  end
+
+  subgraph CoreServices["Mentra Cloud Core Services"]
+    UserAuth["User Auth"]
+    OEMSvc["OEM service"]
+    MiniAppSvc["Miniapp service"]
+    DevConsoleSvc["Dev Console service"]
+  end
+
+  subgraph Websites["Websites"]
+    AppStore["Mentra Miniapp Store"]
+    DevConsoleSite["Dev Console"]
+    OEMPortal["OEM Portal"]
+  end
+
+  BluetoothSDK --> ASG
+  BluetoothSDK --> Zephyr
+  Runtime --> RuntimeServices
+  InstallAuth --> CoreServices
+  CLI --> CoreServices
+  Websites --> CoreServices
+
+  LocalSDK -. "miniapps run in" .-> Runtime
 ```
 
 ## Components
