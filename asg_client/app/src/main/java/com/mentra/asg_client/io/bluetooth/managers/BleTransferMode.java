@@ -9,20 +9,26 @@ import android.util.Log;
 import androidx.core.content.ContextCompat;
 
 /**
- * Runtime toggle for BLE file transfer optimizations (Phase 1).
+ * Runtime toggle for BLE file transfer Phase 1 optimizations.
  *
- * <p>Modes:
+ * <p>Currently controls the pre-transfer delay guard that lets an in-flight JSON packet fully
+ * transmit over BLE before the file-packet stream starts:
+ *
  * <ul>
- *   <li>OPTIMIZED — event-driven TX pump, single ACK watchdog, fast UART recv, 75ms pre-delay
- *   <li>LEGACY    — original stop-and-wait per-packet timer, 200ms pre-delay
+ *   <li>OPTIMIZED — 75 ms pre-transfer delay (default)
+ *   <li>LEGACY — 200 ms pre-transfer delay (original conservative value for A/B comparison)
  * </ul>
  *
+ * <p>All other Phase 1 improvements (event-driven ACK watchdog, zero-copy packet buffer, fast
+ * UART read loop) are always active regardless of mode and cannot be toggled here.
+ *
  * <p>Toggle via ADB (no reinstall required):
+ *
  * <pre>
- *   # Enable Phase 1 optimizations (default)
+ *   # Use optimized 75ms pre-delay (default)
  *   adb shell am broadcast -a com.mentra.BLE_TRANSFER_MODE --es mode OPTIMIZED
  *
- *   # Revert to legacy behavior for A/B comparison
+ *   # Revert to conservative 200ms pre-delay for comparison
  *   adb shell am broadcast -a com.mentra.BLE_TRANSFER_MODE --es mode LEGACY
  *
  *   # Query current mode
@@ -88,7 +94,7 @@ public class BleTransferMode {
                 context,
                 receiver,
                 new IntentFilter(ACTION),
-                ContextCompat.RECEIVER_EXPORTED);
+                ContextCompat.RECEIVER_NOT_EXPORTED);
         receiverRegistered = true;
         Log.i(TAG, "BleTransferMode receiver registered. Current mode: " + current);
     }

@@ -644,9 +644,12 @@ export function GalleryScreen() {
         // For v2 capture-aware photos every filePath ends with the same leaf (e.g. "base.jpg.processed.jpg"),
         // so basing the cache name on filePath.split("/").pop() would make every cache file appear
         // identical to the receiving app even though they have different content.
+        // Prefix with a zero-padded index so two photos whose names sanitize to the same string
+        // (e.g. "My Photo!" and "My Photo?") don't collide in the cache directory.
         const ext = filePath.includes(".") ? filePath.slice(filePath.lastIndexOf(".")) : ""
         const safeName = photo.name.replace(/[^a-zA-Z0-9_.-]/g, "_")
-        const cachePath = `${cacheDir}/${safeName}${ext}`
+        const cacheIndex = String(shareUrls.length + 1).padStart(3, "0")
+        const cachePath = `${cacheDir}/${cacheIndex}-${safeName}${ext}`
 
         console.log(`[GalleryShare] Copying ${photo.name}: ${filePath} → ${cachePath}`)
         await RNFS.unlink(cachePath).catch(() => {})

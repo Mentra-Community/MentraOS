@@ -910,19 +910,20 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     /** Check if file packet acknowledgment was received */
     private void checkFilePacketAck(int packetIndex) {
         fileTransferAckTimeout = null;
-        if (currentStats != null) currentStats.timeoutCount++;
         if (currentFileTransfer == null || !currentFileTransfer.isActive) {
             return;
         }
 
         FilePacketState packetState = pendingPackets.get(packetIndex);
         if (packetState == null) {
-            // Packet was acknowledged and removed
+            // Packet was already ACKed — watchdog fired late, not a real timeout
             return;
         }
 
         long timeSinceLastSend = System.currentTimeMillis() - packetState.lastSendTime;
         if (timeSinceLastSend >= FILE_TRANSFER_ACK_TIMEOUT_MS) {
+            // Only count as a real timeout once we confirm the ACK is genuinely missing
+            if (currentStats != null) currentStats.timeoutCount++;
             packetState.retryCount++;
 
             if (packetState.retryCount >= FILE_TRANSFER_MAX_RETRIES) {
