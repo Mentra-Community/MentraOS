@@ -196,14 +196,14 @@ sdk.stopStream()
 ```swift
 let streamId = "stream-\(Date().timeIntervalSince1970)"
 
-sdk.startStream(
+try await sdk.startStream(
     StreamRequest(
         streamUrl: "http://192.168.1.42:8889/mentra-live/whip",
         streamId: streamId
     )
 )
 
-sdk.stopStream()
+try await sdk.stopStream()
 ```
 
   </Tab>
