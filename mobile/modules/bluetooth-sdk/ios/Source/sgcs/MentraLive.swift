@@ -511,7 +511,7 @@ private enum K900ProtocolUtils {
     static let CMD_TYPE_DATA: UInt8 = 0x35
 
     // File transfer constants
-    static let FILE_PACK_SIZE = 400 // Max data size per packet
+    static let FILE_PACK_SIZE = 470 // Phase 2 max data size per packet (512 MTU)
     static let LENGTH_FILE_START = 2
     static let LENGTH_FILE_TYPE = 1
     static let LENGTH_FILE_PACKSIZE = 2
@@ -626,18 +626,14 @@ private enum K900ProtocolUtils {
 
 private struct FileTransferSession {
     let fileName: String
-    let fileSize: Int // NOTE: May be "fake" (inflated) due to BES firmware workaround
-    var actualPackSize: Int = 0 // Actual pack size from first received packet
+    let fileSize: Int
+    var actualPackSize: Int = 0
     var totalPackets: Int
     var expectedNextPacket: Int = 0
     var receivedPackets: [Int: Data] = [:]
     let startTime: Date
     var isComplete: Bool = false
     var isAnnounced: Bool = false
-
-    /// BES2700 firmware hardcodes FILE_PACK_SIZE=400 when calculating totalPack.
-    /// Android glasses "lie" about fileSize to make BES expect correct packet count.
-    private static let BES_HARDCODED_PACK_SIZE = 400
 
     init(fileName: String, fileSize: Int, announcedPackets: Int? = nil) {
         self.fileName = fileName
@@ -663,29 +659,12 @@ private struct FileTransferSession {
         }
     }
 
-    /// Recalculate total packets based on actual pack size from received packet.
-    /// Detects BES lie: if fileSize is multiple of 400 but actual pack size differs.
+    /// Recalculate total packets from actual pack size in the first received packet header.
     mutating func recalculateTotalPackets(actualPackSize: Int) {
         guard actualPackSize > 0, actualPackSize <= K900ProtocolUtils.FILE_PACK_SIZE else { return }
 
         self.actualPackSize = actualPackSize
-
-        // Detect BES lie: if fileSize is exact multiple of 400, glasses used the lie strategy
-        let isBesLie =
-            (fileSize % Self.BES_HARDCODED_PACK_SIZE == 0)
-                && (actualPackSize != Self.BES_HARDCODED_PACK_SIZE)
-
-        let newTotalPackets: Int
-        if isBesLie {
-            // BES lie detected: totalPackets = fileSize / 400
-            newTotalPackets = fileSize / Self.BES_HARDCODED_PACK_SIZE
-            print(
-                "📦 BES Lie detected! fakeFileSize=\(fileSize), totalPackets=\(newTotalPackets), actualPackSize=\(actualPackSize)"
-            )
-        } else {
-            // Normal case: calculate based on actual pack size
-            newTotalPackets = (fileSize + actualPackSize - 1) / actualPackSize
-        }
+        let newTotalPackets = (fileSize + actualPackSize - 1) / actualPackSize
 
         if newTotalPackets != totalPackets {
             print(
@@ -873,6 +852,8 @@ extension MentraLive: CBCentralManagerDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             Bridge.log("Connected to GATT server, discovering services...")
+            // CoreBluetooth has no setPreferredPhy API; iOS auto-negotiates LE 2M when
+            // the phone supports Bluetooth 5 and the peripheral (BES) prefers 2M.
 
             self.stopConnectionTimeout()
             self.isConnecting = false
@@ -1371,7 +1352,6 @@ class MentraLive: NSObject, SGCManager {
     private var connectedPeripheral: CBPeripheral?
     private var txCharacteristic: CBCharacteristic?
     private var rxCharacteristic: CBCharacteristic?
-    private let bes2700MtuLimit = 256
     private var currentMtu: Int = 23 // Default BLE MTU
 
     // State Tracking
@@ -2975,6 +2955,71 @@ class MentraLive: NSObject, SGCManager {
         fullyBooted = true
         connected = true
         updateConnectionState(ConnTypes.CONNECTED)
+
+        BleBandwidthBench.scheduleAfterFullyConnected { [weak self] in
+            self?.runBleBandwidthBench()
+        }
+    }
+
+    /// Debug-only BLE bandwidth probe after fully connected (see `BleBandwidthBench`).
+    private func runBleBandwidthBench() {
+        guard BleBandwidthBench.isEnabled else { return }
+        let attempt = BleBandwidthBench.beginAttempt()
+        let maxAttempts = BleBandwidthBench.maxAttempts
+        guard attempt <= maxAttempts else {
+            Bridge.log(
+                "LIVE: 📊 \(BleBandwidthBench.logPrefix) give_up after \(maxAttempts) attempts (camera never ready)"
+            )
+            return
+        }
+
+        let requestId = "ble-bench-\(Int(Date().timeIntervalSince1970 * 1000))"
+        let bleImgId = "bench" + String(format: "%09d", Int(Date().timeIntervalSince1970 * 1000) % 100_000_000)
+        let size = BleBandwidthBench.photoSize
+
+        var json: [String: Any] = [
+            "type": "take_photo",
+            "requestId": requestId,
+            "appId": "com.mentra.ble.bench",
+            "size": size,
+            "compress": "none",
+            "transferMethod": "ble",
+            "bleImgId": bleImgId,
+            "save": false,
+            "flash": false,
+            "sound": false,
+        ]
+
+        let transfer = BlePhotoTransfer(bleImgId: bleImgId, requestId: requestId, webhookUrl: "")
+        blePhotoTransfers[bleImgId] = transfer
+
+        let startLine =
+            "\(BleBandwidthBench.logPrefix) start attempt=\(attempt)/\(maxAttempts) requestId=\(requestId) size=\(size) mtu=\(currentMtu)"
+        Bridge.log("LIVE: 📊 \(startLine)")
+
+        sendJson(json, wakeUp: true)
+    }
+
+    private func handleBenchPhotoCaptureFailed(
+        requestId: String, errorCode: String?, errorMessage: String?
+    ) {
+        guard BleBandwidthBench.isBenchRequestId(requestId) else { return }
+        if BleBandwidthBench.isRetryableError(errorCode: errorCode, errorMessage: errorMessage),
+           BleBandwidthBench.canRetryAfterFailure()
+        {
+            let delaySec = Double(BleBandwidthBench.retryDelayNanos) / 1_000_000_000
+            let nextAttempt = BleBandwidthBench.attemptCountForLogging + 1
+            Bridge.log(
+                "LIVE: 📊 \(BleBandwidthBench.logPrefix) retry scheduled in \(Int(delaySec))s after \(errorCode ?? ""): \(errorMessage ?? "") (next attempt \(nextAttempt)/\(BleBandwidthBench.maxAttempts))"
+            )
+            DispatchQueue.main.asyncAfter(deadline: .now() + delaySec) { [weak self] in
+                self?.runBleBandwidthBench()
+            }
+            return
+        }
+        Bridge.log(
+            "LIVE: 📊 \(BleBandwidthBench.logPrefix) failed requestId=\(requestId) error=\(errorCode ?? ""): \(errorMessage ?? "") (no more retries)"
+        )
     }
 
     private func handleWifiScanResult(_ json: [String: Any]) {
@@ -3097,14 +3142,18 @@ class MentraLive: NSObject, SGCManager {
             "LIVE: 📸 BLE photo ready notification: bleImgId=\(bleImgId), requestId=\(requestId)"
         )
 
-        // Update the transfer with glasses compression duration
         if var transfer = blePhotoTransfers[bleImgId] {
             transfer.glassesCompressionDurationMs = compressionDurationMs
-            transfer.bleTransferStartTime = Date() // BLE transfer starts now
+            transfer.bleTransferStartTime = Date()
             blePhotoTransfers[bleImgId] = transfer
             Bridge.log("LIVE: ⏱️ Glasses compression took: \(compressionDurationMs)ms")
         } else {
             Bridge.log("LIVE: Received ble_photo_ready for unknown transfer: \(bleImgId)")
+        }
+
+        if !requestId.isEmpty {
+            sendJson(["type": "ble_ready_ack", "requestId": requestId], wakeUp: true, requireAck: false)
+            Bridge.log("LIVE: Sent ble_ready_ack for requestId=\(requestId)")
         }
     }
 
@@ -3338,6 +3387,15 @@ class MentraLive: NSObject, SGCManager {
                             Bridge.log(
                                 "📊 Transfer rate: \(Int(packetInfo.fileSize) * 1000 / Int(bleTransferDuration)) bytes/sec"
                             )
+                        }
+                        if BleBandwidthBench.isBenchRequestId(photoTransfer.requestId),
+                           bleTransferDuration > 0
+                        {
+                            let benchRate = Int(packetInfo.fileSize) * 1000 / Int(bleTransferDuration)
+                            Bridge.log(
+                                "LIVE: 📊 \(BleBandwidthBench.logPrefix) result requestId=\(photoTransfer.requestId) fileSize=\(packetInfo.fileSize) packs=\(session.totalPackets) packSize=\(packetInfo.packSize) bleMs=\(Int(bleTransferDuration)) totalMs=\(Int(totalDuration)) compressionMs=\(photoTransfer.glassesCompressionDurationMs) mtu=\(currentMtu) rateBps=\(benchRate)"
+                            )
+                            BleBandwidthBench.markSucceeded()
                         }
 
                         if let imageData = session.assembleFile() {
@@ -3642,17 +3700,14 @@ class MentraLive: NSObject, SGCManager {
     }
 
     private func sendBleMtuConfig() {
-        let effectiveMtu = min(currentMtu, bes2700MtuLimit)
         let json: [String: Any] = [
             "type": "set_ble_mtu",
-            "mtu": effectiveMtu,
+            "mtu": currentMtu,
             "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
         ]
 
         sendJson(json)
-        Bridge.log(
-            "LIVE: Sent BLE MTU config to glasses: negotiated=\(currentMtu), BES2700 limit=\(bes2700MtuLimit), effective=\(effectiveMtu)"
-        )
+        Bridge.log("LIVE: Sent BLE MTU config to glasses: negotiated=\(currentMtu)")
     }
 
     // MARK: - Sending Data
@@ -4346,6 +4401,18 @@ class MentraLive: NSObject, SGCManager {
 
     private func emitPhotoResponse(_ json: [String: Any]) {
         Bridge.sendPhotoResponse(json)
+
+        let requestId = json["requestId"] as? String
+        guard BleBandwidthBench.isBenchRequestId(requestId) else { return }
+        let state = json["state"] as? String ?? ""
+        let success = state == "success" || (json["success"] as? Bool == true)
+        if !success {
+            handleBenchPhotoCaptureFailed(
+                requestId: requestId!,
+                errorCode: json["errorCode"] as? String,
+                errorMessage: json["errorMessage"] as? String ?? json["error"] as? String
+            )
+        }
     }
 
     private func emitButtonPress(buttonId: String, pressType: String, timestamp: Int64) {
@@ -4385,6 +4452,7 @@ class MentraLive: NSObject, SGCManager {
     private func destroy() {
         Bridge.log("Destroying MentraLiveManager")
 
+        BleBandwidthBench.resetScheduleState()
         isKilled = true
 
         // Stop scanning

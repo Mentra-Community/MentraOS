@@ -49,6 +49,7 @@ import com.mentra.bluetoothsdk.utils.BlePhotoUploadService;
 import com.mentra.bluetoothsdk.utils.IncidentLogBleRelayNaming;
 import com.mentra.bluetoothsdk.utils.IncidentLogBleUploadService;
 import com.mentra.bluetoothsdk.DeviceStore;
+import com.mentra.bluetoothsdk.bench.BleBandwidthBench;
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor;
 
 // old augmentos imports:
@@ -314,8 +315,8 @@ public class MentraLive extends SGCManager {
     // Inner class to track incoming file transfers
     private static class FileTransferSession {
         String fileName;
-        int fileSize;           // NOTE: This may be "fake" (inflated) due to BES firmware workaround
-        int actualPackSize;     // Actual pack size from first received packet (for BES lie detection)
+        int fileSize;
+        int actualPackSize;
         int totalPackets;
         int expectedNextPacket;
         ConcurrentHashMap<Integer, byte[]> receivedPackets;
@@ -323,16 +324,10 @@ public class MentraLive extends SGCManager {
         boolean isComplete;
         boolean isAnnounced;
 
-        // BES2700 firmware hardcodes FILE_PACK_SIZE=400 when calculating totalPack.
-        // We "lie" about fileSize to make BES expect correct packet count.
-        // This constant must match the one in asg_client's FileTransferSession.
-        private static final int BES_HARDCODED_PACK_SIZE = 400;
-
         FileTransferSession(String fileName, int fileSize) {
             this.fileName = fileName;
             this.fileSize = fileSize;
-            this.actualPackSize = 0; // Will be set on first packet
-            // Initialize with max expected packets - will be recalculated on first packet
+            this.actualPackSize = 0;
             this.totalPackets = (fileSize + K900ProtocolUtils.FILE_PACK_SIZE - 1) / K900ProtocolUtils.FILE_PACK_SIZE;
             this.expectedNextPacket = 0;
             this.receivedPackets = new ConcurrentHashMap<>();
@@ -341,34 +336,14 @@ public class MentraLive extends SGCManager {
             this.isAnnounced = false;
         }
 
-        /**
-         * Recalculate total packets based on actual pack size from received packet.
-         * Called when first packet is received to handle variable pack sizes.
-         *
-         * NOTE: Due to BES firmware workaround, fileSize in header may be "fake" (inflated).
-         * We detect this by checking if fileSize is a multiple of 400 (BES_HARDCODED_PACK_SIZE).
-         * If so, totalPackets = fileSize / 400, regardless of actual pack size.
-         */
+        /** Recalculate total packets from actual pack size in the first received packet header. */
         void recalculateTotalPackets(int actualPackSize) {
             if (actualPackSize <= 0 || actualPackSize > K900ProtocolUtils.FILE_PACK_SIZE) {
                 return;
             }
 
             this.actualPackSize = actualPackSize;
-
-            // Detect BES lie: if fileSize is exact multiple of 400, glasses used the lie strategy
-            boolean isBesLie = (fileSize % BES_HARDCODED_PACK_SIZE == 0) && (actualPackSize != BES_HARDCODED_PACK_SIZE);
-
-            int newTotalPackets;
-            if (isBesLie) {
-                // BES lie detected: totalPackets = fileSize / 400
-                newTotalPackets = fileSize / BES_HARDCODED_PACK_SIZE;
-                Log.i("FileTransferSession", "📦 BES Lie detected! fakeFileSize=" + fileSize +
-                      ", totalPackets=" + newTotalPackets + ", actualPackSize=" + actualPackSize);
-            } else {
-                // Normal case: calculate based on actual pack size
-                newTotalPackets = (fileSize + actualPackSize - 1) / actualPackSize;
-            }
+            int newTotalPackets = (fileSize + actualPackSize - 1) / actualPackSize;
 
             if (newTotalPackets != totalPackets) {
                 Log.i("FileTransferSession", "📦 Recalculating totalPackets: " + totalPackets + " -> " + newTotalPackets +
@@ -1179,6 +1154,15 @@ public class MentraLive extends SGCManager {
                         DeviceStore.INSTANCE.apply("bluetooth", "device_address", connectedDevice.getAddress());
                     }
 
+                    gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        gatt.setPreferredPhy(
+                                BluetoothDevice.PHY_LE_2M_MASK,
+                                BluetoothDevice.PHY_LE_2M_MASK,
+                                BluetoothDevice.PHY_OPTION_NO_PREFERRED);
+                        Bridge.log("LIVE: Requested LE 2M PHY (tx/rx)");
+                    }
+
                     // Save the connected device name for future reconnections
                     // no longer needed as we now save it immediately in connectToDevice()
                     // if (connectedDevice != null && connectedDevice.getName() != null) {
@@ -1482,6 +1466,23 @@ public class MentraLive extends SGCManager {
 
             // Process next queued descriptor write (serialized to avoid BLE stack contention)
             writeNextDescriptor();
+        }
+
+        @Override
+        public void onPhyUpdate(BluetoothGatt gatt, int txPhy, int rxPhy, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Bridge.log("LIVE: PHY updated tx=" + phyLabel(txPhy) + " rx=" + phyLabel(rxPhy));
+            } else {
+                Log.w(TAG, "PHY update failed status=" + status);
+                Bridge.log("LIVE: PHY update failed status=" + status);
+            }
+        }
+
+        @Override
+        public void onPhyRead(BluetoothGatt gatt, int txPhy, int rxPhy, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Bridge.log("LIVE: PHY read tx=" + phyLabel(txPhy) + " rx=" + phyLabel(rxPhy));
+            }
         }
 
         @Override
@@ -2429,9 +2430,11 @@ public class MentraLive extends SGCManager {
 
                 if (!photoSuccess) {
                     // Handle failed photo response
+                    String errorCode = json.optString("errorCode", "");
                     String errorMsg = json.optString("errorMessage", json.optString("error", "Unknown error"));
                     Bridge.log("LIVE: Photo request failed - requestId: " + requestId +
                           ", appId: " + appId + ", error: " + errorMsg);
+                    handleBenchPhotoCaptureFailed(requestId, errorCode, errorMsg);
                 } else {
                     // Handle successful photo (in future implementation)
                     Bridge.log("LIVE: Photo request succeeded - requestId: " + requestId);
@@ -2711,14 +2714,9 @@ public class MentraLive extends SGCManager {
                 // Stop the readiness check loop since we got confirmation
                 stopReadinessCheckLoop();
 
-                // Send BLE MTU config to glasses so they can adjust file packet sizes.
-                // Use the minimum of negotiated MTU and BES2700's known limit (256).
-                // BES2700 chip often ignores higher negotiated MTUs and truncates to 253 bytes,
-                // but we should respect the actual negotiated value if it's lower.
-                final int BES2700_MTU_LIMIT = 256; // BES2700's known notification size limit
-                final int effectiveMtu = Math.min(currentMtu, BES2700_MTU_LIMIT);
-                Bridge.log("LIVE: 📦 Sending BLE MTU config: negotiated=" + currentMtu + ", BES2700 limit=" + BES2700_MTU_LIMIT + ", effective=" + effectiveMtu);
-                try { sendBleMtuConfig(effectiveMtu); }
+                // Phase 2: propagate negotiated ATT MTU so ASG uses ~470B payloads (MTU - 3 - 32).
+                Bridge.log("LIVE: 📦 Sending BLE MTU config: negotiated=" + currentMtu);
+                try { sendBleMtuConfig(currentMtu); }
                 catch (Throwable t) { Bridge.log("LIVE: ⚠️ glasses_ready: sendBleMtuConfig threw: " + t); }
 
                 // Now we can perform all SOC-dependent initialization
@@ -2792,8 +2790,7 @@ public class MentraLive extends SGCManager {
                 // This check maintains platform parity with iOS
                 if (audioConnected) {
                     Bridge.log("LIVE: Audio: Both glasses_ready and audio connected - marking as fully connected");
-                    DeviceStore.INSTANCE.apply("glasses", "fullyBooted", true);
-                    updateConnectionState(ConnTypes.CONNECTED);
+                    markFullyConnectedAndScheduleBench();
                 } else {
                     Bridge.log("LIVE: Audio: Waiting for CTKD audio bonding before marking as fully connected");
                 }
@@ -3181,14 +3178,21 @@ public class MentraLive extends SGCManager {
 
             Bridge.log("LIVE: 📸 BLE photo ready notification: bleImgId=" + bleImgId + ", requestId=" + requestId);
 
-            // Update the transfer with glasses compression duration
             BlePhotoTransfer transfer = blePhotoTransfers.get(bleImgId);
             if (transfer != null) {
                 transfer.glassesCompressionDurationMs = compressionDurationMs;
-                transfer.bleTransferStartTime = System.currentTimeMillis();  // BLE transfer starts now
+                transfer.bleTransferStartTime = System.currentTimeMillis();
                 Bridge.log("LIVE: ⏱️ Glasses compression took: " + compressionDurationMs + "ms");
             } else {
                 Log.w(TAG, "Received ble_photo_ready for unknown transfer: " + bleImgId);
+            }
+
+            if (!requestId.isEmpty()) {
+                JSONObject ack = new JSONObject();
+                ack.put("type", "ble_ready_ack");
+                ack.put("requestId", requestId);
+                sendJsonWithoutAck(ack, true);
+                Bridge.log("LIVE: Sent ble_ready_ack for requestId=" + requestId);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error processing ble_photo_ready", e);
@@ -3629,6 +3633,19 @@ public class MentraLive extends SGCManager {
     /**
      * Convert bytes to hex string for debugging
      */
+    private static String phyLabel(int phy) {
+        switch (phy) {
+            case BluetoothDevice.PHY_LE_1M:
+                return "1M";
+            case BluetoothDevice.PHY_LE_2M:
+                return "2M";
+            case BluetoothDevice.PHY_LE_CODED:
+                return "Coded";
+            default:
+                return "unknown(" + phy + ")";
+        }
+    }
+
     private static String bytesToHex(byte[] bytes) {
         StringBuilder sb = new StringBuilder();
         for (byte b : bytes) {
@@ -4360,6 +4377,105 @@ public class MentraLive extends SGCManager {
         }
     }
 
+    /**
+     * Debug-only: fire a BLE {@code take_photo} after {@code glasses_ready} to measure phone↔glasses bandwidth.
+     * Gated by {@link BleBandwidthBench}.
+     */
+    private void runBleBandwidthBench() {
+        if (!BleBandwidthBench.isEnabled(context)) {
+            return;
+        }
+        int attempt = BleBandwidthBench.beginAttempt();
+        int maxAttempts = BleBandwidthBench.getMaxAttempts();
+        if (attempt > maxAttempts) {
+            String giveUp = BleBandwidthBench.LOG_PREFIX
+                    + " give_up after "
+                    + maxAttempts
+                    + " attempts (camera never ready)";
+            Log.w(BleBandwidthBench.TAG, giveUp);
+            Bridge.log("LIVE: 📊 " + giveUp);
+            return;
+        }
+
+        String requestId = "ble-bench-" + System.currentTimeMillis();
+        String bleImgId = "bench" + String.format("%09d", System.currentTimeMillis() % 1000000000L);
+        String size = BleBandwidthBench.getPhotoSize();
+
+        try {
+            JSONObject json = new JSONObject();
+            json.put("type", "take_photo");
+            json.put("requestId", requestId);
+            json.put("appId", "com.mentra.ble.bench");
+            json.put("size", size);
+            json.put("compress", "none");
+            json.put("transferMethod", "ble");
+            json.put("bleImgId", bleImgId);
+            json.put("save", false);
+            json.put("flash", false);
+            json.put("sound", false);
+
+            BlePhotoTransfer transfer = new BlePhotoTransfer(bleImgId, requestId, "");
+            transfer.phoneStartTime = System.currentTimeMillis();
+            blePhotoTransfers.put(bleImgId, transfer);
+
+            String startLine = BleBandwidthBench.LOG_PREFIX
+                    + " start attempt="
+                    + attempt
+                    + "/"
+                    + maxAttempts
+                    + " requestId="
+                    + requestId
+                    + " size="
+                    + size
+                    + " mtu="
+                    + currentMtu;
+            Log.i(BleBandwidthBench.TAG, startLine);
+            Bridge.log("LIVE: 📊 " + startLine);
+
+            sendJson(json, true);
+        } catch (JSONException e) {
+            Log.e(BleBandwidthBench.TAG, "Failed to start BLE bandwidth bench", e);
+        }
+    }
+
+    private void handleBenchPhotoCaptureFailed(
+            String requestId, String errorCode, String errorMessage) {
+        if (!BleBandwidthBench.isBenchRequestId(requestId)) {
+            return;
+        }
+        if (BleBandwidthBench.isRetryableError(errorCode, errorMessage)
+                && BleBandwidthBench.canRetryAfterFailure()) {
+            long delayMs = BleBandwidthBench.getRetryDelayMs();
+            int nextAttempt = BleBandwidthBench.getAttemptCount() + 1;
+            String retryLine = BleBandwidthBench.LOG_PREFIX
+                    + " retry scheduled in "
+                    + delayMs
+                    + "ms after "
+                    + errorCode
+                    + ": "
+                    + errorMessage
+                    + " (next attempt "
+                    + nextAttempt
+                    + "/"
+                    + BleBandwidthBench.getMaxAttempts()
+                    + ")";
+            Log.w(BleBandwidthBench.TAG, retryLine);
+            Bridge.log("LIVE: 📊 " + retryLine);
+            handler.postDelayed(this::runBleBandwidthBench, delayMs);
+            return;
+        }
+        String failLine = BleBandwidthBench.LOG_PREFIX
+                + " failed requestId="
+                + requestId
+                + " error="
+                + errorCode
+                + ": "
+                + errorMessage
+                + " (no more retries)";
+        Log.e(BleBandwidthBench.TAG, failLine);
+        Bridge.log("LIVE: 📊 " + failLine);
+    }
+
     public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean save, boolean sound, Long exposureTimeNs, Integer iso) {
         boolean hasAuthToken = authToken != null && !authToken.isEmpty();
         Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", save=" + save + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs + ", iso=" + iso);
@@ -4607,8 +4723,7 @@ public class MentraLive extends SGCManager {
                                 // If glasses_ready was already received, now we're fully ready
                                 if (glassesReadyReceived) {
                                     Bridge.log("LIVE: Audio: Both audio and glasses_ready confirmed - marking as fully connected");
-                                    DeviceStore.INSTANCE.apply("glasses", "fullyBooted", true);
-                                    updateConnectionState(ConnTypes.CONNECTED);
+                                    markFullyConnectedAndScheduleBench();
                                 }
 
                                 // Send audio connected event for platform parity with iOS
@@ -4844,8 +4959,20 @@ public class MentraLive extends SGCManager {
         Bridge.sendAudioConnected(deviceName);
         if (glassesReadyReceived) {
             Bridge.log("LIVE: A2DP: Both audio and glasses_ready confirmed - marking as fully connected");
-            DeviceStore.INSTANCE.apply("glasses", "fullyBooted", true);
-            updateConnectionState(ConnTypes.CONNECTED);
+            markFullyConnectedAndScheduleBench();
+        }
+    }
+
+    private void markFullyConnectedAndScheduleBench() {
+        DeviceStore.INSTANCE.apply("glasses", "fullyBooted", true);
+        updateConnectionState(ConnTypes.CONNECTED);
+        if (BleBandwidthBench.scheduleAfterFullyConnected(context, handler, this::runBleBandwidthBench)) {
+            Bridge.log(
+                    "LIVE: 📊 BLE_BANDWIDTH_BENCH scheduled in "
+                            + BleBandwidthBench.getInitialDelayMs()
+                            + "ms after fully connected (maxAttempts="
+                            + BleBandwidthBench.getMaxAttempts()
+                            + ")");
         }
     }
 
@@ -4950,6 +5077,8 @@ public class MentraLive extends SGCManager {
         if (connectionTimeoutRunnable != null) {
             connectionTimeoutHandler.removeCallbacks(connectionTimeoutRunnable);
         }
+
+        BleBandwidthBench.resetScheduleState();
 
         // Cancel any pending handlers
         handler.removeCallbacksAndMessages(null);
@@ -6390,6 +6519,22 @@ public class MentraLive extends SGCManager {
                         Bridge.log("LIVE: ⏱️ BLE transfer duration: " + bleTransferDuration + "ms");
                         Bridge.log("LIVE: 📊 Transfer rate: " + (packetInfo.fileSize * 1000 / bleTransferDuration) + " bytes/sec");
                     }
+                    if (BleBandwidthBench.isBenchRequestId(photoTransfer.requestId) && bleTransferDuration > 0) {
+                        long benchRate = packetInfo.fileSize * 1000L / bleTransferDuration;
+                        String benchLine = BleBandwidthBench.LOG_PREFIX
+                                + " result requestId=" + photoTransfer.requestId
+                                + " fileSize=" + packetInfo.fileSize
+                                + " packs=" + photoTransfer.session.totalPackets
+                                + " packSize=" + packetInfo.packSize
+                                + " bleMs=" + bleTransferDuration
+                                + " totalMs=" + totalDuration
+                                + " compressionMs=" + photoTransfer.glassesCompressionDurationMs
+                                + " mtu=" + currentMtu
+                                + " rateBps=" + benchRate;
+                        Log.i(BleBandwidthBench.TAG, benchLine);
+                        Bridge.log("LIVE: 📊 " + benchLine);
+                        BleBandwidthBench.markSucceeded();
+                    }
 
                     // Get complete image data (AVIF or JPEG)
                     byte[] imageData = photoTransfer.session.assembleFile();
@@ -6811,12 +6956,7 @@ public class MentraLive extends SGCManager {
         }
     }
 
-    /**
-     * Send BLE MTU config to glasses so they can adjust file packet sizes.
-     * The BES2700 chip on the glasses truncates packets to 253 bytes (256 MTU - 3 ATT header)
-     * regardless of negotiated MTU. By sending the actual MTU, glasses can use smaller
-     * packet sizes that fit within this limit.
-     */
+    /** Send negotiated BLE MTU to glasses so ASG/BES align file pack size (Phase 2). */
     private void sendBleMtuConfig(int mtu) {
         try {
             JSONObject json = new JSONObject();
