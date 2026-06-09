@@ -14,7 +14,7 @@ Use the latest SDK version published by Mentra for your app. This repo can be cl
 
 ## Documentation
 
-Checkout the full [Mentra Bluetooth SDK documentation here](https://bluetooth-sdk-docs.mentra.glass).
+Read the first-party [Mentra Live Bluetooth SDK docs](https://docs.mentraglass.com/mentra-live).
 
 ## Start Here
 
