@@ -106,6 +106,7 @@ public enum DeviceModel: String {
     case frame
     case simulated
     case r1
+    case inmoGo2
 
     public var deviceType: String {
         switch self {
@@ -127,6 +128,8 @@ public enum DeviceModel: String {
             DeviceTypes.SIMULATED
         case .r1:
             ControllerTypes.R1
+        case .inmoGo2:
+    DeviceTypes.INMO_GO2
         }
     }
 
@@ -150,6 +153,8 @@ public enum DeviceModel: String {
             .simulated
         case ControllerTypes.R1:
             .r1
+        case DeviceTypes.INMO_GO2:
+    .inmoGo2
         default:
             .mentraLive
         }
