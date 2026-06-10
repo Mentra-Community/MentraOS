@@ -89,12 +89,15 @@ public class MediaCaptureService {
     private boolean currentVideoSoundEnabled =
             false; // Track if sound was enabled for current recording
 
-    // Pending webhook upload target for the active recording. Provided at STOP time (not start) so
-    // the auth token is fresh when the upload actually runs. Consumed and cleared in the
-    // onRecordingStopped path. Written on the command/worker thread, read on the main thread →
-    // volatile for visibility.
-    private volatile String pendingUploadWebhookUrl = null;
-    private volatile String pendingUploadAuthToken = null;
+    // Stop-time upload decision, bound to the recording's captureId (its capture-dir name, which is
+    // unique per recording). Registered when the recording is stopped and consumed exactly once by
+    // that recording's onRecordingStopped. Keying by captureId — instead of shared mutable fields —
+    // means: the FIRST stop for a recording wins (putIfAbsent), so a user stop that races or follows
+    // an auto-stop can't turn a "no upload" auto-stop into an upload; a new recording (different
+    // captureId) can't overwrite a prior recording's still-pending target; and every onRecordingStopped
+    // exit path removes its own entry, so a target can't leak into a later recording.
+    private final ConcurrentHashMap<String, UploadTarget> uploadTargetsByCaptureId =
+            new ConcurrentHashMap<>();
 
     // Max recording time check
     private final Handler recordingTimeHandler = new Handler(Looper.getMainLooper());
@@ -116,6 +119,17 @@ public class MediaCaptureService {
     }
 
     private StopReason mCurrentStopReason = null;
+
+    /** Stop-time upload target bound to a specific recording. Empty/null webhook = keep on device. */
+    private static final class UploadTarget {
+        final String webhookUrl;
+        final String authToken;
+
+        UploadTarget(String webhookUrl, String authToken) {
+            this.webhookUrl = webhookUrl;
+            this.authToken = authToken;
+        }
+    }
 
     // Guards the stop prologue (mCurrentStopReason + pending-upload target) so the
     // check-and-set is atomic across threads. The user stop arrives on the BLE worker
@@ -866,6 +880,14 @@ public class MediaCaptureService {
                                             ? captureIdFromCallback
                                             : captureIdAtStart;
 
+                            // Consume this recording's upload decision exactly once, up front, so it
+                            // is dropped on every exit path below (null file path, cleanup, integrity
+                            // failure) and can never leak into a later recording.
+                            final UploadTarget uploadTarget =
+                                    captureId != null
+                                            ? uploadTargetsByCaptureId.remove(captureId)
+                                            : null;
+
                             // Block sync before clearing session state — no gap between active and
                             // pending.
                             // Add to pending BEFORE removing from in-flight so a concurrent
@@ -923,15 +945,17 @@ public class MediaCaptureService {
                                                         () -> {
                                                             videoCaptureIdsPendingIntegrityCheck
                                                                     .remove(captureId);
-                                                            // Consume the stop-time upload target
-                                                            // once and clear it, so a later
-                                                            // auto-stop can't reuse a stale token.
+                                                            // Upload target was captured up front
+                                                            // and bound to this recording's
+                                                            // captureId; null = keep on device.
                                                             final String uploadWebhookUrl =
-                                                                    pendingUploadWebhookUrl;
+                                                                    uploadTarget != null
+                                                                            ? uploadTarget.webhookUrl
+                                                                            : null;
                                                             final String uploadAuthToken =
-                                                                    pendingUploadAuthToken;
-                                                            pendingUploadWebhookUrl = null;
-                                                            pendingUploadAuthToken = null;
+                                                                    uploadTarget != null
+                                                                            ? uploadTarget.authToken
+                                                                            : null;
                                                             if (ok) {
                                                                 if (mMediaCaptureListener != null) {
                                                                     mMediaCaptureListener
@@ -1132,16 +1156,19 @@ public class MediaCaptureService {
             }
 
             mCurrentStopReason = reason;
-            // Only a user-requested stop may upload to a user-supplied webhook. Auto-stops
-            // (battery, max-duration, error) must never upload. Setting the target inside the
-            // same lock as the guard closes the race where a late user stop could inject a
-            // webhook into an auto-stop that already committed to "no upload".
-            if (reason == StopReason.USER_REQUESTED) {
-                pendingUploadWebhookUrl = webhookUrl;
-                pendingUploadAuthToken = authToken;
-            } else {
-                pendingUploadWebhookUrl = null;
-                pendingUploadAuthToken = null;
+            // Bind the upload decision to this recording's captureId, first-stop-wins. Only a
+            // user-requested stop may upload; any auto-stop (battery/max-duration/error) registers
+            // a "no upload" decision. putIfAbsent means a later or racing stop (e.g. a user stop
+            // landing after an auto-stop already committed to "no upload", even once the stop-reason
+            // guard has been reset) cannot change the outcome. The entry lives until this recording's
+            // onRecordingStopped consumes it.
+            String captureId = captureIdFromVideoAbsPath(currentVideoPath);
+            if (captureId != null) {
+                UploadTarget target =
+                        reason == StopReason.USER_REQUESTED
+                                ? new UploadTarget(webhookUrl, authToken)
+                                : new UploadTarget(null, null);
+                uploadTargetsByCaptureId.putIfAbsent(captureId, target);
             }
         }
         Log.d(TAG, "🛑 Stopping video recording - Reason: " + reason);
@@ -2821,7 +2848,9 @@ public class MediaCaptureService {
             String authToken,
             boolean save) {
         // No webhook configured → nothing to upload; keep the video on device (legacy behavior).
-        if (webhookUrl == null || webhookUrl.isEmpty()) {
+        // Whitespace-safe: a blank/whitespace-only webhook would otherwise attempt a doomed upload
+        // to an empty URL instead of falling back to local-save.
+        if (webhookUrl == null || webhookUrl.trim().isEmpty()) {
             Log.d(
                     TAG,
                     "No webhook URL for video "
@@ -2835,7 +2864,7 @@ public class MediaCaptureService {
             return;
         }
 
-        performDirectVideoUpload(videoFilePath, requestId, webhookUrl, authToken, save);
+        performDirectVideoUpload(videoFilePath, requestId, webhookUrl.trim(), authToken, save);
     }
 
     /**

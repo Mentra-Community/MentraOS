@@ -48,23 +48,39 @@ ASG client (`asg_client/`) already accepts and uses the new fields:
 ### `VideoCommandHandler.java`
 
 - `start_video_recording` now reads `maxRecordingTimeMinutes` (default `0`) and
-  forwards it to `MediaCaptureService.handleStartVideoCommand(...)`.
+  forwards it to `MediaCaptureService.handleStartVideoCommand(...)`. The value is
+  **validated** like the nearby `width`/`height`/`fps`: a negative value is
+  treated as "no limit" (`0`) and an out-of-range value is capped at
+  `MAX_RECORDING_TIME_MINUTES` (24h), so the downstream `minutes * 60 * 1000L`
+  timer math can't overflow to a negative duration and stop the recording
+  immediately.
 - `stop_video_recording` now reads optional `webhookUrl` and `authToken`
   (default `""`) and forwards them to `handleStopVideoCommand(requestId,
   webhookUrl, authToken)` (with-requestId path) or `stopVideoRecording(webhookUrl,
   authToken)` (backward-compat path). Empty webhook = no upload, video stays on
-  device.
+  device. The stop handler logs only the `requestId`, **never the full payload**,
+  so the `authToken` isn't leaked to logcat (the phone-side `SocketComms` redacts
+  it the same way).
 
 ### `MediaCaptureService.java`
 
-- New `volatile` fields `pendingUploadWebhookUrl` / `pendingUploadAuthToken` hold
-  the active recording's upload target. Set at stop, **consumed and cleared once**
-  in the `onRecordingStopped` path so a later auto-stop can't reuse a stale token.
-- **Auto-stops never upload to a user webhook**: any stop with
-  `reason != USER_REQUESTED` (battery, max-duration, error) clears the pending
-  target before it can be used.
-- `uploadVideo(...)` is no longer a stub. With no webhook it keeps the file on
-  device (legacy behavior); with a webhook it calls `performDirectVideoUpload(...)`.
+- The upload decision is **bound to the recording's `captureId`** (its capture-dir
+  name, unique per recording) via a `ConcurrentHashMap<String, UploadTarget>`,
+  **not** shared mutable fields. It is registered when the recording is stopped and
+  consumed exactly once by that recording's `onRecordingStopped`.
+- **First stop wins** (`putIfAbsent`): only a `USER_REQUESTED` stop registers a
+  webhook target; any auto-stop (battery, max-duration, error) registers a
+  "no upload" decision. Because the entry is keyed by `captureId` and set with
+  `putIfAbsent`, a later or racing stop — e.g. a user stop that lands *after* an
+  auto-stop already committed to "no upload", even once the stop-reason guard has
+  reset — cannot flip the outcome, and a new recording can't overwrite a prior
+  recording's still-pending target.
+- **Cleanup is guaranteed**: `onRecordingStopped` removes its own entry up front,
+  so every exit path (null file path, cleanup-in-progress, integrity-check failure)
+  drops the target and it can never leak into a later recording.
+- `uploadVideo(...)` is no longer a stub. With no webhook (null/empty/whitespace,
+  trimmed) it keeps the file on device (legacy behavior); with a webhook it calls
+  `performDirectVideoUpload(...)`.
 - `performDirectVideoUpload(...)` does a background multipart POST mirroring the
   photo path. Multipart body: `video` (the `.mp4`), `requestId`,
   `type=video_upload`, `success=true`, plus optional `Authorization: Bearer
@@ -73,11 +89,15 @@ ASG client (`asg_client/`) already accepts and uses the new fields:
   large for BLE, so a failed upload is terminal. On success, the file is deleted
   unless `save` is `true`.
 
-### Test
+### Tests
 
 - `VideoCommandHandlerStopUploadTest.java` verifies `stop_video_recording`
   routes the upload target to the correct `MediaCaptureService` entry point
-  across the requestId / no-requestId / empty-webhook / not-recording cases.
+  across the requestId / no-requestId / empty-webhook / not-recording cases, each
+  asserting the *other* stop path is never taken.
+- `VideoCommandHandlerStartValidationTest.java` verifies `maxRecordingTimeMinutes`
+  is clamped (negative → `0`, over-cap → `MAX_RECORDING_TIME_MINUTES`, in-range
+  passed through) before reaching `MediaCaptureService`.
 
 ## Phone Bluetooth SDK threading (done)
 

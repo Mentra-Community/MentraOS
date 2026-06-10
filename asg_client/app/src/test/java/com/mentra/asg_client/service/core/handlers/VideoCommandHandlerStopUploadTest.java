@@ -96,6 +96,11 @@ public class VideoCommandHandlerStopUploadTest {
 
         assertThat(handled).isTrue();
         verify(captureService).stopVideoRecording("https://example.com/hook", "tok-abc");
+        verify(captureService, never())
+                .handleStopVideoCommand(
+                        ArgumentMatchers.anyString(),
+                        ArgumentMatchers.anyString(),
+                        ArgumentMatchers.anyString());
     }
 
     @Test
