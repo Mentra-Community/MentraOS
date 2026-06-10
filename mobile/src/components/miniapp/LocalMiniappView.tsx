@@ -418,9 +418,6 @@ function LocalMiniappView({
         return attempt
       })
     }, READY_TIMEOUT_MS)
-    return () => {
-      clearReadyTimer()
-    }
   }, [packageName, clearReadyTimer, connected])
 
   const handleTerminate = useCallback(() => {

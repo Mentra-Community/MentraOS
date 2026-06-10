@@ -32,7 +32,8 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
   const {theme} = useAppTheme()
   const WrapperComponent = onClick ? TouchableOpacity : View
   const flatStyle = extractStyleProps(style)
-  const imageSource = useCachedRemoteImageSource(app.logoUrl)
+  // const imageSource = useCachedRemoteImageSource(app.logoUrl)
+  const imageSource = app.logoUrl
 
   const iconSize = {
     width: flatStyle?.width ?? 64,
