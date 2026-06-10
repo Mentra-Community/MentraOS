@@ -1,0 +1,41 @@
+{
+  "routesTotal": 71,
+  "clean": 68,
+  "redirected": 3,
+  "broken": 0,
+  "healthPct": 100,
+  "navMs": {
+    "p50": 78,
+    "p95": 154,
+    "max": 275
+  },
+  "slowest": [
+    {
+      "route": "/applet/local",
+      "navMs": 275
+    },
+    {
+      "route": "/ota/progress-legacy",
+      "navMs": 229
+    },
+    {
+      "route": "/ota/check-for-updates",
+      "navMs": 161
+    }
+  ],
+  "brokenRoutes": [],
+  "redirectedRoutes": [
+    {
+      "route": "/applet/local",
+      "to": "/home"
+    },
+    {
+      "route": "/ota/check-for-updates",
+      "to": "/onboarding/live"
+    },
+    {
+      "route": "/pairing/prep",
+      "to": "/"
+    }
+  ]
+}

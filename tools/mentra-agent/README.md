@@ -135,6 +135,39 @@ adb -s emulator-5554 emu avd snapshot save qa-golden   # freeze current state
 adb -s emulator-5554 emu avd snapshot load qa-golden   # back to known state in ~2s
 ```
 
+## App-health sweep (quantified whole-app QA)
+
+```bash
+bun tools/mentra-agent/sweep.ts            # human scorecard
+bun tools/mentra-agent/sweep.ts --json     # machine-readable (CI / trend)
+bun tools/mentra-agent/sweep.ts --selftest # prove the error channel works, exit
+bun tools/mentra-agent/sweep.ts --filter settings
+```
+
+Enumerates every expo-router route from `mobile/src/app` (only files that
+`export default` a component; skips layouts, dynamic-param routes, tests),
+navigates to each through the bridge, and asks the app's **error channel**
+(`agentBridge` hooks `ErrorUtils` + `console.error`) whether the screen threw.
+Turns a screen-by-screen manual click-through into one quantified pass:
+
+```
+SCORECARD  health 100%  (68 clean, 3 guarded/redirected, 0 broken of 71)
+           nav p50 73ms  p95 148ms  max 228ms
+           slowest: /ota/progress-legacy 228ms, /applet/local 195ms, ...
+```
+
+Three verdicts so the number is meaningful, not just green:
+- **clean** — landed on the route, no real render error.
+- **redirected** — landed on a different VALID route (auth/onboarding/param
+  guards, e.g. `/` -> `/home`). Working as designed; not a failure.
+- **broken** — threw a render error, or bounced to `+not-found`. Non-zero
+  exit. This is the bucket that was 7+ before the Metro dedupe fix.
+
+**Trust gate:** every run first navigates a known-crashing self-test route
+(`/test/agent-selftest?crash=1`) and aborts unless the error channel catches
+it — a green scorecard is only believable if a broken screen would turn it
+red. `baseline-scorecard.json` is the committed reference to diff against.
+
 ## Scenario runner (fault-injection suite)
 
 ```bash

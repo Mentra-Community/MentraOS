@@ -89,9 +89,57 @@ function wireTranscriptTap(): void {
   }
 }
 
+// Rolling buffer of JS errors the app has thrown/logged since boot. This is the
+// primitive that lets a sweep ask "did this screen render clean?" with a query
+// instead of a screenshot — the single biggest source of QA friction removed.
+interface CapturedError {
+  at: number
+  source: "globalHandler" | "console.error"
+  fatal: boolean
+  message: string
+}
+const errorBuffer: CapturedError[] = []
+const ERROR_BUFFER_MAX = 200
+let errorCaptureWired = false
+
+function recordError(source: CapturedError["source"], fatal: boolean, message: string): void {
+  errorBuffer.push({at: Date.now(), source, fatal, message: message.slice(0, 600)})
+  if (errorBuffer.length > ERROR_BUFFER_MAX) errorBuffer.splice(0, errorBuffer.length - ERROR_BUFFER_MAX)
+  emit("error", {source, fatal, message: message.slice(0, 300)})
+}
+
+function wireErrorCapture(): void {
+  if (errorCaptureWired) return
+  errorCaptureWired = true
+
+  // RN's global handler catches uncaught errors (the ones that draw the red
+  // screen). Chain the existing handler so we observe without changing
+  // behavior. ErrorUtils is a RN global.
+  const g = globalThis as {ErrorUtils?: {getGlobalHandler?: () => unknown; setGlobalHandler?: (h: unknown) => void}}
+  const prior = g.ErrorUtils?.getGlobalHandler?.() as ((e: Error, fatal?: boolean) => void) | undefined
+  g.ErrorUtils?.setGlobalHandler?.((err: Error, fatal?: boolean) => {
+    recordError("globalHandler", !!fatal, err?.message ? `${err.message}\n${err.stack ?? ""}` : String(err))
+    prior?.(err, fatal)
+  })
+
+  // Most React render failures surface as console.error (React logs the error
+  // boundary trace there) before/without hitting the global handler. Wrap it.
+  const priorConsoleError = console.error.bind(console)
+  console.error = (...args: unknown[]) => {
+    try {
+      recordError("console.error", false, args.map((a) => (a instanceof Error ? a.message : String(a))).join(" "))
+    } catch {
+      /* never let capture break logging */
+    }
+    priorConsoleError(...args)
+  }
+}
+
 function wireEventTaps(): void {
   if (eventTapsWired) return
   eventTapsWired = true
+
+  wireErrorCapture()
 
   // The bridge starts at JS boot, BEFORE login. Constructing the cloud client
   // then would spin on a missing auth session, so the transcript tap waits for
@@ -133,8 +181,36 @@ async function handle(req: RpcRequest): Promise<unknown> {
     case "navigate": {
       const path = String(params.path ?? "")
       if (!path.startsWith("/")) throw new Error("path must start with /")
-      lazyNav().getState().push(path, params.params as never)
+      const replace = params.replace === true
+      const nav = lazyNav().getState()
+      if (replace) nav.replaceAll(path, params.params as never)
+      else nav.push(path, params.params as never)
       return {navigated: path}
+    }
+
+    case "getErrors": {
+      // Errors captured since `since` (ms epoch); default = all buffered.
+      const since = typeof params.since === "number" ? params.since : 0
+      return {errors: errorBuffer.filter((e) => e.at >= since)}
+    }
+
+    case "clearErrors":
+      errorBuffer.length = 0
+      return {ok: true}
+
+    case "currentRoute": {
+      // Current pathname for sweep verification (did the app land on the route,
+      // or bounce to +not-found?). The imperative accessor lives on the
+      // router-store global-state singleton (not the public expo-router entry).
+      try {
+        const rs = require("expo-router/build/global-state/router-store") as {
+          store?: {getRouteInfo?: () => {pathname?: string; segments?: string[]}}
+        }
+        const info = rs.store?.getRouteInfo?.()
+        return {path: info?.pathname ?? null, segments: info?.segments ?? null}
+      } catch (err) {
+        return {path: null, error: (err as Error)?.message ?? String(err)}
+      }
     }
 
     case "goBack":
@@ -295,6 +371,10 @@ function scheduleReconnect(candidates: string[], nextIndex: number): void {
 export function startAgentBridge(): void {
   if (!__DEV__ || started) return
   started = true
+  // Capture errors from the very first tick so a route that crashes during the
+  // initial render is recorded even before the harness has connected. Cheap,
+  // side-effect-free, and the buffer is queryable the moment the harness joins.
+  wireErrorCapture()
   // Candidate hosts for the harness, most-specific first. Some builds cannot
   // introspect their bundle origin at all (no SourceCode module, no expo
   // manifest), so rather than depend on detection we rotate through the
