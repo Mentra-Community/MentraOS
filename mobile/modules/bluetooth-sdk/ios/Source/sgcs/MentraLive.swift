@@ -5340,7 +5340,7 @@ extension MentraLive {
         ]
         // Webhook upload target, supplied at stop so the token is fresh.
         // Only sent when present; empty webhook = keep video on device.
-        if let webhookUrl, !webhookUrl.isEmpty {
+        if let webhookUrl, !webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             json["webhookUrl"] = webhookUrl
         }
         if let authToken, !authToken.isEmpty {
