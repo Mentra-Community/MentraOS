@@ -6,11 +6,12 @@
  *          → coordinator.takePhoto(packageName, opts)
  *            ├── (precheck) glasses connected + hasCamera
  *            ├── v2PhotoApi.requestPhoto → {requestId, uploadUrl, uploadToken}
- *            ├── CoreModule.photoRequest(requestId, packageName, size, uploadUrl, uploadToken, compress, flash, sound)
+ *            ├── BluetoothSdk.requestPhoto(requestId, packageName, size, uploadUrl, uploadToken, compress, sound)
  *            └── race:
  *                  - v2PhotoApi.pollUntilReady(requestId) resolves on /upload
- *                  - handlePhotoError(requestId, code, message) rejects if
- *                    MantleManager observes a BLE photo_response error
+ *                  - BluetoothSdk.requestPhoto rejects if terminal photo_response is an error
+ *                  - handlePhotoError(requestId, code, message) rejects if MantleManager observes
+ *                    the same BLE photo_response error before the native promise crosses the bridge
  *
  * `activeRequests` lets MantleManager's gated `photo_response` listener
  * short-circuit our long-poll with a typed error (CAMERA_BUSY, BATTERY_LOW,
@@ -38,7 +39,10 @@ export interface PhotoTaken {
 }
 
 export class PhotoError extends Error {
-  constructor(public readonly code: string, message: string) {
+  constructor(
+    public readonly code: string,
+    message: string,
+  ) {
     super(message)
     this.name = "PhotoError"
   }
@@ -103,10 +107,12 @@ export class PhonePhotoCoordinator {
       this.activeRequests.set(requestId, {packageName, abort, resolve, reject})
     })
 
-    // 3) Drive glasses over BLE. iOS auto-injects transferMethod: "auto"
-    //    (WiFi direct with BLE fallback) — see MentraLive.swift:1328.
+    // 3) Drive glasses over BLE. requestPhoto now resolves at terminal
+    //    photo_response success, so run it beside the cloud poll instead of
+    //    awaiting it before polling. iOS auto-injects transferMethod: "auto"
+    //    (WiFi direct with BLE fallback) — see MentraLive.swift.
     try {
-      await BluetoothSdk.requestPhoto({
+      void BluetoothSdk.requestPhoto({
         requestId,
         appId: packageName,
         size: opts.size ?? "medium",
@@ -116,6 +122,13 @@ export class PhonePhotoCoordinator {
         save: opts.saveToGallery ?? false,
         sound: opts.sound ?? true,
         exposureTimeNs: opts.exposureTimeNs ?? null,
+      }).catch((err) => {
+        const e = this.activeRequests.get(requestId)
+        if (!e) return
+        e.abort.abort()
+        e.reject(this.toPhotoError(err, "BLE_SEND_FAILED"))
+        // Best-effort free the slot on cloud — saves orphan slots.
+        void freePhoto(requestId)
       })
     } catch (err) {
       this.activeRequests.delete(requestId)

@@ -16,7 +16,8 @@ enum class PhotoSize(val value: String) {
 enum class ButtonPhotoSize(val value: String) {
     SMALL("small"),
     MEDIUM("medium"),
-    LARGE("large");
+    LARGE("large"),
+    MAX("max");
 
     companion object {
         @JvmStatic
@@ -47,27 +48,86 @@ data class ButtonVideoRecordingSettings(
     val fps: Int,
 )
 
+enum class CameraRoiPosition(val value: Int, val label: String) {
+    CENTER(0, "center"),
+    BOTTOM(1, "bottom"),
+    TOP(2, "top");
+
+    companion object {
+        @JvmStatic
+        fun fromValue(value: Int?): CameraRoiPosition =
+            values().firstOrNull { it.value == value } ?: CENTER
+
+        @JvmStatic
+        fun fromName(value: String?): CameraRoiPosition =
+            values().firstOrNull { it.label == value } ?: CENTER
+    }
+}
+
 class CameraFov @JvmOverloads constructor(
     fov: Int = DEFAULT_FOV,
-    roiPosition: Int = DEFAULT_ROI_POSITION,
+    roiPosition: CameraRoiPosition = DEFAULT_ROI_POSITION,
 ) {
     val fov: Int = fov.coerceIn(MIN_FOV, MAX_FOV)
-    val roiPosition: Int = roiPosition.coerceIn(MIN_ROI_POSITION, MAX_ROI_POSITION)
+    val roiPosition: CameraRoiPosition = roiPosition
 
     companion object {
         const val MIN_FOV = 62
         const val MAX_FOV = 118
         const val DEFAULT_FOV = 102
         const val NARROW_FOV = 82
-        const val MIN_ROI_POSITION = 0
-        const val MAX_ROI_POSITION = 2
-        const val DEFAULT_ROI_POSITION = 0
+        @JvmField
+        val DEFAULT_ROI_POSITION = CameraRoiPosition.CENTER
         @JvmField
         val NARROW = CameraFov(NARROW_FOV, DEFAULT_ROI_POSITION)
         @JvmField
         val STANDARD = CameraFov(DEFAULT_FOV, DEFAULT_ROI_POSITION)
         @JvmField
         val WIDE = CameraFov(MAX_FOV, DEFAULT_ROI_POSITION)
+    }
+}
+
+data class CameraFovResult(
+    val requestId: String,
+    val fov: Int,
+    val roiPosition: CameraRoiPosition,
+    val timestamp: Long,
+) {
+    val values: Map<String, Any>
+        get() =
+            mapOf(
+                "requestId" to requestId,
+                "fov" to fov,
+                "roiPosition" to roiPosition.label,
+                "timestamp" to timestamp,
+            )
+
+    companion object {
+        @JvmStatic
+        fun fromAck(
+            ack: SettingsAckEvent,
+            fallback: CameraFov,
+        ): CameraFovResult {
+            if (ack.status == "error") {
+                throw BluetoothException(
+                    ack.errorCode ?: "camera_fov_failed",
+                    ack.errorMessage ?: "Camera FOV request failed.",
+                )
+            }
+            if (!ack.hardwareApplied) {
+                throw BluetoothException(
+                    "camera_fov_not_applied",
+                    "Camera FOV was saved but not applied to hardware.",
+                )
+            }
+
+            return CameraFovResult(
+                requestId = ack.requestId,
+                fov = ack.fov ?: fallback.fov,
+                roiPosition = CameraRoiPosition.fromValue(ack.roiPosition ?: fallback.roiPosition.value),
+                timestamp = ack.timestamp,
+            )
+        }
     }
 }
 
@@ -169,6 +229,17 @@ data class VideoRecordingRequest(
     val fps: Int = 0,
 )
 
+data class VideoRecordingStatusEvent(
+    val values: Map<String, Any>,
+) {
+    val requestId: String get() = stringValue(values, "requestId").orEmpty()
+    val success: Boolean get() = boolValue(values, "success") ?: false
+    val status: String get() = stringValue(values, "status").orEmpty()
+    val details: String? get() = stringValue(values, "details")
+    val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()
+    val data: Map<String, Any>? get() = stringMapValue(values["data"])
+}
+
 data class GalleryStatusEvent(
     val values: Map<String, Any>,
 )
@@ -185,7 +256,7 @@ sealed interface PhotoResponse {
                 "requestId" to requestId,
                 "uploadUrl" to uploadUrl,
                 "timestamp" to timestamp,
-            )
+            ).withOptionalPhotoMetadata(this)
 
             is Error -> mutableMapOf<String, Any>(
                 "state" to state,
@@ -204,6 +275,10 @@ sealed interface PhotoResponse {
     data class Success(
         override val requestId: String,
         val uploadUrl: String,
+        val photoUrl: String?,
+        val statusUrl: String?,
+        val contentType: String?,
+        val fileSizeBytes: Long?,
         override val timestamp: Long,
     ) : PhotoResponse {
         override val state: String = "success"
@@ -223,20 +298,43 @@ sealed interface PhotoResponse {
             val requestId = stringValue(values, "requestId").orEmpty()
             val timestamp = longValue(values, "timestamp") ?: System.currentTimeMillis()
             val state = stringValue(values, "state")?.lowercase()
-            return if (state == "success") {
+            val success = state == "success" || boolValue(values, "success") == true
+            return if (success) {
                 val uploadUrl = stringValue(values, "uploadUrl").orEmpty()
-                Success(requestId = requestId, uploadUrl = uploadUrl, timestamp = timestamp)
+                Success(
+                    requestId = requestId,
+                    uploadUrl = uploadUrl,
+                    photoUrl = stringValue(values, "photoUrl"),
+                    statusUrl = stringValue(values, "statusUrl"),
+                    contentType = stringValue(values, "contentType", "mimeType"),
+                    fileSizeBytes =
+                        longValue(values, "fileSizeBytes")
+                            ?: longValue(values, "bytes")
+                            ?: longValue(values, "size"),
+                    timestamp = timestamp,
+                )
             } else {
                 Error(
                     requestId = requestId,
                     errorCode = stringValue(values, "errorCode"),
-                    errorMessage = stringValue(values, "errorMessage") ?: "Unknown photo error",
+                    errorMessage =
+                        stringValue(values, "errorMessage", "error") ?: "Unknown photo error",
                     timestamp = timestamp,
                 )
             }
         }
     }
 }
+
+private fun Map<String, Any>.withOptionalPhotoMetadata(
+    success: PhotoResponse.Success,
+): Map<String, Any> =
+    toMutableMap().apply {
+        success.photoUrl?.takeIf { it.isNotBlank() }?.let { this["photoUrl"] = it }
+        success.statusUrl?.takeIf { it.isNotBlank() }?.let { this["statusUrl"] = it }
+        success.contentType?.takeIf { it.isNotBlank() }?.let { this["contentType"] = it }
+        success.fileSizeBytes?.let { this["fileSizeBytes"] = it }
+    }
 
 data class PhotoResponseEvent(
     val response: PhotoResponse,

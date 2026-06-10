@@ -33,6 +33,7 @@ const initialSnapshot: NavSnapshot = {
     routePoints: null,
     routeSteps: null,
     offRouteAt: null,
+    arrivalSide: null,
   },
   activePivot: null,
   upcomingPivot: null,
@@ -42,6 +43,7 @@ const initialSnapshot: NavSnapshot = {
     speedMultiplier: 5,
     wrongSidewalk: false,
     skipCrossings: false,
+    useRawInstructions: true,
   },
 }
 
@@ -63,9 +65,7 @@ export function installChannelSubscribers(): void {
   mentra.on("nav:coords", (coords) => useNavStore.setState({coords}))
   mentra.on("nav:heading", ({degrees}) => useNavStore.setState({heading: degrees}))
   mentra.on("nav:trip-state", (trip) => useNavStore.getState().applyTrip(trip))
-  mentra.on("nav:pivots", ({active, upcoming}) =>
-    useNavStore.setState({activePivot: active, upcomingPivot: upcoming}),
-  )
+  mentra.on("nav:pivots", ({active, upcoming}) => useNavStore.setState({activePivot: active, upcomingPivot: upcoming}))
   mentra.on("nav:route", ({points, steps}) => {
     useNavStore.setState((s) => ({trip: {...s.trip, routePoints: points, routeSteps: steps}}))
   })

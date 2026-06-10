@@ -9,10 +9,10 @@
  *   3. Start Bun.serve for HTTP health + WS session.
  *   4. (Pending) Worker pool, ownership refresh.
  *
- * When imported, nothing runs — call `startAudio(...)`. When executed
+ * When imported, nothing runs — call `startRuntime(...)`. When executed
  * directly, the bottom block drives boot from env vars.
  *
- * Spec + design: cloud-v2/docs/issues/003-audio/.
+ * Spec + design: cloud-v2/docs/issues/002-cloud-runtime/.
  */
 
 import { createLogger } from "@mentra/cloud-shared";
@@ -45,10 +45,11 @@ import {
   stopWorkerPool,
 } from "./services/audio/workers/pool";
 import { transcriptToStreamMessage } from "./services/audio/result";
+import { PROTOCOL_MAJOR } from "./protocol/envelope";
 
-const logger = createLogger("audio");
+const logger = createLogger("runtime");
 
-export interface StartAudioOptions {
+export interface StartRuntimeOptions {
   /** HTTP/WS port. Default: `process.env.PORT ?? 3001`. */
   httpPort?: number;
   /** UDP port. Default: `process.env.AUDIO_UDP_PORT ?? 8000`. */
@@ -80,14 +81,14 @@ export interface StartAudioOptions {
   forwardTranscriptStubs?: boolean;
 }
 
-export interface AudioHandle {
+export interface RuntimeHandle {
   httpPort: number;
   udpPort: number;
   wsUrl: string;
   stop(): Promise<void>;
 }
 
-export async function startAudio(opts: StartAudioOptions = {}): Promise<AudioHandle> {
+export async function startRuntime(opts: StartRuntimeOptions = {}): Promise<RuntimeHandle> {
   const httpPort = opts.httpPort ?? Number.parseInt(process.env.PORT ?? "3001", 10);
   const udpPort =
     opts.udpPort ?? Number.parseInt(process.env.AUDIO_UDP_PORT ?? "8000", 10);
@@ -126,11 +127,33 @@ export async function startAudio(opts: StartAudioOptions = {}): Promise<AudioHan
       }
       return;
     }
+    if (msg.type === "UDP_LIVENESS_ACK") {
+      logger.debug(
+        {
+          mentraUserId: msg.mentraUserId,
+          sessionTag: msg.sessionTag,
+          probeId: msg.probeId,
+        },
+        "udp liveness ack forwarding to owner websocket sessions",
+      );
+      forwardToUserSessions(msg.mentraUserId, {
+        v: PROTOCOL_MAJOR,
+        type: "audio.udp_liveness_ack",
+        timestamp: Date.now(),
+        payload: {
+          sessionId: msg.audioSessionId,
+          sessionTag: msg.sessionTag,
+          probeId: msg.probeId,
+          receivedAt: msg.receivedAt,
+        },
+      });
+      return;
+    }
     forwardToUserSessions(msg.mentraUserId, transcriptToStreamMessage(msg));
   });
 
   // Refresh-owned-claims loop: keeps each owned user's Redis claim alive
-  // while this pod holds their WS. Idempotent in case startAudio is called
+  // while this pod holds their WS. Idempotent in case startRuntime is called
   // twice in a test.
   startOwnershipRefreshLoop({ podId, getOwnedUserIds });
 
@@ -151,7 +174,7 @@ export async function startAudio(opts: StartAudioOptions = {}): Promise<AudioHan
   const boundHttpPort = server.port!;
   logger.info(
     { httpPort: boundHttpPort, udpPort },
-    "cloud-v2 audio listening (UDP + WS ready; workers + streams pending)",
+    "cloud-v2 runtime listening (audio UDP + WS ready; workers + streams pending)",
   );
 
   return {
@@ -168,8 +191,15 @@ export async function startAudio(opts: StartAudioOptions = {}): Promise<AudioHan
   };
 }
 
+/** @deprecated Use StartRuntimeOptions. */
+export type StartAudioOptions = StartRuntimeOptions;
+/** @deprecated Use RuntimeHandle. */
+export type AudioHandle = RuntimeHandle;
+/** @deprecated Use startRuntime. */
+export const startAudio = startRuntime;
+
 if (import.meta.main) {
-  const handle = await startAudio();
+  const handle = await startRuntime();
   const shutdown = async (signal: string) => {
     logger.info({ signal }, "shutdown requested");
     await handle.stop();

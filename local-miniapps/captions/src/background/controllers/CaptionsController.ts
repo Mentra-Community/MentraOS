@@ -32,7 +32,7 @@
  * full snapshot on every session.ui.onOpen.
  */
 
-import type {MiniappSession, TranscriptionData, UnsubscribeFn} from "@mentra/miniapp/background"
+import type {CloudClientStatus, MiniappSession, TranscriptionData, UnsubscribeFn} from "@mentra/miniapp/background"
 
 import {
   CaptionsFormatter,
@@ -148,6 +148,7 @@ export class CaptionsController {
   private currentWidthSetting = 1 // matches default displayWidth (Medium)
   private lastSpeakerId: string | undefined = undefined
   private lastDisplayPreview: DisplayPreview | null = null
+  private cloudStatus: CloudClientStatus = {status: "disconnected", audioTransport: "none"}
 
   constructor(private readonly session: MiniappSession) {}
 
@@ -186,6 +187,7 @@ export class CaptionsController {
     await this.loadSettings()
     this.applySettingsToDisplay()
     this.subscribeTranscription()
+    this.subscribeCloudStatus()
 
     this.registerUiHandlers()
     console.log(
@@ -230,6 +232,7 @@ export class CaptionsController {
           settings: {...this.settings},
           transcripts: this.publicTranscripts(),
           displayPreview: this.lastDisplayPreview,
+          cloudStatus: {...this.cloudStatus},
         })
       }),
     )
@@ -402,6 +405,19 @@ export class CaptionsController {
       this.transcriptionCleanup = this.session.transcription.forLanguage("en-US", (data) => {
         void this.handleTranscription(data)
       })
+    }
+  }
+
+  private subscribeCloudStatus(): void {
+    try {
+      this.unsubs.push(
+        this.session.cloud.onStatusChanged((status) => {
+          this.cloudStatus = {...status}
+          this.ui.send("captions:cloud-status", {...this.cloudStatus})
+        }),
+      )
+    } catch (err) {
+      console.log("LocalCaptions: cloud status subscribe failed", err)
     }
   }
 

@@ -38,4 +38,24 @@ public class CameraSizeSelectorTest {
         assertThat(CameraSizeSelector.chooseOptimalSize(new Size[0], 1440, 1088)).isNull();
         assertThat(CameraSizeSelector.chooseOptimalSize(null, 1440, 1088)).isNull();
     }
+
+    @Test
+    public void largestSize_returnsHighestPixelCount() {
+        Size max = new Size(4032, 3024);
+        Size[] sizes =
+                new Size[] {
+                    new Size(1920, 1080),
+                    max,
+                    new Size(3264, 2448),
+                    new Size(3840, 2160),
+                };
+
+        assertThat(CameraSizeSelector.largestSize(sizes)).isSameAs(max);
+    }
+
+    @Test
+    public void largestSize_withNoChoices_returnsNull() {
+        assertThat(CameraSizeSelector.largestSize(new Size[0])).isNull();
+        assertThat(CameraSizeSelector.largestSize(null)).isNull();
+    }
 }

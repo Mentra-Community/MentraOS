@@ -51,14 +51,25 @@ export function ManeuverIcon({
         strokeLinejoin="round"
       />,
     )
-  if (t === "ARRIVE")
+  if (t === "ARRIVE") {
+    // Pin glyph from public/assets/dest.svg, inlined here so it can be
+    // recolored to match the cream/stroked palette the rest of the
+    // arrows use. Source viewBox is 0 0 48 48; we render inside the
+    // shared 0 0 80 80 viewport via a centered transform (scale ~1.4,
+    // translated to center the 48×48 art at (40,40)).
     return svg(
-      <>
-        <circle cx="40" cy="34" r="12" fill={color} />
-        <path d="M40 46 L40 66" stroke={color} strokeWidth="8" strokeLinecap="round" />
-        <circle cx="40" cy="34" r="5" fill="#5AC878" />
-      </>,
+      <g transform="translate(6.4 6.4) scale(1.4)">
+        <path
+          d="M24 8 C17 8 12 13 12 20 C12 28 24 40 24 40 C24 40 36 28 36 20 C36 13 31 8 24 8 Z"
+          fill={stroke ? "none" : color}
+          stroke={stroke ? color : undefined}
+          strokeWidth={stroke ? sw / 1.4 : 0}
+          strokeLinejoin="round"
+        />
+        <circle cx="24" cy="20" r="4" fill="#5AC878" />
+      </g>,
     )
+  }
 
   // Straight / continue / default
   if (stroke)

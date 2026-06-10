@@ -7,10 +7,44 @@
 import {MiniappRequestType} from "../protocol"
 import {MiniappSession} from "../session"
 
+export interface StreamVideoConfig {
+  width?: number
+  height?: number
+  bitrate?: number
+  fps?: number
+}
+
+export interface StreamAudioConfig {
+  bitrate?: number
+  sampleRate?: number
+  echoCancellation?: boolean
+  noiseSuppression?: boolean
+}
+
+export interface StreamResolvedConfig {
+  transport?: "rtmp" | "srt" | "whip"
+  video?: {
+    width: number
+    height: number
+    captureWidth?: number
+    captureHeight?: number
+    bitrate: number
+    fps: number
+  }
+  audio?: {
+    bitrate?: number
+    sampleRate?: number
+    echoCancellation?: boolean
+    noiseSuppression?: boolean
+  }
+}
+
 export interface StartUnmanagedOptions {
   streamUrl: string
-  video?: boolean
-  audio?: boolean
+  video?: StreamVideoConfig
+  audio?: StreamAudioConfig
+  /** Play glasses-side stream start/stop sounds. Defaults to true. */
+  sound?: boolean
 }
 
 /**
@@ -26,14 +60,23 @@ export interface RestreamDestination {
 export interface StartManagedOptions {
   /** Bare URL strings or {url, name?} objects; mix freely. */
   restreamDestinations?: Array<string | RestreamDestination>
+  video?: StreamVideoConfig
+  audio?: StreamAudioConfig
+  /** Play glasses-side stream start/stop sounds. Defaults to true. */
+  sound?: boolean
 }
 
-export interface ManagedStreamResult {
+export interface StreamPublisherStartResult {
   streamId: string
+  status: string
+  resolvedConfig?: StreamResolvedConfig
+}
+
+export interface ManagedStreamResult extends StreamPublisherStartResult {
   /** Cloudflare live input UID — useful for building hosted-player URLs. */
-  liveInputId?: string
-  hlsUrl?: string
-  dashUrl?: string
+  liveInputId: string
+  hlsUrl: string
+  dashUrl: string
   webrtcUrl?: string
 }
 
@@ -46,22 +89,24 @@ export interface StreamStatus {
 export class StreamModule {
   constructor(private readonly session: MiniappSession) {}
 
-  async startUnmanaged(options: StartUnmanagedOptions): Promise<string> {
-    const result = await this.session.sendRequest<{streamId: string}>({
+  async startUnmanaged(options: StartUnmanagedOptions): Promise<StreamPublisherStartResult> {
+    return this.session.sendRequest<StreamPublisherStartResult>({
       type: MiniappRequestType.STREAM_START,
       streamUrl: options.streamUrl,
-      video: options.video ?? true,
-      audio: options.audio ?? true,
+      video: options.video,
+      audio: options.audio,
+      sound: options.sound ?? true,
     })
-    return result?.streamId ?? ""
   }
 
   async startManaged(options: StartManagedOptions = {}): Promise<ManagedStreamResult> {
-    const result = await this.session.sendRequest<ManagedStreamResult>({
+    return this.session.sendRequest<ManagedStreamResult>({
       type: MiniappRequestType.MANAGED_STREAM_START,
       restreamDestinations: options.restreamDestinations,
+      video: options.video,
+      audio: options.audio,
+      sound: options.sound ?? true,
     })
-    return result ?? {streamId: ""}
   }
 
   async stop(streamId?: string): Promise<void> {

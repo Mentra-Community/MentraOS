@@ -99,7 +99,7 @@ export default function DevMiniappOfflineScreen() {
 
         <View className="w-full max-w-[320px] gap-3">
           <Button text="Try again" onPress={onTryAgain} preset="primary" />
-          <Button text="Re-scan QR" onPress={onRescan} preset="alternate" />
+          <Button text="Re-scan QR" onPress={onRescan} preset="secondary" />
         </View>
       </View>
     </Screen>

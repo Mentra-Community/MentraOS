@@ -63,6 +63,7 @@ export {
   ISLAND_SETTINGS_KEYS,
   type RuntimeHooks,
   type SocketCommsAdapter,
+  type CloudClientStatusSnapshot,
   type CloudRuntimeAdapter,
   type AudioPlaybackAdapter,
   type AudioPlayRequest,

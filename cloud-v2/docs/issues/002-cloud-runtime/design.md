@@ -72,12 +72,12 @@ the UDP and WebSocket listeners, hands off to `audio.service`, and serves the Ho
 `api/` app (health + the REST surface).
 
 ```ts
-export interface StartAudioOptions {
+export interface StartRuntimeOptions {
   httpPort?: number; udpPort?: number; redisUrl?: string
   udpAdvertisedHost?: string; udpAdvertisedPort?: number; workerCount?: number
 }
-export interface AudioHandle { httpPort: number; udpPort: number; wsUrl: string; stop(): Promise<void> }
-export function startAudio(opts?: StartAudioOptions): Promise<AudioHandle>
+export interface RuntimeHandle { httpPort: number; udpPort: number; wsUrl: string; stop(): Promise<void> }
+export function startRuntime(opts?: StartRuntimeOptions): Promise<RuntimeHandle>
 ```
 
 **`src/clients/redis.client.ts`**: the Redis clients. Two of them, because a blocking

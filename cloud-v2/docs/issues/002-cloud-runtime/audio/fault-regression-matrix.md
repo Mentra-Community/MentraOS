@@ -48,7 +48,7 @@ coverage needed so the same class of bug does not return.
 | AUD-F17 | Duplicate native `local_transcription` listeners | Exactly one JS handler processes each native event | Every local transcription event logs/forwards twice | Mantle unit: one `local_transcription` listener after init; phone log check |
 | AUD-F18 | Offline fallback remains active after cloud reconnect | `local_stt_fallback_active=false`; local STT stops before cloud transcripts resume | Both offline and online transcription run at the same time | LocalSttFallbackCoordinator tests plus phone E2E cloud down/up |
 | AUD-F19 | Online recovery transcript ordering | New final online result appends after the offline result, preserving history order | Recovery result edits an older row or appears above the offline row | Phone E2E: online A, offline B, online C; verify A, B, C all visible in order |
-| AUD-F20 | Cloud badge/status while fallback is active | UI exposes cloud-client connection state and the active audio/fallback transport accurately | UI shows "Cloud" green while offline fallback is generating captions | Mobile debug pill backed by `cloud.runtime.getStatus()` plus E2E screenshot assertion |
+| AUD-F20 | Cloud badge/status while fallback is active | UI exposes cloud-client connection state and the active audio/fallback transport accurately | UI shows "Cloud" green while offline fallback is generating captions | Mobile debug pill backed by `cloud.runtime.getStatus()`; Local Captions indicator backed by `session.cloud`; E2E screenshot assertion |
 | AUD-F21 | Local miniapp dev bridge reconnect after app reload | Dev bridge reconnects, subscriptions re-register, mic starts | Local Captions stays on "Starting..." or no subscription after reload | Dev E2E: force-stop app, relaunch deep link, verify `CONNECT`/`SUBSCRIBE` and marker |
 | AUD-F22 | Metro not running in dev build | Dev build shows Metro error; release build has packaged JS bundle | "Unable to load script" blocks E2E until Metro starts | Dev setup check: Metro on 8081, adb reverse/host reachable before phone E2E |
 | AUD-F23 | UDP audio transport blocked while WebSocket runtime stays connected | Client detects no UDP liveness failure and falls back to WS binary audio as the last-resort cloud transport, then switches back on the first UDP ack | Phone shows WS connected/PCM active, but cloud receives no audio and no fallback starts because the client thinks it is connected; or WS fallback never returns to UDP | Dedicated issue: [`004-cloud-client/udp-liveness-fallback`](../../004-cloud-client/udp-liveness-fallback/). Add network tests with UDP blocked/restored and WS binary fallback enabled |
@@ -56,7 +56,7 @@ coverage needed so the same class of bug does not return.
 | AUD-F25 | Worker crash or provider map loss mid-session | Worker reattaches user, restores codec/subscriptions, resumes from stream | Connected phone has no provider after worker replacement | Runtime worker-pool fault injection test |
 | AUD-F26 | Redis transient or stream replay after failover | Audio that reached Redis is replayed in order; captions may delay but not gap | Words missing after pod/worker failover | Runtime integration with Redis pause/worker restart and marker audio |
 | AUD-F27 | Phone app foreground/background during active captions | Foreground reconnect does not clear live subscriptions; background does not wedge mic/fallback | Returning to app leaves captions frozen | Phone E2E: background app during online and offline states |
-| AUD-F28 | Local SDK session status unavailable to miniapp | Miniapp can show whether transcripts are cloud or offline/fallback | Miniapp cannot tell users it is offline; misleading UX | Future SDK/API design: session/cloud status event; UI test after implemented |
+| AUD-F28 | Local SDK session status unavailable to miniapp | Miniapp can show whether transcripts are cloud or offline/fallback | Miniapp cannot tell users it is offline; misleading UX | `session.cloud.status` + `session.cloud.onStatusChanged`; SDK unit test; Local Captions indicator |
 
 ## Manual phone E2E script
 
@@ -93,6 +93,30 @@ Use distinct spoken markers so screenshots prove ordering:
   making Soniox provider utterance IDs unique across provider instances.
 - Cloud-client runtime status is now exposed to mobile debug UI; the existing
   core/cloud-v1 pill is no longer the source of truth for cloud-v2 audio health.
+- Local miniapps now receive cloud-client status through `session.cloud`. Local
+  Captions shows an explicit transport indicator (`UDP`, `WS`, `Offline`,
+  `Connecting`, or `Retrying`) so fallback mode is visible to users and E2E
+  screenshots can assert the active path.
+- Pixel 8 USB E2E with Doppler-backed local cloud verified:
+  - phone subject-token exchange succeeds only when the local core has
+    `MENTRA_CORE_JWT_SECRET` / `SUPABASE_JWT_SECRET`;
+  - killing local cloud transitions Local Captions from `Cloud captions` to
+    `Offline captions`, starts `LocalSttFallback`, and keeps retrying;
+  - restarting local cloud reconnects without phone app restart, refreshes auth,
+    re-applies the transcription subscription, stops local STT, and returns to
+    `Cloud captions`;
+  - real Soniox provider produced a cloud transcript after recovery.
+- Local cloud without Doppler auth env failed exchange with
+  `500 server_error` (`MENTRA_CORE_JWT_SECRET` missing). Treat that as a setup
+  fault, not a reconnect-loop failure.
+- `scripts/dev-stack.ts` now defaults the test-OEM to port `3102` so it does not
+  collide with the Local Captions dev server on `3100`, and auto-advertises a
+  LAN IPv4 for UDP when `DEV_UDP_ADVERTISE_HOST` is not set. Override with
+  `DEV_UDP_ADVERTISE_HOST=<host>` if the detected interface is not reachable
+  from the phone.
+- Mock provider mode is useful for transport smoke tests but floods the Local
+  Captions history because it emits one final transcript per audio write. UI
+  ordering tests should use real Soniox or a less chatty mock fixture.
 - Remaining known transport gap: UDP-blocked networks still need client-side WS
   binary audio fallback. The runtime/cloud side accepts WS binary audio, but the
   cloud-client mobile path currently sends only UDP. See

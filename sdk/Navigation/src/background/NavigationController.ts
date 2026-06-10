@@ -8,7 +8,14 @@
  * UI's mentra.send / mentra.request bus declared in shared/channels.ts.
  */
 
-import type {MiniappSession, NavRoute, NavUpdate, Pivot, UIModule} from "@mentra/miniapp/background"
+import type {
+  MiniappSession,
+  NavRoute,
+  NavUpdate,
+  Pivot,
+  StartNavigationOptions,
+  UIModule,
+} from "@mentra/miniapp/background"
 
 import type {Channels} from "../shared/channels"
 import type {Coords, DevSettings, LogEntry, NavSnapshot, TripState} from "../shared/types"
@@ -20,7 +27,7 @@ import {NavigationManager} from "./managers/NavigationManager"
 import {PlacesManager} from "./managers/PlacesManager"
 import {SimpleStorageManager} from "./managers/SimpleStorageManager"
 import {formatDistance} from "./lib/formatDistance"
-import {haversineMeters} from "./lib/geometry"
+import {distanceToPolylineMeters, haversineMeters, remainingRouteMeters, sideOfFinalSegment} from "./lib/geometry"
 import {renderMinimap} from "./lib/MinimapRenderer"
 import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
 
@@ -48,6 +55,42 @@ export class NavigationController {
   // and returns to idle.
   private hasCompletedTrip = false
 
+  // Last logged threshold bucket for the off-route diagnostic so we
+  // only print on crossings, not every coord update.
+  // 0 = under OFF_ROUTE_ADVISORY_M, 1 = advisory band, 2 = ≥OFF_ROUTE_TRIGGER_M.
+  private lastOffRouteBucket = 0
+
+  // True while the user is in the 15–30m advisory band. Drives the
+  // glasses HUD's "Go back to route" frame between the moment we
+  // notice the drift and the moment auto-rebuild kicks in at 30m.
+  // Cleared when we return under 15m or when status flips to
+  // rerouting (>=30m crossing).
+  private offRouteAdvisory = false
+  // Live perpendicular distance to the route while in the advisory
+  // band. Refreshed on every coord tick (not just bucket transitions)
+  // so the HUD's "Go back 10m" countdown ticks down as the user
+  // moves toward the route. Null when not in the band.
+  private offRouteAdvisoryDistanceM: number | null = null
+
+  // Trip-start anchor: position recorded at trip start, used to gate
+  // auto-rebuilds. Suppresses the "user is inside a 50m-radius building"
+  // case where the initial fix is already >30m off-route — until the
+  // user has moved >REBUILD_MIN_MOVE_M from the start point, we won't
+  // auto-rebuild.
+  private tripStartCoords: {lat: number; lng: number} | null = null
+  // Last StartNavigationOptions so an auto-rebuild can re-fire the same
+  // mode / simulate / speedMultiplier without the UI having to re-send.
+  private lastStartOpts: (StartNavigationOptions & {destinationName?: string}) | null = null
+  // Cooldown: timestamp of the last auto-rebuild. Suppresses back-to-
+  // back rebuilds while a fresh route is still being computed.
+  private lastAutoRebuildAt = 0
+  // Pending auto-rebuild timer. When we cross >30m we don't rebuild
+  // immediately — we flip the HUD to "Rebuilding route…" and wait
+  // REBUILD_DELAY_MS, then re-check distance and either fire or
+  // cancel. Tracked so we can cancel it on stop/arrived/dispose and
+  // ignore further bucket-2 transitions while one is already pending.
+  private pendingRebuildTimer: ReturnType<typeof setTimeout> | null = null
+
   // Canonical state (mirrored to UI).
   private coords: Coords | null = null
   private heading: number | null = null
@@ -60,6 +103,7 @@ export class NavigationController {
     routePoints: null,
     routeSteps: null,
     offRouteAt: null,
+    arrivalSide: null,
   }
   private activePivot: Pivot | null = null
   private upcomingPivot: Pivot | null = null
@@ -69,7 +113,19 @@ export class NavigationController {
     speedMultiplier: 5,
     wrongSidewalk: false,
     skipCrossings: false,
+    useRawInstructions: true,
   }
+
+  // Cached raw Google `navigationInstruction.instructions` strings, in
+  // step order, from the most recent successful Routes API call. Drives
+  // the `useRawInstructions` debug toggle — the live SDK doesn't carry
+  // these through `NavStep`, so we zip the cached array into the live
+  // step list by index. Refetched on reroute (see onRoute handler) so
+  // the toggle keeps working after the route changes.
+  private cachedInstructions: string[] | null = null
+  // Guards against parallel refetches when the SDK fires multiple
+  // onRoute events in quick succession during a reroute.
+  private refetchingInstructions = false
 
   constructor(private readonly session: MiniappSession) {
     this.ui = session.ui as unknown as UIModule<Channels>
@@ -109,6 +165,8 @@ export class NavigationController {
         }
         this.lastCoordsAt = Date.now()
         this.ui.send("nav:coords", this.coords)
+        this.logOffRouteThresholds()
+        this.maybeFireEarlyArrival()
         this.refreshHUD()
       }),
     )
@@ -188,7 +246,12 @@ export class NavigationController {
           case "rerouting":
             this.trip = {...this.trip, status: "rerouting"}
             break
-          case "arrived":
+          case "arrived": {
+            // Compute side from the current route *before* nulling it,
+            // so the HUD's "on your left|right" line has data to render
+            // when the SDK is the trigger (rather than our early ≤7m
+            // path, which captures side the same way).
+            const side = sideOfFinalSegment(this.trip.routePoints, this.trip.activeDestination)
             this.trip = {
               ...this.trip,
               status: "arrived",
@@ -198,11 +261,31 @@ export class NavigationController {
               routePoints: null,
               routeSteps: null,
               offRouteAt: null,
+              arrivalSide: side,
             }
             this.hasCompletedTrip = true
+            this.activePivot = null
+            this.upcomingPivot = null
+            this.cancelPendingRebuild()
+            this.tripStartCoords = null
+            this.lastStartOpts = null
+            this.lastAutoRebuildAt = 0
+            this.lastOffRouteBucket = 0
+            this.offRouteAdvisory = false
+            this.offRouteAdvisoryDistanceM = null
+            this.cachedInstructions = null
             break
+          }
           case "error":
             this.trip = {...this.trip, status: "idle", running: false}
+            this.cancelPendingRebuild()
+            this.tripStartCoords = null
+            this.lastStartOpts = null
+            this.lastAutoRebuildAt = 0
+            this.lastOffRouteBucket = 0
+            this.offRouteAdvisory = false
+            this.offRouteAdvisoryDistanceM = null
+            this.cachedInstructions = null
             break
         }
         this.ui.send("nav:trip-state", this.trip)
@@ -218,12 +301,22 @@ export class NavigationController {
         // to a plain string for the channel wire (see NavRouteStep).
         const steps =
           route.steps && route.steps.length > 0
-            ? route.steps.map((s) => ({
+            ? route.steps.map((s, i) => ({
                 lat: s.lat,
                 lng: s.lng,
                 road: s.road ?? null,
                 maneuver: s.maneuver,
                 distanceMeters: s.distanceMeters,
+                // Zip the cached preview-time Google instructions in by
+                // index. The SDK strips `instruction` from NavStep, so
+                // this is the only way the `useRawInstructions` toggle
+                // can find Google's verbatim text for the current step.
+                // Mismatched length (cache stale after reroute) is
+                // handled by the silent refetch below.
+                instruction:
+                  this.cachedInstructions && i < this.cachedInstructions.length
+                    ? this.cachedInstructions[i] || null
+                    : null,
               }))
             : null
         // A fresh route landing means any in-flight reroute is resolved.
@@ -234,9 +327,34 @@ export class NavigationController {
         // "arrived" are left untouched.
         const status = this.trip.status === "rerouting" ? "navigating" : this.trip.status
         this.trip = {...this.trip, status, routePoints: route.points, routeSteps: steps}
+        // Fresh route → reset the off-route bucket and re-anchor the
+        // trip-start point. Otherwise the first coord after the new
+        // polyline lands could compare against a stale bucket (the
+        // user might already have been "in" bucket 2 against the old
+        // route) and skip the threshold transition log.
+        this.lastOffRouteBucket = 0
+        this.offRouteAdvisory = false
+        this.offRouteAdvisoryDistanceM = null
+        if (this.coords) {
+          this.tripStartCoords = {lat: this.coords.lat, lng: this.coords.lng}
+        }
         this.ui.send("nav:route", {points: route.points, steps})
         this.ui.send("nav:trip-state", this.trip)
         logLiveRoute(route)
+        // After a reroute the cached preview instructions no longer line
+        // up with the new step list (different count or different roads).
+        // Refetch silently against the current origin so the
+        // `useRawInstructions` toggle keeps showing fresh Google text
+        // through reroutes. Gated behind the toggle so we don't burn a
+        // Routes API call when nobody's watching.
+        if (
+          this.devSettings.useRawInstructions &&
+          steps &&
+          steps.length > 0 &&
+          (this.cachedInstructions == null || this.cachedInstructions.length !== steps.length)
+        ) {
+          this.refetchInstructionsForLiveRoute(steps.length)
+        }
         // Push the initial pivot snapshot. The SDK's onPivot only fires
         // on approaching/entered/exited transitions — at trip start the
         // user can be far from every pivot, so no transition has fired
@@ -263,7 +381,19 @@ export class NavigationController {
   // ── RPC handlers ─────────────────────────────────────────────────────
 
   private wireRpcHandlers(): void {
-    this.unsubs.push(this.ui.handle("nav:compute-route", (opts) => this.navigation.computeRoute(opts)))
+    this.unsubs.push(
+      this.ui.handle("nav:compute-route", async (opts) => {
+        const result = await this.navigation.computeRoute(opts)
+        // Cache the raw Google instruction strings off the primary route
+        // so the `useRawInstructions` debug toggle can substitute them
+        // into the live maneuver card / glasses HUD by step index.
+        const steps = result.routes?.[0]?.steps
+        if (steps && steps.length > 0) {
+          this.cachedInstructions = steps.map((s) => cleanInstruction(s.instruction))
+        }
+        return result
+      }),
+    )
     this.unsubs.push(this.ui.handle("nav:request-permission", () => this.navigation.requestPermission()))
     this.unsubs.push(this.ui.handle("nav:get-snapshot", () => this.buildSnapshot()))
     this.unsubs.push(this.ui.handle("nav:get-pivots", () => this.navigation.getPivots()))
@@ -286,6 +416,12 @@ export class NavigationController {
     this.unsubs.push(
       this.ui.on("nav:start", async (opts) => {
         const {destinationName, ...startOpts} = opts
+        // Clear the previous trip's route polyline immediately so the
+        // off-route threshold check doesn't run against a stale route
+        // between nav:start and the new onRoute event landing. Without
+        // this, the user can be e.g. 500m from the prior route's
+        // polyline at start, instantly trigger the >30m bucket, flip
+        // status to "rerouting", and fire a redundant auto-rebuild.
         this.trip = {
           ...this.trip,
           status: "navigating",
@@ -293,8 +429,23 @@ export class NavigationController {
           activeDestination: startOpts.stops?.[startOpts.stops.length - 1] ?? null,
           activeDestinationName: destinationName ?? null,
           maneuver: null,
+          routePoints: null,
+          routeSteps: null,
           offRouteAt: null,
+          arrivalSide: null,
         }
+        // Snapshot the trip-start context so an auto-rebuild can re-
+        // fire start() with the same shape, and so we can gate
+        // rebuilds on "user has actually moved away from start".
+        this.lastStartOpts = opts
+        this.tripStartCoords = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
+        this.lastAutoRebuildAt = 0
+        this.lastOffRouteBucket = 0
+        this.offRouteAdvisory = false
+        this.offRouteAdvisoryDistanceM = null
+        // Cancel any in-flight delayed rebuild — a fresh start
+        // supersedes the old "are we still off-route?" timer.
+        this.cancelPendingRebuild()
         this.appendLog(`START ${destinationName ?? "(unnamed)"}`)
         this.ui.send("nav:trip-state", this.trip)
         try {
@@ -304,7 +455,7 @@ export class NavigationController {
           // so we must roll the optimistic "navigating" state set above
           // back to idle. Inspecting only `catch` left the UI stuck on a
           // routeless trip with no recovery but a manual stop.
-          const res = await this.navigation.start(startOpts)
+          const res = await this.navigation.start(withPivotDefaults(startOpts))
           if (!res.ok) {
             this.appendLog(`START failed: ${res.error ?? "unknown"}`)
             this.trip = {...this.trip, status: "idle", running: false}
@@ -327,6 +478,16 @@ export class NavigationController {
         } catch {
           /* ignore */
         }
+        this.cancelPendingRebuild()
+        this.tripStartCoords = null
+        this.lastStartOpts = null
+        this.lastAutoRebuildAt = 0
+        this.lastOffRouteBucket = 0
+        this.offRouteAdvisory = false
+        this.offRouteAdvisoryDistanceM = null
+        this.activePivot = null
+        this.upcomingPivot = null
+        this.cachedInstructions = null
         this.trip = {
           ...this.trip,
           status: "idle",
@@ -336,6 +497,7 @@ export class NavigationController {
           routePoints: null,
           routeSteps: null,
           offRouteAt: null,
+          arrivalSide: null,
         }
         this.hasCompletedTrip = true
         this.ui.send("nav:trip-state", this.trip)
@@ -375,8 +537,24 @@ export class NavigationController {
         } catch (err) {
           this.appendLog(`dev-settings forward failed: ${err instanceof Error ? err.message : String(err)}`)
         }
+        const rawJustEnabled =
+          partial.useRawInstructions === true && !this.devSettings.useRawInstructions
         this.devSettings = next
         this.ui.send("nav:dev-settings-update", this.devSettings)
+        // Flipping the toggle changes what the maneuver card / HUD
+        // render, but neither re-runs until the next pivot / coord
+        // tick. Force a refresh so the swap is visible immediately.
+        this.refreshHUD()
+        // If the toggle was just turned on mid-trip and we have no
+        // cached instructions (or the cache is stale relative to the
+        // live route), kick off a silent refetch so the live trip gets
+        // the strings on the next render. No-op when idle.
+        if (rawJustEnabled && this.trip.running) {
+          const liveLen = this.trip.routeSteps?.length ?? 0
+          if (liveLen > 0 && (this.cachedInstructions == null || this.cachedInstructions.length !== liveLen)) {
+            this.refetchInstructionsForLiveRoute(liveLen)
+          }
+        }
       }),
     )
 
@@ -410,6 +588,14 @@ export class NavigationController {
       }),
     )
 
+    this.unsubs.push(
+      this.ui.handle("test:count-1-to-10", () => {
+        for (let i = 1; i <= 10; i++) {
+          setTimeout(() => this.display.showText(String(i)), (i - 1) * 3000)
+        }
+      }),
+    )
+
     // Mid-trip hydration: every fresh WebView open gets a snapshot.
     this.unsubs.push(this.ui.onOpen(() => this.ui.send("nav:snapshot", this.buildSnapshot())))
   }
@@ -436,7 +622,7 @@ export class NavigationController {
   }
 
   private refreshHUD(): void {
-    const {status, running, activeDestinationName, maneuver} = this.trip
+    const {status, running, activeDestinationName, maneuver, arrivalSide} = this.trip
 
     // Minimap runs first so heading-only updates still refresh the map
     // even when the text line below is unchanged (and short-circuits).
@@ -450,21 +636,43 @@ export class NavigationController {
     // one, tweak the other or they'll diverge.
     if (status === "arrived") {
       const at = activeDestinationName ? ` at ${activeDestinationName}` : ""
-      next = `You have arrived${at}`
+      const side = arrivalSide ? `, on your ${arrivalSide}` : ""
+      next = `You have arrived${at}${side}`
       durationMs = 10_000
     } else if (!running && !this.hasCompletedTrip) {
       next = "Welcome to Mentra Maps!\nPick a destination to get started."
       durationMs = 5_000
     } else if (status === "rerouting") {
       next = "Rebuilding route…"
+    } else if (this.offRouteAdvisory && running) {
+      // 15–30m advisory band. Replace the (now stale) maneuver text
+      // with a return-to-route prompt + live distance back to the
+      // path until the user either gets back on (cleared in
+      // logOffRouteThresholds) or crosses 30m and the auto-rebuild
+      // flow takes over.
+      const d = this.offRouteAdvisoryDistanceM
+      next = d != null ? `Go back\n${formatDistance(d)}` : "Go back\nto route"
     } else if (this.activePivot?.direction) {
       // At the turn. Layout:
+      //   ←|→
       //   Onto <toRoad>
       //   Turn left|right
       const verb = this.activePivot.direction === "right" ? "Turn right" : "Turn left"
       const onto = isRealRoadName(this.activePivot.toRoad)
       const topLine = onto ? `Onto ${onto}` : null
-      next = [topLine, verb].filter(Boolean).join("\n")
+      const rawTop = this.devSettings.useRawInstructions
+        ? this.lookupRawInstructionForPivot(this.activePivot)
+        : null
+      // Directional arrow on the top line. Mirrors the approaching-
+      // pivot branch, but since we're AT the corner there's no distance
+      // gate to apply — it's always the turn arrow, never ↑.
+      const arrow = arrowFor(this.activePivot.maneuver, this.activePivot.direction)
+      // At the pivot. With raw instructions on, Google's text already
+      // contains the verb ("Turn right onto X St"), so prepending our
+      // own "Turn right" line duplicates the verb. Use "Now" as the
+      // top line instead — same hierarchy as "In 198 m" above the
+      // line just before the turn fires.
+      next = rawTop ? `${arrow}\nNow\n${rawTop}` : [arrow, topLine, verb].filter(Boolean).join("\n")
     } else if (this.upcomingPivot?.direction && this.coords) {
       // Approaching the next turn. Layout:
       //   Onto <toRoad>
@@ -476,14 +684,57 @@ export class NavigationController {
       const verb = this.upcomingPivot.direction === "right" ? "Turn right" : "Turn left"
       const onto = isRealRoadName(this.upcomingPivot.toRoad)
       const topLine = onto ? `Onto ${onto}` : null
-      next = [topLine, `${verb} in ${formatDistance(dist)}`].filter(Boolean).join("\n")
+      // Direction arrow as its own top line so the user can read the
+      // turn at a glance before parsing the rest of the HUD. Pulled
+      // from the pivot's `maneuver` (richer than `direction`, includes
+      // SLIGHT_/SHARP_ variants) with `direction` as fallback.
+      //
+      // Gated on distance: while still walking down the current street
+      // (>100m from the upcoming pivot) the arrow stays ↑ so it doesn't
+      // claim to be turning when there's nothing to turn at yet. Inside
+      // the approach threshold, the arrow flips to the actual turn
+      // direction.
+      //
+      //   ←|→|↑
+      //   In 198 m
+      //   Turn right onto Octavia St   (or Google's raw text)
+      const arrow =
+        dist < ARROW_APPROACH_M_WALKING
+          ? arrowFor(this.upcomingPivot.maneuver, this.upcomingPivot.direction)
+          : "↑"
+      const rawTop = this.devSettings.useRawInstructions
+        ? this.lookupRawInstructionForPivot(this.upcomingPivot)
+        : null
+      next = rawTop
+        ? `${arrow}\nIn ${formatDistance(dist)}\n${rawTop}`
+        : [arrow, topLine, `${verb} in ${formatDistance(dist)}`].filter(Boolean).join("\n")
     } else if (maneuver?.distanceToDestinationMeters != null && maneuver.distanceToDestinationMeters >= 0) {
-      next = `Arriving in ${formatDistance(maneuver.distanceToDestinationMeters)}`
+      // Final-leg "Arriving in Xm" — no more pivots between here and
+      // the destination, so the directional arrow stays ↑ (straight
+      // ahead) until the ≤7m-remaining trigger flips status to
+      // "arrived". Matches the approach-pivot HUD's arrow-on-top
+      // layout for visual continuity.
+      next = `↑\nArriving in ${formatDistance(maneuver.distanceToDestinationMeters)}`
     } else if (running) {
-      next = "Arriving"
+      next = `↑\nArriving`
     }
 
-    if (next == null) return
+    if (next == null) {
+      // Nothing to display — wipe whatever frame was last on the
+      // glasses (the SDK's text HUD persists until cleared/replaced).
+      // Without this, after `nav:stop` the user keeps seeing the last
+      // "Arriving in Xm" frame indefinitely because the maneuver got
+      // cleared but no replacement HUD was ever pushed.
+      if (this.lastHudKey !== "") {
+        this.lastHudKey = ""
+        try {
+          this.display.clear()
+        } catch {
+          /* ignore */
+        }
+      }
+      return
+    }
     // Coalesce — don't spam the glasses with the same frame.
     const key = `${next} ${durationMs ?? 0}`
     if (key === this.lastHudKey) return
@@ -503,9 +754,7 @@ export class NavigationController {
       coords: {lat: this.coords.lat, lng: this.coords.lng},
       heading: this.heading,
       routePoints: this.trip.routePoints,
-      upcomingPivot: this.upcomingPivot
-        ? {lat: this.upcomingPivot.lat, lng: this.upcomingPivot.lng}
-        : null,
+      upcomingPivot: this.upcomingPivot ? {lat: this.upcomingPivot.lat, lng: this.upcomingPivot.lng} : null,
     })
     if (!png || png === this.lastMinimapPng) return
     this.lastMinimapPng = png
@@ -520,7 +769,6 @@ export class NavigationController {
       .then(() => this.navigation.requestPermission())
       .then((r) => this.appendLog(`requestPermission: ${JSON.stringify(r)}`))
       .catch((err) => {
-        // eslint-disable-next-line no-console
         console.warn("[NavigationController] requestPermission failed", err)
       })
   }
@@ -566,12 +814,299 @@ export class NavigationController {
       })
   }
 
+  // ── Off-route threshold + auto-rebuild ───────────────────────────────
+
+  // Compute perpendicular distance from the current fix to the active
+  // route polyline. Thresholds:
+  //   15m → log only (advisory: "consider returning to route")
+  //   30m → trigger an auto-rebuild to the same destination
+  //
+  // Bucket-based so a user wandering at 18m doesn't spam logs every
+  // tick — only bucket transitions emit. Rebuild gated by two filters
+  // (see triggerAutoRebuild):
+  //   - REBUILD_MIN_MOVE_M: user must have moved away from where the
+  //     trip started. Suppresses the "user is inside a 50m building"
+  //     case where the initial fix is already >30m off but the user
+  //     hasn't actually deviated yet.
+  //   - REBUILD_COOLDOWN_MS: no rebuild within N seconds of the last
+  //     one, so a fresh route can land before we'd consider firing
+  //     another.
+  private logOffRouteThresholds(): void {
+    if (!this.coords) return
+    const route = this.trip.routePoints
+    if (!route || route.length < 2) {
+      this.lastOffRouteBucket = 0
+      this.offRouteAdvisory = false
+      this.offRouteAdvisoryDistanceM = null
+      return
+    }
+    const here = {lat: this.coords.lat, lng: this.coords.lng}
+    const dist = distanceToPolylineMeters(here, route)
+    if (dist == null) return
+    const bucket = dist >= OFF_ROUTE_TRIGGER_M ? 2 : dist >= OFF_ROUTE_ADVISORY_M ? 1 : 0
+    // Keep the advisory distance live so the HUD's "Go back 10m" line
+    // ticks down as the user moves. Done every coord update — only
+    // the bucket-transition log + rebuild trigger below run on edges.
+    const prevDistance = this.offRouteAdvisoryDistanceM
+    this.offRouteAdvisoryDistanceM = bucket === 1 ? dist : null
+    if (
+      bucket === this.lastOffRouteBucket &&
+      bucket === 1 &&
+      prevDistance != null &&
+      Math.round(prevDistance) !== Math.round(dist)
+    ) {
+      // Same bucket, distance label would change — refresh so the HUD
+      // text follows the user. Coalescing in refreshHUD swallows
+      // identical frames so this is cheap.
+      this.refreshHUD()
+    }
+    if (bucket === this.lastOffRouteBucket) return
+    this.lastOffRouteBucket = bucket
+    // Track the advisory band so refreshHUD() can show "Go back to
+    // route" while we wait for either a return-to-path (bucket 0) or
+    // a rebuild trigger (bucket 2).
+    this.offRouteAdvisory = bucket === 1
+    if (bucket === 0) {
+      // Returned within the route — back to maneuver text on the HUD.
+      this.refreshHUD()
+    } else if (bucket === 1) {
+      const msg = `> ${OFF_ROUTE_ADVISORY_M}m off route (${dist.toFixed(1)}m) — return to route`
+      console.log(`[NavOffRoute] ${msg}`)
+      this.appendLog(`[NavOffRoute] ${msg}`)
+      this.refreshHUD()
+    } else if (bucket === 2) {
+      const msg = `> ${OFF_ROUTE_TRIGGER_M}m off route (${dist.toFixed(1)}m) — rebuilding`
+      console.log(`[NavOffRoute] ${msg}`)
+      this.appendLog(`[NavOffRoute] ${msg}`)
+      this.triggerAutoRebuild(here, dist)
+    }
+  }
+
+  // Schedule a delayed auto-rebuild. Crossing >30m flips the HUD to
+  // "Rebuilding route…" immediately (via status="rerouting"), then we
+  // wait REBUILD_DELAY_MS and re-check distance. If the user is still
+  // >30m off, fire nav:start; if they've returned closer, cancel and
+  // revert HUD. The delay also doubles as the "min 3s HUD show" rule —
+  // since REBUILD_DELAY_MS > 3s, the rerouting card is always on screen
+  // for at least 3s before any outcome.
+  //
+  // No-ops if the user hasn't actually moved from where the trip
+  // started (building edge case) or if a previous rebuild is still
+  // within its cooldown window.
+  private triggerAutoRebuild(here: {lat: number; lng: number}, dist: number): void {
+    const REBUILD_MIN_MOVE_M = 10
+    const REBUILD_COOLDOWN_MS = 5_000
+    const REBUILD_DELAY_MS = 4_000
+    const REBUILD_DISTANCE_M = OFF_ROUTE_TRIGGER_M
+
+    const opts = this.lastStartOpts
+    if (!opts) return
+
+    // Already a delayed rebuild in flight — don't stack another.
+    if (this.pendingRebuildTimer) return
+
+    const now = Date.now()
+    if (now - this.lastAutoRebuildAt < REBUILD_COOLDOWN_MS) {
+      this.appendLog(`[NavOffRoute] rebuild skipped (cooldown)`)
+      return
+    }
+
+    const start = this.tripStartCoords
+    if (start) {
+      const moved = haversineMeters(start, here)
+      if (moved < REBUILD_MIN_MOVE_M) {
+        this.appendLog(
+          `[NavOffRoute] rebuild skipped (user hasn't moved: ${moved.toFixed(1)}m from start, ${dist.toFixed(1)}m off route)`,
+        )
+        return
+      }
+    }
+
+    // Flip HUD immediately so "Rebuilding route…" is visible during
+    // the delay window. If the trip ends or a new route lands during
+    // the delay, cancelPendingRebuild() / the existing route handlers
+    // will revert this.
+    this.appendLog(`[NavOffRoute] rebuild armed — re-checking in ${REBUILD_DELAY_MS / 1000}s`)
+    this.trip = {...this.trip, status: "rerouting"}
+    this.ui.send("nav:trip-state", this.trip)
+    this.refreshHUD()
+
+    this.pendingRebuildTimer = setTimeout(() => {
+      this.pendingRebuildTimer = null
+
+      // Trip may have ended or status changed during the delay.
+      if (!this.trip.running && this.trip.status !== "rerouting") return
+      const route = this.trip.routePoints
+      if (!route || route.length < 2 || !this.coords) {
+        // Route or fix went away — revert.
+        this.trip = {...this.trip, status: "navigating"}
+        this.ui.send("nav:trip-state", this.trip)
+        this.refreshHUD()
+        return
+      }
+      const stillOff = distanceToPolylineMeters({lat: this.coords.lat, lng: this.coords.lng}, route)
+      if (stillOff == null || stillOff < REBUILD_DISTANCE_M) {
+        this.appendLog(`[NavOffRoute] rebuild cancelled — back within range (${stillOff?.toFixed(1) ?? "?"}m)`)
+        this.trip = {...this.trip, status: "navigating"}
+        this.ui.send("nav:trip-state", this.trip)
+        this.refreshHUD()
+        return
+      }
+
+      this.lastAutoRebuildAt = Date.now()
+      this.appendLog(
+        `[NavOffRoute] auto-rebuild firing (${stillOff.toFixed(1)}m off) → ${opts.destinationName ?? "(unnamed)"}`,
+      )
+      // Re-anchor trip-start to the current position so the moved-guard
+      // re-arms against this new starting point.
+      this.tripStartCoords = {lat: this.coords!.lat, lng: this.coords!.lng}
+      void this.navigation.start(withPivotDefaults(opts)).then((res) => {
+        if (!res.ok) {
+          this.appendLog(`[NavOffRoute] auto-rebuild failed: ${res.error ?? "unknown"}`)
+          this.trip = {...this.trip, status: "navigating"}
+          this.ui.send("nav:trip-state", this.trip)
+          this.refreshHUD()
+        }
+      })
+    }, REBUILD_DELAY_MS)
+  }
+
+  // ── Early arrival (≤7m of route remaining) ───────────────────────────
+
+  // The Nav SDK fires `arrived` based on its own threshold (straight-
+  // line to the destination pin). We fire earlier when the user has
+  // walked nearly the entire route polyline — the grey trail has
+  // reached the pin. Uses along-route distance, not perpendicular, so a
+  // pin sitting a few meters off the walkable polyline still triggers.
+  //
+  // Mirrors the SDK arrived handler's state mutation so downstream
+  // consumers (HUD, UI) see the same shape regardless of which trigger
+  // fired. Captures the side (left/right) of the pin relative to the
+  // final route segment *before* clearing routePoints so the HUD can
+  // render "on your left|right".
+  private maybeFireEarlyArrival(): void {
+    const ARRIVAL_REMAINING_M = 7
+    if (!this.coords) return
+    if (this.trip.status === "arrived" || !this.trip.running) return
+    const route = this.trip.routePoints
+    const remaining = remainingRouteMeters({lat: this.coords.lat, lng: this.coords.lng}, route)
+    if (remaining == null || remaining > ARRIVAL_REMAINING_M) return
+    const side = sideOfFinalSegment(route, this.trip.activeDestination)
+    this.appendLog(`ARRIVED (early, ${remaining.toFixed(1)}m of route remaining)`)
+    this.trip = {
+      ...this.trip,
+      status: "arrived",
+      running: false,
+      maneuver: null,
+      activeDestination: null,
+      routePoints: null,
+      routeSteps: null,
+      offRouteAt: null,
+      arrivalSide: side,
+    }
+    this.hasCompletedTrip = true
+    this.activePivot = null
+    this.upcomingPivot = null
+    this.cancelPendingRebuild()
+    this.tripStartCoords = null
+    this.lastStartOpts = null
+    this.lastAutoRebuildAt = 0
+    this.lastOffRouteBucket = 0
+    this.offRouteAdvisory = false
+    this.offRouteAdvisoryDistanceM = null
+    try {
+      this.navigation.stop()
+    } catch {
+      /* ignore */
+    }
+    this.ui.send("nav:trip-state", this.trip)
+  }
+
+  private cancelPendingRebuild(): void {
+    if (this.pendingRebuildTimer) {
+      clearTimeout(this.pendingRebuildTimer)
+      this.pendingRebuildTimer = null
+    }
+  }
+
   // ── Log + maneuver helpers ───────────────────────────────────────────
 
   private appendLog(line: string): void {
     const entry: LogEntry = {id: ++this.logSeq, ts: Date.now(), line}
     this.log = [entry, ...this.log].slice(0, 100)
     this.ui.send("nav:log-append", entry)
+  }
+
+  /**
+   * Find the Google `navigationInstruction` string for the live step
+   * whose start coords match the given pivot, by index match on
+   * `(lat, lng)`. Returns null when the toggle is off, when no cached
+   * instructions are available, or when the pivot can't be matched to
+   * a step (rare — usually means a reroute landed and the silent
+   * refetch hasn't completed yet).
+   */
+  private lookupRawInstructionForPivot(pivot: Pivot): string | null {
+    const steps = this.trip.routeSteps
+    if (!steps || steps.length === 0) return null
+    // Pivots and steps share lat/lng to ≥5 decimal places (the SDK
+    // forwards them through unmodified). Match on a small epsilon
+    // rather than equality to absorb float reformatting.
+    const EPS = 1e-5
+    for (const s of steps) {
+      if (Math.abs(s.lat - pivot.lat) < EPS && Math.abs(s.lng - pivot.lng) < EPS) {
+        return s.instruction || null
+      }
+    }
+    return null
+  }
+
+  /**
+   * Silent Routes API refetch triggered after a reroute when the
+   * `useRawInstructions` debug toggle is on. Pulls fresh Google
+   * `navigationInstruction` strings against the current origin (live
+   * coords) and the active destination so the maneuver card / glasses
+   * HUD can keep showing Google's verbatim text through reroutes.
+   * Re-emits `nav:route` and `nav:trip-state` with the zipped steps so
+   * the UI picks up the refreshed strings.
+   */
+  private async refetchInstructionsForLiveRoute(expectedStepCount: number): Promise<void> {
+    if (this.refetchingInstructions) return
+    const origin = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
+    const dest = this.trip.activeDestination
+    if (!origin || !dest) return
+    this.refetchingInstructions = true
+    try {
+      const res = await this.navigation.computeRoute({
+        origin,
+        stops: [dest],
+        mode: this.lastStartOpts?.mode ?? "walking",
+      })
+      const steps = res.routes?.[0]?.steps
+      if (!steps || steps.length === 0) return
+      this.cachedInstructions = steps.map((s) => s.instruction ?? "")
+      // Re-zip into the current live routeSteps so the UI updates.
+      const live = this.trip.routeSteps
+      if (live && live.length > 0) {
+        const merged = live.map((s, i) => ({
+          ...s,
+          instruction:
+            this.cachedInstructions && i < this.cachedInstructions.length
+              ? this.cachedInstructions[i] || null
+              : null,
+        }))
+        this.trip = {...this.trip, routeSteps: merged}
+        this.ui.send("nav:route", {points: this.trip.routePoints ?? [], steps: merged})
+        this.ui.send("nav:trip-state", this.trip)
+        this.refreshHUD()
+      }
+      if (steps.length !== expectedStepCount) {
+        this.appendLog(`raw-instructions: refetch step count ${steps.length} ≠ live ${expectedStepCount}`)
+      }
+    } catch (err) {
+      this.appendLog(`raw-instructions refetch failed: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      this.refetchingInstructions = false
+    }
   }
 
   private formatUpdate(u: NavUpdate): string {
@@ -606,6 +1141,7 @@ export class NavigationController {
   }
 
   private dispose(): void {
+    this.cancelPendingRebuild()
     try {
       this.navigation.stop()
     } catch {
@@ -636,6 +1172,92 @@ function isRealRoadName(s: string | undefined | null): string | null {
 }
 
 /**
+ * Glasses HUD direction arrow for a maneuver. Picks a Unicode glyph
+ * that visually matches the upcoming turn — sharper bends get the
+ * curved arrows, gentle turns get the diagonals, U-turns get the
+ * loopback. Falls back to the pivot's `direction` field (left/right)
+ * when the maneuver string isn't one we recognize, and ultimately to
+ * a straight-ahead `↑`.
+ */
+function arrowFor(maneuver: string | null | undefined, direction: "left" | "right" | null | undefined): string {
+  // Plain arrow glyphs only — the corner-curve variants (↰ ↱) don't
+  // render on the glasses font. Anything left-ish → ←, right-ish → →,
+  // straight / continue / depart / unknown → ↑.
+  const m = (maneuver ?? "").toUpperCase()
+  if (m.includes("LEFT")) return "←"
+  if (m.includes("RIGHT")) return "→"
+  if (direction === "left") return "←"
+  if (direction === "right") return "→"
+  return "↑"
+}
+
+/**
+ * Walking pivot radius (meters). Default SDK walking radius is 7m,
+ * which is tight enough that crossing to the opposite sidewalk at a
+ * 4-way puts you outside the at-turn zone and `onPivot.entered`
+ * never fires. 14m covers all four corners of a typical urban
+ * intersection without being so wide it misfires on adjacent blocks
+ * (block length ≈ 80m). Set as a single static value because the SDK
+ * has no runtime radius setter — same value used for enter and exit.
+ */
+const PIVOT_RADIUS_M_WALKING = 14
+
+// Distance at which the HUD's directional arrow flips from ↑
+// (straight ahead) to ←/→ (the actual turn). Locked to the pivot
+// radius itself so the arrow never claims "turn now" further out
+// than the SDK considers you to be at the turn. Note: in practice
+// crossing this threshold also lands the user in the at-pivot
+// "Now / Turn right onto X" HUD frame, which doesn't render the
+// arrow line — so the ←/→ glyph effectively never shows on screen
+// at this setting. ↑ is what the user sees the entire approach.
+const ARROW_APPROACH_M_WALKING = PIVOT_RADIUS_M_WALKING
+
+/**
+ * Merge the trip-wide pivot radius default into a StartNavigationOptions
+ * payload. Preserves any caller-supplied `pivots` block so an explicit
+ * override from the UI still wins.
+ */
+function withPivotDefaults<T extends {pivots?: {radiusMeters?: number; approachThresholdMeters?: number}}>(opts: T): T {
+  return {
+    ...opts,
+    pivots: {
+      radiusMeters: PIVOT_RADIUS_M_WALKING,
+      ...(opts.pivots ?? {}),
+    },
+  }
+}
+
+// Off-route distance thresholds (meters). Widened from 15/30 to 20/35
+// so opposite-sidewalk crossings at typical urban 4-way intersections
+// don't read as deviations. Walking the far curb across a 4-lane road
+// (~15m wide including parking) lands you ~12-18m from Google's
+// route polyline — narrow enough to fall under the advisory band
+// instead of triggering a spurious rebuild.
+const OFF_ROUTE_ADVISORY_M = 20
+const OFF_ROUTE_TRIGGER_M = 35
+
+/**
+ * Strip the trailing arrival-side hint Google's Routes API appends to
+ * the final step's instruction string (e.g.
+ *   "Turn right onto Octavia St | Destination will be on the left"
+ * becomes
+ *   "Turn right onto Octavia St"
+ * ). The pipe is the canonical delimiter, but we also handle the
+ * occasional period-separated variant. Returns empty string for null
+ * / undefined so the cache zip stays length-aligned with the SDK's
+ * live step list.
+ */
+function cleanInstruction(raw: string | null | undefined): string {
+  if (!raw) return ""
+  // Remove "Destination will be on the left/right" (with or without
+  // a preceding " | " or ". " delimiter). Trim trailing whitespace
+  // and stray punctuation left behind by the removal.
+  return raw
+    .replace(/\s*[|.]?\s*destination will be on the (left|right)\s*\.?\s*$/i, "")
+    .trim()
+}
+
+/**
  * Diagnostic log fired whenever the live trip's onRoute event lands.
  * Mirrors the `[NavPreview]` block the miniapp prints during preview,
  * so we can eyeball-compare preview vs live for the same destination.
@@ -658,16 +1280,12 @@ function logLiveRoute(route: NavRoute): void {
   }
   console.log(`[NavLive] roads: ${roads.join(" → ")}`)
   console.log(
-    `[NavLive] resolution:\n` +
-      annotated.map((a) => `  step ${a.stepIdx} → ${a.name ?? "(none)"}`).join("\n"),
+    `[NavLive] resolution:\n` + annotated.map((a) => `  step ${a.stepIdx} → ${a.name ?? "(none)"}`).join("\n"),
   )
   console.log(
     `[NavLive] steps:\n` +
       steps
-        .map(
-          (s, i) =>
-            `  step ${i}: ${s.road ?? "(unnamed)"} | ${s.maneuver ?? "—"} | ${s.distanceMeters}m`,
-        )
+        .map((s, i) => `  step ${i}: ${s.road ?? "(unnamed)"} | ${s.maneuver ?? "—"} | ${s.distanceMeters}m`)
         .join("\n"),
   )
   const stride = Math.max(1, Math.ceil(polyline.length / 30))

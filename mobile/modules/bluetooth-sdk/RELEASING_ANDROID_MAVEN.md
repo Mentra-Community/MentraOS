@@ -1,9 +1,14 @@
 # Releasing the Android Maven Artifacts
 
-This is the current manual process for publishing the public Android artifacts:
+The normal release path is the GitHub Actions workflow documented in
+`RELEASING_CI.md`. It publishes these public Android artifacts when
+`mobile/modules/bluetooth-sdk/package.json` changes on `dev`:
 
 - `com.mentraglass:bluetooth-sdk`
 - `com.mentraglass:lc3Lib`
+
+Use the manual process below for local smoke checks, emergency recovery, or when
+you need to inspect a Sonatype deployment outside CI.
 
 The source of truth stays in this monorepo under
 `mobile/modules/bluetooth-sdk`. Maven Central is the public artifact mirror, not
@@ -14,18 +19,29 @@ a second source tree.
 Run the release from the branch or commit that contains the complete Android SDK
 feature set for the release. Do not run the publish from a partial split PR
 branch unless that branch intentionally contains every Android source file and
-companion library expected in the public artifacts.
+companion library expected in the public artifacts. In CI, that branch is `dev`
+after the SDK package version bump has merged.
 
 The commands below assume the full MentraOS Android Gradle build layout, where
 the SDK module is included under `mobile/android` as `:mentra-bluetooth-sdk`.
-That is the layout used for the `0.1.7` Maven Central release.
+That is the layout used for Maven Central releases. In a fresh
+checkout where `mobile/android` is not present yet, run
+`cd mobile && cp .env.example .env && bun expo prebuild --platform android`
+after installing dependencies.
+
+The public SDK publication uses `-PmentraPublicSdk=true`. Leave this property
+off for normal MentraOS Android app builds so the app keeps the optional local
+STT, VAD, and Vuzix integrations it needs. With the property enabled, those
+MentraOS-only integrations are compile-only for the SDK artifact and are not
+published as runtime transitive dependencies.
 
 ## Prerequisites
 
 - A clean MentraOS checkout on the release source branch.
 - Java 17 and the Android SDK installed.
 - Push or release approval for publishing `com.mentraglass` artifacts.
-- Sonatype Central credentials and GPG signing configured locally or in CI.
+- Sonatype Central credentials and GPG signing configured locally or in CI. For
+  CI, see `RELEASING_CI.md` for the exact GitHub secret names.
 
 Use `android/gradle.properties.example` as the template. Put real values in
 `~/.gradle/gradle.properties` or CI secrets, not in the repository:
@@ -56,7 +72,8 @@ cd mobile/android
 
 MENTRA_MAVEN_VERSION="${version}" ./gradlew \
   :lc3Lib:publishToMavenLocal \
-  :mentra-bluetooth-sdk:publishToMavenLocal
+  :mentra-bluetooth-sdk:publishToMavenLocal \
+  -PmentraPublicSdk=true
 ```
 
 Use this only as a local smoke check. Consumer validation for a Central release
@@ -74,7 +91,8 @@ From `mobile/android`:
 MENTRA_MAVEN_VERSION="${version}" ./gradlew \
   :lc3Lib:publishReleasePublicationToSonatypeCentralRepository \
   :mentra-bluetooth-sdk:publishReleasePublicationToSonatypeCentralRepository \
-  :mentra-bluetooth-sdk:uploadSonatypeCentralDeployment
+  :mentra-bluetooth-sdk:uploadSonatypeCentralDeployment \
+  -PmentraPublicSdk=true
 ```
 
 The upload task requests a Sonatype Central deployment upload for the
@@ -135,10 +153,9 @@ curl -fsS \
 ```
 
 Then build a consumer app against public repositories. The Partner Kit Android
-example keeps `google()`, `mavenCentral()`, and JitPack configured because the
-SDK has transitive runtime dependencies resolved from those repositories. Remove
-or bypass `mavenLocal()` when checking a completed Central release so the test
-cannot pick up stale local artifacts.
+example should only need `google()` and `mavenCentral()` for a completed public
+release. Remove or bypass `mavenLocal()` when checking a completed Central
+release so the test cannot pick up stale local artifacts.
 
 If the public release is not visible yet, Maven Central mirror propagation can
 lag briefly. Retry after the artifact appears under

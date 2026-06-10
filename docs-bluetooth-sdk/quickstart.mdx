@@ -73,7 +73,6 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven("https://www.jitpack.io")
     }
 }
 ```
@@ -87,18 +86,16 @@ android {
     packaging {
         jniLibs {
             pickFirsts += "**/libc++_shared.so"
-            pickFirsts += "**/libonnxruntime.so"
-            pickFirsts += "**/libonnxruntime4j_jni.so"
         }
     }
 }
 
 dependencies {
-    implementation("com.mentraglass:bluetooth-sdk:0.1.7")
+    implementation("com.mentraglass:bluetooth-sdk:0.1.10")
 }
 ```
 
-The Android artifact is published on Maven Central. Keep `google()` and JitPack in `repositories` for transitive runtime dependency resolution; the SDK's public Android API does not expose Google Play Services or JitPack-only types. The companion LC3 codec artifact resolves transitively as `com.mentraglass:lc3Lib`.
+The Android artifact is published on Maven Central. Keep `google()` and `mavenCentral()` in `repositories`. The companion LC3 codec artifact resolves transitively as `com.mentraglass:lc3Lib`.
 
   </Tab>
   <Tab title="iOS">
@@ -111,14 +108,14 @@ In Xcode, add this package URL:
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Use version `0.1.7` or newer, then add the `MentraBluetoothSDK` product to your app target.
+Use version `0.1.10` or newer, then add the `MentraBluetoothSDK` product to your app target.
 
 For `Package.swift` consumers:
 
 ```swift
 .package(
   url: "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git",
-  from: "0.1.7"
+  from: "0.1.10"
 )
 ```
 

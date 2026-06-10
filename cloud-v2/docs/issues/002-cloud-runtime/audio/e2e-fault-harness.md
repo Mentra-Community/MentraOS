@@ -46,8 +46,8 @@ doppler run -- env \
   REDIS_URL=redis://127.0.0.1:6379/7 \
   AUDIO_PROVIDER=soniox \
   DEV_CORE_PORT=3000 \
-  DEV_AUDIO_HTTP_PORT=3001 \
-  DEV_AUDIO_UDP_PORT=8000 \
+  DEV_RUNTIME_HTTP_PORT=3001 \
+  DEV_RUNTIME_UDP_PORT=8000 \
   DEV_TEST_OEM_PORT=3102 \
   DEV_UDP_ADVERTISE_HOST=<mac-lan-ip> \
   bun scripts/dev-stack.ts

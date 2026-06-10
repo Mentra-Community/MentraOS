@@ -3,13 +3,14 @@ import {motion, useMotionValue, useTransform} from "motion/react"
 
 import {useNavStore} from "@/ui/store/navStore"
 import {bearingDeg, haversineMeters, rdpSmooth} from "@/ui/lib/geometry"
+import {formatDistance} from "@/ui/lib/formatDistance"
 import {MinusIcon, PlusIcon, RecenterIcon} from "@/ui/components/icons"
 
 // Experiment toggle: render the route line with RDP smoothing applied or
 // straight from the raw points Google returned. Flip to false to see the
 // unsmoothed path — useful for verifying turn-dot positions against the
 // actual polyline vertices rather than the visually-smoothed line.
-const SMOOTH_ROUTE_LINE = true
+const SMOOTH_ROUTE_LINE = false
 import type {LatLng} from "@/shared/types"
 import {isDev} from "@/ui/lib/env"
 import {useDevOverride} from "@/ui/lib/devOverride"
@@ -26,6 +27,7 @@ export function NavMap({
   autoFollow = true,
   hideControls = false,
   onLongPress,
+  onPlaceTap,
 }: {
   me: LatLng | null
   destination: LatLng | null
@@ -61,6 +63,15 @@ export function NavMap({
    * search this location"). Parent decides what to do with it.
    */
   onLongPress?: (coord: LatLng) => void
+  /**
+   * Fires when the user taps a built-in Google Maps POI icon (a
+   * Safeway, restaurant, etc). Receives the Google placeId. Parent
+   * resolves it to a PlaceDetails (via the `places:details` RPC) and
+   * decides what to do — typically set it as the selected destination
+   * so the preview drawer opens. Omitted → POI taps fall through to
+   * Google's default place card.
+   */
+  onPlaceTap?: (placeId: string) => void
 }) {
   // Map readiness is local — driven directly by the Google Maps script
   // load. Decoupled from `useNavStore` so a stalled background handshake
@@ -135,6 +146,11 @@ export function NavMap({
   const destMarkerRef = useRef<any | null>(null)
   const routeRef = useRef<any | null>(null)
   const pastRouteRef = useRef<any | null>(null)
+  // Dev: blue connector line from `me` to the closest point on the
+  // route, with a midpoint label showing the distance. Active whenever
+  // a route polyline is present (preview + live).
+  const offRouteLineRef = useRef<any | null>(null)
+  const offRouteLabelRef = useRef<any | null>(null)
   /** Debug: red dots at each detected pivot (turn point). */
   const pivotDotsRef = useRef<any[]>([])
   /** Debug: hovering road-name labels paired with the pivot dots. */
@@ -170,7 +186,10 @@ export function NavMap({
       zoomControl: false,
       gestureHandling: "greedy",
       mapTypeId: "roadmap",
-      clickableIcons: false,
+      // POI icons are tappable so the parent can hook them up as
+      // "pick this Safeway as my destination" (Google-Maps style).
+      // Set false to opt out and suppress the icon hit-area entirely.
+      clickableIcons: true,
       mapId: "e21e99f3286922559250c28e",
     })
 
@@ -204,6 +223,19 @@ export function NavMap({
     container.addEventListener("touchstart", onTouchActive, {passive: true, capture: true})
     container.addEventListener("touchend", onTouchInactive, {passive: true, capture: true})
     container.addEventListener("touchcancel", onTouchInactive, {passive: true, capture: true})
+
+    // POI taps: Google Maps fires `click` with an IconMouseEvent (carries
+    // `placeId`) when the user taps a built-in icon (Safeway, a cafe,
+    // etc). Suppress Google's default place card via e.stop() and let
+    // the parent decide what to do — typically resolve the placeId via
+    // `places:details` and open our own preview drawer.
+    mapRef.current.addListener("click", (e: any) => {
+      const placeId = e?.placeId
+      if (!placeId) return
+      if (typeof e.stop === "function") e.stop()
+      const handler = onPlaceTapRef.current
+      if (handler) handler(placeId)
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready])
 
@@ -220,6 +252,13 @@ export function NavMap({
   // The latest handler is read via a ref so a parent re-render doesn't
   // tear down the listeners.
   const onLongPressRef = useRef(onLongPress)
+  // Same ref pattern for POI taps — the parent typically gates this on
+  // `running` and `isSearching`, both of which re-render often, and we
+  // don't want to detach/reattach the Maps click listener every time.
+  const onPlaceTapRef = useRef(onPlaceTap)
+  useEffect(() => {
+    onPlaceTapRef.current = onPlaceTap
+  }, [onPlaceTap])
   useEffect(() => {
     onLongPressRef.current = onLongPress
   }, [onLongPress])
@@ -603,6 +642,121 @@ export function NavMap({
       routeRef.current?.setMap(null)
     }
   }, [ready, me?.lat, me?.lng, destination?.lat, destination?.lng, routePoints])
+
+  // Dev: blue connector line from `me` → closest point on the route,
+  // with a midpoint label showing the distance. Tears itself down when
+  // there's no route to project onto. Uses the raw (unsmoothed)
+  // polyline so the distance reflects the real route geometry, not the
+  // visually smoothed rendering.
+  useEffect(() => {
+    if (!ready || !mapRef.current) return
+    const g = window.google
+
+    function teardown() {
+      offRouteLineRef.current?.setMap(null)
+      offRouteLineRef.current = null
+      offRouteLabelRef.current?.setMap(null)
+      offRouteLabelRef.current = null
+    }
+
+    if (!me || !routePoints || routePoints.length < 2) {
+      teardown()
+      return
+    }
+
+    let bestSegment = 0
+    let bestT = 0
+    let minDist = Infinity
+    for (let i = 0; i < routePoints.length - 1; i++) {
+      const ax = routePoints[i].lng, ay = routePoints[i].lat
+      const bx = routePoints[i + 1].lng, by = routePoints[i + 1].lat
+      const px = me.lng, py = me.lat
+      const dx = bx - ax, dy = by - ay
+      const lenSq = dx * dx + dy * dy
+      const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq))
+      const cx = ax + t * dx, cy = ay + t * dy
+      const d = Math.hypot(px - cx, py - cy)
+      if (d < minDist) { minDist = d; bestSegment = i; bestT = t }
+    }
+    const projected: LatLng = {
+      lat: routePoints[bestSegment].lat + bestT * (routePoints[bestSegment + 1].lat - routePoints[bestSegment].lat),
+      lng: routePoints[bestSegment].lng + bestT * (routePoints[bestSegment + 1].lng - routePoints[bestSegment].lng),
+    }
+    const distMeters = haversineMeters(me, projected)
+    const midpoint: LatLng = {
+      lat: (me.lat + projected.lat) / 2,
+      lng: (me.lng + projected.lng) / 2,
+    }
+
+    const path = [
+      new g.maps.LatLng(me.lat, me.lng),
+      new g.maps.LatLng(projected.lat, projected.lng),
+    ]
+    if (!offRouteLineRef.current) {
+      offRouteLineRef.current = new g.maps.Polyline({
+        map: mapRef.current,
+        path,
+        strokeColor: "#1E88FF",
+        strokeOpacity: 0.95,
+        strokeWeight: 3,
+        zIndex: 4,
+      })
+    } else {
+      offRouteLineRef.current.setPath(path)
+      offRouteLineRef.current.setMap(mapRef.current)
+    }
+
+    class OffRouteLabelOverlay extends g.maps.OverlayView {
+      private pos: any
+      private text: string
+      private div: HTMLDivElement | null = null
+      constructor(pos: any, text: string) {
+        super()
+        this.pos = pos
+        this.text = text
+      }
+      onAdd() {
+        const div = document.createElement("div")
+        div.style.cssText =
+          "position:absolute;transform:translate(-50%,-50%);pointer-events:none;" +
+          "padding:2px 6px;border-radius:6px;background:#1E88FF;color:#FFFFFF;" +
+          "font:600 11px/1.2 system-ui,sans-serif;white-space:nowrap;" +
+          "box-shadow:0 2px 6px #00000040;border:1px solid #FFFFFF99;z-index:5"
+        div.textContent = this.text
+        this.div = div
+        this.getPanes()!.overlayMouseTarget.appendChild(div)
+      }
+      draw() {
+        if (!this.div) return
+        const proj = this.getProjection()
+        const pt = proj?.fromLatLngToDivPixel(this.pos)
+        if (!pt) return
+        this.div.style.left = `${pt.x}px`
+        this.div.style.top = `${pt.y}px`
+      }
+      setLabel(pos: any, text: string) {
+        this.pos = pos
+        if (this.div) this.div.textContent = text
+        this.text = text
+        this.draw()
+      }
+      onRemove() {
+        this.div?.parentNode?.removeChild(this.div)
+        this.div = null
+      }
+    }
+    const labelText = formatDistance(distMeters)
+    const labelPos = new g.maps.LatLng(midpoint.lat, midpoint.lng)
+    if (!offRouteLabelRef.current) {
+      const overlay = new OffRouteLabelOverlay(labelPos, labelText)
+      overlay.setMap(mapRef.current)
+      offRouteLabelRef.current = overlay
+    } else {
+      offRouteLabelRef.current.setLabel(labelPos, labelText)
+    }
+
+    return teardown
+  }, [ready, me?.lat, me?.lng, routePoints])
 
   // Debug overlay: render a red dot at each turn point. Lets us visually
   // verify that turns land where they belong.

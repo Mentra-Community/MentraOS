@@ -31,6 +31,8 @@ export {getMentraOSGlobals} from "./globals"
 export type {MentraOSGlobals, MiniappCapsuleMenuRect, MiniappColorScheme, MiniappSafeAreaInsets} from "./globals"
 
 export {MiniappErrorCode, MiniappRequestType, MiniappResponseType, MiniappStreamType} from "./protocol"
+export {CLOUD_STATUS_STREAM} from "./modules/cloud"
+export type {CloudClientAudioTransport, CloudClientConnectionStatus, CloudClientStatus} from "./modules/cloud"
 
 // Hardware requirement types — re-exported from @mentra/types so miniapp
 // authors can type their miniapp.json manifest without pulling in the types
@@ -82,6 +84,10 @@ export type {
 } from "./modules/events"
 export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "./modules/speaker"
 export type {
+  CameraFovPreset,
+  CameraFovRequest,
+  CameraFovResult,
+  CameraRoiPosition,
   PhotoTaken,
   SetCameraFovOptions,
   StartVideoRecordingOptions,
@@ -89,8 +95,18 @@ export type {
   VideoRecordingStarted,
 } from "./modules/camera"
 export type {DashboardMode} from "./modules/dashboard"
+export type {CloudModule} from "./modules/cloud"
 export type {LedColor, LedControlOptions} from "./modules/led"
-export type {StartUnmanagedOptions, StartManagedOptions, ManagedStreamResult, StreamStatus} from "./modules/stream"
+export type {
+  ManagedStreamResult,
+  StartManagedOptions,
+  StartUnmanagedOptions,
+  StreamAudioConfig,
+  StreamPublisherStartResult,
+  StreamResolvedConfig,
+  StreamStatus,
+  StreamVideoConfig,
+} from "./modules/stream"
 export type {ShareOptions, ShareResult, DownloadOptions, DownloadResult} from "./modules/system"
 
 // Domain module types — exported so consumers can type module references

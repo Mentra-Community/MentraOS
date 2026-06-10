@@ -39,6 +39,15 @@ export interface DisplayPreview {
   timestamp: number
 }
 
+export type CloudClientConnectionStatus = "connected" | "connecting" | "reconnecting" | "disconnected"
+export type CloudClientAudioTransport = "udp" | "ws" | "offline" | "none"
+
+/** Phone-owned cloud-client status surfaced through session.cloud. */
+export interface CloudClientStatus {
+  status: CloudClientConnectionStatus
+  audioTransport: CloudClientAudioTransport
+}
+
 /** A single live-transcript broadcast: one interim/final result. */
 export interface LiveTranscript {
   type: "interim" | "final"
@@ -54,4 +63,5 @@ export interface CaptionsSnapshot {
   settings: CaptionSettings
   transcripts: Transcript[]
   displayPreview: DisplayPreview | null
+  cloudStatus: CloudClientStatus
 }

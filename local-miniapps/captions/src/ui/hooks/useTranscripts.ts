@@ -1,8 +1,8 @@
 import {useEffect, useRef, useState} from "react"
 
-import type {DisplayPreview, LiveTranscript, Transcript} from "../../shared/types"
+import type {CloudClientStatus, DisplayPreview, LiveTranscript, Transcript} from "../../shared/types"
 
-export type {Transcript, DisplayPreview} from "../../shared/types"
+export type {CloudClientStatus, Transcript, DisplayPreview} from "../../shared/types"
 
 /**
  * useTranscripts — thin hook over the background channel bus.
@@ -22,6 +22,10 @@ export function useTranscripts() {
   const [transcripts, setTranscripts] = useState<Transcript[]>([])
   const [connected, setConnected] = useState(false)
   const [displayPreview, setDisplayPreview] = useState<DisplayPreview | null>(null)
+  const [cloudStatus, setCloudStatus] = useState<CloudClientStatus>({
+    status: "disconnected",
+    audioTransport: "none",
+  })
   const [isRecording, setIsRecording] = useState(false)
   const mountedRef = useRef(true)
 
@@ -35,10 +39,12 @@ export function useTranscripts() {
         const snap = payload as {
           transcripts: Transcript[]
           displayPreview: DisplayPreview | null
+          cloudStatus?: CloudClientStatus
         }
         if (!mountedRef.current) return
         setTranscripts(snap.transcripts || [])
         setDisplayPreview(snap.displayPreview ?? null)
+        if (snap.cloudStatus) setCloudStatus(snap.cloudStatus)
         setConnected(true)
       }),
     )
@@ -54,6 +60,13 @@ export function useTranscripts() {
       on("captions:display-preview", (payload) => {
         if (!mountedRef.current) return
         setDisplayPreview(payload as DisplayPreview)
+      }),
+    )
+
+    offs.push(
+      on("captions:cloud-status", (payload) => {
+        if (!mountedRef.current) return
+        setCloudStatus(payload as CloudClientStatus)
       }),
     )
 
@@ -91,6 +104,7 @@ export function useTranscripts() {
     clearTranscripts,
     reconnect,
     displayPreview,
+    cloudStatus,
   }
 }
 

@@ -241,7 +241,9 @@ object DeviceStore {
             }
             "bluetooth" to "imu_enabled" -> {
                 (value as? Boolean)?.let { enabled ->
-                    DeviceManager.getInstance().sgc?.setImuEnabled(enabled)
+                    CoroutineScope(Dispatchers.Main).launch {
+                        DeviceManager.getInstance().sgc?.setImuEnabled(enabled)
+                    }
                 }
             }
             "bluetooth" to "menu_apps" -> {

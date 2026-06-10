@@ -417,7 +417,7 @@ export const SETTINGS: Record<string, Setting> = {
   },
   use_native_dashboard: {
     key: "use_native_dashboard",
-    defaultValue: () => false,
+    defaultValue: () => true,
     writable: true,
     saveOnServer: true,
     persist: true,

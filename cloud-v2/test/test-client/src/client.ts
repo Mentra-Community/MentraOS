@@ -275,6 +275,10 @@ export class TestClient {
     this.sendAudio(asciiBytes(`${UDP_LIVENESS_PROBE_PREFIX}${probeId}`));
   }
 
+  sendUdpProbeTo(target: { host: string; port: number }, probeId: string): void {
+    this.sendAudioTo(target, asciiBytes(`${UDP_LIVENESS_PROBE_PREFIX}${probeId}`));
+  }
+
   /**
    * Send the same packet shape to an explicit host:port. Used by multi-pod
    * tests to deliberately deliver a packet to a pod that doesn't own the

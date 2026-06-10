@@ -8,6 +8,7 @@ import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.MediaRecorder;
 import android.util.Log;
 import android.util.Size;
+import com.mentra.asg_client.camera.CameraConstants;
 import com.mentra.asg_client.camera.policy.CameraSizeSelector;
 import com.mentra.asg_client.camera.policy.PhotoResolutionPolicy;
 import com.mentra.asg_client.settings.VideoSettings;
@@ -122,6 +123,22 @@ public final class CameraOpener {
             Size[] jpegSizes, boolean fromSdk, String requestedSizeTier) {
         if (jpegSizes == null || jpegSizes.length == 0) {
             return null;
+        }
+        if (CameraConstants.SIZE_MAX.equals(requestedSizeTier)) {
+            Size maxSize = CameraSizeSelector.largestSize(jpegSizes);
+            if (maxSize == null) {
+                maxSize = jpegSizes[0];
+            }
+            Log.d(
+                    TAG,
+                    "Selected MAX JPEG size: "
+                            + maxSize.getWidth()
+                            + "x"
+                            + maxSize.getHeight()
+                            + " (isFromSdk: "
+                            + fromSdk
+                            + ")");
+            return maxSize;
         }
         Size targetPhotoSize = PhotoResolutionPolicy.targetSize(fromSdk, requestedSizeTier);
         Size jpegSize =

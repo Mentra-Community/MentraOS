@@ -792,6 +792,7 @@ class AppRegistry {
         hardwareRequirements,
         isMiniappDev: true,
         devUrl: rec.devUrl,
+        devPort: rec.devPort,
         onStart: () => saveLocalAppRunningState(rec.packageName, true),
         onStop: () => saveLocalAppRunningState(rec.packageName, false),
       }

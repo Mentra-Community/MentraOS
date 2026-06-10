@@ -223,6 +223,7 @@ export default function Compositor() {
           appName={renderedApp.name}
           version={renderedApp.version}
           devUrl={renderedApp.devUrl}
+          devPort={renderedApp.devPort != null ? String(renderedApp.devPort) : undefined}
           iconUrl={renderedApp.logoUrl}
           onExit={handleBack}
           onShouldCapture={handleShouldCapture}

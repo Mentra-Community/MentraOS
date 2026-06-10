@@ -7,7 +7,6 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore} from "@/stores/glasses"
 import {ThemedStyle} from "@/theme"
-import GlassView from "@/components/ui/GlassView"
 
 interface GlassesDisplayMirrorProps {
   fallbackMessage?: string
@@ -199,6 +198,8 @@ const GlassesDisplayMirror: React.FC<GlassesDisplayMirrorProps> = ({
           </View>
         )
       }
+      case "clear_view":
+        return null
       default:
         return <Text style={[styles.cardContent, textStyle]}>Unknown layout type: {layout.layoutType}</Text>
     }

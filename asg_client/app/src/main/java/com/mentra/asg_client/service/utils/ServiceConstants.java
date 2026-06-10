@@ -1,38 +1,44 @@
 package com.mentra.asg_client.service.utils;
 
 /**
- * Constants used throughout the service package.
- * Centralizes all service-related constants for easy maintenance.
+ * Constants used throughout the service package. Centralizes all service-related constants for easy
+ * maintenance.
  */
 public final class ServiceConstants {
-    
+
     // Prevent instantiation
     private ServiceConstants() {}
-    
+
     // ---------------------------------------------
     // Service Actions
     // ---------------------------------------------
     public static final String ACTION_START_CORE = "ACTION_START_CORE";
     public static final String ACTION_STOP_CORE = "ACTION_STOP_CORE";
-    public static final String ACTION_START_FOREGROUND_SERVICE = "MY_ACTION_START_FOREGROUND_SERVICE";
+    public static final String ACTION_START_FOREGROUND_SERVICE =
+            "MY_ACTION_START_FOREGROUND_SERVICE";
     public static final String ACTION_STOP_FOREGROUND_SERVICE = "MY_ACTION_STOP_FOREGROUND_SERVICE";
-    public static final String ACTION_RESTART_SERVICE = "com.mentra.asg_client.ACTION_RESTART_SERVICE";
-    public static final String ACTION_RESTART_COMPLETE = "com.mentra.asg_client.ACTION_RESTART_COMPLETE";
-    public static final String ACTION_RESTART_CAMERA = "com.mentra.asg_client.ACTION_RESTART_CAMERA";
+    public static final String ACTION_RESTART_SERVICE =
+            "com.mentra.asg_client.ACTION_RESTART_SERVICE";
+    public static final String ACTION_RESTART_COMPLETE =
+            "com.mentra.asg_client.ACTION_RESTART_COMPLETE";
+    public static final String ACTION_RESTART_CAMERA =
+            "com.mentra.asg_client.ACTION_RESTART_CAMERA";
     public static final String ACTION_START_OTA_UPDATER = "ACTION_START_OTA_UPDATER";
-    
+
     // ---------------------------------------------
     // OTA Update Actions
     // ---------------------------------------------
-    public static final String ACTION_DOWNLOAD_PROGRESS = "com.augmentos.otaupdater.ACTION_DOWNLOAD_PROGRESS";
-    public static final String ACTION_INSTALLATION_PROGRESS = "com.augmentos.otaupdater.ACTION_INSTALLATION_PROGRESS";
-    
+    public static final String ACTION_DOWNLOAD_PROGRESS =
+            "com.mentra.recovery.ACTION_DOWNLOAD_PROGRESS";
+    public static final String ACTION_INSTALLATION_PROGRESS =
+            "com.mentra.recovery.ACTION_INSTALLATION_PROGRESS";
+
     // ---------------------------------------------
     // Service Health Monitoring
     // ---------------------------------------------
     public static final String ACTION_HEARTBEAT = "com.mentra.asg_client.ACTION_HEARTBEAT";
     public static final String ACTION_HEARTBEAT_ACK = "com.mentra.asg_client.ACTION_HEARTBEAT_ACK";
-    
+
     // ---------------------------------------------
     // Command Types
     // ---------------------------------------------
@@ -57,7 +63,7 @@ public final class ServiceConstants {
     public static final String COMMAND_OTA_UPDATE_RESPONSE = "ota_update_response";
     public static final String COMMAND_SET_PHOTO_MODE = "set_photo_mode";
     public static final String COMMAND_BUTTON_MODE_SETTING = "button_mode_setting";
-    
+
     // ---------------------------------------------
     // Response Types
     // ---------------------------------------------
@@ -76,40 +82,40 @@ public final class ServiceConstants {
     public static final String RESPONSE_PHOTO_MODE_ACK = "photo_mode_ack";
     public static final String RESPONSE_SWIPE_REPORT = "swipe_report";
     public static final String RESPONSE_KEEP_ALIVE_ACK = "keep_alive_ack";
-    
+
     // ---------------------------------------------
     // Media Types
     // ---------------------------------------------
     public static final int MEDIA_TYPE_PHOTO = 1;
     public static final int MEDIA_TYPE_VIDEO = 2;
-    
+
     // ---------------------------------------------
     // Transfer Methods
     // ---------------------------------------------
     public static final String TRANSFER_METHOD_BLE = "ble";
     public static final String TRANSFER_METHOD_AUTO = "auto";
     public static final String TRANSFER_METHOD_DIRECT = "direct";
-    
+
     // ---------------------------------------------
     // Photo Modes
     // ---------------------------------------------
     public static final String PHOTO_MODE_NORMAL = "normal";
     public static final String PHOTO_MODE_HDR = "hdr";
     public static final String PHOTO_MODE_NIGHT = "night";
-    
+
     // ---------------------------------------------
     // Button Press Types
     // ---------------------------------------------
     public static final String BUTTON_PRESS_SHORT = "short";
     public static final String BUTTON_PRESS_LONG = "long";
-    
+
     // ---------------------------------------------
     // Timeouts and Delays
     // ---------------------------------------------
     public static final long WIFI_STATE_DEBOUNCE_MS = 1000;
     public static final long GLASSES_READY_DELAY_MS = 3000;
     public static final long HEARTBEAT_INTERVAL_MS = 30000;
-    
+
     // ---------------------------------------------
     // Default Values
     // ---------------------------------------------
@@ -117,7 +123,7 @@ public final class ServiceConstants {
     public static final String DEFAULT_BUILD_NUMBER = "1";
     public static final int DEFAULT_BATTERY_LEVEL = -1;
     public static final boolean DEFAULT_CHARGING_STATE = false;
-    
+
     // ---------------------------------------------
     // Error Messages
     // ---------------------------------------------
@@ -129,7 +135,7 @@ public final class ServiceConstants {
     public static final String ERROR_NOT_RECORDING = "not_recording";
     public static final String ERROR_ALREADY_RECORDING = "already_recording";
     public static final String ERROR_JSON_ERROR = "json_error";
-    
+
     // ---------------------------------------------
     // Success Messages
     // ---------------------------------------------
@@ -140,7 +146,7 @@ public final class ServiceConstants {
     public static final String SUCCESS_PHOTO_CAPTURED = "photo_captured";
     public static final String SUCCESS_WIFI_CONNECTED = "wifi_connected";
     public static final String SUCCESS_WIFI_DISCONNECTED = "wifi_disconnected";
-    
+
     // ---------------------------------------------
     // Status Messages
     // ---------------------------------------------
@@ -151,7 +157,7 @@ public final class ServiceConstants {
     public static final String STATUS_ERROR = "error";
     public static final String STATUS_SUCCESS = "success";
     public static final String STATUS_FAILED = "failed";
-    
+
     // ---------------------------------------------
     // Configuration Keys
     // ---------------------------------------------
@@ -160,7 +166,7 @@ public final class ServiceConstants {
     public static final String CONFIG_BUTTON_MODE = "button_mode";
     public static final String CONFIG_WIFI_SSID = "wifi_ssid";
     public static final String CONFIG_WIFI_PASSWORD = "wifi_password";
-    
+
     // ---------------------------------------------
     // Notification
     // ---------------------------------------------
@@ -168,19 +174,19 @@ public final class ServiceConstants {
     public static final String NOTIFICATION_APP_NAME = "ASG Client";
     public static final String NOTIFICATION_DESCRIPTION = "Running in foreground";
     public static final int NOTIFICATION_DEFAULT_ID = 1001;
-    
+
     // ---------------------------------------------
     // Web Server
     // ---------------------------------------------
     public static final int CAMERA_WEB_SERVER_PORT = 8089;
     public static final String CAMERA_WEB_SERVER_NAME = "CameraWebServer";
-    
+
     // ---------------------------------------------
     // K900 Protocol
     // ---------------------------------------------
     public static final byte K900_START_MARKER_1 = 0x23; // #
     public static final byte K900_START_MARKER_2 = 0x23; // #
-    public static final byte K900_END_MARKER_1 = 0x24;   // $
-    public static final byte K900_END_MARKER_2 = 0x24;   // $
+    public static final byte K900_END_MARKER_1 = 0x24; // $
+    public static final byte K900_END_MARKER_2 = 0x24; // $
     public static final int K900_PAYLOAD_START = 5;
-} 
+}

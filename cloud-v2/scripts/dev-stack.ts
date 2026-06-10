@@ -1,20 +1,20 @@
 #!/usr/bin/env bun
 /**
- * Local cloud-v2 dev stack — boots test-oem + core + audio as real listening
+ * Local cloud-v2 dev stack — boots test-oem + core + runtime as real listening
  * servers on fixed, simulator-reachable ports and STAYS UP. Use this to point
  * the real Mentra mobile app (iOS simulator) at a local cloud-v2.
  *
  * The iOS simulator shares the Mac's loopback, so `127.0.0.1` from the app
  * reaches these servers directly.
  *
- *   test-oem : http://127.0.0.1:3100   (mint OEM JWTs)
- *   core     : http://127.0.0.1:3000   (token exchange, REST)
- *   audio    : ws://127.0.0.1:3001/ws/session   (+ UDP :8000)
+ *   test-oem : http://127.0.0.1:3102   (mint OEM JWTs)
+ *   core     : http://127.0.0.1:3000   (client auth, REST)
+ *   runtime  : ws://127.0.0.1:3001/ws/session   (+ UDP :8000)
  *
  * Auth flow the mobile replicates (same as the test client):
  *   1. POST {testOem}/test-oem/mint-jwt  -> OEM JWT
- *   2. POST {core}/api/oem/oauth/token   -> v2 access token
- *   3. open ws://{audio}/ws/session?token=<access_token>
+ *   2. POST {core}/api/client/auth/exchange -> v2 access token
+ *   3. open ws://{runtime}/ws/session?token=<access_token>
  *
  * Prereqs (same as the smoke test):
  *   - Local Mongo + Redis: `bun run setup:test`
@@ -28,19 +28,24 @@
 
 import crypto from "node:crypto";
 import { Buffer } from "node:buffer";
+import os from "node:os";
 import { startCore } from "../packages/core/src/index";
-import { startAudio } from "../packages/runtime/src/index";
+import { startRuntime } from "../packages/runtime/src/index";
 import { startTestOem } from "../test/test-oem/src/index";
 import { OemModel } from "../packages/core/src/models/oem.model";
 
 const PORT_CORE = Number(process.env.DEV_CORE_PORT ?? 3000);
-const PORT_AUDIO_HTTP = Number(process.env.DEV_AUDIO_HTTP_PORT ?? 3001);
-const PORT_AUDIO_UDP = Number(process.env.DEV_AUDIO_UDP_PORT ?? 8000);
-const PORT_TEST_OEM = Number(process.env.DEV_TEST_OEM_PORT ?? 3100);
+const PORT_RUNTIME_HTTP = Number(
+  process.env.DEV_RUNTIME_HTTP_PORT ?? process.env.DEV_AUDIO_HTTP_PORT ?? 3001,
+);
+const PORT_RUNTIME_UDP = Number(
+  process.env.DEV_RUNTIME_UDP_PORT ?? process.env.DEV_AUDIO_UDP_PORT ?? 8000,
+);
+const PORT_TEST_OEM = Number(process.env.DEV_TEST_OEM_PORT ?? 3102);
 const OEM_ID = process.env.DEV_OEM_ID ?? "dev-local-oem";
-const ADVERTISE_HOST = process.env.DEV_UDP_ADVERTISE_HOST ?? "127.0.0.1";
+const ADVERTISE_HOST = resolveAdvertiseHost();
 
-// Fresh Ed25519 keypair for this run, shared across core (signs) and audio
+// Fresh Ed25519 keypair for this run, shared across core (signs) and runtime
 // (verifies). Set before shared/auth caches it. (Same pattern as the smoke.)
 {
   const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
@@ -68,15 +73,18 @@ resetMentraKeyCache();
 resetSigningKeyCache();
 
 const provider = process.env.AUDIO_PROVIDER ?? "mock";
-console.log("[dev-stack] booting test-oem, core, audio…");
+// Worker threads read AUDIO_PROVIDER from process.env. If the user relies on
+// the dev-stack default, make that default explicit before startRuntime().
+process.env.AUDIO_PROVIDER = provider;
+console.log("[dev-stack] booting test-oem, core, runtime…");
 
 const testOem = await startTestOem({ port: PORT_TEST_OEM, oemId: OEM_ID });
 const core = await startCore({ port: PORT_CORE });
-const audio = await startAudio({
-  httpPort: PORT_AUDIO_HTTP,
-  udpPort: PORT_AUDIO_UDP,
+await startRuntime({
+  httpPort: PORT_RUNTIME_HTTP,
+  udpPort: PORT_RUNTIME_UDP,
   udpAdvertisedHost: ADVERTISE_HOST,
-  udpAdvertisedPort: PORT_AUDIO_UDP,
+  udpAdvertisedPort: PORT_RUNTIME_UDP,
   workerCount: 1,
 });
 
@@ -93,10 +101,13 @@ console.log("");
 console.log("[dev-stack] cloud-v2 is up:");
 console.log(`  test-oem : ${testOem.url}`);
 console.log(`  core     : ${core.url}`);
-console.log(`  audio WS : ws://${ADVERTISE_HOST}:${PORT_AUDIO_HTTP}/ws/session`);
-console.log(`  audio UDP: ${ADVERTISE_HOST}:${PORT_AUDIO_UDP}`);
+console.log(`  runtime WS : ws://${ADVERTISE_HOST}:${PORT_RUNTIME_HTTP}/ws/session`);
+console.log(`  runtime UDP: ${ADVERTISE_HOST}:${PORT_RUNTIME_UDP}`);
 console.log(`  provider : ${provider}`);
 console.log(`  oemId    : ${testOem.oemId}`);
+if (!process.env.DEV_UDP_ADVERTISE_HOST) {
+  console.log("  udp host : auto-detected; override with DEV_UDP_ADVERTISE_HOST if needed");
+}
 console.log("");
 
 // === One-shot self-check: the exact external flow the mobile will run. ===
@@ -113,6 +124,41 @@ await new Promise<never>(() => {});
 
 // === Helpers ===
 
+/**
+ * Pick a phone-reachable UDP host for local dev.
+ *
+ * TCP endpoints can be reached through adb reverse / simulator loopback, but
+ * UDP cannot. Physical phones need the laptop's LAN address in connection.ack,
+ * so defaulting to 127.0.0.1 makes Cloud V2 fall back to WebSocket audio.
+ */
+function resolveAdvertiseHost(): string {
+  const explicit = process.env.DEV_UDP_ADVERTISE_HOST;
+  if (explicit && explicit !== "auto") return explicit;
+
+  const candidates = Object.entries(os.networkInterfaces()).flatMap(([name, addrs]) =>
+    (addrs ?? [])
+      .filter((addr) => addr.family === "IPv4" && !addr.internal)
+      .map((addr) => ({name, address: addr.address, score: scoreInterface(name, addr.address)})),
+  );
+
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0]?.address ?? "127.0.0.1";
+}
+
+function scoreInterface(name: string, address: string): number {
+  let score = 0;
+  if (isPrivateIpv4(address)) score += 100;
+  if (name === "en0" || name === "en1") score += 50;
+  if (/^(bridge|docker|vboxnet|vmnet|awdl|llw|utun)/.test(name)) score -= 100;
+  if (address.startsWith("169.254.")) score -= 50;
+  return score;
+}
+
+function isPrivateIpv4(address: string): boolean {
+  const [a, b] = address.split(".").map((part) => Number(part));
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
 /** Mint an OEM JWT then exchange it at core for a v2 access token. */
 async function mintAccessToken(oemUserId: string): Promise<string> {
   const mint = await fetch(`${testOem.url}/test-oem/mint-jwt`, {
@@ -123,7 +169,7 @@ async function mintAccessToken(oemUserId: string): Promise<string> {
   if (!mint.ok) throw new Error(`mint-jwt failed: ${mint.status}`);
   const { jwt } = (await mint.json()) as { jwt: string };
 
-  const ex = await fetch(`${core.url}/api/oem/oauth/token`, {
+  const ex = await fetch(`${core.url}/api/client/auth/exchange`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -147,28 +193,46 @@ async function selfCheck(): Promise<void> {
     `[dev-stack] sample access token (1h):\n  ${token}\n`,
   );
 
-  const wsUrl = `ws://${ADVERTISE_HOST}:${PORT_AUDIO_HTTP}/ws/session?token=${encodeURIComponent(token)}`;
+  const wsUrl = `ws://${ADVERTISE_HOST}:${PORT_RUNTIME_HTTP}/ws/session?token=${encodeURIComponent(token)}`;
   const ws = new WebSocket(wsUrl);
 
   const got = await new Promise<boolean>((resolve) => {
     let sessionTag = 0;
     const timer = setTimeout(() => resolve(false), 5000);
+    ws.onopen = () => {
+      ws.send(
+        JSON.stringify({
+          v: 2,
+          type: "connection.init",
+          timestamp: Date.now(),
+          payload: {
+            protocolVersion: "2.0.0",
+            audio: {
+              codec: "lc3",
+              sampleRate: 16000,
+              initialSubscriptions: [
+                {
+                  kind: "transcription",
+                  language: { mode: "auto" },
+                },
+              ],
+            },
+          },
+        }),
+      );
+    };
     ws.onmessage = (ev) => {
       const raw = typeof ev.data === "string" ? ev.data : null;
       if (!raw) return;
-      const msg = JSON.parse(raw) as { type: string; sessionTag?: number };
-      if (msg.type === "CONNECTION_ACK") {
-        sessionTag = msg.sessionTag ?? 0;
-        console.log("[dev-stack] self-check: CONNECTION_ACK via ?token= OK");
-        ws.send(
-          JSON.stringify({
-            type: "phone_subscription_update",
-            subscriptions: ["transcription:en-US"],
-            timestamp: new Date().toISOString(),
-          }),
-        );
+      const msg = JSON.parse(raw) as {
+        type: string;
+        payload?: { audio?: { sessionTag?: number } };
+      };
+      if (msg.type === "connection.ack") {
+        sessionTag = msg.payload?.audio?.sessionTag ?? 0;
+        console.log("[dev-stack] self-check: connection.ack via ?token= OK");
         // For the mock provider, a binary audio frame yields a transcript we
-        // can confirm round-trips as `data_stream`.
+        // can confirm round-trips as a transcript result.
         if (provider === "mock") {
           setTimeout(() => {
             const pkt = Buffer.alloc(6 + 40);
@@ -183,9 +247,9 @@ async function selfCheck(): Promise<void> {
           resolve(true);
         }
       }
-      if (msg.type === "data_stream") {
+      if (msg.type === "audio.transcription") {
         clearTimeout(timer);
-        console.log("[dev-stack] self-check: data_stream received OK");
+        console.log("[dev-stack] self-check: audio.transcription received OK");
         resolve(true);
       }
     };

@@ -12,7 +12,14 @@
  * captions UI never needs request/response RPC.
  */
 
-import type {CaptionSettings, CaptionsSnapshot, DisplayPreview, LiveTranscript, Transcript} from "./types"
+import type {
+  CaptionSettings,
+  CaptionsSnapshot,
+  CloudClientStatus,
+  DisplayPreview,
+  LiveTranscript,
+  Transcript,
+} from "./types"
 
 export interface Channels {
   // ── background → UI ────────────────────────────────────────────────────
@@ -27,6 +34,8 @@ export interface Channels {
   "captions:display-preview": DisplayPreview
   /** Settings update (replaces SSE settings_update). */
   "captions:settings-update": CaptionSettings
+  /** Phone-owned cloud-client status update. */
+  "captions:cloud-status": CloudClientStatus
 
   // ── UI → background ────────────────────────────────────────────────────
 
