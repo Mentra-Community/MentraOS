@@ -7,7 +7,7 @@ icon: "microphone"
 The Bluetooth SDK exposes microphone input controls, microphone audio callbacks, local transcription events, and Mentra Live media-volume helpers. Speaker playback is separate: your app plays audio with normal Android, iOS, or React Native audio APIs, and the phone OS routes that audio to Mentra Live when the glasses are connected as the Bluetooth media output.
 
 <Info>
-Mentra Live and G2 both have microphones. Mentra Live has a speaker; G2 does not.
+Mentra Live has microphone input and speaker playback support.
 </Info>
 
 ## Microphone Input
@@ -195,7 +195,20 @@ let session = AVAudioSession.sharedInstance()
 try session.setCategory(.playback, mode: .default, options: [.duckOthers])
 try session.setActive(true)
 
-let player = AVPlayer(url: audioUrl)
+let item = AVPlayerItem(url: audioUrl)
+let player = AVPlayer(playerItem: item)
+var playbackEndObserver: NSObjectProtocol?
+playbackEndObserver = NotificationCenter.default.addObserver(
+    forName: .AVPlayerItemDidPlayToEndTime,
+    object: item,
+    queue: .main
+) { _ in
+    sdk.setOwnAppAudioPlaying(false)
+    if let observer = playbackEndObserver {
+        NotificationCenter.default.removeObserver(observer)
+    }
+}
+
 sdk.setOwnAppAudioPlaying(true)
 player.play()
 ```
