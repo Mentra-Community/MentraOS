@@ -17,8 +17,27 @@ import {readdirSync, readFileSync} from "node:fs"
 import {join, relative} from "node:path"
 
 const BASE = process.env.MENTRA_AGENT_URL ?? "http://localhost:8787"
+const EMU = process.env.MENTRA_AGENT_EMULATOR ?? "emulator-5554"
 const APP_DIR = join(import.meta.dir, "..", "..", "mobile", "src", "app")
 const SETTLE_MS = 1500
+
+/**
+ * Detect (and auto-dismiss) a SYSTEM dialog covering the app. Runtime
+ * permission prompts and native alerts render OUTSIDE the React tree, so the
+ * error channel and currentRoute are blind to them — a dialog can make every
+ * route look "clean" while really sitting on a prompt. uiautomator is the only
+ * way to see system UI; this is the one place the harness must look at pixels.
+ * Returns true if a dialog was found (and a best-effort allow/dismiss tapped),
+ * which the caller treats as "results from here are suspect until cleared".
+ */
+function systemDialogPresent(): boolean {
+  const dump = Bun.spawnSync(["adb", "-s", EMU, "shell", "uiautomator", "dump", "/sdcard/agent-ui.xml"])
+  if (dump.exitCode !== 0) return false
+  const xml = Bun.spawnSync(["adb", "-s", EMU, "shell", "cat", "/sdcard/agent-ui.xml"]).stdout.toString()
+  // The app's own package owns its UI; a foreground window from com.android.*
+  // (permissioncontroller, systemui) is a system dialog over the app.
+  return /com\.android\.(permissioncontroller|systemui|packageinstaller)/.test(xml)
+}
 
 async function rpc(method: string, params?: unknown, timeoutMs?: number): Promise<unknown> {
   const res = await fetch(`${BASE}/rpc`, {
@@ -175,6 +194,16 @@ if (process.argv.includes("--selftest")) {
     console.error(`error-channel self-test: FAIL — ${(err as Error).message}`)
     process.exit(1)
   }
+}
+
+// A system dialog (permission prompt) over the app makes every route look
+// clean while really covering a prompt. Catch it up front so a run can't
+// silently report green from behind a dialog. Pre-grant via setup-emulator.sh
+// to avoid it entirely.
+if (systemDialogPresent()) {
+  console.error("ABORT: a system dialog (likely a permission prompt) is covering the app.")
+  console.error("       run tools/mentra-agent/setup-emulator.sh to pre-grant permissions, then retry.")
+  process.exit(3)
 }
 
 // Gate every run on the channel self-test: a green scorecard is only
