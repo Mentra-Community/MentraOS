@@ -143,6 +143,30 @@ async function dumpDiagnostics(sinceSeq: number): Promise<void> {
   }
 }
 
+/**
+ * Force-restart the app to drop the server-side STT provider and get a clean
+ * session. The Soniox auto-pause wedge (see README) survives client reconnect
+ * AND unsubscribe — only a full session close (app kill -> DETACH -> provider
+ * dropped) clears it. So between scenarios that churn the provider we restart
+ * the app. The bridge reconnects over adb-reverse localhost; login persists.
+ */
+async function resetApp(): Promise<void> {
+  log("resetting app (force-stop -> relaunch) for a clean STT provider")
+  adb(["shell", "am", "force-stop", "com.mentra.mentra"])
+  await Bun.sleep(1500)
+  adb(["shell", "monkey", "-p", "com.mentra.mentra", "-c", "android.intent.category.LAUNCHER", "1"])
+  // Wait for the bridge to come back, then for cloud to reconnect.
+  await waitFor("bridge reconnected after restart", 60, async () => {
+    try {
+      await rpc("ping", undefined, 3_000)
+      return true
+    } catch {
+      return false
+    }
+  })
+  await ensureReady()
+}
+
 /** Shared setup: logged in, AWS endpoints, pcm codec, connected. */
 async function ensureReady(): Promise<void> {
   const who = (await rpc("isLoggedIn")) as {loggedIn: boolean}
@@ -221,6 +245,44 @@ const SCENARIOS: Record<string, {desc: string; run: () => Promise<void>}> = {
     },
   },
 
+  "udp-block": {
+    desc: "UDP egress blocked: client falls back to WS audio and transcription keeps working",
+    run: async () => {
+      await ensureReady()
+      await speakAndExpect(
+        "Audio over the UDP path first as a baseline with a continuous utterance before anything is blocked",
+        "continuous utterance",
+      )
+      const before = await cloudState()
+      if (before.audioTransport !== "udp") log(`note: starting transport is ${before.audioTransport}, expected udp`)
+
+      log("blocking UDP egress (drops audio frames + liveness probes)")
+      await rpc("setUdpBlocked", {blocked: true})
+      try {
+        // Client probes UDP every 1s; ~3s without acks flips it to WS.
+        await waitFor("audio transport falls back to ws", 20, async () => (await cloudState()).audioTransport === "ws")
+        // The real assertion: audio still gets through over WS binary frames.
+        // Use a LONG continuous utterance: the 3s detection window leaves a
+        // silence gap that trips the Soniox auto-pause wedge (a separate, known
+        // runtime bug — see README); a continuous stream keeps the engine
+        // emitting so this test isolates the WS PATH, which is its job.
+        await speakAndExpect(
+          "Testing the websocket fallback audio path with one long continuous utterance that keeps the transcription engine emitting the whole time without any silence",
+          "continuous utterance",
+        )
+      } finally {
+        log("restoring UDP egress")
+        await rpc("setUdpBlocked", {blocked: false})
+      }
+      // Liveness acks resume -> transport returns to udp on its own.
+      await waitFor("audio transport recovers to udp", 20, async () => (await cloudState()).audioTransport === "udp")
+      await speakAndExpect(
+        "Back on the UDP path again with another long continuous utterance confirming transcription recovered after the websocket fallback ended",
+        "transcription recovered",
+      )
+    },
+  },
+
   "endpoint-switch": {
     desc: "Endpoint override flow: bogus endpoint disconnects, switching back recovers",
     run: async () => {
@@ -238,7 +300,12 @@ const SCENARIOS: Record<string, {desc: string; run: () => Promise<void>}> = {
         await rpc("cloudReconnect")
       }
       await waitFor("reconnected to AWS", 45, async () => (await cloudState()).connected)
-      await speakAndExpect("The scarlet compass finds the harbor again", "scarlet compass")
+      // Continuous utterance: the bogus->AWS reconnect leaves a silence gap
+      // that would trip the auto-pause wedge with a short phrase.
+      await speakAndExpect(
+        "The scarlet compass finds the harbor again after a long continuous utterance confirming transcription works once the real endpoint is restored",
+        "scarlet compass",
+      )
     },
   },
 }
@@ -252,12 +319,24 @@ if (!arg || arg === "list") {
 }
 
 const names = arg === "all" ? Object.keys(SCENARIOS) : [arg]
+const noReset = process.argv.includes("--no-reset")
 let failed = 0
-for (const name of names) {
+for (let i = 0; i < names.length; i++) {
+  const name = names[i]
   const scenario = SCENARIOS[name]
   if (!scenario) {
     console.error(`unknown scenario: ${name}`)
     process.exit(1)
+  }
+  // Reset the app before each scenario (except the first) in a multi-scenario
+  // run so a prior scenario's wedged STT provider can't fail the next one.
+  // Skippable with --no-reset for a faster (but cross-contaminated) run.
+  if (i > 0 && names.length > 1 && !noReset) {
+    try {
+      await resetApp()
+    } catch (err) {
+      console.error(`  reset before ${name} failed: ${(err as Error).message}`)
+    }
   }
   console.log(`\n=== ${name}: ${scenario.desc}`)
   const started = Date.now()

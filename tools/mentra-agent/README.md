@@ -210,18 +210,24 @@ same landmines):
 
 Open (cloud-v2 runtime follow-ups — found by the scenario suite):
 
-- **Soniox auto-pause wedge.** After repeated silence -> auto-pause ->
-  resume cycles (every `speak` separated by >2s triggers one), the soniox
-  provider reaches a state where it stays `connected`, audio still appends to
-  the stream, subscriptions still apply — but it emits NO transcripts. A
-  client reconnect does not clear it (the provider is keyed by mentraUserId
-  and survives the client's new session). Repro: `scenarios.ts all` — the
-  first `captions` passes from clean state, then later utterances time out
-  with `cloud=connected/udp` and `[soniox] auto-paused`/`resumed` churning in
-  the server logs but no `result`. The auto-pause feature (Fix 044-3 port)
-  almost certainly needs the resume to verify the Soniox session actually
-  accepts audio again after `finalize()`, or to rebuild the session instead of
-  resuming a finalized one. Run scenarios individually until fixed.
+- **Soniox auto-pause wedge (HIGH severity).** After an audio gap >2s, the
+  provider calls `session.pause()`, which the Soniox SDK implements as
+  `finalize()` + keepalive. `finalize()` is TERMINAL for emission on Soniox's
+  side: on the next audio, the client SDK's `resume()` clears its local
+  `_paused` flag and `sendAudio` goes through, but Soniox never emits another
+  `result` on that finalized stream. The provider then stays `connected`,
+  audio keeps appending, subscriptions keep applying — and NO transcripts come
+  out. Characterized precisely with the harness: the wedge survives a client
+  reconnect AND a full unsubscribe+resubscribe (the provider is keyed by
+  mentraUserId server-side and outlives the client session). The ONLY recovery
+  is a full session close (app kill -> DETACH -> provider dropped). In
+  production that means a UDP-firewalled or gap-prone user loses captions
+  PERMANENTLY until they restart the app.
+  **Fix:** the auto-pause should keep the session alive across silence with
+  `session.keepAlive()` (no finalize), NOT `session.pause()`/`finalize()` —
+  keepalive was the actual goal of Fix 044-3. Repro: `scenarios.ts all`
+  without `--reset` wedges after ~2 scenarios; the harness works around it by
+  restarting the app between scenarios (`resetApp`).
 - Soniox rejects BCP-47 region codes as language hints ("Invalid language
   hint." for `en-US`); the runtime's soniox provider should normalize, and a
   non-retryable invalid-config error currently spins the self-heal reconnect
