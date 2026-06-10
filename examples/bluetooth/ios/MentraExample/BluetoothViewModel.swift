@@ -566,7 +566,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 responseEvent = try await mentraBluetoothSdk.requestPhoto(
                     PhotoRequest(
                         requestId: requestId,
-                        appId: "com.mentra.examples.ios",
+                        appId: "com.mentra.bluetoothsdk.example.ios",
                         size: photoSize,
                         webhookUrl: uploadUrl,
                         compress: photoCompression,
@@ -610,7 +610,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             responseEvent = try await mentraBluetoothSdk.requestPhoto(
                 PhotoRequest(
                     requestId: requestId,
-                    appId: "com.mentra.examples.ios",
+                    appId: "com.mentra.bluetoothsdk.example.ios",
                     size: photoSize,
                     webhookUrl: uploadUrl,
                     compress: photoCompression,
@@ -1281,7 +1281,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         let response = try await mentraBluetoothSdk.rgbLedControl(
             RgbLedRequest(
                 requestId: "rgb-\(Int(Date().timeIntervalSince1970 * 1000))",
-                packageName: "com.mentra.examples.ios",
+                packageName: "com.mentra.bluetoothsdk.example.ios",
                 action: request.action,
                 color: request.color,
                 onDurationMs: request.onDurationMs,

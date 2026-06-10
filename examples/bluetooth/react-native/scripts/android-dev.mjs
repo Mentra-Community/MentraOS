@@ -5,8 +5,8 @@ import {setTimeout as delay} from "node:timers/promises"
 
 const port = Number(process.env.EXPO_DEV_SERVER_PORT || process.env.RCT_METRO_PORT || 8081)
 const metroHost = process.env.EXPO_DEV_SERVER_HOST || "localhost"
-const scheme = process.env.EXPO_DEV_CLIENT_SCHEME || "exp+mentra-example"
-const appId = process.env.EXPO_ANDROID_APP_ID || "com.mentra.bluetoothsdk.example"
+const scheme = process.env.EXPO_DEV_CLIENT_SCHEME || "exp+mentra-sdk-rn-example"
+const appId = process.env.EXPO_ANDROID_APP_ID || "com.mentra.bluetoothsdk.example.reactnative"
 const metroUrl = `http://${metroHost}:${port}`
 const devClientUrl = `${scheme}://expo-development-client/?url=${encodeURIComponent(metroUrl)}`
 
@@ -24,8 +24,8 @@ spawning a second bundler, then explicitly opens the Expo dev-client URL.
 Environment overrides:
   EXPO_DEV_SERVER_PORT       Metro port. Defaults to 8081.
   EXPO_DEV_SERVER_HOST       Metro host in the dev-client URL. Defaults to localhost.
-  EXPO_DEV_CLIENT_SCHEME     Dev-client scheme. Defaults to exp+mentra-example.
-  EXPO_ANDROID_APP_ID        Android app id. Defaults to com.mentra.bluetoothsdk.example.
+  EXPO_DEV_CLIENT_SCHEME     Dev-client scheme. Defaults to exp+mentra-sdk-rn-example.
+  EXPO_ANDROID_APP_ID        Android app id. Defaults to com.mentra.bluetoothsdk.example.reactnative.
   ANDROID_SERIAL             Required when multiple Android devices are connected.
 `)
   process.exit(0)

@@ -540,7 +540,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 mentraBluetoothSdk.requestPhoto(
                     PhotoRequest(
                         requestId = requestId,
-                        appId = "com.mentra.examples.android",
+                        appId = "com.mentra.bluetoothsdk.example.android",
                         size = PhotoSize.fromValue(state.photoSize),
                         webhookUrl = uploadUrl,
                         compress = PhotoCompression.fromValue(state.photoCompression),
@@ -584,7 +584,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 mentraBluetoothSdk.requestPhoto(
                     PhotoRequest(
                         requestId = requestId,
-                        appId = "com.mentra.examples.android",
+                        appId = "com.mentra.bluetoothsdk.example.android",
                         size = PhotoSize.fromValue(state.photoSize),
                         webhookUrl = uploadUrl,
                         compress = PhotoCompression.fromValue(state.photoCompression),
@@ -1307,7 +1307,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             mentraBluetoothSdk.rgbLedControl(
                 RgbLedRequest(
                     requestId = "rgb-${System.currentTimeMillis()}",
-                    packageName = "com.mentra.examples.android",
+                    packageName = "com.mentra.bluetoothsdk.example.android",
                     action = request.action,
                     color = request.color,
                     onDurationMs = request.onDurationMs,
@@ -2393,7 +2393,7 @@ println("Camera FOV applied at ${'$'}{cameraFovResult.fov}°")
 val photo = mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
       requestId = requestId,
-      appId = "com.mentra.examples.android",
+      appId = "com.mentra.bluetoothsdk.example.android",
       size = PhotoSize.${size.uppercase(Locale.US)},
       webhookUrl = uploadUrl,
       compress = PhotoCompression.${compression.uppercase(Locale.US)},

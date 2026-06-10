@@ -30,7 +30,7 @@
 		4334B27A5FE9C5FECB2F7DF8 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		4558D51EE6D8AEE7C32E4C58 /* DeviceScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceScreen.swift; sourceTree = "<group>"; };
 		85A06A4B5AFA293DC25C9582 /* CameraScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraScreen.swift; sourceTree = "<group>"; };
-		A950FB52FB060CCB1BA59390 /* MentraExample.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MentraExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A950FB52FB060CCB1BA59390 /* MentraSdkIosExample.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MentraSdkIosExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000011 /* LocalNetwork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalNetwork.swift; sourceTree = "<group>"; };
 		A10000000000000000000012 /* LocalPhotoUploadServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPhotoUploadServer.swift; sourceTree = "<group>"; };
 		A10000000000000000000013 /* WhipHeaderProxy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhipHeaderProxy.swift; sourceTree = "<group>"; };
@@ -62,7 +62,7 @@
 		1CB6EE406B6430CB76C32445 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A950FB52FB060CCB1BA59390 /* MentraExample.app */,
+				A950FB52FB060CCB1BA59390 /* MentraSdkIosExample.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -120,8 +120,8 @@
 			packageProductDependencies = (
 				1178B517C2B84A06A3850003 /* MentraBluetoothSDK */,
 			);
-			productName = MentraExample;
-			productReference = A950FB52FB060CCB1BA59390 /* MentraExample.app */;
+			productName = MentraSdkIosExample;
+			productReference = A950FB52FB060CCB1BA59390 /* MentraSdkIosExample.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -242,8 +242,9 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "$(inherited) -Wl,-no_compact_unwind -lresolv -liconv -lc++ -framework GStreamer -framework CoreFoundation -framework Foundation -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework CoreAudio -framework AudioToolbox -framework AssetsLibrary -weak_framework VideoToolbox -framework OpenGLES -framework QuartzCore -framework UIKit";
-				PRODUCT_BUNDLE_IDENTIFIER = com.mentra.examples.ios;
-				PRODUCT_NAME = MentraExample;
+				INFOPLIST_KEY_CFBundleDisplayName = "Mentra SDK iOS";
+				PRODUCT_BUNDLE_IDENTIFIER = com.mentra.bluetoothsdk.example.ios;
+				PRODUCT_NAME = MentraSdkIosExample;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "MentraExample/MentraExample-Bridging-Header.h";
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -272,8 +273,9 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "$(inherited) -Wl,-no_compact_unwind -lresolv -liconv -lc++ -framework GStreamer -framework CoreFoundation -framework Foundation -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework CoreAudio -framework AudioToolbox -framework AssetsLibrary -weak_framework VideoToolbox -framework OpenGLES -framework QuartzCore -framework UIKit";
-				PRODUCT_BUNDLE_IDENTIFIER = com.mentra.examples.ios;
-				PRODUCT_NAME = MentraExample;
+				INFOPLIST_KEY_CFBundleDisplayName = "Mentra SDK iOS";
+				PRODUCT_BUNDLE_IDENTIFIER = com.mentra.bluetoothsdk.example.ios;
+				PRODUCT_NAME = MentraSdkIosExample;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "MentraExample/MentraExample-Bridging-Header.h";
 				TARGETED_DEVICE_FAMILY = "1,2";

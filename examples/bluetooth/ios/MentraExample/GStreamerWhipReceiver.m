@@ -9,7 +9,7 @@
 
 #import "gst_ios_init.h"
 
-static NSString * const GStreamerWhipReceiverErrorDomain = @"com.mentra.examples.ios-webrtc-receiver.gstreamer";
+static NSString * const GStreamerWhipReceiverErrorDomain = @"com.mentra.bluetoothsdk.example.ios-webrtc-receiver.gstreamer";
 
 @interface GStreamerVideoContainerView : UIView
 @property (nonatomic, strong) UIImageView *imageView;

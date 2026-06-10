@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Mentra Example",
-    "slug": "mentra-example",
+    "name": "Mentra SDK RN",
+    "slug": "mentra-sdk-rn-example",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -11,7 +11,7 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.mentra.bluetoothsdk.example",
+      "bundleIdentifier": "com.mentra.bluetoothsdk.example.reactnative",
       "infoPlist": {
         "NSBluetoothAlwaysUsageDescription": "This example app uses Bluetooth to connect to smart glasses.",
         "NSBluetoothPeripheralUsageDescription": "This example app uses Bluetooth to connect to smart glasses.",
@@ -21,7 +21,7 @@
       }
     },
     "android": {
-      "package": "com.mentra.bluetoothsdk.example",
+      "package": "com.mentra.bluetoothsdk.example.reactnative",
       "softwareKeyboardLayoutMode": "pan",
       "usesCleartextTraffic": true,
       "permissions": [

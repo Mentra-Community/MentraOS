@@ -35,7 +35,7 @@ android {
     ndkVersion = "27.1.12297006"
 
     defaultConfig {
-        applicationId = "com.mentra.examples.android"
+        applicationId = "com.mentra.bluetoothsdk.example.android"
         minSdk = 28
         targetSdk = 35
         versionCode = 1

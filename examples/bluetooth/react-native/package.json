@@ -1,5 +1,5 @@
 {
-  "name": "mentra-bluetooth-sdk-example",
+  "name": "mentra-bluetooth-sdk-rn-example",
   "version": "0.1.0",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "mentra-bluetooth-sdk-example",
+      "name": "mentra-bluetooth-sdk-rn-example",
       "dependencies": {
         "@mentra/bluetooth-sdk": "0.1.10",
         "@mentra/react-native-barcode-scanner": "file:modules/mentra-barcode-scanner",
