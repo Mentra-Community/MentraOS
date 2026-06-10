@@ -163,7 +163,6 @@ export async function createSonioxProvider(
   let reconnectAttempts = 0;
   let gapCheckInterval: ReturnType<typeof setInterval> | null = null;
   let lastAudioWriteTime = Date.now();
-  let pausedForGap = false;
 
   // === Per-utterance state (ports v1's SonioxTranscriptionProvider) ===
   //
@@ -338,8 +337,9 @@ export async function createSonioxProvider(
   };
 
   const handleFinalized = () => {
-    // The SDK fires this after session.pause() or session.finalize(). For our
-    // audio-gap pause, it is the trusted "speech segment ended" signal.
+    // The SDK fires this after an explicit session.finalize() (e.g. on close).
+    // Endpoint detection drives normal utterance boundaries; this is a belt-and-
+    // suspenders flush so a finalize from any path commits the in-flight card.
     emitFinal();
   };
 
@@ -417,18 +417,24 @@ export async function createSonioxProvider(
   const startGapDetection = (): void => {
     stopGapDetection();
     lastAudioWriteTime = Date.now();
-    pausedForGap = false;
 
+    // Keep the session warm across silence. Soniox closes an idle realtime
+    // session with a `request-timeout` (400); during a quiet stretch we send a
+    // keepalive so the session survives. We DO NOT call `session.pause()` here:
+    // the SDK implements pause() as `finalize()` + keepalive, and finalize() is
+    // TERMINAL for emission — after it, the session stays "connected" and
+    // accepts audio but Soniox never emits another result, so the provider
+    // wedges (no transcripts) until a full session rebuild. keepAlive() resets
+    // the idle timer WITHOUT finalizing, which is what this gap handling always
+    // wanted. Utterance finalization on a real pause in speech is handled by
+    // Soniox's own endpoint detection (`max_endpoint_delay_ms`), not here.
     gapCheckInterval = setInterval(() => {
-      if (closed || reconnecting || pausedForGap) return;
+      if (closed || reconnecting) return;
       if (Date.now() - lastAudioWriteTime < gapConfig.thresholdMs) return;
-
       try {
-        session.pause();
-        pausedForGap = true;
-        console.log(`[soniox] auto-paused scope=${opts.scope} after audio gap`);
+        session.keepAlive();
       } catch (err) {
-        console.warn(`[soniox] auto-pause failed scope=${opts.scope}:`, err);
+        console.warn(`[soniox] keepalive failed scope=${opts.scope}:`, err);
       }
     }, gapConfig.checkIntervalMs);
   };
@@ -449,7 +455,6 @@ export async function createSonioxProvider(
   const scheduleReconnect = (trigger: string): void => {
     if (closed || reconnecting) return;
     stopGapDetection();
-    pausedForGap = false;
     reconnecting = true;
 
     const attempt = async (): Promise<void> => {
@@ -531,19 +536,9 @@ export async function createSonioxProvider(
       // Soniox SDK accepts Uint8Array of raw PCM bytes.
       const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
       lastAudioWriteTime = Date.now();
-      if (pausedForGap) {
-        try {
-          session.resume();
-          pausedForGap = false;
-          stablePrefix = "";
-          prevFinalLen = 0;
-          lastSentInterim = "";
-          currentUtteranceId = null;
-          console.log(`[soniox] resumed scope=${opts.scope} after audio gap`);
-        } catch (err) {
-          console.warn(`[soniox] resume failed scope=${opts.scope}:`, err);
-        }
-      }
+      // No pause/resume dance: the session is kept warm with keepalive (see
+      // startGapDetection), never finalized, so audio just flows whenever it
+      // arrives after a quiet stretch.
       try {
         session.sendAudio(bytes);
       } catch (err) {

@@ -66,6 +66,7 @@ class FakeSession {
   closeCount = 0;
   pauseCount = 0;
   resumeCount = 0;
+  keepAliveCount = 0;
   /** When > 0, the next N connect() calls reject (simulate a flaky reconnect). */
   failNextConnects = 0;
 
@@ -85,6 +86,9 @@ class FakeSession {
   }
   resume(): void {
     this.resumeCount += 1;
+  }
+  keepAlive(): void {
+    this.keepAliveCount += 1;
   }
   async finish(): Promise<void> {}
   async close(): Promise<void> {
@@ -300,51 +304,61 @@ describe("SonioxProvider utterance lifecycle", () => {
   });
 });
 
-describe("SonioxProvider audio-gap pause/resume", () => {
-  test("auto-pauses after an idle audio gap and commits buffered interim text", async () => {
+describe("SonioxProvider audio-gap keepalive", () => {
+  // The gap handling keeps the session warm with keepAlive() and must NEVER
+  // pause()/finalize() — finalize() is terminal for emission on Soniox's side,
+  // which silently wedges the provider (connected, audio flowing, no
+  // transcripts) until a full rebuild. These tests lock that contract in.
+  test("sends keepalive after an idle audio gap, never pausing/finalizing", async () => {
     await withFastGapConfig(async () => {
       const { session, events, provider } = await makeProvider();
 
       session.result([
         { text: "pending words", confidence: 0.9, is_final: false, speaker: "1" },
       ]);
-      const utteranceId = events.at(-1)!.utteranceId;
 
       await wait(50);
 
-      expect(session.pauseCount).toBe(1);
-      const finals = events.filter((e) => e.isFinal);
-      expect(finals.length).toBe(1);
-      expect(finals[0]!.text).toBe("pending words");
-      expect(finals[0]!.utteranceId).toBe(utteranceId);
+      expect(session.keepAliveCount).toBeGreaterThan(0);
+      expect(session.pauseCount).toBe(0); // never finalize the live stream
+      // The in-flight interim is NOT force-finalized by the gap: Soniox's
+      // endpoint detection owns real utterance boundaries.
+      expect(events.filter((e) => e.isFinal).length).toBe(0);
 
       await provider.close();
     });
   });
 
-  test("resumes before sending the first audio chunk after an idle pause", async () => {
+  test("keeps emitting after a gap — no wedge (audio just flows, no resume needed)", async () => {
     await withFastGapConfig(async () => {
-      const { session, provider } = await makeProvider();
+      const { session, events, provider } = await makeProvider();
 
       await wait(50);
-      expect(session.pauseCount).toBe(1);
+      expect(session.keepAliveCount).toBeGreaterThan(0);
 
+      // Audio after the quiet stretch goes straight through; no resume() dance.
       provider.writeAudio(new Int16Array([1, 2, 3, 4]));
-
-      expect(session.resumeCount).toBe(1);
+      expect(session.resumeCount).toBe(0);
       expect(session.sendAudioCount).toBe(1);
 
+      // And transcripts still emit after the gap — proving no wedge.
+      session.result([
+        { text: "after the silence", confidence: 0.95, is_final: false, speaker: "1" },
+      ]);
+      expect(events.some((e) => e.text === "after the silence")).toBe(true);
+
       await provider.close();
     });
   });
 
-  test("does not auto-pause repeatedly while already paused", async () => {
+  test("sends repeated keepalives while idle (no one-shot pause latch)", async () => {
     await withFastGapConfig(async () => {
       const { session, provider } = await makeProvider();
 
-      await wait(80);
+      await wait(120);
 
-      expect(session.pauseCount).toBe(1);
+      expect(session.keepAliveCount).toBeGreaterThan(1);
+      expect(session.pauseCount).toBe(0);
 
       await provider.close();
     });
