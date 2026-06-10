@@ -197,6 +197,12 @@ public class Mach1 extends SGCManager {
         Bridge.log("Mach1: clearDisplay()");
         blankScreen();
     }
+    
+    @Override
+    public void sendText(String text) {
+        Bridge.log("Mach1: sendText() - text: " + text);
+        displayTextWall(text);
+    }
 
     @Override
     public void sendTextWall(@NonNull String text) {

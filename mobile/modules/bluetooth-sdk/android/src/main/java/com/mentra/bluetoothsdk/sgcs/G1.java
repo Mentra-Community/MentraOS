@@ -1594,6 +1594,12 @@ public class G1 extends SGCManager {
         Bridge.log("G1: clearDisplay() - sending space");
         sendTextWall(" ");
     }
+    
+    @Override
+    public void sendText(String text) {
+        Bridge.log("G1: sendText() - text: " + text);
+        displayTextWall(text);
+    }
 
     @Override
     public void sendTextWall(String text) {

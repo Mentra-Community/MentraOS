@@ -5108,6 +5108,11 @@ public class MentraLive extends SGCManager {
             Log.e(TAG, "Error sending button camera LED setting", e);
         }
     }
+    
+    @Override
+    public void sendText(String text) {
+        Bridge.log("LIVE: [STUB] Device has no display. Text would show: " + text);
+    }
 
     @Override
     public void sendTextWall(String text) {
