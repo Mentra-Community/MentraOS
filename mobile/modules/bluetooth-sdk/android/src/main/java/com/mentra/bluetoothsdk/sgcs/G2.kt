@@ -1955,13 +1955,7 @@ class G2 : SGCManager() {
                     imageContainers[i].bmpData = ByteArray(0)
                 }
                 // shutdown the page and then recreate the containers without the content.
-                // Reset pageCreated so the recreate below issues a fresh createPageMessage rather
-                // than a rebuildPageMessage that no longer matches the torn-down page.
-                val msg = EvenHubProto.shutdownMessage()
-                sendEvenHubCommand(msg)
-                pageCreated = false
-                createPageWithContainers()
-                restartMicIfAlreadyEnabled()
+                rebuildPage()
             }
         }
     }
@@ -2145,6 +2139,9 @@ class G2 : SGCManager() {
         //     sendEvenHubCommand(textMsg)
         //     delay(100)
         // }
+
+        delay(300) // 300ms to settle
+        restartMicIfAlreadyEnabled()
     }
 
     /**

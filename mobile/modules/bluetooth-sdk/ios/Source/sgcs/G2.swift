@@ -1534,7 +1534,6 @@ class G2: NSObject, SGCManager {
     /// Fixed pool of container IDs the page protocol expects.
     private let imageContainerIDPool: [Int32] = [10, 11, 12, 13]
     private let textContainerIDPool: [Int32] = [1, 2, 3, 4, 5, 6]
-    /// Default container seeded into every fresh page: 100x100 in the top-left.
     private static let defaultImgContainer = (
         x: Int32(188), y: Int32(44), width: Int32(200), height: Int32(100)
     )
@@ -1983,7 +1982,7 @@ class G2: NSObject, SGCManager {
             let msg = EvenHubProto.updateTextMessage(
                 containerID: container.id,
                 contentOffset: 0,
-                contentLength: Int32(text.utf8.count),
+                contentLength: Int32(container.content.utf8.count),
                 content: container.content
             )
             queueEvenHubCommand(msg)
@@ -2011,10 +2010,10 @@ class G2: NSObject, SGCManager {
         // Don't shutdown the EvenHub page — that kills audio streaming too.
         // Instead, just clear the text content by sending a space.
 
-        if !pageCreated {
-            Bridge.log("G2: clearDisplay() - page not created")
-            createPageWithContainers()
-        }
+        // if !pageCreated {
+        //     Bridge.log("G2: clearDisplay() - page not created")
+        //     createPageWithContainers()
+        // }
 
         // reset the content of all text containers to empty:
         for i in textContainers.indices {
@@ -2024,10 +2023,7 @@ class G2: NSObject, SGCManager {
             imageContainers[i].bmpData = Data()
         }
         // shutdown the page and then recreate the containers without the content:
-        let msg = EvenHubProto.shutdownMessage()
-        sendEvenHubCommand(msg)
-        createPageWithContainers()
-        restartMicIfAlreadyEnabled()
+        rebuildPage()
     }
 
     /// Send BMP data to an image container via fragmented updateImageRawData
@@ -2207,6 +2203,9 @@ class G2: NSObject, SGCManager {
         //     )
         //     sendEvenHubCommand(msg)
         // }
+        
+        try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms to settle
+        restartMicIfAlreadyEnabled()
     }
 
     /// Upscale BMP pixel data by 2x (200x100 → 400x200) using nearest-neighbor
@@ -2766,6 +2765,7 @@ class G2: NSObject, SGCManager {
     func disconnect() {
         Bridge.log("G2: disconnect()")
         isDisconnecting = true
+        clearDisplay()
         cancelPairingTimeout()
         stopHeartbeats()
         Task { await reconnectionManager.stop() }

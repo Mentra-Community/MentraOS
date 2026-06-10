@@ -24,6 +24,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import CapsuleMenu, {captureScreenshot} from "@/effects/CapsuleMenu"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
+import { SETTINGS, useSetting } from "@/stores/settings"
 
 /**
  * LocalMiniappView — the UI half of a local (or dev) miniapp.
@@ -42,14 +43,9 @@ import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
  * Compositor only arms its edge-swipe once the WebView is at page 0.
  */
 
-// How long to wait for the miniapp's `ready` envelope after the WebView paints
-// before surfacing a "failed to load" error. The Android injection race that
-// used to swallow the handshake is gone (the `injectedJavaScriptBeforeContentLoaded`
-// shim now runs as a WebViewCompat document-start script — see the
-// react-native-webview patch), so a timeout here now means a genuine miniapp
-// fault (never called mentra.ready(), crashed on boot) rather than a lost race.
-// We no longer reload-retry — a reload can't fix a broken bundle.
-const READY_TIMEOUT_MS = 15000
+// Reload-retry tuning for the miniapp `ready` handshake (see readyTimerRef).
+const READY_TIMEOUT_MS = 5000
+const MAX_LOAD_ATTEMPTS = 5
 
 interface LocalMiniappViewProps {
   packageName: string
@@ -88,14 +84,18 @@ function LocalMiniappView({
   const [isLoaded, setIsLoaded] = useState(false)
   const [miniappConnected, setMiniappConnected] = useState(false)
   const [androidGatePassed, setAndroidGatePassed] = useState(false)
+  const [devMode] = useSetting(SETTINGS.dev_mode.key)
 
-  // "ready" handshake state. `onLoadEnd` only means the WebView painted — not
-  // that the miniapp UI JS actually mounted and called mentra.ready(). After
-  // the WebView paints we arm a single timer; if no `ready` envelope arrives
-  // within READY_TIMEOUT_MS we surface an error (a genuine miniapp fault now
-  // that the injection race is fixed — see READY_TIMEOUT_MS).
+  // Reload-retry state for the "ready" handshake. `onLoadEnd` only means the
+  // WebView painted — not that the miniapp UI JS actually mounted and called
+  // mentra.ready(). After each load we start a timer; if no `ready` envelope
+  // arrives within READY_TIMEOUT_MS we reload, up to MAX_LOAD_ATTEMPTS total
+  // loads, then give up with an error.
   const miniappConnectedRef = useRef(false)
   const readyTimerRef = useRef<number | null>(null)
+  // State (not a ref) so the "Connecting… (N of 5)" splash label re-renders
+  // as attempts increment. Counts completed load attempts; initial load is 1.
+  const [loadAttempts, setLoadAttempts] = useState(0)
 
   // Phase machine for the pre-WebView affordance. "ready" means we have a
   // uiUri and the WebView is mounted; the loading card is rendered for
@@ -165,9 +165,10 @@ function LocalMiniappView({
     if (!packageName) return
     let cancelled = false
 
-    // Fresh handshake per (re)launch — a re-foreground / new package restarts
-    // the ready handshake from scratch.
+    // Fresh attempt budget per (re)launch — a re-foreground / new package
+    // restarts the ready handshake and reload-retry loop from scratch.
     miniappConnectedRef.current = false
+    setLoadAttempts(0)
     setMiniappConnected(false)
     setIsLoaded(false)
 
@@ -383,15 +384,14 @@ function LocalMiniappView({
   }, [])
 
   // onLoadEnd means the WebView painted, not that the miniapp is ready. Arm a
-  // single timer; if the `ready` envelope hasn't arrived by READY_TIMEOUT_MS we
-  // surface an error. We do NOT reload-retry: the Android injection race that
-  // used to swallow the handshake is fixed (the shim now runs as a
-  // WebViewCompat document-start script), so a timeout here means a genuine
-  // miniapp fault — and reloading a broken bundle wouldn't help.
+  // timer; if the `ready` envelope hasn't arrived by READY_TIMEOUT_MS we count
+  // it as a failed attempt and reload, up to MAX_LOAD_ATTEMPTS, then error.
   //
-  // A single page load can fire onLoadEnd several times (redirects, SPA history
-  // changes, sub-frame loads); each just re-arms the timer, so the window is
-  // measured from the last paint rather than the first.
+  // The attempt counter is bumped only when a timer actually fires without
+  // `ready` — NOT on every onLoadEnd. A single page load can fire onLoadEnd
+  // several times (redirects, SPA history changes, sub-frame loads); each of
+  // those just re-arms the timer. Counting per-onLoadEnd would inflate the
+  // number (you'd see ~4 attempts on a normal load before `ready` lands).
   const handleLoadEnd = useCallback(() => {
     if (miniappConnectedRef.current) return
     if (readyTimerRef.current) {
@@ -401,9 +401,23 @@ function LocalMiniappView({
     readyTimerRef.current = BgTimer.setTimeout(() => {
       readyTimerRef.current = null
       if (miniappConnectedRef.current) return
-      console.warn(`LocalMiniappView: ${packageName} never sent ready within ${READY_TIMEOUT_MS}ms`)
-      setErrorMessage("miniapp failed to load")
-      setPhase("error")
+      // A real "ready never arrived" timeout — this counts as one attempt.
+      setLoadAttempts((n) => {
+        const attempt = n + 1
+        if (attempt >= MAX_LOAD_ATTEMPTS) {
+          console.warn(`LocalMiniappView: ${packageName} never sent ready after ${MAX_LOAD_ATTEMPTS} attempts`)
+          setErrorMessage("miniapp failed to load")
+          setPhase("error")
+        } else {
+          console.log(`LocalMiniappView: reloading, attempt ${attempt} of ${MAX_LOAD_ATTEMPTS}`)
+          try {
+            webViewRef.current?.reload()
+          } catch (e) {
+            console.warn(`LocalMiniappView: reload(${packageName}) failed:`, e)
+          }
+        }
+        return attempt
+      })
     }, READY_TIMEOUT_MS)
   }, [packageName])
 
@@ -443,8 +457,9 @@ function LocalMiniappView({
     if (!packageName || !devUrl) return
     devServerBridge.onReload((pkg) => {
       if (pkg !== packageName) return
-      // Fresh content → fresh ready handshake.
+      // Fresh content → fresh ready handshake + reload-retry budget.
       miniappConnectedRef.current = false
+      setLoadAttempts(0)
       if (readyTimerRef.current) {
         BgTimer.clearTimeout(readyTimerRef.current)
         readyTimerRef.current = null
@@ -571,6 +586,13 @@ function LocalMiniappView({
     )
   }
 
+  // While the WebView is mounted but the miniapp hasn't sent `ready` yet,
+  // show retry progress on the splash. Once connected, isLoaded hides it.
+  let connectingLabel = undefined
+  if (loadAttempts > 0 && devMode) {
+    connectingLabel = `Connecting… attempt (${Math.max(loadAttempts, 1)} of ${MAX_LOAD_ATTEMPTS})`
+  }
+
   return (
     <View className="flex-1 bg-black" style={{borderRadius: theme.spacing.s12}}>
       <WebView
@@ -611,7 +633,7 @@ function LocalMiniappView({
         webviewDebuggingEnabled={__DEV__}
         style={{flex: 1, borderRadius: theme.spacing.s12}}
       />
-      <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={isLoaded} />
+      <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={isLoaded} label={connectingLabel} />
       {/* <View className="flex-1 bg-red-500"/> */}
       <CapsuleMenu forceShow={true} />
     </View>
