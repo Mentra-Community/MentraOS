@@ -33,27 +33,21 @@ await BluetoothSdk.connect(await chooseDevice(devices));
   <Tab title="Android">
 
 ```kotlin
-var selectedDevice: Device? = null
 sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { nextDevices ->
-    renderDevicePicker(nextDevices, onSelect = { selectedDevice = it })
+    renderDevicePicker(nextDevices, onSelect = { device ->
+        sdk.connect(device)
+    })
 }
-
-selectedDevice?.let { sdk.connect(it) }
 ```
 
   </Tab>
   <Tab title="iOS">
 
 ```swift
-var selectedDevice: Device? = nil
 try sdk.scan(model: .mentraLive, timeout: 10) { nextDevices in
     renderDevicePicker(nextDevices) { device in
-        selectedDevice = device
+        try? sdk.connect(to: device)
     }
-}
-
-if let selectedDevice {
-    try sdk.connect(to: selectedDevice)
 }
 ```
 
