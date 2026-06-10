@@ -126,8 +126,12 @@ var devices: [Device] = []
 let scanSession = try sdk.scan(model: .mentraLive, timeout: 10) { nextDevices in
     devices = nextDevices
     renderDevicePicker(nextDevices) { device in
-        try? sdk.connect(to: device)
-        sdk.setDefaultDevice(device)
+        do {
+            try sdk.connect(to: device)
+            sdk.setDefaultDevice(device)
+        } catch {
+            handleConnectionError(error)
+        }
     }
 }
 
