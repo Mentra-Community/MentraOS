@@ -66,7 +66,7 @@ const DEFAULT_SETTINGS: CaptionSettings = {
   languageHints: [],
   displayLines: 3,
   displayWidth: 1, // 0=Narrow, 1=Medium, 2=Wide
-  wordBreaking: true,
+  wordBreaking: false,
 }
 
 const STORAGE_KEYS = {
@@ -306,7 +306,7 @@ export class CaptionsController {
         return p
       })()
 
-      this.settings.wordBreaking = wbRaw == null ? true : wbRaw === "true"
+      this.settings.wordBreaking = wbRaw == null ? DEFAULT_SETTINGS.wordBreaking : wbRaw === "true"
     } catch (err) {
       console.log("LocalCaptions: failed to load settings, using defaults", err)
       this.settings = {...DEFAULT_SETTINGS}
