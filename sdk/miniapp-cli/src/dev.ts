@@ -181,7 +181,7 @@ export async function dev(): Promise<void> {
   }
 
   const buildDevUrl = (ip: string) => {
-    const base = `mentra-miniapp://dev?url=${encodeURIComponent(`http://${ip}:${port}`)}&name=${encodeURIComponent(name)}&package=${encodeURIComponent(packageName)}`;
+    const base = `miniapp://dev?url=${encodeURIComponent(`http://${ip}:${port}`)}&name=${encodeURIComponent(name)}&package=${encodeURIComponent(packageName)}`;
     return sidecarPort ? `${base}&dev=${sidecarPort}` : base;
   };
 

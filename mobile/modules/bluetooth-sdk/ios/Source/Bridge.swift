@@ -251,6 +251,16 @@ class Bridge {
         Bridge.sendTypedMessage("touch_event", body: body)
     }
 
+    static func sendAccelEvent(x: Float, y: Float, z: Float, timestamp: Int64) {
+        let body: [String: Any] = [
+            "x": x,
+            "y": y,
+            "z": z,
+            "timestamp": timestamp,
+        ]
+        Bridge.sendTypedMessage("accel_event", body: body)
+    }
+
     static func sendSwipeVolumeStatus(enabled: Bool, timestamp: Int64) {
         let body: [String: Any] = [
             "enabled": enabled,

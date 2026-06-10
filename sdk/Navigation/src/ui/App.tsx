@@ -5,6 +5,7 @@ import {RouterProvider, useRouter} from "@/ui/router"
 import {NavigationPage} from "@/ui/pages/NavigationPage/NavigationPage"
 import {AddPlacePage} from "@/ui/pages/AddPlacePage"
 import {getGoogleMaps} from "@/ui/lib/googleMaps"
+import {ToastProvider} from "@/ui/components/Toast/Toast"
 
 function Pages() {
   const {route, pop} = useRouter()
@@ -52,8 +53,10 @@ export default function App() {
   }, [])
 
   return (
-    <RouterProvider>
-      <Pages />
-    </RouterProvider>
+    <ToastProvider>
+      <RouterProvider>
+        <Pages />
+      </RouterProvider>
+    </ToastProvider>
   )
 }

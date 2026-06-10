@@ -27,6 +27,9 @@ import com.mentra.bluetoothsdk.utils.MicMap
 import com.mentra.bluetoothsdk.utils.MicTypes
 import com.mentra.lc3Lib.Lc3Cpp
 import com.mentra.bluetoothsdk.stt.SherpaOnnxTranscriber
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.CountDownLatch
@@ -285,6 +288,9 @@ class DeviceManager {
         } catch (e: Exception) {
             Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
             transcriber = null
+        } catch (e: LinkageError) {
+            Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
+            transcriber = null
         }
 
         // Initialize LC3 encoder/decoder for unified audio encoding
@@ -316,6 +322,9 @@ class DeviceManager {
             vadPolicy = policy
             Bridge.log("VadGateSpeechPolicy initialized")
         } catch (e: Exception) {
+            Bridge.log("Failed to initialize VadGateSpeechPolicy: ${e.message}")
+            vadPolicy = null
+        } catch (e: LinkageError) {
             Bridge.log("Failed to initialize VadGateSpeechPolicy: ${e.message}")
             vadPolicy = null
         }
@@ -1048,15 +1057,27 @@ class DeviceManager {
         } else if (wearable.contains(DeviceTypes.NEX)) {
             sgc = MentraNex()
         } else if (wearable.contains(DeviceTypes.MACH1)) {
-            sgc = Mach1()
+            sgc = createOptionalMach1Sgc(DeviceTypes.MACH1)
         } else if (wearable.contains(DeviceTypes.Z100)) {
-            sgc = Mach1() // Z100 uses same hardware/SDK as Mach1
-            sgc?.type = DeviceTypes.Z100 // Override type to Z100
+            sgc = createOptionalMach1Sgc(DeviceTypes.Z100)
         } else if (wearable.contains(DeviceTypes.FRAME)) {
             // sgc = FrameManager()
         }
         // update device model:
         DeviceStore.apply("glasses", "deviceModel", sgc?.type ?: "")
+    }
+
+    private fun createOptionalMach1Sgc(deviceType: String): SGCManager? {
+        return try {
+            Mach1().also { sgc ->
+                if (deviceType == DeviceTypes.Z100) {
+                    sgc.type = DeviceTypes.Z100
+                }
+            }
+        } catch (e: LinkageError) {
+            Bridge.log("Failed to initialize $deviceType support: ${e.message}")
+            null
+        }
     }
 
     fun initController(controllerType: String) {
@@ -1106,8 +1127,22 @@ class DeviceManager {
 
         syncSystemTimeOnceForConnection(readyKey)
 
-        // Apply dashboard position before any boot text so content doesn't jump.
-        sgc?.setDashboardPosition(dashboardHeight, dashboardDepth)
+        // re-apply display height/depth after reconnection
+        mainHandler.postDelayed(
+                {
+                    val h =
+                            (DeviceStore.store.get("bluetooth", "dashboard_height") as? Number)
+                                    ?.toInt()
+                                    ?: 4
+                    val rawDepth =
+                            (DeviceStore.store.get("bluetooth", "dashboard_depth") as? Number)
+                                    ?.toInt()
+                                    ?: dashboardDepth // canonical default (2), not 1
+                    val d = rawDepth.coerceIn(1, 4)
+                    sgc?.setDashboardPosition(h, d)
+                },
+                2000
+        )
 
         // Show welcome message on first connect for all display glasses
         if (shouldSendBootingMessage) {
@@ -1270,7 +1305,9 @@ class DeviceManager {
     }
 
     fun showNotificationsPanel() {
-        sgc?.showNotificationsPanel()
+        CoroutineScope(Dispatchers.Main).launch {
+            sgc?.showNotificationsPanel()
+        }
     }
 
     fun ping() {

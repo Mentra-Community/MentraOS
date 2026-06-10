@@ -681,6 +681,20 @@ public class Bridge private constructor() {
             sendTypedMessage("imu_gesture_event", eventBody as Map<String, Any>)
         }
 
+        /**
+         * Send a single accelerometer reading from the glasses IMU - matches iOS
+         * Bridge.sendAccelEvent. A richer combined IMU event (gyro + magnetometer) is future work.
+         */
+        @JvmStatic
+        fun sendAccelEvent(x: Float, y: Float, z: Float, timestamp: Long) {
+            val body = HashMap<String, Any>()
+            body["x"] = x
+            body["y"] = y
+            body["z"] = z
+            body["timestamp"] = timestamp
+            sendTypedMessage("accel_event", body as Map<String, Any>)
+        }
+
         // Arbitrary WS Comms (don't use these, make a dedicated function for your use case):
 
         /** Send WebSocket text message */

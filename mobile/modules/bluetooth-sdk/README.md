@@ -409,7 +409,7 @@ For bare native iOS apps, use the public SwiftPM repository:
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Add the `MentraBluetoothSDK` product to your app target at version `0.1.7` or newer.
+Add the `MentraBluetoothSDK` product to your app target at version `0.1.10` or newer.
 
 For local SDK development, add this package folder directly in Xcode:
 
@@ -426,6 +426,10 @@ Maintainers publishing the public SwiftPM mirror should follow
 
 Maintainers publishing the native Android artifacts to Maven Central should
 follow [RELEASING_ANDROID_MAVEN.md](./RELEASING_ANDROID_MAVEN.md).
+
+Public Maven publishing uses a public SDK mode that omits MentraOS-only Android
+integrations from the artifact metadata while normal MentraOS app builds keep
+those integrations enabled.
 
 Use `android/gradle.properties.example` as the template for Sonatype Central and
 GPG signing properties. Put real values in `~/.gradle/gradle.properties` or CI

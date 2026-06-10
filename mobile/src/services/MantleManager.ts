@@ -52,6 +52,7 @@ import {logE2EMetric} from "@/utils/e2eMetrics"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
+import {Buffer} from "@craftzdog/react-native-buffer"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
 
@@ -261,6 +262,7 @@ class MantleManager {
         setSkipCrossings: (enabled) => navigationService.setSkipCrossings(enabled),
         requestPermission: () => navigationService.requestPermission(),
         computeRoute: (payload) => navigationService.computeRoute(payload),
+        reverseGeocodeRoad: (coord) => navigationService.reverseGeocodeRoad(coord),
       },
       heading: {
         addListener: (l) => headingService.addListener(l),
@@ -414,6 +416,12 @@ class MantleManager {
         const {packageName, version} = parsed
 
         if (appRegistry.getInstalledVersions(packageName).includes(version)) {
+          continue
+        }
+
+        let superMode = await useSettingsStore.getState().getSetting(SETTINGS.super_mode.key)
+        if (!superMode && packageName === "com.mentra.example") {
+          // skip installing the example miniapp if super mode is not enabled
           continue
         }
 
@@ -685,6 +693,20 @@ class MantleManager {
         BluetoothSdk.addListener("touch_event", (event) => {
           socketComms.sendTouchEvent(event)
           localMiniappRuntime.forwardEvent("touch_event", event)
+        }),
+      )
+
+      // Raw accelerometer readings from the glasses IMU (G2). The native
+      // payload {x, y, z, timestamp} already matches the miniapp AccelData
+      // shape, so forward it as-is (runtime maps accel_event → accel_data).
+      this.subs.push(
+        BluetoothSdk.addListener("accel_event", (event) => {
+          localMiniappRuntime.forwardEvent("accel_event", {
+            x: event.x,
+            y: event.y,
+            z: event.z,
+            timestamp: typeof event.timestamp === "number" ? event.timestamp : Date.now(),
+          })
         }),
       )
 

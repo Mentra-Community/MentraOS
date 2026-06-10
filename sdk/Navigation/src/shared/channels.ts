@@ -22,6 +22,7 @@ import type {
   Coords,
   DevSettings,
   LogEntry,
+  NavRouteStep,
   NavSnapshot,
   PlaceDetails,
   PlaceSuggestion,
@@ -35,7 +36,7 @@ export interface Channels {
   "nav:coords": Coords                                     // hot
   "nav:heading": {degrees: number}                         // hot, 10Hz throttled
   "nav:trip-state": TripState                              // on transitions
-  "nav:route": {points: {lat: number; lng: number}[]}      // on onRoute
+  "nav:route": {points: {lat: number; lng: number}[]; steps: NavRouteStep[] | null}      // on onRoute
   "nav:pivots": {active: Pivot | null; upcoming: Pivot | null}
   "nav:log-append": LogEntry
   "nav:log-clear": Record<string, never>
@@ -47,11 +48,13 @@ export interface Channels {
   "nav:deviate": Record<string, never>
   "nav:set-destination": PlaceDetails | null
   "nav:set-dev-settings": Partial<DevSettings>
+  "nav:set-show-minimap": boolean
 
   // ── UI → background RPC ────────────────────────────────────────────────
   "nav:compute-route": Rpc<ComputeRouteOptions, ComputeRouteResult>
   "nav:request-permission": Rpc<void, NavPermissionResult>
   "nav:get-snapshot": Rpc<void, NavSnapshot>
+  "nav:get-pivots": Rpc<void, Pivot[]>     // full turn list for dev debug dots
 
   "places:autocomplete": Rpc<{query: string; near?: {lat: number; lng: number}}, PlaceSuggestion[]>
   "places:details": Rpc<{placeId: string}, PlaceDetails>
@@ -61,6 +64,12 @@ export interface Channels {
   "storage:remove-saved": Rpc<{placeId: string}, void>
   "storage:list-recent": Rpc<void, PlaceDetails[]>
   "storage:add-recent": Rpc<PlaceDetails, void>
+
+  // test channels
+  "test:show-text-test": Rpc<{text: string; durationMs?: number}, void>
+  "test:show-bitmap-test": Rpc<void, void>
+  "test:count-1-to-10": Rpc<void, void>
+  "test:reset-nav-permission": Rpc<void, {ok: boolean; error?: string}>
 }
 
 // Convenience: the typed shape of `window.mentra` for this miniapp.

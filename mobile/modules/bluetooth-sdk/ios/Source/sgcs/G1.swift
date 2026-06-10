@@ -786,7 +786,7 @@ class G1: NSObject, SGCManager {
         //    }
     }
 
-    func sendTextWall(_ text: String) {
+    func sendTextWall(_ text: String) async {
         let chunks = textHelper.createTextWallChunks(text)
         queueChunks(chunks, sleepAfterMs: 10)
     }
@@ -799,7 +799,7 @@ class G1: NSObject, SGCManager {
         }
     }
 
-    func sendDoubleTextWall(_ top: String, _ bottom: String) {
+    func sendDoubleTextWall(_ top: String, _ bottom: String) async {
         let chunks = textHelper.createDoubleTextWallChunks(textTop: top, textBottom: bottom)
         queueChunks(chunks, sleepAfterMs: 10)
 
@@ -1886,7 +1886,7 @@ extension G1 {
 
     func clearDisplay() {
         Bridge.log("G1: clearDisplay() - Using space")
-        sendTextWall(" ")
+        Task { await sendTextWall(" ") }
     }
 
     /// Create a simple test BMP pattern in hex format

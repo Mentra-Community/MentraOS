@@ -1,0 +1,102 @@
+---
+title: "Hardware Integration"
+description: "Handle Mentra Live capabilities and status-driven hardware behavior."
+icon: "microchip"
+---
+
+Mentra Live is the camera glasses model supported by this SDK tab. Apps should still treat hardware features as status-driven because firmware version, permissions, and connection state affect what is available at any moment.
+
+## Recommended Flow
+
+1. Ask the user which glasses model they are pairing.
+2. Call `scan()` for that model.
+3. Present typed discovered devices from the progressive scan results.
+4. Connect using the discovered device or default-device helper.
+5. Read shaped glasses state, firmware fields, and hardware-related status before enabling advanced features.
+6. Keep app UI derived from SDK status rather than from command success alone.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+import BluetoothSdk, {DeviceModels} from '@mentra/bluetooth-sdk';
+
+const devices = await BluetoothSdk.scan(DeviceModels.MentraLive, {
+  timeoutMs: 10_000,
+  onResults: (nextDevices) => renderDevicePicker(nextDevices),
+});
+
+await BluetoothSdk.connect(await chooseDevice(devices));
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { nextDevices ->
+    renderDevicePicker(nextDevices, onSelect = { device ->
+        sdk.connect(device)
+    })
+}
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+try sdk.scan(model: .mentraLive, timeout: 10) { nextDevices in
+    renderDevicePicker(nextDevices) { device in
+        do {
+            try sdk.connect(to: device)
+        } catch {
+            handleConnectionError(error)
+        }
+    }
+}
+```
+
+  </Tab>
+</Tabs>
+
+In multi-device environments, keep the picker explicit. Do not auto-connect to the first scan result; let the user choose the glasses they expect.
+
+## Capability Areas
+
+- Input: button, touch, head-up, and switch events.
+- Audio: PCM, LC3, audio pairing, preferred microphone, speaker playback, and local transcription.
+- Camera: photo, gallery, video recording, and streaming.
+- Network: Wi-Fi scan, credentials, and hotspot state.
+- Maintenance: Mentra Live version info and OTA status.
+
+## Mentra Live Hardware
+
+Mentra Live is built for visual capture, streaming, and audio-first interactions.
+
+- Camera: 1080p with streaming support.
+- Microphone: yes.
+- Speaker: yes.
+- Buttons: yes, including press, double press, and long press events.
+- LEDs: RGB feedback plus white privacy light.
+- Wi-Fi: yes.
+
+```ts
+{
+  modelName: "Mentra Live",
+  hasCamera: true,
+  hasMicrophone: true,
+  hasSpeaker: true,
+  hasButton: true,
+  hasLight: true,
+  hasWifi: true
+}
+```
+
+Unsupported operations are recoverable SDK errors. Reconcile command failures with the latest status snapshot before showing destructive UI.
+
+## Connection Resilience
+
+- Subscribe to status callbacks before connecting.
+- Retry scans manually from the UI instead of scanning forever in the background.
+- On mobile OS background transitions, expect Bluetooth behavior to vary by platform.
+- Provide a visible "forget device" path that clears both the SDK default device and any app-persisted default-device record.
+- If your app persists a default device, restore it with `setDefaultDevice()` before calling `connectDefault()`.

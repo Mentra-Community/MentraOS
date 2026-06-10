@@ -325,7 +325,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
         UltraliteManager.shared.stopScan()
     }
 
-    func sendTextWall(_ text: String) {
+    func sendTextWall(_ text: String) async {
         //    displayTextWall(text)
         guard let device = UltraliteManager.shared.currentDevice else {
             Bridge.log("Mach1Manager: No current device")
@@ -355,7 +355,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
     ///
     /// Column composition is handled by DisplayProcessor in React Native.
     /// This method is a "dumb pipe" - it just combines and sends the text.
-    func sendDoubleTextWall(_ topText: String, _ bottomText: String) {
+    func sendDoubleTextWall(_ topText: String, _ bottomText: String) async {
         guard let device = UltraliteManager.shared.currentDevice else {
             Bridge.log("Mach1Manager: No current device")
             ready = false

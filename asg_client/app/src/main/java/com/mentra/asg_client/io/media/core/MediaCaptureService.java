@@ -21,6 +21,7 @@ import com.mentra.asg_client.io.storage.StorageManager;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
 import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
+import com.mentra.asg_client.io.bluetooth.managers.BleTransferMode;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
@@ -312,7 +313,19 @@ public class MediaCaptureService {
         return CameraRestartCooldown.isActive();
     }
 
-    private void playShutterSound() {
+    /**
+     * Plays the photo feedback sound, choosing a short "hot" clip when the upcoming capture will
+     * reuse the already-running camera and a long "cold" clip when it will pay the 1–2s camera/ISP
+     * startup on Mentra Live. The decision is made synchronously here, at button-press time and
+     * before the request is enqueued, so it predicts whether THIS capture is fast or slow. The
+     * upcoming-capture parameters must match those passed to {@code enqueuePhotoRequest} so the
+     * warmth prediction lines up with the path the request actually takes.
+     *
+     * @param size requested photo size for the upcoming capture (nullable)
+     * @param isFromSdk whether the upcoming capture is an SDK request (vs. a button photo)
+     * @param exposureTimeNs requested manual exposure for the upcoming capture, or null for auto
+     */
+    private void playShutterSound(String size, boolean isFromSdk, Long exposureTimeNs) {
         if (hardwareManager == null) {
             Log.w(TAG, "⚠️ hardwareManager is null, cannot play shutter sound");
             return;
@@ -323,7 +336,14 @@ public class MediaCaptureService {
             return;
         }
 
-        hardwareManager.playAudioAsset(AudioAssets.CAMERA_SOUND);
+        // A warm capture reuses the open camera (including queuing behind an in-flight shot), so a
+        // short "hot" sound matches the quick capture. A cold capture needs a longer "cold" sound
+        // that spans the camera/ISP warmup so the user keeps still until the photo actually lands.
+        boolean cameraWarm = CameraNeoService.isCameraWarm(size, isFromSdk, exposureTimeNs);
+        String shutterAsset =
+                cameraWarm ? AudioAssets.TAKE_PHOTO_HOT : AudioAssets.TAKE_PHOTO_COLD;
+        Log.d(TAG, "📸 Playing " + (cameraWarm ? "HOT (short)" : "COLD (long)") + " shutter sound");
+        hardwareManager.playAudioAsset(shutterAsset);
     }
 
     /** Flash privacy LED synchronized with shutter sound for photo capture */
@@ -1305,7 +1325,9 @@ public class MediaCaptureService {
             // RGB LED always flashes for photos (user visibility indicator)
             triggerPhotoFlashLed();
             if (enableSound) {
-                playShutterSound();
+                // Button photo: isFromSdk=false, auto exposure (null) — matches the
+                // enqueuePhotoRequest call below so the warm/cold prediction lines up.
+                playShutterSound(size, false, null);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto(); // Flash privacy LED
@@ -1550,7 +1572,9 @@ public class MediaCaptureService {
             if (!shouldSuppressPhotoFeedback()) {
                 triggerPhotoFlashLed();
                 if (enableSound) {
-                    playShutterSound();
+                    // SDK photo: isFromSdk=true; size and exposure match the enqueuePhotoRequest
+                    // call below so the warm/cold prediction lines up.
+                    playShutterSound(size, true, exposureTimeNs);
                 }
                 if (enableFlash) {
                     flashPrivacyLedForPhoto();
@@ -3160,7 +3184,9 @@ public class MediaCaptureService {
         if (!shouldSuppressPhotoFeedback()) {
             triggerPhotoFlashLed();
             if (enableSound) {
-                playShutterSound();
+                // BLE-transfer SDK photo: isFromSdk=true; size and exposure match the
+                // enqueuePhotoRequest call below so the warm/cold prediction lines up.
+                playShutterSound(size, true, exposureTimeNs);
             }
             if (enableFlash) {
                 flashPrivacyLedForPhoto();
@@ -3551,8 +3577,9 @@ public class MediaCaptureService {
                 // packets start
                 // This prevents packet interleaving at the BLE MTU boundary
                 try {
-                    Thread.sleep(200); // 200ms delay for JSON packet to fully transmit over BLE
-                    Log.d(TAG, "⏱️ Waited 200ms for JSON packet to complete BLE transmission");
+                    int preDelay = BleTransferMode.preTransferDelayMs();
+                    Thread.sleep(preDelay);
+                    Log.d(TAG, "⏱️ Waited " + preDelay + "ms for JSON packet [" + BleTransferMode.get() + "]");
                 } catch (InterruptedException e) {
                     Log.w(TAG, "Delay interrupted", e);
                 }

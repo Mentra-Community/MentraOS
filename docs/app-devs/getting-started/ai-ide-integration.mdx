@@ -77,14 +77,13 @@ Add this to your Cursor MCP config file at `~/.cursor/mcp.json` (create it if it
 {
   "mcpServers": {
     "mentraos-docs": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "https://docs.mentraglass.com/mcp"]
+      "url": "https://docs.mentraglass.com/mcp"
     }
   }
 }
 ```
 
-Then **restart Cursor**.
+Then **restart Cursor** and approve the MCP server if prompted.
 
 <Accordion title="Optional: Developer Console MCP (incidents)">
 Clone [MentraOS](https://github.com/Mentra-Community/MentraOS) and add a second server entry. Use the wrapper script so Bun is found when Cursor starts MCP with a minimal `PATH`:
@@ -93,8 +92,7 @@ Clone [MentraOS](https://github.com/Mentra-Community/MentraOS) and add a second 
 {
   "mcpServers": {
     "mentraos-docs": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "https://docs.mentraglass.com/mcp"]
+      "url": "https://docs.mentraglass.com/mcp"
     },
     "mentra-console": {
       "command": "/absolute/path/to/MentraOS/cloud/packages/console-mcp/scripts/run-mcp.sh",
@@ -126,11 +124,11 @@ VS Code 1.99+ has built-in MCP support with GitHub Copilot.
 5. Name it `mentraos-docs`
 
 <Accordion title="Manual configuration">
-Add to your VS Code `settings.json`:
+Create `.vscode/mcp.json` in your project and add:
 
 ```json
 {
-  "mcp.servers": {
+  "servers": {
     "mentraos-docs": {
       "type": "http",
       "url": "https://docs.mentraglass.com/mcp"
@@ -174,7 +172,7 @@ Add to your VS Code `settings.json`:
 Run this in your terminal:
 
 ```bash
-claude mcp add mentraos-docs --transport http https://docs.mentraglass.com/mcp
+claude mcp add --transport http mentraos-docs https://docs.mentraglass.com/mcp
 ```
 
 <Accordion title="Verify it worked">
@@ -185,16 +183,16 @@ Run `claude mcp list` to see your connected servers. You should see `mentraos-do
 
 ### Other MCP-Compatible Tools
 
-For any tool that supports MCP, use `mcp-remote` to connect to our HTTP endpoint:
-
-```bash
-npx -y mcp-remote https://docs.mentraglass.com/mcp
-```
-
-Or if your tool supports HTTP MCP servers directly, use the URL:
+For tools that support remote HTTP MCP servers, use this URL directly:
 
 ```
 https://docs.mentraglass.com/mcp
+```
+
+If your tool only supports command-based local MCP servers, use `mcp-remote`:
+
+```bash
+npx -y mcp-remote https://docs.mentraglass.com/mcp
 ```
 
 ---
@@ -216,7 +214,7 @@ Your AI should now give you accurate, up-to-date answers using our docs.
 
 <AccordionGroup>
   <Accordion title="Server not connecting">
-    Make sure you have Node.js 18+ installed. The `mcp-remote` package requires it.
+    If your setup uses `mcp-remote`, make sure you have Node.js 18+ installed.
     
     ```bash
     node --version  # Should be v18.0.0 or higher
@@ -228,7 +226,7 @@ Your AI should now give you accurate, up-to-date answers using our docs.
   </Accordion>
   
   <Accordion title="Permission errors">
-    Try running the npx command with `sudo` on macOS/Linux, or run your terminal as Administrator on Windows.
+    Fix your Node.js package permissions with a version manager or npm prefix configuration instead of running downloaded packages with `sudo`.
   </Accordion>
 
   <Accordion title="mentra-console MCP errored in Cursor">

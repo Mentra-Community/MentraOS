@@ -112,6 +112,14 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   requestNavigationPermission(): Promise<{ok: boolean; accepted: boolean; error?: string}>
 
   /**
+   * Dev-only: clear cached T&C acceptance (SDK flag + on-disk pref +
+   * in-process flag) so the next requestNavigationPermission() re-shows
+   * the dialog. Android only; iOS returns {ok: false, error: "not
+   * supported on iOS"}.
+   */
+  resetNavigationPermission(): Promise<{ok: boolean; error?: string}>
+
+  /**
    * Dev-only: nudge the simulated user position ~offsetMeters perpendicular
    * to the route so the Nav SDK reroutes. Default 20m. Android only.
    */

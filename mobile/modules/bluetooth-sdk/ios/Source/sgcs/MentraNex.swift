@@ -81,8 +81,8 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         updateGlassesAutoBrightness(autoMode)
     }
 
-    func sendDoubleTextWall(_ top: String, _ bottom: String) {
-        sendTextWall("\(top)\n\(bottom)")
+    func sendDoubleTextWall(_ top: String, _ bottom: String) async {
+        await sendTextWall("\(top)\n\(bottom)")
     }
 
     func displayBitmap(base64ImageData: String, x _: Int32? = nil, y _: Int32? = nil, width _: Int32? = nil, height _: Int32? = nil) async -> Bool {
@@ -401,6 +401,24 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     private let commandQueue = CommandQueue()
     private var isQueueWorkerRunning = false
 
+    // MARK: - Text wall coalescing (G2-style)
+
+    // Captions arrive per interim transcript (several/sec while speaking) but are
+    // only worth showing if they're the freshest text. A single latest-wins slot +
+    // a 100 ms drain ticker caps glasses-bound text writes at 10/sec and discards
+    // stale interim results instead of queueing them. Without this, continuous
+    // speech while the phone is locked backlogs the FIFO commandQueue (drain slows
+    // at relaxed connection intervals) and the app does unbounded background work.
+    // Mirrors G2's pendingTextMsg/drainEvenHubQueue. One repair resend covers a
+    // dropped final caption (writes are no-ack); mid-stream drops are repaired by
+    // the next update anyway.
+    private let textWallLock = NSLock()
+    private var pendingTextWall: Data?
+    private var lastTextWall: Data?
+    private var textWallResendsRemaining = 0
+    private let TEXT_WALL_RESEND_COUNT = 1
+    private var textWallDrainTask: Task<Void, Never>?
+
     // MARK: - Initialization
 
     override private init() {
@@ -513,12 +531,17 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     /// reassemble messages larger than one MTU. Single-fragment messages set totalChunks = 1
     /// and are decoded directly by the firmware's fast path.
     private func queueDataWithOptimalChunking(
-        _ data: Data, packetType: UInt8 = 0x02, waitTimeMs: Int = 0
+        _ data: Data, packetType: UInt8 = 0x02, waitTimeMs: Int = 0, emitTelemetry: Bool = true
     ) {
         // Telemetry: report the full logical command (type byte + protobuf) before fragmenting.
-        var packetData = Data([packetType])
-        packetData.append(data)
-        emitBleCommandSent(packetData)
+        // Callers on high-rate paths (caption text walls, up to 10/sec) pass
+        // emitTelemetry: false — emitBleCommandSent re-parses the protobuf,
+        // hex-dumps the packet, and crosses to the JS thread per call.
+        if emitTelemetry {
+            var packetData = Data([packetType])
+            packetData.append(data)
+            emitBleCommandSent(packetData)
+        }
 
         let headerSize = 4 // [packetType][seq][totalChunks][chunkIndex]
         let effectiveChunkSize = max(1, maxChunkSize - headerSize)
@@ -549,9 +572,11 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             index += 1
         }
 
-        Bridge.log(
-            "NEX: 📦 Fragmented protobuf into \(chunks.count) chunk(s) (seq=\(seq), max payload \(effectiveChunkSize) bytes)"
-        )
+        // No per-send log: fires for every outbound message (up to 10/sec text
+        // walls during captions).
+        // Bridge.log(
+        //     "NEX: 📦 Fragmented protobuf into \(chunks.count) chunk(s) (seq=\(seq), max payload \(effectiveChunkSize) bytes)"
+        // )
         queueChunks(chunks, waitTimeMs: waitTimeMs)
     }
 
@@ -565,34 +590,34 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
         // Send each chunk sequentially
         for (index, chunk) in command.chunks.enumerated() {
-            let timeSinceConnection = Date().timeIntervalSince1970 * 1000 - lastConnectionTimestamp
-            if timeSinceConnection < Double(INITIAL_CONNECTION_DELAY_MS) {
-                let remainingMs = UInt64(Double(INITIAL_CONNECTION_DELAY_MS) - timeSinceConnection)
-                try? await Task.sleep(nanoseconds: remainingMs * 1_000_000)
-            }
+            // let timeSinceConnection = Date().timeIntervalSince1970 * 1000 - lastConnectionTimestamp
+            // if timeSinceConnection < Double(INITIAL_CONNECTION_DELAY_MS) {
+            //     let remainingMs = UInt64(Double(INITIAL_CONNECTION_DELAY_MS) - timeSinceConnection)
+            //     try? await Task.sleep(nanoseconds: remainingMs * 1_000_000)
+            // }
             let data = Data(chunk)
-            Bridge.log(
-                "NEX: 📦 Sending chunk \(index) of \(command.chunks.count) to \(peripheral.name ?? "Unknown")"
-            )
-            Bridge.log("NEX: 📦 Chunk data: \(data.toHexString())")
-            // Write WITHOUT response: a write-with-response is one outstanding request at a
-            // time gated on a remote round trip, which puts the (screen-off-throttled) app
-            // thread in the path of every fragment and makes captions crawl in the background.
-            // .withoutResponse lets CoreBluetooth batch fragments into connection events.
-            // CoreBluetooth does NOT call didWriteValueFor for .withoutResponse, so we use its
-            // flow-control flag instead of an ack — gating prevents dropped fragments (which
-            // would make the firmware discard the whole reassembled caption). See
-            // docs/ble-disconnects-during-captions.md in the firmware repo.
-            if !peripheral.canSendWriteWithoutResponse {
-                await waitUntilReadyToWrite()
-            }
+            // Bridge.log(
+            //     "NEX: 📦 Sending chunk \(index) of \(command.chunks.count) to \(peripheral.name ?? "Unknown")"
+            // )
+            // Bridge.log("NEX: 📦 Chunk data: \(data.toHexString())")
+            // // Write WITHOUT response: a write-with-response is one outstanding request at a
+            // // time gated on a remote round trip, which puts the (screen-off-throttled) app
+            // // thread in the path of every fragment and makes captions crawl in the background.
+            // // .withoutResponse lets CoreBluetooth batch fragments into connection events.
+            // // CoreBluetooth does NOT call didWriteValueFor for .withoutResponse, so we use its
+            // // flow-control flag instead of an ack — gating prevents dropped fragments (which
+            // // would make the firmware discard the whole reassembled caption). See
+            // // docs/ble-disconnects-during-captions.md in the firmware repo.
+            // if !peripheral.canSendWriteWithoutResponse {
+            //     await waitUntilReadyToWrite()
+            // }
             peripheral.writeValue(data, for: writeCharacteristic, type: .withoutResponse)
 
-            // Delay between chunks except maybe after the last chunk if waitTime will handle it
-            if index < command.chunks.count - 1 {
-                try? await Task.sleep(nanoseconds: UInt64(command.chunkDelayMs) * 1_000_000)
-            }
-            try? await Task.sleep(nanoseconds: DELAY_BETWEEN_CHUNKS_SEND_MS * 1_000_000)
+            // // Delay between chunks except maybe after the last chunk if waitTime will handle it
+            // if index < command.chunks.count - 1 {
+            //     try? await Task.sleep(nanoseconds: UInt64(command.chunkDelayMs) * 1_000_000)
+            // }
+            // try? await Task.sleep(nanoseconds: DELAY_BETWEEN_CHUNKS_SEND_MS * 1_000_000)
         }
 
         // Optional wait after the command
@@ -671,6 +696,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             "Mentra_([0-9A-Fa-f]+)",
             "NEX_([0-9A-Fa-f]+)",
             "MENTRA_NEX_([0-9A-Fa-f]+)",
+            "MENTRA_DISPLAY_([0-9A-Fa-f]+)",
         ]
 
         for pattern in patterns {
@@ -972,7 +998,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         return normalized.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
     }
 
-    func sendTextWall(_ text: String) {
+    func sendTextWall(_ text: String) async {
         guard nexReady else {
             Bridge.log("NEX: Not ready to display text. Device not initialized.")
             return
@@ -982,7 +1008,9 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // can't render (CJK etc.). When enabled, pass the text through unmodified.
         let chineseCaptionsEnabled = DeviceStore.shared.get("bluetooth", "nex_chinese_captions") as? Bool ?? false
         let sanitizedText = chineseCaptionsEnabled ? text : sanitizeDisplayText(text)
-        Bridge.log("NEX: Displaying text wall: '\(sanitizedText)'")
+        // No per-call log: this runs for every interim transcript (several/sec
+        // during continuous speech) and each Bridge.log costs the JS thread.
+        // Bridge.log("NEX: Displaying text wall: '\(sanitizedText)'")
 
         let displayText = Mentraos_Ble_DisplayText.with {
             $0.text = sanitizedText
@@ -997,26 +1025,69 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         }
 
         let protobufData = try! phoneToGlasses.serializedData()
-        queueDataWithOptimalChunking(protobufData, packetType: PACKET_TYPE_PROTOBUF)
+        // Latest-wins: overwrite the pending slot; the 100 ms drain ticker sends it.
+        // Do NOT enqueue on commandQueue — that's what backlogs under continuous speech.
+        textWallLock.lock()
+        pendingTextWall = protobufData
+        textWallLock.unlock()
+    }
+
+    private func startTextWallDrain() {
+        textWallDrainTask?.cancel()
+        textWallDrainTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                guard !Task.isCancelled else { break }
+                self?.drainPendingTextWall()
+            }
+        }
+    }
+
+    private func stopTextWallDrain() {
+        textWallDrainTask?.cancel()
+        textWallDrainTask = nil
+        textWallLock.lock()
+        pendingTextWall = nil
+        lastTextWall = nil
+        textWallResendsRemaining = 0
+        textWallLock.unlock()
+    }
+
+    private func drainPendingTextWall() {
+        textWallLock.lock()
+        let msg = pendingTextWall
+        pendingTextWall = nil
+        var toSend: Data?
+        if let msg {
+            lastTextWall = msg
+            textWallResendsRemaining = TEXT_WALL_RESEND_COUNT
+            toSend = msg
+        } else if textWallResendsRemaining > 0, let last = lastTextWall {
+            textWallResendsRemaining -= 1
+            toSend = last
+        }
+        textWallLock.unlock()
+        guard let toSend else { return }
+        queueDataWithOptimalChunking(toSend, packetType: PACKET_TYPE_PROTOBUF, emitTelemetry: false)
     }
 
     @objc func displayTextLine(_ text: String) {
-        sendTextWall(text)
+        Task { await sendTextWall(text) }
     }
 
     @objc func displayDoubleTextWall(_ textTop: String, textBottom: String) {
         let combinedText = "\(textTop)\n\(textBottom)"
-        sendTextWall(combinedText)
+        Task { await sendTextWall(combinedText) }
     }
 
     @objc func displayReferenceCardSimple(_ title: String, body: String) {
         let combinedText = "\(title)\n\n\(body)"
-        sendTextWall(combinedText)
+        Task { await sendTextWall(combinedText) }
     }
 
     @objc func displayRowsCard(_ rowStrings: [String]) {
         let combinedText = rowStrings.joined(separator: "\n")
-        sendTextWall(combinedText)
+        Task { await sendTextWall(combinedText) }
     }
 
     @objc func displayBulletList(_ title: String, bullets: [String]) {
@@ -1025,7 +1096,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             text += "\n"
         }
         text += bullets.map { "• \($0)" }.joined(separator: "\n")
-        sendTextWall(text)
+        Task { await sendTextWall(text) }
     }
 
     @objc func displayScrollingText(_ text: String) {
@@ -1185,6 +1256,14 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         }
 
         Bridge.log("NEX: Clearing display")
+
+        // Drop any pending/resendable text wall so a stale caption can't
+        // repaint the display after this clear.
+        textWallLock.lock()
+        pendingTextWall = nil
+        lastTextWall = nil
+        textWallResendsRemaining = 0
+        textWallLock.unlock()
 
         let clearDisplay = Mentraos_Ble_ClearDisplay()
 
@@ -1455,7 +1534,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     @objc func displayCustomContent(_ content: String) {
         // For now, treat custom content as regular text
-        sendTextWall(content)
+        Task { await sendTextWall(content) }
     }
 
     @objc func setUpdatingScreen(_ updating: Bool) {
@@ -1539,7 +1618,9 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     private func processProtobufData(_ protobufData: Data) {
         do {
             let glassesToPhone = try Mentraos_Ble_GlassesToPhone(serializedData: protobufData)
-            Bridge.log("NEX: Processing protobuf payload case: \(glassesToPhone.payload)")
+            // No per-message log: String(describing: payload) stringifies the whole
+            // protobuf and every Bridge.log costs the JS thread.
+            // Bridge.log("NEX: Processing protobuf payload case: \(glassesToPhone.payload)")
 
             let fullPacket = Data([PACKET_TYPE_PROTOBUF]) + protobufData
             emitBleCommandReceived(fullPacket, payloadDescription: String(describing: glassesToPhone.payload))
@@ -1590,10 +1671,9 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     }
 
     private func processAudioData(_ audioData: Data, sequenceNumber: UInt8) {
-        Bridge.log(
-            "NEX: Received audio data - sequence: \(sequenceNumber), size: \(audioData.count) bytes"
-        )
-
+        // No per-packet log: fires 20x/sec while the mic streams; each Bridge.log
+        // costs the JS thread. Keep only the sequence-mismatch log below (rare,
+        // fires on actual packet loss).
         if lastReceivedLc3Sequence != -1, UInt8((lastReceivedLc3Sequence + 1) & 0xFF) != sequenceNumber {
             Bridge.log("NEX: LC3 packet sequence mismatch. Expected \((lastReceivedLc3Sequence + 1) & 0xFF), got \(sequenceNumber)")
         }
@@ -2064,6 +2144,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         Task { await commandQueue.clear() }
         resumePendingWrite()
         stopReconnectionTimer()
+        stopTextWallDrain()
     }
 
     // MARK: - Lifecycle Management (ported from Java)
@@ -2222,7 +2303,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         switch central.state {
         case .poweredOn:
             Bridge.log("NEX: ✅ Bluetooth is On and ready for scanning")
-            if scanOnPowerOn {
+            if scanOnPowerOn || peripheralToConnectName != nil {
                 Bridge.log("NEX: 🚀 Triggering scan after power on.")
                 scanOnPowerOn = false
                 startScan()
@@ -2411,6 +2492,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
         // Stop mic beat system (like Java implementation)
         stopMicBeat()
+        stopTextWallDrain()
 
         nexReady = false
         deviceReady = false
@@ -2550,6 +2632,9 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
         // Initialize command queue worker to process queued commands
         setupCommandQueue()
+
+        // Start the 100 ms latest-wins drain for caption text walls
+        startTextWallDrain()
 
         // Emit device ready event to React Native
         // emitDeviceReady()
@@ -2696,7 +2781,11 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             Bridge.log("NEX-CONN: ⚠️ Received notification with no data.")
             return
         }
-        Bridge.log("NEX-CONN: 📥 Received data (\(data.count) bytes): \(data.toHexString())")
+        // No per-notification logging here: this fires for EVERY inbound packet
+        // (~20/sec audio alone), and Bridge.log is a typed message the JS thread
+        // must process — plus the toHexString() is O(n) per packet. This was a
+        // top contributor to the background CPU kill (cpu_resource_fatal.ips).
+        // Bridge.log("NEX-CONN: 📥 Received data (\(data.count) bytes): \(data.toHexString())")
 
         // Process the received data based on packet type
         processReceivedData(data)

@@ -133,11 +133,11 @@ class Simulated: SGCManager {
         Bridge.log("clearDisplay")
     }
 
-    func sendTextWall(_: String) {
+    func sendTextWall(_: String) async {
         Bridge.log("sendTextWall")
     }
 
-    func sendDoubleTextWall(_: String, _: String) {
+    func sendDoubleTextWall(_: String, _: String) async {
         Bridge.log("sendDoubleTextWall")
     }
 
