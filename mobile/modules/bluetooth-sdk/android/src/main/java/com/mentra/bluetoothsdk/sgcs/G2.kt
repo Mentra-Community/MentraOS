@@ -1838,10 +1838,18 @@ class G2 : SGCManager() {
 
     // ---------- SGCManager: Display Control ----------
 
+    override fun sendText(text: String) {
+        displayScope.launch {
+            displayMutex.withLock {
+                sendText2(text)
+            }
+        }
+    }
+
     override fun sendTextWall(text: String) {
         displayScope.launch {
             displayMutex.withLock {
-                sendText(
+                sendText2(
                         text,
                         x = defaultTextX,
                         y = defaultTextY,
@@ -1856,7 +1864,7 @@ class G2 : SGCManager() {
         }
     }
 
-    private suspend fun sendText(
+    private suspend fun sendText2(
             text: String,
             x: Int? = null,
             y: Int? = null,
@@ -3548,6 +3556,9 @@ class G2 : SGCManager() {
     private fun handleEvenHubResponse(payload: ByteArray) {
         val reader = ProtobufReader(payload)
         val fields = reader.parseFields()
+
+        // print raw payload:
+        Bridge.log("G2: EvenHub response payload: ${payload.joinToString("") { String.format("%02X", it) }}")
 
         val cmdValue =
                 fields[1] as? Int

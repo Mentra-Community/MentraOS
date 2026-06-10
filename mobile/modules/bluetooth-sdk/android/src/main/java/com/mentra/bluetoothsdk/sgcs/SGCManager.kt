@@ -64,6 +64,7 @@ abstract class SGCManager {
     // Display Control
     abstract fun setBrightness(level: Int, autoMode: Boolean)
     abstract fun clearDisplay()
+    abstract fun sendText(text: String)
     abstract fun sendTextWall(text: String)
     abstract fun sendDoubleTextWall(top: String, bottom: String)
     /**
