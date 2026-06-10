@@ -160,3 +160,7 @@ release so the test cannot pick up stale local artifacts.
 If the public release is not visible yet, Maven Central mirror propagation can
 lag briefly. Retry after the artifact appears under
 `https://repo.maven.apache.org/maven2/com/mentraglass/bluetooth-sdk/`.
+
+If a Maven Central version is published with incorrect POM or Gradle module
+metadata, treat it as immutable and publish a new patch version from
+`mobile/modules/bluetooth-sdk/package.json`.
