@@ -5,7 +5,6 @@
  *   miniapp → SDK → LocalMiniappRuntime → coordinator
  *           coordinator → CoreModule (BLE → glasses publisher)
  *           coordinator ↔ v2StreamApi (managed only, Cloudflare provisioning)
- *           coordinator ↔ StreamLifecycleController (keep-alive heartbeat)
  *           coordinator → status listeners → routed back to miniapp(s)
  *
  * Single-stream constraint:
@@ -29,9 +28,8 @@
  */
 
 import CoreModule from "@mentra/bluetooth-sdk-internal"
-import type {KeepAliveAckEvent, StreamResolvedConfig, StreamStatusEvent} from "@mentra/bluetooth-sdk-internal"
+import type {StreamResolvedConfig, StreamStatusEvent} from "@mentra/bluetooth-sdk-internal"
 
-import {StreamLifecycleController, type LifecycleLogger} from "./StreamLifecycleController"
 import {
   getManagedStreamStatus,
   provisionManagedStream,
@@ -42,13 +40,11 @@ import {
 } from "./v2StreamApi"
 
 /**
- * Default cadence + thresholds. Exposed via {@link CoordinatorTimings} so tests
- * can shorten them; production code should never override these.
+ * Default polling cadence. Exposed via {@link CoordinatorTimings} so tests can
+ * shorten it; production code should never override these.
  */
 const DEFAULT_TIMINGS = {
   keepAliveIntervalMs: 15_000,
-  ackTimeoutMs: 10_000,
-  maxMissedAcks: 3,
   cloudflareStatusPollMs: 5_000,
   // Cloudflare typically needs ~5-10s after first frame before HLS is live.
   hlsReadinessInitialDelayMs: 5_000,
@@ -58,19 +54,6 @@ const DEFAULT_TIMINGS = {
 
 type TimingConfig = {[K in keyof typeof DEFAULT_TIMINGS]: number}
 export type CoordinatorTimings = Partial<TimingConfig>
-
-// Console-backed minimal logger; replaces pino on the phone.
-const consoleLogger: LifecycleLogger = {
-  child: (bindings) => ({
-    ...consoleLogger,
-    debug: (...args) => console.debug("[STREAM]", bindings, ...args),
-    warn: (...args) => console.warn("[STREAM]", bindings, ...args),
-    error: (...args) => console.error("[STREAM]", bindings, ...args),
-  }),
-  debug: (...args) => console.debug("[STREAM]", ...args),
-  warn: (...args) => console.warn("[STREAM]", ...args),
-  error: (...args) => console.error("[STREAM]", ...args),
-}
 
 export interface StartUnmanagedOptions {
   streamUrl: string
@@ -144,7 +127,6 @@ export class StreamConflictError extends Error {
 
 export class PhoneStreamCoordinator {
   private current: Entry | null = null
-  private lifecycle: StreamLifecycleController | null = null
   private statusSubscriber: StatusSubscriber | null = null
   private idCounter = 0
   private readonly timings: TimingConfig
@@ -237,7 +219,6 @@ export class PhoneStreamCoordinator {
           audio: opts.audio as never,
         })
         const result = publisherStartResult(streamId, event)
-        this.startLifecycle(streamId)
         return result
       } catch (err) {
         this.current = null
@@ -325,7 +306,6 @@ export class PhoneStreamCoordinator {
         throw err
       }
 
-      this.startLifecycle(streamId)
       this.startCloudflareStatusPoll(entry)
       this.startHlsReadinessPoll(entry)
       return {kind: "fresh", entry}
@@ -375,7 +355,6 @@ export class PhoneStreamCoordinator {
     if (!this.current) return
     if (event.streamId && event.streamId !== this.current.streamId) return
 
-    this.lifecycle?.recordActivity()
     this.fanout({
       streamId: this.current.streamId,
       source: "glasses",
@@ -400,12 +379,6 @@ export class PhoneStreamCoordinator {
     }
   }
 
-  /** Called by MantleManager when a phone-owned keep_alive_ack arrives. */
-  handleKeepAliveAck(event: KeepAliveAckEvent): void {
-    if (!event.ackId) return
-    this.lifecycle?.handleAck(event.ackId)
-  }
-
   // ===========================================================================
   // Internal
   // ===========================================================================
@@ -413,43 +386,6 @@ export class PhoneStreamCoordinator {
   private mintId(prefix: "u" | "m"): string {
     this.idCounter += 1
     return `phone-${prefix}-${Date.now().toString(36)}-${this.idCounter}`
-  }
-
-  private startLifecycle(streamId: string): void {
-    this.lifecycle?.dispose()
-    const ctrl = new StreamLifecycleController(
-      {
-        logger: consoleLogger,
-        streamId,
-        keepAliveIntervalMs: this.timings.keepAliveIntervalMs,
-        ackTimeoutMs: this.timings.ackTimeoutMs,
-        maxMissedAcks: this.timings.maxMissedAcks,
-      },
-      {
-        sendKeepAlive: async (ackId) => {
-          await CoreModule.sendExternallyManagedStreamKeepAlive({
-            type: "keep_stream_alive",
-            streamId,
-            ackId,
-          })
-        },
-        onTimeout: async () => {
-          this.fanout({
-            streamId,
-            source: "coordinator",
-            status: "error",
-            data: {reason: "keep_alive_timeout"},
-          })
-          await this.runExclusive(async () => {
-            // The stream this timeout was bound to may already be gone.
-            if (this.current?.streamId !== streamId) return
-            await this.teardownLocked("keep_alive_timeout")
-          })
-        },
-      },
-    )
-    ctrl.setActive(true)
-    this.lifecycle = ctrl
   }
 
   private startCloudflareStatusPoll(entry: ManagedEntry): void {
@@ -557,12 +493,6 @@ export class PhoneStreamCoordinator {
     const entry = this.current
     if (!entry) return
     const sendBleStop = options.sendBleStop !== false
-
-    // Dispose the lifecycle controller immediately so it doesn't fire one
-    // more keep-alive against a stream we're tearing down. The transition
-    // lock guarantees no new lifecycle is started concurrently.
-    this.lifecycle?.dispose()
-    this.lifecycle = null
 
     if (entry.kind === "managed") {
       if (entry.cloudflareTimer) clearInterval(entry.cloudflareTimer)
