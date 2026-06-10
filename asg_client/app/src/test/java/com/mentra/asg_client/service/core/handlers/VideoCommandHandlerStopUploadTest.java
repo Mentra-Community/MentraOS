@@ -107,6 +107,8 @@ public class VideoCommandHandlerStopUploadTest {
         assertThat(handled).isTrue();
         // Empty webhook = no upload; the service treats "" as "keep on device".
         verify(captureService).handleStopVideoCommand("req-123", "", "");
+        verify(captureService, never())
+                .stopVideoRecording(ArgumentMatchers.anyString(), ArgumentMatchers.anyString());
     }
 
     @Test
