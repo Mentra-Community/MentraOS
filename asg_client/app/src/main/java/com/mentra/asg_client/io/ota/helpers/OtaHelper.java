@@ -131,6 +131,12 @@ public class OtaHelper {
     private static final String CACHE_FIELD_VERSION = "version";
     private static final String CACHE_FIELD_TIMESTAMP = "timestamp";
     private static final String CACHE_FIELD_SIZE = "size";
+    // Marks that CACHE_FIELD_SHA256 holds the ACTUAL computed hash of the file on disk (true), vs
+    // a legacy entry written by older code that stored the server's *claimed* hash. The fast path
+    // only trusts entries with this flag; legacy entries (flag absent) are forced through a full
+    // re-hash so a corrupt APK cached by the old buggy code is caught immediately, not after the
+    // TTL. See markCachedArtifactReady()/isCachedArtifactValid().
+    private static final String CACHE_FIELD_HASH_VERIFIED = "hash_verified";
     private static final String CACHE_KEY_APK_ASG = "apk_com.mentra.asg_client";
     private static final String CACHE_KEY_APK_RECOVERY = "apk_com.mentra.recovery";
     private static final String CACHE_KEY_MTK = "mtk_main";
@@ -445,6 +451,10 @@ public class OtaHelper {
             editor.putBoolean(cacheField(cacheKey, CACHE_FLAG_READY), true);
             editor.putString(cacheField(cacheKey, CACHE_FIELD_PATH), localPath);
             editor.putString(cacheField(cacheKey, CACHE_FIELD_SHA256), computedHash);
+            // Mark that the stored hash is a real computed hash of the file (distinguishes this
+            // from legacy entries that stored the server's claimed hash). Only such entries may
+            // take the fast path in isCachedArtifactValid().
+            editor.putBoolean(cacheField(cacheKey, CACHE_FIELD_HASH_VERIFIED), true);
             editor.putString(
                     cacheField(cacheKey, CACHE_FIELD_VERSION),
                     metadata.optString("versionName", ""));
@@ -525,16 +535,33 @@ public class OtaHelper {
             // not been modified since we verified it, the bytes on disk are genuinely correct and
             // we can skip the expensive full re-hash. This is a real integrity check, not a
             // tautology — storedHash now reflects the file content, expectedHash the server claim.
+            //
+            // CACHE_FIELD_HASH_VERIFIED gates this: it is only set when the stored hash was
+            // computed from the file. Legacy entries written by older code stored the server's
+            // *claimed* hash instead, which would make this comparison a claim-vs-claim tautology
+            // (the original bug). Those entries lack the flag and are forced through the slow path
+            // below, which re-hashes the file — so a corrupt APK cached by the old code is caught
+            // on the very next check rather than only after the TTL.
+            boolean hashIsComputed =
+                    getCachePrefs().getBoolean(cacheField(cacheKey, CACHE_FIELD_HASH_VERIFIED), false);
             String storedHash =
                     getCachePrefs().getString(cacheField(cacheKey, CACHE_FIELD_SHA256), "");
             String expectedHash = metadata.optString("sha256", "");
 
-            if (!storedHash.isEmpty()
+            if (hashIsComputed
+                    && !storedHash.isEmpty()
                     && !expectedHash.isEmpty()
                     && storedHash.equalsIgnoreCase(expectedHash)
                     && file.lastModified() <= storedTimestamp) {
                 Log.d(TAG, "Cache fast-path hit for " + cacheKey + " - skipping re-hash");
                 return true;
+            }
+            if (!hashIsComputed) {
+                Log.i(
+                        TAG,
+                        "Legacy cache entry for "
+                                + cacheKey
+                                + " (no computed hash) — forcing full re-verify");
             }
 
             // Slow path: stored hash absent, mismatched, or file was modified — full verify.
@@ -577,6 +604,7 @@ public class OtaHelper {
             editor.remove(cacheField(cacheKey, CACHE_FLAG_READY));
             editor.remove(cacheField(cacheKey, CACHE_FIELD_PATH));
             editor.remove(cacheField(cacheKey, CACHE_FIELD_SHA256));
+            editor.remove(cacheField(cacheKey, CACHE_FIELD_HASH_VERIFIED));
             editor.remove(cacheField(cacheKey, CACHE_FIELD_VERSION));
             editor.remove(cacheField(cacheKey, CACHE_FIELD_TIMESTAMP));
             editor.remove(cacheField(cacheKey, CACHE_FIELD_SIZE));
