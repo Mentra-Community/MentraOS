@@ -602,8 +602,12 @@ class SocketComms {
     // Optional per-recording video settings; when absent the glasses use their
     // saved button-video settings. Only forward fields that are present.
     const s = msg.settings ?? {}
-    // Optional auto-stop timer (minutes); 0/absent = record until stopped.
-    const maxRecordingTimeMinutes = typeof msg.maxRecordingTimeMinutes === "number" ? msg.maxRecordingTimeMinutes : undefined
+    // Optional auto-stop timer (minutes); 0/absent = record until stopped. Accept it from the
+    // canonical nested location (settings.maxRecordingTimeMinutes, per VideoRecordingSettings) or
+    // the legacy top-level location, preferring nested. `??` (not `||`) preserves an explicit 0.
+    const rawMaxRecordingTimeMinutes = s.maxRecordingTimeMinutes ?? msg.maxRecordingTimeMinutes
+    const maxRecordingTimeMinutes =
+      typeof rawMaxRecordingTimeMinutes === "number" ? rawMaxRecordingTimeMinutes : undefined
     const settings =
       s.width != null || s.height != null || s.fps != null || maxRecordingTimeMinutes != null
         ? {width: s.width, height: s.height, fps: s.fps, maxRecordingTimeMinutes}

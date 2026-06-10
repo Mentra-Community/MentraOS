@@ -66,8 +66,10 @@ ASG client (`asg_client/`) already accepts and uses the new fields:
 
 - The upload decision is **bound to the recording's `captureId`** (its capture-dir
   name, unique per recording) via a `ConcurrentHashMap<String, UploadTarget>`,
-  **not** shared mutable fields. It is registered when the recording is stopped and
-  consumed exactly once by that recording's `onRecordingStopped`.
+  **not** shared mutable fields. It is registered in `stopVideoRecording` **only
+  once the stop is actually dispatched to the recorder** (below the "not recording"
+  guard, so an early-return can never orphan it) and consumed exactly once by that
+  recording's `onRecordingStopped`.
 - **First stop wins** (`putIfAbsent`): only a `USER_REQUESTED` stop registers a
   webhook target; any auto-stop (battery, max-duration, error) registers a
   "no upload" decision. Because the entry is keyed by `captureId` and set with
@@ -75,9 +77,15 @@ ASG client (`asg_client/`) already accepts and uses the new fields:
   auto-stop already committed to "no upload", even once the stop-reason guard has
   reset — cannot flip the outcome, and a new recording can't overwrite a prior
   recording's still-pending target.
-- **Cleanup is guaranteed**: `onRecordingStopped` removes its own entry up front,
-  so every exit path (null file path, cleanup-in-progress, integrity-check failure)
-  drops the target and it can never leak into a later recording.
+- **Cleanup is guaranteed on every terminal path**: the entry is dropped by
+  `onRecordingStopped` (removed up front, covering its null-file-path /
+  cleanup-in-progress / integrity-failure exits), by `onRecordingError` (the
+  mutually-exclusive alternative to `onRecordingStopped`), by the `stopVideoRecording`
+  catch (failed dispatch → no callback fires), and by `cleanup()` (`clear()` on
+  teardown). So a pending target — including its auth token — can never leak into a
+  later recording or survive service teardown. `currentVideoPath` is `volatile`
+  because the stop prologue reads it (to derive the `captureId` key) on a different
+  thread than the start/callback writers.
 - `uploadVideo(...)` is no longer a stub. With no webhook (null/empty/whitespace,
   trimmed) it keeps the file on device (legacy behavior); with a webhook it calls
   `performDirectVideoUpload(...)`.
@@ -200,7 +208,10 @@ message and forwards them into the SDK calls (mirroring `handle_photo_request`):
 - `handle_stop_video_recording`: reads `webhookUrl` + `authToken` and calls
   `BluetoothSdk.stopVideoRecording(requestId, webhookUrl, authToken)`. Empty
   webhook = keep on device.
-- `handle_start_video_recording`: reads `maxRecordingTimeMinutes` and includes it
+- `handle_start_video_recording`: reads `maxRecordingTimeMinutes` from either the
+  canonical nested location (`settings.maxRecordingTimeMinutes`, per
+  `VideoRecordingSettings`) or the legacy top-level `msg`, preferring nested
+  (`??`, so an explicit `0` = "record until stopped" is preserved), and includes it
   in the `settings` object passed to `BluetoothSdk.startVideoRecording(...)`.
 
 ## Remaining (cloud — out of scope here, required for end-to-end)

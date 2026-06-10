@@ -82,7 +82,9 @@ public class MediaCaptureService {
     // Track current video recording
     private boolean isRecordingVideo = false;
     private String currentVideoId = null;
-    private String currentVideoPath = null;
+    // volatile: read in the stop prologue (BLE worker / main looper) to derive the upload-target
+    // captureId key, while written on the start/callback threads — needs cross-thread visibility.
+    private volatile String currentVideoPath = null;
     private long recordingStartTime = 0;
     private boolean currentVideoLedEnabled =
             false; // Track if LED was enabled for current recording
@@ -1062,6 +1064,15 @@ public class MediaCaptureService {
                                 clearVideoCaptureSyncBlocks(currentVideoPath);
                             }
 
+                            // onRecordingError is the mutually-exclusive alternative to
+                            // onRecordingStopped (exactly one fires per stop), so consume this
+                            // recording's upload decision here too. Otherwise a USER_REQUESTED stop
+                            // that already registered a webhook target would leak it (auth token
+                            // included) and the planned upload would silently never run.
+                            if (captureIdAtStart != null) {
+                                uploadTargetsByCaptureId.remove(captureIdAtStart);
+                            }
+
                             isRecordingVideo = false;
 
                             // Turn off RGB white LED on error (error path may not go through
@@ -1133,10 +1144,13 @@ public class MediaCaptureService {
     /**
      * Stop video recording with a reason and an optional upload target.
      *
-     * <p>The reason guard, the {@code mCurrentStopReason} write, and the pending-upload target are
-     * set together under {@link #mStopLock} so the decision is atomic: only a {@code USER_REQUESTED}
-     * stop may carry a webhook, and a stop already in progress (e.g. an auto-stop) can't have a
-     * racing user stop inject a webhook into it.
+     * <p>The reason guard + {@code mCurrentStopReason} write are serialized under {@link #mStopLock}.
+     * The upload target is registered only once the stop is actually dispatched to the recorder
+     * (below the "not recording" guard), keyed by the recording's captureId via {@code putIfAbsent}
+     * (first-stop-wins): only a {@code USER_REQUESTED} stop carries a webhook, and a stop already in
+     * progress — or a user stop racing/following an auto-stop that already committed to "no upload" —
+     * can't flip the outcome. The entry is consumed in {@code onRecordingStopped} and dropped on
+     * every other terminal path ({@code onRecordingError}, the catch below, {@code cleanup}).
      *
      * @param reason Why recording is stopping
      * @param webhookUrl Upload target (USER_REQUESTED only); null/empty keeps the video on device
@@ -1156,22 +1170,13 @@ public class MediaCaptureService {
             }
 
             mCurrentStopReason = reason;
-            // Bind the upload decision to this recording's captureId, first-stop-wins. Only a
-            // user-requested stop may upload; any auto-stop (battery/max-duration/error) registers
-            // a "no upload" decision. putIfAbsent means a later or racing stop (e.g. a user stop
-            // landing after an auto-stop already committed to "no upload", even once the stop-reason
-            // guard has been reset) cannot change the outcome. The entry lives until this recording's
-            // onRecordingStopped consumes it.
-            String captureId = captureIdFromVideoAbsPath(currentVideoPath);
-            if (captureId != null) {
-                UploadTarget target =
-                        reason == StopReason.USER_REQUESTED
-                                ? new UploadTarget(webhookUrl, authToken)
-                                : new UploadTarget(null, null);
-                uploadTargetsByCaptureId.putIfAbsent(captureId, target);
-            }
         }
         Log.d(TAG, "🛑 Stopping video recording - Reason: " + reason);
+
+        // captureId of the active recording: the key under which the upload decision is registered
+        // (below, just before dispatch) and later consumed/removed. Read from the (volatile)
+        // current path so it is published across the worker/callback/main threads.
+        final String captureId = captureIdFromVideoAbsPath(currentVideoPath);
 
         try {
             // Stop battery monitoring first
@@ -1179,6 +1184,8 @@ public class MediaCaptureService {
 
             if (!isRecordingVideo || currentVideoId == null) {
                 Log.w(TAG, "⚠️ Not currently recording, nothing to stop");
+                // No dispatch → no camera callback → nothing was registered for this stop, so
+                // there is nothing to leak (registration happens below, only on dispatch).
                 return;
             }
 
@@ -1212,6 +1219,22 @@ public class MediaCaptureService {
 
             stopVideoRecordingLed(); // Stop white LED when video recording stops
 
+            // Bind the upload decision to this recording's captureId, first-stop-wins, only now that
+            // the stop is actually being dispatched to the recorder — so an early-return above can
+            // never orphan it. Only a USER_REQUESTED stop may upload; any auto-stop
+            // (battery/max-duration/error) registers a "no upload" decision. putIfAbsent means a
+            // later or racing stop (e.g. a user stop landing after an auto-stop already committed to
+            // "no upload", once the stop-reason guard has reset) cannot flip the outcome. The entry
+            // is consumed once in onRecordingStopped and dropped on every terminal path
+            // (onRecordingError, the catch below, cleanup) so it can never leak.
+            if (captureId != null) {
+                UploadTarget target =
+                        reason == StopReason.USER_REQUESTED
+                                ? new UploadTarget(webhookUrl, authToken)
+                                : new UploadTarget(null, null);
+                uploadTargetsByCaptureId.putIfAbsent(captureId, target);
+            }
+
             // Stop the recording via CameraNeoService
             CameraNeoService.stopVideoRecording(mContext, currentVideoId);
 
@@ -1225,10 +1248,14 @@ public class MediaCaptureService {
                         MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
             }
 
-            // Reset state in case of error
+            // Reset state in case of error. No camera callback will fire after a failed dispatch,
+            // so drop this recording's upload target here to mirror onRecordingStopped/onRecordingError.
             isRecordingVideo = false;
             currentVideoId = null;
             currentVideoPath = null;
+            if (captureId != null) {
+                uploadTargetsByCaptureId.remove(captureId);
+            }
 
             // Ensure LED is turned off even if stop fails (if it was enabled)
             if (currentVideoLedEnabled && hardwareManager.supportsRecordingLed()) {
@@ -4300,6 +4327,9 @@ public class MediaCaptureService {
             }
             videoCaptureIdsInFlight.clear();
             videoCaptureIdsPendingIntegrityCheck.clear();
+            // Defensive: drop any pending upload targets so no auth token survives teardown and the
+            // map can't grow without bound if a terminal path ever failed to consume its entry.
+            uploadTargetsByCaptureId.clear();
 
             Log.d(TAG, "✅ MediaCaptureService cleanup complete");
 
