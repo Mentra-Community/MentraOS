@@ -119,7 +119,7 @@ export default function MiniappDeveloperScannerScreen() {
       if (manifest) {
         const portNum = devPort ? parseInt(devPort, 10) : NaN
         registerDevApp({
-          packageName,
+          packageName: DEV_APP_PACKAGE_NAME,
           name: name ?? packageName,
           iconUrl: iconUrl ?? `${devUrl.replace(/\/$/, "")}/icon.png`,
           devUrl,

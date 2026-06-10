@@ -1925,7 +1925,7 @@ class G2 : SGCManager() {
                     contentLength = container.content.toByteArray(Charsets.UTF_8).size,
                     content = container.content
             )
-            sendEvenHubCommand(msg)
+            queueEvenHubCommand(msg)
             return
         }
         container =

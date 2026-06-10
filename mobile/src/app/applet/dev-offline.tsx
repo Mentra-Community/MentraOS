@@ -27,14 +27,14 @@ export default function DevMiniappOfflineScreen() {
     name?: string
     iconUrl?: string
   }>()
-  const {replace, push} = useNavigationStore.getState()
+  const {push} = useNavigationStore.getState()
   const apps = useApps()
   const viewShotRef = useRef<View>(null)
 
   useRegisterCapsule({
     packageName,
     viewShotRef,
-    visibleOnRoutes: ["/applet/dev-offline"],
+    visibleOnRoutes: ["/applet/dev-tools"],
   })
 
   // Fall back to the store entry's logoUrl/name if the route didn't carry
