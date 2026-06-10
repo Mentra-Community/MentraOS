@@ -763,10 +763,9 @@ public class OtaHelper {
             lastVersionJsonUrl = requestedVersionJsonUrl;
             startInstallFromCachedJson(context, cachedVersionJson, requestedVersionJsonUrl);
             return;
-        } else if (cachedVersionJson != null) {
-            Log.i(
-                    TAG,
-                    "📱 Cache fast-path skipped because requested OTA URL differs from cached URL");
+        } else if (cachedVersionJson != null
+                || (cachedVersionJsonUrl != null && !requestedVersionJsonUrl.equals(cachedVersionJsonUrl))) {
+            invalidateCachedOtaForUrlMismatch(requestedVersionJsonUrl, cachedVersionJsonUrl);
         }
 
         Log.i(TAG, "📱 Phone-initiated OTA: starting version check (download STARTED deferred)");
@@ -853,6 +852,17 @@ public class OtaHelper {
         synchronized (pendingPhoneInstallLock) {
             return pendingPhoneInstall;
         }
+    }
+
+    private void invalidateCachedOtaForUrlMismatch(String requestedVersionJsonUrl, String prefetchedVersionJsonUrl) {
+        Log.i(TAG, "📱 OTA manifest URL changed from "
+                + (prefetchedVersionJsonUrl != null ? prefetchedVersionJsonUrl : "unknown")
+                + " to "
+                + requestedVersionJsonUrl
+                + " - clearing prefetched OTA cache");
+        cachedVersionJson = null;
+        cachedVersionJsonUrl = null;
+        clearAllCachedArtifacts();
     }
 
     private void startPeriodicChecks() {
@@ -1275,14 +1285,17 @@ public class OtaHelper {
                                             TAG,
                                             "📱 Phone-initiated install was queued during prefetch"
                                                     + " - firing install pass now");
-                                    isPhoneInitiatedOta = true;
-                                    startVersionCheckWithUrl(
-                                            context,
+                                    String installVersionJsonUrl =
                                             pendingVersionJsonUrl != null
                                                     ? pendingVersionJsonUrl
-                                                    : lastVersionJsonUrl); // fresh pass: same URL,
-                                    // installNow=true, files served
-                                    // from cache
+                                                    : lastVersionJsonUrl;
+                                    if (!installVersionJsonUrl.equals(lastVersionJsonUrl)) {
+                                        invalidateCachedOtaForUrlMismatch(
+                                                installVersionJsonUrl, lastVersionJsonUrl);
+                                    }
+                                    isPhoneInitiatedOta = true;
+                                    startVersionCheckWithUrl(context, installVersionJsonUrl);
+                                    // Fresh pass: same URL, installNow=true.
                                 }
                             }
                         })
