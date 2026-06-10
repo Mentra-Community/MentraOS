@@ -21,6 +21,12 @@ import org.json.JSONObject;
 public class VideoCommandHandler extends BaseMediaCommandHandler {
     private static final String TAG = "VideoCommandHandler";
 
+    // Upper sanity cap (24h) for the optional auto-stop timer. Not a product limit — battery and
+    // storage end a real recording long before — it just bounds the downstream
+    // `minutes * 60 * 1000L` timer math (which multiplies as int before promotion to long) so a
+    // garbage/overflowing value can't wrap to a negative duration and trigger an immediate stop.
+    private static final int MAX_RECORDING_TIME_MINUTES = 24 * 60;
+
     private final AsgClientServiceManager serviceManager;
     private final IMediaManager streamingManager;
     private final IStateManager stateManager;
@@ -188,9 +194,27 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
             boolean flash = data.optBoolean("flash", true);
             boolean sound = data.optBoolean("sound", true);
             // Optional auto-stop after N minutes; 0 (the default) means record until
-            // stopped or interrupted (battery/storage/thermal/error). A null/invalid
-            // settings object passes through as defaults inside the capture service.
+            // stopped or interrupted (battery/storage/thermal/error). Validate like the
+            // nearby numeric settings (width/height/fps): a negative value is meaningless
+            // (treated as "no limit") and an out-of-range value is capped, so the downstream
+            // `minutes * 60 * 1000L` timer math can't overflow to a negative duration.
             int maxRecordingTimeMinutes = data.optInt("maxRecordingTimeMinutes", 0);
+            if (maxRecordingTimeMinutes < 0) {
+                Log.w(
+                        TAG,
+                        "Ignoring negative maxRecordingTimeMinutes ("
+                                + maxRecordingTimeMinutes
+                                + "), recording until stopped");
+                maxRecordingTimeMinutes = 0;
+            } else if (maxRecordingTimeMinutes > MAX_RECORDING_TIME_MINUTES) {
+                Log.w(
+                        TAG,
+                        "Clamping maxRecordingTimeMinutes "
+                                + maxRecordingTimeMinutes
+                                + " to cap "
+                                + MAX_RECORDING_TIME_MINUTES);
+                maxRecordingTimeMinutes = MAX_RECORDING_TIME_MINUTES;
+            }
 
             captureService.handleStartVideoCommand(
                     requestId, save, videoSettings, flash, sound, maxRecordingTimeMinutes);
@@ -209,7 +233,11 @@ public class VideoCommandHandler extends BaseMediaCommandHandler {
 
     /** Handle stop video recording command */
     public boolean handleStopCommand(JSONObject data) {
-        Log.d(TAG, "handleStopCommand called with data: " + data);
+        // Do not log the full payload: a stop command may carry an upload `authToken`.
+        Log.d(
+                TAG,
+                "handleStopCommand called with requestId: "
+                        + (data != null ? data.optString("requestId", "") : ""));
 
         try {
             String requestId = data != null ? data.optString("requestId", "") : "";

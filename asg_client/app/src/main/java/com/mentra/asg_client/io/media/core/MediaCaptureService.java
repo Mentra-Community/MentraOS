@@ -117,6 +117,13 @@ public class MediaCaptureService {
 
     private StopReason mCurrentStopReason = null;
 
+    // Guards the stop prologue (mCurrentStopReason + pending-upload target) so the
+    // check-and-set is atomic across threads. The user stop arrives on the BLE worker
+    // thread while auto-stops (max-duration/battery/error) fire on the main looper; without
+    // this lock a late user stop could inject a webhook into an auto-stop that already
+    // committed to "no upload".
+    private final Object mStopLock = new Object();
+
     // Default BLE params (used if size unspecified)
     public static final int bleImageTargetWidth = 480;
     public static final int bleImageTargetHeight = 480;
@@ -1096,22 +1103,46 @@ public class MediaCaptureService {
      * @param reason Why recording is stopping
      */
     private void stopVideoRecording(StopReason reason) {
-        // Prevent recursive calls
-        if (mCurrentStopReason != null) {
-            Log.w(
-                    TAG,
-                    "⚠️ stopVideoRecording already in progress (reason: "
-                            + mCurrentStopReason
-                            + "), ignoring recursive call with reason: "
-                            + reason);
-            return;
-        }
+        stopVideoRecording(reason, null, null);
+    }
 
-        mCurrentStopReason = reason;
-        // Auto-stops (battery, max-duration, error) must never upload to a user-supplied webhook.
-        if (reason != StopReason.USER_REQUESTED) {
-            pendingUploadWebhookUrl = null;
-            pendingUploadAuthToken = null;
+    /**
+     * Stop video recording with a reason and an optional upload target.
+     *
+     * <p>The reason guard, the {@code mCurrentStopReason} write, and the pending-upload target are
+     * set together under {@link #mStopLock} so the decision is atomic: only a {@code USER_REQUESTED}
+     * stop may carry a webhook, and a stop already in progress (e.g. an auto-stop) can't have a
+     * racing user stop inject a webhook into it.
+     *
+     * @param reason Why recording is stopping
+     * @param webhookUrl Upload target (USER_REQUESTED only); null/empty keeps the video on device
+     * @param authToken Bearer token for the webhook upload
+     */
+    private void stopVideoRecording(StopReason reason, String webhookUrl, String authToken) {
+        synchronized (mStopLock) {
+            // Prevent recursive/concurrent stops
+            if (mCurrentStopReason != null) {
+                Log.w(
+                        TAG,
+                        "⚠️ stopVideoRecording already in progress (reason: "
+                                + mCurrentStopReason
+                                + "), ignoring call with reason: "
+                                + reason);
+                return;
+            }
+
+            mCurrentStopReason = reason;
+            // Only a user-requested stop may upload to a user-supplied webhook. Auto-stops
+            // (battery, max-duration, error) must never upload. Setting the target inside the
+            // same lock as the guard closes the race where a late user stop could inject a
+            // webhook into an auto-stop that already committed to "no upload".
+            if (reason == StopReason.USER_REQUESTED) {
+                pendingUploadWebhookUrl = webhookUrl;
+                pendingUploadAuthToken = authToken;
+            } else {
+                pendingUploadWebhookUrl = null;
+                pendingUploadAuthToken = null;
+            }
         }
         Log.d(TAG, "🛑 Stopping video recording - Reason: " + reason);
 
@@ -1178,7 +1209,9 @@ public class MediaCaptureService {
                 Log.d(TAG, "Recording LED turned OFF (stop error recovery)");
             }
         } finally {
-            mCurrentStopReason = null; // Reset for next recording
+            synchronized (mStopLock) {
+                mCurrentStopReason = null; // Reset for next recording
+            }
         }
     }
 
@@ -1187,10 +1220,8 @@ public class MediaCaptureService {
      * Note: Called from Bluetooth worker thread via command handlers - no thread assertion.
      */
     public void stopVideoRecording() {
-        // No-webhook variant (button / power / toggle): clear any pending target so we don't upload.
-        pendingUploadWebhookUrl = null;
-        pendingUploadAuthToken = null;
-        stopVideoRecording(StopReason.USER_REQUESTED);
+        // No-webhook variant (button / power / toggle): no upload target.
+        stopVideoRecording(StopReason.USER_REQUESTED, null, null);
     }
 
     /**
@@ -1199,9 +1230,7 @@ public class MediaCaptureService {
      * is fresh when the upload runs. An empty/null webhook keeps the video on device (no upload).
      */
     public void stopVideoRecording(String webhookUrl, String authToken) {
-        pendingUploadWebhookUrl = webhookUrl;
-        pendingUploadAuthToken = authToken;
-        stopVideoRecording(StopReason.USER_REQUESTED);
+        stopVideoRecording(StopReason.USER_REQUESTED, webhookUrl, authToken);
     }
 
     /** Check if currently recording video */

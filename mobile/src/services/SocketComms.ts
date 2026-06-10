@@ -614,12 +614,16 @@ class SocketComms {
   }
 
   private handle_stop_video_recording(msg: any) {
-    console.log(`SOCKET: Received STOP_VIDEO_RECORDING: ${JSON.stringify(msg)}`)
     const stopRequestId = msg.requestId || ""
     // Upload target supplied at stop (not start) so the auth token is fresh when
     // the upload runs. Empty webhook = keep the video on device (no upload).
     const webhookUrl = msg.webhookUrl ?? ""
     const authToken = typeof msg.authToken === "string" && msg.authToken.length > 0 ? msg.authToken : ""
+    // Don't log the full payload: the auth token is a secret. Log presence, not the value
+    // (mirrors the photo pipeline redaction above).
+    console.log(
+      `SOCKET: Received STOP_VIDEO_RECORDING requestId=${stopRequestId} webhookUrl=${webhookUrl || "none"} authToken=${authToken ? "set" : "none"}`,
+    )
     BluetoothSdk.stopVideoRecording(stopRequestId, webhookUrl, authToken).catch((error) => {
       console.warn("SOCKET: stopVideoRecording failed:", error)
     })
