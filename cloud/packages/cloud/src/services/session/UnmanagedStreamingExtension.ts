@@ -23,6 +23,7 @@ import {
 } from "@mentra/sdk";
 
 import { StreamLifecycleController } from "../streaming/StreamLifecycleController";
+import { normalizeStreamResolvedConfig } from "../streaming/ResolvedConfigCompatibility";
 import { ConnectionValidator } from "../validators/ConnectionValidator";
 import { WebSocketReadyState } from "../websocket/types";
 
@@ -581,6 +582,7 @@ export class UnmanagedStreamingExtension {
     stats?: StreamStatus["stats"],
     resolvedConfig?: StreamStatus["resolvedConfig"],
   ): Promise<void> {
+    const normalizedResolvedConfig = normalizeStreamResolvedConfig(resolvedConfig);
     const streamInfo = this.unmanagedStreams.get(streamId);
     // It's possible streamInfo is gone if cleanup happened due to rapid events.
     const packageName = streamInfo ? streamInfo.packageName : "unknown_package_owner";
@@ -594,7 +596,7 @@ export class UnmanagedStreamingExtension {
       status,
       errorDetails,
       stats,
-      resolvedConfig,
+      resolvedConfig: normalizedResolvedConfig,
       appId: packageName,
       timestamp: new Date(),
     };
@@ -650,7 +652,7 @@ export class UnmanagedStreamingExtension {
       errorDetails,
       appId: packageName,
       stats,
-      resolvedConfig,
+      resolvedConfig: normalizedResolvedConfig,
       timestamp: new Date(),
     };
 

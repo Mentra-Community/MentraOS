@@ -18,6 +18,7 @@ import UserSession from "../session/UserSession";
 import { CloudflareStreamService } from "./CloudflareStreamService";
 import { StreamRegistry, ManagedStreamState, StreamState } from "./StreamRegistry";
 import { StreamLifecycleController } from "./StreamLifecycleController";
+import { normalizeStreamResolvedConfig } from "./ResolvedConfigCompatibility";
 import { ConnectionValidator } from "../validators/ConnectionValidator";
 
 // Keep-alive constants matching UnmanagedStreamingExtension
@@ -1097,6 +1098,7 @@ export class ManagedStreamingExtension {
     thumbnailUrl?: string,
     resolvedConfig?: ManagedStreamStatus["resolvedConfig"],
   ): Promise<void> {
+    const normalizedResolvedConfig = normalizeStreamResolvedConfig(resolvedConfig);
     const stream = this.stateManager.getStreamByStreamId(streamId);
     if (!stream || stream.type !== "managed") return;
 
@@ -1126,7 +1128,7 @@ export class ManagedStreamingExtension {
       thumbnailUrl: thumbnailUrl,
       streamId,
       message,
-      resolvedConfig,
+      resolvedConfig: normalizedResolvedConfig,
       outputs,
     };
 

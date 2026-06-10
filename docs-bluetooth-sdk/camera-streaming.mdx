@@ -284,7 +284,7 @@ import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
 export function StreamStatusLogger() {
   useBluetoothEvent('stream_status', (event) => {
     console.log(event);
-    console.log(event.resolvedConfig?.video?.fps);
+    console.log(event.resolvedConfig?.video?.frameRate);
   });
 
   return null;
@@ -297,7 +297,7 @@ export function StreamStatusLogger() {
 ```kotlin
 override fun onStreamStatus(event: StreamStatusEvent) {
     Log.d("Mentra", "Stream status: ${event.status}")
-    Log.d("Mentra", "Resolved FPS: ${event.resolvedConfig?.video?.fps}")
+    Log.d("Mentra", "Resolved FPS: ${event.resolvedConfig?.video?.frameRate}")
 }
 ```
 
@@ -308,7 +308,7 @@ override fun onStreamStatus(event: StreamStatusEvent) {
 func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
     if case let .streamStatus(status) = event {
         print("Stream status: \(status)")
-        print("Resolved FPS: \(status.resolvedConfig?.video?.fps ?? -1)")
+        print("Resolved FPS: \(status.resolvedConfig?.video?.frameRate ?? -1)")
     }
 }
 ```
@@ -322,6 +322,6 @@ used by the glasses after defaults, clamps, and camera-mode selection. In
 `resolvedConfig.video`, `width` and `height` are the encoded output dimensions,
 `captureWidth` and `captureHeight` are the native camera buffer dimensions before
 crop or downscale, `bitrate` is the encoded video bitrate in bits per second, and
-`fps` is the resolved capture/encode frame rate. `resolvedConfig.audio` reports
+`frameRate` is the resolved capture/encode frame rate. `resolvedConfig.audio` reports
 the audio bitrate, sample rate, echo cancellation, and noise suppression settings
 when audio is active.

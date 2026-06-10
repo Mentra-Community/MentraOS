@@ -344,7 +344,7 @@ export function HardwareEventLogger() {
   useBluetoothEvent('button_press', (event) => console.log(event));
   useBluetoothEvent('touch_event', (event) => console.log(event));
   useBluetoothEvent('photo_status', (event) => console.log(event.status, event.resolvedConfig));
-  useBluetoothEvent('stream_status', (event) => console.log(event.resolvedConfig?.video?.fps));
+  useBluetoothEvent('stream_status', (event) => console.log(event.resolvedConfig?.video?.frameRate));
   useBluetoothEvent('ota_status', (event) => console.log(event.overall_percent));
   useBluetoothEvent('speaking_status', (event) => console.log(event.speaking));
   useBluetoothEvent('mic_pcm', (event) => {
@@ -443,7 +443,7 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `audio_disconnected` | `AudioDisconnectedEvent` | Bluetooth audio disconnects. |
 | `mic_pcm` | `MicPcmEvent` | PCM microphone frame arrives. |
 | `mic_lc3` | `MicLc3Event` | LC3 microphone frame arrives. |
-| `stream_status` | `StreamStatusEvent` | Camera stream lifecycle, reconnect, or error state changes. May include `resolvedConfig` with effective stream settings: encoded output size in `video.width` / `video.height`, native camera capture size in `video.captureWidth` / `video.captureHeight`, video bitrate and `fps`, plus audio bitrate, sample rate, echo cancellation, and noise suppression. |
+| `stream_status` | `StreamStatusEvent` | Camera stream lifecycle, reconnect, or error state changes. May include `resolvedConfig` with effective stream settings: encoded output size in `video.width` / `video.height`, native camera capture size in `video.captureWidth` / `video.captureHeight`, video bitrate and `frameRate`, plus audio bitrate, sample rate, echo cancellation, and noise suppression. |
 | `ota_update_available` | `OtaUpdateAvailableEvent` | Mentra Live reports an available OTA package. Also returned by `checkForOtaUpdate()` when an update is available. |
 | `ota_start_ack` | `OtaStartAckEvent` | Mentra Live acknowledges `startOtaUpdate()`. Also returned by `startOtaUpdate()`. |
 | `ota_status` | `OtaStatusEvent` | OTA step, phase, status, progress, or error changes. |

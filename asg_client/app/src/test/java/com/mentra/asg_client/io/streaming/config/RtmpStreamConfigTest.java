@@ -128,4 +128,13 @@ public class RtmpStreamConfigTest {
         c.setCaptureSize(1920, 1080);
         assertTrue(c.toString().contains("capture=1920x1080"));
     }
+
+    @Test
+    public void toStatusJson_reportsResolvedFps() throws JSONException {
+        RtmpStreamConfig c = new RtmpStreamConfig().setVideoFps(24);
+
+        JSONObject video = c.toStatusJson("rtmp").getJSONObject("video");
+        assertEquals(24, video.getInt("fps"));
+        assertFalse(video.has("frameRate"));
+    }
 }

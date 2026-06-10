@@ -493,7 +493,7 @@ export type StreamVideoConfig = {
   width?: number
   height?: number
   bitrate?: number
-  fps?: number
+  frameRate?: number
 }
 
 export type StreamAudioConfig = {
@@ -597,7 +597,7 @@ export type StreamResolvedConfig = {
     /** Encoded video bitrate in bits per second. */
     bitrate: number
     /** Resolved capture/encode frame rate. */
-    fps: number
+    frameRate: number
   }
   audio?: {
     /** Encoded audio bitrate in bits per second. */

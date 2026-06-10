@@ -348,7 +348,7 @@ public class WhipCameraCapturer implements VideoCapturer {
 
             // Avoid per-frame metadata callbacks: SENSOR_FRAME_DURATION is instantaneous and can
             // make
-            // resolvedConfig.video.fps jitter even though the requested camera FPS is stable.
+            // resolvedConfig.video.frameRate jitter even though the requested camera FPS is stable.
             mCaptureSession.setRepeatingRequest(builder.build(), null, mCameraHandler);
 
             // Match the stock WebRTC Camera2 session semantics:
