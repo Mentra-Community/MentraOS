@@ -207,6 +207,34 @@ describe("audio multi-pod e2e", () => {
     await client.close();
   });
 
+  test("cross-pod UDP liveness probe acks over the owner pod WS", async () => {
+    const client = newClient(podA, "alice-cross-probe");
+    await client.connect();
+
+    const tagRecord = await lookupSessionTagInRedis(client.sessionTag);
+    expect(tagRecord).not.toBeNull();
+    expect(tagRecord!.podId).toBe("pod-a");
+
+    client.sendUdpProbeTo(podB.udpAddr, "probe-cross-pod");
+
+    const ack = (await client.waitFor("audio.udp_liveness_ack", 5000)) as {
+      payload: {
+        sessionId: string;
+        sessionTag: number;
+        probeId: string;
+        receivedAt: number;
+      };
+    };
+    expect(ack.payload.sessionTag).toBe(client.sessionTag);
+    expect(ack.payload.probeId).toBe("probe-cross-pod");
+
+    const redis = getRedis();
+    const entries = await redis.xrange(audioStreamKey(tagRecord!.mentraUserId), "-", "+");
+    expect(entries).toHaveLength(0);
+
+    await client.close();
+  });
+
   test("same-pod ingress still works alongside cross-pod", async () => {
     const client = newClient(podA, "alice-same");
     await client.connect();

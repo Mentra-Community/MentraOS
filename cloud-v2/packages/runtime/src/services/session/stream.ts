@@ -70,6 +70,7 @@ export interface IngestResult {
   kind?: "audio" | "probe";
   origin?: "local" | "redis";
   mentraUserId?: string;
+  audioSessionId?: string;
   /** Bytes written to the stream (the decrypted length for UDP frames). */
   payloadLen?: number;
   probeId?: string;
@@ -179,6 +180,7 @@ export async function ingestAudioPacket(
       kind: "probe",
       origin,
       mentraUserId,
+      audioSessionId,
       payloadLen: payload.byteLength,
       probeId,
     };
@@ -191,7 +193,14 @@ export async function ingestAudioPacket(
     audioSessionId,
   });
 
-  return { ok: true, kind: "audio", origin, mentraUserId, payloadLen: payload.byteLength };
+  return {
+    ok: true,
+    kind: "audio",
+    origin,
+    mentraUserId,
+    audioSessionId,
+    payloadLen: payload.byteLength,
+  };
 }
 
 /**

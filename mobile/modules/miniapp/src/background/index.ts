@@ -52,6 +52,12 @@ export {
 // utility helpers that take a session-like dependency.
 export type {DisplayManager} from "../modules/display"
 export type {CameraModule} from "../modules/camera"
+export type {
+  CloudClientAudioTransport,
+  CloudClientConnectionStatus,
+  CloudClientStatus,
+  CloudModule,
+} from "../modules/cloud"
 export type {DashboardAPI} from "../modules/dashboard"
 export type {GlassesModule} from "../modules/glasses"
 export type {HeadingModule} from "../modules/heading"

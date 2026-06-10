@@ -134,7 +134,7 @@ async function main() {
       "\n\x1b[32mReady.\x1b[0m Next:\n" +
         "  \x1b[2m# in separate terminals\x1b[0m\n" +
         "  bun run dev:core\n" +
-        "  bun run dev:audio\n" +
+        "  bun run dev:runtime\n" +
         "  bun run dev:proxy\n",
     );
   }

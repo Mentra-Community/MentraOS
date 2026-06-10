@@ -13,9 +13,16 @@ interface TranscriptListProps {
   isRecording: boolean
   onToggleRecording: () => void
   onClearTranscripts: () => void
+  accentColor?: string
 }
 
-export function TranscriptList({ transcripts, isRecording, onToggleRecording, onClearTranscripts }: TranscriptListProps) {
+export function TranscriptList({
+  transcripts,
+  isRecording,
+  onToggleRecording,
+  onClearTranscripts,
+  accentColor = "#6DAEA6",
+}: TranscriptListProps) {
   const [autoScroll, setAutoScroll] = useState(true)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
@@ -59,6 +66,7 @@ export function TranscriptList({ transcripts, isRecording, onToggleRecording, on
               transcript={transcript}
               isFirst={index === 0}
               isLast={index === transcripts.length - 1}
+              accentColor={accentColor}
             />
           ))
         )}
@@ -68,7 +76,8 @@ export function TranscriptList({ transcripts, isRecording, onToggleRecording, on
       {!autoScroll && transcripts.length > 0 && (
         <button
           onClick={scrollToBottom}
-          className="absolute bottom-6 right-6 w-12 h-12 bg-[#6DAEA6] hover:bg-[#6DAEA6]/95 text-white rounded-full shadow-lg flex items-center justify-center transition-all z-10">
+          className="absolute bottom-6 right-6 w-12 h-12 text-white rounded-full shadow-lg flex items-center justify-center transition-all z-10"
+          style={{backgroundColor: accentColor}}>
           <ChevronDown className="w-5 h-5" />
         </button>
       )}

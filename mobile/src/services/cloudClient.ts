@@ -12,7 +12,7 @@
 import {CloudClient, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
 import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-runtime/protocol"
-import type {CloudRuntimeAdapter} from "@mentra/island"
+import type {CloudClientStatusSnapshot, CloudRuntimeAdapter} from "@mentra/island"
 
 import mentraAuth from "@/utils/auth/authClient"
 import {useCloudClientStatusStore} from "@/stores/cloudClientStatus"
@@ -116,13 +116,36 @@ let connected = false
 let audioSubscriptions: AudioSubscription[] = []
 let transportsReady = false
 let runtimeStatusUnsubscribe: (() => void) | null = null
+let transcriptUnsubscribe: (() => void) | null = null
+let translationUnsubscribe: (() => void) | null = null
+
+const transcriptListeners = new Set<(d: TranscriptionData) => void>()
+const translationListeners = new Set<(d: TranslationData) => void>()
+const statusListeners = new Set<(snapshot: CloudClientStatusSnapshot) => void>()
+
+function toCloudClientStatusSnapshot(snapshot: RuntimeSnapshot): CloudClientStatusSnapshot {
+  return {
+    status: snapshot.status,
+    audioTransport: snapshot.audioTransport,
+  }
+}
+
+function currentRuntimeStatus(): CloudClientStatusSnapshot {
+  const state = useCloudClientStatusStore.getState()
+  return {
+    status: state.status,
+    audioTransport: state.audioTransport,
+  }
+}
 
 function setRuntimeStatus(snapshot: RuntimeSnapshot): void {
   useCloudClientStatusStore.getState().setSnapshot(snapshot)
+  emitStatus(toCloudClientStatusSnapshot(snapshot))
 }
 
 function resetRuntimeStatus(): void {
   useCloudClientStatusStore.getState().reset()
+  emitStatus(currentRuntimeStatus())
 }
 
 function stringifyMeta(meta: unknown): string {
@@ -172,7 +195,46 @@ function lc3FrameSizeBytes(): Lc3FrameSizeBytes {
   return frameSize === 20 || frameSize === 40 || frameSize === 60 ? frameSize : 20
 }
 
-function buildAdapter(c: CloudClient): CloudRuntimeAdapter {
+function emitTranscript(data: TranscriptionData): void {
+  for (const l of transcriptListeners) {
+    try {
+      l(data)
+    } catch (err) {
+      console.warn(`${LOG_TAG}: transcript listener threw: ${(err as Error)?.message ?? err}`)
+    }
+  }
+}
+
+function emitTranslation(data: TranslationData): void {
+  for (const l of translationListeners) {
+    try {
+      l(data)
+    } catch (err) {
+      console.warn(`${LOG_TAG}: translation listener threw: ${(err as Error)?.message ?? err}`)
+    }
+  }
+}
+
+function emitStatus(snapshot: CloudClientStatusSnapshot): void {
+  for (const l of statusListeners) {
+    try {
+      l(snapshot)
+    } catch (err) {
+      console.warn(`${LOG_TAG}: status listener threw: ${(err as Error)?.message ?? err}`)
+    }
+  }
+}
+
+function clearRuntimeEventSubscriptions(): void {
+  runtimeStatusUnsubscribe?.()
+  runtimeStatusUnsubscribe = null
+  transcriptUnsubscribe?.()
+  transcriptUnsubscribe = null
+  translationUnsubscribe?.()
+  translationUnsubscribe = null
+}
+
+function buildAdapter(): CloudRuntimeAdapter {
   return {
     setSubscriptions: async (subs: AudioSubscription[]): Promise<void> => {
       // Cache the desired state unconditionally so it survives a not-yet-
@@ -182,15 +244,33 @@ function buildAdapter(c: CloudClient): CloudRuntimeAdapter {
       // and nothing would retry. The `onConnected` handler re-applies the
       // cached set, so subscribe-before-connect self-heals.
       audioSubscriptions = subs
-      if (connected) {
+      const c = client
+      if (connected && c) {
         await c.runtime.setSubscriptions(subs)
       }
     },
     sendAudioFrame: (frame: Uint8Array): void => {
-      c.runtime.sendAudioFrame(frame)
+      client?.runtime.sendAudioFrame(frame)
     },
-    onTranscript: (cb: (d: TranscriptionData) => void): (() => void) => c.runtime.onTranscript(cb),
-    onTranslation: (cb: (d: TranslationData) => void): (() => void) => c.runtime.onTranslation(cb),
+    onTranscript: (cb: (d: TranscriptionData) => void): (() => void) => {
+      transcriptListeners.add(cb)
+      return () => {
+        transcriptListeners.delete(cb)
+      }
+    },
+    onTranslation: (cb: (d: TranslationData) => void): (() => void) => {
+      translationListeners.add(cb)
+      return () => {
+        translationListeners.delete(cb)
+      }
+    },
+    getStatus: (): CloudClientStatusSnapshot => currentRuntimeStatus(),
+    onStatusChanged: (cb: (snapshot: CloudClientStatusSnapshot) => void): (() => void) => {
+      statusListeners.add(cb)
+      return () => {
+        statusListeners.delete(cb)
+      }
+    },
     hasAudioSubscriptions: (): boolean => audioSubscriptions.length > 0,
     isConnected: (): boolean => connected,
   }
@@ -209,9 +289,12 @@ export const cloudClient = {
    * running.
    */
   init(): CloudRuntimeAdapter {
-    if (adapter) return adapter
+    if (adapter && client) return adapter
 
     ensureTransports()
+    if (!adapter) {
+      adapter = buildAdapter()
+    }
 
     const endpoints = {core: coreUrl(), runtime: runtimeUrl()}
     console.log(`${LOG_TAG}: endpoints ${JSON.stringify(endpoints)}`)
@@ -226,10 +309,18 @@ export const cloudClient = {
     })
 
     const c = client
-    runtimeStatusUnsubscribe?.()
+    clearRuntimeEventSubscriptions()
     runtimeStatusUnsubscribe = c.runtime.onStatusChanged((status) => {
       if (c !== client) return
       setRuntimeStatus(status)
+    })
+    transcriptUnsubscribe = c.runtime.onTranscript((data) => {
+      if (c !== client) return
+      emitTranscript(data)
+    })
+    translationUnsubscribe = c.runtime.onTranslation((data) => {
+      if (c !== client) return
+      emitTranslation(data)
     })
     setRuntimeStatus(c.runtime.getStatus())
 
@@ -260,8 +351,6 @@ export const cloudClient = {
       console.warn(`${LOG_TAG}: runtime error: ${err.code}`)
     })
 
-    adapter = buildAdapter(c)
-
     // Best-effort connect. Do not crash the app if the dev cloud is unreachable.
     c.runtime
       .connect()
@@ -284,12 +373,10 @@ export const cloudClient = {
     } catch (err) {
       console.warn(`${LOG_TAG}: reconnect close() failed: ${(err as Error)?.message ?? err}`)
     }
-    runtimeStatusUnsubscribe?.()
-    runtimeStatusUnsubscribe = null
+    clearRuntimeEventSubscriptions()
 
     const wasConnected = connected
     client = null
-    adapter = null
     connected = false
     resetRuntimeStatus()
     // Notify so the local-miniapp STT fallback engages while the client is torn

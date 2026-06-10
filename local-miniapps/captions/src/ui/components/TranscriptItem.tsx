@@ -17,6 +17,7 @@ interface TranscriptItemProps {
   transcript: Transcript;
   isFirst: boolean;
   isLast: boolean;
+  accentColor?: string;
 }
 
 // Speaker colors matching the design
@@ -32,11 +33,12 @@ export function TranscriptItem({
   transcript,
   isFirst,
   isLast,
+  accentColor,
 }: TranscriptItemProps) {
   // Extract speaker number from "Speaker 1", "Speaker 2", etc.
   const speakerNumber = parseInt(transcript.speaker.replace(/\D/g, "")) || 1;
   const speakerIndex = (speakerNumber - 1) % SPEAKER_COLORS.length;
-  const colors = SPEAKER_COLORS[speakerIndex];
+  const colors = accentColor ? { bg: accentColor, text: accentColor } : SPEAKER_COLORS[speakerIndex];
 
   return (
     <div
@@ -52,7 +54,10 @@ export function TranscriptItem({
           className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
           style={{ backgroundColor: colors.bg, minWidth: "20px" }}
         >
-          <span className="text-white text-[10px] font-bold font-['Red_Hat_Display'] leading-none">
+          <span
+            className="text-[10px] font-bold font-['Red_Hat_Display'] leading-none"
+            style={{ color: readableTextColor(colors.bg) }}
+          >
             {speakerNumber}
           </span>
         </div>
@@ -85,4 +90,14 @@ export function TranscriptItem({
       </p>
     </div>
   );
+}
+
+function readableTextColor(hex: string): string {
+  const color = hex.replace("#", "");
+  if (color.length !== 6) return "#FFFFFF";
+  const r = parseInt(color.slice(0, 2), 16);
+  const g = parseInt(color.slice(2, 4), 16);
+  const b = parseInt(color.slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.62 ? "#1F2937" : "#FFFFFF";
 }

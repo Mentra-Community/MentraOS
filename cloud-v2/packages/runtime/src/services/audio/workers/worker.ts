@@ -134,7 +134,21 @@ export interface TranscriptMessage {
 export interface WorkerReadyMessage {
   type: "WORKER_READY"
 }
-export type WorkerOutMessage = TranscriptStubMessage | TranscriptMessage | WorkerReadyMessage
+
+export interface UdpLivenessAckMessage {
+  type: "UDP_LIVENESS_ACK"
+  mentraUserId: string
+  sessionTag: number
+  audioSessionId: string
+  probeId: string
+  receivedAt: number
+}
+
+export type WorkerOutMessage =
+  | TranscriptStubMessage
+  | TranscriptMessage
+  | UdpLivenessAckMessage
+  | WorkerReadyMessage
 
 // === Worker state ===
 
@@ -508,12 +522,12 @@ async function ensureConsumerGroup(mentraUserId: string): Promise<boolean> {
 
 async function ensureControlConsumerGroup(mentraUserId: string): Promise<boolean> {
   try {
-    // Start at `$` (new entries only): the control stream is a nudge bus, and
-    // any change that happened before we took ownership is already reflected in
-    // the subscription key, which we read directly on attach. So we only need
-    // entries that arrive AFTER we start owning the user. `MKSTREAM` creates
-    // the stream if no REST write has touched it yet.
-    await controlClient.xgroup("CREATE", controlStreamKey(mentraUserId), CONTROL_STREAM_GROUP, "$", "MKSTREAM")
+    // Start at `0` rather than `$`: UDP liveness ACKs can be published by a
+    // non-owner pod milliseconds after connection.ack, before the owner worker
+    // has finished creating this group. Starting at `$` would skip that ACK
+    // forever. Control streams are bounded and nudges are idempotent, so
+    // replaying a tiny backlog is safer than missing a liveness result.
+    await controlClient.xgroup("CREATE", controlStreamKey(mentraUserId), CONTROL_STREAM_GROUP, "0", "MKSTREAM")
     controlReadyUsers.add(mentraUserId)
     return true
   } catch (err) {
@@ -564,10 +578,36 @@ async function controlReadLoop(): Promise<void> {
 
       for (const [streamKey, entries] of result) {
         const mentraUserId = controlUserFromKey(streamKey)
-        // Reconcile once per batch (not once per entry): every entry is the
-        // same "re-read the key" nudge, so collapsing a burst of writes into a
-        // single reconcile is correct and cheaper. We still XACK every entry.
-        if (entries.length > 0) await reconcileFromKey(mentraUserId)
+        let shouldReconcile = false
+
+        for (const [, fields] of entries) {
+          const map = fieldArrayToMap(fields)
+          switch (map.kind) {
+            case "subscriptions-changed":
+              // Reconcile once per batch, not once per entry: every subscription
+              // entry is the same "re-read the key" nudge.
+              shouldReconcile = true
+              break
+            case "udp-liveness-ack":
+              console.debug("[audio-worker] udp liveness ack control received", {
+                mentraUserId,
+                sessionTag: map.sessionTag,
+                probeId: map.probeId,
+              })
+              self.postMessage({
+                type: "UDP_LIVENESS_ACK",
+                mentraUserId,
+                sessionTag: Number(map.sessionTag ?? 0),
+                audioSessionId: map.audioSessionId ?? "",
+                probeId: map.probeId ?? "",
+                receivedAt: Number(map.receivedAt ?? Date.now()),
+              } satisfies UdpLivenessAckMessage)
+              break
+          }
+        }
+
+        if (shouldReconcile) await reconcileFromKey(mentraUserId)
+
         for (const [entryId] of entries) {
           try {
             await controlClient.xack(streamKey, CONTROL_STREAM_GROUP, entryId)

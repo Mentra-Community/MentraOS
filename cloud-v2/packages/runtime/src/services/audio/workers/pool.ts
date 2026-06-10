@@ -22,7 +22,8 @@
  * IPC surface (worker side: `./worker.ts`):
  *   - main → worker: `ATTACH_USER`, `DETACH_USER`, `UPDATE_SUBSCRIPTIONS`,
  *     `SET_CODEC`, `SHUTDOWN`
- *   - worker → main: `WORKER_READY`, `TRANSCRIPT_STUB`, `TRANSCRIPT`
+ *   - worker → main: `WORKER_READY`, `TRANSCRIPT_STUB`, `TRANSCRIPT`,
+ *     `UDP_LIVENESS_ACK`
  */
 
 import { createLogger } from "@mentra/cloud-shared";
@@ -31,6 +32,7 @@ import type {
   SetCodecMessage,
   TranscriptMessage,
   TranscriptStubMessage,
+  UdpLivenessAckMessage,
   WorkerInMessage,
   WorkerOutMessage,
 } from "./worker";
@@ -65,11 +67,11 @@ interface WorkerPoolState {
   /** mentraUserId → WorkerSlot. So DETACH/release knows which worker holds them. */
   userToWorker: Map<string, WorkerSlot>;
   /**
-   * Callback set by session.service: route transcript / stub messages to
-   * the user's WS. Receives both real transcripts and the routing stubs.
+   * Callback set by session.service: route worker-emitted messages to the
+   * user's WS. Receives real transcripts, routing stubs, and control acks.
    */
   transcriptHandler:
-    | ((msg: TranscriptStubMessage | TranscriptMessage) => void)
+    | ((msg: TranscriptStubMessage | TranscriptMessage | UdpLivenessAckMessage) => void)
     | null;
   /** Cleared by stopWorkerPool to suppress respawn during shutdown. */
   shuttingDown: boolean;
@@ -124,12 +126,11 @@ export async function stopWorkerPool(): Promise<void> {
 }
 
 /**
- * Register the callback that routes worker → main messages (TRANSCRIPT_STUB
- * + TRANSCRIPT) onward to the user's WebSocket. Called once by
- * `session.service` at boot.
+ * Register the callback that routes worker → main messages onward to the
+ * user's WebSocket. Called once by `session.service` at boot.
  */
 export function onTranscript(
-  handler: (msg: TranscriptStubMessage | TranscriptMessage) => void,
+  handler: (msg: TranscriptStubMessage | TranscriptMessage | UdpLivenessAckMessage) => void,
 ): void {
   if (!pool) throw new Error("worker pool not started");
   pool.transcriptHandler = handler;
@@ -305,7 +306,7 @@ function spawnWorkerSlot(id: string): WorkerSlot {
       slot.pendingSubscriptions.clear();
       return;
     }
-    if (msg.type === "TRANSCRIPT_STUB" || msg.type === "TRANSCRIPT") {
+    if (msg.type === "TRANSCRIPT_STUB" || msg.type === "TRANSCRIPT" || msg.type === "UDP_LIVENESS_ACK") {
       pool?.transcriptHandler?.(msg);
       return;
     }

@@ -15,9 +15,11 @@
  * the key and XADDs the nudge here; the owner's worker, which already reads this
  * stream, picks up the nudge in order and reconciles from the key.
  *
- * Entries carry a `kind` field so future control entry types (codec change,
- * etc.) can ride the same stream; today the only kind is
- * `subscriptions-changed`.
+ * Entries carry a `kind` field so control entry types can ride the same stream.
+ * Today:
+ *   - `subscriptions-changed`: nudge the owner worker to re-read subscriptions.
+ *   - `udp-liveness-ack`: a non-owner UDP ingress pod received a valid probe
+ *      and asks the owner pod to ack it over the user's WebSocket.
  */
 
 import { getRedis } from "../../clients/redis.client";
@@ -58,5 +60,40 @@ export async function publishSubscriptionsChanged(
     "subscriptions-changed",
     "version",
     String(version),
+  );
+}
+
+export interface UdpLivenessAckControl {
+  sessionTag: number;
+  audioSessionId: string;
+  probeId: string;
+  receivedAt: number;
+}
+
+/**
+ * Ask the owning pod to send an `audio.udp_liveness_ack` over the user's WS.
+ * Used when a UDP probe lands on a non-owner pod: ingress can prove UDP reached
+ * the cluster, but only the owner pod holds the client's WebSocket.
+ */
+export async function publishUdpLivenessAck(
+  mentraUserId: string,
+  ack: UdpLivenessAckControl,
+): Promise<void> {
+  await getRedis().xadd(
+    controlStreamKey(mentraUserId),
+    "MAXLEN",
+    "~",
+    String(CONTROL_STREAM_MAXLEN),
+    "*",
+    "kind",
+    "udp-liveness-ack",
+    "sessionTag",
+    String(ack.sessionTag),
+    "audioSessionId",
+    ack.audioSessionId,
+    "probeId",
+    ack.probeId,
+    "receivedAt",
+    String(ack.receivedAt),
   );
 }

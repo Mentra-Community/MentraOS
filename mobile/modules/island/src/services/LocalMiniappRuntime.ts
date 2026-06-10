@@ -22,6 +22,7 @@ import {
   MiniappRequestType,
   MiniappResponseType,
   MiniappStreamType,
+  CLOUD_STATUS_STREAM,
   parseEnvelope,
   serializeEnvelope,
 } from "@mentra/miniapp"
@@ -38,6 +39,7 @@ import micStateCoordinator from "./MicStateCoordinator"
 import {
   getRuntimeHooks,
   ISLAND_SETTINGS_KEYS,
+  type CloudClientStatusSnapshot,
   type CloudRuntimeAdapter,
   type TtsSynthesisResult,
 } from "../runtime/config"
@@ -208,6 +210,7 @@ class LocalMiniappRuntime {
 
   /** Guards one-time wiring of the cloud transcript/translation fan-out. */
   private cloudResultsWired = false
+  private cloudStatusWired = false
 
   /** Ping interval handle. */
   private pingIntervalId: number | null = null
@@ -465,6 +468,7 @@ class LocalMiniappRuntime {
     // now gone — recompute so the aggregate doesn't include a stale rate.
     // The WebView will re-SUBSCRIBE shortly and the rate will reappear.
     this.recomputeLocationTier()
+    this.ensureCloudStatusWired()
     this.ensurePingLoop()
   }
 
@@ -829,6 +833,7 @@ class LocalMiniappRuntime {
       },
       requestId,
     )
+    this.sendCloudStatusToMiniapp(packageName)
   }
 
   private handleSubscribe(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
@@ -2180,6 +2185,47 @@ class LocalMiniappRuntime {
         provider: d.provider,
         confidence: d.confidence,
       })
+    })
+  }
+
+  private ensureCloudStatusWired(): void {
+    if (this.cloudStatusWired) return
+    this.cloudStatusWired = true
+
+    getRuntimeHooks().cloud?.onStatusChanged(() => {
+      this.broadcastCloudStatus()
+    })
+
+    getRuntimeHooks().settings?.subscribeKey?.<boolean>(ISLAND_SETTINGS_KEYS.localSttFallbackActive, () => {
+      this.broadcastCloudStatus()
+    })
+  }
+
+  private currentCloudStatus(): CloudClientStatusSnapshot {
+    const base = getRuntimeHooks().cloud?.getStatus() ?? {
+      status: "disconnected",
+      audioTransport: "none",
+    }
+    const fallbackActive =
+      getRuntimeHooks().settings?.getSetting<boolean>(ISLAND_SETTINGS_KEYS.localSttFallbackActive) === true
+    return {
+      status: base.status,
+      audioTransport: fallbackActive ? "offline" : base.audioTransport,
+    }
+  }
+
+  private broadcastCloudStatus(): void {
+    const status = this.currentCloudStatus()
+    for (const packageName of this.connectedApps.keys()) {
+      this.sendCloudStatusToMiniapp(packageName, status)
+    }
+  }
+
+  private sendCloudStatusToMiniapp(packageName: string, status = this.currentCloudStatus()): void {
+    this.sendToMiniapp(packageName, {
+      type: MiniappResponseType.EVENT,
+      streamType: CLOUD_STATUS_STREAM,
+      data: status,
     })
   }
 

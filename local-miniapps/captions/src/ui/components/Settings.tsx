@@ -6,6 +6,8 @@ import { DisplayPreview } from "../hooks/useTranscripts";
 interface SettingsProps {
   settings: CaptionSettings | null;
   displayPreview: DisplayPreview | null;
+  accentColor?: string;
+  accentForeground?: string;
   onUpdateDisplayLines: (lines: number) => Promise<boolean>;
   onUpdateDisplayWidth: (width: number) => Promise<boolean>;
   onUpdateWordBreaking: (enabled: boolean) => Promise<boolean>;
@@ -14,6 +16,8 @@ interface SettingsProps {
 export function Settings({
   settings,
   displayPreview,
+  accentColor = "#6DAEA6",
+  accentForeground = "#FFFFFF",
   onUpdateDisplayLines,
   onUpdateDisplayWidth,
   onUpdateWordBreaking,
@@ -133,11 +137,11 @@ export function Settings({
                   onClick={() => handleDisplayLinesChange(lines)}
                   className={`py-3 rounded-xl text-lg font-medium font-['Red_Hat_Display'] transition-colors ${
                     displayLines === lines
-                      ? "text-white shadow-sm"
+                      ? "shadow-sm"
                       : "bg-gray-50 text-gray-900 hover:bg-gray-100"
                   }`}
                   style={
-                    displayLines === lines ? { backgroundColor: "#6DAEA6" } : {}
+                    displayLines === lines ? { backgroundColor: accentColor, color: accentForeground } : {}
                   }
                 >
                   {lines}
@@ -181,12 +185,12 @@ export function Settings({
                   onClick={() => handleDisplayWidthChange(option.value)}
                   className={`py-3 rounded-xl text-base font-medium font-['Red_Hat_Display'] transition-colors ${
                     displayWidth === option.value
-                      ? "text-white shadow-sm"
+                      ? "shadow-sm"
                       : "bg-gray-50 text-gray-900 hover:bg-gray-100"
                   }`}
                   style={
                     displayWidth === option.value
-                      ? { backgroundColor: "#6DAEA6" }
+                      ? { backgroundColor: accentColor, color: accentForeground }
                       : {}
                   }
                 >
@@ -234,7 +238,7 @@ export function Settings({
                 className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${
                   wordBreaking ? "" : "bg-gray-300"
                 }`}
-                style={wordBreaking ? { backgroundColor: "#6DAEA6" } : {}}
+                style={wordBreaking ? { backgroundColor: accentColor } : {}}
                 role="switch"
                 aria-checked={wordBreaking}
               >

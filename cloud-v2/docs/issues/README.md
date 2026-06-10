@@ -25,7 +25,7 @@ lands.
 | [auth / spec + design](./001-cloud-core/auth/spec.md) | Specced | [spec.md](./001-cloud-core/auth/spec.md) (endpoints + tokens) and [design.md](./001-cloud-core/auth/design.md) (e2e code changes + the identity model, migration bridge, and miniapp auto-auth + injection): exchange, refresh, miniapp-token mint, JWKS. Open: API-key role |
 | [auth / oem-auth](./001-cloud-core/auth/oem-auth.md) | Implemented | the OEM-JWT exchange mechanics, built in v2, e2e verified with `test-oem`. Left: finalize doc review |
 | [oem-service](./001-cloud-core/oem-service/) | Stub | needs spec |
-| [miniapp-service](./001-cloud-core/miniapp-service/) | Stub | needs spec (stores bundles via storage-service) |
+| [miniapp-service](./001-cloud-core/miniapp-service/) | Draft | placeholder plus [preinstalled-local-miniapps.md](./001-cloud-core/miniapp-service/preinstalled-local-miniapps.md), a draft registry spec for default local miniapps and version reconciliation |
 | [dev-console-service](./001-cloud-core/dev-console-service/) | Stub | needs spec |
 | [storage-service](./001-cloud-core/storage-service/) | Stub | needs spec (wrapper around swappable blob providers; used by miniapp-service, dev-console-service) |
 | **[002-cloud-runtime](./002-cloud-runtime/)** | | self-hostable runtime product |

@@ -22,14 +22,14 @@
 
 import crypto from "node:crypto";
 import { startCore } from "../packages/core/src/index";
-import { startAudio } from "../packages/runtime/src/index";
+import { startRuntime } from "../packages/runtime/src/index";
 import { startTestOem } from "../test/test-oem/src/index";
 import { OemModel } from "../packages/core/src/models/oem.model";
 import { TestClient } from "../test/test-client/src/client";
 
 const PORT_CORE = 16000;
-const PORT_AUDIO_HTTP = 16001;
-const PORT_AUDIO_UDP = 18301;
+const PORT_RUNTIME_HTTP = 16001;
+const PORT_RUNTIME_UDP = 18301;
 const PORT_TEST_OEM = 16100;
 
 // Ed25519 keys come from Doppler. But for the smoke test we want a fresh
@@ -63,7 +63,7 @@ const { resetSigningKeyCache } = await import(
 resetMentraKeyCache();
 resetSigningKeyCache();
 
-console.log("[smoke] booting test-oem, core, audio…");
+console.log("[smoke] booting test-oem, core, runtime…");
 
 const testOem = await startTestOem({
   port: PORT_TEST_OEM,
@@ -72,18 +72,18 @@ const testOem = await startTestOem({
 
 const core = await startCore({ port: PORT_CORE });
 
-const audio = await startAudio({
-  httpPort: PORT_AUDIO_HTTP,
-  udpPort: PORT_AUDIO_UDP,
+const runtime = await startRuntime({
+  httpPort: PORT_RUNTIME_HTTP,
+  udpPort: PORT_RUNTIME_UDP,
   udpAdvertisedHost: "127.0.0.1",
-  udpAdvertisedPort: PORT_AUDIO_UDP,
+  udpAdvertisedPort: PORT_RUNTIME_UDP,
   workerCount: 1,
 });
 
 console.log("[smoke] services up:");
 console.log(`  test-oem: ${testOem.url}`);
 console.log(`  core:     ${core.url}`);
-console.log(`  audio:    ${audio.wsUrl} (UDP :${audio.udpPort})`);
+console.log(`  runtime:  ${runtime.wsUrl} (audio UDP :${runtime.udpPort})`);
 console.log(`  provider: ${process.env.AUDIO_PROVIDER}`);
 
 // Seed the test OEM record so token exchange works.
@@ -98,7 +98,7 @@ await OemModel.create({
 const client = new TestClient({
   testOemUrl: testOem.url,
   coreUrl: core.url,
-  audioWsUrl: audio.wsUrl,
+  audioWsUrl: runtime.wsUrl,
   oemUserId: "smoke-alice",
   connectTimeoutMs: 10_000,
 });

@@ -28,6 +28,7 @@ import {
   ingestAudioPacket,
   parseAudioPacket,
 } from "../services/session/stream";
+import { publishUdpLivenessAck } from "../services/session/control-stream";
 import { getSessionByTag } from "./ws";
 import { PROTOCOL_MAJOR } from "../protocol/envelope";
 
@@ -115,19 +116,37 @@ async function handlePacket(data: Buffer | Uint8Array): Promise<void> {
   const localEntry = origin === "local" ? getSessionByTag(sessionTag) : undefined;
 
   if (result.kind === "probe") {
+    const receivedAt = Date.now();
     if (localEntry) {
       localEntry.ws.send(
         JSON.stringify({
           v: PROTOCOL_MAJOR,
           type: "audio.udp_liveness_ack",
-          timestamp: Date.now(),
+          timestamp: receivedAt,
           payload: {
             sessionId: localEntry.data.audioSessionId,
             sessionTag,
             probeId: result.probeId ?? "",
-            receivedAt: Date.now(),
+            receivedAt,
           },
         }),
+      );
+    } else if (mentraUserId && result.audioSessionId) {
+      await publishUdpLivenessAck(mentraUserId, {
+        sessionTag,
+        audioSessionId: result.audioSessionId,
+        probeId: result.probeId ?? "",
+        receivedAt,
+      });
+      logger.debug(
+        {
+          sessionTag,
+          sequence,
+          mentraUserId,
+          origin,
+          probeId: result.probeId,
+        },
+        "udp liveness ack published to owner control stream",
       );
     }
     logger.debug(

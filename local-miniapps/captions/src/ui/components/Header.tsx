@@ -4,6 +4,8 @@ import {getLanguageName, getFlagEmoji} from "../lib/languages"
 
 interface HeaderProps {
   connected: boolean
+  accentColor: string
+  accentForeground: string
   error: string | null
   settings: CaptionSettings | null
   onUpdateLanguage: (lang: string) => Promise<boolean>
@@ -17,6 +19,8 @@ interface HeaderProps {
 
 export function Header({
   connected,
+  accentColor,
+  accentForeground,
   error,
   settings,
   onToggleLanguageSelector,
@@ -27,13 +31,15 @@ export function Header({
     <div className="w-full flex flex-col">
       {/* Top header bar */}
       <div
-        className="w-full px-6 py-3 backdrop-blur-lg flex justify-center items-center"
-        style={{backgroundColor: "#6DAEA6"}}>
+        className="w-full h-[46px] px-6 backdrop-blur-lg flex justify-center items-center"
+        style={{backgroundColor: accentColor}}>
         {/* Title with icon */}
         <div className="flex justify-start items-center gap-2">
           <img src={CCIcon} alt="CC" className="w-7 h-5" />
-          <div className="text-center text-white text-lg font-semibold font-['Red_Hat_Display'] leading-7">
-            Captions
+          <div
+            className="text-center text-lg font-semibold font-['Red_Hat_Display'] leading-6"
+            style={{color: accentForeground}}>
+            Local Captions
           </div>
         </div>
       </div>
@@ -65,7 +71,7 @@ export function Header({
                 className={`w-2.5 h-2.5 rounded-full flex-shrink-0 transition-colors ${
                   connected ? "bg-green-500" : "bg-red-500"
                 }`}
-                style={connected ? {backgroundColor: "#6DAEA6"} : {}}
+                style={connected ? {backgroundColor: accentColor} : {}}
                 title={connected ? "Connected" : "Disconnected"}
               />
 
@@ -78,11 +84,13 @@ export function Header({
                 <div className="flex items-center gap-3 overflow-x-auto scrollbar-hide">
                   <div className="px-0"></div>
                   {/* Primary language chip */}
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-[#6DAEA6] rounded-full flex-shrink-0">
+                  <div
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-full flex-shrink-0"
+                    style={{backgroundColor: accentColor, color: accentForeground}}>
                     <span className="text-base">
                       {settings.language === "auto" ? "🏳️" : getFlagEmoji(settings.language)}
                     </span>
-                    <span className="text-sm font-semibold text-white font-['Red_Hat_Display']">
+                    <span className="text-sm font-semibold font-['Red_Hat_Display']">
                       {settings.language === "auto" ? "Auto" : getLanguageName(settings.language)}
                     </span>
                   </div>
@@ -92,9 +100,10 @@ export function Header({
                     settings.languageHints.map((hint) => (
                       <div
                         key={hint}
-                        className="flex items-center gap-2 px-3 py-1.5 bg-[#6DAEA6] rounded-full flex-shrink-0">
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-full flex-shrink-0"
+                        style={{backgroundColor: accentColor, color: accentForeground}}>
                         <span className="text-base">{getFlagEmoji(hint)}</span>
-                        <span className="text-sm font-semibold text-white font-['Red_Hat_Display']">
+                        <span className="text-sm font-semibold font-['Red_Hat_Display']">
                           {getLanguageName(hint)}
                         </span>
                       </div>

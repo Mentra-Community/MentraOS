@@ -13,6 +13,14 @@
  */
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-runtime/protocol"
 
+export type CloudClientConnectionStatus = "connected" | "connecting" | "reconnecting" | "disconnected"
+export type CloudClientAudioTransport = "udp" | "ws" | "offline" | "none"
+
+export interface CloudClientStatusSnapshot {
+  status: CloudClientConnectionStatus
+  audioTransport: CloudClientAudioTransport
+}
+
 /**
  * Snapshot the host exposes about the connected glasses. The host's full
  * glasses store is too rich for the runtime — these are the fields the
@@ -56,6 +64,10 @@ export interface CloudRuntimeAdapter {
   onTranscript: (cb: (d: TranscriptionData) => void) => () => void
   /** Subscribe to v2 translation results. Returns an unsubscribe fn. */
   onTranslation: (cb: (d: TranslationData) => void) => () => void
+  /** Current cloud-client runtime status, without host UI labels. */
+  getStatus: () => CloudClientStatusSnapshot
+  /** Subscribe to cloud-client runtime status changes. Returns an unsubscribe fn. */
+  onStatusChanged: (cb: (snapshot: CloudClientStatusSnapshot) => void) => () => void
   /**
    * Whether any transcription/translation subscription is currently set on v2.
    * The host's audio-capture site gates `sendAudioFrame` on this so we don't

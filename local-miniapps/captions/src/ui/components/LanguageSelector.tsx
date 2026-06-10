@@ -1,4 +1,5 @@
 import {Search, X, Check} from "lucide-react"
+import type {CSSProperties} from "react"
 import {useState, useEffect} from "react"
 
 import {AVAILABLE_LANGUAGES, getLanguageName, getFlagEmoji} from "../lib/languages"
@@ -6,11 +7,20 @@ import {AVAILABLE_LANGUAGES, getLanguageName, getFlagEmoji} from "../lib/languag
 interface LanguageSelectorProps {
   currentLanguage: string
   currentHints: string[]
+  accentColor?: string
+  accentForeground?: string
   onSave: (language: string, hints: string[]) => Promise<void>
   onCancel: () => void
 }
 
-export function LanguageSelector({currentLanguage, currentHints, onSave, onCancel}: LanguageSelectorProps) {
+export function LanguageSelector({
+  currentLanguage,
+  currentHints,
+  accentColor = "#6DAEA6",
+  accentForeground = "#FFFFFF",
+  onSave,
+  onCancel,
+}: LanguageSelectorProps) {
   const [tempLanguage, setTempLanguage] = useState(currentLanguage)
   const [tempHints, setTempHints] = useState<string[]>(currentHints)
   const [searchQuery, setSearchQuery] = useState("")
@@ -74,31 +84,38 @@ export function LanguageSelector({currentLanguage, currentHints, onSave, onCance
         <div className="flex flex-wrap gap-3">
           {/* Primary Language Chip - only show if not auto */}
           {tempLanguage !== "auto" ? (
-            <div className="px-3 py-1.5 bg-[#6DAEA6] rounded-full flex items-center gap-2 shadow-sm">
+            <div
+              className="px-3 py-1.5 rounded-full flex items-center gap-2 shadow-sm"
+              style={{backgroundColor: accentColor, color: accentForeground}}>
               <span className="text-lg">{getFlagEmoji(tempLanguage)}</span>
-              <span className="text-sm font-semibold text-white font-['Red_Hat_Display']">
+              <span className="text-sm font-semibold font-['Red_Hat_Display']">
                 {getLanguageName(tempLanguage)}
               </span>
               <button
                 onClick={() => handleLanguageClick(tempLanguage)}
                 className="ml-1 p-0.5 rounded-full hover:bg-white/20">
-                <X className="w-3 h-3 text-white" />
+                <X className="w-3 h-3" />
               </button>
             </div>
           ) : (
-            <div className="px-3 py-1.5 bg-[#6DAEA6] rounded-full flex items-center gap-2 shadow-sm">
+            <div
+              className="px-3 py-1.5 rounded-full flex items-center gap-2 shadow-sm"
+              style={{backgroundColor: accentColor, color: accentForeground}}>
               <span className="text-lg">🏳️</span>
-              <span className="text-sm font-semibold text-white font-['Red_Hat_Display']">Auto</span>
+              <span className="text-sm font-semibold font-['Red_Hat_Display']">Auto</span>
             </div>
           )}
 
           {/* Hint Chips */}
           {tempHints.map((code) => (
-            <div key={code} className="px-3 py-1.5 bg-[#6DAEA6] rounded-full flex items-center gap-2 shadow-sm">
+            <div
+              key={code}
+              className="px-3 py-1.5 rounded-full flex items-center gap-2 shadow-sm"
+              style={{backgroundColor: accentColor, color: accentForeground}}>
               <span className="text-lg">{getFlagEmoji(code)}</span>
-              <span className="text-sm font-semibold text-white font-['Red_Hat_Display']">{getLanguageName(code)}</span>
+              <span className="text-sm font-semibold font-['Red_Hat_Display']">{getLanguageName(code)}</span>
               <button onClick={() => handleLanguageClick(code)} className="ml-1 p-0.5 rounded-full hover:bg-white/20">
-                <X className="w-3 h-3 text-white" />
+                <X className="w-3 h-3" />
               </button>
             </div>
           ))}
@@ -114,7 +131,8 @@ export function LanguageSelector({currentLanguage, currentHints, onSave, onCance
             placeholder="Search languages"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full py-3 pl-10 pr-4 bg-white rounded-xl text-base text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#6DAEA6]/50 font-['Red_Hat_Display'] shadow-sm"
+            className="w-full py-3 pl-10 pr-4 bg-white rounded-xl text-base text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 font-['Red_Hat_Display'] shadow-sm"
+            style={{"--tw-ring-color": `${accentColor}80`} as CSSProperties}
           />
         </div>
       </div>
@@ -138,7 +156,7 @@ export function LanguageSelector({currentLanguage, currentHints, onSave, onCance
                     )}
                   </div>
                 </div>
-                {selected && <Check className="w-5 h-5 text-[#6DAEA6]" />}
+                {selected && <Check className="w-5 h-5" style={{color: accentColor}} />}
               </button>
             )
           })}
@@ -151,7 +169,8 @@ export function LanguageSelector({currentLanguage, currentHints, onSave, onCance
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex-1 py-3.5 bg-[#6DAEA6] text-white rounded-full font-bold text-lg font-['Red_Hat_Display'] shadow-sm hover:bg-[#5C9A92] transition-colors disabled:opacity-50">
+            className="flex-1 py-3.5 rounded-full font-bold text-lg font-['Red_Hat_Display'] shadow-sm transition-colors disabled:opacity-50"
+            style={{backgroundColor: accentColor, color: accentForeground}}>
             {saving ? "Saving..." : "Save"}
           </button>
           <button
