@@ -179,6 +179,12 @@ public class OtaHelper {
     private static volatile boolean mtkUpdatedThisSession = false;
     private static volatile boolean isBackgroundPrefetchInProgress = false;
 
+    // True when the in-flight MTK install is the final firmware step (no BES update follows).
+    // BES installs power-cycle the device themselves; an MTK-only update has nothing to trigger
+    // the reboot its staged A/B image needs, so OtaService reboots on MTK success. Set at install
+    // kickoff so it is correct on both the session and legacy/no-session completion paths.
+    private volatile boolean rebootAfterMtkInstall = false;
+
     private volatile boolean pendingPhoneInstall = false;
 
     /** Snapshot for {@link #buildMinimalOtaStatusJson()} when no OTA session exists (aligns with {@link #sendMtkInstallProgress} shape). */
@@ -343,6 +349,19 @@ public class OtaHelper {
 
     public OtaSessionManager getSessionManager() {
         return sessionManager;
+    }
+
+    /**
+     * Returns whether the most recently started MTK install should trigger a self-reboot on
+     * success — i.e. it is an MTK-only update with no BES step to power-cycle the device — and
+     * atomically clears the flag. Read-and-clear so a duplicate or late MTK SUCCESS event cannot
+     * schedule a second/stale reboot; the flag is re-armed only at the next MTK install kickoff
+     * (see {@link #checkAndUpdateMtkFirmware}). Works regardless of whether an OTA session exists.
+     */
+    public synchronized boolean consumeRebootAfterMtkInstall() {
+        boolean reboot = rebootAfterMtkInstall;
+        rebootAfterMtkInstall = false;
+        return reboot;
     }
 
     /**
@@ -1275,7 +1294,9 @@ public class OtaHelper {
                         // and start BES as a separate update round.
                         Log.i(TAG, "Both MTK and BES updates available - applying MTK first, phone will handle BES next");
 
-                        boolean mtkStarted = checkAndUpdateMtkFirmware(mtkPatch, context, true);
+                        // besUpdateFollows=true: the upcoming BES install will power-cycle the
+                        // device, so MTK must not self-reboot here (avoids a double reboot).
+                        boolean mtkStarted = checkAndUpdateMtkFirmware(mtkPatch, context, true, true);
                         if (mtkStarted) {
                             Log.i(TAG, "MTK firmware update started - BES will be handled by phone in next round");
                         } else {
@@ -2293,6 +2314,12 @@ public class OtaHelper {
     }
 
     private boolean checkAndUpdateMtkFirmware(JSONObject firmwareInfo, Context context, boolean installNow) {
+        // Default: treat as the final firmware step (MTK-only) so it self-reboots. Callers that
+        // know a BES update follows pass besUpdateFollows=true to suppress the reboot.
+        return checkAndUpdateMtkFirmware(firmwareInfo, context, installNow, false);
+    }
+
+    private boolean checkAndUpdateMtkFirmware(JSONObject firmwareInfo, Context context, boolean installNow, boolean besUpdateFollows) {
         try {
             // Check for mutual exclusion - don't start MTK update if other updates in progress
             if (isUpdating) {
@@ -2381,6 +2408,12 @@ public class OtaHelper {
             }
 
             Log.i(TAG, "✅ MTK firmware ready for install");
+
+            // Record whether this install should self-reboot on success. An MTK-only update
+            // (no BES update following) has nothing to power-cycle the device and apply the
+            // staged A/B image, so OtaService reboots on success. When a BES update follows,
+            // the BES install power-cycles the device for us, so we must not reboot here.
+            rebootAfterMtkInstall = !besUpdateFollows;
 
             // Set flag before starting update
             isMtkOtaInProgress = true;
