@@ -49,11 +49,16 @@ export function FloatingDevPanel({
     saveState(storageKey, {x: pos.x, y: pos.y, collapsed})
   }, [storageKey, pos.x, pos.y, collapsed])
 
-  // Clamp into viewport on mount + resize so a saved position from a
-  // larger window doesn't strand the panel offscreen.
-  // If the user hasn't dragged yet, re-center whenever collapsed state changes.
+  // Soft-clamp into viewport on mount + resize. The panel is allowed
+  // to be dragged mostly off-screen (so a dev who wants the map to be
+  // fully visible can park it at the edge), but we always keep at
+  // least KEEP_VISIBLE_PX of it reachable from each side — otherwise
+  // it could be lost entirely with no way to drag back.
+  // If the user hasn't dragged yet, re-center whenever collapsed
+  // state changes.
   const rootRef = useRef<HTMLElement | null>(null)
   useEffect(() => {
+    const KEEP_VISIBLE_PX = 24
     function clamp() {
       const el = rootRef.current
       if (!el) return
@@ -65,9 +70,13 @@ export function FloatingDevPanel({
           y: Math.max(0, (window.innerHeight - h) / 2),
         })
       } else {
+        const minX = -(w - KEEP_VISIBLE_PX)
+        const maxX = window.innerWidth - KEEP_VISIBLE_PX
+        const minY = -(h - KEEP_VISIBLE_PX)
+        const maxY = window.innerHeight - KEEP_VISIBLE_PX
         setPos((p) => ({
-          x: Math.max(0, Math.min(window.innerWidth - w, p.x)),
-          y: Math.max(0, Math.min(window.innerHeight - h, p.y)),
+          x: Math.max(minX, Math.min(maxX, p.x)),
+          y: Math.max(minY, Math.min(maxY, p.y)),
         }))
       }
     }
@@ -95,8 +104,16 @@ export function FloatingDevPanel({
     if (!drag || !el) return
     const w = el.offsetWidth
     const h = el.offsetHeight
-    const x = Math.max(0, Math.min(window.innerWidth - w, e.clientX - drag.dx))
-    const y = Math.max(0, Math.min(window.innerHeight - h, e.clientY - drag.dy))
+    // Allow dragging mostly off-screen, but keep KEEP_VISIBLE_PX
+    // reachable from each edge so the panel can't be lost. Mirrors
+    // the soft-clamp in the resize effect.
+    const KEEP_VISIBLE_PX = 24
+    const minX = -(w - KEEP_VISIBLE_PX)
+    const maxX = window.innerWidth - KEEP_VISIBLE_PX
+    const minY = -(h - KEEP_VISIBLE_PX)
+    const maxY = window.innerHeight - KEEP_VISIBLE_PX
+    const x = Math.max(minX, Math.min(maxX, e.clientX - drag.dx))
+    const y = Math.max(minY, Math.min(maxY, e.clientY - drag.dy))
     setPos({x, y})
   }
   function onPointerUp(e: React.PointerEvent<HTMLElement>) {
@@ -124,9 +141,9 @@ export function FloatingDevPanel({
           setCollapsed(false)
         }}
         style={{position: "fixed", left: pos.x, top: pos.y, touchAction: "none"}}
-        className="z-9999 w-11 h-11 rounded-full bg-[#1A1A1A] text-white shadow-[#FFFFFF14_0px_1px_0px_inset,#00000073_0px_12px_30px] flex items-center justify-center select-none cursor-grab active:cursor-grabbing"
+        className="z-9999 w-11 h-11 rounded-full bg-[#1A1A1A] text-white shadow-[#FFFFFF14_0px_1px_0px_inset,#00000073_0px_12px_30px] flex items-center justify-center select-none cursor-grab active:cursor-grabbing text-[11px] font-bold tracking-wider"
         aria-label={`Open ${title} panel`}>
-        <WrenchIcon />
+        DBG
       </button>
     )
   }
@@ -144,8 +161,8 @@ export function FloatingDevPanel({
         onPointerUp={onPointerUp}
         style={{touchAction: "none"}}
         className="flex items-center h-11.5 pr-2.5 pl-3.5 gap-2.25 shrink-0 [box-shadow:#FFFFFF14_0px_1px_0px_inset] bg-[#1A1A1A] cursor-grab active:cursor-grabbing select-none">
-        <div className="flex items-center justify-center w-5.5 h-5.5 shrink-0">
-          <WrenchIcon />
+        <div className="flex items-center justify-center shrink-0 text-white text-[11px] font-bold tracking-wider">
+          DBG
         </div>
         <span className="grow tracking-[-0.01em] font-sans font-semibold text-white text-[15px]/5">{title}</span>
         <button
@@ -160,17 +177,6 @@ export function FloatingDevPanel({
       </div>
       <div className="overflow-y-auto p-3 grow">{children}</div>
     </div>
-  )
-}
-
-function WrenchIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-      <path
-        d="M14.7 6.3a3.5 3.5 0 0 1 4.6 4.4l-2-2-1.8.5-.5 1.8 2 2a3.5 3.5 0 0 1-4.4-4.6L7.8 16.9a1.6 1.6 0 1 1-2.2-2.2l5.8-5.8a3.5 3.5 0 0 1 3.3-2.6Z"
-        fill="#FFFFFF"
-      />
-    </svg>
   )
 }
 

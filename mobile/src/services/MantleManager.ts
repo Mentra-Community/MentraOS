@@ -249,6 +249,9 @@ class MantleManager {
         stopRecording: (pkg, recordingId) => phoneVideoCoordinator.stopRecording(pkg, recordingId),
         stopForApp: (pkg) => phoneVideoCoordinator.stopForApp(pkg),
       },
+      cameraSettings: {
+        setFov: (_pkg, request) => BluetoothSdk.setCameraFov(request),
+      },
       // Google Nav SDK adapter — the island runtime fan-outs nav events to
       // miniapps subscribed to navigation_*. Delegates straight to the host's
       // singleton NavigationService.
@@ -626,21 +629,13 @@ class MantleManager {
         BluetoothSdk.addListener("photo_response", (event) => {
           // Local miniapps' photos are tracked by phonePhotoCoordinator. If
           // glasses report an error (BATTERY_LOW, CAMERA_BUSY, ...) for a
-          // phone-owned requestId, short-circuit the in-flight long-poll
-          // with the typed error. Cloud-app photos (third-party SDK) still
-          // forward to cloud's PhotoManager.
+          // phone-owned requestId, short-circuit the in-flight long-poll with
+          // the typed error. Terminal success is ignored here because the
+          // coordinator resolves from the phone/cloud upload result. Cloud-app
+          // photos (third-party SDK) still forward to cloud's PhotoManager.
           //
-          // Note: glasses only emit photo_response on ERROR (verified in
-          // asg_client/.../MediaCaptureService.java — only sendPhotoErrorResponse
-          // emits this event). Successful uploads land directly on cloud's
-          // /api/v2/client/photo/upload and the coordinator learns via its
-          // long-poll. So the state === "success" branch is unreachable for
-          // phone-owned requestIds.
-          //
-          // Caveat: BLE-fallback upload failures on the phone-side
-          // BlePhotoUploadService only log (no photo_response is emitted),
-          // so the coordinator falls back to the 30s long-poll timeout in
-          // that path. Pre-existing v1 behavior; not regressed here.
+          // Error responses are the only photo_response events that settle
+          // the coordinator directly.
           if (event.requestId && phonePhotoCoordinator.owns(event.requestId)) {
             if (event.state === "error") {
               phonePhotoCoordinator.handlePhotoError(

@@ -23,16 +23,25 @@ import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+import dagger.hilt.android.AndroidEntryPoint;
+import javax.inject.Inject;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 
+@AndroidEntryPoint
 public class OtaService extends Service {
     private static final String TAG = OtaConstants.TAG;
     private static final String CHANNEL_ID = "ota_service_channel";
     private static final int NOTIFICATION_ID = 2001;
 
-    private OtaHelper otaHelper;
+    // Delay before rebooting to apply a staged MTK-only update. Gives the BLE
+    // ota_status "complete" message time to reach the phone before we drop the
+    // connection, so the phone settles on its "complete" UI rather than a bare
+    // "disconnected" spinner during the reboot.
+    private static final long MTK_REBOOT_DELAY_MS = 3000;
+
+    @Inject OtaHelper otaHelper;
 
     @Override
     public void onCreate() {
@@ -45,18 +54,7 @@ public class OtaService extends Service {
         // Start as foreground service
         startForeground(NOTIFICATION_ID, createNotification("OTA Service Running"));
 
-        // TEMPORARY: Kill external OTA updater app if it's running
-        // This prevents dual OTA checks when updating from older versions
-        try {
-            Log.w(TAG, "Stopping external OTA updater app to prevent conflicts");
-            SystemControllerFactory.get(this).stopApp("com.augmentos.otaupdater");
-            Log.i(TAG, "External OTA updater stopped");
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to stop external OTA updater", e);
-        }
-
-        // Initialize OTA helper singleton
-        otaHelper = OtaHelper.initialize(this);
+        stopLegacyOtaUpdaterIfPresent();
 
         // Clean up old firmware files from previous updates
         cleanupOldFirmwareFiles();
@@ -92,10 +90,8 @@ public class OtaService extends Service {
             EventBus.getDefault().unregister(this);
         }
 
-        // Clean up OTA helper
-        if (otaHelper != null) {
-            otaHelper.cleanup();
-        }
+        // OtaHelper is an app-scoped Hilt singleton shared by command handlers and debug
+        // receivers. Do not call cleanup() here; it tears down state that later OTA flows reuse.
     }
 
     @Override
@@ -131,6 +127,15 @@ public class OtaService extends Service {
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null) {
             manager.notify(NOTIFICATION_ID, createNotification(contentText));
+        }
+    }
+
+    private void stopLegacyOtaUpdaterIfPresent() {
+        try {
+            Log.i(TAG, "Stopping legacy OTA updater to prevent conflicts with internal OTA");
+            SystemControllerFactory.get(this).stopApp("com.augmentos.otaupdater");
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to stop legacy OTA updater", e);
         }
     }
 
@@ -223,6 +228,17 @@ public class OtaService extends Service {
                 updateNotification("MTK firmware updated successfully");
                 Log.i(TAG, "📱 MTK system SUCCESS received - staged for next reboot");
 
+                // MTK A/B updates only take effect after a reboot. When a BES update follows, the
+                // BES install power-cycles the device and applies the staged MTK image as a side
+                // effect, so we must NOT reboot here. For an MTK-only update nothing else triggers
+                // that reboot, so we issue it ourselves once the install reports success.
+                //
+                // The decision is read from a flag OtaHelper set at install kickoff (based on
+                // whether a BES update follows), NOT from session state — so it is correct on both
+                // the session path and the legacy/no-session path below. consume*() clears the flag
+                // so a duplicate/late SUCCESS event can't schedule a second reboot.
+                boolean shouldRebootAfterMtk = otaHelper != null && otaHelper.consumeRebootAfterMtkInstall();
+
                 if (otaHelper != null) {
                     otaHelper.sendMtkInstallProgressToPhone("FINISHED", 100, null);
                     // Session-based path: auto-advance to the next step (e.g. BES) immediately
@@ -238,6 +254,14 @@ public class OtaService extends Service {
                     }
                 } else {
                     sendMtkUpdateCompleteMessage();
+                }
+
+                // MTK-only update: no BES step will reboot for us, so apply the staged
+                // firmware ourselves after a short delay (lets the phone receive the
+                // "complete" status first). Historically MTK was always bundled with a BES
+                // update, whose MCU-level install power-cycled the device automatically.
+                if (shouldRebootAfterMtk) {
+                    scheduleMtkRebootToApplyUpdate();
                 }
                 break;
             case ERROR:
@@ -255,6 +279,25 @@ public class OtaService extends Service {
         Log.i(TAG, "Sending MTK update complete broadcast");
         Intent intent = new Intent("com.mentra.asg_client.MTK_UPDATE_COMPLETE");
         sendBroadcast(intent);
+    }
+
+    /**
+     * Reboot the device to apply a staged MTK-only firmware update.
+     *
+     * MTK A/B updates do not change ro.custom.ota.version until the device reboots. When MTK is
+     * bundled with a BES update the BES install power-cycles the device for us; for an MTK-only
+     * update nothing else triggers the reboot, so the device would otherwise keep re-offering the
+     * same patch (current firmware still matches the patch's start_firmware) in a loop.
+     *
+     * Delayed so the phone receives the BLE "complete" status before the connection drops.
+     */
+    private void scheduleMtkRebootToApplyUpdate() {
+        Log.i(TAG, "🔄 MTK was the final OTA step (no BES update) - rebooting in "
+                + (MTK_REBOOT_DELAY_MS / 1000) + "s to apply staged firmware");
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            Log.i(TAG, "🔄 Rebooting now to apply staged MTK firmware update");
+            SystemControllerFactory.get(this).reboot();
+        }, MTK_REBOOT_DELAY_MS);
     }
 
     @Subscribe(threadMode = ThreadMode.MAIN)
@@ -384,6 +427,8 @@ public class OtaService extends Service {
                         "📱 First boot with version tracking - recording ASG version: "
                                 + currentVersion);
                 prefs.edit().putLong("last_seen_asg_version", currentVersion).apply();
+                // Clear any recovery heartbeat pause that may have been set before this install.
+                OtaHelper.notifyRecoveryInstallCompleted(this);
 
                 if (otaHelper != null) {
                     Log.i(
@@ -399,6 +444,7 @@ public class OtaService extends Service {
                                 + " to "
                                 + currentVersion);
                 prefs.edit().putLong("last_seen_asg_version", currentVersion).apply();
+                OtaHelper.notifyRecoveryInstallCompleted(this);
 
                 if (otaHelper != null) {
                     Log.i(
@@ -410,6 +456,8 @@ public class OtaService extends Service {
                 Log.d(
                         TAG,
                         "ASG version unchanged (" + currentVersion + ") - no auto-resume needed");
+                // Safety net: clear any recovery heartbeat pause from a same-version reinstall.
+                OtaHelper.notifyRecoveryInstallCompleted(this);
             }
         } catch (Exception e) {
             Log.e(TAG, "Error checking for APK update auto-resume", e);
@@ -418,6 +466,8 @@ public class OtaService extends Service {
 
     private void resumeFromSession(OtaSessionManager sessionManager) {
         try {
+            // Clear any recovery heartbeat pause that was set before the APK install.
+            OtaHelper.notifyRecoveryInstallCompleted(this);
             sessionManager.clearRestartGuard();
             int nextStep = sessionManager.getCurrentStepIndex() + 1;
 

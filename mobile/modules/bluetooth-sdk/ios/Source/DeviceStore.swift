@@ -187,7 +187,7 @@ class DeviceStore {
             let auto = store.get("bluetooth", "auto_brightness") as? Bool ?? true
             Task {
                 DeviceManager.shared.sgc?.setBrightness(b, autoMode: auto)
-                DeviceManager.shared.sgc?.sendTextWall("Set brightness to \(b)%")
+                await DeviceManager.shared.sgc?.sendTextWall("Set brightness to \(b)%")
                 try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
                 DeviceManager.shared.sgc?.clearDisplay()
             }
@@ -199,7 +199,7 @@ class DeviceStore {
             Task {
                 DeviceManager.shared.sgc?.setBrightness(b, autoMode: auto)
                 if autoBrightnessChanged {
-                    DeviceManager.shared.sgc?.sendTextWall(
+                    await DeviceManager.shared.sgc?.sendTextWall(
                         auto ? "Enabled auto brightness" : "Disabled auto brightness"
                     )
                     try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
@@ -220,7 +220,7 @@ class DeviceStore {
 
         case ("bluetooth", "imu_enabled"):
             if let enabled = value as? Bool {
-                DeviceManager.shared.sgc?.setImuEnabled(enabled)
+                Task { await DeviceManager.shared.sgc?.setImuEnabled(enabled) }
             }
 
         case ("bluetooth", "menu_apps"):

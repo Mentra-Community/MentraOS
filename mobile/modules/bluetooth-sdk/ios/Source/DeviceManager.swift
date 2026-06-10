@@ -565,7 +565,7 @@ struct ViewState {
             // Check if we've completed all cycles
             if cycles >= totalCycles {
                 // End animation with final message
-                sgc?.sendTextWall("                  /// MentraOS Connected \\\\\\")
+                Task { await sgc?.sendTextWall("                  /// MentraOS Connected \\\\\\") }
                 animationQueue.asyncAfter(deadline: .now() + 1.0) {
                     self.sgc?.clearDisplay()
                 }
@@ -575,7 +575,7 @@ struct ViewState {
             // Display current animation frame
             let frameText =
                 "                    \(arrowFrames[frameIndex]) MentraOS Booting \(arrowFrames[frameIndex])"
-            sgc?.sendTextWall(frameText)
+            Task { await sgc?.sendTextWall(frameText) }
 
             // Move to next frame
             frameIndex = (frameIndex + 1) % arrowFrames.count
@@ -693,13 +693,13 @@ struct ViewState {
             switch layoutType {
             case "text_wall":
                 let text = currentViewState.text
-                sgc?.sendTextWall(text)
+                await sgc?.sendTextWall(text)
             case "double_text_wall":
                 let topText = currentViewState.topText
                 let bottomText = currentViewState.bottomText
-                sgc?.sendDoubleTextWall(topText, bottomText)
+                await sgc?.sendDoubleTextWall(topText, bottomText)
             case "reference_card":
-                sgc?.sendTextWall(currentViewState.title + "\n\n" + currentViewState.text)
+                await sgc?.sendTextWall(currentViewState.title + "\n\n" + currentViewState.text)
             case "bitmap_view":
                 // Bridge.log("MAN: Processing bitmap_view layout")
                 guard let data = currentViewState.data else {
@@ -908,7 +908,7 @@ struct ViewState {
         // Show welcome message on first connect for all display glasses
         if shouldSendBootingMessage {
             Task {
-                sgc.sendTextWall("// MentraOS Connected")
+                await sgc.sendTextWall("// MentraOS Connected")
                 try? await Task.sleep(nanoseconds: 3_000_000_000) // 1 second
                 sgc.clearDisplay()
             }
@@ -1009,7 +1009,7 @@ struct ViewState {
         }
 
         Bridge.log("MAN: Displaying text: \(text)")
-        sgc?.sendTextWall(text)
+        Task { await sgc?.sendTextWall(text) }
     }
 
     func displayEvent(_ event: [String: Any]) {
@@ -1099,7 +1099,7 @@ struct ViewState {
     }
 
     func showNotificationsPanel() {
-        sgc?.showNotificationsPanel()
+        Task { await sgc?.showNotificationsPanel() }
     }
 
     func ping() {
@@ -1177,6 +1177,37 @@ struct ViewState {
     func sendOtaQueryStatus() {
         Bridge.log("MAN: 📱 Sending OTA query status command to glasses")
         (sgc as? MentraLive)?.sendOtaQueryStatus()
+    }
+
+    private func liveSgc() throws -> MentraLive {
+        guard let live = sgc as? MentraLive else {
+            throw BluetoothError(code: "unsupported_device", message: "This command requires Mentra Live glasses.")
+        }
+        return live
+    }
+
+    func sendGalleryMode(requestId: String, enabled: Bool) throws {
+        try liveSgc().sendGalleryMode(requestId: requestId, active: enabled)
+    }
+
+    func sendButtonPhotoSettings(requestId: String, size: String) throws {
+        try liveSgc().sendButtonPhotoSettings(requestId: requestId, size: size)
+    }
+
+    func sendButtonVideoRecordingSettings(requestId: String, width: Int, height: Int, fps: Int) throws {
+        try liveSgc().sendButtonVideoRecordingSettings(requestId: requestId, width: width, height: height, fps: fps)
+    }
+
+    func sendButtonCameraLedSetting(requestId: String, enabled: Bool) throws {
+        try liveSgc().sendButtonCameraLedSetting(requestId: requestId, enabled: enabled)
+    }
+
+    func sendButtonMaxRecordingTime(requestId: String, minutes: Int) throws {
+        try liveSgc().sendButtonMaxRecordingTime(requestId: requestId, minutes: minutes)
+    }
+
+    func sendCameraFovSetting(requestId: String, fov: Int, roiPosition: Int) throws {
+        try liveSgc().sendCameraFovSetting(requestId: requestId, fov: fov, roiPosition: roiPosition)
     }
 
     func retryOtaVersionCheck() {

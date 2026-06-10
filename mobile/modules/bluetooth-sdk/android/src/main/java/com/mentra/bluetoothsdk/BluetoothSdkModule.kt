@@ -116,6 +116,14 @@ class BluetoothSdkModule : Module() {
                     sendEvent("photo_status", event.values)
                 }
 
+                override fun onVideoRecordingStatus(event: VideoRecordingStatusEvent) {
+                    sendEvent("video_recording_status", event.values)
+                }
+
+                override fun onRgbLedControlResponse(event: RgbLedControlResponseEvent) {
+                    sendEvent("rgb_led_control_response", event.values)
+                }
+
                 override fun onStreamStatus(event: StreamStatusEvent) {
                     sendEvent("stream_status", event.values)
                 }
@@ -134,6 +142,14 @@ class BluetoothSdkModule : Module() {
 
                 override fun onOtaStatus(event: OtaStatusEvent) {
                     sendEvent("ota_status", event.values)
+                }
+
+                override fun onSettingsAck(event: SettingsAckEvent) {
+                    sendEvent("settings_ack", event.values)
+                }
+
+                override fun onVersionInfo(event: VersionInfoResult) {
+                    sendEvent("version_info", event.toMap() + mapOf("type" to "version_info"))
                 }
 
                 override fun onMicPcm(event: MicPcmEvent) {
@@ -159,7 +175,14 @@ class BluetoothSdkModule : Module() {
                 override fun onRawEvent(eventName: String, values: Map<String, Any>) {
                     sendEvent(eventName, values)
                 }
-            }
+        }
+
+    private fun requireSdk(): MentraBluetoothSdk =
+            sdk
+                    ?: throw BluetoothException(
+                            "sdk_not_initialized",
+                            "Bluetooth SDK is not initialized.",
+                    )
 
     override fun definition() = ModuleDefinition {
         Name("BluetoothSdk")
@@ -184,10 +207,12 @@ class BluetoothSdkModule : Module() {
             "battery_status",
             "local_transcription",
             "wifi_status_change",
+            "wifi_scan_result",
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
             "photo_status",
+            "video_recording_status",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",
@@ -197,6 +222,8 @@ class BluetoothSdkModule : Module() {
             "swipe_volume_status",
             "switch_status",
             "rgb_led_control_response",
+            "settings_ack",
+            "version_info",
             "pair_failure",
             "audio_pairing_needed",
             "audio_connected",
@@ -375,16 +402,16 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - WiFi Commands
 
-        AsyncFunction("requestWifiScan") { sdk?.requestWifiScan() }
+        AsyncFunction("requestWifiScan") { requireSdk().requestWifiScan().map { it.toMap() } }
 
         AsyncFunction("sendWifiCredentials") { ssid: String, password: String ->
-            sdk?.sendWifiCredentials(ssid, password)
+            requireSdk().sendWifiCredentials(ssid, password).values
         }
 
-        AsyncFunction("forgetWifiNetwork") { ssid: String -> sdk?.forgetWifiNetwork(ssid) }
+        AsyncFunction("forgetWifiNetwork") { ssid: String -> requireSdk().forgetWifiNetwork(ssid).values }
 
         AsyncFunction("setHotspotState") { enabled: Boolean ->
-            sdk?.setHotspotState(enabled)
+            requireSdk().setHotspotState(enabled).values
         }
 
         AsyncFunction("setSystemTime") { timestampMs: Double ->
@@ -394,14 +421,39 @@ class BluetoothSdkModule : Module() {
         // MARK: - Gallery Commands
 
         AsyncFunction("setGalleryModeEnabled") { enabled: Boolean ->
-            sdk?.setGalleryModeEnabled(enabled)
+            requireSdk().setGalleryModeEnabled(enabled).values
         }
 
         AsyncFunction("setVoiceActivityDetectionEnabled") { enabled: Boolean ->
             sdk?.setVoiceActivityDetectionEnabled(enabled)
         }
 
-        AsyncFunction("queryGalleryStatus") { sdk?.queryGalleryStatus() }
+        AsyncFunction("setButtonPhotoSettings") { size: String ->
+            requireSdk().setButtonPhotoSettings(ButtonPhotoSize.fromValue(size)).values
+        }
+
+        AsyncFunction("setButtonVideoRecordingSettings") { width: Int, height: Int, fps: Int ->
+            requireSdk().setButtonVideoRecordingSettings(width, height, fps).values
+        }
+
+        AsyncFunction("setButtonCameraLed") { enabled: Boolean ->
+            requireSdk().setButtonCameraLed(enabled).values
+        }
+
+        AsyncFunction("setButtonMaxRecordingTime") { minutes: Int ->
+            requireSdk().setButtonMaxRecordingTime(minutes).values
+        }
+
+        AsyncFunction("setCameraFov") { fov: Map<String, Any> ->
+            val value = (fov["fov"] as? Number)?.toInt() ?: CameraFov.DEFAULT_FOV
+            val roiPosition = CameraRoiPosition.fromValue(
+                (fov["roiPosition"] as? Number)?.toInt()
+                    ?: (fov["roi_position"] as? Number)?.toInt(),
+            )
+            requireSdk().setCameraFov(CameraFov(value, roiPosition)).values
+        }
+
+        AsyncFunction("queryGalleryStatus") { requireSdk().queryGalleryStatus().values }
 
         AsyncFunction("requestPhoto") { params: Map<String, Any?> ->
             // JS may pass null for optional fields; Map<String, Any> rejects null values at the bridge.
@@ -413,27 +465,20 @@ class BluetoothSdkModule : Module() {
             Bridge.log(
                     "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} appId=${req.appId} size=${req.size} compress=${req.compress} flash=${req.flash} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs} iso=${req.iso}"
             )
-            val activeSdk = sdk
-            if (activeSdk == null) {
-                Bridge.log(
-                        "NATIVE: PHOTO PIPELINE — sdk is null; requestPhoto dropped requestId=${req.requestId}"
-                )
-            } else {
-                activeSdk.requestPhoto(req)
-            }
+            requireSdk().requestPhoto(req).values
         }
 
         // MARK: - OTA Commands
 
-        AsyncFunction("sendOtaStart") { sdk?.sendOtaStart() }
+        AsyncFunction("sendOtaStart") { requireSdk().sendOtaStart().values }
 
-        AsyncFunction("sendOtaQueryStatus") { sdk?.sendOtaQueryStatus() }
+        AsyncFunction("sendOtaQueryStatus") { requireSdk().sendOtaQueryStatus().values }
 
-        AsyncFunction("retryOtaVersionCheck") { sdk?.retryOtaVersionCheck() }
+        AsyncFunction("retryOtaVersionCheck") { requireSdk().retryOtaVersionCheck().values }
 
         // MARK: - Version Info Commands
 
-        AsyncFunction("requestVersionInfo") { sdk?.requestVersionInfo() }
+        AsyncFunction("requestVersionInfo") { requireSdk().requestVersionInfo().toMap() }
 
         // MARK: - Power Control Commands
 
@@ -452,7 +497,7 @@ class BluetoothSdkModule : Module() {
             // the glasses treat as "use the saved button-video default". JS numbers
             // arrive as Double across the bridge, so coerce to Int.
             fun dim(key: String): Int = (settings?.get(key) as? Number)?.toInt() ?: 0
-            sdk?.startVideoRecording(
+            requireSdk().startVideoRecording(
                     VideoRecordingRequest(
                             requestId,
                             save,
@@ -461,20 +506,20 @@ class BluetoothSdkModule : Module() {
                             dim("height"),
                             dim("fps"),
                     )
-            )
+            ).values
         }
 
         AsyncFunction("stopVideoRecording") { requestId: String ->
-            sdk?.stopVideoRecording(requestId)
+            requireSdk().stopVideoRecording(requestId).values
         }
 
         // MARK: - Stream Commands
 
         AsyncFunction("startStream") { params: Map<String, Any> ->
-            sdk?.startStream(StreamRequest.fromMap(params))
+            requireSdk().startStream(StreamRequest.fromMap(params)).values
         }
 
-        AsyncFunction("stopStream") { sdk?.stopStream() }
+        AsyncFunction("stopStream") { requireSdk().stopStream().values }
 
         AsyncFunction("sendExternallyManagedStreamKeepAlive") { params: Map<String, Any> ->
             sdk?.sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest.fromMap(params))
@@ -531,7 +576,7 @@ class BluetoothSdkModule : Module() {
                 onDurationMs: Int,
                 offDurationMs: Int,
                 count: Int ->
-            sdk?.rgbLedControl(
+            requireSdk().rgbLedControl(
                     RgbLedRequest(
                             requestId = requestId,
                             packageName = packageName,
@@ -541,7 +586,7 @@ class BluetoothSdkModule : Module() {
                             offDurationMs = offDurationMs,
                             count = count,
                     )
-            )
+            ).values
         }
 
         // MARK: - STT Commands

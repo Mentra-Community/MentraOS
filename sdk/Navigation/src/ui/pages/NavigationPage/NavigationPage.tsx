@@ -247,7 +247,23 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [simulate, setSimulate] = useState(false)
   const [speedMultiplier, setSpeedMultiplier] = useState(5)
   const [wrongSidewalk, setWrongSidewalk] = useState(false)
+  const [useRawInstructions, setUseRawInstructions] = useState(true)
   const [travelMode, setTravelMode] = useState<TravelMode>("walking")
+
+  // Sticky off-route banner. The upstream `offRouteAt` flag only lives
+  // for the ~100ms gap between the SDK's `off_route` event and the
+  // controller flipping status to "rerouting" — too short to read.
+  // Latch it for OFF_ROUTE_STICKY_MS on the rising edge so the user
+  // sees the recalculating notice (plus spinner) even after the
+  // controller has moved on to actually rebuilding the route.
+  const OFF_ROUTE_STICKY_MS = 5_000
+  const [offRouteSticky, setOffRouteSticky] = useState(false)
+  useEffect(() => {
+    if (offRouteAt == null) return
+    setOffRouteSticky(true)
+    const t = setTimeout(() => setOffRouteSticky(false), OFF_ROUTE_STICKY_MS)
+    return () => clearTimeout(t)
+  }, [offRouteAt])
 
   const [previewRoutePoints, setPreviewRoutePoints] = useState<LatLng[] | null>(null)
   // Dev-only: turn points along the previewed route, used to draw red
@@ -588,6 +604,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
       simulate,
       speedMultiplier,
       missedTurnRerouteMeters: 3,
+      pivots: {radiusMeters: 14},
       destinationName: destination.name || destination.address || undefined,
     })
   }
@@ -608,6 +625,28 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     mentra.send("nav:deviate", {})
   }
 
+  // Cancel the current trip and immediately re-start it to the same
+  // destination. Useful in dev for re-triggering route build / initial
+  // display logic without having to re-pick the destination.
+  function handleRebuildRoute() {
+    const dest = effectiveDestination
+    if (!dest) {
+      append("ERROR: no active destination to rebuild")
+      return
+    }
+    append(`rebuild → ${dest.name || `${dest.lat}, ${dest.lng}`}`)
+    mentra.send("nav:stop", {})
+    mentra.send("nav:start", {
+      stops: [{lat: dest.lat, lng: dest.lng}],
+      mode: "walking",
+      simulate,
+      speedMultiplier,
+      missedTurnRerouteMeters: 3,
+      pivots: {radiusMeters: 14},
+      destinationName: dest.name || dest.address || undefined,
+    })
+  }
+
   // Long-press on the map drops a destination pin at the pressed coord.
   // Mirrors Google Maps "drop pin" UX: the pin enters the same flow as
   // a search-result destination — preview drawer opens, route preview
@@ -616,6 +655,26 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   // a real street address in the background; no-op if it fails.
   // Disabled during active trips: re-routing mid-trip via long-press
   // would be too easy to do by accident.
+  // Google Maps-style POI tap: user tapped a built-in icon (Safeway, a
+  // cafe, etc). Resolve the placeId via the same `places:details` RPC
+  // search results use, then set it as the selected destination — the
+  // existing preview drawer takes care of the rest. No-op during a live
+  // trip (the parent gates this via the prop) so a mid-walk tap can't
+  // accidentally swap destinations.
+  function handleMapPoiTap(placeId: string) {
+    if (running) return
+    append(`POI tap → resolving ${placeId}`)
+    mentra
+      .request("places:details", {placeId})
+      .then((place) => {
+        setDestination(place)
+        append(`POI → ${place.name || place.address || placeId}`)
+      })
+      .catch((err) => {
+        append(`POI lookup failed: ${err instanceof Error ? err.message : String(err)}`)
+      })
+  }
+
   function handleMapLongPress(coord: LatLng) {
     if (running) return
     const coordStr = `${coord.lat.toFixed(6)}, ${coord.lng.toFixed(6)}`
@@ -708,6 +767,10 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           // open. Otherwise a press through the (semi-transparent) panel
           // edges or before the drawer animates in can drop a stray pin.
           onLongPress={isSearching ? undefined : handleMapLongPress}
+          // POI tap → preview drawer. Gated on the search overlay (same
+          // reason as long-press) and on a live trip (avoid swapping
+          // destinations mid-walk).
+          onPlaceTap={isSearching || running ? undefined : handleMapPoiTap}
         />
 
         {/* Top floating stack — search bar, then orientation card while running. */}
@@ -770,7 +833,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
             </div>
           )}
           {(running || devDrawer === "running") && (
-            <div className={`"pointer-events-auto ${safeHeadingManuverCard}`}>
+            <div className={`"pointer-events-auto ${safeHeadingManuverCard} px-1.5`}>
               <OrientationCard
                 me={me}
                 heading={heading}
@@ -780,9 +843,23 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
               />
             </div>
           )}
-          {offRouteAt != null && status !== "rerouting" ? (
-            <div className="pointer-events-none mx-3 px-3 py-2 rounded-lg bg-amber-500/95 text-white text-sm font-semibold shadow">
-              Off route — recalculating…
+          {offRouteSticky ? (
+            <div className="pointer-events-none mx-3 px-3 py-2 rounded-lg bg-amber-500/95 text-white text-sm font-semibold shadow flex items-center gap-2">
+              <svg
+                className="size-4 animate-spin shrink-0"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.3" strokeWidth="3" />
+                <path
+                  d="M21 12 A9 9 0 0 0 12 3"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  fill="none"
+                />
+              </svg>
+              <span>Off route — recalculating…</span>
             </div>
           ) : null}
         </div>
@@ -888,6 +965,40 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                     Send
                   </button>
                 </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Count 1→10 every 3s</span>
+                  <button
+                    type="button"
+                    onClick={() => mentra.request("test:count-1-to-10", undefined)}
+                    className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                    Start
+                  </button>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Arrow glyph on glasses</span>
+                  <div className="flex gap-1.5">
+                    {(
+                      [
+                        {label: "←", glyph: "←"},
+                        {label: "↑", glyph: "↑"},
+                        {label: "→", glyph: "→"},
+                      ] as const
+                    ).map((arrow) => (
+                      <button
+                        key={arrow.glyph}
+                        type="button"
+                        onClick={() =>
+                          mentra.request("test:show-text-test", {
+                            text: arrow.glyph,
+                            durationMs: 3000,
+                          })
+                        }
+                        className="text-[14px] leading-none w-8 h-7 rounded-lg font-semibold bg-red-600 text-white">
+                        {arrow.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </>
             ) : null}
             {devTab === "nav" ? <>
@@ -898,6 +1009,16 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 onClick={() => setRawMapOpen(true)}
                 className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-neutral-800 text-white">
                 Open
+              </button>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700">Rebuild current route</span>
+              <button
+                type="button"
+                disabled={!effectiveDestination}
+                onClick={handleRebuildRoute}
+                className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-blue-600 text-white disabled:opacity-40">
+                Rebuild
               </button>
             </div>
             <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
@@ -1039,6 +1160,25 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   searchFrozen ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
                 }`}>
                 {searchFrozen ? "Frozen" : "Freeze"}
+              </button>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <div className="flex flex-col">
+                <span className="text-[13px] font-medium text-neutral-700">Use raw Google instructions</span>
+                <span className="text-[11px] text-neutral-500">Maneuver card + glasses HUD</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !useRawInstructions
+                  setUseRawInstructions(next)
+                  mentra.send("nav:set-dev-settings", {useRawInstructions: next})
+                  append(`raw-instructions → ${next ? "on" : "off"}`)
+                }}
+                className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${
+                  useRawInstructions ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
+                }`}>
+                {useRawInstructions ? "ON" : "OFF"}
               </button>
             </div>
             <LiveLog log={log} running={running} status={status} maneuver={maneuver} />

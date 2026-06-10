@@ -27,6 +27,9 @@ import com.mentra.bluetoothsdk.utils.MicMap
 import com.mentra.bluetoothsdk.utils.MicTypes
 import com.mentra.lc3Lib.Lc3Cpp
 import com.mentra.bluetoothsdk.stt.SherpaOnnxTranscriber
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.CountDownLatch
@@ -285,6 +288,9 @@ class DeviceManager {
         } catch (e: Exception) {
             Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
             transcriber = null
+        } catch (e: LinkageError) {
+            Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
+            transcriber = null
         }
 
         // Initialize LC3 encoder/decoder for unified audio encoding
@@ -316,6 +322,9 @@ class DeviceManager {
             vadPolicy = policy
             Bridge.log("VadGateSpeechPolicy initialized")
         } catch (e: Exception) {
+            Bridge.log("Failed to initialize VadGateSpeechPolicy: ${e.message}")
+            vadPolicy = null
+        } catch (e: LinkageError) {
             Bridge.log("Failed to initialize VadGateSpeechPolicy: ${e.message}")
             vadPolicy = null
         }
@@ -1048,15 +1057,27 @@ class DeviceManager {
         } else if (wearable.contains(DeviceTypes.NEX)) {
             sgc = MentraNex()
         } else if (wearable.contains(DeviceTypes.MACH1)) {
-            sgc = Mach1()
+            sgc = createOptionalMach1Sgc(DeviceTypes.MACH1)
         } else if (wearable.contains(DeviceTypes.Z100)) {
-            sgc = Mach1() // Z100 uses same hardware/SDK as Mach1
-            sgc?.type = DeviceTypes.Z100 // Override type to Z100
+            sgc = createOptionalMach1Sgc(DeviceTypes.Z100)
         } else if (wearable.contains(DeviceTypes.FRAME)) {
             // sgc = FrameManager()
         }
         // update device model:
         DeviceStore.apply("glasses", "deviceModel", sgc?.type ?: "")
+    }
+
+    private fun createOptionalMach1Sgc(deviceType: String): SGCManager? {
+        return try {
+            Mach1().also { sgc ->
+                if (deviceType == DeviceTypes.Z100) {
+                    sgc.type = DeviceTypes.Z100
+                }
+            }
+        } catch (e: LinkageError) {
+            Bridge.log("Failed to initialize $deviceType support: ${e.message}")
+            null
+        }
     }
 
     fun initController(controllerType: String) {
@@ -1284,7 +1305,9 @@ class DeviceManager {
     }
 
     fun showNotificationsPanel() {
-        sgc?.showNotificationsPanel()
+        CoroutineScope(Dispatchers.Main).launch {
+            sgc?.showNotificationsPanel()
+        }
     }
 
     fun ping() {
@@ -1365,6 +1388,36 @@ class DeviceManager {
     fun sendOtaQueryStatus() {
         Bridge.log("MAN: 📱 Sending OTA query status command to glasses")
         (sgc as? MentraLive)?.sendOtaQueryStatus()
+    }
+
+    fun sendGalleryMode(requestId: String, enabled: Boolean) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendGalleryMode(requestId, enabled)
+    }
+
+    fun sendButtonPhotoSettings(requestId: String, size: String) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendButtonPhotoSettings(requestId, size)
+    }
+
+    fun sendButtonVideoRecordingSettings(requestId: String, width: Int, height: Int, fps: Int) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendButtonVideoRecordingSettings(requestId, width, height, fps)
+    }
+
+    fun sendButtonCameraLedSetting(requestId: String, enabled: Boolean) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendButtonCameraLedSetting(requestId, enabled)
+    }
+
+    fun sendButtonMaxRecordingTime(requestId: String, minutes: Int) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendButtonMaxRecordingTime(requestId, minutes)
+    }
+
+    fun sendCameraFovSetting(requestId: String, fov: Int, roiPosition: Int) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraFovSetting(requestId, fov, roiPosition)
     }
 
     fun retryOtaVersionCheck() {

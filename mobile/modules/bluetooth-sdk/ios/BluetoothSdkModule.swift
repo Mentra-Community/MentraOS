@@ -26,10 +26,12 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "speaking_status",
             "battery_status",
             "wifi_status_change",
+            "wifi_scan_result",
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
             "photo_status",
+            "video_recording_status",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",
@@ -37,6 +39,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "swipe_volume_status",
             "switch_status",
             "rgb_led_control_response",
+            "settings_ack",
+            "version_info",
             "pair_failure",
             "audio_pairing_needed",
             "audio_connected",
@@ -272,27 +276,23 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         // MARK: - WiFi Commands
 
         AsyncFunction("requestWifiScan") {
-            await MainActor.run {
-                self.bluetoothSdk().requestWifiScan()
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.requestWifiScan().map(\.dictionary)
         }
 
         AsyncFunction("sendWifiCredentials") { (ssid: String, password: String) in
-            await MainActor.run {
-                self.bluetoothSdk().sendWifiCredentials(ssid: ssid, password: password)
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.sendWifiCredentials(ssid: ssid, password: password).values
         }
 
         AsyncFunction("forgetWifiNetwork") { (ssid: String) in
-            await MainActor.run {
-                self.bluetoothSdk().forgetWifiNetwork(ssid: ssid)
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.forgetWifiNetwork(ssid: ssid).values
         }
 
         AsyncFunction("setHotspotState") { (enabled: Bool) in
-            await MainActor.run {
-                self.bluetoothSdk().setHotspotState(enabled: enabled)
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setHotspotState(enabled: enabled).values
         }
 
         AsyncFunction("setSystemTime") { (timestampMs: Double) in
@@ -316,7 +316,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("setGalleryModeEnabled") { (enabled: Bool) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            try await sdk.setGalleryModeEnabled(enabled)
+            return try await sdk.setGalleryModeEnabled(enabled).values
         }
 
         AsyncFunction("setVoiceActivityDetectionEnabled") { (enabled: Bool) in
@@ -324,10 +324,38 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             try await sdk.setVoiceActivityDetectionEnabled(enabled)
         }
 
+        AsyncFunction("setButtonPhotoSettings") { (size: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setButtonPhotoSettings(size: ButtonPhotoSize(rawValue: size) ?? .medium).values
+        }
+
+        AsyncFunction("setButtonVideoRecordingSettings") { (width: Int, height: Int, fps: Int) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setButtonVideoRecordingSettings(width: width, height: height, fps: fps).values
+        }
+
+        AsyncFunction("setButtonCameraLed") { (enabled: Bool) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setButtonCameraLed(enabled: enabled).values
+        }
+
+        AsyncFunction("setButtonMaxRecordingTime") { (minutes: Int) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setButtonMaxRecordingTime(minutes: minutes).values
+        }
+
+        AsyncFunction("setCameraFov") { (fov: [String: Any]) in
+            let value = intValue(fov["fov"]) ?? CameraFov.defaultFov
+            let roiPosition = CameraRoiPosition.from(
+                rawValue: intValue(fov["roiPosition"]) ?? intValue(fov["roi_position"])
+            )
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setCameraFov(CameraFov(fov: value, roiPosition: roiPosition)).values
+        }
+
         AsyncFunction("queryGalleryStatus") {
-            await MainActor.run {
-                self.bluetoothSdk().queryGalleryStatus()
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.queryGalleryStatus().values
         }
 
         AsyncFunction("requestPhoto") { (params: [String: Any]) in
@@ -368,51 +396,46 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                 iso = nil
             }
 
-            await MainActor.run {
-                self.bluetoothSdk().requestPhoto(
-                    PhotoRequest(
-                        requestId: requestId,
-                        appId: appId,
-                        size: PhotoSize(rawValue: size) ?? .medium,
-                        webhookUrl: webhookUrl,
-                        authToken: authToken,
-                        compress: PhotoCompression(rawValue: compress),
-                        flash: flash,
-                        save: save,
-                        sound: sound,
-                        exposureTimeNs: exposureTimeNs,
-                        iso: iso
-                    )
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.requestPhoto(
+                PhotoRequest(
+                    requestId: requestId,
+                    appId: appId,
+                    size: PhotoSize(rawValue: size) ?? .medium,
+                    webhookUrl: webhookUrl,
+                    authToken: authToken,
+                    compress: PhotoCompression(rawValue: compress),
+                    flash: flash,
+                    save: save,
+                    sound: sound,
+                    exposureTimeNs: exposureTimeNs,
+                    iso: iso
                 )
-            }
+            ).values
         }
 
         // MARK: - OTA Commands
 
         AsyncFunction("sendOtaStart") {
-            await MainActor.run {
-                self.bluetoothSdk().sendOtaStart()
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.sendOtaStart().values
         }
 
         AsyncFunction("sendOtaQueryStatus") {
-            await MainActor.run {
-                self.bluetoothSdk().sendOtaQueryStatus()
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.sendOtaQueryStatus().values
         }
 
         AsyncFunction("retryOtaVersionCheck") {
-            await MainActor.run {
-                self.bluetoothSdk().retryOtaVersionCheck()
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.retryOtaVersionCheck().values
         }
 
         // MARK: - Version Info Commands
 
         AsyncFunction("requestVersionInfo") {
-            await MainActor.run {
-                self.bluetoothSdk().requestVersionInfo()
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.requestVersionInfo().dictionary
         }
 
         // MARK: - Power Control Commands
@@ -439,34 +462,30 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             func dim(_ key: String) -> Int {
                 (settings?[key] as? NSNumber)?.intValue ?? 0
             }
-            await MainActor.run {
-                self.bluetoothSdk().startVideoRecording(
-                    VideoRecordingRequest(
-                        requestId: requestId, save: save, sound: sound,
-                        width: dim("width"), height: dim("height"), fps: dim("fps")
-                    )
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.startVideoRecording(
+                VideoRecordingRequest(
+                    requestId: requestId, save: save, sound: sound,
+                    width: dim("width"), height: dim("height"), fps: dim("fps")
                 )
-            }
+            ).values
         }
 
         AsyncFunction("stopVideoRecording") { (requestId: String) in
-            await MainActor.run {
-                self.bluetoothSdk().stopVideoRecording(requestId: requestId)
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.stopVideoRecording(requestId: requestId).values
         }
 
         // MARK: - Stream Commands
 
         AsyncFunction("startStream") { (params: [String: Any]) in
-            await MainActor.run {
-                self.bluetoothSdk().startStream(StreamRequest(values: params))
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.startStream(StreamRequest(values: params)).values
         }
 
         AsyncFunction("stopStream") {
-            await MainActor.run {
-                self.bluetoothSdk().stopStream()
-            }
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.stopStream().values
         }
 
         AsyncFunction("sendExternallyManagedStreamKeepAlive") { (params: [String: Any]) in
@@ -498,19 +517,18 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                 requestId: String, packageName: String?, action: String, color: String?,
                 onDurationMs: Int, offDurationMs: Int, count: Int
             ) in
-            await MainActor.run {
-                self.bluetoothSdk().rgbLedControl(
-                    RgbLedRequest(
-                        requestId: requestId,
-                        packageName: packageName,
-                        action: RgbLedAction(rawValue: action) ?? .off,
-                        color: color.flatMap(RgbLedColor.init(rawValue:)),
-                        onDurationMs: onDurationMs,
-                        offDurationMs: offDurationMs,
-                        count: count
-                    )
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.rgbLedControl(
+                RgbLedRequest(
+                    requestId: requestId,
+                    packageName: packageName,
+                    action: RgbLedAction(rawValue: action) ?? .off,
+                    color: color.flatMap(RgbLedColor.init(rawValue:)),
+                    onDurationMs: onDurationMs,
+                    offDurationMs: offDurationMs,
+                    count: count
                 )
-            }
+            ).values
         }
 
         // MARK: - Microphone Commands
@@ -683,6 +701,10 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             sendEvent("photo_response", response.values)
         case let .photoStatus(status):
             sendEvent("photo_status", status.values)
+        case let .videoRecordingStatus(status):
+            sendEvent("video_recording_status", status.values)
+        case let .rgbLedControlResponse(response):
+            sendEvent("rgb_led_control_response", response.values)
         case let .streamStatus(status):
             sendEvent("stream_status", status.values)
         case let .keepAliveAck(ack):
@@ -693,6 +715,12 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             sendEvent("ota_start_ack", event.values)
         case let .otaStatus(event):
             sendEvent("ota_status", event.values)
+        case let .settingsAck(event):
+            sendEvent("settings_ack", event.values)
+        case let .versionInfo(event):
+            var values = event.dictionary
+            values["type"] = "version_info"
+            sendEvent("version_info", values)
         case let .localTranscription(transcription):
             sendEvent("local_transcription", transcription.values)
         case let .raw(name, values):

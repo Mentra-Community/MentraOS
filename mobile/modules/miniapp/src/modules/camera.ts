@@ -5,11 +5,28 @@
 import {MiniappRequestType} from "../protocol"
 import {MiniappSession} from "../session"
 
-export interface SetCameraFovOptions {
-  /** Horizontal FOV, degrees. */
-  horizontal?: number
-  /** Vertical FOV, degrees. */
-  vertical?: number
+export type CameraRoiPosition = "center" | "bottom" | "top"
+export type CameraFovPreset = "narrow" | "standard" | "wide"
+
+export type CameraFovRequest =
+  | {
+      /** Horizontal FOV, degrees. */
+      fov: number
+      /** Crop/region position: center, bottom, or top. Defaults to center. */
+      roiPosition?: CameraRoiPosition
+    }
+  | {
+      /** Named FOV preset. Presets use center ROI. */
+      preset: CameraFovPreset
+    }
+
+export type SetCameraFovOptions = CameraFovRequest
+
+export interface CameraFovResult {
+  requestId: string
+  fov: number
+  roiPosition: CameraRoiPosition
+  timestamp: number
 }
 
 export interface TakePhotoOptions {
@@ -26,6 +43,8 @@ export interface TakePhotoOptions {
 }
 
 export interface PhotoTaken {
+  /** Request id that correlates ASG status, upload, and phone/cloud logs. */
+  requestId: string
   photoUrl: string
   mimeType: string
   size: number
@@ -61,12 +80,16 @@ export class CameraModule {
     return this.session._hasManifestPermission("CAMERA")
   }
 
-  /** Write camera FOV settings. */
-  setFov(options: SetCameraFovOptions): void {
-    this.session.sendOneShot({
+  /**
+   * Apply camera FOV/ROI settings on the glasses.
+   *
+   * Resolves after the ASG client reports that the setting was applied to camera
+   * hardware after the restart cooldown. Requires CAMERA permission declared in miniapp.json.
+   */
+  async setFov(request: CameraFovRequest): Promise<CameraFovResult> {
+    return this.session.sendRequest<CameraFovResult>({
       type: MiniappRequestType.CAMERA_FOV,
-      horizontal: options.horizontal,
-      vertical: options.vertical,
+      ...request,
     })
   }
 
@@ -92,8 +115,9 @@ export class CameraModule {
 
   /**
    * Start recording video on the glasses camera. Returns a `recordingId` to pass
-   * to {@link stopVideoRecording}. Requires CAMERA permission declared in
-   * miniapp.json. Check `session.capabilities.hasCamera` before calling.
+   * to {@link stopVideoRecording} after the glasses report that recording
+   * started. Requires CAMERA permission declared in miniapp.json. Check
+   * `session.capabilities.hasCamera` before calling.
    *
    * Resolution and frame rate are optional — omit them to use the device's saved
    * button-video settings. Lowering `fps` (e.g. to 5) keeps the glasses cooler
