@@ -46,7 +46,11 @@ sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { nextDevices ->
 ```swift
 try sdk.scan(model: .mentraLive, timeout: 10) { nextDevices in
     renderDevicePicker(nextDevices) { device in
-        try? sdk.connect(to: device)
+        do {
+            try sdk.connect(to: device)
+        } catch {
+            handleConnectionError(error)
+        }
     }
 }
 ```
