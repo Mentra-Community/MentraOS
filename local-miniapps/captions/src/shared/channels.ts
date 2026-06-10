@@ -45,6 +45,8 @@ export interface Channels {
   "captions:set-display-width": {width: number}
   "captions:set-word-breaking": {enabled: boolean}
   "captions:clear": Record<string, never>
+  /** Explicit hydration request after the WebView has registered listeners. */
+  "captions:request-snapshot": Record<string, never>
 }
 
 declare global {

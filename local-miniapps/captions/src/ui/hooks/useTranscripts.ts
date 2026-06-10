@@ -17,6 +17,7 @@ export type {CloudClientStatus, Transcript, DisplayPreview} from "../../shared/t
  *   captions:live-transcript    -> one interim/final frame
  *   captions:transcripts-update -> full list replacement (e.g. after clear)
  *   captions:display-preview    -> glasses preview
+ *   captions:request-snapshot   -> sent after listeners attach to avoid onOpen races
  */
 export function useTranscripts() {
   const [transcripts, setTranscripts] = useState<Transcript[]>([])
@@ -78,6 +79,8 @@ export function useTranscripts() {
         applyLiveTranscript(setTranscripts, data)
       }),
     )
+
+    mentra.send("captions:request-snapshot", {})
 
     return () => {
       mountedRef.current = false
