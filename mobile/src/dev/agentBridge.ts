@@ -54,7 +54,12 @@ type RpcRequest = {id: number; method: string; params?: Record<string, unknown>}
 let socket: WebSocket | null = null
 let started = false
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-let transcriptTapWired = false
+// The adapter instance we've tapped onTranscript on. cloudClient.reconnect()
+// rebuilds the client and returns a NEW adapter, so a once-only guard would
+// leave the tap on the dead adapter and the harness would stop seeing
+// transcripts after any reconnect (e.g. switching endpoints). Re-tap whenever
+// the adapter identity changes.
+let tappedAdapter: unknown = null
 
 function send(payload: unknown): void {
   if (socket?.readyState === WebSocket.OPEN) {
@@ -75,16 +80,15 @@ function emit(event: string, data: unknown): void {
 let eventTapsWired = false
 
 function wireTranscriptTap(): void {
-  if (transcriptTapWired) return
-  transcriptTapWired = true
-  // lazyCloudClient().init() is idempotent and returns the island adapter; tapping
-  // its onTranscript does not disturb the island runtime's own wiring.
+  // lazyCloudClient().init() is idempotent and returns the CURRENT adapter
+  // (a fresh one after a reconnect). Only (re)tap when the adapter changed.
   try {
     const adapter = lazyCloudClient().init()
+    if (adapter === tappedAdapter) return
+    tappedAdapter = adapter
     adapter.onTranscript((t) => emit("transcript", t))
     adapter.onTranslation((t) => emit("translation", t))
   } catch (err) {
-    transcriptTapWired = false
     console.warn(`${LOG_TAG}: transcript tap failed: ${(err as Error)?.message ?? err}`)
   }
 }

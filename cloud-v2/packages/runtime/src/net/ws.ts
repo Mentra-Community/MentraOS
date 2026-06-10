@@ -272,6 +272,13 @@ function getPodId(): string {
 
 /** Bun WebSocket handlers — wire into `Bun.serve({ websocket: wsHandlers })`. */
 export const wsHandlers: WebSocketHandler<WsData> = {
+  // Bun.serve's WS idleTimeout defaults to ~10s; the client's liveness ping is
+  // every 15s, so a direct ws:// connection idles out BEFORE the first ping and
+  // the socket flaps every ~10s (each flap DETACHes the user and recreates the
+  // Soniox session, which then dies with "No audio received"). AWS masks this
+  // because its load balancer keeps the connection warm. Set the documented
+  // long idleTimeout so the client owns liveness, as intended.
+  idleTimeout: 120,
   open(ws) {
     sessionByTag.set(ws.data.sessionTag, { ws, data: ws.data });
     const wasFirst = !sessionsPerUser.has(ws.data.mentraUserId);
