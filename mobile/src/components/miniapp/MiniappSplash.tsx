@@ -17,6 +17,7 @@ import Animated, {runOnJS, useAnimatedStyle, useSharedValue, withTiming} from "r
 
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {Text} from "@/components/ignite"
+import {DevIcon} from "@/components/miniapps/DevIcons"
 
 interface MiniappSplashProps {
   iconUrl?: string
@@ -25,6 +26,7 @@ interface MiniappSplashProps {
   name?: string
   error?: string
   label?: string
+  devApp?: boolean
 }
 
 const FADE_IN_DURATION_MS = 50
@@ -38,6 +40,7 @@ export default function MiniappSplash({
   name,
   error,
   label,
+  devApp = false,
 }: MiniappSplashProps) {
   const {theme} = useAppTheme()
   const size = 128
@@ -86,7 +89,8 @@ export default function MiniappSplash({
             alignItems: "center",
             justifyContent: "center",
           }}>
-          {iconUrl ? (
+          {devApp && <DevIcon size={size} />}
+          {!devApp && iconUrl ? (
             <Image
               source={iconUrl}
               style={{width: "100%", height: "100%"}}

@@ -16,6 +16,7 @@ import {
   buildMentraUiShim,
   buildMiniappGlobalsScript,
   decideDevLaunchRoute,
+  DEV_APP_PACKAGE_NAME,
   devServerBridge,
   type InstalledMiniappManifest,
   useAppStatusStore,
@@ -121,13 +122,16 @@ function LocalMiniappView({
     setLoadAttempts(0)
     clearReadyTimer()
   }, [clearReadyTimer])
-  
-  const fail = useCallback((msg: string) => {
-    console.warn(`LocalMiniappView: ${packageName} ${msg}`)
-    setLabel(undefined)
-    setErrorMessage(msg)
-    clearReadyTimer()
-  }, [packageName, clearReadyTimer])
+
+  const fail = useCallback(
+    (msg: string) => {
+      console.warn(`LocalMiniappView: ${packageName} ${msg}`)
+      setLabel(undefined)
+      setErrorMessage(msg)
+      clearReadyTimer()
+    },
+    [packageName, clearReadyTimer],
+  )
 
   // Phase machine for the pre-WebView affordance. "ready" means we have a
   // uiUri and the WebView is mounted; the loading card is rendered for
@@ -250,9 +254,6 @@ function LocalMiniappView({
           hardwareRequirements: manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
         }
 
-        // setDerivedAppName(manifest.name)
-        // setDerivedIcon(manifest.icon)
-
         try {
           const res = await fetch(bgUrl)
           if (!res.ok) {
@@ -300,7 +301,7 @@ function LocalMiniappView({
         fail("MentraJS runtime not bootstrapped")
         return
       }
-      
+
       // Spawn the JSContext if it isn't already alive. Re-foregrounding a
       // running miniapp just rebuilds the WebView half.
       if (!mj.router.registeredPackages().includes(packageName)) {
@@ -395,6 +396,7 @@ function LocalMiniappView({
   // those just re-arms the timer. Counting per-onLoadEnd would inflate the
   // number (you'd see ~4 attempts on a normal load before `ready` lands).
   const handleLoadEnd = useCallback(() => {
+    console.log("LocalMiniappView: handleLoadEnd, connected:", connected)
     if (connected) return
     clearReadyTimer()
     readyTimerRef.current = BgTimer.setTimeout(() => {
@@ -472,7 +474,7 @@ function LocalMiniappView({
   //   )
   // }
 
-
+  let isDevApp = packageName == DEV_APP_PACKAGE_NAME
 
   if (!uiUri) {
     return (
@@ -484,6 +486,7 @@ function LocalMiniappView({
           isLoaded={false}
           error={errorMessage}
           label={label}
+          devApp={isDevApp}
         />
       </View>
     )
@@ -551,7 +554,13 @@ function LocalMiniappView({
             style={{flex: 1, borderRadius: theme.spacing.s12}}
           />
         </View>
-        <MiniappSplash name={derivedAppName} iconUrl={derivedIcon} bgColor={theme.colors.background} isLoaded={false} />
+        <MiniappSplash
+          name={derivedAppName}
+          iconUrl={derivedIcon}
+          bgColor={theme.colors.background}
+          isLoaded={false}
+          devApp={isDevApp}
+        />
         <CapsuleMenu forceShow={true} />
       </View>
     )
@@ -561,8 +570,10 @@ function LocalMiniappView({
   // show retry progress on the splash. Once connected, the splash hides.
   let connectingLabel = undefined
   if (loadAttempts > 0 && devMode) {
-    connectingLabel = `Loading… (attempt ${loadAttempts+1} of ${MAX_LOAD_ATTEMPTS})`
+    connectingLabel = `Loading… (attempt ${loadAttempts + 1} of ${MAX_LOAD_ATTEMPTS})`
   }
+
+  console.log("LocalMiniappView: connected:", connected, packageName)
 
   return (
     <View className="flex-1 bg-black" style={{borderRadius: theme.spacing.s12}}>
@@ -604,7 +615,15 @@ function LocalMiniappView({
         webviewDebuggingEnabled={__DEV__}
         style={{flex: 1, borderRadius: theme.spacing.s12}}
       />
-      <MiniappSplash name={derivedAppName} iconUrl={derivedIcon} bgColor={theme.colors.background} isLoaded={connected} error={errorMessage} label={connectingLabel} />
+      <MiniappSplash
+        name={derivedAppName}
+        iconUrl={derivedIcon}
+        bgColor={theme.colors.background}
+        isLoaded={connected}
+        error={errorMessage}
+        label={connectingLabel}
+        devApp={isDevApp}
+      />
       {/* <View className="flex-1 bg-red-500"/> */}
       <CapsuleMenu forceShow={true} />
     </View>
