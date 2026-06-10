@@ -1229,12 +1229,12 @@ class MentraLive: NSObject, SGCManager {
         return true
     }
 
-    func sendDoubleTextWall(_: String, _: String) {}
+    func sendDoubleTextWall(_: String, _: String) async {}
     func setHeadUpAngle(_: Int) {}
     func getBatteryStatus() {}
     func setBrightness(_: Int, autoMode _: Bool) {}
     func clearDisplay() {}
-    func sendTextWall(_: String) {}
+    func sendTextWall(_: String) async {}
     func ping() {
         Bridge.log("LIVE: ping()")
         keepAwake()

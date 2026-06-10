@@ -99,6 +99,24 @@ export class MentraUIRouter {
   }
 
   /**
+   * Re-announce the already-mounted WebView to a freshly (re)spawned
+   * background JSContext. The dev background hot-reload tears down and
+   * respawns the JSContext (mentraJsBootstrap.onRespawnBackground) without
+   * reloading the WebView, so the new background `MiniappSession` starts
+   * with `ui.bound=false` and never receives a `UI_OPEN` — the WebView's
+   * `mentra.ready()` latches and won't re-fire. Until that's fixed the
+   * new session drops every RPC reply (UIModule.sendRpcReply bails when
+   * unbound), so every `mentra.request(...)` aborts. Re-emitting UI_OPEN
+   * here flips `ui.bound` back to true so replies flow again.
+   *
+   * No-op if no WebView is currently bound for the package.
+   */
+  notifyReopen(packageName: string): void {
+    if (!this.bindings.has(packageName)) return
+    this.deliverToBackground(packageName, {type: "UI_OPEN"})
+  }
+
+  /**
    * Forward a WebView-originated postMessage envelope to the JSContext.
    * `rawJson` is the raw string from `event.nativeEvent.data` — the
    * caller hasn't parsed it yet so the router controls the wire format

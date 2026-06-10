@@ -10,7 +10,13 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {decideDevLaunchRoute} from "@mentra/island"
+import {
+  decideDevLaunchRoute,
+  registerDevApp,
+  useAppStatusStore,
+  DEV_APP_PACKAGE_NAME,
+  type DevAppRecord,
+} from "@mentra/island"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
@@ -92,13 +98,12 @@ export default function MiniappDeveloperUrlScreen() {
       }
     }
 
-    push("/applet/local", {
-      packageName: entry.packageName,
-      devUrl: entry.url,
-      appName: entry.name,
-      iconUrl: entry.iconUrl,
-      manifestJson: JSON.stringify(launchResult.manifest),
-    })
+    await useAppStatusStore.getState().refresh()
+    // Compositor begins its fade-in + mounts LocalMiniappView (which runs its
+    // own install/spawn phase machine inside the overlay). Foreground the single
+    // dev slot, NOT the manifest's real package name — the projected tile +
+    // JSContext are registered under DEV_APP_PACKAGE_NAME.
+    await useAppStatusStore.getState().setForeground(DEV_APP_PACKAGE_NAME)
   }
 
   const handleLoadUrl = async () => {
@@ -140,10 +145,18 @@ export default function MiniappDeveloperUrlScreen() {
       }
       const updated = [entry, ...recent.filter((r) => r.url !== entry.url)].slice(0, MAX_RECENT)
       saveRecent(updated)
-      // Persist the dev URL keyed on packageName so Composer's
-      // getLocalApplets sees it and so home-tile taps after a phone
-      // restart can route to the live server.
-      storage.save(`${entry.packageName}_dev_url`, entry.url)
+      // Home-tile record so the dev miniapp is re-launchable without
+      // re-entering the URL (dev apps load over HTTP, not installed to disk).
+      // registerDevApp owns the dev_url/dev_port keys (under DEV_APP_PACKAGE_NAME),
+      // so the launch chain reads them under the single package name it routes by.
+      registerDevApp({
+        packageName: entry.packageName,
+        name: entry.name,
+        iconUrl: entry.iconUrl ?? `${entry.url}/icon.png`,
+        devUrl: entry.url,
+        permissions: manifest.permissions as DevAppRecord["permissions"],
+        hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+      })
 
       // launchDevMiniapp re-runs the reachability + manifest fetch (cheap;
       // catches manifest changes between save and tap) and runs the

@@ -37,7 +37,7 @@ export class GlassesController {
   private liveTranscript = ""
   private history: string[] = []
   private lastButton = ""
-  private mirrorToGlasses = true
+  private mirrorToGlasses = false
 
   constructor(private readonly session: MiniappSession) {}
 
@@ -102,7 +102,7 @@ export class GlassesController {
     ui.on("captions:clear", () => {
       this.history = []
       this.liveTranscript = ""
-      this.session.display.clearView()
+      this.session.display.clear()
       ui.send("captions:history-update", {history: []})
       ui.send("captions:live-transcript", {text: ""})
     })

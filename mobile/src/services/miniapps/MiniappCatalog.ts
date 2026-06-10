@@ -1,3 +1,4 @@
+import {createElement} from "react"
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 
@@ -17,6 +18,7 @@ import {
 } from "@mentra/island"
 
 import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
+import {DevToolsIcon} from "@/components/miniapps/DevIcons"
 import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {showAlert} from "@/contexts/ModalContext"
 import {useNavigationStore} from "@/stores/navigation"
@@ -342,19 +344,16 @@ class MiniappCatalog {
     }
     if (app.offline) return // offline app without a route — nothing to navigate to
     if (app.isMiniappDev && app.devUrl) {
-      // Dev miniapps push the same /applet/local route as installed local
-      // miniapps. Reachability check still routes to the offline screen
-      // if the dev server isn't responding.
+      // Dev miniapps foreground through the Compositor overlay, same as
+      // released local miniapps (and the same as the app switcher's
+      // setForeground path) — so the launch is identical no matter where
+      // the user tapped. We still pre-flight reachability first so an
+      // unreachable dev server lands on the dedicated offline screen
+      // rather than the inline error card LocalMiniappView falls back to.
       const {packageName, devUrl, name: appName, logoUrl} = app
       decideDevLaunchRoute(packageName, devUrl).then((result) => {
         if (result.decision === "live") {
-          nav.push("/applet/local", {
-            packageName,
-            appName,
-            devUrl,
-            iconUrl: logoUrl,
-            transition: appOpenTransition,
-          })
+          useAppStatusStore.getState().setForeground(packageName)
         } else {
           nav.push("/applet/dev-offline", {packageName, name: appName, iconUrl: logoUrl})
         }
@@ -514,7 +513,7 @@ class MiniappCatalog {
       },
     ]
 
-    if (useSettingsStore.getState().getSetting(SETTINGS.super_mode.key)) {
+    if (useSettingsStore.getState().getSetting(SETTINGS.dev_mode.key)) {
       apps.push({
         packageName: lmaInstallerPackageName,
         name: translate("miniApps:lmaInstaller"),
@@ -530,6 +529,7 @@ class MiniappCatalog {
         hidden: false,
         hardwareRequirements: [],
         logoUrl: require("@assets/applet-icons/store.png"),
+        iconComponent: createElement(DevToolsIcon),
       })
     }
 

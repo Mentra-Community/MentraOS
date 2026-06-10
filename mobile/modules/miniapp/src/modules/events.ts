@@ -62,6 +62,15 @@ export interface HeadPositionData {
   position: "up" | "down"
 }
 
+export interface AccelData {
+  /** Accelerometer axes in g (gravity-normalized). */
+  x: number
+  y: number
+  z: number
+  /** Unix ms timestamp of the reading. */
+  timestamp: number
+}
+
 export interface LocationData {
   lat: number
   lng: number

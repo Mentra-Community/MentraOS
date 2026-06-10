@@ -241,6 +241,7 @@ struct ViewState {
         get { DeviceStore.shared.get("bluetooth", "shouldSendBootingMessage") as? Bool ?? true }
         set { DeviceStore.shared.apply("bluetooth", "shouldSendBootingMessage", newValue) }
     }
+
     private var lastSystemTimeSyncConnectionKey = ""
 
     private var systemMicUnavailable: Bool {
@@ -564,7 +565,7 @@ struct ViewState {
             // Check if we've completed all cycles
             if cycles >= totalCycles {
                 // End animation with final message
-                sgc?.sendTextWall("                  /// MentraOS Connected \\\\\\")
+                Task { await sgc?.sendTextWall("                  /// MentraOS Connected \\\\\\") }
                 animationQueue.asyncAfter(deadline: .now() + 1.0) {
                     self.sgc?.clearDisplay()
                 }
@@ -574,7 +575,7 @@ struct ViewState {
             // Display current animation frame
             let frameText =
                 "                    \(arrowFrames[frameIndex]) MentraOS Booting \(arrowFrames[frameIndex])"
-            sgc?.sendTextWall(frameText)
+            Task { await sgc?.sendTextWall(frameText) }
 
             // Move to next frame
             frameIndex = (frameIndex + 1) % arrowFrames.count
@@ -692,20 +693,20 @@ struct ViewState {
             switch layoutType {
             case "text_wall":
                 let text = currentViewState.text
-                sgc?.sendTextWall(text)
+                await sgc?.sendTextWall(text)
             case "double_text_wall":
                 let topText = currentViewState.topText
                 let bottomText = currentViewState.bottomText
-                sgc?.sendDoubleTextWall(topText, bottomText)
+                await sgc?.sendDoubleTextWall(topText, bottomText)
             case "reference_card":
-                sgc?.sendTextWall(currentViewState.title + "\n\n" + currentViewState.text)
+                await sgc?.sendTextWall(currentViewState.title + "\n\n" + currentViewState.text)
             case "bitmap_view":
-                Bridge.log("MAN: Processing bitmap_view layout")
+                // Bridge.log("MAN: Processing bitmap_view layout")
                 guard let data = currentViewState.data else {
                     Bridge.log("MAN: ERROR: bitmap_view missing data field")
                     return
                 }
-                Bridge.log("MAN: Processing bitmap_view with base64 data, length: \(data.count)")
+                // Bridge.log("MAN: Processing bitmap_view with base64 data, length: \(data.count)")
                 await sgc?.displayBitmap(
                     base64ImageData: data,
                     x: currentViewState.bmpX,
@@ -890,11 +891,24 @@ struct ViewState {
 
         let connectionKey = "\(sgc.type):\(deviceName)"
         syncSystemTimeOnceForConnection(sgc, connectionKey: connectionKey)
+        
+        // re-apply display height/depth after reconnection
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            // Re-read the current sgc rather than capturing the connect-time instance: the user may
+            // have disconnected or switched glasses during the 2s window, and we must not push to a
+            // stale/torn-down connection.
+            guard let sgc = self?.sgc else { return }
+            let h = DeviceStore.shared.get("bluetooth", "dashboard_height") as? Int ?? 4
+            // Fall back to the canonical default (2), matching DeviceStore — not 1.
+            let rawDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 2
+            let d = min(max(rawDepth, 1), 4)
+            sgc.setDashboardPosition(h, d)
+        }
 
         // Show welcome message on first connect for all display glasses
         if shouldSendBootingMessage {
             Task {
-                sgc.sendTextWall("// MentraOS Connected")
+                await sgc.sendTextWall("// MentraOS Connected")
                 try? await Task.sleep(nanoseconds: 3_000_000_000) // 1 second
                 sgc.clearDisplay()
             }
@@ -920,17 +934,6 @@ struct ViewState {
         Bridge.saveSetting("device_name", deviceName)
         Bridge.saveSetting("device_address", deviceAddress)
 
-        // Re-apply display height after reconnection
-        let h = DeviceStore.shared.get("bluetooth", "dashboard_height") as? Int ?? 4
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_NEX
-        let d = NexDashboardDisplayWire.clampDepthFromStore(
-            DeviceStore.shared.get("bluetooth", "dashboard_depth")
-        )
-#else
-        let rawDepth = DeviceStore.shared.get("bluetooth", "dashboard_depth") as? Int ?? 1
-        let d = min(max(rawDepth, 1), 4)
-#endif
-        sgc.setDashboardPosition(h, d)
     }
 
     private func syncSystemTimeOnceForConnection(_ sgc: SGCManager, connectionKey: String) {
@@ -1006,7 +1009,7 @@ struct ViewState {
         }
 
         Bridge.log("MAN: Displaying text: \(text)")
-        sgc?.sendTextWall(text)
+        Task { await sgc?.sendTextWall(text) }
     }
 
     func displayEvent(_ event: [String: Any]) {
@@ -1096,7 +1099,7 @@ struct ViewState {
     }
 
     func showNotificationsPanel() {
-        sgc?.showNotificationsPanel()
+        Task { await sgc?.showNotificationsPanel() }
     }
 
     func ping() {

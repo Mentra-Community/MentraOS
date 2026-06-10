@@ -5,10 +5,11 @@ import {ActivityIndicator, StyleProp, StyleSheet, TouchableOpacity, View, ViewSt
 import {withUniwind} from "uniwind"
 
 import {Icon} from "@/components/ignite"
-import {DevMiniappBadge} from "@/components/miniapps/DevMiniappBadge"
+import {DevIcon} from "@/components/miniapps/DevIcons"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useCachedRemoteImageSource} from "@/hooks/useCachedRemoteImageSource"
 import type {ClientApp} from "@mentra/island"
+import React from "react"
 
 // Helper to extract style properties for width/height override
 const extractStyleProps = (style: StyleProp<ViewStyle>): Partial<ViewStyle> => {
@@ -40,7 +41,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
   }
 
   return (
-    <View className={`items-center ${app.compatibility?.isCompatible ? "" : "opacity-30"}`}>
+    <View className={`items-center justify-center ${app.compatibility?.isCompatible ? "" : "opacity-30"}`}>
       <WrapperComponent
         onPress={onClick}
         activeOpacity={onClick ? 0.7 : undefined}
@@ -62,13 +63,20 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
               <ActivityIndicator size="large" color={theme.colors.palette.white} />
             </View>
           )}
-          <Image
-            source={imageSource}
-            style={{width: "100%", height: "100%", resizeMode: "cover"}}
-            contentFit="cover"
-            transition={200}
-            cachePolicy="memory-disk"
-          />
+          {app.isMiniappDev && <DevIcon size={iconSize.width as number} />}
+          {!app.isMiniappDev && (
+            <Image
+              source={imageSource}
+              style={{width: "100%", height: "100%", resizeMode: "cover"}}
+              contentFit="cover"
+              transition={200}
+              cachePolicy="memory-disk"
+            />
+          )}
+          {app.iconComponent &&
+            React.cloneElement(app.iconComponent as React.ReactElement<{size?: number}>, {
+              size: iconSize.width as number,
+            })}
           {/* {!app.compatibility?.isCompatible && !app.packageName.startsWith("@") && (
             <View
               style={{
@@ -85,7 +93,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
           <Icon name="alert" size={theme.spacing.s4} color={theme.colors.error} />
         </View>
       )}
-      {app.isMiniappDev && <DevMiniappBadge />}
+      {/* {app.isMiniappDev && <DevMiniappBadge size={iconSize.width as number}/>} */}
       {/* Show wifi-off badge for offline apps (excluding camera app) */}
       {/* disabled for now */}
       {/* {app.offline && app.packageName !== getMoreAppsApplet().packageName && app.packageName !== cameraPackageName && (

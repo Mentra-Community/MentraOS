@@ -54,6 +54,7 @@
   "dependencies": {
     "@babel/runtime": "^7.28.6",
     "@config-plugins/react-native-webrtc": "^13.0.0",
+    "@craftzdog/react-native-buffer": "^6.1.2",
     "@douglowder/expo-av-route-picker-view": "^0.0.5",
     "@dr.pogodin/react-native-fs": "^2.37.0",
     "@expo-google-fonts/red-hat-display": "^0.4.1",
@@ -67,8 +68,8 @@
     "@livekit/react-native-webrtc": "^137.0.2",
     "@mentra/bluetooth-sdk": "workspace:*",
     "@mentra/island": "workspace:*",
-    "@mentra/miniapp": "workspace:*",
     "@mentra/jspolyfill": "workspace:*",
+    "@mentra/miniapp": "workspace:*",
     "@react-native-community/netinfo": "11.5.2",
     "@react-native-community/slider": "5.1.2",
     "@react-native-firebase/analytics": "^23.8.6",
@@ -78,7 +79,7 @@
     "@sentry/react-native": "~7.11.0",
     "@shopify/flash-list": "2.0.2",
     "@shopify/react-native-skia": "2.4.18",
-    "@supabase/supabase-js": "2.105.0",
+    "@supabase/supabase-js": "2.106.0",
     "authing-js-sdk": "^4.23.55",
     "axios": "^1.13.6",
     "babel-plugin-module-resolver": "5.0.0",
@@ -203,7 +204,8 @@
     "react-native-draggable-masonry@1.3.0": "patches/react-native-draggable-masonry@1.3.0.patch",
     "react-native-executorch@0.7.2": "patches/react-native-executorch@0.7.2.patch",
     "expo-speech-transcriber@0.1.9": "patches/expo-speech-transcriber@0.1.9.patch",
-    "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch"
+    "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch",
+    "react-native-webview@13.16.0": "patches/react-native-webview@13.16.0.patch"
   },
   "trustedDependencies": [
     "@sentry/cli",

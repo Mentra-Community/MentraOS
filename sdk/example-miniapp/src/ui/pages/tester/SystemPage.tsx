@@ -22,7 +22,7 @@ export default function SystemPage() {
   const [clipText, setClipText] = useState("Hello from session.system.copyToClipboard")
   return (
     <Shell>
-      <MiniappHeader title="session.system" onBack={() => navigate("/tester")} />
+      <MiniappHeader title="session.system" onBack={() => navigate("/")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
           OS-level utilities — open URL, share sheet, clipboard, download.

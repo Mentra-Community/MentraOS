@@ -114,7 +114,7 @@ abstract class SGCManager {
     open fun sendDashboardDisplaySettings() {}
 
     // Notification Panel (default no-op — only G2 supports this)
-    open fun showNotificationsPanel() {}
+    open suspend fun showNotificationsPanel() {}
 
     // Controller bridging (default no-op — only G2 supports pairing with a ring controller)
     open fun connectController() {}
@@ -122,6 +122,16 @@ abstract class SGCManager {
 
     // Device Control
     abstract fun setHeadUpAngle(angle: Int)
+
+    /**
+     * Enable/disable raw accelerometer (IMU) reporting from the glasses.
+     * Default no-op for devices without IMU support. G2 (both iOS and Android) overrides this to
+     * stream IMU data; other devices accept the call so the cross-platform JS API stays uniform.
+     */
+    open suspend fun setImuEnabled(enabled: Boolean) {
+        Bridge.log("SGC: setImuEnabled not supported")
+    }
+
     abstract fun getBatteryStatus()
     abstract fun setSilentMode(enabled: Boolean)
     abstract fun exit()

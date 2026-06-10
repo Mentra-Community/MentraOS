@@ -14,7 +14,7 @@ export default function GlassesPage() {
   const lastConnection = [...log].reverse().find((e) => e.kind === "connection")
   return (
     <Shell>
-      <MiniappHeader title="session.glasses" onBack={() => navigate("/tester")} />
+      <MiniappHeader title="session.glasses" onBack={() => navigate("/")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
           Glasses-side telemetry — battery + connection state.

@@ -14,8 +14,7 @@ export function haversineMeters(a: LatLng, b: LatLng): number {
   const dLng = toRad(b.lng - a.lng)
   const lat1 = toRad(a.lat)
   const lat2 = toRad(b.lat)
-  const x =
-    Math.sin(dLat / 2) ** 2 + Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2)
+  const x = Math.sin(dLat / 2) ** 2 + Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2)
   return 2 * R * Math.asin(Math.sqrt(x))
 }
 
@@ -68,6 +67,21 @@ export function perpDistanceMeters(p: LatLng, a: LatLng, b: LatLng): number {
 }
 
 /**
+ * Distance in meters from `p` to the nearest point on a polyline.
+ * Returns null for empty / single-point polylines. Walks every segment;
+ * fine for the segment counts we deal with (tens to low hundreds).
+ */
+export function distanceToPolylineMeters(p: LatLng, points: LatLng[] | null): number | null {
+  if (!points || points.length < 2) return null
+  let best = Infinity
+  for (let i = 0; i < points.length - 1; i++) {
+    const d = perpDistanceMeters(p, points[i], points[i + 1])
+    if (d < best) best = d
+  }
+  return best === Infinity ? null : best
+}
+
+/**
  * Bearing of the route at the user's current position. We find the
  * polyline segment closest to `me` and return its endpoint bearing —
  * i.e. which way the route wants you to face right now.
@@ -84,6 +98,71 @@ export function nextSegmentBearing(me: LatLng | null, route: LatLng[] | null): n
     }
   }
   return bearingDeg(route[bestIdx], route[bestIdx + 1])
+}
+
+/**
+ * Remaining route distance in meters: from the user's projection onto
+ * the route polyline to the route's endpoint. Walks the polyline from
+ * the closest segment forward, summing the rest of that segment plus
+ * every segment after it. Returns null for empty / single-point routes.
+ *
+ * Used to fire arrival when the user is within N meters of the route's
+ * end *along the route*, rather than straight-line to the destination
+ * pin (the pin can sit a few meters off the walkable polyline).
+ */
+export function remainingRouteMeters(me: LatLng | null, route: LatLng[] | null): number | null {
+  if (!me || !route || route.length < 2) return null
+  let bestIdx = 0
+  let bestDist = Infinity
+  for (let i = 0; i < route.length - 1; i++) {
+    const d = perpDistanceMeters(me, route[i], route[i + 1])
+    if (d < bestDist) {
+      bestDist = d
+      bestIdx = i
+    }
+  }
+  const mPerDegLat = 111_320
+  const seg = route[bestIdx]
+  const next = route[bestIdx + 1]
+  const mPerDegLng = 111_320 * Math.cos((seg.lat * Math.PI) / 180)
+  const ax = 0
+  const ay = 0
+  const bx = (next.lng - seg.lng) * mPerDegLng
+  const by = (next.lat - seg.lat) * mPerDegLat
+  const px = (me.lng - seg.lng) * mPerDegLng
+  const py = (me.lat - seg.lat) * mPerDegLat
+  const dx = bx - ax
+  const dy = by - ay
+  const len2 = dx * dx + dy * dy
+  let t = len2 > 0 ? (px * dx + py * dy) / len2 : 0
+  t = Math.max(0, Math.min(1, t))
+  const projx = ax + t * dx
+  const projy = ay + t * dy
+  let remaining = Math.sqrt((bx - projx) * (bx - projx) + (by - projy) * (by - projy))
+  for (let i = bestIdx + 1; i < route.length - 1; i++) {
+    remaining += haversineMeters(route[i], route[i + 1])
+  }
+  return remaining
+}
+
+/**
+ * "left" or "right": which side of the final route segment the
+ * destination pin sits on, from the perspective of a walker facing
+ * along that segment. Used at arrival to tell the user which way to
+ * turn their head to see the destination.
+ *
+ * Returns null when the route is too short or the pin sits exactly on
+ * the segment's bearing line (rare; cross-product is zero).
+ */
+export function sideOfFinalSegment(route: LatLng[] | null, pin: LatLng | null): "left" | "right" | null {
+  if (!route || route.length < 2 || !pin) return null
+  const a = route[route.length - 2]
+  const b = route[route.length - 1]
+  const segBearing = bearingDeg(a, b)
+  const pinBearing = bearingDeg(b, pin)
+  const diff = signedAngleDiff(pinBearing, segBearing)
+  if (diff === 0) return null
+  return diff > 0 ? "right" : "left"
 }
 
 export type Crossing = {

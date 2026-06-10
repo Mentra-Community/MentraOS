@@ -3,9 +3,10 @@
  * Details from the WebView.
  *
  * Key resolution mirrors GoogleMapsManager: prod build inlines
- * `EXPO_PUBLIC_GOOGLE_PLACES_API_KEY` via build.ts; dev fetches it from
- * `/api/config`. The key must be HTTP-referrer-restricted in Google Cloud
- * Console since it ships in the client bundle.
+ * `GOOGLE_NAV_API_KEY` via build.ts; dev fetches it from `/api/config`.
+ * The key is shared with the maps loader — one GCP key covers both
+ * Maps JavaScript API and Places API (New). Restrict by API in GCP
+ * since the key ships in the client bundle.
  *
  * One PlacesSession represents one autocomplete-then-details flow. Google
  * bills the autocomplete keystrokes + the final details call as a single
@@ -56,7 +57,7 @@ async function getApiKey(): Promise<string> {
   if (cachedKeyPromise) return cachedKeyPromise
   cachedKeyPromise = (async () => {
     try {
-      const fromEnv = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY
+      const fromEnv = process.env.GOOGLE_NAV_API_KEY
       if (fromEnv) return fromEnv
     } catch {
       // process is not defined in the dev WebView — fall through.
@@ -64,8 +65,8 @@ async function getApiKey(): Promise<string> {
     try {
       const res = await fetch("/api/config")
       if (res.ok) {
-        const {googlePlacesApiKey} = (await res.json()) as {googlePlacesApiKey?: string}
-        return googlePlacesApiKey ?? ""
+        const {googleMapsApiKey} = (await res.json()) as {googleMapsApiKey?: string}
+        return googleMapsApiKey ?? ""
       }
     } catch {
       // /api/config not reachable.
@@ -85,7 +86,7 @@ export class PlacesSession {
   async autocomplete(input: string, signal?: AbortSignal): Promise<PlaceSuggestion[]> {
     if (!input.trim()) return []
     const key = await getApiKey()
-    if (!key) throw new Error("missing EXPO_PUBLIC_GOOGLE_PLACES_API_KEY")
+    if (!key) throw new Error("missing GOOGLE_NAV_API_KEY")
     const res = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
       method: "POST",
       headers: {
@@ -120,7 +121,7 @@ export class PlacesSession {
 
   async details(placeId: string, signal?: AbortSignal): Promise<PlaceDetails> {
     const key = await getApiKey()
-    if (!key) throw new Error("missing EXPO_PUBLIC_GOOGLE_PLACES_API_KEY")
+    if (!key) throw new Error("missing GOOGLE_NAV_API_KEY")
     const url = `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?sessionToken=${encodeURIComponent(this.token)}`
     const res = await fetch(url, {
       headers: {

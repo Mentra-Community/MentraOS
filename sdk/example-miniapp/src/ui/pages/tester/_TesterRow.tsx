@@ -42,12 +42,16 @@ export function TableRow({
   emoji,
   label,
   data,
+  ordered,
 }: {
   emoji: string
   label: string
   data: Record<string, unknown> | null
+  // Keep rows in object insertion order instead of the default
+  // value-weighted sort. Use when the field order is meaningful.
+  ordered?: boolean
 }) {
-  const entries = data ? sortedEntries(data) : []
+  const entries = data ? (ordered ? Object.entries(data) : sortedEntries(data)) : []
   return (
     <div className="mb-2 rounded-xl border border-border bg-card p-3">
       <div className="mb-2 flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wider text-muted-foreground">
