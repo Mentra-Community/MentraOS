@@ -136,6 +136,12 @@ public class OtaHelper {
     private static final String CACHE_KEY_MTK = "mtk_main";
     private static final String CACHE_KEY_BES = "bes_main";
 
+    // Cached artifacts auto-expire after this age and are re-downloaded on the next check, even
+    // if they still pass integrity verification. Defense-in-depth: a cache entry that somehow
+    // becomes poisoned (e.g. a future bug, or a server-side artifact swap that reuses a path)
+    // cannot persist indefinitely and trap a device in an update loop.
+    private static final long CACHE_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000; // 7 days
+
     // ⚠️ DEBUG FLAG: Set to true to skip all checks and install MTK firmware from local file
     // This will bypass version checking, downloading, and directly install
     // /storage/emulated/0/asg/mtk_firmware.zip
@@ -418,11 +424,27 @@ public class OtaHelper {
     private void markCachedArtifactReady(
             String cacheKey, String updateType, String localPath, JSONObject metadata) {
         try {
+            // Store the ACTUAL computed hash of the file on disk, not the server's claimed hash
+            // from the manifest. Storing the server's claim made cache validation a tautology
+            // (compare the claim to itself), so a corrupt/partial/stale file would be trusted
+            // forever. Computing the real hash here means isCachedArtifactValid()'s fast path
+            // genuinely verifies the bytes on disk match what the server expects.
+            String computedHash = computeFileSha256(localPath);
+            if (computedHash == null) {
+                Log.e(
+                        TAG,
+                        "Refusing to mark cache ready — could not hash file: "
+                                + localPath
+                                + " ("
+                                + cacheKey
+                                + ")");
+                return;
+            }
+
             SharedPreferences.Editor editor = getCachePrefs().edit();
             editor.putBoolean(cacheField(cacheKey, CACHE_FLAG_READY), true);
             editor.putString(cacheField(cacheKey, CACHE_FIELD_PATH), localPath);
-            editor.putString(
-                    cacheField(cacheKey, CACHE_FIELD_SHA256), metadata.optString("sha256", ""));
+            editor.putString(cacheField(cacheKey, CACHE_FIELD_SHA256), computedHash);
             editor.putString(
                     cacheField(cacheKey, CACHE_FIELD_VERSION),
                     metadata.optString("versionName", ""));
@@ -430,9 +452,33 @@ public class OtaHelper {
             editor.putLong(cacheField(cacheKey, CACHE_FIELD_SIZE), new File(localPath).length());
             editor.putString(cacheField(cacheKey, "type"), updateType);
             editor.apply();
-            Log.i(TAG, "📦 Cache ready: " + cacheKey + " at " + localPath);
+            Log.i(TAG, "📦 Cache ready: " + cacheKey + " at " + localPath + " (sha256=" + computedHash + ")");
         } catch (Exception e) {
             Log.e(TAG, "Failed to mark cached artifact ready: " + cacheKey, e);
+        }
+    }
+
+    /**
+     * Compute the SHA-256 of a file as a lowercase hex string. Returns {@code null} on any I/O or
+     * algorithm error (caller must treat null as "cannot verify").
+     */
+    private String computeFileSha256(String filePath) {
+        try (FileInputStream is = new FileInputStream(filePath)) {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = is.read(buffer)) > 0) {
+                digest.update(buffer, 0, read);
+            }
+            byte[] hashBytes = digest.digest();
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hashBytes) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to compute SHA-256 for " + filePath, e);
+            return null;
         }
     }
 
@@ -455,16 +501,36 @@ public class OtaHelper {
                 return false;
             }
 
-            // Fast path: if the stored SHA256 matches the expected hash from metadata AND the file
-            // has not been modified since it was verified, skip the expensive full re-hash.
-            // This avoids re-reading large firmware files on every 30-minute periodic check.
-            String storedHash =
-                    getCachePrefs().getString(cacheField(cacheKey, CACHE_FIELD_SHA256), "");
             long storedTimestamp =
                     getCachePrefs().getLong(cacheField(cacheKey, CACHE_FIELD_TIMESTAMP), 0);
+
+            // TTL: cached artifacts auto-expire so a poisoned entry can never trap a device
+            // indefinitely. An expired-but-otherwise-valid file is re-downloaded on the next check.
+            long age = System.currentTimeMillis() - storedTimestamp;
+            if (storedTimestamp <= 0 || age > CACHE_MAX_AGE_MS) {
+                Log.i(
+                        TAG,
+                        "Cache expired for "
+                                + cacheKey
+                                + " (age="
+                                + age
+                                + "ms, max="
+                                + CACHE_MAX_AGE_MS
+                                + "ms) — forcing fresh download");
+                return false;
+            }
+
+            // Fast path: the stored hash is the ACTUAL computed hash of the file (see
+            // markCachedArtifactReady). If it matches the server's expected hash AND the file has
+            // not been modified since we verified it, the bytes on disk are genuinely correct and
+            // we can skip the expensive full re-hash. This is a real integrity check, not a
+            // tautology — storedHash now reflects the file content, expectedHash the server claim.
+            String storedHash =
+                    getCachePrefs().getString(cacheField(cacheKey, CACHE_FIELD_SHA256), "");
             String expectedHash = metadata.optString("sha256", "");
 
             if (!storedHash.isEmpty()
+                    && !expectedHash.isEmpty()
                     && storedHash.equalsIgnoreCase(expectedHash)
                     && file.lastModified() <= storedTimestamp) {
                 Log.d(TAG, "Cache fast-path hit for " + cacheKey + " - skipping re-hash");
@@ -2169,11 +2235,37 @@ public class OtaHelper {
 
         Log.d(TAG, "APK downloaded to: " + apkFile.getAbsolutePath());
 
-        // APK hash check disabled – downloaded APK is accepted without integrity verification.
-        Log.w(
-                TAG,
-                "WARNING: OTA APK SHA256 hash verification is DISABLED. Downloaded APK is not"
-                        + " integrity-checked.");
+        // Completeness check: a dropped connection can make in.read() return -1 early without
+        // throwing, leaving a truncated APK that would otherwise be cached as "valid" and
+        // re-installed forever. Reject any download whose size doesn't match Content-Length.
+        if (fileSize > 0 && total != fileSize) {
+            Log.e(
+                    TAG,
+                    "APK download incomplete: got "
+                            + total
+                            + " of "
+                            + fileSize
+                            + " bytes — deleting partial file and failing");
+            if (apkFile.exists() && !apkFile.delete()) {
+                Log.w(TAG, "Failed deleting partial APK: " + apkFile.getAbsolutePath());
+            }
+            return false;
+        }
+
+        // Integrity check: verify the downloaded bytes match the server's published SHA-256
+        // before declaring the download a success. Without this, a corrupt download poisons the
+        // cache. (MTK/BES firmware already do this; the APK path previously had it disabled.)
+        if (!verifyApkFile(apkFile.getAbsolutePath(), json)) {
+            Log.e(
+                    TAG,
+                    "Downloaded APK failed SHA256 verification — deleting and failing: "
+                            + apkFile.getAbsolutePath());
+            if (apkFile.exists() && !apkFile.delete()) {
+                Log.w(TAG, "Failed deleting corrupt APK: " + apkFile.getAbsolutePath());
+            }
+            return false;
+        }
+
         EventBus.getDefault().post(DownloadProgressEvent.createFinished(fileSize));
         sendProgressToPhone("download", 100, fileSize, fileSize, "FINISHED", null);
         createMetaDataJson(json, context);
@@ -2181,12 +2273,37 @@ public class OtaHelper {
     }
 
     private boolean verifyApkFile(String apkPath, JSONObject jsonObject) {
-        // APK hash check disabled – APK is accepted without integrity verification.
-        Log.w(
-                TAG,
-                "WARNING: OTA APK SHA256 hash verification is DISABLED. APK is not"
-                        + " integrity-checked.");
-        return true;
+        String expectedHash = jsonObject.optString("sha256", "");
+        if (expectedHash.isEmpty()) {
+            // No server-provided hash to check against. Don't hard-fail (older manifests may omit
+            // it), but warn loudly — without a hash we cannot detect a corrupt/partial APK.
+            Log.w(TAG, "No SHA256 hash provided for APK - skipping verification");
+            return true;
+        }
+
+        String calculatedHash = computeFileSha256(apkPath);
+        if (calculatedHash == null) {
+            Log.e(TAG, "APK SHA256 check error - could not hash " + apkPath);
+            return false;
+        }
+
+        Log.d(TAG, "Expected APK SHA256: " + expectedHash);
+        Log.d(TAG, "Calculated APK SHA256: " + calculatedHash);
+
+        boolean match = calculatedHash.equalsIgnoreCase(expectedHash);
+        Log.d(TAG, "APK SHA256 check " + (match ? "passed" : "failed"));
+        if (!match) {
+            Log.e(
+                    TAG,
+                    "APK integrity check FAILED for "
+                            + apkPath
+                            + " (expected "
+                            + expectedHash
+                            + ", got "
+                            + calculatedHash
+                            + ")");
+        }
+        return match;
     }
 
     private void createMetaDataJson(JSONObject json, Context context) {
