@@ -21,7 +21,8 @@ echo "preparing $SERIAL for harness runs..."
 # tolerate failures. Covers the mic/camera/location/notification/BT prompts.
 for p in RECORD_AUDIO CAMERA ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION \
          ACCESS_BACKGROUND_LOCATION POST_NOTIFICATIONS \
-         BLUETOOTH_CONNECT BLUETOOTH_SCAN BLUETOOTH_ADVERTISE; do
+         BLUETOOTH_CONNECT BLUETOOTH_SCAN BLUETOOTH_ADVERTISE \
+         READ_PHONE_STATE CALL_PHONE READ_PHONE_NUMBERS; do
   adb -s "$SERIAL" shell pm grant "$PKG" "android.permission.$p" 2>/dev/null \
     && echo "  granted $p" || true
 done

@@ -275,6 +275,45 @@ async function handle(req: RpcRequest): Promise<unknown> {
       return {launched: packageName}
     }
 
+    case "installDevMiniapp": {
+      // Load + run a local miniapp from a `mentra-miniapp dev` server URL, the
+      // way the dev-URL screen does (fetch manifest, register the dev-app
+      // record, foreground it) — but without the text-input + permission-UI
+      // dance, which the harness can't drive. Permissions are pre-granted via
+      // setup-emulator.sh, so the UI permission gate is skipped here.
+      const url = String(params.url ?? "").trim().replace(/\/+$/, "")
+      if (!url.startsWith("http")) throw new Error("http(s) url required")
+      const island = require("@mentra/island") as {
+        decideDevLaunchRoute: (pkg: string, url: string) => Promise<{decision: string; manifest: Record<string, unknown>}>
+        registerDevApp: (rec: Record<string, unknown>) => void
+        useAppStatusStore: {getState: () => {refresh: () => Promise<void>; setForeground: (pkg: string) => Promise<void>}}
+        DEV_APP_PACKAGE_NAME: string
+      }
+      const res = await island.decideDevLaunchRoute("", url)
+      if (res.decision === "offline") throw new Error(`dev server unreachable at ${url}`)
+      const manifest = res.manifest
+      const port = (() => {
+        try {
+          const p = Number(new URL(url).port)
+          return Number.isFinite(p) && p > 0 ? p + 1 : undefined
+        } catch {
+          return undefined
+        }
+      })()
+      island.registerDevApp({
+        packageName: String(manifest.packageName ?? "com.dev.unknown"),
+        name: String(manifest.name ?? "Dev Mini App"),
+        iconUrl: `${url}/icon.png`,
+        devUrl: url,
+        devPort: port,
+        permissions: manifest.permissions,
+        hardwareRequirements: manifest.hardwareRequirements,
+      })
+      await island.useAppStatusStore.getState().refresh()
+      await island.useAppStatusStore.getState().setForeground(island.DEV_APP_PACKAGE_NAME)
+      return {installed: manifest.packageName, name: manifest.name, devPort: port}
+    }
+
     case "setSubscriptions": {
       // Drive the cloud's transcription directly (no miniapp UI needed) — the
       // pipeline test subscribes, injects audio, and asserts the transcript

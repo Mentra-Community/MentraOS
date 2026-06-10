@@ -125,6 +125,27 @@ production LC3 path.
 `app_speak` is the whole e2e as one tool call — subscribe, synthesize, inject,
 and return the interim + final transcripts.
 
+## Local miniapp on simulated glasses (no hardware)
+
+Run a full local island miniapp (e.g. `local-miniapps/captions`) on the
+emulator against Cloud V2, with simulated glasses instead of real hardware:
+
+```bash
+# 1. simulated glasses (one-time per fresh app): home -> "Setup without
+#    glasses" -> Continue. (Needs the phone permissions setup-emulator.sh grants.)
+# 2. serve the miniapp from its dir:
+cd local-miniapps/captions && bun run dev        # static :PORT + sidecar :PORT+1
+# 3. load + run it in one call (no QR / no typing a URL):
+bun tools/mentra-agent/cli.ts install-miniapp http://10.0.2.2:<PORT>
+# 4. drive captions through it:
+bun tools/mentra-agent/cli.ts speak "..." --lang auto
+```
+
+`install-miniapp` replicates the dev-URL screen (fetch manifest -> registerDevApp
+-> foreground) over the bridge, skipping the text-input + permission-UI dance.
+Verified end-to-end: Local Captions rendered live captions (speaker-diarized,
+interim+final) from injected speech via Cloud V2, on simulated glasses.
+
 ## Emulator golden snapshot
 
 A known-good state (QA user logged in, cloud on AWS us-west-2, codec=pcm) is

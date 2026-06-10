@@ -194,6 +194,11 @@ try {
     case "launch":
       out(await rpc("launchMiniapp", {packageName: args[0]}))
       break
+    case "install-miniapp":
+      // Load + run a local miniapp from a `mentra-miniapp dev` server URL.
+      // e.g. install-miniapp http://10.0.2.2:3120  (emulator -> host port 3120)
+      out(await rpc("installDevMiniapp", {url: args[0]}))
+      break
     case "speak":
       await speak(args)
       break
