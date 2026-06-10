@@ -228,12 +228,12 @@ class InmoGo2: NSObject, SGCManager {
     func exit() {}
     func showDashboard() {}
     func displayBitmap(base64ImageData _: String) async -> Bool { return true }
-    func sendDoubleTextWall(_: String, _: String) {}
+    func sendDoubleTextWall(_ top: String, _ bottom: String) { sendJson(["type": "double_text_wall", "topText": top, "bottomText": bottom]) }
     func setHeadUpAngle(_: Int) {}
     func getBatteryStatus() {}
     func setBrightness(_: Int, autoMode _: Bool) {}
-    func clearDisplay() {}
-    func sendTextWall(_: String) {}
+    func clearDisplay() { sendJson(["type": "clear_display"]) }
+    func sendTextWall(_ text: String) { sendJson(["type": "text_wall", "text": text]) }
     func connectController() {}
     func disconnectController() {}
     func dbg1() {}
