@@ -1,7 +1,8 @@
 // Tester page — diagnostic surface, ephemeral by design.
-// session.storage doesn't have an event surface, so background's
-// TesterController serves the "tester:invoke" requests directly and
-// surfaces results via the "tester:event" channel with kind="result".
+// session.storage has no event surface; it's an imperative tester. Each
+// button issues a "tester:invoke" RPC that background dispatches to
+// session.storage.*, and the call's return value (e.g. get → the stored
+// string) is the RPC resolution we render below.
 
 import {useState} from "react"
 import {useNavigate} from "react-router-dom"
@@ -16,13 +17,25 @@ import {ErrorRow, TableRow} from "./_TesterRow"
 
 export default function StoragePage() {
   const navigate = useNavigate()
-  const {log, invoke, lastError} = useTester("storage")
+  const {invoke, lastError} = useTester("storage")
   const [key, setKey] = useState("test-key")
   const [value, setValue] = useState("hello")
-  const lastResult = [...log].reverse().find((e) => e.kind === "result")
+  const [result, setResult] = useState<{method: string; args: unknown[]; value: unknown} | null>(null)
+
+  // invoke() routes errors to lastError (and re-throws), so the catch just
+  // keeps the last successful result visible while <ErrorRow> shows the error.
+  const run = async (method: "set" | "get" | "delete", args: unknown[]) => {
+    try {
+      const value = await invoke(method, args)
+      setResult({method, args, value})
+    } catch {
+      /* surfaced via lastError */
+    }
+  }
+
   return (
     <Shell>
-      <MiniappHeader title="session.storage" onBack={() => navigate("/tester")} />
+      <MiniappHeader title="session.storage" onBack={() => navigate("/")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
           Per-miniapp key/value store. Read-then-write tests use the
@@ -34,15 +47,16 @@ export default function StoragePage() {
         <Label htmlFor="storage-value">value</Label>
         <Input id="storage-value" value={value} onChange={(e) => setValue(e.target.value)} />
         <div className="mt-3 flex gap-2">
-          <Button onClick={() => invoke("set", [key, value])}>set(key, value)</Button>
-          <Button onClick={() => invoke("get", [key])}>get(key)</Button>
-          <Button onClick={() => invoke("delete", [key])}>delete(key)</Button>
+          <Button onClick={() => run("set", [key, value])}>set(key, value)</Button>
+          <Button onClick={() => run("get", [key])}>get(key)</Button>
+          <Button onClick={() => run("delete", [key])}>delete(key)</Button>
         </div>
         <div className="mt-4">
           <TableRow
             emoji="🗄️"
             label="last result"
-            data={lastResult ? ((lastResult.payload as unknown) as Record<string, unknown>) : null}
+            ordered
+            data={result ? {method: result.method, args: result.args, value: result.value} : null}
           />
           <ErrorRow event={lastError} />
         </div>

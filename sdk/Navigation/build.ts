@@ -17,10 +17,14 @@ const distDir = "./dist"
 
 await rm(distDir, {recursive: true, force: true})
 
-const navKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY ?? ""
-const placesKey = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY ?? ""
-if (!navKey) console.warn("WARN: EXPO_PUBLIC_GOOGLE_NAV_API_KEY is not set — maps will fail to load.")
-if (!placesKey) console.warn("WARN: EXPO_PUBLIC_GOOGLE_PLACES_API_KEY is not set — search will fail.")
+// Single GCP key feeds every Google API the miniapp talks to:
+// Maps JavaScript API (ui/lib/googleMaps.ts) and Places API (New)
+// (background/lib/places.ts). Lacks the `EXPO_PUBLIC_` prefix on
+// purpose — this miniapp manages its own env contract; the mobile-side
+// host has its own separate key (`EXPO_PUBLIC_GOOGLE_NAV_API_KEY` in
+// mobile/.env) that we deliberately don't share with.
+const navKey = process.env.GOOGLE_NAV_API_KEY ?? ""
+if (!navKey) console.warn("WARN: GOOGLE_NAV_API_KEY is not set — maps and search will fail.")
 
 const nodeEnv = process.env.NODE_ENV === "production" ? "production" : "development"
 // Only announce when we're in production — that's the unusual case
@@ -29,8 +33,7 @@ const nodeEnv = process.env.NODE_ENV === "production" ? "production" : "developm
 if (nodeEnv === "production") console.log("Building with NODE_ENV=production")
 
 const sharedDefine: Record<string, string> = {
-  "process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY": JSON.stringify(navKey),
-  "process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY": JSON.stringify(placesKey),
+  "process.env.GOOGLE_NAV_API_KEY": JSON.stringify(navKey),
   "process.env.NODE_ENV": JSON.stringify(nodeEnv),
 }
 

@@ -26,7 +26,7 @@ export default function LedPage() {
   const duration = Number(durationMs) || 1000
   return (
     <Shell>
-      <MiniappHeader title="session.led" onBack={() => navigate("/tester")} />
+      <MiniappHeader title="session.led" onBack={() => navigate("/")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
           RGB LED on Mentra Live. Colors are a fixed enum

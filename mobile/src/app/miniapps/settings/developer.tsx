@@ -207,6 +207,20 @@ export default function DeveloperSettingsScreen() {
             />
 
             <RouteButton
+              label="Reset Nav T&C Dialog"
+              subtitle="Clear cached acceptance so Google's T&C dialog shows again next start (Android only)"
+              onPress={async () => {
+                const result = await navigationService.resetPermission()
+                console.log("NAV_TEST: reset T&C", result)
+                if (!result.ok) {
+                  showAlert("Nav", `Reset failed: ${result.error ?? "unknown"}`)
+                  return
+                }
+                showAlert("Nav", "T&C cache cleared. Start Test Nav to see the dialog again.")
+              }}
+            />
+
+            <RouteButton
               label="Clear Websocket"
               subtitle="Clear the Websocket"
               onPress={async () => {

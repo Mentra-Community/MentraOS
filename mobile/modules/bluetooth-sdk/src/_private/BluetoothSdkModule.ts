@@ -100,6 +100,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setDashboardMenu(items: DashboardMenuItem[]): Promise<void>
   setCalendarEvents(events: CalendarEvent[]): Promise<void>
   setHeadUpAngle(angleDegrees: number): Promise<void>
+  setImuEnabled(enabled: boolean): Promise<void>
   setScreenDisabled(disabled: boolean): Promise<void>
   ping(): Promise<void>
   dbg1(): Promise<void>
@@ -437,6 +438,10 @@ NativeBluetoothSdkModule.setCalendarEvents = function (events: CalendarEvent[]) 
 
 NativeBluetoothSdkModule.setHeadUpAngle = function (angleDegrees: number) {
   return this.updateBluetoothSettings({head_up_angle: angleDegrees})
+}
+
+NativeBluetoothSdkModule.setImuEnabled = function (enabled: boolean) {
+  return this.updateBluetoothSettings({imu_enabled: enabled})
 }
 
 NativeBluetoothSdkModule.setScreenDisabled = function (disabled: boolean) {

@@ -206,6 +206,18 @@ export interface NavigationAdapter {
       steps?: NavRouteStep[]
     }>
   }>
+  /**
+   * Reverse-geocode a coordinate into a short road/route name. Used by
+   * the SDK pivot engine as a last-resort fallback when the Routes-API
+   * step's instruction text didn't yield a clean road name. Optional —
+   * hosts that don't implement it leave the SDK without a fallback,
+   * and pivots with no parseable instruction stay unlabeled.
+   */
+  reverseGeocodeRoad?: (coord: {lat: number; lng: number}) => Promise<{
+    ok: boolean
+    road?: string | null
+    error?: string
+  }>
 }
 
 /**

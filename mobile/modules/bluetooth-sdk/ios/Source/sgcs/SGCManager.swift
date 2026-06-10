@@ -47,8 +47,8 @@ protocol SGCManager {
 
     func setBrightness(_ level: Int, autoMode: Bool)
     func clearDisplay()
-    func sendTextWall(_ text: String)
-    func sendDoubleTextWall(_ top: String, _ bottom: String)
+    func sendTextWall(_ text: String) async
+    func sendDoubleTextWall(_ top: String, _ bottom: String) async
     /// Display a bitmap. Optional `x`/`y`/`width`/`height` position and size the target
     /// container (used by G2; other SGCs ignore positioning and render the bitmap as before).
     func displayBitmap(base64ImageData: String, x: Int32?, y: Int32?, width: Int32?, height: Int32?) async -> Bool
@@ -64,7 +64,7 @@ protocol SGCManager {
 
     // MARK: - Notification Panel
 
-    func showNotificationsPanel()
+    func showNotificationsPanel() async
 
     // MARK: - Calendar Events
 
@@ -77,6 +77,9 @@ protocol SGCManager {
     // MARK: - Device Control
 
     func setHeadUpAngle(_ angle: Int)
+    /// Enable/disable raw accelerometer (IMU) reporting from the glasses.
+    /// Default no-op; only G2 streams IMU data today.
+    func setImuEnabled(_ enabled: Bool) async
     func getBatteryStatus()
     func setSilentMode(_ enabled: Bool)
     func exit()
@@ -165,7 +168,13 @@ extension SGCManager {
 
     // MARK: - Notification Panel (default no-op — only G2 supports this)
 
-    func showNotificationsPanel() {}
+    func showNotificationsPanel() async {}
+
+    // MARK: - IMU (default no-op — only G2 streams accelerometer data)
+
+    func setImuEnabled(_: Bool) async {
+        Bridge.log("SGC: setImuEnabled not supported")
+    }
 
     // MARK: - Calendar Events (default no-op — only G2 supports this)
 

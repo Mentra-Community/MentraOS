@@ -2,6 +2,7 @@ import {useEffect, useState} from "react"
 
 import type {LatLng, PlaceDetails, SavedPlace} from "@/shared/types"
 import {Drawer} from "@/ui/components/Drawer/Drawer"
+import {ClockIcon, HomeIconFilled, PlusIcon, StarIcon, WorkIconFilled} from "@/ui/components/icons"
 
 type Props = {
   me: LatLng | null
@@ -36,7 +37,7 @@ export function IdleDrawer({onSelect, onAddPlace, refreshKey}: Props) {
       peekHeight={163}
       expanded={expanded}
       onExpandedChange={setExpanded}
-      className="[font-synthesis:none] pointer-events-auto mx-auto max-w-md flex flex-col rounded-tl-[28px] rounded-tr-[28px] bg-[#FFFFFFB3] border-t border-t-solid border-t-[#FFFFFF99] [backdrop-filter:blur(40px)_saturate(180%)] [box-shadow:#0000001A_0px_-8px_28px] antialiased overflow-hidden">
+      className="[font-synthesis:none] pointer-events-auto w-full flex flex-col rounded-tl-[28px] rounded-tr-[28px] bg-[#FFFFFFB3] border-t border-t-solid border-t-[#FFFFFF99] [backdrop-filter:blur(40px)_saturate(180%)] [box-shadow:#0000001A_0px_-8px_28px] antialiased overflow-hidden">
 
       {/* Sticky top: Home + Work quick-access cards, then Add Place. */}
       <div className="flex gap-2.5 px-5 pb-3 shrink-0">
@@ -49,7 +50,7 @@ export function IdleDrawer({onSelect, onAddPlace, refreshKey}: Props) {
               onClick={() => onSelect(home)}
               className="grow shrink basis-[0%] min-w-0 flex flex-col rounded-[18px] gap-2 bg-[#FFFFFFD9] [box-shadow:#0000000F_0px_0px_0px_1px_inset] p-3.5 text-left">
               <div className="flex items-center justify-center rounded-2xl bg-[#1A1A1A] [box-shadow:#00000033_0px_2px_6px] shrink-0 size-8">
-                <HomeIcon />
+                <HomeIconFilled />
               </div>
               <div className="min-w-0 w-full">
                 <div className="tracking-[-0.005em] text-[#000000E6] font-sans font-semibold text-sm/4.5">
@@ -64,7 +65,7 @@ export function IdleDrawer({onSelect, onAddPlace, refreshKey}: Props) {
               onClick={() => onAddPlace("home")}
               className="grow shrink basis-[0%] min-w-0 flex flex-col rounded-[18px] gap-2 bg-[#FFFFFFD9] [box-shadow:#0000000F_0px_0px_0px_1px_inset] p-3.5 text-left opacity-40">
               <div className="flex items-center justify-center rounded-2xl bg-[#1A1A1A] [box-shadow:#00000033_0px_2px_6px] shrink-0 size-8">
-                <HomeIcon />
+                <HomeIconFilled />
               </div>
               <div className="min-w-0 w-full">
                 <div className="tracking-[-0.005em] text-[#000000E6] font-sans font-semibold text-sm/4.5">Home</div>
@@ -83,7 +84,7 @@ export function IdleDrawer({onSelect, onAddPlace, refreshKey}: Props) {
               onClick={() => onSelect(work)}
               className="grow shrink basis-[0%] min-w-0 flex flex-col rounded-[18px] gap-2 bg-[#FFFFFFD9] [box-shadow:#0000000F_0px_0px_0px_1px_inset] p-3.5 text-left">
               <div className="flex items-center justify-center rounded-2xl bg-[#000000D9] shrink-0 size-8">
-                <WorkIcon />
+                <WorkIconFilled />
               </div>
               <div className="min-w-0 w-full">
                 <div className="tracking-[-0.005em] text-[#000000E6] font-sans font-semibold text-sm/4.5">
@@ -98,7 +99,7 @@ export function IdleDrawer({onSelect, onAddPlace, refreshKey}: Props) {
               onClick={() => onAddPlace("work")}
               className="grow shrink basis-[0%] min-w-0 flex flex-col rounded-[18px] gap-2 bg-[#FFFFFFD9] [box-shadow:#0000000F_0px_0px_0px_1px_inset] p-3.5 text-left opacity-40">
               <div className="flex items-center justify-center rounded-2xl bg-[#000000D9] shrink-0 size-8">
-                <WorkIcon />
+                <WorkIconFilled />
               </div>
               <div className="min-w-0 w-full">
                 <div className="tracking-[-0.005em] text-[#000000E6] font-sans font-semibold text-sm/4.5">Work</div>
@@ -114,9 +115,7 @@ export function IdleDrawer({onSelect, onAddPlace, refreshKey}: Props) {
           onClick={() => onAddPlace()}
           className="[font-synthesis:none] w-21 flex flex-col items-start gap-2 rounded-[18px] shrink-0 [box-shadow:#00000014_0px_0px_0px_1px_inset] bg-[#0000000A] antialiased p-3.5">
           <div className="flex items-center justify-center rounded-full shrink-0 bg-[#0000001A] size-8">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-              <path d="M12 5V19M5 12H19" stroke="#000000" strokeWidth="2.4" strokeLinecap="round" />
-            </svg>
+            <PlusIcon />
           </div>
           <div className="flex flex-col items-start tracking-[0.02em] [white-space-collapse:preserve] font-sans font-semibold text-[#1A1A1A] text-[11px]/3.5">
             <span>Add</span>
@@ -202,36 +201,3 @@ export function IdleDrawer({onSelect, onAddPlace, refreshKey}: Props) {
 }
 
 
-function HomeIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-      <path d="M3 12 L12 4 L21 12 L21 20 H14 V14 H10 V20 H3 Z" fill="#FFFFFF" />
-    </svg>
-  )
-}
-
-function WorkIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-      <rect x="3" y="8" width="18" height="13" rx="1.5" fill="#FFFFFF" />
-      <path d="M9 8 V5 H15 V8" stroke="#FFFFFF" strokeWidth="2" fill="none" />
-    </svg>
-  )
-}
-
-function StarIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" fill="#000000D9" />
-    </svg>
-  )
-}
-
-function ClockIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-      <circle cx="12" cy="12" r="9" stroke="#000000D9" strokeWidth="2" fill="none" />
-      <path d="M12 7V12L15 14" stroke="#000000D9" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  )
-}
