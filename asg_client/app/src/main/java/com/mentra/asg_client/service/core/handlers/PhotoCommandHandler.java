@@ -141,6 +141,13 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 return false;
             }
 
+            if (captureService.attachSdkPhotoRequestToActiveOrRecentLocalPhoto(
+                    requestId, webhookUrl, authToken, bleImgId, size, transferMethod, compress)) {
+                Log.i(TAG, "PHOTO PIPELINE [ASG 3/3] Capture attached to active/recent local photo requestId=" + requestId);
+                logCommandResult("take_photo", true, null);
+                return true;
+            }
+
             // PHOTO JOB CHECK: Reject if any photo job (capture or upload/BLE-handoff) is in flight
             if (captureService.isPhotoJobInFlight()) {
                 Log.w(TAG, "🚫 Photo request rejected - photo job already in flight");
