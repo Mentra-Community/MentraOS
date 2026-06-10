@@ -463,14 +463,20 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.startVideoRecording(
                 VideoRecordingRequest(
                     requestId: requestId, save: save, sound: sound,
-                    width: dim("width"), height: dim("height"), fps: dim("fps")
+                    width: dim("width"), height: dim("height"), fps: dim("fps"),
+                    maxRecordingTimeMinutes: dim("maxRecordingTimeMinutes")
                 )
             ).values
         }
 
-        AsyncFunction("stopVideoRecording") { (requestId: String) in
+        // webhookUrl/authToken are supplied at stop (not start) so the token is
+        // fresh when the upload runs. Empty/nil webhook = keep on device.
+        AsyncFunction("stopVideoRecording") {
+            (requestId: String, webhookUrl: String?, authToken: String?) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.stopVideoRecording(requestId: requestId).values
+            return try await sdk.stopVideoRecording(
+                requestId: requestId, webhookUrl: webhookUrl, authToken: authToken
+            ).values
         }
 
         // MARK: - Stream Commands

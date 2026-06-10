@@ -227,6 +227,8 @@ data class VideoRecordingRequest(
     val width: Int = 0,
     val height: Int = 0,
     val fps: Int = 0,
+    // Optional auto-stop timer in minutes; 0 = record until stopped/interrupted.
+    val maxRecordingTimeMinutes: Int = 0,
 )
 
 data class VideoRecordingStatusEvent(

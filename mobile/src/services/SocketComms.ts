@@ -602,9 +602,11 @@ class SocketComms {
     // Optional per-recording video settings; when absent the glasses use their
     // saved button-video settings. Only forward fields that are present.
     const s = msg.settings ?? {}
+    // Optional auto-stop timer (minutes); 0/absent = record until stopped.
+    const maxRecordingTimeMinutes = typeof msg.maxRecordingTimeMinutes === "number" ? msg.maxRecordingTimeMinutes : undefined
     const settings =
-      s.width != null || s.height != null || s.fps != null
-        ? {width: s.width, height: s.height, fps: s.fps}
+      s.width != null || s.height != null || s.fps != null || maxRecordingTimeMinutes != null
+        ? {width: s.width, height: s.height, fps: s.fps, maxRecordingTimeMinutes}
         : undefined
     BluetoothSdk.startVideoRecording(videoRequestId, save, sound, settings).catch((error) => {
       console.warn("SOCKET: startVideoRecording failed:", error)
@@ -614,7 +616,11 @@ class SocketComms {
   private handle_stop_video_recording(msg: any) {
     console.log(`SOCKET: Received STOP_VIDEO_RECORDING: ${JSON.stringify(msg)}`)
     const stopRequestId = msg.requestId || ""
-    BluetoothSdk.stopVideoRecording(stopRequestId).catch((error) => {
+    // Upload target supplied at stop (not start) so the auth token is fresh when
+    // the upload runs. Empty webhook = keep the video on device (no upload).
+    const webhookUrl = msg.webhookUrl ?? ""
+    const authToken = typeof msg.authToken === "string" && msg.authToken.length > 0 ? msg.authToken : ""
+    BluetoothSdk.stopVideoRecording(stopRequestId, webhookUrl, authToken).catch((error) => {
       console.warn("SOCKET: stopVideoRecording failed:", error)
     })
   }

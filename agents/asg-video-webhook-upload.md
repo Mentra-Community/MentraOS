@@ -1,0 +1,203 @@
+# ASG Video Webhook Upload (Upload Recorded Video on Stop)
+
+## Date: 2026-06-09
+
+## Summary
+
+Recorded videos can now be uploaded to a webhook (multipart/form-data) when a
+recording is stopped, mirroring the existing photo snapshot upload flow. The
+glasses-side implementation landed in commit `dc35cc1` ("feat: upload recorded
+video to webhook on stop"). The phone side now threads the upload target
+(`webhookUrl` / `authToken`) and the start-time `maxRecordingTimeMinutes` from
+the cloud message, through the Bluetooth SDK, into the BLE command.
+
+Status:
+
+- **Glasses (ASG client):** done — commit `dc35cc1`.
+- **Phone Bluetooth SDK (Android + iOS):** done — see "Phone Bluetooth SDK
+  threading" below.
+- **Phone message handler (`SocketComms.ts`):** done.
+- **Cloud:** not done — no video API exists yet to send the fields (see
+  "Remaining (cloud)").
+
+This doc captures the design and the implementation, following the established
+BLE command path documented in `docs/bluetooth-sdk-subsystem-tracing.md`
+(`## BLE Command Path`).
+
+## Background
+
+Previously `MediaCaptureService.uploadVideo()` was a stub — videos were always
+kept on device with a `TODO: Implement WiFi upload when needed`. Photos already
+had a full webhook upload path (`performDirectUpload`), so video upload is
+modeled directly on it.
+
+### Why the upload target is supplied at STOP, not START
+
+For photos, `webhookUrl` + `authToken` travel with the capture request. For
+video this is deliberately different: a recording can last arbitrarily long, so
+an auth token captured at start could be stale by the time the upload runs. The
+webhook URL and auth token are therefore supplied at **stop** time, kept fresh.
+
+`maxRecordingTimeMinutes` is the one video field that belongs on **start** (it is
+an auto-stop timer, `0` = no limit).
+
+## What's done (glasses side — commit `dc35cc1`)
+
+ASG client (`asg_client/`) already accepts and uses the new fields:
+
+### `VideoCommandHandler.java`
+
+- `start_video_recording` now reads `maxRecordingTimeMinutes` (default `0`) and
+  forwards it to `MediaCaptureService.handleStartVideoCommand(...)`.
+- `stop_video_recording` now reads optional `webhookUrl` and `authToken`
+  (default `""`) and forwards them to `handleStopVideoCommand(requestId,
+  webhookUrl, authToken)` (with-requestId path) or `stopVideoRecording(webhookUrl,
+  authToken)` (backward-compat path). Empty webhook = no upload, video stays on
+  device.
+
+### `MediaCaptureService.java`
+
+- New `volatile` fields `pendingUploadWebhookUrl` / `pendingUploadAuthToken` hold
+  the active recording's upload target. Set at stop, **consumed and cleared once**
+  in the `onRecordingStopped` path so a later auto-stop can't reuse a stale token.
+- **Auto-stops never upload to a user webhook**: any stop with
+  `reason != USER_REQUESTED` (battery, max-duration, error) clears the pending
+  target before it can be used.
+- `uploadVideo(...)` is no longer a stub. With no webhook it keeps the file on
+  device (legacy behavior); with a webhook it calls `performDirectVideoUpload(...)`.
+- `performDirectVideoUpload(...)` does a background multipart POST mirroring the
+  photo path. Multipart body: `video` (the `.mp4`), `requestId`,
+  `type=video_upload`, `success=true`, plus optional `Authorization: Bearer
+  <authToken>`. Timeouts are generous for large files (write 120s/idle, read
+  30s/idle, `callTimeout` 300s end-to-end). **No BLE fallback** — video is far too
+  large for BLE, so a failed upload is terminal. On success, the file is deleted
+  unless `save` is `true`.
+
+### Test
+
+- `VideoCommandHandlerStopUploadTest.java` verifies `stop_video_recording`
+  routes the upload target to the correct `MediaCaptureService` entry point
+  across the requestId / no-requestId / empty-webhook / not-recording cases.
+
+## Phone Bluetooth SDK threading (done)
+
+The fields are now threaded through every layer of the BLE command path,
+**mirrored on both Android and iOS**, following the `requestPhoto` pattern below.
+`stopVideoRecording` carries `webhookUrl` + `authToken`; `startVideoRecording`
+carries `maxRecordingTimeMinutes` (inside its `settings`). The file list below
+records exactly what changed.
+
+### Reference: how `requestPhoto` already does it
+
+`requestPhoto` already threads `webhookUrl` + `authToken` end-to-end and is the
+canonical example to copy. On Android the chain is:
+
+```
+src/index.ts                         requestPhoto bound to native module
+src/_private/BluetoothSdkModule.ts   requestPhoto(params: PhotoRequestParams)
+──────── Expo native bridge ────────
+BluetoothSdkModule.kt   AsyncFunction("requestPhoto") { params -> ... }
+MentraBluetoothSdk.kt   fun requestPhoto(request) -> deviceManager.requestPhoto(...)
+DeviceManager.kt        activeSgc.requestPhoto(requestId, appId, size, webhookUrl, authToken, ...)
+SGCManager.kt           abstract fun requestPhoto(...)        ← interface
+MentraLive.java         builds the BLE JSON command           ← only real impl
+```
+
+iOS mirrors this 1:1: `BluetoothSdkModule.swift` → `MentraBluetoothSDK.swift` →
+`DeviceManager.swift` → `SGCManager.swift` → `MentraLive.swift`.
+
+### Files changed for video
+
+Implemented via **overloads with a delegating default** (not by widening the
+existing abstract methods), so only `MentraLive` needed real changes — every
+other glasses impl (G1, G2, Mach1, MentraNex, Simulated, Frame) inherits the
+no-op default and was left untouched. `SGCManager` gained an
+`open`/extension-default `stopVideoRecording(requestId, webhookUrl, authToken)`
+that delegates to `stopVideoRecording(requestId)`, and `maxRecordingTimeMinutes`
+was added to the existing rich `startVideoRecording` overload.
+
+**TypeScript (public API + types):**
+
+- `src/BluetoothSdk.types.ts`
+  - `VideoRecordingSettings` (~L407): add `maxRecordingTimeMinutes?: number`.
+  - `stopVideoRecording(...)` (~L890): add `webhookUrl?: string`,
+    `authToken?: string`.
+- `src/_private/BluetoothSdkModule.ts` (~L144-150): mirror the same signatures.
+- `src/index.ts` (~L84-85): no signature change, just the existing binds.
+
+**Android (Kotlin/Java):**
+
+- `BluetoothSdkModule.kt`
+  - `AsyncFunction("startVideoRecording")` (~L485): include
+    `maxRecordingTimeMinutes` in the request.
+  - `AsyncFunction("stopVideoRecording")` (~L506): currently takes only
+    `requestId: String`; accept `webhookUrl` + `authToken` too.
+- `MentraBluetoothSdk.kt`
+  - `startVideoRecording(request: VideoRecordingRequest)` (~L772): add
+    `maxRecordingTimeMinutes` to `VideoRecordingRequest`.
+  - `stopVideoRecording(requestId)` (~L797): thread `webhookUrl` + `authToken`.
+- `DeviceManager.kt`
+  - `startVideoRecording(...)` (~L1464): add `maxRecordingTimeMinutes`, pass to
+    `sgc?.startVideoRecording(...)`. (Note: `flash` is hardcoded `true` here.)
+  - `stopVideoRecording(requestId)` (~L1479): add `webhookUrl` + `authToken`,
+    pass to `sgc?.stopVideoRecording(...)`.
+- `sgcs/SGCManager.kt`
+  - `stopVideoRecording(requestId)` abstract (~L55): add `webhookUrl`,
+    `authToken`. For start, add `maxRecordingTimeMinutes` to the rich
+    `startVideoRecording` overload (~L43).
+- `sgcs/MentraLive.java`
+  - `startVideoRecording(...)` (~L7014): put `maxRecordingTimeMinutes` into the
+    JSON when `> 0`.
+  - `stopVideoRecording(...)` (~L7050): put `webhookUrl` / `authToken` into the
+    JSON when present.
+- **Other SGC impls** (`G1.java`, `G2.kt`, `Mach1.java`, `MentraNex.kt`,
+  `Simulated.kt`, controllers): signature must compile, but they can no-op — only
+  `MentraLive` records video.
+
+**iOS (Swift) — mirror every Android change:**
+
+- `BluetoothSdkModule.swift`, `MentraBluetoothSDK.swift`, `DeviceManager.swift`,
+  `sgcs/SGCManager.swift`, `sgcs/MentraLive.swift` (JSON build at ~L5282 start /
+  ~L5316 stop), and the other SGC impls (`G1`, `G2`, `Mach1`, `MentraNex`,
+  `Simulated`, `Frame`).
+
+### Pattern gotchas
+
+- **Abstract interface + overloads.** `SGCManager` is abstract and implemented by
+  every glasses class. Prefer adding a richer overload that delegates to the
+  basic one (see the existing `startVideoRecording` overload in `SGCManager.kt`)
+  so non-camera devices don't all need real implementations.
+- **Always mirror iOS and Android.** Forgetting one platform is the classic bug
+  in this module — every command exists twice.
+- **Empty webhook = keep on device.** Match the glasses contract: an empty/absent
+  `webhookUrl` must mean "no upload", not an error.
+
+## Phone message handler (done)
+
+`mobile/src/services/SocketComms.ts` now extracts the new fields from the cloud
+message and forwards them into the SDK calls (mirroring `handle_photo_request`):
+
+- `handle_stop_video_recording`: reads `webhookUrl` + `authToken` and calls
+  `BluetoothSdk.stopVideoRecording(requestId, webhookUrl, authToken)`. Empty
+  webhook = keep on device.
+- `handle_start_video_recording`: reads `maxRecordingTimeMinutes` and includes it
+  in the `settings` object passed to `BluetoothSdk.startVideoRecording(...)`.
+
+## Remaining (cloud — out of scope here, required for end-to-end)
+
+The phone is now ready to receive and forward these fields, but nothing populates
+them for video yet:
+
+- The cloud has **no** video recording API and does not send `webhookUrl` /
+  `authToken` in `stop_video_recording` (grep of `cloud/packages/` finds nothing).
+  The cloud must expose a video API and populate the upload target on stop
+  (mirroring how it does for `photo_request`).
+
+This is tracked separately; this doc covers the glasses, Bluetooth SDK, and phone
+message-handler layers.
+
+## Related
+
+- Glasses commit: `dc35cc1` (feat: upload recorded video to webhook on stop)
+- BLE command path reference: `docs/bluetooth-sdk-subsystem-tracing.md`
+- Photo upload reference: `requestPhoto` path + `MediaCaptureService.performDirectUpload`

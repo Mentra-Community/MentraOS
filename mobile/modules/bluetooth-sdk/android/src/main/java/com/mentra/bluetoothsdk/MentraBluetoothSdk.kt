@@ -787,6 +787,7 @@ class MentraBluetoothSdk private constructor(
                     request.width,
                     request.height,
                     request.fps,
+                    request.maxRecordingTimeMinutes,
             )
             return pending.await()
         } finally {
@@ -794,7 +795,11 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    fun stopVideoRecording(requestId: String): VideoRecordingStatusEvent {
+    fun stopVideoRecording(
+            requestId: String,
+            webhookUrl: String?,
+            authToken: String?,
+    ): VideoRecordingStatusEvent {
         require(requestId.isNotBlank()) { "requestId is required to stop video recording." }
         val pending = PendingResponse<VideoRecordingStatusEvent>("stop video recording")
         val pendingRequest = PendingVideoRecordingRequest("recording_stopped", pending)
@@ -805,7 +810,7 @@ class MentraBluetoothSdk private constructor(
             )
         }
         try {
-            deviceManager.stopVideoRecording(requestId)
+            deviceManager.stopVideoRecording(requestId, webhookUrl, authToken)
             return pending.await()
         } finally {
             pendingVideoRecordingRequests.remove(requestId, pendingRequest)

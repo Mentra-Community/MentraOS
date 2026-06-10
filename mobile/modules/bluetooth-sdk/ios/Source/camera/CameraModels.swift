@@ -229,9 +229,12 @@ public struct VideoRecordingRequest {
     public let width: Int
     public let height: Int
     public let fps: Int
+    // Optional auto-stop timer in minutes; 0 = record until stopped/interrupted.
+    public let maxRecordingTimeMinutes: Int
 
     public init(
-        requestId: String, save: Bool, sound: Bool, width: Int = 0, height: Int = 0, fps: Int = 0
+        requestId: String, save: Bool, sound: Bool, width: Int = 0, height: Int = 0, fps: Int = 0,
+        maxRecordingTimeMinutes: Int = 0
     ) {
         self.requestId = requestId
         self.save = save
@@ -239,6 +242,7 @@ public struct VideoRecordingRequest {
         self.width = width
         self.height = height
         self.fps = fps
+        self.maxRecordingTimeMinutes = maxRecordingTimeMinutes
     }
 }
 
