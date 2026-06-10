@@ -86,13 +86,22 @@ await BluetoothSdk.connect(device, {saveAsDefault: false});
 
 await BluetoothSdk.setDefaultDevice(device);
 
-const defaultDevice = await BluetoothSdk.getDefaultDevice();
-await BluetoothSdk.connectDefault();
-await BluetoothSdk.clearDefaultDevice();
+async function reconnectSavedDevice() {
+  const defaultDevice = await BluetoothSdk.getDefaultDevice();
+  if (defaultDevice) {
+    await BluetoothSdk.connectDefault();
+  }
+}
 
-await BluetoothSdk.cancelConnectionAttempt();
-await BluetoothSdk.disconnect();
-await BluetoothSdk.forget();
+async function clearSavedDevice() {
+  await BluetoothSdk.clearDefaultDevice();
+}
+
+async function stopConnection() {
+  await BluetoothSdk.cancelConnectionAttempt();
+  await BluetoothSdk.disconnect();
+  await BluetoothSdk.forget();
+}
 ```
 
   </Tab>
@@ -100,23 +109,31 @@ await BluetoothSdk.forget();
 
 ```kotlin
 val devices = mutableListOf<Device>()
-var selectedDevice: Device? = null
 val scanSession = sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { nextDevices ->
     devices.clear()
     devices.addAll(nextDevices)
-    renderDevicePicker(nextDevices, onSelect = { selectedDevice = it })
+    renderDevicePicker(nextDevices, onSelect = { device ->
+        sdk.connect(device)
+        sdk.setDefaultDevice(device)
+    })
 }
 
-val device = selectedDevice ?: return
-sdk.connect(device)
-sdk.setDefaultDevice(device)
-val defaultDevice = sdk.getDefaultDevice()
-sdk.connectDefault()
-sdk.clearDefaultDevice()
+fun reconnectSavedDevice() {
+    val defaultDevice = sdk.getDefaultDevice()
+    if (defaultDevice != null) {
+        sdk.connectDefault()
+    }
+}
 
-sdk.cancelConnectionAttempt()
-sdk.disconnect()
-sdk.forget()
+fun clearSavedDevice() {
+    sdk.clearDefaultDevice()
+}
+
+fun stopConnection() {
+    sdk.cancelConnectionAttempt()
+    sdk.disconnect()
+    sdk.forget()
+}
 ```
 
   </Tab>
@@ -124,24 +141,33 @@ sdk.forget()
 
 ```swift
 var devices: [Device] = []
-var selectedDevice: Device? = nil
 let scanSession = try sdk.scan(model: .mentraLive, timeout: 10) { nextDevices in
     devices = nextDevices
     renderDevicePicker(nextDevices) { device in
-        selectedDevice = device
+        do {
+            try sdk.connect(to: device)
+            sdk.setDefaultDevice(device)
+        } catch {
+            handleConnectionError(error)
+        }
     }
 }
 
-guard let device = selectedDevice else { return }
-try sdk.connect(to: device)
-sdk.setDefaultDevice(device)
-let defaultDevice = sdk.getDefaultDevice()
-try sdk.connectDefault()
-sdk.clearDefaultDevice()
+func reconnectSavedDevice() throws {
+    if sdk.getDefaultDevice() != nil {
+        try sdk.connectDefault()
+    }
+}
 
-sdk.cancelConnectionAttempt()
-sdk.disconnect()
-sdk.forget()
+func clearSavedDevice() {
+    sdk.clearDefaultDevice()
+}
+
+func stopConnection() {
+    sdk.cancelConnectionAttempt()
+    sdk.disconnect()
+    sdk.forget()
+}
 ```
 
   </Tab>

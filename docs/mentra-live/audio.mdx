@@ -195,7 +195,20 @@ let session = AVAudioSession.sharedInstance()
 try session.setCategory(.playback, mode: .default, options: [.duckOthers])
 try session.setActive(true)
 
-let player = AVPlayer(url: audioUrl)
+let item = AVPlayerItem(url: audioUrl)
+let player = AVPlayer(playerItem: item)
+var playbackEndObserver: NSObjectProtocol?
+playbackEndObserver = NotificationCenter.default.addObserver(
+    forName: .AVPlayerItemDidPlayToEndTime,
+    object: item,
+    queue: .main
+) { _ in
+    sdk.setOwnAppAudioPlaying(false)
+    if let observer = playbackEndObserver {
+        NotificationCenter.default.removeObserver(observer)
+    }
+}
+
 sdk.setOwnAppAudioPlaying(true)
 player.play()
 ```
