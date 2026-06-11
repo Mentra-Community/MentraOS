@@ -18,7 +18,7 @@ image:
 
 services:
   - name: mongo
-    type: web
+    type: worker
     port: 27017
     cpuCores: 0.5
     ramMegabytes: 1024

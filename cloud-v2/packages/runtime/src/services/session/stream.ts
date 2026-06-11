@@ -1,7 +1,7 @@
 /**
  * @fileoverview Audio Redis substrate. Owns three pieces of state in Redis:
  *
- *   1. **Per-user audio streams** (`audio:{mentraUserId}`). XADDed by any pod
+ *   1. **Per-user audio streams** (`{user:mentraUserId}:audio`). XADDed by any pod
  *      that receives a UDP packet for that user; XREADGROUPed by the owner
  *      pod (whichever pod holds the WS). Bounded by MAXLEN ~ retained-window.
  *
@@ -24,7 +24,7 @@ import { UDP_LIVENESS_PROBE_PREFIX } from "../../protocol/audio";
 
 /** Per-user audio stream key. */
 export function audioStreamKey(mentraUserId: string): string {
-  return `audio:${mentraUserId}`;
+  return `{user:${mentraUserId}}:audio`;
 }
 
 /** 6-byte UDP/WS audio packet header: [sessionTag:u32 BE][sequence:u16 BE]. */
@@ -296,14 +296,16 @@ function sessionTagKey(tag: number): string {
 export async function registerSessionTag(
   tag: number,
   record: SessionTagRecord,
-): Promise<void> {
+): Promise<boolean> {
   const redis = getRedis();
-  await redis.set(
+  const result = await redis.set(
     sessionTagKey(tag),
     JSON.stringify(record),
     "EX",
     SESSION_TAG_TTL_SEC,
+    "NX",
   );
+  return result === "OK";
 }
 
 export async function refreshSessionTag(tag: number): Promise<void> {

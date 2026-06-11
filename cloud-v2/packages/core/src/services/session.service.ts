@@ -39,7 +39,7 @@ import {
   type TokenResponse,
 } from "../types/oauth.types";
 import { findOrCreateUser } from "./user.service";
-import { verifyOemJwt } from "./oem.service";
+import { recordSeenJti, verifyOemJwt } from "./oem.service";
 
 const logger = createLogger("core").child({ service: "session.service" });
 
@@ -114,6 +114,22 @@ export async function createSession(args: {
     oemId: identity.oemId,
   });
 
+  if (identity.jti) {
+    if (typeof identity.exp !== "number") {
+      throw new InvalidGrant("subject_token missing 'exp' claim");
+    }
+    try {
+      await recordSeenJti({
+        jti: identity.jti,
+        oemId: identity.oemId,
+        expUnixSec: identity.exp,
+      });
+    } catch (err) {
+      await RefreshTokenModel.deleteOne({ sessionId });
+      throw err;
+    }
+  }
+
   logger.info(
     { sessionId, mentraUserId: user.mentraUserId, oemId: identity.oemId },
     "session created",
@@ -129,19 +145,18 @@ export async function createSession(args: {
 
 /**
  * Refresh flow. Hashes the presented refresh token, looks up the session,
- * checks the OEM is still enabled, rotates: deletes the old refresh-token
- * doc and inserts a new one. Returns fresh access + refresh tokens.
+ * checks the OEM is still enabled, rotates the stored refresh-token hash in
+ * place, and returns fresh access + refresh tokens.
  */
 export async function refreshSession(args: {
   refreshToken: string;
 }): Promise<TokenResponse> {
   const presentedHash = hashRefreshToken(args.refreshToken);
 
-  // Atomically grab and delete the old row. If it's gone (already rotated
-  // or revoked), the refresh fails. This single-shot delete is the
-  // single-use guarantee.
-  const oldDoc = await RefreshTokenModel.findOneAndDelete({
+  const now = new Date();
+  const oldDoc = await RefreshTokenModel.findOne({
     refreshTokenHash: presentedHash,
+    expiresAt: { $gt: now },
   }).lean();
   if (!oldDoc) {
     throw new InvalidGrant("refresh_token unknown, expired, or already used");
@@ -165,15 +180,31 @@ export async function refreshSession(args: {
     oemId: oldDoc.oemId,
     sessionId: oldDoc.sessionId,
   });
-  const refreshToken = await issueRefreshToken({
-    sessionId: oldDoc.sessionId,
-    mentraUserId: oldDoc.mentraUserId,
-    oemId: oldDoc.oemId,
-  });
+  const nextRefresh = mintRefreshToken();
+
+  // Single-use guarantee: only the request still holding the current hash can
+  // rotate it. A concurrent refresh that arrives milliseconds later sees no
+  // matching current hash and fails instead of minting a second live token.
+  const rotated = await RefreshTokenModel.findOneAndUpdate(
+    {
+      refreshTokenHash: presentedHash,
+      expiresAt: { $gt: new Date() },
+    },
+    {
+      $set: {
+        refreshTokenHash: nextRefresh.hash,
+        issuedAt: new Date(),
+        expiresAt: nextRefresh.expiresAt,
+      },
+    },
+  ).lean();
+  if (!rotated) {
+    throw new InvalidGrant("refresh_token unknown, expired, or already used");
+  }
 
   return {
     access_token: accessToken,
-    refresh_token: refreshToken,
+    refresh_token: nextRefresh.plaintext,
     token_type: "Bearer",
     expires_in: ACCESS_TOKEN_TTL_SEC,
   };
@@ -317,7 +348,12 @@ function miniappTokenTtlSec(): number {
  */
 async function resolveSubjectIdentity(
   subjectToken: string,
-): Promise<{ oemId: string; oemUserId: string }> {
+): Promise<{
+  oemId: string;
+  oemUserId: string;
+  jti?: string;
+  exp?: number;
+}> {
   let alg: string;
   let iss: string | undefined;
   try {
@@ -337,7 +373,12 @@ async function resolveSubjectIdentity(
   }
 
   const verified = await verifyOemJwt(subjectToken);
-  return { oemId: verified.oemId, oemUserId: verified.oemUserId };
+  return {
+    oemId: verified.oemId,
+    oemUserId: verified.oemUserId,
+    jti: verified.jti,
+    exp: verified.exp,
+  };
 }
 
 /**
@@ -528,21 +569,32 @@ async function issueRefreshToken(args: {
   mentraUserId: string;
   oemId: string;
 }): Promise<string> {
-  // 32 bytes of randomness, base64url-encoded → ~43 chars, 256 bits entropy.
-  const plaintext = crypto.randomBytes(32).toString("base64url");
-  const hash = hashRefreshToken(plaintext);
-  const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_SEC * 1000);
+  const token = mintRefreshToken();
 
   await RefreshTokenModel.create({
     sessionId: args.sessionId,
-    refreshTokenHash: hash,
+    refreshTokenHash: token.hash,
     mentraUserId: args.mentraUserId,
     oemId: args.oemId,
     issuedAt: new Date(),
-    expiresAt,
+    expiresAt: token.expiresAt,
   });
 
-  return plaintext;
+  return token.plaintext;
+}
+
+function mintRefreshToken(): {
+  plaintext: string;
+  hash: string;
+  expiresAt: Date;
+} {
+  // 32 bytes of randomness, base64url-encoded → ~43 chars, 256 bits entropy.
+  const plaintext = crypto.randomBytes(32).toString("base64url");
+  return {
+    plaintext,
+    hash: hashRefreshToken(plaintext),
+    expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_SEC * 1000),
+  };
 }
 
 /**

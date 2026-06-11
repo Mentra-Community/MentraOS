@@ -45,13 +45,10 @@ import {
 import {convertToPinyin} from "../../core/ChineseUtils"
 import {languageToLocale} from "../../core/languageLocale"
 import type {Channels} from "../../shared/channels"
-import type {CaptionSettings, DisplayPreview, Transcript} from "../../shared/types"
+import type {CaptionSettings, CaptionsSnapshot, DisplayPreview, Transcript} from "../../shared/types"
 
 type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]) => void
-type On = <C extends keyof Channels & string>(
-  channel: C,
-  cb: (payload: Channels[C]) => void,
-) => () => void
+type On = <C extends keyof Channels & string>(channel: C, cb: (payload: Channels[C]) => void) => () => void
 
 interface TranscriptEntry {
   id: string
@@ -69,7 +66,7 @@ const DEFAULT_SETTINGS: CaptionSettings = {
   languageHints: [],
   displayLines: 3,
   displayWidth: 1, // 0=Narrow, 1=Medium, 2=Wide
-  wordBreaking: true,
+  wordBreaking: false,
 }
 
 const STORAGE_KEYS = {
@@ -87,19 +84,10 @@ function getProfileForModel(modelName: string | null | undefined): DisplayProfil
   if (lower.includes("g1") || lower.includes("even realities") || lower.includes("even_g1")) {
     return G1_PROFILE
   }
-  if (
-    lower.includes("z100") ||
-    lower.includes("vuzix") ||
-    lower.includes("mach1") ||
-    lower.includes("mach 1")
-  ) {
+  if (lower.includes("z100") || lower.includes("vuzix") || lower.includes("mach1") || lower.includes("mach 1")) {
     return Z100_PROFILE
   }
-  if (
-    lower.includes("nex") ||
-    lower.includes("mentra display") ||
-    lower.includes("mentra_nex")
-  ) {
+  if (lower.includes("nex") || lower.includes("mentra display") || lower.includes("mentra_nex")) {
     return NEX_PROFILE
   }
   return G1_PROFILE
@@ -190,9 +178,7 @@ export class CaptionsController {
     this.subscribeCloudStatus()
 
     this.registerUiHandlers()
-    console.log(
-      `LocalCaptions: started (lang=${this.settings.language}, profile=${this.currentProfile.id})`,
-    )
+    console.log(`LocalCaptions: started (lang=${this.settings.language}, profile=${this.currentProfile.id})`)
   }
 
   stop(): void {
@@ -228,12 +214,13 @@ export class CaptionsController {
     // + /api/settings hydration).
     this.unsubs.push(
       this.ui.onOpen(() => {
-        this.ui.send("captions:snapshot", {
-          settings: {...this.settings},
-          transcripts: this.publicTranscripts(),
-          displayPreview: this.lastDisplayPreview,
-          cloudStatus: {...this.cloudStatus},
-        })
+        this.sendSnapshot()
+      }),
+    )
+
+    this.unsubs.push(
+      this.ui.on("captions:request-snapshot", () => {
+        this.sendSnapshot()
       }),
     )
 
@@ -268,6 +255,16 @@ export class CaptionsController {
         this.clearTranscripts()
       }),
     )
+  }
+
+  private sendSnapshot(): void {
+    const snapshot: CaptionsSnapshot = {
+      settings: {...this.settings},
+      transcripts: this.publicTranscripts(),
+      displayPreview: this.lastDisplayPreview,
+      cloudStatus: {...this.cloudStatus},
+    }
+    this.ui.send("captions:snapshot", snapshot)
   }
 
   // ───────────────────────────────────────────────────────────────────────
@@ -309,7 +306,7 @@ export class CaptionsController {
         return p
       })()
 
-      this.settings.wordBreaking = wbRaw == null ? true : wbRaw === "true"
+      this.settings.wordBreaking = wbRaw == null ? DEFAULT_SETTINGS.wordBreaking : wbRaw === "true"
     } catch (err) {
       console.log("LocalCaptions: failed to load settings, using defaults", err)
       this.settings = {...DEFAULT_SETTINGS}
@@ -575,18 +572,10 @@ export class CaptionsController {
 
   /** Apply the current settings object to the display formatter. */
   private applySettingsToDisplay(): void {
-    this.updateDisplaySettings(
-      this.settings.displayWidth,
-      this.settings.displayLines,
-      this.settings.wordBreaking,
-    )
+    this.updateDisplaySettings(this.settings.displayWidth, this.settings.displayLines, this.settings.wordBreaking)
   }
 
-  private updateDisplaySettings(
-    displayWidth: number,
-    numberOfLines: number,
-    wordBreaking: boolean,
-  ): void {
+  private updateDisplaySettings(displayWidth: number, numberOfLines: number, wordBreaking: boolean): void {
     this.currentWidthSetting = displayWidth
     this.currentDisplayWidthPx = this.calculateDisplayWidth(displayWidth, this.currentProfile)
     this.currentMaxLines = Math.min(Math.max(2, numberOfLines), this.currentProfile.maxLines)

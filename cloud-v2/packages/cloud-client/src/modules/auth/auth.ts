@@ -217,7 +217,7 @@ export class Auth implements AuthModule {
       throw new AuthExpiredError("identity is unavailable before first sign-in");
     }
     const claims = decodeClaims(current.accessToken);
-    return { mentraUserId: claims.sub, oemId: claims.oemId };
+    return { mentraUserId: claims.sub, oemId: claims.oem_id };
   }
 
   /**

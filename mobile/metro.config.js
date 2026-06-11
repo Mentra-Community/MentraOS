@@ -98,23 +98,10 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       return (baseResolveRequest ?? context.resolveRequest)(context, target, platform)
     }
   }
-  // @mentra/island -> src/index.ts; @mentra/island/foo -> src/foo. Let Metro's
-  // default resolver (via sourceExts) pick the .ts/.tsx extension off the
-  // resulting path so we don't hardcode file extensions here.
+  // @mentra/island -> src/index.ts. Keep this limited to the public root export
+  // so future island internals do not become implicit app import surface area.
   if (moduleName === "@mentra/island") {
     return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ISLAND_SRC, "index"), platform)
-  }
-  if (moduleName.startsWith("@mentra/island/")) {
-    const subpath = moduleName.slice("@mentra/island/".length)
-    return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ISLAND_SRC, subpath), platform)
-  }
-  // @craftzdog/react-native-buffer is backed by the QuickBase64 C++ TurboModule,
-  // which is not reliably compiled into local debug builds (getEnforcing throws
-  // and breaks the v1 UDP transport). The pure-JS `buffer` package is API-
-  // compatible; alias to it so every Buffer user resolves to a dependency that
-  // works without the native module.
-  if (moduleName === "@craftzdog/react-native-buffer") {
-    return (baseResolveRequest ?? context.resolveRequest)(context, "buffer", platform)
   }
   return (baseResolveRequest ?? context.resolveRequest)(context, moduleName, platform)
 }

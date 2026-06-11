@@ -12,13 +12,12 @@
 import {CloudClient, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
 import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-runtime/protocol"
-import type {CloudClientStatusSnapshot, CloudRuntimeAdapter} from "@mentra/island"
+import {createCloudUdpSocket, type CloudClientStatusSnapshot, type CloudRuntimeAdapter} from "@mentra/island"
 
 import mentraAuth from "@/utils/auth/authClient"
 import {useCloudClientStatusStore} from "@/stores/cloudClientStatus"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
-import {createCloudUdpSocket} from "@/utils/cloudClient/RnUdpAdapter"
 import {cloudSecureStore} from "@/utils/cloudClient/MmkvSecureStore"
 
 const LOG_TAG = "cloudClient"

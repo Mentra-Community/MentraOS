@@ -77,6 +77,18 @@ export async function tryClaimOwnership(
   // Failed. Was it us or someone else?
   const current = await redis.get(ownerKey(mentraUserId));
   if (current === podId) return "already-ours";
+  if (current === null) {
+    const retry = await redis.set(
+      ownerKey(mentraUserId),
+      podId,
+      "EX",
+      OWNERSHIP_TTL_SEC,
+      "NX",
+    );
+    if (retry === "OK") return "claimed";
+    const afterRetry = await redis.get(ownerKey(mentraUserId));
+    if (afterRetry === podId) return "already-ours";
+  }
   return "owned-by-other";
 }
 
@@ -190,6 +202,7 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null;
 export function startOwnershipRefreshLoop(opts: {
   podId: string;
   getOwnedUserIds: () => Iterable<string>;
+  onLostOwnership?: (mentraUserId: string) => void;
 }): void {
   if (refreshTimer) return;
   refreshTimer = setInterval(async () => {
@@ -205,6 +218,7 @@ export function startOwnershipRefreshLoop(opts: {
             { mentraUserId: userId, podId: opts.podId },
             "ownership refresh failed, claim no longer ours",
           );
+          opts.onLostOwnership?.(userId);
         }
       }
     } catch (err) {

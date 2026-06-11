@@ -72,24 +72,29 @@ export async function readSubscriptions(
 }
 
 /**
- * Seed the key for a brand-new session, unconditionally. Called from
+ * Seed the key for a brand-new session without clobbering a live session. Called from
  * `connection.init` so the initial subscription set is in place before any
  * audio flows. A fresh handshake establishes a new `sessionId` baseline at
  * `version` 0; subsequent REST writes for that session are then guarded
- * against it by `writeSubscriptions`. Seeding is unconditional because a new
- * session legitimately replaces whatever a prior (now gone) session left
- * behind, which the session guard would otherwise reject.
+ * against it by `writeSubscriptions`.
+ *
+ * If another live socket already seeded the user's key, this returns false
+ * rather than replacing that socket's session guard. The existing key TTL is
+ * refreshed by the owner and removed on clean last-session close.
  */
 export async function seedSubscriptions(
   mentraUserId: string,
   record: SubscriptionRecord,
-): Promise<void> {
-  await getRedis().set(
+): Promise<boolean> {
+  const applied = (await getRedis().eval(
+    SEED_SCRIPT,
+    1,
     subscriptionsKey(mentraUserId),
     JSON.stringify(record),
-    "EX",
     SUBSCRIPTIONS_TTL_SEC,
-  );
+    record.sessionId,
+  )) as number;
+  return applied === 1;
 }
 
 /**
@@ -179,4 +184,21 @@ local record = string.format(
 )
 redis.call("SET", KEYS[1], record, "EX", ttl)
 return {1, "", newVersion}
+`;
+
+const SEED_SCRIPT = `
+local existing = redis.call("GET", KEYS[1])
+local record = ARGV[1]
+local ttl = ARGV[2]
+local newSession = ARGV[3]
+
+if existing then
+  local decoded = cjson.decode(existing)
+  if decoded.sessionId ~= newSession then
+    return 0
+  end
+end
+
+redis.call("SET", KEYS[1], record, "EX", ttl)
+return 1
 `;

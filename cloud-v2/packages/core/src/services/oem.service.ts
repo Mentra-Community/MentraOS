@@ -8,7 +8,8 @@
  *     (static mode) or fetching the OEM's JWKS URL via jose's cached fetcher
  *     (JWKS-URL mode).
  *   - End-to-end verification of an OEM-signed JWT: signature + claims
- *     (aud, exp, iat skew) + replay protection (jti).
+ *     (aud, exp, iat skew).
+ *   - Recording accepted OEM JWT `jti` values after session creation.
  *
  * What it does NOT own:
  *   - Issuing Mentra access/refresh tokens (session.service).
@@ -62,7 +63,8 @@ export async function getOem(oemId: string): Promise<Oem | null> {
  *   2. Look up OEM. Unknown or disabled → `unauthorized_client`.
  *   3. Resolve public key (static PEM or JWKS URL).
  *   4. Verify signature + standard claims (aud, exp, iat skew).
- *   5. Replay-check `jti` via SeenJtiModel; insert on success.
+ *   5. Return verified identity; session.service records `jti` only after
+ *      the Mentra session is persisted.
  */
 export async function verifyOemJwt(jwt: string): Promise<VerifiedOemJwt> {
   // Step 1 — peek at iss without verifying. If the JWT is so malformed we
@@ -99,12 +101,6 @@ export async function verifyOemJwt(jwt: string): Promise<VerifiedOemJwt> {
   if (typeof payload.iat !== "number") {
     throw new InvalidGrant("subject_token missing 'iat' claim");
   }
-
-  // Step 5 — replay check and record. We do this AFTER signature verification
-  // (no point recording garbage tokens) and BEFORE returning success (the
-  // exchange isn't atomic with this insert, but the unique index on
-  // (jti, oemId) means a concurrent replay loses the race).
-  await recordSeenJti({ jti, oemId, expUnixSec: payload.exp });
 
   // Pass through anything that isn't a standard claim, for the audio path or
   // downstream services that want OEM-supplied metadata (e.g. display name).
@@ -237,11 +233,13 @@ function getJwksFetcher(url: string) {
 }
 
 /**
- * Record a successful OEM JWT acceptance for replay protection. Throws
+ * Record a successful OEM JWT acceptance for replay protection. Call this
+ * after the Mentra session is persisted, so a transient session-creation
+ * failure does not consume the OEM JWT's one-time `jti`. Throws
  * `invalid_grant` if the same (jti, oemId) was already recorded — that's a
  * replay attempt.
  */
-async function recordSeenJti(args: {
+export async function recordSeenJti(args: {
   jti: string;
   oemId: string;
   expUnixSec: number;

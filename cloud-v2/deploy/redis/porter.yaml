@@ -17,7 +17,7 @@ image:
 
 services:
   - name: redis
-    type: web
+    type: worker
     # Disable persistence — Redis here is coordination + stream buffer,
     # not durable state. Matches the dev docker config.
     run: redis-server --save "" --appendonly no

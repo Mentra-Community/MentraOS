@@ -24,6 +24,7 @@ const logger = createLogger("audio").child({ component: "redis" });
 
 let mainClient: Redis | null = null;
 let streamsClient: Redis | null = null;
+let connectPromise: Promise<void> | null = null;
 
 /**
  * Open Redis connections. Idempotent: calling twice with the same URL is a
@@ -31,17 +32,36 @@ let streamsClient: Redis | null = null;
  * backoff thereafter.
  */
 export async function connectRedis(url: string): Promise<void> {
-  if (mainClient && mainClient.status === "ready") {
+  if (mainClient?.status === "ready" && streamsClient?.status === "ready") {
     logger.warn("connectRedis called while already connected; ignoring");
     return;
   }
 
-  mainClient = buildClient(url, "main");
-  streamsClient = buildClient(url, "streams");
+  if (connectPromise) return connectPromise;
 
-  // Wait for both to report ready before returning. Either failing here
-  // surfaces the misconfiguration at boot rather than at first command.
-  await Promise.all([waitReady(mainClient), waitReady(streamsClient)]);
+  connectPromise = (async () => {
+    await closeClients();
+
+    const nextMain = buildClient(url, "main");
+    const nextStreams = buildClient(url, "streams");
+    mainClient = nextMain;
+    streamsClient = nextStreams;
+
+    try {
+      // Wait for both to report ready before returning. Either failing here
+      // surfaces the misconfiguration at boot rather than at first command.
+      await Promise.all([waitReady(nextMain), waitReady(nextStreams)]);
+    } catch (err) {
+      await closeClients(nextMain, nextStreams);
+      if (mainClient === nextMain) mainClient = null;
+      if (streamsClient === nextStreams) streamsClient = null;
+      throw err;
+    }
+  })().finally(() => {
+    connectPromise = null;
+  });
+
+  return connectPromise;
 }
 
 function buildClient(url: string, label: string): Redis {
@@ -95,12 +115,19 @@ export function getRedisStreams(): Redis {
 
 /** Close both clients. Call from graceful-shutdown handlers. */
 export async function disconnectRedis(): Promise<void> {
-  await Promise.all([
-    mainClient?.quit().catch(() => undefined),
-    streamsClient?.quit().catch(() => undefined),
-  ]);
+  await closeClients();
   mainClient = null;
   streamsClient = null;
+}
+
+async function closeClients(
+  main: Redis | null = mainClient,
+  streams: Redis | null = streamsClient,
+): Promise<void> {
+  await Promise.all([
+    main?.quit().catch(() => undefined),
+    streams?.quit().catch(() => undefined),
+  ]);
 }
 
 /**

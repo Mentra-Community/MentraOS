@@ -16,12 +16,17 @@
 
 import { hostname } from "node:os";
 import pino, { type Logger, type LoggerOptions } from "pino";
-import PinoPretty from "pino-pretty";
 
 const NODE_ENV = process.env.NODE_ENV ?? "development";
 const REGION = process.env.REGION ?? process.env.DEPLOYMENT_REGION ?? "local";
 const LOG_LEVEL = process.env.LOG_LEVEL ?? (NODE_ENV === "production" ? "info" : "debug");
 const LOG_STDOUT_JSON = process.env.LOG_STDOUT_JSON === "true";
+
+type PrettyFactory = typeof import("pino-pretty").default;
+
+const PinoPretty: PrettyFactory | null = LOG_STDOUT_JSON
+  ? null
+  : (await import("pino-pretty")).default;
 
 function podHostname(): string {
   if (NODE_ENV === "production") {

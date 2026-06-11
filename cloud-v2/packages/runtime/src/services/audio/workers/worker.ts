@@ -31,7 +31,12 @@ import {LC3Decoder} from "./lc3"
 import {createMockProvider} from "../providers/mock"
 import {createSonioxProvider} from "../providers/soniox"
 import type {TranscriptionProvider, TranscriptEvent} from "../providers/provider"
-import type {AudioSubscription, LanguageSource, TranscriptionSubscription} from "../../session/subscriptions"
+import {
+  subscriptionKey,
+  type AudioSubscription,
+  type LanguageSource,
+  type TranscriptionSubscription,
+} from "../../session/subscriptions"
 
 // === Worker IPC types ===
 
@@ -195,9 +200,9 @@ const POD_ID = process.env.POD_ID ?? "pod"
 const CONSUMER_NAME = `${POD_ID}:${WORKER_ID}`
 
 const XREAD_COUNT_PER_STREAM = 100
-const XREAD_BLOCK_MS = 1000
+const XREAD_IDLE_SLEEP_MS = 50
 const XAUTOCLAIM_COUNT = 500
-const XAUTOCLAIM_MIN_IDLE_MS = 5_000
+const XAUTOCLAIM_MIN_IDLE_MS = 0
 const XAUTOCLAIM_LOOP_INTERVAL_MS = 2_000
 
 // Note: we DO want offline queue here, unlike the audio-ingress XADD path.
@@ -308,7 +313,7 @@ async function reconcileProviders(mentraUserId: string, subs: AudioSubscription[
   // carry a `kind` discriminator so the client knows which is which.
   const desired = new Map<string, AudioSubscription>()
   for (const sub of subs) {
-    desired.set(subscriptionKeyFor(sub), sub)
+    desired.set(subscriptionKey(sub), sub)
   }
 
   // Close providers whose subs are gone.
@@ -365,20 +370,7 @@ function shouldKeepProvider(mentraUserId: string, key: string): boolean {
   if (!ownedUsers.has(mentraUserId)) return false
   if (!userProviders.has(mentraUserId)) return false
   const subs = userSubs.get(mentraUserId) ?? []
-  return subs.some((sub) => subscriptionKeyFor(sub) === key)
-}
-
-function subscriptionKeyFor(sub: AudioSubscription): string {
-  if (sub.kind === "transcription") {
-    return `t:${langKey(sub.language)}`
-  }
-  return `x:${langKey(sub.source)}>${sub.target}`
-}
-
-function langKey(lang: LanguageSource): string {
-  if (lang.mode === "specific") return `s:${lang.code}`
-  const hints = lang.hints ? [...lang.hints].sort().join(",") : ""
-  return `a:${hints}`
+  return subs.some((sub) => subscriptionKey(sub) === key)
 }
 
 function langCode(lang: LanguageSource): string {
@@ -646,43 +638,43 @@ async function freshReadLoop(): Promise<void> {
       continue
     }
 
-    // STREAMS k1 k2 k3 ... > > > ... — one `>` per stream means
-    // "give me entries no one in this group has seen yet."
-    const streams = users.map(audioStreamKey)
-    const ids = users.map(() => ">")
+    let sawEntries = false
+    for (const userId of users) {
+      try {
+        // One stream per command: Redis Cluster requires all keys in a command
+        // to share a hash slot, and each user's audio stream intentionally
+        // hashes to that user. A per-user read avoids CROSSSLOT while keeping
+        // the worker's ownership set unchanged.
+        const result = (await streamsClient.xreadgroup(
+          "GROUP",
+          AUDIO_STREAM_GROUP,
+          CONSUMER_NAME,
+          "COUNT",
+          XREAD_COUNT_PER_STREAM,
+          "STREAMS",
+          audioStreamKey(userId),
+          ">",
+        )) as Array<[string, Array<[string, string[]]>]> | null
 
-    try {
-      const result = (await streamsClient.xreadgroup(
-        "GROUP",
-        AUDIO_STREAM_GROUP,
-        CONSUMER_NAME,
-        "COUNT",
-        XREAD_COUNT_PER_STREAM,
-        "BLOCK",
-        XREAD_BLOCK_MS,
-        "STREAMS",
-        ...streams,
-        ...ids,
-      )) as Array<[string, Array<[string, string[]]>]> | null
-
-      if (result) await processBatch(result, "live")
-    } catch (err) {
-      const msg = (err as Error).message ?? ""
-      // NOGROUP can happen if a stream got DEL'd out from under us (tests
-      // wipe Redis between cases; production this would only happen if
-      // someone manually nuked a stream key). Re-ensure groups for all
-      // currently-owned users — the next iteration picks up cleanly.
-      // We DON'T remove the user from readyUsers because the user is
-      // still legitimately owned; the stream just needs recreating.
-      if (msg.includes("NOGROUP")) {
-        for (const userId of [...readyUsers]) {
-          await ensureConsumerGroup(userId)
+        if (result) {
+          sawEntries = true
+          await processBatch(result, "live")
         }
-        continue
+      } catch (err) {
+        const msg = (err as Error).message ?? ""
+        // NOGROUP can happen if a stream got DEL'd out from under us (tests
+        // wipe Redis between cases; production this would only happen if
+        // someone manually nuked a stream key). Re-ensure this user's group;
+        // the next iteration picks up cleanly.
+        if (msg.includes("NOGROUP")) {
+          await ensureConsumerGroup(userId)
+          continue
+        }
+        console.error("[audio-worker] xreadgroup failed:", err)
+        await Bun.sleep(500)
       }
-      console.error("[audio-worker] xreadgroup failed:", err)
-      await Bun.sleep(500)
     }
+    if (!sawEntries) await Bun.sleep(XREAD_IDLE_SLEEP_MS)
   }
 }
 

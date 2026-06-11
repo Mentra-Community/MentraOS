@@ -11,9 +11,9 @@
  * Boot flow:
  *   1. Client opens WS to `/ws/session` with `Authorization: Bearer <access_token>`.
  *   2. We verify the access token via the shared verifier.
- *   3. We mint a random u32 sessionTag, register `tag → identity` BOTH locally
- *      (fast-path lookup for packets that land on this same pod) AND in Redis
- *      (so packets that land on other pods can still resolve who this is for).
+ *   3. We reserve a random u32 sessionTag in Redis with NX, then register it
+ *      locally on open (fast-path lookup for same-pod packets). Redis makes
+ *      cross-pod collision checks authoritative.
  *   4. Client sends `connection.init` (codec + initial subscriptions); we
  *      answer with `connection.ack` carrying the sessionTag + UDP coordinates.
  *   5. Client starts sending UDP packets with the sessionTag in the header;
@@ -146,6 +146,45 @@ export function getOwnedUserIds(): Iterable<string> {
   return sessionsPerUser.keys();
 }
 
+/** Detach local sessions after Redis says this pod no longer owns the user. */
+export function dropUserSessionsForLostOwnership(mentraUserId: string): void {
+  const entries = [...sessionByTag.values()].filter(
+    (entry) => entry.data.mentraUserId === mentraUserId,
+  );
+
+  sessionsPerUser.delete(mentraUserId);
+  releaseUser(mentraUserId);
+  deleteSubscriptions(mentraUserId).catch((err) => {
+    logger.warn(
+      { err, mentraUserId },
+      "subscription key delete failed after lost ownership",
+    );
+  });
+
+  for (const entry of entries) {
+    sessionByTag.delete(entry.data.sessionTag);
+    const interval = refreshIntervals.get(entry.data.sessionTag);
+    if (interval) {
+      clearInterval(interval);
+      refreshIntervals.delete(entry.data.sessionTag);
+    }
+    unregisterSessionTag(entry.data.sessionTag).catch((err) => {
+      logger.warn(
+        { err, sessionTag: entry.data.sessionTag },
+        "sessionTag unregister failed after lost ownership",
+      );
+    });
+    try {
+      entry.ws.close(1012, "ownership lost");
+    } catch (err) {
+      logger.warn(
+        { err, sessionTag: entry.data.sessionTag },
+        "ws close failed after lost ownership",
+      );
+    }
+  }
+}
+
 /**
  * Send a worker-emitted message to all of the user's open WebSocket sessions
  * on this pod (typically one). Called by `worker-pool.onTranscript`.
@@ -234,17 +273,40 @@ export async function tryWsUpgrade(
     return new Response("user already owned by another pod", { status: 409 });
   }
 
-  const sessionTag = mintSessionTag();
+  const audioSessionId = `audio_${ulid()}`;
+  const encryptionKeyB64 = crypto.randomBytes(32).toString("base64");
+  const tagRecord = {
+    mentraUserId: verified.mentraUserId,
+    oemId: verified.oemId,
+    audioSessionId,
+    authSessionId: verified.sessionId,
+    podId,
+    encryptionKeyB64,
+  };
+  let sessionTag: number;
+  try {
+    sessionTag = await reserveSessionTag(tagRecord);
+  } catch (err) {
+    if (claim === "claimed" && !sessionsPerUser.has(verified.mentraUserId)) {
+      releaseOwnership(verified.mentraUserId, podId).catch(() => undefined);
+    }
+    logger.error(
+      { err, mentraUserId: verified.mentraUserId },
+      "failed to reserve sessionTag",
+    );
+    return new Response("could not reserve session tag", { status: 503 });
+  }
+
   const data: WsData = {
     sessionTag,
-    audioSessionId: `audio_${ulid()}`,
+    audioSessionId,
     mentraUserId: verified.mentraUserId,
     oemId: verified.oemId,
     authSessionId: verified.sessionId,
-    // 32-byte secretbox key for this session. Minted here so it is in `ws.data`
-    // when the `open` handler registers the sessionTag (which carries the key
-    // to Redis so any ingress pod can decrypt). Sent to the client at ack.
-    encryptionKeyB64: crypto.randomBytes(32).toString("base64"),
+    // 32-byte secretbox key for this session. Stored in Redis with the reserved
+    // sessionTag so any ingress pod can decrypt UDP frames. Sent to the client
+    // at ack.
+    encryptionKeyB64,
   };
 
   const upgraded = server.upgrade(req, { data });
@@ -255,6 +317,7 @@ export async function tryWsUpgrade(
     if (claim === "claimed" && !sessionsPerUser.has(verified.mentraUserId)) {
       releaseOwnership(verified.mentraUserId, podId).catch(() => undefined);
     }
+    unregisterSessionTag(sessionTag).catch(() => undefined);
     return new Response("upgrade failed", { status: 400 });
   }
   return undefined;
@@ -299,24 +362,6 @@ export const wsHandlers: WebSocketHandler<WsData> = {
       },
       "ws session opened",
     );
-
-    // Register in Redis so other pods can resolve this tag. Fire-and-forget;
-    // local map is the fast-path so same-pod packets work even if this fails.
-    registerSessionTag(ws.data.sessionTag, {
-      mentraUserId: ws.data.mentraUserId,
-      oemId: ws.data.oemId,
-      audioSessionId: ws.data.audioSessionId,
-      authSessionId: ws.data.authSessionId,
-      podId: getPodId(),
-      // Carried so a UDP packet that lands on any pod can fetch this session's
-      // key by sessionTag and decrypt the frame.
-      encryptionKeyB64: ws.data.encryptionKeyB64,
-    }).catch((err) => {
-      logger.error(
-        { err, sessionTag: ws.data.sessionTag },
-        "failed to register sessionTag in Redis (cross-pod routing degraded for this session)",
-      );
-    });
 
     // Refresh loop: keep the Redis registration AND the subscription key alive
     // while the WS is open. Both are TTL'd so an abandoned session (crashed pod)
@@ -460,27 +505,30 @@ export const wsHandlers: WebSocketHandler<WsData> = {
 
     // Decrement per-user session count; if zero, release the ownership claim
     // AND detach the user from its worker.
-    const remaining = (sessionsPerUser.get(ws.data.mentraUserId) ?? 1) - 1;
-    if (remaining <= 0) {
-      sessionsPerUser.delete(ws.data.mentraUserId);
-      releaseUser(ws.data.mentraUserId);
-      releaseOwnership(ws.data.mentraUserId, getPodId()).catch((err) => {
-        logger.warn(
-          { err, mentraUserId: ws.data.mentraUserId },
-          "ownership release failed (will TTL out)",
-        );
-      });
-      // Drop the subscription key on a clean last-session close so the next
-      // session for this user starts from its own seed, not stale subs. If this
-      // fails the key TTLs out shortly anyway.
-      deleteSubscriptions(ws.data.mentraUserId).catch((err) => {
-        logger.warn(
-          { err, mentraUserId: ws.data.mentraUserId },
-          "subscription key delete failed (will TTL out)",
-        );
-      });
-    } else {
-      sessionsPerUser.set(ws.data.mentraUserId, remaining);
+    const currentCount = sessionsPerUser.get(ws.data.mentraUserId);
+    if (currentCount !== undefined) {
+      const remaining = currentCount - 1;
+      if (remaining <= 0) {
+        sessionsPerUser.delete(ws.data.mentraUserId);
+        releaseUser(ws.data.mentraUserId);
+        releaseOwnership(ws.data.mentraUserId, getPodId()).catch((err) => {
+          logger.warn(
+            { err, mentraUserId: ws.data.mentraUserId },
+            "ownership release failed (will TTL out)",
+          );
+        });
+        // Drop the subscription key on a clean last-session close so the next
+        // session for this user starts from its own seed, not stale subs. If this
+        // fails the key TTLs out shortly anyway.
+        deleteSubscriptions(ws.data.mentraUserId).catch((err) => {
+          logger.warn(
+            { err, mentraUserId: ws.data.mentraUserId },
+            "subscription key delete failed (will TTL out)",
+          );
+        });
+      } else {
+        sessionsPerUser.set(ws.data.mentraUserId, remaining);
+      }
     }
 
     // Best-effort cleanup. If this fails the entry TTLs out shortly anyway.
@@ -523,20 +571,27 @@ async function handleConnectionInit(
   // so audio that starts flowing right after the ack is transcribed against the
   // right subscriptions instead of an empty set. We seed at version 0 with this
   // session's id (the same id the client echoes in REST writes); subsequent REST
-  // writes are guarded against this baseline. We seed even an empty set so the
-  // key exists and carries the session's baseline version. Mid-session changes
-  // arrive later via the REST subscriptions endpoint.
+  // writes are guarded against this baseline. If another still-live socket for
+  // this user already seeded the key, the seed is ignored so we don't clobber
+  // that session's guard. Mid-session changes arrive later via REST.
   const subs = init.audio?.initialSubscriptions ?? [];
   try {
-    await seedSubscriptions(ws.data.mentraUserId, {
+    const seeded = await seedSubscriptions(ws.data.mentraUserId, {
       subscriptions: subs,
       sessionId: ws.data.audioSessionId,
       version: 0,
     });
-    // Nudge the local worker to reconcile from the freshly seeded key. The key
-    // is the source of truth; the worker re-reads it rather than trusting any
-    // passed snapshot. Cross-pod writes use the control stream instead.
-    reconcileSubscriptions(ws.data.mentraUserId);
+    if (seeded) {
+      // Nudge the local worker to reconcile from the freshly seeded key. The key
+      // is the source of truth; the worker re-reads it rather than trusting any
+      // passed snapshot. Cross-pod writes use the control stream instead.
+      reconcileSubscriptions(ws.data.mentraUserId);
+    } else {
+      logger.warn(
+        { mentraUserId: ws.data.mentraUserId, audioSessionId: ws.data.audioSessionId },
+        "connection.init subscription seed skipped; another session is authoritative",
+      );
+    }
   } catch (err) {
     logger.error(
       { err, mentraUserId: ws.data.mentraUserId },
@@ -703,13 +758,14 @@ function isExpiredTokenError(err: AccessTokenError): boolean {
   return /exp.*claim|expired/i.test(err.message);
 }
 
-/** Mint a u32 sessionTag with a collision check against this pod's registry. */
-function mintSessionTag(): number {
-  for (let i = 0; i < 8; i++) {
+/** Mint and reserve a u32 sessionTag across all pods. */
+async function reserveSessionTag(record: Parameters<typeof registerSessionTag>[1]): Promise<number> {
+  for (let i = 0; i < 16; i++) {
     const tag = crypto.randomBytes(4).readUInt32BE(0);
-    if (!sessionByTag.has(tag)) return tag;
+    if (sessionByTag.has(tag)) continue;
+    if (await registerSessionTag(tag, record)) return tag;
   }
-  // 1 in 4 billion, retried 8 times. Effectively impossible unless we have
-  // ~hundreds of millions of concurrent sessions on one pod.
-  throw new Error("could not mint a unique sessionTag after 8 tries");
+  // 1 in 4 billion, retried 16 times. Effectively impossible unless the Redis
+  // registry is unavailable or the tag space is exhausted.
+  throw new Error("could not reserve a unique sessionTag after 16 tries");
 }

@@ -278,6 +278,22 @@ export class G2Manager extends EventEmitter {
     const pkt = g2.parseNotify(d)
     if (!pkt) return
     this.emit("notify", { side, serviceId: pkt.serviceId, cmd: pkt.cmd, hex: d.toString("hex") })
+    // EvenHub command acks: the firmware echoes our magic (field 2) plus a result
+    // code — StartupResCmd f4, ImgResCmd f6 (code in its f8), RebuildResCmd f8.
+    if (pkt.serviceId === 0xe0) {
+      try {
+        const f = g2.parseFields(pkt.payload)
+        const ack = { side, cmd: f[1], magic: f[2] ?? 0 }
+        if (f[4] != null) ack.startupCode = g2.parseFields(f[4])[1]
+        if (f[8] != null) ack.rebuildCode = g2.parseFields(f[8])[1]
+        if (f[6] != null) {
+          const s = g2.parseFields(f[6])
+          ack.imgCode = s[8]
+          ack.fragIndex = s[6] ?? 0
+        }
+        this.emit("evenhubAck", ack)
+      } catch {}
+    }
     // Decode the payload into a semantic event (IMU / gesture / device status).
     const ev = g2.decodeG2Event(pkt.serviceId, pkt.payload)
     if (!ev) return
@@ -324,6 +340,22 @@ export class G2Manager extends EventEmitter {
   }
   _devSettings(payload, lr) {
     return this._write(this.send.packets(g2.ServiceID.DEVICE_SETTINGS, payload), lr)
+  }
+  // Wait for an EvenHub ack matching pred; resolves null on timeout.
+  _awaitAck(pred, ms = 4000) {
+    return new Promise((resolve) => {
+      const on = (a) => {
+        if (!pred(a)) return
+        clearTimeout(t)
+        this.off("evenhubAck", on)
+        resolve(a)
+      }
+      const t = setTimeout(() => {
+        this.off("evenhubAck", on)
+        resolve(null)
+      }, ms)
+      this.on("evenhubAck", on)
+    })
   }
   _evenHub(payload) {
     return this._write(this.send.packets(g2.ServiceID.EVEN_HUB, payload, true), { left: true, right: true })
@@ -469,20 +501,33 @@ export class G2Manager extends EventEmitter {
       this.pageCreated = true
       await sleep(300)
     }
-    await this._evenHub(g2.rebuildPageMessage(textProps, [prop], this.send.nextMagic()))
+    // Ack-gated rebuild: wait for RebuildResCmd (6=success) before fragments.
+    const rbMagic = this.send.nextMagic()
+    const rbAckP = this._awaitAck((a) => a.rebuildCode != null && a.magic === rbMagic, 6000)
+    await this._evenHub(g2.rebuildPageMessage(textProps, [prop], rbMagic))
+    const rbAck = await rbAckP
+    this.log(`image: rebuild ack ${rbAck ? `code=${rbAck.rebuildCode}` : "TIMEOUT"}`)
     await sleep(settleMs)
     // Sessions wedge after any failed stream; advance by 2 to skip inherited state.
     const session = (this._imgSession = (this._imgSession || 40) + 2)
     const FRAG = 4096
     let frag = 0
+    const acks = []
     for (let off = 0; off < bmp.length; off += FRAG) {
       const chunk = bmp.subarray(off, Math.min(off + FRAG, bmp.length))
-      // unique magic per fragment: it is the firmware's ack-correlation key
-      await this._evenHub(g2.updateImageMessage(id, name, session, bmp.length, frag, chunk, this.send.nextMagic()))
+      // unique magic per fragment: it is the firmware's ack-correlation key.
+      // Ack-gate each fragment (4=img_success, 5=img_failed) instead of a blind timer.
+      const m = this.send.nextMagic()
+      const ackP = this._awaitAck((a) => a.imgCode != null && a.magic === m, 6000)
+      await this._evenHub(g2.updateImageMessage(id, name, session, bmp.length, frag, chunk, m))
+      const a = await ackP
+      acks.push(a ? a.imgCode : "timeout")
+      this.log(`image: frag ${frag} ack ${a ? `code=${a.imgCode}` : "TIMEOUT"}`)
       frag++
-      await sleep(200)
+      await sleep(50)
     }
-    return { ok: true, bytes: bmp.length, fragments: frag, session, geometry: { x, y, width, height } }
+    const ok = acks.every((c) => c === 4)
+    return { ok, bytes: bmp.length, fragments: frag, session, fragAcks: acks, rebuildAck: rbAck?.rebuildCode ?? null, geometry: { x, y, width, height } }
   }
 
   async setImu(enable, freq = 100) {

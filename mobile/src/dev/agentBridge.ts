@@ -240,7 +240,7 @@ async function handle(req: RpcRequest): Promise<unknown> {
       // QA: drop outbound UDP to force the client's WS-audio fallback. Lazy
       // require so this module's import graph stays clean.
       const blocked = params.blocked === true
-      ;(require("@/utils/cloudClient/RnUdpAdapter") as {setUdpBlocked: (b: boolean) => void}).setUdpBlocked(blocked)
+      ;(require("@mentra/island") as {setUdpBlocked: (b: boolean) => void}).setUdpBlocked(blocked)
       return {udpBlocked: blocked}
     }
 

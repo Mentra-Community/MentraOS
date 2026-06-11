@@ -116,6 +116,7 @@ export {
   type MiniappSafeArea,
 } from "./utils/miniappGlobals"
 export {decideDevLaunchRoute, type DevLaunchResult, type DevManifest} from "./utils/devMiniappLaunch"
+export {createCloudUdpSocket, setUdpBlocked} from "./utils/cloudClient/RnUdpAdapter"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
 export {BgTimer, throttle, debounce} from "./utils/timers"
 export {storage, printDirectory} from "./utils/storage"
