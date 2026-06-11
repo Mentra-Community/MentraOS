@@ -10,10 +10,21 @@
  */
 import type {ComponentType} from "react"
 
+import {
+  cameraPackageName,
+  feedbackPackageName,
+  lmaInstallerPackageName,
+  mirrorPackageName,
+  settingsPackageName,
+  storePackageName,
+} from "@/constants/miniapps"
 import {OFFLINE_HOSTED_PACKAGES} from "./offlineHostedPackages"
 
 import GalleryScreen from "@/app/asg/gallery"
 import GallerySettingsScreen from "@/app/asg/gallery-settings"
+import DeveloperUrlScreen from "@/app/miniapps/miniappdev/developer-url"
+import MiniappDevMain from "@/app/miniapps/miniappdev/main"
+import ScannerScreen from "@/app/miniapps/miniappdev/scanner"
 import MirrorScreen from "@/app/miniapps/mirror/mirror"
 import AppearanceSettings from "@/app/miniapps/settings/appearance"
 import CameraSettings from "@/app/miniapps/settings/camera"
@@ -72,28 +83,36 @@ const settingsRoutes: Record<string, ComponentType<any>> = {
 }
 
 export const offlineAppRegistry: Record<string, OfflineAppDef> = {
-  "com.mentra.settings": {
+  [settingsPackageName]: {
     initialRoute: "/miniapps/settings/main",
     routes: settingsRoutes,
   },
-  "com.mentra.store": {
+  [storePackageName]: {
     initialRoute: "/miniapps/store/store",
     routes: {"/miniapps/store/store": StoreScreen},
   },
-  "com.mentra.mirror": {
+  [mirrorPackageName]: {
     initialRoute: "/miniapps/mirror/mirror",
     routes: {"/miniapps/mirror/mirror": MirrorScreen},
   },
-  "com.mentra.camera": {
+  [cameraPackageName]: {
     initialRoute: "/asg/gallery",
     routes: {
       "/asg/gallery": GalleryScreen,
       "/asg/gallery-settings": GallerySettingsScreen,
     },
   },
-  "com.mentra.feedback": {
+  [feedbackPackageName]: {
     initialRoute: "/miniapps/settings/feedback",
     routes: {"/miniapps/settings/feedback": FeedbackScreen},
+  },
+  [lmaInstallerPackageName]: {
+    initialRoute: "/miniapps/miniappdev/main",
+    routes: {
+      "/miniapps/miniappdev/main": MiniappDevMain,
+      "/miniapps/miniappdev/developer-url": DeveloperUrlScreen,
+      "/miniapps/miniappdev/scanner": ScannerScreen,
+    },
   },
 }
 

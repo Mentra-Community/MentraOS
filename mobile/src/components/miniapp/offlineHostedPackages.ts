@@ -7,16 +7,24 @@
  * (MiniappCatalog, AppSwitcher) don't transitively import every hosted
  * screen component.
  *
- * Deliberately excludes:
- *   - com.mentra.miniappdev (lmaInstaller) — keeps its route behavior
- *   - captions / notify — no offlineRoute, nothing to render
+ * Deliberately excludes captions / notify — no offlineRoute, nothing to render.
  */
+import {
+  cameraPackageName,
+  feedbackPackageName,
+  lmaInstallerPackageName,
+  mirrorPackageName,
+  settingsPackageName,
+  storePackageName,
+} from "@/constants/miniapps"
+
 export const OFFLINE_HOSTED_PACKAGES = new Set([
-  "com.mentra.settings",
-  "com.mentra.store",
-  "com.mentra.mirror",
-  "com.mentra.camera",
-  "com.mentra.feedback",
+  settingsPackageName,
+  storePackageName,
+  mirrorPackageName,
+  cameraPackageName,
+  feedbackPackageName,
+  lmaInstallerPackageName,
 ])
 
 export const isOfflineHosted = (packageName: string) => OFFLINE_HOSTED_PACKAGES.has(packageName)
