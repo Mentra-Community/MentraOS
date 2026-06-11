@@ -201,6 +201,8 @@ const CONSUMER_NAME = `${POD_ID}:${WORKER_ID}`
 
 const XREAD_COUNT_PER_STREAM = 100
 const XREAD_IDLE_SLEEP_MS = 50
+/** Control-stream reads still block server-side; audio reads poll instead. */
+const CONTROL_XREAD_BLOCK_MS = 1000
 const XAUTOCLAIM_COUNT = 500
 const XAUTOCLAIM_MIN_IDLE_MS = 0
 const XAUTOCLAIM_LOOP_INTERVAL_MS = 2_000
@@ -560,7 +562,7 @@ async function controlReadLoop(): Promise<void> {
         "COUNT",
         100,
         "BLOCK",
-        XREAD_BLOCK_MS,
+        CONTROL_XREAD_BLOCK_MS,
         "STREAMS",
         ...streams,
         ...ids,
