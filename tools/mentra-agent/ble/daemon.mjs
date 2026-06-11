@@ -21,7 +21,8 @@ import net from "node:net"
 import os from "node:os"
 import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
-import { writeFileSync, appendFileSync, mkdirSync } from "node:fs"
+import { writeFileSync, appendFileSync, mkdirSync, readFileSync } from "node:fs"
+import { execFileSync } from "node:child_process"
 import { WebSocketServer } from "ws"
 import { G2Manager } from "./manager.mjs"
 import * as bmp from "./bmp.mjs"
@@ -204,6 +205,20 @@ async function sgcHandle(sock, msg) {
         return reply({ ok: true, ...info })
       }
       case "imuEnable": return reply(await mgr.setImu(!!msg.enable, Number(msg.freq ?? 100)))
+      case "bitmap": {
+        // base64 image (any format ffmpeg reads) -> gray + dither -> tiled render.
+        const w = Math.min(288, Number(msg.width ?? 224)) & ~1
+        const h = Math.min(144, Number(msg.height ?? 140)) & ~1
+        const src = join(os.tmpdir(), `sgc-bmp-${Date.now()}.img`)
+        const raw = src + ".raw"
+        writeFileSync(src, Buffer.from(String(msg.b64), "base64"))
+        execFileSync("ffmpeg", ["-y", "-loglevel", "error", "-i", src, "-vf",
+          `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},eq=gamma=1.5:contrast=1.3,normalize`,
+          "-pix_fmt", "gray", "-f", "rawvideo", raw])
+        const frame = bmp.ditherTo16({ w, h, data: new Uint8Array(readFileSync(raw)) })
+        const res = await mgr.displayImageTiled(frame, { x: msg.x != null ? Number(msg.x) : null, y: msg.y != null ? Number(msg.y) : null })
+        return reply(res)
+      }
       case "photo": return reply(await mgr.takePhoto(msg.opts || {}))
       default: return reply({ ok: false, error: `unknown cmd ${msg.cmd}` })
     }

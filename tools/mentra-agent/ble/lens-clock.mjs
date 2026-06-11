@@ -29,17 +29,28 @@ function clockFrame() {
   return f
 }
 
-console.log("setting up clock container...")
-await post("/text", { text: "clock" }); await sleep(800)
-const setup = await post("/image", { imageOnly: true, x: (576 - S) >> 1, y: (288 - S) >> 1, width: S, height: S,
-  bmpBase64: Buffer.from(bmp.encode4BitBmp(clockFrame())).toString("base64") })
-console.log("setup:", JSON.stringify(setup))
-if (!setup.ok) process.exit(1)
+async function setupPage() {
+  console.log("setting up clock container...")
+  await post("/text", { text: "clock" }); await sleep(800)
+  const setup = await post("/image", { imageOnly: true, x: (576 - S) >> 1, y: (288 - S) >> 1, width: S, height: S,
+    bmpBase64: Buffer.from(bmp.encode4BitBmp(clockFrame())).toString("base64") })
+  console.log("setup:", JSON.stringify(setup))
+  return setup.ok
+}
+if (!(await setupPage())) process.exit(1)
 await sleep(400)
 let fails = 0
 for (;;) {
   const r = await post("/imageUpdate", { id: 1, width: S, height: S, gapMs: 8,
     grayBase64: Buffer.from(clockFrame().data).toString("base64") }).catch(() => ({ ok: false }))
-  if (!r.ok) { if (++fails > 10) { console.log("too many failures, exiting"); process.exit(1) } await sleep(2000) }
-  else fails = 0
+  if (!r.ok) {
+    fails++
+    if (fails % 3 === 0) {
+      // firmware likely system_exited our page (idle/unworn) - re-own it
+      console.log(`${new Date().toISOString()} updates failing (${fails}); re-setup`)
+      await setupPage().catch(() => {})
+    }
+    if (fails > 30) { console.log("giving up after 30 consecutive failures"); process.exit(1) }
+    await sleep(2000)
+  } else fails = 0
 }

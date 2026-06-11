@@ -34,6 +34,7 @@ export class G2Manager extends EventEmitter {
     this.imuEnabled = false
     this.micEnabled = false
     this._q = Promise.resolve() // serialize BLE writes
+    this._imgQ = Promise.resolve() // serialize IMAGE operations (concurrent image streams corrupt each other in fw)
     this._hb = []
     // Auto-reconnect is OFF by default: a device that drops repeatedly (e.g. a
     // Mentra Live still trying to rebond to its phone) would otherwise spin a
@@ -565,7 +566,10 @@ export class G2Manager extends EventEmitter {
   // a single-fragment BMP (<=4096B) in its own container — the only image path
   // this firmware accepts (multi-fragment reassembly is broken: frag0 acks 4,
   // continuations ack 5). Max 4 containers -> strips of h<=floor((4096-118)/stride).
-  async displayImageTiled(frame, { x = null, y = null } = {}) {
+  displayImageTiled(frame, opts = {}) {
+    return (this._imgQ = this._imgQ.catch(() => {}).then(() => this._displayImageTiledNow(frame, opts)))
+  }
+  async _displayImageTiledNow(frame, { x = null, y = null } = {}) {
     if (!this.connected) throw new Error("not connected")
     if (this.device !== "g2") throw new Error("tiled image display is G2-only")
     const { w, h } = frame
@@ -660,7 +664,10 @@ export class G2Manager extends EventEmitter {
   // container (declared by a prior displayImage/displayImageTiled rebuild) —
   // no page rebuild, so this is the fastest bitmap path. ackGate=false sends
   // blind for max rate (caller is responsible for pacing).
-  async updateImage(frame, { id = 1, ackGate = true, gapMs = 30 } = {}) {
+  updateImage(frame, opts = {}) {
+    return (this._imgQ = this._imgQ.catch(() => {}).then(() => this._updateImageNow(frame, opts)))
+  }
+  async _updateImageNow(frame, { id = 1, ackGate = true, gapMs = 30 } = {}) {
     if (!this.connected) throw new Error("not connected")
     const bmpBuf = bmpEncode4(frame)
     if (bmpBuf.length > 4096) throw new Error(`BMP ${bmpBuf.length}B > 4096 single-fragment limit`)
