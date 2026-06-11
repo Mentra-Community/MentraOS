@@ -82,8 +82,8 @@ export default function DebugSettingsScreen() {
             />
 
             <ToggleSetting
-              label={translate("devSettings:debugConsole")}
-              subtitle={translate("devSettings:debugConsoleSubtitle")}
+              label={translate("debugSettings:debugConsole")}
+              subtitle={translate("debugSettings:debugConsoleSubtitle")}
               value={debugConsole}
               onValueChange={(value) => setDebugConsole(value)}
             />
@@ -153,15 +153,15 @@ export default function DebugSettingsScreen() {
             />
           </Group>
 
-          <Group title={translate("devSettings:miniappDevGroupTitle")}>
+          <Group title={translate("debugSettings:miniappDevGroupTitle")}>
             <RouteButton
-              label={translate("devSettings:miniappDevLoadUrlLabel")}
-              subtitle={translate("devSettings:miniappDevLoadUrlSubtitle")}
+              label={translate("debugSettings:miniappDevLoadUrlLabel")}
+              subtitle={translate("debugSettings:miniappDevLoadUrlSubtitle")}
               onPress={() => push("/miniapps/miniappdev/developer-url")}
             />
             <RouteButton
-              label={translate("devSettings:miniappDevScanLabel")}
-              subtitle={translate("devSettings:miniappDevScanSubtitle")}
+              label={translate("debugSettings:miniappDevScanLabel")}
+              subtitle={translate("debugSettings:miniappDevScanSubtitle")}
               onPress={() => push("/miniapps/miniappdev/scanner")}
             />
           </Group>

@@ -13,14 +13,14 @@ export default function MiniappDeveloperModeSettingsScreen() {
 
   return (
     <Screen preset="fixed">
-      <Header titleTx="miniappDeveloperSettings:title" leftIcon="chevron-left" onLeftPress={() => goBack()} />
+      <Header titleTx="miniappDevSettings:title" leftIcon="chevron-left" onLeftPress={() => goBack()} />
 
       <ScrollView className="flex px-6 -mx-6">
         <View className="flex gap-6 mt-6">
           <Group title="Settings">
             <ToggleSetting
-              label={translate("miniappDeveloperSettings:miniappDeveloperMode")}
-              subtitle={translate("miniappDeveloperSettings:miniappDeveloperModeSubtitle")}
+              label={translate("miniappDevSettings:miniappDevMode")}
+              subtitle={translate("miniappDevSettings:miniappDevModeSubtitle")}
               value={miniappDevMode}
               onValueChange={(value) => setMiniappDevMode(value)}
             />

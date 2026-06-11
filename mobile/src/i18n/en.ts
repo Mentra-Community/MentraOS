@@ -591,7 +591,7 @@ const en = {
     androidBlur: "Blur effects",
     androidInnerShadow: "Inner shadow",
   },
-  devSettings: {
+  debugSettings: {
     debugConsole: "Debug Console",
     debugConsoleSubtitle: "Enable the debug console.",
     miniappScanTitle: "Scan Mini App QR",
@@ -630,10 +630,10 @@ const en = {
     miniappDevScanLabel: "Scan Mini App QR Code",
     miniappDevScanSubtitle: "Scan a QR code from your dev server",
   },
-  miniappDeveloperSettings: {
-    title: "Miniapp Developer Settings",
-    miniappDeveloperMode: "Miniapp Developer Mode",
-    miniappDeveloperModeSubtitle: "Enable miniapp developer mode",
+  miniappDevSettings: {
+    title: "Miniapp Dev",
+    miniappDevMode: "Miniapp Dev Mode",
+    miniappDevModeSubtitle: "Enable miniapp dev mode",
   },
   transcription: {
     downloadModelToEnableLocalTranscription: "Download a model to enable local transcription",

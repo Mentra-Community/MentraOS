@@ -99,7 +99,7 @@ export default function MainSettingsPage() {
               <RouteButton
                 icon={<Icon name="user-code" size={24} color={theme.colors.secondary_foreground} />}
                 label={translate("settings:miniappDeveloperSettings")}
-                onPress={() => push("/miniapps/settings/dev")}
+                onPress={() => push("/miniapps/settings/miniapp-dev")}
               />
             </Group>
           </View>
