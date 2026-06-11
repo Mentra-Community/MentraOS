@@ -77,6 +77,18 @@ export async function tryClaimOwnership(
   // Failed. Was it us or someone else?
   const current = await redis.get(ownerKey(mentraUserId));
   if (current === podId) return "already-ours";
+  if (current === null) {
+    const retry = await redis.set(
+      ownerKey(mentraUserId),
+      podId,
+      "EX",
+      OWNERSHIP_TTL_SEC,
+      "NX",
+    );
+    if (retry === "OK") return "claimed";
+    const afterRetry = await redis.get(ownerKey(mentraUserId));
+    if (afterRetry === podId) return "already-ours";
+  }
   return "owned-by-other";
 }
 
