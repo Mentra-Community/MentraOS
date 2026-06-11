@@ -42,7 +42,7 @@ await sleep(400)
 let fails = 0
 for (;;) {
   const r = await post("/imageUpdate", { id: 1, width: S, height: S, gapMs: 8,
-    grayBase64: Buffer.from(clockFrame().data).toString("base64") }).catch(() => ({ ok: false }))
+    grayBase64: Buffer.from(clockFrame().data).toString("base64"), gapMs: 14 }).catch(() => ({ ok: false }))
   if (!r.ok) {
     fails++
     if (fails % 3 === 0) {
@@ -53,4 +53,5 @@ for (;;) {
     if (fails > 30) { console.log("giving up after 30 consecutive failures"); process.exit(1) }
     await sleep(2000)
   } else fails = 0
+  await sleep(400) // ~1.5fps: kinder to a marginal arm than flat-out
 }
