@@ -29,8 +29,10 @@ interface Env {
 
 const GOOGLE_PLACES_HOST = "places.googleapis.com"
 
-// The Field Mask the Navigation miniapp sends for details. Keep in sync with
-// the client so we stay in Google's cheapest pricing tier.
+// The Field Mask applied to EVERY details call, fixed server-side. Never
+// trust a client-supplied mask: with placeholder auth, forwarding one would
+// let any caller request pricier fields (reviews, photos, ...) on our key.
+// This fixed set keeps us in Google's cheapest pricing tier.
 const DETAILS_FIELD_MASK = "id,location,displayName,formattedAddress"
 
 function json(body: unknown, status: number): Response {
@@ -51,7 +53,7 @@ export default {
         headers: {
           "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, X-User-Email, X-Goog-FieldMask",
+          "Access-Control-Allow-Headers": "Content-Type, X-User-Email",
         },
       })
     }
@@ -92,7 +94,7 @@ export default {
       const upstream = await fetch(target, {
         headers: {
           "X-Goog-Api-Key": env.GOOGLE_NAV_PLACES_KEY,
-          "X-Goog-FieldMask": request.headers.get("X-Goog-FieldMask") ?? DETAILS_FIELD_MASK,
+          "X-Goog-FieldMask": DETAILS_FIELD_MASK,
         },
       })
       return passthrough(upstream)

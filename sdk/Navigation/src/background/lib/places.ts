@@ -111,12 +111,11 @@ export class PlacesSession {
     const url =
       `${PROXY_BASE_URL}/places/details/${encodeURIComponent(placeId)}` +
       `?sessionToken=${encodeURIComponent(this.token)}`
+    // The Worker applies the field mask server-side (fixed to the cheapest
+    // pricing tier) — clients can't widen it, so we don't send one.
     const res = await fetch(url, {
       headers: {
         "X-User-Email": this.userEmail,
-        // Field mask keeps us in the cheapest pricing tier. The Worker
-        // forwards this through to Google.
-        "X-Goog-FieldMask": "id,location,displayName,formattedAddress",
       },
       signal,
     })

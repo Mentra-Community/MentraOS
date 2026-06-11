@@ -30,7 +30,9 @@ quota cap + API restriction** on the Places key.
 | POST | `/places/autocomplete` | `https://places.googleapis.com/v1/places:autocomplete` |
 | GET | `/places/details/:placeId?sessionToken=` | `https://places.googleapis.com/v1/places/:placeId` |
 
-Egress is allowlisted to `places.googleapis.com` only.
+Egress is allowlisted to `places.googleapis.com` only. The details field mask
+is fixed server-side (`id,location,displayName,formattedAddress`) so callers
+can't request pricier fields on our key.
 
 ## Deploy
 
