@@ -45,9 +45,12 @@ const app = new Hono<AppEnv>();
 const ROUTE_RATE_LIMIT_MAX = 10;
 // The mobile road-name resolver reverse-geocodes step midpoints in parallel
 // (Promise.all in roadNameResolver.resolveStepRoads), so one legitimate
-// route compute can burst dozens of calls. Keep generous headroom; the
-// geocode cache makes repeats free anyway.
-const GEOCODE_RATE_LIMIT_MAX = 60;
+// route compute can burst dozens of calls — and a user previewing several
+// destinations stacks a few bursts inside one window. The route limiter
+// caps how many bursts can be triggered at all and the geocode cache makes
+// repeated coordinates free, so this ceiling only needs to stop sustained
+// unique-coordinate floods, not legitimate bursts.
+const GEOCODE_RATE_LIMIT_MAX = 200;
 const RATE_LIMIT_WINDOW_MS = 10_000;
 const RATE_LIMIT_WARN_THROTTLE_MS = 60_000;
 const RATE_LIMIT_CLEANUP_INTERVAL_MS = 60_000;

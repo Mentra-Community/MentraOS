@@ -38,7 +38,13 @@ const DETAILS_FIELD_MASK = "id,location,displayName,formattedAddress"
 function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: {"Content-Type": "application/json"},
+    headers: {
+      "Content-Type": "application/json",
+      // CORS on error responses too — without it the browser blocks the
+      // response and callers see an opaque network error instead of the
+      // actual 401/404/500.
+      "Access-Control-Allow-Origin": "*",
+    },
   })
 }
 

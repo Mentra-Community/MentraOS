@@ -75,6 +75,10 @@ export class PlacesSession {
 
   async autocomplete(input: string, signal?: AbortSignal): Promise<PlaceSuggestion[]> {
     if (!input.trim()) return []
+    // Fail loudly at call time (build.ts only warns): with an empty base
+    // URL the fetch would silently hit a relative path on the WebView's
+    // own origin and produce a confusing failure instead.
+    if (!PROXY_BASE_URL) throw new Error("missing PROXY_BASE_URL")
     const res = await fetch(`${PROXY_BASE_URL}/places/autocomplete`, {
       method: "POST",
       headers: {
@@ -108,6 +112,7 @@ export class PlacesSession {
   }
 
   async details(placeId: string, signal?: AbortSignal): Promise<PlaceDetails> {
+    if (!PROXY_BASE_URL) throw new Error("missing PROXY_BASE_URL")
     const url =
       `${PROXY_BASE_URL}/places/details/${encodeURIComponent(placeId)}` +
       `?sessionToken=${encodeURIComponent(this.token)}`
