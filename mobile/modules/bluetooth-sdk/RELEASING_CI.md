@@ -89,11 +89,6 @@ Maven reruns are safe only after confirming there is no open Sonatype deployment
 for the same version; if Maven Central already shows both artifacts, the workflow
 skips Maven publishing.
 
-If a version reaches a public registry with bad package contents or Maven
-metadata, bump `mobile/modules/bluetooth-sdk/package.json` to a new patch
-version and publish the replacement. Do not try to overwrite the published
-version.
-
 ## Dry Runs and Verification
 
 Use `workflow_dispatch` with `dry_run=true` to exercise the build/export path
