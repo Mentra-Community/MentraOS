@@ -610,7 +610,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
       index = index - 1
       const cardWidth = CARD_WIDTH + CARD_SPACING
       const clamped = Math.max(-1, Math.min(index, apps.length - 1))
-      // console.log("APPSWITCHER: goToIndex()", index, clamped, instant, apps.length)
+      console.log("APPSWITCHER: goToIndex()", index, clamped, instant, apps.length)
       if (clamped === targetIndex.value) {
         // console.log("APPSWITCHER: goToIndex() - already at index", index)
         return
@@ -692,7 +692,6 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         // setTimeout(() => {
         if (apps.length > 1) {
           console.log("APPSWITCHER: swipeProgress.value - opening to last index", apps.length - 1)
-          // runOnJS(goToIndex)(apps.length - 1, true)
           runOnJS(goToEnd)()
         }
         openX.value = withSpring(0, {damping: 200, stiffness: 1000, overshootClamping: true})
@@ -703,8 +702,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         // scheduleOnRN(() => {setIsOpen(false)})
       }
       if (previous !== null && current > 0 && previous == 0) {
-        console.log("APPSWITCHER: JUST OPENED: swipeProgress.value - closing to last index", apps.length - 1)
-        // runOnJS(goToIndex)(apps.length - 1, true)
+        console.log("APPSWITCHER: JUST OPENED: swipeProgress.value - opening to last index", apps.length - 1)
         runOnJS(goToEnd)()
         runOnJS(setBlurPointerEvents)("auto")
         if (apps.length > 0) {

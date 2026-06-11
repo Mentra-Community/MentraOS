@@ -261,21 +261,33 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
     // glass surfaces in the hosted screens sample whatever is behind them —
     // without this they'd pick up the home screen instead of the app
     // background they sat on when pushed as routes.
-    <View style={{flex: 1, backgroundColor: theme.colors.background}} ref={viewShotRef} collapsable={false}>
+    // Rounded corners match LocalMiniappView's surface (same radius). Unlike
+    // the WebView there — which clips itself — the hosted screens are plain
+    // views, so the root must clip them via overflow:hidden for the radius
+    // to show.
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: theme.colors.background,
+        borderRadius: theme.spacing.s12,
+        borderCurve: "continuous",
+        overflow: "hidden",
+      }}
+      ref={viewShotRef}
+      collapsable={false}>
       {stack.map((entry, i) => {
         const RouteComponent = def.routes[entry.path]
         if (!RouteComponent) return null
-        const isTop = i === depth - 1
-        // The entry directly beneath the top stays visible (fully covered by
-        // the opaque top screen) so the pop swipe reveals it mid-gesture.
-        const isUnderTop = i === depth - 2
         return (
-          // Keep every entry mounted (hidden when not top) so sub-screen
-          // state survives back navigation, like a native stack.
+          // Every entry stays mounted AND visible — stacked absoluteFill
+          // siblings, top entry last so it paints over the rest. Hiding the
+          // covered screens with display:none intermittently broke their
+          // liquid-glass surfaces on re-show (the native effect view fails to
+          // re-establish backdrop sampling), so they simply stay rendered
+          // beneath the opaque top screen instead.
           <HostStackEntry
             key={`${entry.path}-${i}`}
             index={i}
-            visible={isTop || isUnderTop}
             popTargetIndex={popTargetIndex}
             popTranslateX={popTranslateX}>
             <RouteComponent />
@@ -308,13 +320,11 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
  */
 function HostStackEntry({
   index,
-  visible,
   popTargetIndex,
   popTranslateX,
   children,
 }: {
   index: number
-  visible: boolean
   popTargetIndex: SharedValue<number>
   popTranslateX: SharedValue<number>
   children: ReactNode
@@ -323,7 +333,7 @@ function HostStackEntry({
     transform: [{translateX: popTargetIndex.value === index ? popTranslateX.value : 0}],
   }))
   return (
-    <Animated.View style={[StyleSheet.absoluteFill, animatedStyle, {display: visible ? "flex" : "none"}]}>
+    <Animated.View style={[StyleSheet.absoluteFill, animatedStyle]}>
       {children}
     </Animated.View>
   )
