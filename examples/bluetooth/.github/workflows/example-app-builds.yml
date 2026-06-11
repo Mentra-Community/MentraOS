@@ -4,6 +4,9 @@ name: Example App Builds
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -30,6 +33,22 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Free disk space
+        run: |
+          df -h
+          sudo apt-get clean
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/share/boost \
+            "$ANDROID_HOME/ndk" \
+            "$ANDROID_HOME/cmake" \
+            "$ANDROID_HOME/emulator" \
+            "$ANDROID_HOME/system-images" \
+            "$ANDROID_HOME/platforms" \
+            "$ANDROID_HOME/build-tools"
+          df -h
 
       - name: Install Android SDK packages
         run: |
@@ -118,9 +137,25 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Free disk space
+        run: |
+          df -h
+          sudo apt-get clean
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/share/boost \
+            "$ANDROID_HOME/ndk" \
+            "$ANDROID_HOME/cmake" \
+            "$ANDROID_HOME/emulator" \
+            "$ANDROID_HOME/system-images" \
+            "$ANDROID_HOME/platforms" \
+            "$ANDROID_HOME/build-tools"
+          df -h
+
       - name: Install Android SDK packages
         run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.1.12297006"
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -173,9 +208,25 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Free disk space
+        run: |
+          df -h
+          sudo apt-get clean
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /usr/local/share/boost \
+            "$ANDROID_HOME/ndk" \
+            "$ANDROID_HOME/cmake" \
+            "$ANDROID_HOME/emulator" \
+            "$ANDROID_HOME/system-images" \
+            "$ANDROID_HOME/platforms" \
+            "$ANDROID_HOME/build-tools"
+          df -h
+
       - name: Install Android SDK packages
         run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.1.12297006"
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
