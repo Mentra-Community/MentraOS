@@ -88,14 +88,6 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     const subpath = moduleName.slice("@mentra/island/".length)
     return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ISLAND_SRC, subpath), platform)
   }
-  // @craftzdog/react-native-buffer is backed by the QuickBase64 C++ TurboModule,
-  // which is not reliably compiled into local debug builds (getEnforcing throws
-  // and breaks the v1 UDP transport). The pure-JS `buffer` package is API-
-  // compatible; alias to it so every Buffer user resolves to a dependency that
-  // works without the native module.
-  if (moduleName === "@craftzdog/react-native-buffer") {
-    return (baseResolveRequest ?? context.resolveRequest)(context, "buffer", platform)
-  }
   return (baseResolveRequest ?? context.resolveRequest)(context, moduleName, platform)
 }
 config.watchFolders.push(
