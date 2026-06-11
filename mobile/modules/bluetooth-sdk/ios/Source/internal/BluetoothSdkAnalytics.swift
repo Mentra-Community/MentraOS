@@ -22,7 +22,7 @@ public struct BluetoothSdkAnalyticsConfiguration {
     }
 
     init(dictionary: [String: Any], surface: String) {
-        enabled = dictionary["enabled"] as? Bool ?? !((dictionary["disabled"] as? Bool) ?? false)
+        enabled = dictionary["enabled"] as? Bool ?? true
         postHogApiKey = (dictionary["postHogApiKey"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             ?? BluetoothSdkAnalyticsConfiguration.defaultPostHogApiKey
         postHogHost = (dictionary["postHogHost"] as? String).flatMap { $0.isEmpty ? nil : $0 }

@@ -27,7 +27,7 @@ data class BluetoothSdkAnalyticsConfig @JvmOverloads constructor(
 
         internal fun fromMap(values: Map<String, Any?>, surface: String): BluetoothSdkAnalyticsConfig =
             BluetoothSdkAnalyticsConfig(
-                enabled = (values["enabled"] as? Boolean) ?: ((values["disabled"] as? Boolean)?.not() ?: true),
+                enabled = (values["enabled"] as? Boolean) ?: true,
                 postHogApiKey =
                     (values["postHogApiKey"] as? String)
                         ?.takeIf { it.isNotBlank() }
