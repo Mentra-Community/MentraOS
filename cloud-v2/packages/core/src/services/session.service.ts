@@ -39,7 +39,7 @@ import {
   type TokenResponse,
 } from "../types/oauth.types";
 import { findOrCreateUser } from "./user.service";
-import { verifyOemJwt } from "./oem.service";
+import { recordSeenJti, verifyOemJwt } from "./oem.service";
 
 const logger = createLogger("core").child({ service: "session.service" });
 
@@ -113,6 +113,22 @@ export async function createSession(args: {
     mentraUserId: user.mentraUserId,
     oemId: identity.oemId,
   });
+
+  if (identity.jti) {
+    if (typeof identity.exp !== "number") {
+      throw new InvalidGrant("subject_token missing 'exp' claim");
+    }
+    try {
+      await recordSeenJti({
+        jti: identity.jti,
+        oemId: identity.oemId,
+        expUnixSec: identity.exp,
+      });
+    } catch (err) {
+      await RefreshTokenModel.deleteOne({ sessionId });
+      throw err;
+    }
+  }
 
   logger.info(
     { sessionId, mentraUserId: user.mentraUserId, oemId: identity.oemId },
@@ -332,7 +348,12 @@ function miniappTokenTtlSec(): number {
  */
 async function resolveSubjectIdentity(
   subjectToken: string,
-): Promise<{ oemId: string; oemUserId: string }> {
+): Promise<{
+  oemId: string;
+  oemUserId: string;
+  jti?: string;
+  exp?: number;
+}> {
   let alg: string;
   let iss: string | undefined;
   try {
@@ -352,7 +373,12 @@ async function resolveSubjectIdentity(
   }
 
   const verified = await verifyOemJwt(subjectToken);
-  return { oemId: verified.oemId, oemUserId: verified.oemUserId };
+  return {
+    oemId: verified.oemId,
+    oemUserId: verified.oemUserId,
+    jti: verified.jti,
+    exp: verified.exp,
+  };
 }
 
 /**
