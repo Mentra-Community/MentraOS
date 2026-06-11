@@ -296,14 +296,16 @@ function sessionTagKey(tag: number): string {
 export async function registerSessionTag(
   tag: number,
   record: SessionTagRecord,
-): Promise<void> {
+): Promise<boolean> {
   const redis = getRedis();
-  await redis.set(
+  const result = await redis.set(
     sessionTagKey(tag),
     JSON.stringify(record),
     "EX",
     SESSION_TAG_TTL_SEC,
+    "NX",
   );
+  return result === "OK";
 }
 
 export async function refreshSessionTag(tag: number): Promise<void> {
