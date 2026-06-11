@@ -90,6 +90,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   connectDefaultController(): Promise<void>
   disconnectController(): Promise<void>
   connectSimulated(): Promise<void>
+  connectRemoteHarness(): Promise<void>
   disconnect(): Promise<void>
   forget(): Promise<void>
   forgetController(): Promise<void>

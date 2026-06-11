@@ -244,6 +244,25 @@ async function handle(req: RpcRequest): Promise<unknown> {
       return {udpBlocked: blocked}
     }
 
+    case "connectRemoteGlasses": {
+      // Pair the app with the laptop harness daemon, which holds REAL glasses
+      // over BLE — so the emulator app drives physical hardware. Mirrors the
+      // "use simulated" pairing flow but with the RemoteHarness SGC driver.
+      const sdk = require("@mentra/bluetooth-sdk-internal") as {default: {connectRemoteHarness: () => Promise<void>}}
+      await sdk.default.connectRemoteHarness()
+      return {connected: "remote-harness"}
+    }
+
+    case "glassesText": {
+      // Drive the app's own display path (JS -> native module -> SGC driver),
+      // proving app->glasses output end-to-end (with RemoteHarness: real lens).
+      const sdk = require("@mentra/bluetooth-sdk-internal") as {
+        default: {displayText: (text: string, x?: number, y?: number, size?: number) => Promise<void>}
+      }
+      await sdk.default.displayText(String(params.text ?? "hello"))
+      return {displayed: true}
+    }
+
     case "login": {
       // Drive the app's real Supabase password sign-in (same path a human
       // taps through). On success Supabase fires onAuthStateChange, which the

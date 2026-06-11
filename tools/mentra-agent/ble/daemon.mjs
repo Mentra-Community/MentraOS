@@ -17,6 +17,7 @@
 //   POST /shutdown          -> exit the daemon
 
 import http from "node:http"
+import net from "node:net"
 import os from "node:os"
 import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
@@ -157,6 +158,77 @@ const mediaServer = http.createServer((req, res) => {
   })
 })
 mediaServer.listen(MEDIA_PORT, "0.0.0.0", () => log(`media receiver on 0.0.0.0:${MEDIA_PORT} (lan ${lanIp() ?? "?"})`))
+
+// ---------------------------------------------------------------------------
+// Remote-SGC bridge: lets the MentraOS app (Android emulator, no Bluetooth)
+// drive the REAL glasses this daemon holds. The app's dev-only RemoteHarness
+// driver opens a plain TCP socket (10.0.2.2 -> host) and speaks newline-
+// delimited JSON: commands in ({cmd:"text"|"clear"|"mic"|...}), events out
+// ({event:"hello"|"status"|"battery"|"gesture"|"imu"} and {event:"audio",
+// b64:<LC3>} for the glasses mic). Plain TCP because the bluetooth-sdk module
+// has no WebSocket/HTTP client dependency.
+// ---------------------------------------------------------------------------
+const SGC_PORT = PORT + 3
+const sgcClients = new Set()
+
+function sgcSend(sock, obj) {
+  try { sock.write(JSON.stringify(obj) + "\n") } catch {}
+}
+function sgcBroadcast(obj) {
+  for (const s of sgcClients) sgcSend(s, obj)
+}
+mgr.on("audio", ({ data }) => sgcBroadcast({ event: "audio", b64: Buffer.from(data).toString("base64") }))
+mgr.on("status", (s) => sgcBroadcast({ event: "battery", level: s?.battery ?? -1, charging: !!s?.charging }))
+mgr.on("gesture", (g) => sgcBroadcast({ event: "gesture", gesture: g.gesture }))
+mgr.on("imu", (v) => sgcBroadcast({ event: "imu", ...v }))
+mgr.on("state", (s) => sgcBroadcast({ event: "status", connected: s.connected, device: s.device, match: s.match }))
+
+async function sgcHandle(sock, msg) {
+  const reply = (obj) => sgcSend(sock, { id: msg.id, ...obj })
+  try {
+    switch (msg.cmd) {
+      case "ping": return reply({ ok: true, pong: true })
+      case "state": return reply({ ok: true, ...mgr.status() })
+      case "text": return reply(await mgr.displayText(String(msg.text ?? " ")))
+      case "clear": return reply(await mgr.clear())
+      case "mic": return reply(await mgr.setMic(!!msg.enable))
+      case "brightness": return reply(await mgr.setBrightness(Number(msg.level ?? 128), !!msg.auto))
+      case "headup": return reply(await mgr.setHeadUpAngle(Number(msg.angle ?? 30)))
+      case "battery": {
+        const info = await mgr.requestInfo()
+        if (info?.battery != null) sgcSend(sock, { event: "battery", level: info.battery, charging: !!info.charging })
+        return reply({ ok: true, ...info })
+      }
+      case "imuEnable": return reply(await mgr.setImu(!!msg.enable, Number(msg.freq ?? 100)))
+      case "photo": return reply(await mgr.takePhoto(msg.opts || {}))
+      default: return reply({ ok: false, error: `unknown cmd ${msg.cmd}` })
+    }
+  } catch (e) {
+    reply({ ok: false, error: String(e?.message || e) })
+  }
+}
+
+const sgcServer = net.createServer((sock) => {
+  sgcClients.add(sock)
+  log(`remote-sgc client connected (${sgcClients.size} total)`)
+  sock.setNoDelay(true)
+  sgcSend(sock, { event: "hello", ...mgr.status() })
+  let buf = ""
+  sock.on("data", (d) => {
+    buf += d.toString("utf8")
+    let nl
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim()
+      buf = buf.slice(nl + 1)
+      if (!line) continue
+      try { void sgcHandle(sock, JSON.parse(line)) } catch {}
+    }
+  })
+  const drop = () => { sgcClients.delete(sock); log("remote-sgc client disconnected") }
+  sock.on("close", drop)
+  sock.on("error", drop)
+})
+sgcServer.listen(SGC_PORT, "0.0.0.0", () => log(`remote-sgc bridge on 0.0.0.0:${SGC_PORT}`))
 let lastImu = null // IMU is high-rate; keep only the latest sample (exposed via /status)
 mgr.on("imu", (v) => { lastImu = v })
 

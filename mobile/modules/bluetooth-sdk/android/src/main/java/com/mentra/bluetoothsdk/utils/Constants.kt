@@ -9,7 +9,9 @@ object DeviceTypes {
     const val Z100 = "Vuzix Z100"
     const val FRAME = "Brilliant Frame"
     const val G2 = "Even Realities G2"
-    val ALL = arrayOf(SIMULATED, G1, G2, MACH1, LIVE, Z100, FRAME, NEX)
+    /** Dev-only: proxies to the laptop harness daemon, which drives real glasses over BLE. */
+    const val REMOTE_HARNESS = "Remote Glasses (Harness)"
+    val ALL = arrayOf(SIMULATED, G1, G2, MACH1, LIVE, Z100, FRAME, NEX, REMOTE_HARNESS)
 }
 
 object ControllerTypes {

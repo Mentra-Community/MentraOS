@@ -18,6 +18,7 @@ import com.mentra.bluetoothsdk.sgcs.G1
 import com.mentra.bluetoothsdk.sgcs.G2
 import com.mentra.bluetoothsdk.sgcs.Mach1
 import com.mentra.bluetoothsdk.sgcs.MentraLive
+import com.mentra.bluetoothsdk.sgcs.RemoteHarness
 import com.mentra.bluetoothsdk.sgcs.MentraNex
 import com.mentra.bluetoothsdk.sgcs.SGCManager
 import com.mentra.bluetoothsdk.sgcs.Simulated
@@ -1046,7 +1047,9 @@ class DeviceManager {
             return
         }
 
-        if (wearable.contains(DeviceTypes.SIMULATED)) {
+        if (wearable.contains(DeviceTypes.REMOTE_HARNESS)) {
+            sgc = RemoteHarness()
+        } else if (wearable.contains(DeviceTypes.SIMULATED)) {
             sgc = Simulated()
         } else if (wearable.contains(DeviceTypes.G1)) {
             sgc = G1()
@@ -1678,6 +1681,14 @@ class DeviceManager {
     fun connectSimulated() {
         defaultWearable = DeviceTypes.SIMULATED
         deviceName = DeviceTypes.SIMULATED
+        initSGC(defaultWearable)
+        handleDeviceReady()
+    }
+
+    /** Dev-only: pair with the laptop harness daemon, which drives real glasses over BLE. */
+    fun connectRemoteHarness() {
+        defaultWearable = DeviceTypes.REMOTE_HARNESS
+        deviceName = DeviceTypes.REMOTE_HARNESS
         initSGC(defaultWearable)
         handleDeviceReady()
     }

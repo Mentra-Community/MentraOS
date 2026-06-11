@@ -350,6 +350,10 @@ class MentraBluetoothSdk private constructor(
         deviceManager.connectSimulated()
     }
 
+    internal fun connectRemoteHarness() {
+        deviceManager.connectRemoteHarness()
+    }
+
     fun disconnect() {
         deviceManager.disconnect()
     }

@@ -360,6 +360,8 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("connectSimulated") { sdk?.connectSimulated() }
 
+        AsyncFunction("connectRemoteHarness") { sdk?.connectRemoteHarness() }
+
         AsyncFunction("disconnect") { sdk?.disconnect() }
 
         AsyncFunction("forget") { sdk?.forget() }
