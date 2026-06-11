@@ -27,6 +27,8 @@ import {submitMiniappStartFailedBugReport} from "@/services/bugReport/miniappSta
 import restComms from "@/services/RestComms"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
+import {resolveWearableCapabilities} from "@/utils/hardware/resolveCapabilities"
+import {useGlassesStore} from "@/stores/glasses"
 
 import {
   cameraPackageName,
@@ -88,6 +90,16 @@ class MiniappCatalog {
         useAppStatusStore.getState().refresh()
       },
     )
+
+    // Same for the live deviceModel: the Remote Glasses (Harness) wearable
+    // resolves capabilities from the family the daemon actually holds, which
+    // arrives after pairing — re-gate the grid when it lands or changes.
+    useGlassesStore.subscribe(
+      (state) => state.deviceModel,
+      () => {
+        useAppStatusStore.getState().refresh()
+      },
+    )
   }
 
   /** Public refresh — non-React entry point used by SocketComms, deeplinks, etc. */
@@ -144,7 +156,9 @@ class MiniappCatalog {
 
   private getCapabilities() {
     const wearable = useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key) || DeviceTypes.NONE
-    return getModelCapabilities(wearable)
+    // Resolves the dev harness wearable to the REAL remote family it holds
+    // (its unknown model name would otherwise land on NONE and gate every app).
+    return resolveWearableCapabilities(wearable)
   }
 
   private async beforeStart(app: ClientApp, opts?: StartOptions): Promise<boolean> {
