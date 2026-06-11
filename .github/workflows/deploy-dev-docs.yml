@@ -6,7 +6,6 @@ on:
       - dev
     paths:
       - docs/**
-      - docs-bluetooth-sdk/**
       - package.json
       - bun.lock
       - .github/workflows/deploy-dev-docs.yml
@@ -24,23 +23,9 @@ env:
 
 jobs:
   deploy:
-    name: Export and deploy ${{ matrix.site_name }}
+    name: Export and deploy MentraOS dev docs
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - site_name: MentraOS dev docs
-            docs_dir: docs
-            export_name: mentraos-docs-dev
-            pages_project: mentraos-docs-dev
-            docs_url: https://docs-dev.mentraglass.com
-          - site_name: Bluetooth SDK docs
-            docs_dir: docs-bluetooth-sdk
-            export_name: mentra-bluetooth-sdk-docs
-            pages_project: mentraos-docs-temp
-            docs_url: https://bluetooth-sdk-docs.mentra.glass
 
     steps:
       - name: Checkout
@@ -52,13 +37,13 @@ jobs:
           bun-version: latest
 
       - name: Export Mintlify docs
-        working-directory: ${{ matrix.docs_dir }}
-        run: bunx --bun mint export --output "$RUNNER_TEMP/${{ matrix.export_name }}.zip"
+        working-directory: docs
+        run: bunx --bun mint export --output "$RUNNER_TEMP/mentraos-docs-dev.zip"
 
       - name: Prepare Cloudflare Pages artifact
         run: |
-          EXPORT_ZIP="$RUNNER_TEMP/${{ matrix.export_name }}.zip"
-          EXPORT_DIR="$RUNNER_TEMP/${{ matrix.export_name }}"
+          EXPORT_ZIP="$RUNNER_TEMP/mentraos-docs-dev.zip"
+          EXPORT_DIR="$RUNNER_TEMP/mentraos-docs-dev"
           rm -rf "$EXPORT_DIR"
           mkdir -p "$EXPORT_DIR"
           unzip -q "$EXPORT_ZIP" -d "$EXPORT_DIR"
@@ -72,14 +57,14 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
         run: |
-          EXPORT_DIR="$RUNNER_TEMP/${{ matrix.export_name }}"
+          EXPORT_DIR="$RUNNER_TEMP/mentraos-docs-dev"
           npx wrangler@4.86.0 pages deploy "$EXPORT_DIR" \
-            --project-name "${{ matrix.pages_project }}" \
+            --project-name mentraos-docs-dev \
             --branch "$CLOUDFLARE_PAGES_BRANCH" \
             --commit-hash "$GITHUB_SHA" \
-            --commit-message "Deploy ${{ matrix.site_name }} from ${GITHUB_SHA::7}" \
+            --commit-message "Deploy MentraOS dev docs from ${GITHUB_SHA::7}" \
             --commit-dirty=true
 
       - name: Print docs URL
         run: |
-          echo "${{ matrix.site_name }} deploy target: ${{ matrix.docs_url }}"
+          echo "MentraOS dev docs deploy target: https://docs-dev.mentraglass.com"

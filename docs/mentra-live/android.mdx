@@ -117,11 +117,11 @@ class GlassesController(context: Context) : MentraBluetoothSdkCallback() {
 
 ## Local SDK Override
 
-Use this when testing SDK source changes locally:
+Use this when testing SDK source changes from a local MentraOS checkout. Run the publish command from the SDK Android module with a local Gradle install, then consume the Maven-local artifact from your app:
 
 ```bash
-cd /path/to/MentraOS/mobile/android
-./gradlew :lc3Lib:publishToMavenLocal :mentra-bluetooth-sdk:publishToMavenLocal -PmentraPublicSdk=true
+cd /path/to/MentraOS/mobile/modules/bluetooth-sdk/android
+gradle :lc3Lib:publishToMavenLocal :publishToMavenLocal -PmentraPublicSdk=true
 ```
 
 Then include `mavenLocal()` before `mavenCentral()` in the app's repositories while testing the local artifact.
