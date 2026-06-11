@@ -71,6 +71,8 @@ export interface RuntimeModule {
   onTranslation(handler: (data: TranslationData) => void): () => void;
 
   requestManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; readUrl: string }>;
+  startManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; uploadUrl: string; readUrl: string }>;
+  awaitManagedPhotoReady(requestId: string): Promise<{ requestId: string; readUrl: string }>;
   startManagedStream(opts: StreamOptions): Promise<ManagedStream>;
   stopManagedStream(streamId: string): Promise<void>;
 
@@ -402,6 +404,15 @@ export class Runtime implements RuntimeModule {
 
   requestManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; readUrl: string }> {
     return this.camera.requestPhoto(opts);
+  }
+
+  /** Device-side managed photo: presign now, deliver bytes yourself, then await ready. */
+  startManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; uploadUrl: string; readUrl: string }> {
+    return this.camera.startPhoto(opts);
+  }
+
+  awaitManagedPhotoReady(requestId: string): Promise<{ requestId: string; readUrl: string }> {
+    return this.camera.awaitPhotoReady(requestId);
   }
 
   startManagedStream(opts: StreamOptions): Promise<ManagedStream> {

@@ -83,12 +83,31 @@ export class Camera {
    * before any push can be processed for it.
    */
   async requestPhoto(opts: PhotoOptions): Promise<PhotoResult> {
-    const { requestId } = await this.http.post<{
+    const { requestId } = await this.startPhoto(opts);
+    return this.awaitPhotoReady(requestId);
+  }
+
+  /**
+   * Step 1 of the managed-photo flow: presign and return the coordinates.
+   * Hosts that act as the DEVICE side too (a phone driving glasses over BLE)
+   * need the uploadUrl to deliver the captured bytes themselves before the
+   * `photo.ready` push can fire; plain consumers can keep using
+   * {@link requestPhoto}, which composes both steps.
+   */
+  async startPhoto(opts: PhotoOptions): Promise<{
+    requestId: string;
+    uploadUrl: string;
+    readUrl: string;
+  }> {
+    return await this.http.post<{
       requestId: string;
       uploadUrl: string;
       readUrl: string;
     }>(PHOTO_PATH, opts);
+  }
 
+  /** Step 2: resolve when the cloud pushes `photo.ready` for the request. */
+  awaitPhotoReady(requestId: string): Promise<PhotoResult> {
     return new Promise<PhotoResult>((resolve, reject) => {
       const timer = setTimeout(() => {
         // Drop the entry first so the rejection cannot race a late push.
