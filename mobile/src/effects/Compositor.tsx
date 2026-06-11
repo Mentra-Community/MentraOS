@@ -31,6 +31,8 @@ import Animated, {
 } from "react-native-reanimated"
 
 import LocalMiniappView from "@/components/miniapp/LocalMiniappView"
+import OfflineAppHost from "@/components/miniapp/OfflineAppHost"
+import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {captureScreenshot} from "@/effects/CapsuleMenu"
 import {useAppStatusStore, useForegroundApp} from "@mentra/island"
 import {Screen} from "@/components/ignite/Screen"
@@ -102,7 +104,6 @@ export default function Compositor() {
   const commitThreshold = screenWidth * COMMIT_FRACTION
 
   const handleBack = useCallback(() => {
-    console.log("handleBack", insets.top)
     captureScreenshot(viewShotRef as any, foregroundApp?.packageName ?? "", insets.top)
     useAppStatusStore.getState().clearForeground()
   }, [foregroundApp?.packageName])
@@ -319,15 +320,25 @@ export default function Compositor() {
         KeyboardAvoidingViewProps={{enabled: false}}
         className="px-0"
         ref={viewShotRef}>
-        <LocalMiniappView
-          packageName={renderedApp.packageName}
-          appName={renderedApp.name}
-          version={renderedApp.version}
-          devUrl={renderedApp.devUrl}
-          iconUrl={renderedApp.logoUrl}
-          onExit={handleBack}
-          onShouldCapture={handleShouldCapture}
-        />
+        {isOfflineHosted(renderedApp.packageName) ? (
+          <OfflineAppHost
+            packageName={renderedApp.packageName}
+            appName={renderedApp.name}
+            iconUrl={renderedApp.logoUrl}
+            onExit={handleBack}
+            onShouldCapture={handleShouldCapture}
+          />
+        ) : (
+          <LocalMiniappView
+            packageName={renderedApp.packageName}
+            appName={renderedApp.name}
+            version={renderedApp.version}
+            devUrl={renderedApp.devUrl}
+            iconUrl={renderedApp.logoUrl}
+            onExit={handleBack}
+            onShouldCapture={handleShouldCapture}
+          />
+        )}
       </Screen>
       {/* </View> */}
       {isForeground && gestureEnabled && Platform.OS === "ios" && (

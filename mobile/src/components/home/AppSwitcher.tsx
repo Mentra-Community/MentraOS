@@ -26,6 +26,7 @@ import {
   type ClientApp,
 } from "@mentra/island"
 import AppIcon from "@/components/home/AppIcon"
+import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@/stores/settings"
@@ -639,7 +640,11 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     }
 
     // Handle apps with custom routes (offline or online with offlineRoute override)
-    if (applet.offlineRoute) {
+    if (applet.offlineRoute && isOfflineHosted(applet.packageName)) {
+      // Registry-hosted offline apps render in the Compositor overlay like
+      // local miniapps (setForeground already saves last-open time).
+      setForeground(applet.packageName)
+    } else if (applet.offlineRoute) {
       saveLastOpenTime(applet.packageName)
       push(applet.offlineRoute, {transition: "fade"})
     } else if (applet.webviewUrl && applet.healthy) {
