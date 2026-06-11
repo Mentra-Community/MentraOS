@@ -80,3 +80,19 @@ The glasses-side SRT path (StreamPack CameraSrtLiveStreamer) works as-shipped;
 no firmware change needed. Product fix: the cloud should hand out SRT ingest
 URLs (Cloudflare provides them on every live input) instead of — or as fallback
 to — RTMPS. One-line-ish change where the start_stream URL is chosen.
+
+## FINAL PICTURE (2026-06-11 PM): it's a prod deploy gap
+
+The SRT-default streaming code (ManagedStreamingExtension picks srtUrl unless a
+pscp.tv restream forces RTMP; WHIP on request) has been on `dev` and `staging`
+since June 3 (0377294ba) — but `main` (prod) does NOT contain it. Prod also
+404s the v2 client photo API. Both of today's CEO-visible failures are the
+same story: **the fixes exist and have not shipped to prod.**
+
+- Cayden's morning failures hit the PRE-restart cloud-dev deploy (rtmps) and
+  prod (rtmps); cloud-dev restarted ~12:30 PT and should now serve SRT.
+- Dev-account photo storage fixed today: created the missing
+  `mentra-miniapp-sdk-photos` R2 bucket (verified e2e: mint -> upload 200).
+  NOTE: needs the 1-day lifecycle rule added in the CF dashboard.
+- Action: promote dev -> staging -> main (ships v2 photo API + SRT streaming),
+  and add R2_MINIAPP_SDK_PHOTOS_BUCKET/bucket to prod env review.
