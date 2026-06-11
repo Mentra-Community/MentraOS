@@ -107,6 +107,36 @@ Action for display-utils owner: shrink displayWidthPx to ~568 for G2, fix the
 'a' and '1' entries, and consider a G2-specific profile instead of inheriting
 G1 verbatim.
 
+## G2 bitmap display: protocol cracked (human-verified on-lens, 2026-06-11)
+
+Earlier "image ✅" notes were wrong — they verified fragment ACCEPTANCE, not
+pixels. No bitmap had ever rendered on the G2. Root causes (proven on fw
+2.2.4.34 by exhaustive on-hardware experiments + community RE cross-reference):
+
+- Multi-fragment UPDATE_IMAGE_RAW_DATA is broken in firmware: fragment 0 acks
+  success (ImgRes code 4), every continuation is rejected (code 5) no matter
+  what. Only single-fragment images (whole 4-bit BMP <= 4096 B) render.
+  Workaround: tile into <= 4 single-fragment strip containers declared in ONE
+  image-only REBUILD_PAGE (manager.mjs displayImageTiled; photo = 224x140 as
+  4 strips of 224x35).
+- A CREATE_STARTUP_PAGE over a live page is silently ignored — SHUTDOWN first,
+  and after a BLE reconnect a page must be re-owned (shutdown+create) or
+  rebuilds time out.
+- Image containers register only via REBUILD_PAGE; G2.kt's repeat-create with
+  ID pool 10-13 never registers them (that's why the app's displayBitmap has
+  never worked on G2 — filed as a follow-up task). Image ID 1 collides with
+  the default text container's ID 1 on shared pages; use image-only rebuilds.
+- Firmware replies echo the request magic (field 2) with result codes
+  (ImgRes f6/sub-f8: 4 ok, 5 fail; RebuildRes f8/sub-f1: 6 ok, 7 fail) — sends
+  must be ack-gated; blind-timer streaming (the app's approach) can't even
+  see the failures. Hammering bad fragments can crash the BLE link entirely.
+- Limits: containers 20-288 x 20-144, name <= 14 chars, BMP 4bpp colorsUsed=16,
+  dims == container dims.
+
+End result: a real Mentra Live camera photo rendered on the worn G2 lens
+(Live -> WiFi webhook -> ffmpeg gray + gamma -> 4-strip tile -> EvenHub),
+human-confirmed. Cross-device camera->display pipeline complete.
+
 ## Dual-device control (verified)
 
 Two daemon instances (per-port pidfiles/logs) held BOTH glasses families
@@ -114,3 +144,16 @@ simultaneously: daemon A :8799 -> Even G2 (worn), daemon B :8899 -> Mentra Live.
 Demo: the Live's camera captured a 179KB JPEG to the laptop while the G2 lens
 narrated the countdown and result live; then a touchpad swipe on the Live was
 relayed onto the G2 lens. Target a daemon with GLASSES_PORT=<port>.
+
+## Physical-device findings (Pixel 8, preview build, real Mentra Live)
+
+- The example miniapp shipped `DISPLAY: REQUIRED`, which blocks LAUNCH entirely
+  when display-less glasses (Mentra Live) are connected — on a tester app whose
+  camera pages exist specifically FOR camera glasses. Changed DISPLAY and
+  MICROPHONE to OPTIONAL; a tester should adapt to present hardware, not gate.
+- App bug (preview build): after installing a dev miniapp via QR scan, the new
+  miniapp does NOT appear on the home grid or app drawer — only findable via
+  drawer search. The registration succeeds but the home/drawer list doesn't
+  refresh. (Same family as the emulator finding that the background JSContext
+  keeps a stale manifest until app restart — dev-app registration changes
+  don't propagate to consumers.)

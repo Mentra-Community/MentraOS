@@ -37,12 +37,12 @@
   "hardwareRequirements": [
     {
       "type": "DISPLAY",
-      "level": "REQUIRED",
-      "description": "Shows live transcription"
+      "level": "OPTIONAL",
+      "description": "Display tester pages work when a display is present"
     },
     {
       "type": "MICROPHONE",
-      "level": "REQUIRED",
+      "level": "OPTIONAL",
       "description": "Captures speech for transcription"
     }
   ],
