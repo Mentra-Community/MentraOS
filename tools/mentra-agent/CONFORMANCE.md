@@ -86,3 +86,23 @@ implication: caption updates, spinners, and even character-grid animations
   576/16 = 36/line, consistent with the observed overflow. The app path wraps
   pixel-accurately via TextWrapper BEFORE sending; firmware wrap is the
   fallback for raw/bypass senders.
+
+## G2 glyph metrics: hardware validation of display utils (predict-then-verify)
+
+Sent uniform character rows at predicted-capacity+3 and counted line-2 spill on
+a worn G2. Measured capacities per line: M=35, W=35, e=56, a>=51, '1'=81,
+i in [100,146], mixed digit ruler=50; prose WORD-WRAPPED ("forever" moved to
+its own line intact).
+
+Best fit reconciling all observations against profiles/g1.ts (inherited by
+G2_PROFILE):
+- Effective drawable width is ~568-570px, NOT the profile's 576px.
+- Two glyph-table errors: '1' renders ~7px (table: 8px) and 'a' ~11px
+  (table: 12px). M/W/e/digits match the table within measurement error.
+- G2 firmware word-wraps natively; G1-era utils assume char-wrap. App-side
+  TextWrapper on G2 therefore wraps slightly early on a/1-heavy text and can
+  rely on firmware word-wrap as a safe fallback.
+
+Action for display-utils owner: shrink displayWidthPx to ~568 for G2, fix the
+'a' and '1' entries, and consider a G2-specific profile instead of inheriting
+G1 verbatim.
