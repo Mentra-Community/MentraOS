@@ -14,6 +14,7 @@ import { EventEmitter } from "node:events"
 import * as g2 from "./g2.mjs"
 import * as g1 from "./g1.mjs"
 import * as live from "./live.mjs"
+import { encode4BitBmp as bmpEncode4 } from "./bmp.mjs"
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -357,8 +358,8 @@ export class G2Manager extends EventEmitter {
       this.on("evenhubAck", on)
     })
   }
-  _evenHub(payload) {
-    return this._write(this.send.packets(g2.ServiceID.EVEN_HUB, payload, true), { left: true, right: true })
+  _evenHub(payload, lr = { left: true, right: true }, gapMs = 30) {
+    return this._write(this.send.packets(g2.ServiceID.EVEN_HUB, payload, true), lr, gapMs)
   }
   _g2setting(payload) {
     return this._write(this.send.packets(g2.ServiceID.G2_SETTING, payload, true), { left: true, right: true })
@@ -443,9 +444,16 @@ export class G2Manager extends EventEmitter {
       await this._write(g1.textPackets(text, this.g1seq.nextText()), { left: true, right: true })
       return { ok: true, text }
     }
-    if (!this.pageCreated) {
+    if (!this.pageCreated || this.pageHasText === false) {
+      // A CREATE while an old page is still alive is silently ignored by the
+      // firmware — always clear the slate first. Also taken when the live page
+      // is image-only: UPDATE_TEXT_DATA to a missing text container CRASHES
+      // the firmware BLE link (observed twice on fw 2.2.4.34).
+      await this._evenHub(g2.shutdownMessage(0, this.send.nextMagic()))
+      await sleep(300)
       await this._evenHub(g2.defaultTextPage(text, this.send.nextMagic()))
       this.pageCreated = true
+      this.pageHasText = true
     } else {
       // live update of container 1 — no page flicker
       await this._evenHub(g2.updateTextMessage(1, text.length === 0 ? " " : text, this.send.nextMagic()))
@@ -481,53 +489,192 @@ export class G2Manager extends EventEmitter {
   // Display a 4-bit BMP (Buffer) on the lens, in a container of the given
   // geometry. Creates an image page, then streams the bitmap in 4096-byte
   // fragments (200ms apart, per G2.kt sendImageData).
-  async displayImage(bmp, { x = 188, y = 44, width = 200, height = 100, label = " ", imageOnly = false, settleMs = 300 } = {}) {
+  async displayImage(bmp, { x = 188, y = 44, width = 200, height = 100, label = " ", imageOnly = false, settleMs = 300, arms = "both" } = {}) {
+    this._imgArms = arms === "right" ? { left: false, right: true } : arms === "left" ? { left: true, right: false } : { left: true, right: true }
+    this._imgF6Offset = !!arguments[1]?.f6Offset
     if (!this.connected) throw new Error("not connected")
     if (this.device !== "g2") throw new Error("image display is wired for G2 (G1 bitmap is in g1.mjs; Live has no display)")
     // Firmware limits (community RE): container width 20-288, height 20-144,
     // name <= 14 chars, fragments <= 4096B, BMP dims must equal container dims.
     if (width < 20 || width > 288 || height < 20 || height > 144)
       throw new Error(`G2 image container must be 20-288 x 20-144 (got ${width}x${height})`)
-    const id = 10
+    // containerID 1 + image-only rebuild: the proven-working sender declares the
+    // container with f5=1 and addresses updates to ID 1 (MentraOS's 10-13 pool
+    // never worked on this firmware).
+    const id = Number(arguments[1]?.id) || (imageOnly ? 1 : 2) // image id 1 collides with text id 1 on shared pages
     const name = `img-${id}`
     const prop = g2.imageContainerProperty({ x, y, width, height, containerID: id, containerName: name })
     const textProps = imageOnly ? [] : [g2.defaultTextProp(label)]
+    this.pageHasText = !imageOnly
     // The image container must be declared via REBUILD_PAGE on a live page —
     // a repeat CREATE does not rebuild firmware state and image data then
     // fails with errorCode 5. So: ensure a page exists, then REBUILD with
     // text + image containers, settle, then stream fragments.
     if (!this.pageCreated) {
+      // shutdown first: a CREATE over a live page is silently ignored
+      await this._evenHub(g2.shutdownMessage(0, this.send.nextMagic()))
+      await sleep(300)
       await this._evenHub(g2.defaultTextPage(label, this.send.nextMagic()))
       this.pageCreated = true
       await sleep(300)
     }
-    // Ack-gated rebuild: wait for RebuildResCmd (6=success) before fragments.
-    const rbMagic = this.send.nextMagic()
-    const rbAckP = this._awaitAck((a) => a.rebuildCode != null && a.magic === rbMagic, 6000)
-    await this._evenHub(g2.rebuildPageMessage(textProps, [prop], rbMagic))
-    const rbAck = await rbAckP
+    if (arguments[1]?.appLaunch) {
+      // sid=0x01 app-launch (exact captured frame from the working sender's
+      // prelude) — registers an app task so the firmware doesn't system_exit
+      // the page mid-stream.
+      const f5872 = Buffer.from("aa219213010101200802109c01220a1a081206120408001000a142", "hex")
+      await this._write([f5872], { left: true, right: true })
+      await sleep(600)
+    }
+    // Ack-gated rebuild (self-healing): wait for RebuildResCmd 6 before fragments.
+    const rbAck = await this._rebuildOwned(textProps, [prop], label)
     this.log(`image: rebuild ack ${rbAck ? `code=${rbAck.rebuildCode}` : "TIMEOUT"}`)
     await sleep(settleMs)
     // Sessions wedge after any failed stream; advance by 2 to skip inherited state.
     const session = (this._imgSession = (this._imgSession || 40) + 2)
-    const FRAG = 4096
+    const FRAG = Number(arguments[1]?.fragSize) || 4096
+    const RETRY = Number(arguments[1]?.retry) || 0
+    const gapMs = Number(arguments[1]?.gapMs) || 50
     let frag = 0
     const acks = []
     for (let off = 0; off < bmp.length; off += FRAG) {
       const chunk = bmp.subarray(off, Math.min(off + FRAG, bmp.length))
       // unique magic per fragment: it is the firmware's ack-correlation key.
       // Ack-gate each fragment (4=img_success, 5=img_failed) instead of a blind timer.
-      const m = this.send.nextMagic()
-      const ackP = this._awaitAck((a) => a.imgCode != null && a.magic === m, 6000)
-      await this._evenHub(g2.updateImageMessage(id, name, session, bmp.length, frag, chunk, m))
-      const a = await ackP
-      acks.push(a ? a.imgCode : "timeout")
-      this.log(`image: frag ${frag} ack ${a ? `code=${a.imgCode}` : "TIMEOUT"}`)
+      let code = null
+      for (let attempt = 0; attempt <= RETRY; attempt++) {
+        const m = this.send.nextMagic()
+        const ackP = this._awaitAck((a) => a.imgCode != null && a.magic === m, 6000)
+        const f6 = this._imgF6Offset ? off : frag // experiment: byte offset vs fragment index in field 6
+        await this._evenHub(g2.updateImageMessage(id, name, session, bmp.length, f6, chunk, m), this._imgArms || { left: true, right: true })
+        const a = await ackP
+        code = a ? a.imgCode : "timeout"
+        if (code === 4) break
+        if (attempt < RETRY) this.log(`image: frag ${frag} code=${code}, retrying`)
+      }
+      acks.push(code)
+      this.log(`image: frag ${frag} ack code=${code}`)
       frag++
-      await sleep(50)
+      await sleep(gapMs)
     }
     const ok = acks.every((c) => c === 4)
     return { ok, bytes: bmp.length, fragments: frag, session, fragAcks: acks, rebuildAck: rbAck?.rebuildCode ?? null, geometry: { x, y, width, height } }
+  }
+
+  // Display a grayscale frame {w,h,data} as a mosaic of horizontal strips, each
+  // a single-fragment BMP (<=4096B) in its own container — the only image path
+  // this firmware accepts (multi-fragment reassembly is broken: frag0 acks 4,
+  // continuations ack 5). Max 4 containers -> strips of h<=floor((4096-118)/stride).
+  async displayImageTiled(frame, { x = null, y = null } = {}) {
+    if (!this.connected) throw new Error("not connected")
+    if (this.device !== "g2") throw new Error("tiled image display is G2-only")
+    const { w, h } = frame
+    const rowBytes = (Math.ceil(w / 2) + 3) & ~3
+    const maxRows = Math.floor((4096 - 118) / rowBytes)
+    const strips = Math.ceil(h / maxRows)
+    if (strips > 4) throw new Error(`image needs ${strips} strips (>4 containers): reduce to <= ${w}x${maxRows * 4}`)
+    const px = x ?? Math.max(0, Math.floor((576 - w) / 2))
+    const py = y ?? Math.max(0, Math.floor((288 - h) / 2))
+    // declare all strip containers in ONE image-only rebuild (ids 1..n)
+    const props = []
+    const tiles = []
+    for (let i = 0; i < strips; i++) {
+      const sy = i * maxRows
+      const sh = Math.min(maxRows, h - sy)
+      const sub = { w, h: sh, data: frame.data.subarray(sy * w, (sy + sh) * w) }
+      tiles.push({ id: i + 1, name: `img-${i + 1}`, y: py + sy, h: sh, sub })
+      props.push(g2.imageContainerProperty({ x: px, y: py + sy, width: w, height: sh, containerID: i + 1, containerName: `img-${i + 1}` }))
+    }
+    if (!this.pageCreated) {
+      // own a fresh page first: rebuilds only ack on a page created in this
+      // BLE session (orphan pages from a previous connection time out)
+      await this._evenHub(g2.shutdownMessage(0, this.send.nextMagic()))
+      await sleep(300)
+      await this._evenHub(g2.defaultTextPage(" ", this.send.nextMagic()))
+      this.pageCreated = true
+      await sleep(300)
+    }
+    const rbAck = await this._rebuildOwned([], props)
+    this.log(`tiled image: rebuild ack ${rbAck ? `code=${rbAck.rebuildCode}` : "TIMEOUT"}`)
+    await sleep(300)
+    const acks = []
+    for (const t of tiles) {
+      const bmpBuf = bmpEncode4(t.sub)
+      const session = (this._imgSession = (this._imgSession || 40) + 2)
+      const m = this.send.nextMagic()
+      const ackP = this._awaitAck((a) => a.imgCode != null && a.magic === m, 6000)
+      await this._evenHub(g2.updateImageMessage(t.id, t.name, session, bmpBuf.length, 0, bmpBuf, m))
+      const a = await ackP
+      acks.push(a ? a.imgCode : "timeout")
+      this.log(`tiled image: strip ${t.id} ack code=${a ? a.imgCode : "TIMEOUT"}`)
+      await sleep(100)
+    }
+    this.pageHasText = false // image-only page: text updates must recreate the page
+    return { ok: acks.every((c) => c === 4), strips, stripAcks: acks, rebuildAck: rbAck?.rebuildCode ?? null, geometry: { x: px, y: py, width: w, height: h } }
+  }
+
+  // Rebuild with self-healing: a failed/timed-out rebuild (stale container set,
+  // orphaned page) resets the page (shutdown -> create) and retries once.
+  async _rebuildOwned(textProps, imageProps, label = " ") {
+    const attempt = async () => {
+      const m = this.send.nextMagic()
+      const ackP = this._awaitAck((a) => a.rebuildCode != null && a.magic === m, 6000)
+      await this._evenHub(g2.rebuildPageMessage(textProps, imageProps, m))
+      return await ackP
+    }
+    let ack = await attempt()
+    if (ack?.rebuildCode !== 6) {
+      this.log(`rebuild failed (${ack?.rebuildCode ?? "timeout"}); resetting page and retrying`)
+      await this._evenHub(g2.shutdownMessage(0, this.send.nextMagic()))
+      await sleep(300)
+      await this._evenHub(g2.defaultTextPage(label, this.send.nextMagic()))
+      this.pageCreated = true
+      await sleep(300)
+      ack = await attempt()
+    }
+    return ack
+  }
+
+  // Declare a page with the default event-capture text container (id 1) plus
+  // arbitrary image containers (ids 2+), e.g. for dirty-rect game rendering.
+  // Containers are declared empty; paint them with updateImage().
+  async setupImagePage({ text = " ", tiles = [] } = {}) {
+    if (!this.connected) throw new Error("not connected")
+    if (this.device !== "g2") throw new Error("image pages are G2-only")
+    if (tiles.length > 4) throw new Error("max 4 image containers")
+    if (!this.pageCreated) {
+      await this._evenHub(g2.shutdownMessage(0, this.send.nextMagic()))
+      await sleep(300)
+      await this._evenHub(g2.defaultTextPage(text, this.send.nextMagic()))
+      this.pageCreated = true
+      await sleep(300)
+    }
+    const props = tiles.map((t) =>
+      g2.imageContainerProperty({ x: t.x, y: t.y, width: t.width, height: t.height, containerID: t.id, containerName: `img-${t.id}` }))
+    const ack = await this._rebuildOwned([g2.defaultTextProp(text)], props, text)
+    this.pageHasText = true
+    return { ok: ack?.rebuildCode === 6, rebuildAck: ack?.rebuildCode ?? "timeout", tiles: tiles.map((t) => t.id) }
+  }
+
+  // Fast partial update: stream ONE single-fragment BMP into an EXISTING image
+  // container (declared by a prior displayImage/displayImageTiled rebuild) —
+  // no page rebuild, so this is the fastest bitmap path. ackGate=false sends
+  // blind for max rate (caller is responsible for pacing).
+  async updateImage(frame, { id = 1, ackGate = true, gapMs = 30 } = {}) {
+    if (!this.connected) throw new Error("not connected")
+    const bmpBuf = bmpEncode4(frame)
+    if (bmpBuf.length > 4096) throw new Error(`BMP ${bmpBuf.length}B > 4096 single-fragment limit`)
+    const session = (this._imgSession = (this._imgSession || 40) + 2)
+    const m = this.send.nextMagic()
+    const t0 = Date.now()
+    if (!ackGate) {
+      await this._evenHub(g2.updateImageMessage(id, `img-${id}`, session, bmpBuf.length, 0, bmpBuf, m), undefined, gapMs)
+      return { ok: true, ms: Date.now() - t0, bytes: bmpBuf.length, ack: null }
+    }
+    const ackP = this._awaitAck((a) => a.imgCode != null && a.magic === m, 5000)
+    await this._evenHub(g2.updateImageMessage(id, `img-${id}`, session, bmpBuf.length, 0, bmpBuf, m), undefined, gapMs)
+    const a = await ackP
+    return { ok: a?.imgCode === 4, ms: Date.now() - t0, bytes: bmpBuf.length, ack: a?.imgCode ?? "timeout" }
   }
 
   async setImu(enable, freq = 100) {

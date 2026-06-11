@@ -137,6 +137,35 @@ End result: a real Mentra Live camera photo rendered on the worn G2 lens
 (Live -> WiFi webhook -> ffmpeg gray + gamma -> 4-strip tile -> EvenHub),
 human-confirmed. Cross-device camera->display pipeline complete.
 
+## G2 bitmap/IMU follow-ups (autonomous session, 2026-06-11 PM)
+
+- **Partial updates**: containers declared once can be re-streamed individually
+  (updateImage, no rebuild). Rates (ack-gated, 8ms packet gap, 100% acks):
+  32x32 = 11.2 fps, 48x48 = 8.4, 64x64 = 4.4, 88x88 = ~2.5. Rule of thumb
+  fps ~= 9500 / BMP-bytes. CRITICAL: at the old 30ms packet gap mid-stream
+  frames were REJECTED; 8ms (what Android uses) fixes acks entirely.
+- **Text+image pages work** (the earlier "collision" was image id 1 vs text
+  id 1): text container id 1 + image ids 2..5 coexist; score-text + bitmap
+  game proven (lens-balance.mjs, head-tilt ball balance via G2 IMU).
+- **IMU needs an event-capture container on the page** (image-only pages get
+  no IMU/touch events — they ride OS_NOTIFY_EVENT_TO_APP). Stationary glasses
+  report ~2 samples/sec regardless of pacing code (likely change-driven;
+  needs a worn retest for true rate).
+- **Multi-fragment is dead, definitively**: frag sizes 512-4096, inter-fragment
+  delays up to 3s, retries — always [4,5,...]. Tiling is the permanent path.
+- **Rebuild throughput: 16.7/sec ack-gated (10/10 ok)** — container-position
+  animation (moving text/images by rebuilding with shifted geometry) is
+  viable near the 20Hz render ceiling. Flicker/tearing needs a human check.
+- **Self-healing rebuilds**: a rebuild after drastic container-set changes can
+  fail (code 7) or time out on an orphaned page; manager now resets
+  (shutdown -> create) and retries once automatically.
+- Text update queue accepts ~900 sends/sec (render ceiling stays 20Hz).
+- New harness surface: /imagePage (text + up to 4 image containers),
+  /imageUpdate (single-fragment partial update, gapMs/ackGate), bmp.mjs
+  dithers (FS/Atkinson/Bayer), lens-clock.mjs (long-run soak),
+  lens-balance.mjs (IMU game), button-to-lens.mjs (Live button -> G2 photo,
+  IMU auto-orientation).
+
 ## Dual-device control (verified)
 
 Two daemon instances (per-port pidfiles/logs) held BOTH glasses families

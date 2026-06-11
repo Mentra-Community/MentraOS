@@ -263,16 +263,16 @@ export function imagePageMessage(imageProp, magic = 0) {
 }
 
 // One fragment of a 4-bit BMP. compressMode 0 = uncompressed.
+// The stream header (container/name/session/totalSize) goes ONLY in fragment 0:
+// the firmware treats any header-bearing fragment as a new stream start, so
+// resending it on continuations (as G2.kt does) makes every fragment > 0 fail
+// with errorCode 5. Continuations carry only index/size/data (f6, f7, f8).
 export function updateImageMessage(containerID, name, sessionId, totalSize, fragIndex, fragData, magic = 0) {
+  // Matches the proven-working sender (g2-img-send.ts): full header in every
+  // fragment, compressMode (f5) omitted entirely, f6 = 0-based fragment index.
   const upd = new PB().int32(1, containerID)
   if (name) upd.string(2, name)
-  upd
-    .int32(3, sessionId)
-    .int32(4, totalSize)
-    .int32(5, 0)
-    .int32(6, fragIndex)
-    .int32(7, fragData.length)
-    .bytes(8, fragData)
+  upd.int32(3, sessionId).int32(4, totalSize).int32(6, fragIndex).int32(7, fragData.length).bytes(8, fragData)
   return evenHubMessage(EvenHubCmd.UPDATE_IMAGE_RAW_DATA, 5, upd.buf(), magic)
 }
 

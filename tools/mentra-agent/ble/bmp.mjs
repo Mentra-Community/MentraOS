@@ -47,6 +47,70 @@ export function demoImage(w = 200, h = 100) {
   return f
 }
 
+// Floyd-Steinberg dither a gray8 frame down to the 16 levels the G2 can show
+// (multiples of 17). Without this, smooth gradients band into blocky steps.
+export function ditherTo16(f) {
+  const { w, h } = f
+  const px = Float32Array.from(f.data)
+  const out = new Uint8Array(w * h)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      const old = px[i]
+      const lvl = Math.max(0, Math.min(15, Math.round(old / 17)))
+      const nw = lvl * 17
+      out[i] = nw
+      const err = old - nw
+      if (x + 1 < w) px[i + 1] += (err * 7) / 16
+      if (y + 1 < h) {
+        if (x > 0) px[i + w - 1] += (err * 3) / 16
+        px[i + w] += (err * 5) / 16
+        if (x + 1 < w) px[i + w + 1] += (err * 1) / 16
+      }
+    }
+  }
+  return { w, h, data: out }
+}
+
+// Atkinson dither (classic Mac look): diffuses only 6/8 of the error -> punchier
+// contrast, less "noise crawl" than Floyd-Steinberg on low-res displays.
+export function ditherAtkinson(f) {
+  const { w, h } = f
+  const px = Float32Array.from(f.data)
+  const out = new Uint8Array(w * h)
+  const spread = [[1, 0], [2, 0], [-1, 1], [0, 1], [1, 1], [0, 2]]
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      const lvl = Math.max(0, Math.min(15, Math.round(px[i] / 17)))
+      out[i] = lvl * 17
+      const err = (px[i] - out[i]) / 8
+      for (const [dx, dy] of spread) {
+        const nx = x + dx, ny = y + dy
+        if (nx >= 0 && nx < w && ny < h) px[ny * w + nx] += err
+      }
+    }
+  }
+  return { w, h, data: out }
+}
+
+// Ordered 4x4 Bayer dither: stable patterns (no frame-to-frame crawl), best for
+// animation since pixels don't shimmer between frames.
+const BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]
+export function ditherBayer(f) {
+  const { w, h } = f
+  const out = new Uint8Array(w * h)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      const t = (BAYER4[(y & 3) * 4 + (x & 3)] + 0.5) / 16 - 0.5 // -0.47..+0.47
+      const lvl = Math.max(0, Math.min(15, Math.round(f.data[i] / 17 + t)))
+      out[i] = lvl * 17
+    }
+  }
+  return { w, h, data: out }
+}
+
 // Little-endian writers
 function u32(n) { return Buffer.from([n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >> 24) & 0xff]) }
 function u16(n) { return Buffer.from([n & 0xff, (n >> 8) & 0xff]) }

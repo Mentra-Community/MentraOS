@@ -300,7 +300,23 @@ const server = http.createServer(async (req, res) => {
       const height = Number(b.height ?? 100)
       // Use a supplied 4-bit BMP (base64), else generate a demo test pattern.
       const img = b.bmpBase64 ? Buffer.from(b.bmpBase64, "base64") : bmp.encode4BitBmp(bmp.demoImage(width, height))
-      return json(res, 200, await mgr.displayImage(img, { x: Number(b.x ?? 188), y: Number(b.y ?? 44), width, height, label: b.label, imageOnly: !!b.imageOnly, settleMs: Number(b.settleMs ?? 300) }))
+      if (b.tiled) {
+        // grayBase64 = raw 8-bit grayscale pixels (w*h bytes), tiled into
+        // single-fragment strip containers (the only path this fw renders).
+        const gray = Buffer.from(b.grayBase64, "base64")
+        const frame = { w: width, h: height, data: new Uint8Array(gray) }
+        return json(res, 200, await mgr.displayImageTiled(frame, { x: b.x != null ? Number(b.x) : null, y: b.y != null ? Number(b.y) : null }))
+      }
+      return json(res, 200, await mgr.displayImage(img, { ...b, x: Number(b.x ?? 188), y: Number(b.y ?? 44), width, height, label: b.label, imageOnly: !!b.imageOnly, settleMs: Number(b.settleMs ?? 300), arms: b.arms || "both" }))
+    }
+    if (req.method === "POST" && url === "/imagePage") {
+      const b = (await body(req)) || {}
+      return json(res, 200, await mgr.setupImagePage({ text: b.text ?? " ", tiles: b.tiles ?? [] }))
+    }
+    if (req.method === "POST" && url === "/imageUpdate") {
+      const b = (await body(req)) || {}
+      const frame = { w: Number(b.width), h: Number(b.height), data: new Uint8Array(Buffer.from(b.grayBase64, "base64")) }
+      return json(res, 200, await mgr.updateImage(frame, { id: Number(b.id ?? 1), ackGate: b.ackGate !== false, gapMs: Number(b.gapMs ?? 30) }))
     }
     if (req.method === "POST" && url === "/imu") {
       const b = await body(req)

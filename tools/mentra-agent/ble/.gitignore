@@ -11,3 +11,6 @@ MentraBLE.app/Contents/_CodeSignature/
 scan-result*.json
 daemon.pid
 photos/
+daemon-*.pid
+daemon-*.log
+photos/
