@@ -278,16 +278,17 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
       {stack.map((entry, i) => {
         const RouteComponent = def.routes[entry.path]
         if (!RouteComponent) return null
+        const isTop = i === depth - 1
+        // The entry directly beneath the top stays visible (fully covered by
+        // the opaque top screen) so the pop swipe reveals it mid-gesture.
+        const isUnderTop = i === depth - 2
         return (
-          // Every entry stays mounted AND visible — stacked absoluteFill
-          // siblings, top entry last so it paints over the rest. Hiding the
-          // covered screens with display:none intermittently broke their
-          // liquid-glass surfaces on re-show (the native effect view fails to
-          // re-establish backdrop sampling), so they simply stay rendered
-          // beneath the opaque top screen instead.
+          // Keep every entry mounted (hidden when not top) so sub-screen
+          // state survives back navigation, like a native stack.
           <HostStackEntry
             key={`${entry.path}-${i}`}
             index={i}
+            visible={isTop || isUnderTop}
             popTargetIndex={popTargetIndex}
             popTranslateX={popTranslateX}>
             <RouteComponent />
@@ -320,11 +321,13 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
  */
 function HostStackEntry({
   index,
+  visible,
   popTargetIndex,
   popTranslateX,
   children,
 }: {
   index: number
+  visible: boolean
   popTargetIndex: SharedValue<number>
   popTranslateX: SharedValue<number>
   children: ReactNode
@@ -333,7 +336,7 @@ function HostStackEntry({
     transform: [{translateX: popTargetIndex.value === index ? popTranslateX.value : 0}],
   }))
   return (
-    <Animated.View style={[StyleSheet.absoluteFill, animatedStyle]}>
+    <Animated.View style={[StyleSheet.absoluteFill, animatedStyle, {display: visible ? "flex" : "none"}]}>
       {children}
     </Animated.View>
   )

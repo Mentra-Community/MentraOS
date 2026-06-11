@@ -288,12 +288,20 @@ export default function Compositor() {
       didSwipeToExit.current = false // reset the flag so we can animate out again
       swipeTranslateX.value = 0
       swipeTranslateY.value = 0
-      fadeOpacity.value = 0
-      // Zoom-in on launch: scale up from FADE_IN_SCALE_FROM → 1 alongside the
-      // opacity fade so the app surface grows into place.
-      fadeScale.value = FADE_IN_SCALE_FROM
-      fadeOpacity.value = withDelay(FADE_IN_DELAY_MS, withTiming(1, {duration: FADE_IN_DURATION_MS}))
-      fadeScale.value = withDelay(FADE_IN_DELAY_MS, withTiming(1, {duration: FADE_IN_DURATION_MS}))
+      // Offline-hosted apps mount with NO open animation: their native
+      // liquid-glass surfaces misrender when configured while an ancestor
+      // animates opacity/scale, so the overlay snaps straight to rest state.
+      if (foregroundApp && isOfflineHosted(foregroundApp.packageName)) {
+        fadeOpacity.value = 1
+        fadeScale.value = 1
+      } else {
+        fadeOpacity.value = 0
+        // Zoom-in on launch: scale up from FADE_IN_SCALE_FROM → 1 alongside the
+        // opacity fade so the app surface grows into place.
+        fadeScale.value = FADE_IN_SCALE_FROM
+        fadeOpacity.value = withDelay(FADE_IN_DELAY_MS, withTiming(1, {duration: FADE_IN_DURATION_MS}))
+        fadeScale.value = withDelay(FADE_IN_DELAY_MS, withTiming(1, {duration: FADE_IN_DURATION_MS}))
+      }
     } else {
       // only animate out if we didn't swipe to exit:
       if (!didSwipeToExit.current) {
