@@ -1,5 +1,7 @@
 package com.mentra.bluetoothsdk.sgcs
 
+// Mentra
+// old augmentos imports:
 import android.Manifest
 import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothAdapter
@@ -8,7 +10,6 @@ import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
-import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.BluetoothLeScanner
@@ -20,23 +21,18 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-
 import androidx.core.app.ActivityCompat
-
-// Mentra
 import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
-import com.mentra.bluetoothsdk.utils.BitmapJavaUtils
 import com.mentra.bluetoothsdk.utils.BlePhotoUploadService
 import com.mentra.bluetoothsdk.utils.ConnTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
@@ -46,20 +42,10 @@ import com.mentra.bluetoothsdk.utils.K900ProtocolUtils
 import com.mentra.bluetoothsdk.utils.MessageChunkReassembler
 import com.mentra.bluetoothsdk.utils.MessageChunker
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
-import com.mentra.bluetoothsdk.utils.SmartGlassesConnectionState
 import com.mentra.bluetoothsdk.utils.audio.Lc3Player
-
-// old augmentos imports:
 import com.mentra.lc3Lib.Lc3Cpp
-
-import org.greenrobot.eventbus.EventBus
-import org.json.JSONArray
-import org.json.JSONException
-import org.json.JSONObject
-
 import java.io.File
 import java.io.FileOutputStream
-import java.lang.reflect.Method
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.text.SimpleDateFormat
@@ -75,16 +61,18 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import java.util.function.Consumer
+import org.json.JSONArray
+import org.json.JSONException
+import org.json.JSONObject
 
 /**
- * Smart Glasses Communicator for Mentra Live (K900) glasses
- * Uses BLE to communicate with the glasses
+ * Smart Glasses Communicator for Mentra Live (K900) glasses Uses BLE to communicate with the
+ * glasses
  *
- * Note: Mentra Live glasses have no display capabilities, only camera and microphone.
- * All display-related methods are stubbed out and will log a message but not actually display anything.
+ * Note: Mentra Live glasses have no display capabilities, only camera and microphone. All
+ * display-related methods are stubbed out and will log a message but not actually display anything.
  */
 class MentraLive : SGCManager() {
 
@@ -100,16 +88,25 @@ class MentraLive : SGCManager() {
         private const val LC3_FRAME_SIZE = 40
         private const val VOICE_ACTIVITY_DETECTION_SWITCH_TYPE = 8
 
-        // BLE UUIDs - updated to match K900 BES2800 MCU UUIDs for compatibility with both glass types
-        // CRITICAL FIX: Swapped TX and RX UUIDs to match actual usage from central device perspective
+        // BLE UUIDs - updated to match K900 BES2800 MCU UUIDs for compatibility with both glass
+        // types
+        // CRITICAL FIX: Swapped TX and RX UUIDs to match actual usage from central device
+        // perspective
         // In BLE, characteristic names are from the perspective of the device that owns them:
         // - From peripheral's perspective: TX is for sending, RX is for receiving
         // - From central's perspective: RX is peripheral's TX, TX is peripheral's RX
         private val SERVICE_UUID: UUID = UUID.fromString("00004860-0000-1000-8000-00805f9b34fb")
-        //000070FF-0000-1000-8000-00805f9b34fb
-        private val RX_CHAR_UUID: UUID = UUID.fromString("000070FF-0000-1000-8000-00805f9b34fb") // Central receives on peripheral's TX
-        private val TX_CHAR_UUID: UUID = UUID.fromString("000071FF-0000-1000-8000-00805f9b34fb") // Central transmits on peripheral's RX
-        private val CLIENT_CHARACTERISTIC_CONFIG_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+        // 000070FF-0000-1000-8000-00805f9b34fb
+        private val RX_CHAR_UUID: UUID =
+                UUID.fromString(
+                        "000070FF-0000-1000-8000-00805f9b34fb"
+                ) // Central receives on peripheral's TX
+        private val TX_CHAR_UUID: UUID =
+                UUID.fromString(
+                        "000071FF-0000-1000-8000-00805f9b34fb"
+                ) // Central transmits on peripheral's RX
+        private val CLIENT_CHARACTERISTIC_CONFIG_UUID: UUID =
+                UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
         // BES => PHONE
         private val FILE_READ_UUID: UUID = UUID.fromString("000072FF-0000-1000-8000-00805f9b34fb")
@@ -119,11 +116,14 @@ class MentraLive : SGCManager() {
         private val LC3_WRITE_UUID: UUID = UUID.fromString("6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
 
         // Reconnection parameters
-        private const val BASE_RECONNECT_DELAY_MS = 500 // Start with 0.5 seconds (faster initial retry)
+        private const val BASE_RECONNECT_DELAY_MS =
+                500 // Start with 0.5 seconds (faster initial retry)
         private const val MAX_RECONNECT_DELAY_MS = 20000 // Max 20 seconds (more aggressive)
         private const val MAX_RECONNECT_ATTEMPTS = 20 // Increased from 10 for better persistence
-        private const val RECONNECT_SCAN_TIMEOUT_MS = 10000 // 10 seconds for reconnection scans (faster than 60s default)
-        private const val POST_SHUTDOWN_RECONNECT_DELAY_MS = 10_000L // 10s before first scan after shutdown
+        private const val RECONNECT_SCAN_TIMEOUT_MS =
+                10000 // 10 seconds for reconnection scans (faster than 60s default)
+        private const val POST_SHUTDOWN_RECONNECT_DELAY_MS =
+                10_000L // 10s before first scan after shutdown
         private const val SHUTDOWN_RECENT_MS = 45_000L // Consider "recent shutdown" for 45s
 
         // Keep-alive parameters
@@ -147,7 +147,8 @@ class MentraLive : SGCManager() {
         private const val KEY_CORE_TOKEN = "core_token"
 
         private const val MAX_BONDING_RETRIES = 3
-        private const val BONDING_RETRY_DELAY_MS = 1500L // Delay before retry to let user see dialog again
+        private const val BONDING_RETRY_DELAY_MS =
+                1500L // Delay before retry to let user see dialog again
 
         private const val CORE_TOKEN_MAX_RETRIES = 3
         private const val CORE_TOKEN_RETRY_DELAY_MS = 250L
@@ -179,9 +180,7 @@ class MentraLive : SGCManager() {
         private const val LC3_SAVING_ENABLED = true
         private const val LC3_LOG_DIR = "lc3_audio_logs"
 
-        /**
-         * Convert bytes to hex string for debugging
-         */
+        /** Convert bytes to hex string for debugging */
         private fun bytesToHex(bytes: ByteArray): String {
             val sb = StringBuilder()
             for (b in bytes) {
@@ -203,7 +202,10 @@ class MentraLive : SGCManager() {
 
     private var reconnectAttempts = 0
     private var isReconnecting = false // Track if we're in reconnection mode
-    /** Timestamp when sr_shut (K900 shutdown) was last received; used to delay first reconnect scan so glasses can reboot. */
+    /**
+     * Timestamp when sr_shut (K900 shutdown) was last received; used to delay first reconnect scan
+     * so glasses can reboot.
+     */
     private var lastShutdownTimeMs = 0L
 
     // State tracking
@@ -237,7 +239,8 @@ class MentraLive : SGCManager() {
     // Queue for serializing BLE descriptor writes (only one GATT operation at a time)
     private val pendingDescriptorWrites = ConcurrentLinkedQueue<BluetoothGattDescriptor>()
     private var isDescriptorWriteInProgress = false
-    private var notificationsEnabled = false // Track if enableNotifications was already called this connection
+    private var notificationsEnabled =
+            false // Track if enableNotifications was already called this connection
     private var connectionTimeoutRunnable: Runnable? = null
     private var connectionTimeoutHandler = Handler(Looper.getMainLooper())
     private var processSendQueueRunnable: Runnable? = null
@@ -252,8 +255,8 @@ class MentraLive : SGCManager() {
     // LC3 Mic suspend/resume state machine for A2DP conflict avoidance
     // When phone plays audio via A2DP while LC3 mic is active, it overloads the MCU
     // So we temporarily suspend the LC3 mic during phone audio playback
-    private var micIntentEnabled = false       // User/system WANTS mic enabled
-    private var micSuspendedForAudio = false   // Mic temporarily suspended due to phone audio
+    private var micIntentEnabled = false // User/system WANTS mic enabled
+    private var micSuspendedForAudio = false // Mic temporarily suspended due to phone audio
     private var phoneAudioMonitor: PhoneAudioMonitor? = null
     private var micOnCount = 0
     private var micOffCount = 0
@@ -261,7 +264,7 @@ class MentraLive : SGCManager() {
     private var lastSendTimeMs = 0L // Timestamp of last send
 
     // Local state tracking (not in parent SGCManager)
-    private var isCharging = false  // Charging status (batteryLevel is in parent)
+    private var isCharging = false // Charging status (batteryLevel is in parent)
     private var isConnected = false
 
     // File transfer management
@@ -293,15 +296,15 @@ class MentraLive : SGCManager() {
     private var pendingSetGlassesVolumeError: Consumer<String>? = null
 
     private class BlePhotoTransfer(
-        var bleImgId: String,
-        var requestId: String,
-        var webhookUrl: String?
+            var bleImgId: String,
+            var requestId: String,
+            var webhookUrl: String?
     ) {
         var authToken: String? = null
         var session: FileTransferSession? = null
-        var phoneStartTime: Long = System.currentTimeMillis()  // When phone received the request
-        var bleTransferStartTime: Long = 0  // When BLE transfer actually started
-        var glassesCompressionDurationMs: Long = 0  // How long glasses took to compress
+        var phoneStartTime: Long = System.currentTimeMillis() // When phone received the request
+        var bleTransferStartTime: Long = 0 // When BLE transfer actually started
+        var glassesCompressionDurationMs: Long = 0 // How long glasses took to compress
     }
 
     private enum class BleIncidentLogKind {
@@ -310,10 +313,10 @@ class MentraLive : SGCManager() {
     }
 
     private class BleIncidentLogRelay(
-        val fileBaseKey: String,
-        val incidentId: String,
-        val apiBaseUrl: String,
-        val kind: BleIncidentLogKind
+            val fileBaseKey: String,
+            val incidentId: String,
+            val apiBaseUrl: String,
+            val kind: BleIncidentLogKind
     ) {
         var session: FileTransferSession? = null
     }
@@ -321,7 +324,8 @@ class MentraLive : SGCManager() {
     // Inner class to track incoming file transfers
     private class FileTransferSession(var fileName: String, var fileSize: Int) {
         // NOTE: fileSize may be "fake" (inflated) due to BES firmware workaround
-        var actualPackSize = 0     // Actual pack size from first received packet (for BES lie detection)
+        var actualPackSize =
+                0 // Actual pack size from first received packet (for BES lie detection)
         var totalPackets: Int
         var expectedNextPacket = 0
         var receivedPackets = ConcurrentHashMap<Int, ByteArray>()
@@ -338,16 +342,18 @@ class MentraLive : SGCManager() {
 
         init {
             // Initialize with max expected packets - will be recalculated on first packet
-            totalPackets = (fileSize + K900ProtocolUtils.FILE_PACK_SIZE - 1) / K900ProtocolUtils.FILE_PACK_SIZE
+            totalPackets =
+                    (fileSize + K900ProtocolUtils.FILE_PACK_SIZE - 1) /
+                            K900ProtocolUtils.FILE_PACK_SIZE
         }
 
         /**
-         * Recalculate total packets based on actual pack size from received packet.
-         * Called when first packet is received to handle variable pack sizes.
+         * Recalculate total packets based on actual pack size from received packet. Called when
+         * first packet is received to handle variable pack sizes.
          *
-         * NOTE: Due to BES firmware workaround, fileSize in header may be "fake" (inflated).
-         * We detect this by checking if fileSize is a multiple of 400 (BES_HARDCODED_PACK_SIZE).
-         * If so, totalPackets = fileSize / 400, regardless of actual pack size.
+         * NOTE: Due to BES firmware workaround, fileSize in header may be "fake" (inflated). We
+         * detect this by checking if fileSize is a multiple of 400 (BES_HARDCODED_PACK_SIZE). If
+         * so, totalPackets = fileSize / 400, regardless of actual pack size.
          */
         fun recalculateTotalPackets(actualPackSize: Int) {
             if (actualPackSize <= 0 || actualPackSize > K900ProtocolUtils.FILE_PACK_SIZE) {
@@ -357,22 +363,41 @@ class MentraLive : SGCManager() {
             this.actualPackSize = actualPackSize
 
             // Detect BES lie: if fileSize is exact multiple of 400, glasses used the lie strategy
-            val isBesLie = (fileSize % BES_HARDCODED_PACK_SIZE == 0) && (actualPackSize != BES_HARDCODED_PACK_SIZE)
+            val isBesLie =
+                    (fileSize % BES_HARDCODED_PACK_SIZE == 0) &&
+                            (actualPackSize != BES_HARDCODED_PACK_SIZE)
 
             val newTotalPackets: Int
             if (isBesLie) {
                 // BES lie detected: totalPackets = fileSize / 400
                 newTotalPackets = fileSize / BES_HARDCODED_PACK_SIZE
-                Log.i("FileTransferSession", "📦 BES Lie detected! fakeFileSize=" + fileSize +
-                      ", totalPackets=" + newTotalPackets + ", actualPackSize=" + actualPackSize)
+                Log.i(
+                        "FileTransferSession",
+                        "📦 BES Lie detected! fakeFileSize=" +
+                                fileSize +
+                                ", totalPackets=" +
+                                newTotalPackets +
+                                ", actualPackSize=" +
+                                actualPackSize
+                )
             } else {
                 // Normal case: calculate based on actual pack size
                 newTotalPackets = (fileSize + actualPackSize - 1) / actualPackSize
             }
 
             if (newTotalPackets != totalPackets) {
-                Log.i("FileTransferSession", "📦 Recalculating totalPackets: " + totalPackets + " -> " + newTotalPackets +
-                      " (packSize=" + actualPackSize + ", fileSize=" + fileSize + ")")
+                Log.i(
+                        "FileTransferSession",
+                        "📦 Recalculating totalPackets: " +
+                                totalPackets +
+                                " -> " +
+                                newTotalPackets +
+                                " (packSize=" +
+                                actualPackSize +
+                                ", fileSize=" +
+                                fileSize +
+                                ")"
+                )
                 totalPackets = newTotalPackets
             }
         }
@@ -415,9 +440,9 @@ class MentraLive : SGCManager() {
         }
 
         /**
-         * Assemble file from received packets.
-         * NOTE: We calculate actual file size from received data, NOT from header fileSize,
-         * because fileSize may be "fake" (inflated) due to BES firmware workaround.
+         * Assemble file from received packets. NOTE: We calculate actual file size from received
+         * data, NOT from header fileSize, because fileSize may be "fake" (inflated) due to BES
+         * firmware workaround.
          */
         fun assembleFile(): ByteArray? {
             if (!isComplete) {
@@ -433,8 +458,15 @@ class MentraLive : SGCManager() {
                 }
             }
 
-            Log.i("FileTransferSession", "📦 Assembling file: headerFileSize=" + fileSize +
-                  ", actualFileSize=" + actualFileSize + ", totalPackets=" + totalPackets)
+            Log.i(
+                    "FileTransferSession",
+                    "📦 Assembling file: headerFileSize=" +
+                            fileSize +
+                            ", actualFileSize=" +
+                            actualFileSize +
+                            ", totalPackets=" +
+                            totalPackets
+            )
 
             val fileData = ByteArray(actualFileSize)
             var offset = 0
@@ -473,7 +505,10 @@ class MentraLive : SGCManager() {
     private var cachedOtaSessionId: String? = null
     private var cachedOtaTotalSteps = 0
     private var cachedOtaCurrentStep = 0
-    /** Step type sequence (e.g. ["apk","bes"]) from last ota_status; used to compute BES weight in sr_adota. */
+    /**
+     * Step type sequence (e.g. ["apk","bes"]) from last ota_status; used to compute BES weight in
+     * sr_adota.
+     */
     private var cachedOtaStepSequence: JSONArray? = null
     private var rgbLedAuthorityClaimed = false // Track if we've claimed RGB LED control from BES
 
@@ -511,10 +546,10 @@ class MentraLive : SGCManager() {
 
     // Pending message data structure
     private class PendingMessage(
-        val messageData: String,
-        val timestamp: Long,
-        val retryCount: Int,
-        val retryRunnable: Runnable
+            val messageData: String,
+            val timestamp: Long,
+            val retryCount: Int,
+            val retryRunnable: Runnable
     )
 
     private var lc3AudioFileStream: FileOutputStream? = null
@@ -532,7 +567,8 @@ class MentraLive : SGCManager() {
         this.context = Bridge.getContext()
 
         // Initialize bluetooth adapter
-        val bluetoothManager = context!!.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager?
+        val bluetoothManager =
+                context!!.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager?
         if (bluetoothManager != null) {
             bluetoothAdapter = bluetoothManager.adapter
         }
@@ -546,24 +582,27 @@ class MentraLive : SGCManager() {
         // Initialize the send queue processor
         processSendQueueRunnable = Runnable {
             processSendQueue()
-            // Don't reschedule here - let processSendQueue and onCharacteristicWrite handle scheduling
+            // Don't reschedule here - let processSendQueue and onCharacteristicWrite handle
+            // scheduling
         }
 
         // Initialize heartbeat runnable
-        heartbeatRunnable = object : Runnable {
-            override fun run() {
-                sendHeartbeat()
-                // Schedule next heartbeat
-                heartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS.toLong())
-            }
-        }
+        heartbeatRunnable =
+                object : Runnable {
+                    override fun run() {
+                        sendHeartbeat()
+                        // Schedule next heartbeat
+                        heartbeatHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS.toLong())
+                    }
+                }
 
-        rssiReadRunnable = object : Runnable {
-            override fun run() {
-                requestSignalStrength()
-                rssiReadHandler.postDelayed(this, RSSI_READ_INTERVAL_MS)
-            }
-        }
+        rssiReadRunnable =
+                object : Runnable {
+                    override fun run() {
+                        requestSignalStrength()
+                        rssiReadHandler.postDelayed(this, RSSI_READ_INTERVAL_MS)
+                    }
+                }
 
         // Initialize test message runnable for ACK testing
         // testMessageRunnable = new Runnable() {
@@ -592,12 +631,18 @@ class MentraLive : SGCManager() {
         // Start playback only if audioPlaybackEnabled is true
         if (audioPlaybackEnabled) {
             lc3AudioPlayer!!.startPlay()
-            Bridge.log("LIVE: 🔊 LC3 audio player started (frame size: " + LC3_FRAME_SIZE + " bytes)")
+            Bridge.log(
+                    "LIVE: 🔊 LC3 audio player started (frame size: " + LC3_FRAME_SIZE + " bytes)"
+            )
         } else {
-            Bridge.log("LIVE: 🔊 LC3 audio player initialized but playback disabled (frame size: " + LC3_FRAME_SIZE + " bytes)")
+            Bridge.log(
+                    "LIVE: 🔊 LC3 audio player initialized but playback disabled (frame size: " +
+                            LC3_FRAME_SIZE +
+                            " bytes)"
+            )
         }
 
-        //setup LC3 decoder for PCM conversion
+        // setup LC3 decoder for PCM conversion
         if (lc3DecoderPtr == 0L) {
             lc3DecoderPtr = Lc3Cpp.initDecoder()
             Bridge.log("LIVE: Initialized LC3 decoder for PCM conversion: " + lc3DecoderPtr)
@@ -608,12 +653,16 @@ class MentraLive : SGCManager() {
         // to avoid overloading the MCU when both A2DP output and LC3 mic input are active
         if (BLOCK_AUDIO_DUPLEX) {
             phoneAudioMonitor = PhoneAudioMonitor.getInstance(context!!)
-            phoneAudioMonitor!!.startMonitoring(object : PhoneAudioMonitor.Listener {
-                override fun onPhoneAudioStateChanged(isPlaying: Boolean) {
-                    handlePhoneAudioStateChanged(isPlaying)
-                }
-            })
-            Bridge.log("LIVE: 🎵 Phone audio monitor started for LC3 mic suspend/resume (BLOCK_AUDIO_DUPLEX=true)")
+            phoneAudioMonitor!!.startMonitoring(
+                    object : PhoneAudioMonitor.Listener {
+                        override fun onPhoneAudioStateChanged(isPlaying: Boolean) {
+                            handlePhoneAudioStateChanged(isPlaying)
+                        }
+                    }
+            )
+            Bridge.log(
+                    "LIVE: 🎵 Phone audio monitor started for LC3 mic suspend/resume (BLOCK_AUDIO_DUPLEX=true)"
+            )
         } else {
             Bridge.log("LIVE: 🎵 Phone audio monitor disabled (BLOCK_AUDIO_DUPLEX=false)")
         }
@@ -628,15 +677,16 @@ class MentraLive : SGCManager() {
      * Compute the weighted overall OTA percentage for a BES progress event arriving via sr_adota.
      * Mirrors the weight table in OtaSessionManager.computeOverallPercent() / computeStepWeights().
      *
-     * Weight assignments:
-     *   [apk, mtk, bes] → bes base=50, weight=50
-     *   [apk, bes]       → bes base=20, weight=80
-     *   [mtk, bes]       → bes base=40, weight=60
-     *   [bes]            → bes base=0,  weight=100
+     * Weight assignments: [apk, mtk, bes] → bes base=50, weight=50 [apk, bes] → bes base=20,
+     * weight=80 [mtk, bes] → bes base=40, weight=60 [bes] → bes base=0, weight=100
      *
      * Falls back to raw besProgress when step sequence is unavailable.
      */
-    private fun computeBesOverallPercent(besProgress: Int, totalSteps: Int, stepSequence: JSONArray?): Int {
+    private fun computeBesOverallPercent(
+            besProgress: Int,
+            totalSteps: Int,
+            stepSequence: JSONArray?
+    ): Int {
         if (stepSequence == null || stepSequence.length() == 0) {
             return besProgress // no context, fall back to raw
         }
@@ -644,19 +694,22 @@ class MentraLive : SGCManager() {
         var hasMtk = false
         for (i in 0 until stepSequence.length()) {
             val t = stepSequence.optString(i, "")
-            if ("apk" == t) hasApk = true
-            else if ("mtk" == t) hasMtk = true
+            if ("apk" == t) hasApk = true else if ("mtk" == t) hasMtk = true
         }
         val base: Int
         val weight: Int
         if (hasApk && hasMtk) {
-            base = 50; weight = 50
+            base = 50
+            weight = 50
         } else if (hasApk) {
-            base = 20; weight = 80
+            base = 20
+            weight = 80
         } else if (hasMtk) {
-            base = 40; weight = 60
+            base = 40
+            weight = 60
         } else {
-            base = 0; weight = 100
+            base = 0
+            weight = 100
         }
         return Math.min(100, base + besProgress * weight / 100)
     }
@@ -680,7 +733,8 @@ class MentraLive : SGCManager() {
             }
             // Drop cached version fields from the previous BLE session so the next version_info
             // repopulates RN. Otherwise a stale build (e.g. 38) can remain while ASG is still 36,
-            // and the phone-side OTA check will disagree with glasses' PackageManager + ota_update_available.
+            // and the phone-side OTA check will disagree with glasses' PackageManager +
+            // ota_update_available.
             DeviceStore.apply("glasses", "buildNumber", "")
             DeviceStore.apply("glasses", "appVersion", "")
             DeviceStore.apply("glasses", "besFirmwareVersion", "")
@@ -701,10 +755,10 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Drops cached OTA session context. Called on disconnect and when a new session id
-     * arrives — without this, stale fields from a previous session would leak into
-     * sr_adota progress messages (wrong totalSteps, wrong stepSequence, stale
-     * lastBesOtaProgress that swallows the first few percent of the new install).
+     * Drops cached OTA session context. Called on disconnect and when a new session id arrives —
+     * without this, stale fields from a previous session would leak into sr_adota progress messages
+     * (wrong totalSteps, wrong stepSequence, stale lastBesOtaProgress that swallows the first few
+     * percent of the new install).
      */
     private fun resetOtaCache() {
         cachedOtaSessionId = null
@@ -720,9 +774,7 @@ class MentraLive : SGCManager() {
         // SMALL_FONT = 1;
     }
 
-    /**
-     * Starts BLE scanning for Mentra Live glasses
-     */
+    /** Starts BLE scanning for Mentra Live glasses */
     private fun startScan() {
         if (bluetoothAdapter == null || isScanning) {
             return
@@ -735,24 +787,25 @@ class MentraLive : SGCManager() {
         }
 
         // Configure scan settings
-        val settings = ScanSettings.Builder()
-                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-                .build()
+        val settings =
+                ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
 
         // Set up filters for both standard "Xy_A" and K900 "XyBLE_" device names
         val filters = ArrayList<ScanFilter>()
 
         // Standard glasses filter
-        val standardFilter = ScanFilter.Builder()
-                .setDeviceName("Xy_A") // Name for standard glasses BLE peripheral
-                .build()
-       // filters.add(standardFilter);
+        val standardFilter =
+                ScanFilter.Builder()
+                        .setDeviceName("Xy_A") // Name for standard glasses BLE peripheral
+                        .build()
+        // filters.add(standardFilter);
 
         // K900/Mentra Live glasses filter
-        val k900Filter = ScanFilter.Builder()
-                .setDeviceName("XyBLE_") // Name for K900/Mentra Live glasses
-                .build()
-       // filters.add(k900Filter);
+        val k900Filter =
+                ScanFilter.Builder()
+                        .setDeviceName("XyBLE_") // Name for K900/Mentra Live glasses
+                        .build()
+        // filters.add(k900Filter);
 
         // Start scanning
         try {
@@ -760,49 +813,76 @@ class MentraLive : SGCManager() {
             val scanTimeout = if (isReconnecting) RECONNECT_SCAN_TIMEOUT_MS.toLong() else 60000L
 
             if (isReconnecting) {
-                Log.i(TAG, "🔌 ⚡ FAST RECONNECT SCAN - timeout: " + scanTimeout + "ms (attempt #" + reconnectAttempts + ")")
-                Bridge.log("LIVE: Starting FAST BLE scan for reconnection (timeout: " + scanTimeout + "ms)")
+                Log.i(
+                        TAG,
+                        "🔌 ⚡ FAST RECONNECT SCAN - timeout: " +
+                                scanTimeout +
+                                "ms (attempt #" +
+                                reconnectAttempts +
+                                ")"
+                )
+                Bridge.log(
+                        "LIVE: Starting FAST BLE scan for reconnection (timeout: " +
+                                scanTimeout +
+                                "ms)"
+                )
             } else {
-                Bridge.log("LIVE: Starting BLE scan for Mentra Live glasses (timeout: " + scanTimeout + "ms)")
+                Bridge.log(
+                        "LIVE: Starting BLE scan for Mentra Live glasses (timeout: " +
+                                scanTimeout +
+                                "ms)"
+                )
             }
 
             isScanning = true
             bluetoothScanner!!.startScan(filters, settings, scanCallback)
 
             // Set a timeout to stop scanning
-            handler.postDelayed(object : Runnable {
-                override fun run() {
-                    if (isScanning) {
-                        stopScan()
-                        emitStopScanEvent()
+            handler.postDelayed(
+                    object : Runnable {
+                        override fun run() {
+                            if (isScanning) {
+                                stopScan()
+                                emitStopScanEvent()
 
-                        if (isReconnecting) {
-                            synchronized(connectionLock) {
-                                // If scanCallback already claimed a connection, don't start another reconnect cycle
-                                if (isConnecting || isConnected) {
-                                    Log.i(TAG, "🔌 Scan timeout fired but connection already in progress, skipping reconnect")
-                                    return
+                                if (isReconnecting) {
+                                    synchronized(connectionLock) {
+                                        // If scanCallback already claimed a connection, don't start
+                                        // another reconnect cycle
+                                        if (isConnecting || isConnected) {
+                                            Log.i(
+                                                    TAG,
+                                                    "🔌 Scan timeout fired but connection already in progress, skipping reconnect"
+                                            )
+                                            return
+                                        }
+                                    }
+                                    // Clear the reconnection latch before scheduling the next
+                                    // attempt.
+                                    // Otherwise handleReconnection() immediately aborts with
+                                    // "already reconnecting".
+                                    isReconnecting = false
+                                    Log.i(
+                                            TAG,
+                                            "🔌 ⏰ Reconnect scan timed out - scheduling next reconnect attempt"
+                                    )
+                                    Bridge.log(
+                                            "LIVE: 🔌 ⏰ Reconnect scan timed out - scheduling next reconnect attempt"
+                                    )
+                                    handleReconnection()
                                 }
                             }
-                            // Clear the reconnection latch before scheduling the next attempt.
-                            // Otherwise handleReconnection() immediately aborts with "already reconnecting".
-                            isReconnecting = false
-                            Log.i(TAG, "🔌 ⏰ Reconnect scan timed out - scheduling next reconnect attempt")
-                            Bridge.log("LIVE: 🔌 ⏰ Reconnect scan timed out - scheduling next reconnect attempt")
-                            handleReconnection()
                         }
-                    }
-                }
-            }, scanTimeout)
+                    },
+                    scanTimeout
+            )
         } catch (e: Exception) {
             Log.e(TAG, "Error starting BLE scan", e)
             isScanning = false
         }
     }
 
-    /**
-     * Stops BLE scanning
-     */
+    /** Stops BLE scanning */
     override fun stopScan() {
         if (bluetoothAdapter == null || bluetoothScanner == null || !isScanning) {
             return
@@ -816,7 +896,8 @@ class MentraLive : SGCManager() {
 
             // Post event only if we haven't been destroyed
             // if (smartGlassesDevice != null) {
-                // EventBus.getDefault().post(new GlassesBluetoothSearchStopEvent(smartGlassesDevice.deviceModelName));
+            // EventBus.getDefault().post(new
+            // GlassesBluetoothSearchStopEvent(smartGlassesDevice.deviceModelName));
             // }
         } catch (e: Exception) {
             Log.e(TAG, "Error stopping BLE scan", e)
@@ -833,90 +914,121 @@ class MentraLive : SGCManager() {
 
     var seenDevices: MutableSet<String> = HashSet()
 
-    /**
-     * BLE Scan callback
-     */
-    private val scanCallback: ScanCallback = object : ScanCallback() {
-        override fun onScanResult(callbackType: Int, result: ScanResult) {
-            // Check if the object has been destroyed to prevent NPE
-            if (context == null || isKilled) {
-                Bridge.log("LIVE: Ignoring scan result - object destroyed or killed")
-                return
-            }
-
-            val device = result.device
-            if (device == null) {
-                return
-            }
-
-            var deviceName: String? = null
-            try {
-                deviceName = device.name
-            } catch (e: SecurityException) {
-                Bridge.log("LIVE: Missing permission to read BLE device name: " + e.message)
-            }
-            if (deviceName == null && result.scanRecord != null) {
-                deviceName = result.scanRecord!!.deviceName
-            }
-            if (deviceName == null) {
-                return
-            }
-
-            val deviceAddress = device.address
-
-            // String device = deviceName + deviceAddress;
-            // if (!seenDevices.contains(device)) {
-            //     seenDevices.add(device);
-            //     Bridge.log("LIVE: Found BLE device: " + deviceName + " (" + deviceAddress + ")");
-            // }
-
-            // Check if this device matches the saved device name
-            // SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            // String savedDeviceName = prefs.getString(PREF_DEVICE_NAME, null);
-
-            // Post the discovered device to the event bus ONLY
-            // Don't automatically connect - wait for explicit connect request from UI
-            if (deviceName == "Xy_A" || deviceName.startsWith("XyBLE_") || deviceName.startsWith("MENTRA_LIVE_BLE") || deviceName.startsWith("MENTRA_LIVE_BT") || deviceName.lowercase().startsWith("mentra_live")) {
-                val glassType = if (deviceName == "Xy_A") "Standard" else "K900"
-                Bridge.log("LIVE: Found compatible " + glassType + " glasses device: " + deviceName)
-                // EventBus.getDefault().post(new GlassesBluetoothSearchDiscoverEvent(
-                        // smartGlassesDevice.deviceModelName, deviceName));
-                Bridge.sendDiscoveredDevice(DeviceTypes.LIVE, deviceName, deviceAddress, result.rssi)
-
-                // If this is the specific device we want to connect to by name, connect to it
-                if (savedDeviceName != null && savedDeviceName == deviceName) {
-                    Log.i(TAG, "🔌 🎯 RECONNECT TARGET FOUND - Device: " + deviceName + " (Attempt #" + reconnectAttempts + ")")
-                    Bridge.log("LIVE: 🔌 🎯 Found our remembered device by name, connecting: " + deviceName +
-                              " (Reconnect attempt #" + reconnectAttempts + ")")
-                    synchronized(connectionLock) {
-                        if (isConnected || isConnecting) {
-                            return
-                        }
-                        isConnecting = true
+    /** BLE Scan callback */
+    private val scanCallback: ScanCallback =
+            object : ScanCallback() {
+                override fun onScanResult(callbackType: Int, result: ScanResult) {
+                    // Check if the object has been destroyed to prevent NPE
+                    if (context == null || isKilled) {
+                        Bridge.log("LIVE: Ignoring scan result - object destroyed or killed")
+                        return
                     }
-                    stopScan()
-                    emitStopScanEvent()
-                    isReconnecting = false
-                    connectToDevice(device)
+
+                    val device = result.device
+                    if (device == null) {
+                        return
+                    }
+
+                    var deviceName: String? = null
+                    try {
+                        deviceName = device.name
+                    } catch (e: SecurityException) {
+                        Bridge.log("LIVE: Missing permission to read BLE device name: " + e.message)
+                    }
+                    if (deviceName == null && result.scanRecord != null) {
+                        deviceName = result.scanRecord!!.deviceName
+                    }
+                    if (deviceName == null) {
+                        return
+                    }
+
+                    val deviceAddress = device.address
+
+                    // String device = deviceName + deviceAddress;
+                    // if (!seenDevices.contains(device)) {
+                    //     seenDevices.add(device);
+                    //     Bridge.log("LIVE: Found BLE device: " + deviceName + " (" + deviceAddress
+                    // + ")");
+                    // }
+
+                    // Check if this device matches the saved device name
+                    // SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME,
+                    // Context.MODE_PRIVATE);
+                    // String savedDeviceName = prefs.getString(PREF_DEVICE_NAME, null);
+
+                    // Post the discovered device to the event bus ONLY
+                    // Don't automatically connect - wait for explicit connect request from UI
+                    if (deviceName == "Xy_A" ||
+                                    deviceName.startsWith("XyBLE_") ||
+                                    deviceName.startsWith("MENTRA_LIVE_BLE") ||
+                                    deviceName.startsWith("MENTRA_LIVE_BT") ||
+                                    deviceName.lowercase().startsWith("mentra_live")
+                    ) {
+                        val glassType = if (deviceName == "Xy_A") "Standard" else "K900"
+                        Bridge.log(
+                                "LIVE: Found compatible " +
+                                        glassType +
+                                        " glasses device: " +
+                                        deviceName
+                        )
+                        // EventBus.getDefault().post(new GlassesBluetoothSearchDiscoverEvent(
+                        // smartGlassesDevice.deviceModelName, deviceName));
+                        Bridge.sendDiscoveredDevice(
+                                DeviceTypes.LIVE,
+                                deviceName,
+                                deviceAddress,
+                                result.rssi
+                        )
+
+                        // If this is the specific device we want to connect to by name, connect to
+                        // it
+                        if (savedDeviceName != null && savedDeviceName == deviceName) {
+                            Log.i(
+                                    TAG,
+                                    "🔌 🎯 RECONNECT TARGET FOUND - Device: " +
+                                            deviceName +
+                                            " (Attempt #" +
+                                            reconnectAttempts +
+                                            ")"
+                            )
+                            Bridge.log(
+                                    "LIVE: 🔌 🎯 Found our remembered device by name, connecting: " +
+                                            deviceName +
+                                            " (Reconnect attempt #" +
+                                            reconnectAttempts +
+                                            ")"
+                            )
+                            synchronized(connectionLock) {
+                                if (isConnected || isConnecting) {
+                                    return
+                                }
+                                isConnecting = true
+                            }
+                            stopScan()
+                            emitStopScanEvent()
+                            isReconnecting = false
+                            connectToDevice(device)
+                        }
+                    }
+                }
+
+                override fun onScanFailed(errorCode: Int) {
+                    Log.e(TAG, "BLE scan failed with error: " + errorCode)
+                    isScanning = false
+                    if (isReconnecting && !isKilled) {
+                        isReconnecting = false
+                        Bridge.log(
+                                "LIVE: 🔌 ❌ Reconnect scan failed - scheduling next reconnect attempt"
+                        )
+                        handleReconnection()
+                    }
                 }
             }
-        }
-
-        override fun onScanFailed(errorCode: Int) {
-            Log.e(TAG, "BLE scan failed with error: " + errorCode)
-            isScanning = false
-            if (isReconnecting && !isKilled) {
-                isReconnecting = false
-                Bridge.log("LIVE: 🔌 ❌ Reconnect scan failed - scheduling next reconnect attempt")
-                handleReconnection()
-            }
-        }
-    }
 
     /**
-     * device.getName() requires BLUETOOTH_CONNECT on Android 12+ and throws
-     * SecurityException when not granted. Auto-reconnect paths fire before
-     * permissions are requested in some flows (MENTRA-OS-21Y).
+     * device.getName() requires BLUETOOTH_CONNECT on Android 12+ and throws SecurityException when
+     * not granted. Auto-reconnect paths fire before permissions are requested in some flows
+     * (MENTRA-OS-21Y).
      */
     private fun safeDeviceName(device: BluetoothDevice?): String {
         if (device == null) return ""
@@ -931,9 +1043,9 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Safely tear down the GATT reference. Avoids NPE / races with gatt callbacks
-     * disconnecting on a binder thread while a queued teardown runnable fires.
-     * Pass disconnect=true to call disconnect() before close().
+     * Safely tear down the GATT reference. Avoids NPE / races with gatt callbacks disconnecting on
+     * a binder thread while a queued teardown runnable fires. Pass disconnect=true to call
+     * disconnect() before close().
      */
     @Synchronized
     private fun closeGattQuietly(disconnect: Boolean) {
@@ -956,9 +1068,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Connect to a specific BLE device
-     */
+    /** Connect to a specific BLE device */
     private fun connectToDevice(device: BluetoothDevice?) {
         if (device == null) {
             return
@@ -972,7 +1082,14 @@ class MentraLive : SGCManager() {
         // Set connection timeout
         connectionTimeoutRunnable = Runnable {
             if (isConnecting && !isConnected) {
-                Log.w(TAG, "🔌 ⏰ CONNECTION TIMEOUT after " + CONNECTION_TIMEOUT_MS + "ms - Reconnect attempt #" + reconnectAttempts + " TIMED OUT")
+                Log.w(
+                        TAG,
+                        "🔌 ⏰ CONNECTION TIMEOUT after " +
+                                CONNECTION_TIMEOUT_MS +
+                                "ms - Reconnect attempt #" +
+                                reconnectAttempts +
+                                " TIMED OUT"
+                )
                 Bridge.log("LIVE: 🔌 ⏰ Connection timeout - closing GATT connection and retrying")
                 isConnecting = false
 
@@ -984,18 +1101,41 @@ class MentraLive : SGCManager() {
             }
         }
 
-        connectionTimeoutHandler.postDelayed(connectionTimeoutRunnable!!, CONNECTION_TIMEOUT_MS.toLong())
+        connectionTimeoutHandler.postDelayed(
+                connectionTimeoutRunnable!!,
+                CONNECTION_TIMEOUT_MS.toLong()
+        )
 
         // Update connection state
         isConnecting = true
         updateConnectionState(ConnTypes.CONNECTING)
-        Log.i(TAG, "🔌 🔗 ATTEMPTING CONNECTION to device: " + device.address + " (" + safeDeviceName(device) + ") - Reconnect attempt #" + reconnectAttempts)
-        Bridge.log("LIVE: 🔌 🔗 Connecting to device: " + device.address + " (Attempt #" + reconnectAttempts + ")")
+        Log.i(
+                TAG,
+                "🔌 🔗 ATTEMPTING CONNECTION to device: " +
+                        device.address +
+                        " (" +
+                        safeDeviceName(device) +
+                        ") - Reconnect attempt #" +
+                        reconnectAttempts
+        )
+        Bridge.log(
+                "LIVE: 🔌 🔗 Connecting to device: " +
+                        device.address +
+                        " (Attempt #" +
+                        reconnectAttempts +
+                        ")"
+        )
 
         // Connect to the device
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                bluetoothGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                bluetoothGatt =
+                        device.connectGatt(
+                                context,
+                                false,
+                                gattCallback,
+                                BluetoothDevice.TRANSPORT_LE
+                        )
                 Log.d(TAG, "🔌 GATT connection initiated with TRANSPORT_LE (Android M+)")
             } else {
                 bluetoothGatt = device.connectGatt(context, false, gattCallback)
@@ -1013,27 +1153,26 @@ class MentraLive : SGCManager() {
      * Try to reconnect to the last known device by starting a scan and looking for the saved name
      */
     // private void reconnectToLastKnownDevice() {
-        // SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        // String lastDeviceName = prefs.getString(PREF_DEVICE_NAME, null);
+    // SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+    // String lastDeviceName = prefs.getString(PREF_DEVICE_NAME, null);
 
-        // if (lastDeviceName != null && bluetoothAdapter != null) {
-        //     Bridge.log("LIVE: Attempting to reconnect to last known device by name: " + lastDeviceName);
+    // if (lastDeviceName != null && bluetoothAdapter != null) {
+    //     Bridge.log("LIVE: Attempting to reconnect to last known device by name: " +
+    // lastDeviceName);
 
-        //     // We can't directly connect by name, we need to scan to find the device first
-        //     Bridge.log("LIVE: Starting scan to find device with name: " + lastDeviceName);
-        //     startScan();
+    //     // We can't directly connect by name, we need to scan to find the device first
+    //     Bridge.log("LIVE: Starting scan to find device with name: " + lastDeviceName);
+    //     startScan();
 
-        //     // The scan callback will automatically connect when it finds a device with this name
-        // } else {
-        //     // No last device to connect to, start scanning
-        //     Bridge.log("LIVE: No last known device name, starting scan");
-        //     startScan();
-        // }
+    //     // The scan callback will automatically connect when it finds a device with this name
+    // } else {
+    //     // No last device to connect to, start scanning
+    //     Bridge.log("LIVE: No last known device name, starting scan");
+    //     startScan();
+    // }
     // }
 
-    /**
-     * Handle reconnection with exponential backoff
-     */
+    /** Handle reconnection with exponential backoff */
     private fun handleReconnection() {
         // Don't attempt reconnection if we've been killed/forgotten
         if (isKilled) {
@@ -1059,431 +1198,646 @@ class MentraLive : SGCManager() {
 
         reconnectAttempts++
         // RN home UI keys off core.searching for "connecting"; auto-reconnect does not set that.
-        // Publish CONNECTING so the app shows reconnecting during backoff (e.g. post-shutdown delay).
+        // Publish CONNECTING so the app shows reconnecting during backoff (e.g. post-shutdown
+        // delay).
         updateConnectionState(ConnTypes.CONNECTING)
         // Calculate delay with exponential backoff
-        var delay = Math.min(BASE_RECONNECT_DELAY_MS * (1L shl reconnectAttempts), MAX_RECONNECT_DELAY_MS.toLong())
+        var delay =
+                Math.min(
+                        BASE_RECONNECT_DELAY_MS * (1L shl reconnectAttempts),
+                        MAX_RECONNECT_DELAY_MS.toLong()
+                )
         // After K900 shutdown, glasses need time to power cycle before they advertise again
-        if (reconnectAttempts == 1 && lastShutdownTimeMs > 0
-                && (System.currentTimeMillis() - lastShutdownTimeMs) < SHUTDOWN_RECENT_MS) {
+        if (reconnectAttempts == 1 &&
+                        lastShutdownTimeMs > 0 &&
+                        (System.currentTimeMillis() - lastShutdownTimeMs) < SHUTDOWN_RECENT_MS
+        ) {
             delay = Math.max(delay, POST_SHUTDOWN_RECONNECT_DELAY_MS)
-            Log.i(TAG, "🔌 ⏳ Post-shutdown: waiting " + (POST_SHUTDOWN_RECONNECT_DELAY_MS / 1000) + "s before first reconnect scan")
-            Bridge.log("LIVE: 🔌 ⏳ Post-shutdown: waiting for glasses to reboot before first reconnect scan")
+            Log.i(
+                    TAG,
+                    "🔌 ⏳ Post-shutdown: waiting " +
+                            (POST_SHUTDOWN_RECONNECT_DELAY_MS / 1000) +
+                            "s before first reconnect scan"
+            )
+            Bridge.log(
+                    "LIVE: 🔌 ⏳ Post-shutdown: waiting for glasses to reboot before first reconnect scan"
+            )
         }
 
-        Log.i(TAG, "🔌 📅 SCHEDULING RECONNECT #" + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS +
-              " in " + delay + "ms (base=" + BASE_RECONNECT_DELAY_MS + "ms, max=" + MAX_RECONNECT_DELAY_MS + "ms, scan_timeout=" + RECONNECT_SCAN_TIMEOUT_MS + "ms)")
-        Bridge.log("LIVE: 🔌 📅 Scheduling reconnection attempt " + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS +
-              " in " + delay + "ms (fast scan: " + RECONNECT_SCAN_TIMEOUT_MS + "ms)")
+        Log.i(
+                TAG,
+                "🔌 📅 SCHEDULING RECONNECT #" +
+                        reconnectAttempts +
+                        "/" +
+                        MAX_RECONNECT_ATTEMPTS +
+                        " in " +
+                        delay +
+                        "ms (base=" +
+                        BASE_RECONNECT_DELAY_MS +
+                        "ms, max=" +
+                        MAX_RECONNECT_DELAY_MS +
+                        "ms, scan_timeout=" +
+                        RECONNECT_SCAN_TIMEOUT_MS +
+                        "ms)"
+        )
+        Bridge.log(
+                "LIVE: 🔌 📅 Scheduling reconnection attempt " +
+                        reconnectAttempts +
+                        "/" +
+                        MAX_RECONNECT_ATTEMPTS +
+                        " in " +
+                        delay +
+                        "ms (fast scan: " +
+                        RECONNECT_SCAN_TIMEOUT_MS +
+                        "ms)"
+        )
 
         // Schedule reconnection attempt
-        handler.postDelayed(object : Runnable {
-            override fun run() {
-                if (!isConnected && !isConnecting && !isKilled) {
-                    // Prefer saved MAC for direct GATT connect (faster and more reliable than scanning).
-                    // Falls back to name-based scan if no address is saved.
-                    val lastDeviceAddress = DeviceStore.get("bluetooth", "device_address") as String?
-                    if (lastDeviceAddress != null && !lastDeviceAddress.isEmpty() && bluetoothAdapter != null) {
-                        try {
-                            val device = bluetoothAdapter!!.getRemoteDevice(lastDeviceAddress)
-                            Log.i(TAG, "🔌 🔁 RECONNECT #" + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS
-                                    + " - Direct GATT to saved address " + lastDeviceAddress)
-                            Bridge.log("LIVE: 🔌 🔁 Reconnection attempt " + reconnectAttempts + "/"
-                                    + MAX_RECONNECT_ATTEMPTS + " - connecting to saved BLE address: "
-                                    + lastDeviceAddress)
-                            // Release latch so connect timeout / GATT error can call handleReconnection() again
+        handler.postDelayed(
+                object : Runnable {
+                    override fun run() {
+                        if (!isConnected && !isConnecting && !isKilled) {
+                            // Prefer saved MAC for direct GATT connect (faster and more reliable
+                            // than scanning).
+                            // Falls back to name-based scan if no address is saved.
+                            val lastDeviceAddress =
+                                    DeviceStore.get("bluetooth", "device_address") as String?
+                            if (lastDeviceAddress != null &&
+                                            !lastDeviceAddress.isEmpty() &&
+                                            bluetoothAdapter != null
+                            ) {
+                                try {
+                                    val device =
+                                            bluetoothAdapter!!.getRemoteDevice(lastDeviceAddress)
+                                    Log.i(
+                                            TAG,
+                                            "🔌 🔁 RECONNECT #" +
+                                                    reconnectAttempts +
+                                                    "/" +
+                                                    MAX_RECONNECT_ATTEMPTS +
+                                                    " - Direct GATT to saved address " +
+                                                    lastDeviceAddress
+                                    )
+                                    Bridge.log(
+                                            "LIVE: 🔌 🔁 Reconnection attempt " +
+                                                    reconnectAttempts +
+                                                    "/" +
+                                                    MAX_RECONNECT_ATTEMPTS +
+                                                    " - connecting to saved BLE address: " +
+                                                    lastDeviceAddress
+                                    )
+                                    // Release latch so connect timeout / GATT error can call
+                                    // handleReconnection() again
+                                    isReconnecting = false
+                                    connectToDevice(device)
+                                    return
+                                } catch (e: IllegalArgumentException) {
+                                    Log.w(
+                                            TAG,
+                                            "🔌 ⚠️ Invalid saved BLE address, falling back to scan: " +
+                                                    lastDeviceAddress,
+                                            e
+                                    )
+                                    Bridge.log(
+                                            "LIVE: 🔌 ⚠️ Invalid saved BLE address, using scan fallback"
+                                    )
+                                }
+                            }
+
+                            if (savedDeviceName != null &&
+                                            !savedDeviceName.isEmpty() &&
+                                            bluetoothAdapter != null
+                            ) {
+                                Log.i(
+                                        TAG,
+                                        "🔌 🔍 STARTING RECONNECT #" +
+                                                reconnectAttempts +
+                                                "/" +
+                                                MAX_RECONNECT_ATTEMPTS +
+                                                " - Fast scan (" +
+                                                RECONNECT_SCAN_TIMEOUT_MS +
+                                                "ms) for device: " +
+                                                savedDeviceName
+                                )
+                                Bridge.log(
+                                        "LIVE: 🔌 🔍 Reconnection attempt " +
+                                                reconnectAttempts +
+                                                "/" +
+                                                MAX_RECONNECT_ATTEMPTS +
+                                                " - Starting FAST BLE scan for: " +
+                                                savedDeviceName
+                                )
+                                startScan()
+                            } else {
+                                Log.w(
+                                        TAG,
+                                        "🔌 ⚠️ RECONNECT #" +
+                                                reconnectAttempts +
+                                                " SKIPPED - No saved address or device id"
+                                )
+                                Bridge.log(
+                                        "LIVE: 🔌 ⚠️ Reconnection attempt " +
+                                                reconnectAttempts +
+                                                " - No saved BLE address or device id, scheduling next attempt"
+                                )
+                                handleReconnection()
+                            }
+                        } else if (isConnected) {
+                            Log.i(
+                                    TAG,
+                                    "🔌 🔗 Reconnect attempt skipped - BLE link already connected (attempt " +
+                                            reconnectAttempts +
+                                            ")"
+                            )
+                            Bridge.log(
+                                    "LIVE: 🔌 🔗 Reconnect attempt skipped - BLE link already connected"
+                            )
+                            reconnectAttempts = 0
                             isReconnecting = false
-                            connectToDevice(device)
-                            return
-                        } catch (e: IllegalArgumentException) {
-                            Log.w(TAG, "🔌 ⚠️ Invalid saved BLE address, falling back to scan: " + lastDeviceAddress, e)
-                            Bridge.log("LIVE: 🔌 ⚠️ Invalid saved BLE address, using scan fallback")
+                        } else {
+                            Log.d(
+                                    TAG,
+                                    "🔌 ⏭️ RECONNECT SKIPPED - State changed (connected=" +
+                                            isConnected +
+                                            ", connecting=" +
+                                            isConnecting +
+                                            ", killed=" +
+                                            isKilled +
+                                            ")"
+                            )
+                            isReconnecting = false
                         }
                     }
-
-                    if (savedDeviceName != null && !savedDeviceName.isEmpty() && bluetoothAdapter != null) {
-                        Log.i(TAG, "🔌 🔍 STARTING RECONNECT #" + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS +
-                              " - Fast scan (" + RECONNECT_SCAN_TIMEOUT_MS + "ms) for device: " + savedDeviceName)
-                        Bridge.log("LIVE: 🔌 🔍 Reconnection attempt " + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS +
-                              " - Starting FAST BLE scan for: " + savedDeviceName)
-                        startScan()
-                    } else {
-                        Log.w(TAG, "🔌 ⚠️ RECONNECT #" + reconnectAttempts + " SKIPPED - No saved address or device id")
-                        Bridge.log("LIVE: 🔌 ⚠️ Reconnection attempt " + reconnectAttempts +
-                              " - No saved BLE address or device id, scheduling next attempt")
-                        handleReconnection()
-                    }
-                } else if (isConnected) {
-                    Log.i(TAG, "🔌 🔗 Reconnect attempt skipped - BLE link already connected (attempt " + reconnectAttempts + ")")
-                    Bridge.log("LIVE: 🔌 🔗 Reconnect attempt skipped - BLE link already connected")
-                    reconnectAttempts = 0
-                    isReconnecting = false
-                } else {
-                    Log.d(TAG, "🔌 ⏭️ RECONNECT SKIPPED - State changed (connected=" + isConnected +
-                          ", connecting=" + isConnecting + ", killed=" + isKilled + ")")
-                    isReconnecting = false
-                }
-            }
-        }, delay)
+                },
+                delay
+        )
     }
 
-    /**
-     * GATT callback for BLE operations
-     */
-    private val gattCallback: BluetoothGattCallback = object : BluetoothGattCallback() {
-        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            // Cancel the connection timeout
-            if (connectionTimeoutRunnable != null) {
-                connectionTimeoutHandler.removeCallbacks(connectionTimeoutRunnable!!)
-                connectionTimeoutRunnable = null
-            }
-
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    Bridge.log("LIVE: 🔌 🔗 BLE GATT link connected - validating services/characteristics...")
-                    isConnecting = false
-                    isConnected = true
-                    connectedDevice = gatt.device
-                    DeviceStore.apply("glasses", "bluetoothName", connectedDevice!!.name)
-                    // Persist MAC so reconnection can use direct GATT instead of scanning
-                    if (connectedDevice!!.address != null) {
-                        DeviceStore.apply("bluetooth", "device_address", connectedDevice!!.address)
+    /** GATT callback for BLE operations */
+    private val gattCallback: BluetoothGattCallback =
+            object : BluetoothGattCallback() {
+                override fun onConnectionStateChange(
+                        gatt: BluetoothGatt,
+                        status: Int,
+                        newState: Int
+                ) {
+                    // Cancel the connection timeout
+                    if (connectionTimeoutRunnable != null) {
+                        connectionTimeoutHandler.removeCallbacks(connectionTimeoutRunnable!!)
+                        connectionTimeoutRunnable = null
                     }
 
-                    // Save the connected device name for future reconnections
-                    // no longer needed as we now save it immediately in connectToDevice()
-                    // if (connectedDevice != null && connectedDevice.getName() != null) {
-                    //     SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                    //     prefs.edit().putString(PREF_DEVICE_NAME, connectedDevice.getName()).apply();
-                    //     Log.i(TAG, "🔌 💾 Saved device name for future reconnection: " + connectedDevice.getName());
-                    //     Bridge.log("LIVE: Saved device name for future reconnection: " + connectedDevice.getName());
-                    // }
-
-                    // CTKD Implementation: Register bonding receiver and create bond for BT Classic
-                    registerBondingReceiver()
-                    bondingRetryCount = 0 // Reset retry counter for new connection
-                    Bridge.log("LIVE: CTKD: BLE connection established, initiating CTKD bonding for BT Classic")
-
-                    // Check if device is already bonded before attempting to create bond
-                    if (connectedDevice!!.bondState == BluetoothDevice.BOND_BONDED) {
-                        Bridge.log("LIVE: CTKD: Device is already bonded - connecting A2DP audio profile")
-                        // Device is bonded but we need to explicitly connect the A2DP audio profile
-                        // Just being bonded doesn't mean the audio profile is connected
-                        connectA2dpProfile(connectedDevice!!)
-                        // Note: audioConnected will be set to true once A2DP profile connects
-                    } else {
-                        createBond(connectedDevice!!)
-                    }
-
-                    // Discover services
-                    gatt.discoverServices()
-
-                    // Reset reconnect attempts on successful connection
-                    val previousAttempts = reconnectAttempts
-                    reconnectAttempts = 0
-                    isReconnecting = false // Clear reconnection mode
-                    Log.i(TAG, "🔌 ✅ Reconnection counter reset (was at " + previousAttempts + " attempts)")
-                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    Log.w(TAG, "🔌 ⚠️ DISCONNECTED from GATT server - Initiating reconnection sequence")
-                    Bridge.log("LIVE: 🔌 ⚠️ Disconnected from GATT server - Will attempt reconnection")
-                    isConnected = false
-                    isConnecting = false
-
-
-                    connectedDevice = null
-                    glassesReady = false // Reset ready state on disconnect
-
-                    // Reset audio pairing flags
-                    glassesReadyReceived = false
-                    audioConnected = false
-
-                    notificationsEnabled = false
-
-                    // Notify frontend and backend of disconnection
-                    updateConnectionState(ConnTypes.DISCONNECTED)
-
-                    handler.removeCallbacks(processSendQueueRunnable!!)
-
-                    // Stop the readiness check loop
-                    stopReadinessCheckLoop()
-
-                    // Stop heartbeat mechanism
-                    stopHeartbeat()
-
-                    // Stop RSSI polling
-                    stopSignalStrengthPolling()
-
-                    // Stop micbeat mechanism
-                    stopMicBeat()
-
-                    // Clean up GATT resources
-                    closeGattQuietly(false)
-
-                    // Attempt reconnection if not killed
-                    if (!isKilled) {
-                        Log.i(TAG, "🔌 🔄 Starting automatic reconnection procedure...")
-                        handleReconnection()
-                    }
-
-                    // Close LC3 audio logging
-                    closeLc3Logging()
-
-                    //stop LC3 player
-                    if (lc3AudioPlayer != null) {
-                        lc3AudioPlayer!!.stopPlay()
-                    }
-                }
-            } else {
-                // Connection error
-                Log.e(TAG, "🔌 ❌ GATT connection error: status=" + status + " - Reconnect attempt #" + reconnectAttempts + " FAILED")
-                Bridge.log("LIVE: 🔌 ❌ GATT connection error (status=" + status + ") - Will retry reconnection")
-                isConnected = false
-                isConnecting = false
-                glassesReady = false
-                glassesReadyReceived = false
-                audioConnected = false
-
-                notificationsEnabled = false
-
-                // Notify frontend and backend of disconnection
-                updateConnectionState(ConnTypes.DISCONNECTED)
-
-                // Stop heartbeat mechanism
-                stopHeartbeat()
-
-                // Stop RSSI polling
-                stopSignalStrengthPolling()
-
-                // Stop micbeat mechanism
-                stopMicBeat()
-
-                // Clean up resources
-                closeGattQuietly(false)
-
-                // Attempt reconnection if not killed
-                if (!isKilled) {
-                    Log.i(TAG, "🔌 🔄 Retrying after GATT error...")
-                    handleReconnection()
-                }
-            }
-        }
-
-        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                Bridge.log("LIVE: GATT services discovered")
-
-                // Find our service and characteristics
-                val service = gatt.getService(SERVICE_UUID)
-                if (service != null) {
-                    txCharacteristic = service.getCharacteristic(TX_CHAR_UUID)
-                    rxCharacteristic = service.getCharacteristic(RX_CHAR_UUID)
-
-                    // Get LC3 characteristics (always supported)
-                    lc3ReadCharacteristic = service.getCharacteristic(LC3_READ_UUID)
-                    lc3WriteCharacteristic = service.getCharacteristic(LC3_WRITE_UUID)
-
-                    // Check if we have required characteristics
-                    val hasRequiredCharacteristics = (rxCharacteristic != null && txCharacteristic != null) &&
-                                                       (lc3ReadCharacteristic != null && lc3WriteCharacteristic != null)
-
-                    if (hasRequiredCharacteristics) {
-                        // BLE connection established, but we still need to wait for glasses SOC
-                        Bridge.log("LIVE: 🔌 ✅ BLE reconnection fully ready (Core TX/RX + LC3 TX/RX characteristics verified)")
-                        Bridge.log("LIVE: 🔄 Waiting for glasses SOC to become ready...")
-
-                        // Don't set connected=true here - wait for SOC to be ready (fullyBooted=true)
-                        // DeviceStore handles connected state based on fullyBooted
-
-                        // Keep the state as CONNECTING until the glasses SOC responds
-                        // connectionEvent(SmartGlassesConnectionState.CONNECTING);
-
-                        // Request MTU first, then enable notifications from onMtuChanged,
-                        // then start data flow after all descriptors are written.
-                        // This ensures no concurrent GATT operations on older Android BLE stacks.
-                        if (checkPermission()) {
-                            val mtuRequested = gatt.requestMtu(512)
-                            Bridge.log("LIVE: 🔄 Requested MTU size 512, success: " + mtuRequested)
-                            if (!mtuRequested) {
-                                // MTU request failed to even start, enable notifications directly
-                                enableNotifications()
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        if (newState == BluetoothProfile.STATE_CONNECTED) {
+                            Bridge.log(
+                                    "LIVE: 🔌 🔗 BLE GATT link connected - validating services/characteristics..."
+                            )
+                            isConnecting = false
+                            isConnected = true
+                            connectedDevice = gatt.device
+                            DeviceStore.apply("glasses", "bluetoothName", connectedDevice!!.name)
+                            // Persist MAC so reconnection can use direct GATT instead of scanning
+                            if (connectedDevice!!.address != null) {
+                                DeviceStore.apply(
+                                        "bluetooth",
+                                        "device_address",
+                                        connectedDevice!!.address
+                                )
                             }
-                            // Otherwise, enableNotifications() will be called from onMtuChanged
-                        } else {
-                            enableNotifications()
-                        }
 
-                        // NOTE: Send queue and readiness loop are started AFTER descriptor
-                        // writes complete (in writeNextDescriptor when queue is empty) to
-                        // avoid writeCharacteristic conflicting with writeDescriptor on
-                        // older Android BLE stacks that don't support concurrent GATT ops.
+                            // Save the connected device name for future reconnections
+                            // no longer needed as we now save it immediately in connectToDevice()
+                            // if (connectedDevice != null && connectedDevice.getName() != null) {
+                            //     SharedPreferences prefs =
+                            // context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                            //     prefs.edit().putString(PREF_DEVICE_NAME,
+                            // connectedDevice.getName()).apply();
+                            //     Log.i(TAG, "🔌 💾 Saved device name for future reconnection: " +
+                            // connectedDevice.getName());
+                            //     Bridge.log("LIVE: Saved device name for future reconnection: " +
+                            // connectedDevice.getName());
+                            // }
+
+                            // CTKD Implementation: Register bonding receiver and create bond for BT
+                            // Classic
+                            registerBondingReceiver()
+                            bondingRetryCount = 0 // Reset retry counter for new connection
+                            Bridge.log(
+                                    "LIVE: CTKD: BLE connection established, initiating CTKD bonding for BT Classic"
+                            )
+
+                            // Check if device is already bonded before attempting to create bond
+                            if (connectedDevice!!.bondState == BluetoothDevice.BOND_BONDED) {
+                                Bridge.log(
+                                        "LIVE: CTKD: Device is already bonded - connecting A2DP audio profile"
+                                )
+                                // Device is bonded but we need to explicitly connect the A2DP audio
+                                // profile
+                                // Just being bonded doesn't mean the audio profile is connected
+                                connectA2dpProfile(connectedDevice!!)
+                                // Note: audioConnected will be set to true once A2DP profile
+                                // connects
+                            } else {
+                                createBond(connectedDevice!!)
+                            }
+
+                            // Discover services
+                            gatt.discoverServices()
+
+                            // Reset reconnect attempts on successful connection
+                            val previousAttempts = reconnectAttempts
+                            reconnectAttempts = 0
+                            isReconnecting = false // Clear reconnection mode
+                            Log.i(
+                                    TAG,
+                                    "🔌 ✅ Reconnection counter reset (was at " +
+                                            previousAttempts +
+                                            " attempts)"
+                            )
+                        } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                            Log.w(
+                                    TAG,
+                                    "🔌 ⚠️ DISCONNECTED from GATT server - Initiating reconnection sequence"
+                            )
+                            Bridge.log(
+                                    "LIVE: 🔌 ⚠️ Disconnected from GATT server - Will attempt reconnection"
+                            )
+                            isConnected = false
+                            isConnecting = false
+
+                            connectedDevice = null
+                            glassesReady = false // Reset ready state on disconnect
+
+                            // Reset audio pairing flags
+                            glassesReadyReceived = false
+                            audioConnected = false
+
+                            notificationsEnabled = false
+
+                            // Notify frontend and backend of disconnection
+                            updateConnectionState(ConnTypes.DISCONNECTED)
+
+                            handler.removeCallbacks(processSendQueueRunnable!!)
+
+                            // Stop the readiness check loop
+                            stopReadinessCheckLoop()
+
+                            // Stop heartbeat mechanism
+                            stopHeartbeat()
+
+                            // Stop RSSI polling
+                            stopSignalStrengthPolling()
+
+                            // Stop micbeat mechanism
+                            stopMicBeat()
+
+                            // Clean up GATT resources
+                            closeGattQuietly(false)
+
+                            // Attempt reconnection if not killed
+                            if (!isKilled) {
+                                Log.i(TAG, "🔌 🔄 Starting automatic reconnection procedure...")
+                                handleReconnection()
+                            }
+
+                            // Close LC3 audio logging
+                            closeLc3Logging()
+
+                            // stop LC3 player
+                            if (lc3AudioPlayer != null) {
+                                lc3AudioPlayer!!.stopPlay()
+                            }
+                        }
                     } else {
-                        Log.e(TAG, "Required BLE characteristics not found")
-                        if (rxCharacteristic == null) {
-                            Log.e(TAG, "RX characteristic (peripheral's TX) not found")
+                        // Connection error
+                        Log.e(
+                                TAG,
+                                "🔌 ❌ GATT connection error: status=" +
+                                        status +
+                                        " - Reconnect attempt #" +
+                                        reconnectAttempts +
+                                        " FAILED"
+                        )
+                        Bridge.log(
+                                "LIVE: 🔌 ❌ GATT connection error (status=" +
+                                        status +
+                                        ") - Will retry reconnection"
+                        )
+                        isConnected = false
+                        isConnecting = false
+                        glassesReady = false
+                        glassesReadyReceived = false
+                        audioConnected = false
+
+                        notificationsEnabled = false
+
+                        // Notify frontend and backend of disconnection
+                        updateConnectionState(ConnTypes.DISCONNECTED)
+
+                        // Stop heartbeat mechanism
+                        stopHeartbeat()
+
+                        // Stop RSSI polling
+                        stopSignalStrengthPolling()
+
+                        // Stop micbeat mechanism
+                        stopMicBeat()
+
+                        // Clean up resources
+                        closeGattQuietly(false)
+
+                        // Attempt reconnection if not killed
+                        if (!isKilled) {
+                            Log.i(TAG, "🔌 🔄 Retrying after GATT error...")
+                            handleReconnection()
                         }
-                        if (txCharacteristic == null) {
-                            Log.e(TAG, "TX characteristic (peripheral's RX) not found")
+                    }
+                }
+
+                override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        Bridge.log("LIVE: GATT services discovered")
+
+                        // Find our service and characteristics
+                        val service = gatt.getService(SERVICE_UUID)
+                        if (service != null) {
+                            txCharacteristic = service.getCharacteristic(TX_CHAR_UUID)
+                            rxCharacteristic = service.getCharacteristic(RX_CHAR_UUID)
+
+                            // Get LC3 characteristics (always supported)
+                            lc3ReadCharacteristic = service.getCharacteristic(LC3_READ_UUID)
+                            lc3WriteCharacteristic = service.getCharacteristic(LC3_WRITE_UUID)
+
+                            // Check if we have required characteristics
+                            val hasRequiredCharacteristics =
+                                    (rxCharacteristic != null && txCharacteristic != null) &&
+                                            (lc3ReadCharacteristic != null &&
+                                                    lc3WriteCharacteristic != null)
+
+                            if (hasRequiredCharacteristics) {
+                                // BLE connection established, but we still need to wait for glasses
+                                // SOC
+                                Bridge.log(
+                                        "LIVE: 🔌 ✅ BLE reconnection fully ready (Core TX/RX + LC3 TX/RX characteristics verified)"
+                                )
+                                Bridge.log("LIVE: 🔄 Waiting for glasses SOC to become ready...")
+
+                                // Don't set connected=true here - wait for SOC to be ready
+                                // (fullyBooted=true)
+                                // DeviceStore handles connected state based on fullyBooted
+
+                                // Keep the state as CONNECTING until the glasses SOC responds
+                                // connectionEvent(SmartGlassesConnectionState.CONNECTING);
+
+                                // Request MTU first, then enable notifications from onMtuChanged,
+                                // then start data flow after all descriptors are written.
+                                // This ensures no concurrent GATT operations on older Android BLE
+                                // stacks.
+                                if (checkPermission()) {
+                                    val mtuRequested = gatt.requestMtu(512)
+                                    Bridge.log(
+                                            "LIVE: 🔄 Requested MTU size 512, success: " +
+                                                    mtuRequested
+                                    )
+                                    if (!mtuRequested) {
+                                        // MTU request failed to even start, enable notifications
+                                        // directly
+                                        enableNotifications()
+                                    }
+                                    // Otherwise, enableNotifications() will be called from
+                                    // onMtuChanged
+                                } else {
+                                    enableNotifications()
+                                }
+
+                                // NOTE: Send queue and readiness loop are started AFTER descriptor
+                                // writes complete (in writeNextDescriptor when queue is empty) to
+                                // avoid writeCharacteristic conflicting with writeDescriptor on
+                                // older Android BLE stacks that don't support concurrent GATT ops.
+                            } else {
+                                Log.e(TAG, "Required BLE characteristics not found")
+                                if (rxCharacteristic == null) {
+                                    Log.e(TAG, "RX characteristic (peripheral's TX) not found")
+                                }
+                                if (txCharacteristic == null) {
+                                    Log.e(TAG, "TX characteristic (peripheral's RX) not found")
+                                }
+                                // Log LC3 characteristic errors
+                                if (lc3ReadCharacteristic == null) {
+                                    Log.e(TAG, "LC3_READ characteristic not found")
+                                }
+                                if (lc3WriteCharacteristic == null) {
+                                    Log.e(TAG, "LC3_WRITE characteristic not found")
+                                }
+                                gatt.disconnect()
+                            }
+                        } else {
+                            Log.e(TAG, "Required BLE service not found: " + SERVICE_UUID)
+                            gatt.disconnect()
                         }
-                        // Log LC3 characteristic errors
-                        if (lc3ReadCharacteristic == null) {
-                            Log.e(TAG, "LC3_READ characteristic not found")
-                        }
-                        if (lc3WriteCharacteristic == null) {
-                            Log.e(TAG, "LC3_WRITE characteristic not found")
-                        }
+                    } else {
+                        Log.e(TAG, "Service discovery failed with status: " + status)
                         gatt.disconnect()
                     }
-                } else {
-                    Log.e(TAG, "Required BLE service not found: " + SERVICE_UUID)
-                    gatt.disconnect()
-                }
-            } else {
-                Log.e(TAG, "Service discovery failed with status: " + status)
-                gatt.disconnect()
-            }
-        }
-
-        override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                Bridge.log("LIVE: Characteristic read successful")
-                // Process the read data if needed
-            } else {
-                Log.e(TAG, "Characteristic read failed with status: " + status)
-            }
-        }
-
-        override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
-            rssiReadInProgress = false
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                if (isConnected && bluetoothGatt != null && gatt === bluetoothGatt) {
-                    updateSignalStrength(rssi)
-                }
-            } else {
-                Log.e(TAG, "RSSI read failed with status: " + status)
-            }
-        }
-
-        override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                //Bridge.log("LIVE: Characteristic write successful");
-
-                // Calculate time since last send to enforce rate limiting
-                val currentTimeMs = System.currentTimeMillis()
-                val timeSinceLastSendMs = currentTimeMs - lastSendTimeMs
-                val nextProcessDelayMs: Long
-
-                if (timeSinceLastSendMs < MIN_SEND_DELAY_MS) {
-                    // Not enough time has elapsed, enforce minimum delay
-                    nextProcessDelayMs = MIN_SEND_DELAY_MS - timeSinceLastSendMs
-                    //Bridge.log("LIVE: Rate limiting: Next queue processing in " + nextProcessDelayMs + "ms");
-                } else {
-                    // Enough time has already passed
-                    nextProcessDelayMs = 0
                 }
 
-                // Schedule the next queue processing with appropriate delay
-                handler.postDelayed(processSendQueueRunnable!!, nextProcessDelayMs)
-            } else {
-                Log.e(TAG, "Characteristic write failed with status: " + status)
-                // If write fails, try again with a longer delay
-                handler.postDelayed(processSendQueueRunnable!!, 500L)
-            }
-        }
-
-        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            // Get thread ID for tracking thread issues
-            val threadId = Thread.currentThread().id
-            val uuid = characteristic.uuid
-
-            val data = characteristic.value
-            if (data == null || data.isEmpty()) {
-                return
-            }
-
-            // FILE_READ characteristic (72FF) needs special handling for packet reassembly
-            // Android BLE fragments notifications larger than MTU into multiple callbacks
-            val isFileReadCharacteristic = uuid == FILE_READ_UUID
-            if (isFileReadCharacteristic) {
-                fileReadNotificationCount++
-                Bridge.log("LIVE: 📁 FILE_READ #" + fileReadNotificationCount + " (" + data.size + " bytes), currentMtu=" + currentMtu)
-                processFilePacketData(data)
-                return // File data handled separately with reassembly buffer
-            }
-
-            val isRxCharacteristic = uuid == RX_CHAR_UUID
-            val isTxCharacteristic = uuid == TX_CHAR_UUID
-            val isLc3ReadCharacteristic = uuid == LC3_READ_UUID
-            val isLc3WriteCharacteristic = uuid == LC3_WRITE_UUID
-
-            if (isRxCharacteristic) {
-                Bridge.log("LIVE: Received data on RX characteristic")
-                // #region agent log [810da2] Hypothesis A+C: capture data.length vs negotiated MTU
-                Bridge.log("LIVE: [DEBUG-810da2-HypAC] RX dataLen=" + data.size + " mtu=" + currentMtu + " firstByte=0x" + String.format("%02X", data[0]) + " second=0x" + (if (data.size > 1) String.format("%02X", data[1]) else "??"))
-                // #endregion
-            } else if (isTxCharacteristic) {
-                Bridge.log("LIVE: Received data on TX characteristic")
-            } else if (isLc3ReadCharacteristic) {
-                // Bridge.log("LIVE: Received data on LC3_READ characteristic");
-                processLc3AudioPacket(data)
-                return // LC3 audio handled separately
-            } else if (isLc3WriteCharacteristic) {
-                Bridge.log("LIVE: Received data on LC3_WRITE characteristic")
-            } else {
-                Log.w(TAG, "Received data on unknown characteristic: " + uuid)
-            }
-
-            // Process command/JSON data on RX/TX characteristics
-            processReceivedData(data, data.size)
-        }
-
-        override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-            val threadId = Thread.currentThread().id
-
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                Log.e(TAG, "Thread-" + threadId + ": ✅ Descriptor write successful for " + descriptor.characteristic.uuid)
-            } else {
-                Log.e(TAG, "Thread-" + threadId + ": ℹ️ Descriptor write failed with status: " + status + " for " + descriptor.characteristic.uuid)
-            }
-
-            // Process next queued descriptor write (serialized to avoid BLE stack contention)
-            writeNextDescriptor()
-        }
-
-        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                Bridge.log("LIVE: 🔵 MTU negotiation successful - changed to " + mtu + " bytes")
-                val effectivePayload = mtu - 3
-                Bridge.log("LIVE:    Effective payload size: " + effectivePayload + " bytes")
-
-                // Store the new MTU value
-                currentMtu = mtu
-
-                // If the negotiated MTU is sufficient for LC3 audio packets (typically 40-60 bytes)
-                if (mtu >= 64) {
-                    Bridge.log("LIVE: ✅ MTU size is sufficient for LC3 audio data packets")
-                } else {
-                    Log.w(TAG, "⚠️ MTU size may be too small for LC3 audio data packets")
-                    Bridge.log("LIVE: 📊 Effective MTU payload: " + effectivePayload + " bytes")
+                override fun onCharacteristicRead(
+                        gatt: BluetoothGatt,
+                        characteristic: BluetoothGattCharacteristic,
+                        status: Int
+                ) {
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        Bridge.log("LIVE: Characteristic read successful")
+                        // Process the read data if needed
+                    } else {
+                        Log.e(TAG, "Characteristic read failed with status: " + status)
+                    }
                 }
-            } else {
-                Log.e(TAG, "❌ MTU change failed with status: " + status)
-                Log.w(TAG, "   Will continue with default MTU (23 bytes, 20 byte payload)")
-            }
 
-            // Now that MTU operation is complete, enable notifications
-            // (descriptor writes are GATT operations and can't overlap with MTU request)
-            if (!notificationsEnabled) {
-                notificationsEnabled = true
-                enableNotifications()
+                override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
+                    rssiReadInProgress = false
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        if (isConnected && bluetoothGatt != null && gatt === bluetoothGatt) {
+                            updateSignalStrength(rssi)
+                        }
+                    } else {
+                        Log.e(TAG, "RSSI read failed with status: " + status)
+                    }
+                }
+
+                override fun onCharacteristicWrite(
+                        gatt: BluetoothGatt,
+                        characteristic: BluetoothGattCharacteristic,
+                        status: Int
+                ) {
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        // Bridge.log("LIVE: Characteristic write successful");
+
+                        // Calculate time since last send to enforce rate limiting
+                        val currentTimeMs = System.currentTimeMillis()
+                        val timeSinceLastSendMs = currentTimeMs - lastSendTimeMs
+                        val nextProcessDelayMs: Long
+
+                        if (timeSinceLastSendMs < MIN_SEND_DELAY_MS) {
+                            // Not enough time has elapsed, enforce minimum delay
+                            nextProcessDelayMs = MIN_SEND_DELAY_MS - timeSinceLastSendMs
+                            // Bridge.log("LIVE: Rate limiting: Next queue processing in " +
+                            // nextProcessDelayMs + "ms");
+                        } else {
+                            // Enough time has already passed
+                            nextProcessDelayMs = 0
+                        }
+
+                        // Schedule the next queue processing with appropriate delay
+                        handler.postDelayed(processSendQueueRunnable!!, nextProcessDelayMs)
+                    } else {
+                        Log.e(TAG, "Characteristic write failed with status: " + status)
+                        // If write fails, try again with a longer delay
+                        handler.postDelayed(processSendQueueRunnable!!, 500L)
+                    }
+                }
+
+                override fun onCharacteristicChanged(
+                        gatt: BluetoothGatt,
+                        characteristic: BluetoothGattCharacteristic
+                ) {
+                    // Get thread ID for tracking thread issues
+                    val threadId = Thread.currentThread().id
+                    val uuid = characteristic.uuid
+
+                    val data = characteristic.value
+                    if (data == null || data.isEmpty()) {
+                        return
+                    }
+
+                    // FILE_READ characteristic (72FF) needs special handling for packet reassembly
+                    // Android BLE fragments notifications larger than MTU into multiple callbacks
+                    val isFileReadCharacteristic = uuid == FILE_READ_UUID
+                    if (isFileReadCharacteristic) {
+                        fileReadNotificationCount++
+                        Bridge.log(
+                                "LIVE: 📁 FILE_READ #" +
+                                        fileReadNotificationCount +
+                                        " (" +
+                                        data.size +
+                                        " bytes), currentMtu=" +
+                                        currentMtu
+                        )
+                        processFilePacketData(data)
+                        return // File data handled separately with reassembly buffer
+                    }
+
+                    val isRxCharacteristic = uuid == RX_CHAR_UUID
+                    val isTxCharacteristic = uuid == TX_CHAR_UUID
+                    val isLc3ReadCharacteristic = uuid == LC3_READ_UUID
+                    val isLc3WriteCharacteristic = uuid == LC3_WRITE_UUID
+
+                    if (isRxCharacteristic) {
+                        Bridge.log("LIVE: Received data on RX characteristic")
+                        // #region agent log [810da2] Hypothesis A+C: capture data.length vs
+                        // negotiated MTU
+                        Bridge.log(
+                                "LIVE: [DEBUG-810da2-HypAC] RX dataLen=" +
+                                        data.size +
+                                        " mtu=" +
+                                        currentMtu +
+                                        " firstByte=0x" +
+                                        String.format("%02X", data[0]) +
+                                        " second=0x" +
+                                        (if (data.size > 1) String.format("%02X", data[1])
+                                        else "??")
+                        )
+                        // #endregion
+                    } else if (isTxCharacteristic) {
+                        Bridge.log("LIVE: Received data on TX characteristic")
+                    } else if (isLc3ReadCharacteristic) {
+                        // Bridge.log("LIVE: Received data on LC3_READ characteristic");
+                        processLc3AudioPacket(data)
+                        return // LC3 audio handled separately
+                    } else if (isLc3WriteCharacteristic) {
+                        Bridge.log("LIVE: Received data on LC3_WRITE characteristic")
+                    } else {
+                        Log.w(TAG, "Received data on unknown characteristic: " + uuid)
+                    }
+
+                    // Process command/JSON data on RX/TX characteristics
+                    processReceivedData(data, data.size)
+                }
+
+                override fun onDescriptorWrite(
+                        gatt: BluetoothGatt,
+                        descriptor: BluetoothGattDescriptor,
+                        status: Int
+                ) {
+                    val threadId = Thread.currentThread().id
+
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        Log.e(
+                                TAG,
+                                "Thread-" +
+                                        threadId +
+                                        ": ✅ Descriptor write successful for " +
+                                        descriptor.characteristic.uuid
+                        )
+                    } else {
+                        Log.e(
+                                TAG,
+                                "Thread-" +
+                                        threadId +
+                                        ": ℹ️ Descriptor write failed with status: " +
+                                        status +
+                                        " for " +
+                                        descriptor.characteristic.uuid
+                        )
+                    }
+
+                    // Process next queued descriptor write (serialized to avoid BLE stack
+                    // contention)
+                    writeNextDescriptor()
+                }
+
+                override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        Bridge.log(
+                                "LIVE: 🔵 MTU negotiation successful - changed to " + mtu + " bytes"
+                        )
+                        val effectivePayload = mtu - 3
+                        Bridge.log(
+                                "LIVE:    Effective payload size: " + effectivePayload + " bytes"
+                        )
+
+                        // Store the new MTU value
+                        currentMtu = mtu
+
+                        // If the negotiated MTU is sufficient for LC3 audio packets (typically
+                        // 40-60 bytes)
+                        if (mtu >= 64) {
+                            Bridge.log("LIVE: ✅ MTU size is sufficient for LC3 audio data packets")
+                        } else {
+                            Log.w(TAG, "⚠️ MTU size may be too small for LC3 audio data packets")
+                            Bridge.log(
+                                    "LIVE: 📊 Effective MTU payload: " + effectivePayload + " bytes"
+                            )
+                        }
+                    } else {
+                        Log.e(TAG, "❌ MTU change failed with status: " + status)
+                        Log.w(TAG, "   Will continue with default MTU (23 bytes, 20 byte payload)")
+                    }
+
+                    // Now that MTU operation is complete, enable notifications
+                    // (descriptor writes are GATT operations and can't overlap with MTU request)
+                    if (!notificationsEnabled) {
+                        notificationsEnabled = true
+                        enableNotifications()
+                    }
+                }
             }
-        }
-    }
 
     /**
-     * Write the next queued descriptor, or mark the queue as idle.
-     * Must be called after each onDescriptorWrite callback to serialize BLE GATT operations.
-     * On older Android devices, issuing multiple writeDescriptor() calls without waiting for
-     * onDescriptorWrite() causes the subsequent writes to silently fail.
+     * Write the next queued descriptor, or mark the queue as idle. Must be called after each
+     * onDescriptorWrite callback to serialize BLE GATT operations. On older Android devices,
+     * issuing multiple writeDescriptor() calls without waiting for onDescriptorWrite() causes the
+     * subsequent writes to silently fail.
      */
     private fun writeNextDescriptor() {
         val next = pendingDescriptorWrites.poll()
@@ -1510,12 +1864,22 @@ class MentraLive : SGCManager() {
             val writeSuccess = bluetoothGatt!!.writeDescriptor(next)
             val threadId = Thread.currentThread().id
             val uuid = next.characteristic.uuid
-            Log.e(TAG, "Thread-" + threadId + ": 📱 Write descriptor for " + uuid + ": " + writeSuccess)
+            Log.e(
+                    TAG,
+                    "Thread-" + threadId + ": 📱 Write descriptor for " + uuid + ": " + writeSuccess
+            )
 
             if (!writeSuccess) {
                 // If writeDescriptor returns false, onDescriptorWrite won't be called,
                 // so we need to continue the queue ourselves
-                Log.e(TAG, "Thread-" + threadId + ": ⚠️ writeDescriptor returned false for " + uuid + ", continuing queue")
+                Log.e(
+                        TAG,
+                        "Thread-" +
+                                threadId +
+                                ": ⚠️ writeDescriptor returned false for " +
+                                uuid +
+                                ", continuing queue"
+                )
                 handler.postDelayed(this::writeNextDescriptor, 50L)
             }
         } catch (e: Exception) {
@@ -1527,20 +1891,26 @@ class MentraLive : SGCManager() {
 
     /**
      * Enable notifications for all characteristics to ensure we catch data from any endpoint.
-     * Descriptor writes are queued and serialized to work reliably on older Android BLE stacks
-     * that don't support concurrent GATT operations.
+     * Descriptor writes are queued and serialized to work reliably on older Android BLE stacks that
+     * don't support concurrent GATT operations.
      */
     private fun enableNotifications() {
         val threadId = Thread.currentThread().id
         Log.e(TAG, "Thread-" + threadId + ": 🔵 enableNotifications() called")
 
         if (bluetoothGatt == null) {
-            Log.e(TAG, "Thread-" + threadId + ": ❌ Cannot enable notifications - bluetoothGatt is null")
+            Log.e(
+                    TAG,
+                    "Thread-" + threadId + ": ❌ Cannot enable notifications - bluetoothGatt is null"
+            )
             return
         }
 
         if (!hasPermissions()) {
-            Log.e(TAG, "Thread-" + threadId + ": ❌ Cannot enable notifications - missing permissions")
+            Log.e(
+                    TAG,
+                    "Thread-" + threadId + ": ❌ Cannot enable notifications - missing permissions"
+            )
             return
         }
 
@@ -1553,7 +1923,14 @@ class MentraLive : SGCManager() {
 
         // Get all characteristics
         val characteristics = service.characteristics
-        Bridge.log("LIVE: Thread-" + threadId + ": Found " + characteristics.size + " characteristics in service " + SERVICE_UUID)
+        Bridge.log(
+                "LIVE: Thread-" +
+                        threadId +
+                        ": Found " +
+                        characteristics.size +
+                        " characteristics in service " +
+                        SERVICE_UUID
+        )
 
         var notificationSuccess = false
 
@@ -1577,14 +1954,21 @@ class MentraLive : SGCManager() {
             val hasIndicate = (properties and BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0
             val hasRead = (properties and BluetoothGattCharacteristic.PROPERTY_READ) != 0
             val hasWrite = (properties and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0
-            val hasWriteNoResponse = (properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0
+            val hasWriteNoResponse =
+                    (properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0
 
-            Bridge.log("LIVE: Thread-" + threadId + ": Characteristic " + uuid + " properties: " +
-                   (if (hasNotify) "NOTIFY " else "") +
-                   (if (hasIndicate) "INDICATE " else "") +
-                   (if (hasRead) "READ " else "") +
-                   (if (hasWrite) "WRITE " else "") +
-                   (if (hasWriteNoResponse) "WRITE_NO_RESPONSE " else ""))
+            Bridge.log(
+                    "LIVE: Thread-" +
+                            threadId +
+                            ": Characteristic " +
+                            uuid +
+                            " properties: " +
+                            (if (hasNotify) "NOTIFY " else "") +
+                            (if (hasIndicate) "INDICATE " else "") +
+                            (if (hasRead) "READ " else "") +
+                            (if (hasWrite) "WRITE " else "") +
+                            (if (hasWriteNoResponse) "WRITE_NO_RESPONSE " else "")
+            )
 
             // Store references to our main characteristics
             if (uuid == RX_CHAR_UUID) {
@@ -1604,14 +1988,24 @@ class MentraLive : SGCManager() {
             // Enable notifications for any characteristic that supports it
             if (hasNotify || hasIndicate) {
                 try {
-                    // Enable local notifications (this is synchronous and can be done for all at once)
-                    val success = bluetoothGatt!!.setCharacteristicNotification(characteristic, true)
-                    Log.e(TAG, "Thread-" + threadId + ": 📱 Set local notification for " + uuid + ": " + success)
+                    // Enable local notifications (this is synchronous and can be done for all at
+                    // once)
+                    val success =
+                            bluetoothGatt!!.setCharacteristicNotification(characteristic, true)
+                    Log.e(
+                            TAG,
+                            "Thread-" +
+                                    threadId +
+                                    ": 📱 Set local notification for " +
+                                    uuid +
+                                    ": " +
+                                    success
+                    )
                     notificationSuccess = notificationSuccess || success
 
-                    // Queue the remote descriptor write (must be serialized on older Android BLE stacks)
-                    val descriptor = characteristic.getDescriptor(
-                        CLIENT_CHARACTERISTIC_CONFIG_UUID)
+                    // Queue the remote descriptor write (must be serialized on older Android BLE
+                    // stacks)
+                    val descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
 
                     if (descriptor != null) {
                         val value: ByteArray
@@ -1623,40 +2017,72 @@ class MentraLive : SGCManager() {
                         descriptor.value = value
                         pendingDescriptorWrites.add(descriptor)
                     } else {
-                        Log.e(TAG, "Thread-" + threadId + ": ⚠️ No notification descriptor found for " + uuid)
+                        Log.e(
+                                TAG,
+                                "Thread-" +
+                                        threadId +
+                                        ": ⚠️ No notification descriptor found for " +
+                                        uuid
+                        )
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Thread-" + threadId + ": ❌ Exception enabling notifications for " + uuid + ": " + e.message)
+                    Log.e(
+                            TAG,
+                            "Thread-" +
+                                    threadId +
+                                    ": ❌ Exception enabling notifications for " +
+                                    uuid +
+                                    ": " +
+                                    e.message
+                    )
                 }
             }
         }
 
         // Log notification status
         if (notificationSuccess) {
-            Bridge.log("LIVE: Thread-" + threadId + ": Local notification registration SUCCESS for at least one characteristic")
-            Log.e(TAG, "Thread-" + threadId + ": 🔔 Ready to receive data via onCharacteristicChanged()")
+            Bridge.log(
+                    "LIVE: Thread-" +
+                            threadId +
+                            ": Local notification registration SUCCESS for at least one characteristic"
+            )
+            Log.e(
+                    TAG,
+                    "Thread-" +
+                            threadId +
+                            ": 🔔 Ready to receive data via onCharacteristicChanged()"
+            )
         } else {
-            Log.e(TAG, "Thread-" + threadId + ": ❌ Failed to enable notifications on any characteristic")
+            Log.e(
+                    TAG,
+                    "Thread-" +
+                            threadId +
+                            ": ❌ Failed to enable notifications on any characteristic"
+            )
         }
 
         // Kick off the serialized descriptor write queue
         if (!pendingDescriptorWrites.isEmpty()) {
             isDescriptorWriteInProgress = true
             val queueSize = pendingDescriptorWrites.size
-            Bridge.log("LIVE: Queued " + queueSize + " descriptor writes, starting serialized write sequence")
+            Bridge.log(
+                    "LIVE: Queued " +
+                            queueSize +
+                            " descriptor writes, starting serialized write sequence"
+            )
             writeNextDescriptor()
         } else {
             // No descriptors to write, start data flow immediately
-            Bridge.log("LIVE: No descriptor writes needed, starting send queue and readiness check loop")
+            Bridge.log(
+                    "LIVE: No descriptor writes needed, starting send queue and readiness check loop"
+            )
             startSignalStrengthPolling()
             handler.post(processSendQueueRunnable!!)
             startReadinessCheckLoop()
         }
     }
 
-    /**
-     * Process the send queue with rate limiting
-     */
+    /** Process the send queue with rate limiting */
     private fun processSendQueue() {
         if (!isConnected || bluetoothGatt == null || txCharacteristic == null) {
             return
@@ -1670,7 +2096,9 @@ class MentraLive : SGCManager() {
             // Not enough time has elapsed since last send
             // Reschedule processing after the remaining delay
             val remainingDelayMs = MIN_SEND_DELAY_MS - timeSinceLastSendMs
-            Bridge.log("LIVE: Rate limiting: Waiting " + remainingDelayMs + "ms before next BLE send")
+            Bridge.log(
+                    "LIVE: Rate limiting: Waiting " + remainingDelayMs + "ms before next BLE send"
+            )
             handler.postDelayed(processSendQueueRunnable!!, remainingDelayMs)
             return
         }
@@ -1680,15 +2108,18 @@ class MentraLive : SGCManager() {
         if (data != null) {
             // Update last send time before sending
             lastSendTimeMs = currentTimeMs
-            Bridge.log("LIVE: 📤 Sending queued data - Queue size: " + sendQueue.size +
-                  ", Time since last send: " + timeSinceLastSendMs + "ms")
+            Bridge.log(
+                    "LIVE: 📤 Sending queued data - Queue size: " +
+                            sendQueue.size +
+                            ", Time since last send: " +
+                            timeSinceLastSendMs +
+                            "ms"
+            )
             sendDataInternal(data)
         }
     }
 
-    /**
-     * Send data through BLE
-     */
+    /** Send data through BLE */
     private fun sendDataInternal(data: ByteArray?) {
         if (!isConnected || bluetoothGatt == null || txCharacteristic == null || data == null) {
             return
@@ -1702,13 +2133,12 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Queue data to be sent
-     */
+    /** Queue data to be sent */
     private fun queueData(data: ByteArray?) {
         if (data != null) {
             sendQueue.add(data)
-            // Bridge.log("LIVE: 📋 Added " + data.length + " to send queue - New queue size: " + sendQueue.size());
+            // Bridge.log("LIVE: 📋 Added " + data.length + " to send queue - New queue size: " +
+            // sendQueue.size());
 
             // Log all outgoing bytes for testing
             val hexBytes = StringBuilder()
@@ -1741,9 +2171,7 @@ class MentraLive : SGCManager() {
         return messageId
     }
 
-    /**
-     * Send a JSON object to the glasses with message ID and ACK tracking
-     */
+    /** Send a JSON object to the glasses with message ID and ACK tracking */
     private fun sendJson(json: JSONObject?, wakeup: Boolean) {
         if (json != null) {
             try {
@@ -1751,9 +2179,17 @@ class MentraLive : SGCManager() {
                     val jsonStr = json.toString()
                     // Bridge.log("LIVE: 📤 Sending JSON with esoteric message ID: " + jsonStr);
                     if ("take_photo" == json.optString("type", "")) {
-                        Bridge.log("LIVE: PHOTO PIPELINE [4/4] sendJson(build<5) -> sendDataToGlasses — " + summarizeOutgoingMessage(jsonStr))
+                        Bridge.log(
+                                "LIVE: PHOTO PIPELINE [4/4] sendJson(build<5) -> sendDataToGlasses — " +
+                                        summarizeOutgoingMessage(jsonStr)
+                        )
                     }
-                    BleTraceLogger.logJson("phone_to_glasses", "sdk_ble_command", json, jsonStr.length)
+                    BleTraceLogger.logJson(
+                            "phone_to_glasses",
+                            "sdk_ble_command",
+                            json,
+                            jsonStr.length
+                    )
                     sendDataToGlasses(jsonStr, wakeup)
                 } else {
                     // Add esoteric message ID to the JSON
@@ -1761,7 +2197,8 @@ class MentraLive : SGCManager() {
                     json.put("mId", messageId)
 
                     val jsonStr = json.toString()
-                    // Bridge.log("LIVE: 📤 Sending JSON with esoteric message ID " + messageId + ": " + jsonStr);
+                    // Bridge.log("LIVE: 📤 Sending JSON with esoteric message ID " + messageId + ":
+                    // " + jsonStr);
 
                     // Check if this message will be chunked to determine timeout
                     var ackTimeout = ACK_TIMEOUT_MS
@@ -1778,11 +2215,20 @@ class MentraLive : SGCManager() {
                             // Calculate dynamic timeout for chunked message
                             val estimatedChunks = Math.ceil(jsonStr.length / 300.0).toInt()
                             ackTimeout = ACK_TIMEOUT_MS + (estimatedChunks * 50L) + 2000L
-                            Bridge.log("LIVE: Message will be chunked into ~" + estimatedChunks + " chunks, using dynamic timeout: " + ackTimeout + "ms")
+                            Bridge.log(
+                                    "LIVE: Message will be chunked into ~" +
+                                            estimatedChunks +
+                                            " chunks, using dynamic timeout: " +
+                                            ackTimeout +
+                                            "ms"
+                            )
                         }
                     } catch (e: JSONException) {
                         // If we can't determine, use default timeout
-                        Log.w(TAG, "Could not determine if message needs chunking, using default timeout")
+                        Log.w(
+                                TAG,
+                                "Could not determine if message needs chunking, using default timeout"
+                        )
                     }
 
                     // Track the message for ACK with appropriate timeout
@@ -1790,9 +2236,21 @@ class MentraLive : SGCManager() {
 
                     // Send the data
                     if ("take_photo" == json.optString("type", "")) {
-                        Bridge.log("LIVE: PHOTO PIPELINE [4/4] sendJson -> sendDataToGlasses (mId=" + messageId + ", ackTimeoutMs=" + ackTimeout + ") — " + summarizeOutgoingMessage(jsonStr))
+                        Bridge.log(
+                                "LIVE: PHOTO PIPELINE [4/4] sendJson -> sendDataToGlasses (mId=" +
+                                        messageId +
+                                        ", ackTimeoutMs=" +
+                                        ackTimeout +
+                                        ") — " +
+                                        summarizeOutgoingMessage(jsonStr)
+                        )
                     }
-                    BleTraceLogger.logJson("phone_to_glasses", "sdk_ble_command", json, jsonStr.length)
+                    BleTraceLogger.logJson(
+                            "phone_to_glasses",
+                            "sdk_ble_command",
+                            json,
+                            jsonStr.length
+                    )
                     sendDataToGlasses(jsonStr, wakeup)
                 }
             } catch (e: JSONException) {
@@ -1807,24 +2265,18 @@ class MentraLive : SGCManager() {
         sendJson(json, false)
     }
 
-    fun sendJson(jsonOriginal: Map<String, Any>, wakeUp: Boolean) {
-
-    }
+    fun sendJson(jsonOriginal: Map<String, Any>, wakeUp: Boolean) {}
 
     override fun sortMicRanking(list: MutableList<String>): MutableList<String> {
         return list
     }
 
-    /**
-     * Track a message for ACK response
-     */
+    /** Track a message for ACK response */
     private fun trackMessageForAck(messageId: Long, messageData: String) {
         trackMessageForAck(messageId, messageData, ACK_TIMEOUT_MS)
     }
 
-    /**
-     * Track a message for ACK response with custom timeout
-     */
+    /** Track a message for ACK response with custom timeout */
     private fun trackMessageForAck(messageId: Long, messageData: String, timeoutMs: Long) {
         if (!isConnected) {
             Bridge.log("LIVE: Not connected, skipping ACK tracking for message " + messageId)
@@ -1833,50 +2285,72 @@ class MentraLive : SGCManager() {
 
         // Skip ACK tracking for glasses with build number < 5 (older firmware)
         if (buildNumberInt < 5) {
-            Bridge.log("LIVE: Glasses build number (" + buildNumberInt + ") < 5, skipping ACK tracking for message " + messageId)
+            Bridge.log(
+                    "LIVE: Glasses build number (" +
+                            buildNumberInt +
+                            ") < 5, skipping ACK tracking for message " +
+                            messageId
+            )
             return
         }
 
         // Create retry runnable
-        val retryRunnable = Runnable {
-            retryMessage(messageId)
-        }
+        val retryRunnable = Runnable { retryMessage(messageId) }
 
         // Create pending message
-        val pendingMessage = PendingMessage(messageData, System.currentTimeMillis(), 0, retryRunnable)
+        val pendingMessage =
+                PendingMessage(messageData, System.currentTimeMillis(), 0, retryRunnable)
         pendingMessages[messageId] = pendingMessage
 
         // Schedule ACK timeout with custom timeout
-        handler.postDelayed({
-            checkMessageAck(messageId)
-        }, timeoutMs)
+        handler.postDelayed({ checkMessageAck(messageId) }, timeoutMs)
 
-        Bridge.log("LIVE: 📋 Tracking message " + messageId + " for ACK (timeout: " + timeoutMs + "ms)")
+        Bridge.log(
+                "LIVE: 📋 Tracking message " + messageId + " for ACK (timeout: " + timeoutMs + "ms)"
+        )
     }
 
-    /**
-     * Check if a message has been acknowledged
-     */
+    /** Check if a message has been acknowledged */
     private fun checkMessageAck(messageId: Long) {
         val pendingMessage = pendingMessages[messageId]
         if (pendingMessage != null) {
-            Log.w(TAG, "⏰ ACK timeout for message " + messageId + " (attempt " + pendingMessage.retryCount + ")")
+            Log.w(
+                    TAG,
+                    "⏰ ACK timeout for message " +
+                            messageId +
+                            " (attempt " +
+                            pendingMessage.retryCount +
+                            ")"
+            )
 
             if (pendingMessage.retryCount < MAX_RETRY_ATTEMPTS) {
                 // Retry the message
-                Bridge.log("LIVE: 🔄 Retrying message " + messageId + " (attempt " + (pendingMessage.retryCount + 1) + "/" + MAX_RETRY_ATTEMPTS + ")")
+                Bridge.log(
+                        "LIVE: 🔄 Retrying message " +
+                                messageId +
+                                " (attempt " +
+                                (pendingMessage.retryCount + 1) +
+                                "/" +
+                                MAX_RETRY_ATTEMPTS +
+                                ")"
+                )
                 retryMessage(messageId)
             } else {
                 // Max retries reached
-                Log.e(TAG, "❌ Message " + messageId + " failed after " + MAX_RETRY_ATTEMPTS + " attempts")
+                Log.e(
+                        TAG,
+                        "❌ Message " +
+                                messageId +
+                                " failed after " +
+                                MAX_RETRY_ATTEMPTS +
+                                " attempts"
+                )
                 pendingMessages.remove(messageId)
             }
         }
     }
 
-    /**
-     * Retry a message
-     */
+    /** Retry a message */
     private fun retryMessage(messageId: Long) {
         val pendingMessage = pendingMessages[messageId]
         if (pendingMessage == null) {
@@ -1891,45 +2365,54 @@ class MentraLive : SGCManager() {
         }
 
         // Create new pending message with incremented retry count
-        val retryMessage = PendingMessage(
-            pendingMessage.messageData,
-            System.currentTimeMillis(),
-            pendingMessage.retryCount + 1,
-            pendingMessage.retryRunnable
-        )
+        val retryMessage =
+                PendingMessage(
+                        pendingMessage.messageData,
+                        System.currentTimeMillis(),
+                        pendingMessage.retryCount + 1,
+                        pendingMessage.retryRunnable
+                )
 
         // Update the tracked message
         pendingMessages[messageId] = retryMessage
 
         // Send the message again
-        Bridge.log("LIVE: 📤 Retrying message " + messageId + " (attempt " + retryMessage.retryCount + ")")
+        Bridge.log(
+                "LIVE: 📤 Retrying message " +
+                        messageId +
+                        " (attempt " +
+                        retryMessage.retryCount +
+                        ")"
+        )
         sendDataToGlasses(pendingMessage.messageData, false)
 
         // Schedule next ACK check
-        handler.postDelayed({
-            checkMessageAck(messageId)
-        }, ACK_TIMEOUT_MS)
+        handler.postDelayed({ checkMessageAck(messageId) }, ACK_TIMEOUT_MS)
     }
 
-    /**
-     * Process ACK response from glasses
-     */
+    /** Process ACK response from glasses */
     private fun processAckResponse(messageId: Long) {
         val pendingMessage = pendingMessages.remove(messageId)
         if (pendingMessage != null) {
-            Bridge.log("LIVE: ✅ Received ACK for message " + messageId + " (attempts: " + pendingMessage.retryCount + ")")
+            Bridge.log(
+                    "LIVE: ✅ Received ACK for message " +
+                            messageId +
+                            " (attempts: " +
+                            pendingMessage.retryCount +
+                            ")"
+            )
         } else {
             Log.w(TAG, "⚠️ Received ACK for untracked message " + messageId)
         }
     }
 
     /**
-     * Process file packet data with reassembly buffer for fragmented BLE notifications.
-     * Android BLE delivers notifications larger than MTU in multiple onCharacteristicChanged callbacks.
-     * This method buffers fragments until a complete K900 file packet is received.
+     * Process file packet data with reassembly buffer for fragmented BLE notifications. Android BLE
+     * delivers notifications larger than MTU in multiple onCharacteristicChanged callbacks. This
+     * method buffers fragments until a complete K900 file packet is received.
      *
-     * K900 file packet format:
-     * ## (2) + type (1) + packSize (2) + packIndex (2) + fileSize (4) + fileName (16) + flags (2) + data (packSize) + verify (1) + $$ (2)
+     * K900 file packet format: ## (2) + type (1) + packSize (2) + packIndex (2) + fileSize (4) +
+     * fileName (16) + flags (2) + data (packSize) + verify (1) + $$ (2)
      */
     private fun processFilePacketData(data: ByteArray?) {
         if (data == null || data.isEmpty()) {
@@ -1954,8 +2437,8 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Extract and process complete file packets from the reassembly buffer.
-     * Must be called within synchronized(filePacketBufferLock) block.
+     * Extract and process complete file packets from the reassembly buffer. Must be called within
+     * synchronized(filePacketBufferLock) block.
      */
     private fun extractCompleteFilePackets() {
         var pos = 0
@@ -1967,14 +2450,19 @@ class MentraLive : SGCManager() {
         for (i in 0 until Math.min(40, filePacketBufferSize)) {
             hexFirst.append(String.format("%02X ", filePacketBuffer[i]))
         }
-        Bridge.log("LIVE: 📦 extractCompleteFilePackets: buffer has " + filePacketBufferSize +
-                  " bytes, first 40: " + hexFirst.toString())
+        Bridge.log(
+                "LIVE: 📦 extractCompleteFilePackets: buffer has " +
+                        filePacketBufferSize +
+                        " bytes, first 40: " +
+                        hexFirst.toString()
+        )
 
         while (pos < filePacketBufferSize && iterations++ < MAX_ITERATIONS) {
             // Find start marker ## (0x23 0x23)
             var startPos = -1
             for (i in pos until filePacketBufferSize - 1) {
-                if (filePacketBuffer[i] == 0x23.toByte() && filePacketBuffer[i + 1] == 0x23.toByte()) {
+                if (filePacketBuffer[i] == 0x23.toByte() && filePacketBuffer[i + 1] == 0x23.toByte()
+                ) {
                     startPos = i
                     break
                 }
@@ -1982,52 +2470,90 @@ class MentraLive : SGCManager() {
 
             if (startPos < 0) {
                 // No start marker found, clear buffer
-                Bridge.log("LIVE: 📦 No start marker found in " + filePacketBufferSize + " bytes, clearing buffer")
+                Bridge.log(
+                        "LIVE: 📦 No start marker found in " +
+                                filePacketBufferSize +
+                                " bytes, clearing buffer"
+                )
                 filePacketBufferSize = 0
                 return
             }
 
             // Skip any garbage before start marker
             if (startPos > pos) {
-                Bridge.log("LIVE: 📦 Skipping " + (startPos - pos) + " bytes of garbage before start marker")
+                Bridge.log(
+                        "LIVE: 📦 Skipping " +
+                                (startPos - pos) +
+                                " bytes of garbage before start marker"
+                )
                 pos = startPos
             }
 
             // Need at least 5 bytes to read type and packSize: ## (2) + type (1) + packSize (2)
             if (filePacketBufferSize - pos < 5) {
-                Bridge.log("LIVE: 📦 Not enough data for header, have " + (filePacketBufferSize - pos) + " bytes, need 5")
+                Bridge.log(
+                        "LIVE: 📦 Not enough data for header, have " +
+                                (filePacketBufferSize - pos) +
+                                " bytes, need 5"
+                )
                 break
             }
 
             // Read packSize from header (bytes 3-4, big-endian)
             val packSizeOffset = pos + 3 // Skip ## and type
-            val packSize = ((filePacketBuffer[packSizeOffset].toInt() and 0xFF) shl 8) or
-                          (filePacketBuffer[packSizeOffset + 1].toInt() and 0xFF)
+            val packSize =
+                    ((filePacketBuffer[packSizeOffset].toInt() and 0xFF) shl 8) or
+                            (filePacketBuffer[packSizeOffset + 1].toInt() and 0xFF)
 
             // Also try little-endian for comparison
-            val packSizeLE = (filePacketBuffer[packSizeOffset].toInt() and 0xFF) or
+            val packSizeLE =
+                    (filePacketBuffer[packSizeOffset].toInt() and 0xFF) or
                             ((filePacketBuffer[packSizeOffset + 1].toInt() and 0xFF) shl 8)
-            Bridge.log("LIVE: 📦 Header bytes 3-4: 0x" +
-                      String.format("%02X%02X", filePacketBuffer[packSizeOffset], filePacketBuffer[packSizeOffset + 1]) +
-                      " -> packSize BE=" + packSize + ", LE=" + packSizeLE)
+            Bridge.log(
+                    "LIVE: 📦 Header bytes 3-4: 0x" +
+                            String.format(
+                                    "%02X%02X",
+                                    filePacketBuffer[packSizeOffset],
+                                    filePacketBuffer[packSizeOffset + 1]
+                            ) +
+                            " -> packSize BE=" +
+                            packSize +
+                            ", LE=" +
+                            packSizeLE
+            )
 
             // Validate packSize
             if (packSize < 0 || packSize > K900ProtocolUtils.FILE_PACK_SIZE) {
-                Log.w(TAG, "Invalid packSize " + packSize + " (LE would be " + packSizeLE + "), skipping start marker")
+                Log.w(
+                        TAG,
+                        "Invalid packSize " +
+                                packSize +
+                                " (LE would be " +
+                                packSizeLE +
+                                "), skipping start marker"
+                )
                 pos = startPos + 1
                 continue
             }
 
             // Calculate expected total packet size
-            // ## (2) + type (1) + packSize (2) + packIndex (2) + fileSize (4) + fileName (16) + flags (2) + data (packSize) + verify (1) + $$ (2)
+            // ## (2) + type (1) + packSize (2) + packIndex (2) + fileSize (4) + fileName (16) +
+            // flags (2) + data (packSize) + verify (1) + $$ (2)
             val expectedPacketSize = 2 + 1 + 2 + 2 + 4 + 16 + 2 + packSize + 1 + 2
 
             // Check if we have the complete packet
             val availableBytes = filePacketBufferSize - pos
             if (availableBytes < expectedPacketSize) {
                 // Not enough data yet, wait for more fragments
-                Bridge.log("LIVE: 📦 Waiting for more data: have " + availableBytes +
-                          " of " + expectedPacketSize + " bytes (packSize=" + packSize + ")")
+                Bridge.log(
+                        "LIVE: 📦 Waiting for more data: have " +
+                                availableBytes +
+                                " of " +
+                                expectedPacketSize +
+                                " bytes (packSize=" +
+                                packSize +
+                                ")"
+                )
                 break // IMPORTANT: break here, don't continue looking for end marker
             }
 
@@ -2038,20 +2564,39 @@ class MentraLive : SGCManager() {
 
             // Debug: Show bytes around expected end marker position
             val endContext = StringBuilder()
-            for (i in Math.max(0, endMarkerPos - 5)..Math.min(filePacketBufferSize - 1, endMarkerPos + 5)) {
+            for (i in
+                    Math.max(0, endMarkerPos - 5)..Math.min(
+                                    filePacketBufferSize - 1,
+                                    endMarkerPos + 5
+                            )) {
                 if (i == endMarkerPos) endContext.append("[")
                 endContext.append(String.format("%02X", filePacketBuffer[i]))
                 if (i == endMarkerPos + 1) endContext.append("]")
                 endContext.append(" ")
             }
-            Bridge.log("LIVE: 📦 End marker check at pos " + endMarkerPos + ": " + endContext.toString())
+            Bridge.log(
+                    "LIVE: 📦 End marker check at pos " +
+                            endMarkerPos +
+                            ": " +
+                            endContext.toString()
+            )
 
             if (endByte1 != 0x24.toByte() || endByte2 != 0x24.toByte()) {
                 // End marker not found - could be corrupted packet or wrong packSize interpretation
-                Log.w(TAG, "End marker $$ not found at pos " + endMarkerPos +
-                      " (found 0x" + String.format("%02X%02X", endByte1, endByte2) +
-                      "), packSize=" + packSize + ", expectedPacketSize=" + expectedPacketSize +
-                      ", bufferSize=" + filePacketBufferSize + ", skipping start marker")
+                Log.w(
+                        TAG,
+                        "End marker $$ not found at pos " +
+                                endMarkerPos +
+                                " (found 0x" +
+                                String.format("%02X%02X", endByte1, endByte2) +
+                                "), packSize=" +
+                                packSize +
+                                ", expectedPacketSize=" +
+                                expectedPacketSize +
+                                ", bufferSize=" +
+                                filePacketBufferSize +
+                                ", skipping start marker"
+                )
                 pos = startPos + 1
                 continue
             }
@@ -2060,13 +2605,19 @@ class MentraLive : SGCManager() {
             val completePacket = ByteArray(expectedPacketSize)
             System.arraycopy(filePacketBuffer, pos, completePacket, 0, expectedPacketSize)
 
-            Bridge.log("LIVE: 📦 ✅ Complete file packet reassembled: " + expectedPacketSize + " bytes")
+            Bridge.log(
+                    "LIVE: 📦 ✅ Complete file packet reassembled: " + expectedPacketSize + " bytes"
+            )
 
             // Process the complete packet
             val packetInfo = K900ProtocolUtils.extractFilePacket(completePacket)
             if (packetInfo != null && packetInfo.isValid) {
-                Bridge.log("LIVE: 📦 ✅ Packet validated: index=" + packetInfo.packIndex +
-                          ", fileName=" + packetInfo.fileName)
+                Bridge.log(
+                        "LIVE: 📦 ✅ Packet validated: index=" +
+                                packetInfo.packIndex +
+                                ", fileName=" +
+                                packetInfo.fileName
+                )
                 // Post to handler to process outside the lock
                 val finalPacketInfo = packetInfo
                 handler.post { processFilePacket(finalPacketInfo) }
@@ -2082,7 +2633,13 @@ class MentraLive : SGCManager() {
             val remaining = filePacketBufferSize - pos
             System.arraycopy(filePacketBuffer, pos, filePacketBuffer, 0, remaining)
             filePacketBufferSize = remaining
-            Bridge.log("LIVE: 📦 Removed " + pos + " bytes, " + remaining + " bytes remaining in buffer")
+            Bridge.log(
+                    "LIVE: 📦 Removed " +
+                            pos +
+                            " bytes, " +
+                            remaining +
+                            " bytes remaining in buffer"
+            )
         } else if (pos >= filePacketBufferSize) {
             filePacketBufferSize = 0
         }
@@ -2093,18 +2650,12 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Clear the file packet reassembly buffer (call on disconnect)
-     */
+    /** Clear the file packet reassembly buffer (call on disconnect) */
     private fun clearFilePacketBuffer() {
-        synchronized(filePacketBufferLock) {
-            filePacketBufferSize = 0
-        }
+        synchronized(filePacketBufferLock) { filePacketBufferSize = 0 }
     }
 
-    /**
-     * Process data received from the glasses
-     */
+    /** Process data received from the glasses */
     private fun processReceivedData(data: ByteArray?, size: Int) {
         // Bridge.log("LIVE: Processing received data: " + bytesToHex(data));
 
@@ -2119,36 +2670,47 @@ class MentraLive : SGCManager() {
         for (i in 0 until Math.min(size, 16)) {
             hexData.append(String.format("%02X ", data[i]))
         }
-        // Bridge.log("LIVE: Processing data packet, first " + Math.min(size, 16) + " bytes: " + hexData.toString());
+        // Bridge.log("LIVE: Processing data packet, first " + Math.min(size, 16) + " bytes: " +
+        // hexData.toString());
 
         // Get thread ID for consistent logging
         val threadId = Thread.currentThread().id
 
         // First check if this looks like a K900 protocol formatted message (starts with ##)
         if (size >= 7 && data[0] == 0x23.toByte() && data[1] == 0x23.toByte()) {
-            Bridge.log("LIVE: Thread-" + threadId + ": 🔍 DETECTED K900 PROTOCOL FORMAT (## prefix)")
+            Bridge.log(
+                    "LIVE: Thread-" + threadId + ": 🔍 DETECTED K900 PROTOCOL FORMAT (## prefix)"
+            )
 
             // Check the command type byte
             val cmdType = data[2]
 
             // Check if this is a file transfer packet
             if (cmdType == K900ProtocolUtils.CMD_TYPE_PHOTO ||
-                cmdType == K900ProtocolUtils.CMD_TYPE_VIDEO ||
-                cmdType == K900ProtocolUtils.CMD_TYPE_AUDIO ||
-                cmdType == K900ProtocolUtils.CMD_TYPE_DATA) {
+                            cmdType == K900ProtocolUtils.CMD_TYPE_VIDEO ||
+                            cmdType == K900ProtocolUtils.CMD_TYPE_AUDIO ||
+                            cmdType == K900ProtocolUtils.CMD_TYPE_DATA
+            ) {
 
-                Bridge.log("LIVE: Thread-" + threadId + ": 📦 DETECTED FILE TRANSFER PACKET (type: 0x" +
-                      String.format("%02X", cmdType) + ")")
+                Bridge.log(
+                        "LIVE: Thread-" +
+                                threadId +
+                                ": 📦 DETECTED FILE TRANSFER PACKET (type: 0x" +
+                                String.format("%02X", cmdType) +
+                                ")"
+                )
 
                 // Debug: Log the raw data
                 val hexDump = StringBuilder()
                 for (i in 0 until Math.min(data.size, 64)) {
                     hexDump.append(String.format("%02X ", data[i]))
                 }
-                // Bridge.log("LIVE: Thread-" + threadId + ": 📦 Raw file packet data length=" + data.length +
+                // Bridge.log("LIVE: Thread-" + threadId + ": 📦 Raw file packet data length=" +
+                // data.length +
                 //       ", first 64 bytes: " + hexDump.toString());
 
-                // The data IS the file packet - it starts with ## and contains the full file packet structure
+                // The data IS the file packet - it starts with ## and contains the full file packet
+                // structure
                 val packetInfo = K900ProtocolUtils.extractFilePacket(data)
                 if (packetInfo != null && packetInfo.isValid) {
                     processFilePacket(packetInfo)
@@ -2166,9 +2728,24 @@ class MentraLive : SGCManager() {
                 processJsonMessage(json)
             } else {
                 Log.w(TAG, "Thread-" + threadId + ": Failed to parse K900 protocol data")
-                // #region agent log [810da2] Hypothesis A+B: log header-declared length vs actual data length
-                val declaredPayloadLen = if (data.size >= 5) (((data[3].toInt() and 0xFF) shl 8) or (data[4].toInt() and 0xFF)) else -1
-                Bridge.log("LIVE: [DEBUG-810da2-HypAB] K900 PARSE FAILED thread=" + threadId + " dataLen=" + data.size + " mtu=" + currentMtu + " declaredPayloadLen=" + declaredPayloadLen + " expectedTotal=" + (declaredPayloadLen + 7))
+                // #region agent log [810da2] Hypothesis A+B: log header-declared length vs actual
+                // data length
+                val declaredPayloadLen =
+                        if (data.size >= 5)
+                                (((data[3].toInt() and 0xFF) shl 8) or (data[4].toInt() and 0xFF))
+                        else -1
+                Bridge.log(
+                        "LIVE: [DEBUG-810da2-HypAB] K900 PARSE FAILED thread=" +
+                                threadId +
+                                " dataLen=" +
+                                data.size +
+                                " mtu=" +
+                                currentMtu +
+                                " declaredPayloadLen=" +
+                                declaredPayloadLen +
+                                " expectedTotal=" +
+                                (declaredPayloadLen + 7)
+                )
                 // #endregion
             }
 
@@ -2177,10 +2754,13 @@ class MentraLive : SGCManager() {
 
         // Check the first byte to determine the packet type for non-protocol formatted data
         val commandByte = data[0]
-        // Bridge.log("LIVE: Command byte: 0x" + String.format("%02X", commandByte) + " (" + (int)(commandByte & 0xFF) + ")");
+        // Bridge.log("LIVE: Command byte: 0x" + String.format("%02X", commandByte) + " (" +
+        // (int)(commandByte & 0xFF) + ")");
 
-        // NOTE: LC3 audio (0xA0) is now processed exclusively via the dedicated LC3_READ characteristic
-        // This prevents duplicate audio processing and follows the proper BLE characteristic separation
+        // NOTE: LC3 audio (0xA0) is now processed exclusively via the dedicated LC3_READ
+        // characteristic
+        // This prevents duplicate audio processing and follows the proper BLE characteristic
+        // separation
 
         // Process non-audio data based on command byte
         when (commandByte) {
@@ -2197,12 +2777,13 @@ class MentraLive : SGCManager() {
                     Log.e(TAG, "Error parsing received JSON data", e)
                 }
             }
-
             else -> {
                 // Unknown packet type (LC3 audio 0xA0 is handled via dedicated characteristic)
-                // Log.w(TAG, "Received unknown packet type: " + String.format("0x%02X", commandByte));
+                // Log.w(TAG, "Received unknown packet type: " + String.format("0x%02X",
+                // commandByte));
                 if (size > 10) {
-                    // Bridge.log("LIVE: First 10 bytes: " + bytesToHex(Arrays.copyOfRange(data, 0, 10)));
+                    // Bridge.log("LIVE: First 10 bytes: " + bytesToHex(Arrays.copyOfRange(data, 0,
+                    // 10)));
                 } else {
                     Bridge.log("LIVE: Data: " + bytesToHex(data))
                 }
@@ -2210,9 +2791,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Process a JSON message
-     */
+    /** Process a JSON message */
     private fun processJsonMessage(json: JSONObject) {
         // Demoted from INFO (Bridge.log) to DEBUG: per-type handlers below already log
         // the messages that matter, and full payloads can leak PII (wifi SSID, bt_mac,
@@ -2245,20 +2824,16 @@ class MentraLive : SGCManager() {
         }
 
         when (type) {
-            "file_announce" ->
-                handleFileTransferAnnouncement(json)
-            "transfer_timeout" ->
-                handleTransferTimeout(json)
-            "transfer_failed" ->
-                handleTransferFailed(json)
-            "ble_photo_ready" ->
-                processBlePhotoReady(json)
+            "file_announce" -> handleFileTransferAnnouncement(json)
+            "transfer_timeout" -> handleTransferTimeout(json)
+            "transfer_failed" -> handleTransferFailed(json)
+            "ble_photo_ready" -> processBlePhotoReady(json)
             "photo_status" ->
-                try {
-                    Bridge.sendPhotoStatus(jsonObjectToMap(json))
-                } catch (e: JSONException) {
-                    Log.e(TAG, "Error converting photo status to Map", e)
-                }
+                    try {
+                        Bridge.sendPhotoStatus(jsonObjectToMap(json))
+                    } catch (e: JSONException) {
+                        Log.e(TAG, "Error converting photo status to Map", e)
+                    }
             "stream_status" -> {
                 // Process streaming status update from ASG client
                 Bridge.log("LIVE: Received stream status update from glasses: " + json.toString())
@@ -2272,7 +2847,9 @@ class MentraLive : SGCManager() {
                     Log.e(TAG, "⏱️ Timestamp: " + System.currentTimeMillis())
 
                     // Check if it's the timeout error we're investigating
-                    if (errorDetails.contains("Stream timed out") || errorDetails.contains("no keep-alive")) {
+                    if (errorDetails.contains("Stream timed out") ||
+                                    errorDetails.contains("no keep-alive")
+                    ) {
                         Log.e(TAG, "🔍 RTMP TIMEOUT ERROR - Dumping diagnostic info:")
                         Log.e(TAG, "💓 Last heartbeat counter: " + heartbeatCounter)
                         Log.e(TAG, "⏱️ Current timestamp: " + System.currentTimeMillis())
@@ -2283,9 +2860,21 @@ class MentraLive : SGCManager() {
                         // Log BLE connection state
                         Log.e(TAG, "🔌 BLE Connection state:")
                         Log.e(TAG, "   - isConnected: " + isConnected)
-                        Log.e(TAG, "   - bluetoothGatt: " + (if (bluetoothGatt != null) "NOT NULL" else "NULL"))
-                        Log.e(TAG, "   - txCharacteristic: " + (if (txCharacteristic != null) "NOT NULL" else "NULL"))
-                        Log.e(TAG, "   - rxCharacteristic: " + (if (rxCharacteristic != null) "NOT NULL" else "NULL"))
+                        Log.e(
+                                TAG,
+                                "   - bluetoothGatt: " +
+                                        (if (bluetoothGatt != null) "NOT NULL" else "NULL")
+                        )
+                        Log.e(
+                                TAG,
+                                "   - txCharacteristic: " +
+                                        (if (txCharacteristic != null) "NOT NULL" else "NULL")
+                        )
+                        Log.e(
+                                TAG,
+                                "   - rxCharacteristic: " +
+                                        (if (rxCharacteristic != null) "NOT NULL" else "NULL")
+                        )
                         Log.e(TAG, "   - connectionState: " + connectionState)
                         Log.e(TAG, "   - glassesReady: " + glassesReady)
                     }
@@ -2298,39 +2887,39 @@ class MentraLive : SGCManager() {
                     Log.e(TAG, "Error converting RTMP status to Map", e)
                 }
             }
-
-            "video_recording_status" ->
-                emitVideoRecordingStatus(json)
-
+            "video_recording_status" -> emitVideoRecordingStatus(json)
+            "media_success", "media_error" -> {
+                try {
+                    Bridge.sendMediaUploadEvent(jsonObjectToMap(json))
+                } catch (e: JSONException) {
+                    Log.e(TAG, "Error converting media upload event to Map", e)
+                }
+            }
             "voice_activity_detection_status" ->
-                handleVoiceActivityDetectionStatus(
-                        json.optBoolean(
-                                "voiceActivityDetectionEnabled",
-                                BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED))
-
-            "speaking_status" ->
-                handleSpeakingStatus(json.optBoolean("speaking", false))
-
+                    handleVoiceActivityDetectionStatus(
+                            json.optBoolean(
+                                    "voiceActivityDetectionEnabled",
+                                    BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
+                            )
+                    )
+            "speaking_status" -> handleSpeakingStatus(json.optBoolean("speaking", false))
             "battery_status" -> {
                 // Process battery status
                 val percent = json.optInt("percent", batteryLevel)
                 val charging = json.optBoolean("charging", isCharging)
                 updateBatteryStatus(percent, charging)
             }
-
             "pong" ->
-                // Process heartbeat pong response
-                Bridge.log("LIVE: Received pong response - connection healthy")
-
+                    // Process heartbeat pong response
+                    Bridge.log("LIVE: Received pong response - connection healthy")
             "imu_response",
             "imu_stream_response",
             "imu_gesture_response",
             "imu_gesture_subscribed",
             "imu_ack",
             "imu_error" ->
-                // Handle IMU-related responses
-                handleImuResponse(json)
-
+                    // Handle IMU-related responses
+                    handleImuResponse(json)
             "wifi_status" -> {
                 // Process WiFi status information
                 val wifiConnectedStatus = json.optBoolean("connected", false)
@@ -2339,7 +2928,6 @@ class MentraLive : SGCManager() {
 
                 updateWifiStatus(wifiConnectedStatus, ssid, localIp)
             }
-
             "hotspot_status_update" -> {
                 // Process hotspot status information (same pattern as "wifi_status")
                 val hotspotEnabled = json.optBoolean("hotspot_enabled", false)
@@ -2349,7 +2937,6 @@ class MentraLive : SGCManager() {
 
                 updateHotspotStatus(hotspotEnabled, hotspotSsid, hotspotPassword, hotspotGatewayIp)
             }
-
             "hotspot_error" -> {
                 // Process hotspot error
                 val errorMessage = json.optString("error_message", "Unknown hotspot error")
@@ -2357,7 +2944,6 @@ class MentraLive : SGCManager() {
 
                 handleHotspotError(errorMessage, timestamp)
             }
-
             "photo_response" -> {
                 // Process photo response (success or failure)
                 val requestId = json.optString("requestId", "")
@@ -2373,23 +2959,35 @@ class MentraLive : SGCManager() {
 
                 if (!photoSuccess) {
                     // Handle failed photo response
-                    val errorMsg = json.optString("errorMessage", json.optString("error", "Unknown error"))
-                    Bridge.log("LIVE: Photo request failed - requestId: " + requestId +
-                          ", appId: " + appId + ", error: " + errorMsg)
+                    val errorMsg =
+                            json.optString("errorMessage", json.optString("error", "Unknown error"))
+                    Bridge.log(
+                            "LIVE: Photo request failed - requestId: " +
+                                    requestId +
+                                    ", appId: " +
+                                    appId +
+                                    ", error: " +
+                                    errorMsg
+                    )
                 } else {
                     // Handle successful photo (in future implementation)
                     Bridge.log("LIVE: Photo request succeeded - requestId: " + requestId)
                 }
             }
-
             "ble_photo_complete" -> {
                 // Process BLE photo transfer completion
                 val bleRequestId = json.optString("requestId", "")
                 val bleBleImgId = json.optString("bleImgId", "")
                 val bleSuccess = json.optBoolean("success", false)
 
-                Bridge.log("LIVE: BLE photo transfer complete - requestId: " + bleRequestId +
-                     ", bleImgId: " + bleBleImgId + ", success: " + bleSuccess)
+                Bridge.log(
+                        "LIVE: BLE photo transfer complete - requestId: " +
+                                bleRequestId +
+                                ", bleImgId: " +
+                                bleBleImgId +
+                                ", success: " +
+                                bleSuccess
+                )
 
                 // Send completion notification back to glasses
                 if (bleSuccess) {
@@ -2398,47 +2996,49 @@ class MentraLive : SGCManager() {
                     Log.e(TAG, "BLE photo transfer failed for requestId: " + bleRequestId)
                 }
             }
-
             "wifi_scan_result" -> {
                 // Process WiFi scan results
                 val networks: MutableList<Map<String, Any>> = ArrayList()
 
                 if (json.has("networks_neo")) {
-                        try {
-                            val networksNeoArray = json.getJSONArray("networks_neo")
+                    try {
+                        val networksNeoArray = json.getJSONArray("networks_neo")
 
-                            for (i in 0 until networksNeoArray.length()) {
-                                val networkInfo = networksNeoArray.getJSONObject(i)
+                        for (i in 0 until networksNeoArray.length()) {
+                            val networkInfo = networksNeoArray.getJSONObject(i)
 
-                                // Convert JSONObject to Map
-                                val networkMap = HashMap<String, Any>()
-                                val keys = networkInfo.keys()
-                                while (keys.hasNext()) {
-                                    val key = keys.next()
-                                    networkMap[key] = networkInfo.get(key)
-                                }
-                                networks.add(networkMap)
+                            // Convert JSONObject to Map
+                            val networkMap = HashMap<String, Any>()
+                            val keys = networkInfo.keys()
+                            while (keys.hasNext()) {
+                                val key = keys.next()
+                                networkMap[key] = networkInfo.get(key)
                             }
-
-                            Bridge.log(
-                                "Received enhanced WiFi scan results: " + networks.size +
-                                " networks with security info"
-                            )
-                        } catch (e: JSONException) {
-                            Log.e(TAG, "Error parsing networks_neo", e)
+                            networks.add(networkMap)
                         }
+
+                        Bridge.log(
+                                "Received enhanced WiFi scan results: " +
+                                        networks.size +
+                                        " networks with security info"
+                        )
+                    } catch (e: JSONException) {
+                        Log.e(TAG, "Error parsing networks_neo", e)
+                    }
                 }
 
-                val scanComplete = json.optBoolean("scan_complete", json.optBoolean("scanComplete", false))
+                val scanComplete =
+                        json.optBoolean("scan_complete", json.optBoolean("scanComplete", false))
                 Bridge.updateWifiScanResults(networks, scanComplete)
             }
-
             "token_status" -> {
                 // Process coreToken acknowledgment
                 val success = json.optBoolean("success", false)
-                Bridge.log("LIVE: Received token status from ASG client: " + (if (success) "SUCCESS" else "FAILED"))
+                Bridge.log(
+                        "LIVE: Received token status from ASG client: " +
+                                (if (success) "SUCCESS" else "FAILED")
+                )
             }
-
             "ota_update_available" -> {
                 // Process OTA update available notification from glasses (background mode)
                 Bridge.log("LIVE: 📱 Received ota_update_available from glasses")
@@ -2457,23 +3057,34 @@ class MentraLive : SGCManager() {
                         }
                     }
 
-                    Bridge.log("LIVE: 📱 OTA available - version: " + otaVersionName +
-                          " (" + otaVersionCode + "), updates: " + updates +
-                          ", size: " + otaTotalSize + " bytes")
+                    Bridge.log(
+                            "LIVE: 📱 OTA available - version: " +
+                                    otaVersionName +
+                                    " (" +
+                                    otaVersionCode +
+                                    "), updates: " +
+                                    updates +
+                                    ", size: " +
+                                    otaTotalSize +
+                                    " bytes"
+                    )
 
                     // Send to React Native
-                    Bridge.sendOtaUpdateAvailable(otaVersionCode, otaVersionName, updates, otaTotalSize)
+                    Bridge.sendOtaUpdateAvailable(
+                            otaVersionCode,
+                            otaVersionName,
+                            updates,
+                            otaTotalSize
+                    )
                 } catch (e: JSONException) {
                     Log.e(TAG, "Error parsing ota_update_available", e)
                 }
             }
-
             "ota_start_ack" -> {
                 // Glasses acknowledged receipt of ota_start — phone can cancel its retry timer
                 Bridge.log("LIVE: 📱 Received ota_start_ack from glasses")
                 Bridge.sendOtaStartAck()
             }
-
             "ota_status" -> {
                 val osSessionId = json.optString("sid", json.optString("session_id", ""))
                 val osTotalSteps = json.optInt("ts", json.optInt("total_steps", 0))
@@ -2483,14 +3094,17 @@ class MentraLive : SGCManager() {
                 val osStepPercent = json.optInt("sp", json.optInt("step_percent", 0))
                 val osOverallPercent = json.optInt("op", json.optInt("overall_percent", 0))
                 val osStatus = json.optString("status", "idle")
-                val osErrorMessage: String? = json.optString("err", json.optString("error_message", null))
+                val osErrorMessage: String? =
+                        json.optString("err", json.optString("error_message", null))
 
                 // If the glasses started a new session, drop any leftover state from the
                 // old one before caching the new values. Without this, lastBesOtaProgress
                 // would stay at e.g. 95 from the previous session and cause us to silently
                 // skip the first few percent of the new BES install.
-                if (!osSessionId.isEmpty() && cachedOtaSessionId != null
-                        && cachedOtaSessionId != osSessionId) {
+                if (!osSessionId.isEmpty() &&
+                                cachedOtaSessionId != null &&
+                                cachedOtaSessionId != osSessionId
+                ) {
                     resetOtaCache()
                 }
 
@@ -2503,17 +3117,37 @@ class MentraLive : SGCManager() {
                     cachedOtaStepSequence = osStepSequence
                 }
 
-                Bridge.log("LIVE: 📱 OTA status - step " + osCurrentStep + "/" + osTotalSteps +
-                      " " + osPhase + " " + osStatus + " " + osOverallPercent + "%")
+                Bridge.log(
+                        "LIVE: 📱 OTA status - step " +
+                                osCurrentStep +
+                                "/" +
+                                osTotalSteps +
+                                " " +
+                                osPhase +
+                                " " +
+                                osStatus +
+                                " " +
+                                osOverallPercent +
+                                "%"
+                )
 
                 val glassesTimeMs = json.optLong("glasses_time_ms", 0)
-                Bridge.sendOtaStatus(osSessionId, osTotalSteps, osCurrentStep, osStepType,
-                    osPhase, osStepPercent, osOverallPercent, osStatus, osErrorMessage,
-                    if (glassesTimeMs > 0) glassesTimeMs else null)
+                Bridge.sendOtaStatus(
+                        osSessionId,
+                        osTotalSteps,
+                        osCurrentStep,
+                        osStepType,
+                        osPhase,
+                        osStepPercent,
+                        osOverallPercent,
+                        osStatus,
+                        osErrorMessage,
+                        if (glassesTimeMs > 0) glassesTimeMs else null
+                )
             }
-
             "ota_progress" -> {
-                // Legacy glasses firmware: map to unified ota_status so JS has a single path (Mantle / progress UI).
+                // Legacy glasses firmware: map to unified ota_status so JS has a single path
+                // (Mantle / progress UI).
                 run {
                     val legacyStage = json.optString("stage", "download")
                     val legacyStatus = json.optString("status", "PROGRESS")
@@ -2532,23 +3166,42 @@ class MentraLive : SGCManager() {
                     } else {
                         unified = "in_progress"
                     }
-                    Bridge.log("LIVE: 📱 Legacy ota_progress → ota_status: " + legacyStage + " "
-                            + legacyStatus + " " + legacyProgress + "%")
-                    Bridge.sendOtaStatus("", 1, 1, currentUpdate, legacyPhase,
-                            legacyProgress, legacyProgress, unified, err)
+                    Bridge.log(
+                            "LIVE: 📱 Legacy ota_progress → ota_status: " +
+                                    legacyStage +
+                                    " " +
+                                    legacyStatus +
+                                    " " +
+                                    legacyProgress +
+                                    "%"
+                    )
+                    Bridge.sendOtaStatus(
+                            "",
+                            1,
+                            1,
+                            currentUpdate,
+                            legacyPhase,
+                            legacyProgress,
+                            legacyProgress,
+                            unified,
+                            err
+                    )
                 }
             }
-
             "button_press" -> {
                 // Process button press event
                 val buttonId = json.optString("buttonId", "unknown")
                 val pressType = json.optString("pressType", "short")
 
-                Bridge.log("LIVE: Received button press - buttonId: " + buttonId + ", pressType: " + pressType)
+                Bridge.log(
+                        "LIVE: Received button press - buttonId: " +
+                                buttonId +
+                                ", pressType: " +
+                                pressType
+                )
 
                 Bridge.sendButtonPressEvent(buttonId, pressType)
             }
-
             "gallery_status" -> {
                 // Process gallery status response
                 val photoCount = json.optInt("photos", 0)
@@ -2569,16 +3222,28 @@ class MentraLive : SGCManager() {
                     }
                 }
 
-                Bridge.log("LIVE: 📸 Received gallery status: " + photoCount + " photos, " +
-                      videoCount + " videos, total size: " + totalSize + " bytes")
+                Bridge.log(
+                        "LIVE: 📸 Received gallery status: " +
+                                photoCount +
+                                " photos, " +
+                                videoCount +
+                                " videos, total size: " +
+                                totalSize +
+                                " bytes"
+                )
 
                 // Send gallery status to React Native frontend (matches iOS pattern)
-                Bridge.sendGalleryStatus(photoCount, videoCount, totalCount, totalSize, hasContent,
-                        cameraBusy, cameraBusyReason)
+                Bridge.sendGalleryStatus(
+                        photoCount,
+                        videoCount,
+                        totalCount,
+                        totalSize,
+                        hasContent,
+                        cameraBusy,
+                        cameraBusyReason
+                )
             }
-
-            "settings_ack" ->
-                emitSettingsAck(json)
+            "settings_ack" -> emitSettingsAck(json)
 
             // case "touch_event":
             //     // Process touch event from glasses (swipes, taps, long press)
@@ -2601,8 +3266,17 @@ class MentraLive : SGCManager() {
                         val gestureName = mapK900GestureType(gestureType)
 
                         if (gestureName != null) {
-                            Bridge.log("LIVE: 👆 K900 touchpad event - Type: " + gestureType + " -> " + gestureName)
-                            Bridge.sendTouchEvent(deviceModel, gestureName, System.currentTimeMillis())
+                            Bridge.log(
+                                    "LIVE: 👆 K900 touchpad event - Type: " +
+                                            gestureType +
+                                            " -> " +
+                                            gestureName
+                            )
+                            Bridge.sendTouchEvent(
+                                    deviceModel,
+                                    gestureName,
+                                    System.currentTimeMillis()
+                            )
                         } else {
                             Log.d(TAG, "Unknown K900 gesture type: " + gestureType)
                         }
@@ -2611,7 +3285,6 @@ class MentraLive : SGCManager() {
                     Log.e(TAG, "Error parsing sr_tpevt", e)
                 }
             }
-
             "swipe_volume_status" -> {
                 // Process swipe volume control status from glasses
                 val swipeVolumeEnabled = json.optBoolean("enabled", false)
@@ -2622,24 +3295,30 @@ class MentraLive : SGCManager() {
                 // Send swipe volume status to React Native
                 Bridge.sendSwipeVolumeStatus(swipeVolumeEnabled, swipeTimestamp)
             }
-
             "switch_status" -> {
                 // Process switch status report from glasses
-                val switchType = if (json.has("switch_type")) json.optInt("switch_type", -1) else json.optInt("switchType", -1)
-                val switchValue = if (json.has("switch_value")) json.optInt("switch_value", -1) else json.optInt("switchValue", -1)
+                val switchType =
+                        if (json.has("switch_type")) json.optInt("switch_type", -1)
+                        else json.optInt("switchType", -1)
+                val switchValue =
+                        if (json.has("switch_value")) json.optInt("switch_value", -1)
+                        else json.optInt("switchValue", -1)
                 val switchTimestamp = json.optLong("timestamp", System.currentTimeMillis())
 
-                Log.d(TAG, "🔘 Received switch status - Type: " + switchType +
-                      ", Value: " + switchValue)
+                Log.d(
+                        TAG,
+                        "🔘 Received switch status - Type: " +
+                                switchType +
+                                ", Value: " +
+                                switchValue
+                )
 
                 handleSwitchStatus(switchType, switchValue, switchTimestamp)
             }
-
             "sensor_data" -> {
                 // Process sensor data
                 // ...
             }
-
             "glasses_ready" -> {
                 // Glasses SOC has booted and is ready for communication
                 Bridge.log("LIVE: 🎉 Received glasses_ready message - SOC is booted and ready!")
@@ -2660,16 +3339,32 @@ class MentraLive : SGCManager() {
                 // but we should respect the actual negotiated value if it's lower.
                 val BES2700_MTU_LIMIT = 256 // BES2700's known notification size limit
                 val effectiveMtu = Math.min(currentMtu, BES2700_MTU_LIMIT)
-                Bridge.log("LIVE: 📦 Sending BLE MTU config: negotiated=" + currentMtu + ", BES2700 limit=" + BES2700_MTU_LIMIT + ", effective=" + effectiveMtu)
-                try { sendBleMtuConfig(effectiveMtu) }
-                catch (t: Throwable) { Bridge.log("LIVE: ⚠️ glasses_ready: sendBleMtuConfig threw: " + t) }
+                Bridge.log(
+                        "LIVE: 📦 Sending BLE MTU config: negotiated=" +
+                                currentMtu +
+                                ", BES2700 limit=" +
+                                BES2700_MTU_LIMIT +
+                                ", effective=" +
+                                effectiveMtu
+                )
+                try {
+                    sendBleMtuConfig(effectiveMtu)
+                } catch (t: Throwable) {
+                    Bridge.log("LIVE: ⚠️ glasses_ready: sendBleMtuConfig threw: " + t)
+                }
 
                 // Now we can perform all SOC-dependent initialization
                 Bridge.log("LIVE: 🔄 Requesting battery and WiFi status from glasses")
-                try { requestBatteryStatus() }
-                catch (t: Throwable) { Bridge.log("LIVE: ⚠️ glasses_ready: requestBatteryStatus threw: " + t) }
-                try { requestWifiStatus() }
-                catch (t: Throwable) { Bridge.log("LIVE: ⚠️ glasses_ready: requestWifiStatus threw: " + t) }
+                try {
+                    requestBatteryStatus()
+                } catch (t: Throwable) {
+                    Bridge.log("LIVE: ⚠️ glasses_ready: requestBatteryStatus threw: " + t)
+                }
+                try {
+                    requestWifiStatus()
+                } catch (t: Throwable) {
+                    Bridge.log("LIVE: ⚠️ glasses_ready: requestWifiStatus threw: " + t)
+                }
 
                 // Request version info from ASG client
                 Bridge.log("LIVE: 🔄 Requesting version info from ASG client")
@@ -2682,25 +3377,37 @@ class MentraLive : SGCManager() {
                 }
 
                 Bridge.log("LIVE: 🔄 Sending coreToken to ASG client")
-                try { sendCoreTokenToAsgClient() }
-                catch (t: Throwable) { Bridge.log("LIVE: ⚠️ glasses_ready: sendCoreTokenToAsgClient threw: " + t) }
+                try {
+                    sendCoreTokenToAsgClient()
+                } catch (t: Throwable) {
+                    Bridge.log("LIVE: ⚠️ glasses_ready: sendCoreTokenToAsgClient threw: " + t)
+                }
 
                 // Send stored user email for crash reporting
-                try { sendStoredUserEmailToAsgClient() }
-                catch (t: Throwable) { Bridge.log("LIVE: ⚠️ glasses_ready: sendStoredUserEmailToAsgClient threw: " + t) }
+                try {
+                    sendStoredUserEmailToAsgClient()
+                } catch (t: Throwable) {
+                    Bridge.log("LIVE: ⚠️ glasses_ready: sendStoredUserEmailToAsgClient threw: " + t)
+                }
 
-                //startDebugVideoCommandLoop();
+                // startDebugVideoCommandLoop();
 
                 // Start the heartbeat mechanism now that glasses are ready
-                try { startHeartbeat() }
-                catch (t: Throwable) { Bridge.log("LIVE: ⚠️ glasses_ready: startHeartbeat threw: " + t) }
+                try {
+                    startHeartbeat()
+                } catch (t: Throwable) {
+                    Bridge.log("LIVE: ⚠️ glasses_ready: startHeartbeat threw: " + t)
+                }
 
                 // Start the micbeat mechanism now that glasses are ready
                 // startMicBeat();
 
                 // Send user settings to glasses
-                try { sendUserSettings() }
-                catch (t: Throwable) { Bridge.log("LIVE: ⚠️ glasses_ready: sendUserSettings threw: " + t) }
+                try {
+                    sendUserSettings()
+                } catch (t: Throwable) {
+                    Bridge.log("LIVE: ⚠️ glasses_ready: sendUserSettings threw: " + t)
+                }
 
                 // Claim RGB LED control authority
                 // DISABLED: MentraLive is not supposed to send this command
@@ -2717,9 +3424,14 @@ class MentraLive : SGCManager() {
                 // Restore mic state if it was enabled before reconnect
                 try {
                     if (micIntentEnabled) {
-                        if (BLOCK_AUDIO_DUPLEX && phoneAudioMonitor != null && phoneAudioMonitor!!.isPlaying()) {
+                        if (BLOCK_AUDIO_DUPLEX &&
+                                        phoneAudioMonitor != null &&
+                                        phoneAudioMonitor!!.isPlaying()
+                        ) {
                             micSuspendedForAudio = true
-                            Bridge.log("LIVE: 🎤 Restoring mic intent after reconnect, but phone audio is playing - suspending")
+                            Bridge.log(
+                                    "LIVE: 🎤 Restoring mic intent after reconnect, but phone audio is playing - suspending"
+                            )
                         } else {
                             micSuspendedForAudio = false
                             Bridge.log("LIVE: 🎤 Restoring mic state after reconnect")
@@ -2731,17 +3443,21 @@ class MentraLive : SGCManager() {
                 }
 
                 // Audio Pairing: Only mark as fully connected if audio is also ready
-                // On Android, CTKD automatically pairs BT Classic when BLE bonds, so audio is always ready
+                // On Android, CTKD automatically pairs BT Classic when BLE bonds, so audio is
+                // always ready
                 // This check maintains platform parity with iOS
                 if (audioConnected) {
-                    Bridge.log("LIVE: Audio: Both glasses_ready and audio connected - marking as fully connected")
+                    Bridge.log(
+                            "LIVE: Audio: Both glasses_ready and audio connected - marking as fully connected"
+                    )
                     DeviceStore.apply("glasses", "fullyBooted", true)
                     updateConnectionState(ConnTypes.CONNECTED)
                 } else {
-                    Bridge.log("LIVE: Audio: Waiting for CTKD audio bonding before marking as fully connected")
+                    Bridge.log(
+                            "LIVE: Audio: Waiting for CTKD audio bonding before marking as fully connected"
+                    )
                 }
             }
-
             "keep_alive_ack" -> {
                 // Process keep-alive ACK from ASG client
                 Bridge.log("LIVE: Received keep-alive ACK from glasses: " + json.toString())
@@ -2775,7 +3491,11 @@ class MentraLive : SGCManager() {
                 DeviceStore.apply("glasses", "buildNumber", buildNumberLegacy)
                 DeviceStore.apply("glasses", "deviceModel", deviceModelLegacy)
                 DeviceStore.apply("glasses", "androidVersion", androidVersionLegacy)
-                DeviceStore.apply("glasses", "otaVersionUrl", if (otaVersionUrlLegacy != null) otaVersionUrlLegacy else "")
+                DeviceStore.apply(
+                        "glasses",
+                        "otaVersionUrl",
+                        if (otaVersionUrlLegacy != null) otaVersionUrlLegacy else ""
+                )
                 DeviceStore.apply("glasses", "firmwareVersion", firmwareVersionLegacy)
                 DeviceStore.apply("glasses", "bluetoothMacAddress", btMacAddressLegacy)
 
@@ -2784,7 +3504,8 @@ class MentraLive : SGCManager() {
                 versionInfoLegacy["buildNumber"] = buildNumberLegacy
                 versionInfoLegacy["deviceModel"] = deviceModelLegacy
                 versionInfoLegacy["androidVersion"] = androidVersionLegacy
-                versionInfoLegacy["otaVersionUrl"] = if (otaVersionUrlLegacy != null) otaVersionUrlLegacy else ""
+                versionInfoLegacy["otaVersionUrl"] =
+                        if (otaVersionUrlLegacy != null) otaVersionUrlLegacy else ""
                 versionInfoLegacy["firmwareVersion"] = firmwareVersionLegacy
                 Bridge.sendVersionInfo(versionInfoLegacy)
 
@@ -2796,12 +3517,13 @@ class MentraLive : SGCManager() {
                     buildNumberInt = 0
                     Log.e(TAG, "Failed to parse build number as integer: " + buildNumberLegacy)
                 }
-
             }
-
             "ota_download_progress" -> {
                 // Process OTA download progress from ASG client
-                Bridge.log("LIVE: 📥 Received OTA download progress from ASG client: " + json.toString())
+                Bridge.log(
+                        "LIVE: 📥 Received OTA download progress from ASG client: " +
+                                json.toString()
+                )
 
                 // Extract download progress information
                 val downloadStatus = json.optString("status", "")
@@ -2811,10 +3533,20 @@ class MentraLive : SGCManager() {
                 val downloadErrorMessage: String? = json.optString("error_message", null)
                 val downloadTimestamp = json.optLong("timestamp", System.currentTimeMillis())
 
-                Bridge.log("LIVE: 📥 OTA Download Progress - Status: " + downloadStatus +
-                      ", Progress: " + downloadProgress + "%" +
-                      ", Bytes: " + bytesDownloaded + "/" + totalBytes +
-                      (if (downloadErrorMessage != null) ", Error: " + downloadErrorMessage else ""))
+                Bridge.log(
+                        "LIVE: 📥 OTA Download Progress - Status: " +
+                                downloadStatus +
+                                ", Progress: " +
+                                downloadProgress +
+                                "%" +
+                                ", Bytes: " +
+                                bytesDownloaded +
+                                "/" +
+                                totalBytes +
+                                (if (downloadErrorMessage != null)
+                                        ", Error: " + downloadErrorMessage
+                                else "")
+                )
 
                 // Emit EventBus event for AugmentosService on main thread
                 try {
@@ -2827,15 +3559,18 @@ class MentraLive : SGCManager() {
                         }
                         "PROGRESS" -> {
                             // downloadEventStatus = DownloadProgressEvent.DownloadStatus.PROGRESS;
-                            // event = new DownloadProgressEvent(downloadEventStatus, downloadProgress, bytesDownloaded, totalBytes);
+                            // event = new DownloadProgressEvent(downloadEventStatus,
+                            // downloadProgress, bytesDownloaded, totalBytes);
                         }
                         "FINISHED" -> {
                             // downloadEventStatus = DownloadProgressEvent.DownloadStatus.FINISHED;
-                            // event = new DownloadProgressEvent(downloadEventStatus, totalBytes, true);
+                            // event = new DownloadProgressEvent(downloadEventStatus, totalBytes,
+                            // true);
                         }
                         "FAILED" -> {
                             // downloadEventStatus = DownloadProgressEvent.DownloadStatus.FAILED;
-                            // event = new DownloadProgressEvent(downloadEventStatus, downloadErrorMessage);
+                            // event = new DownloadProgressEvent(downloadEventStatus,
+                            // downloadErrorMessage);
                         }
                         else -> {
                             Log.w(TAG, "Unknown download status: " + downloadStatus)
@@ -2845,7 +3580,8 @@ class MentraLive : SGCManager() {
 
                     // Post event on main thread to ensure proper delivery
                     handler.post {
-                        // Bridge.log("LIVE: 📡 Posting download progress event on main thread: " + downloadEventStatus);
+                        // Bridge.log("LIVE: 📡 Posting download progress event on main thread: " +
+                        // downloadEventStatus);
                         // EventBus.getDefault().post(event);
                         // Bridge.
                     }
@@ -2855,13 +3591,15 @@ class MentraLive : SGCManager() {
 
                 // Forward to data observable for cloud communication
                 // if (dataObservable != null) {
-                    // dataObservable.onNext(json);
+                // dataObservable.onNext(json);
                 // }
             }
-
             "ota_installation_progress" -> {
                 // Process OTA installation progress from ASG client
-                Bridge.log("LIVE: 🔧 Received OTA installation progress from ASG client: " + json.toString())
+                Bridge.log(
+                        "LIVE: 🔧 Received OTA installation progress from ASG client: " +
+                                json.toString()
+                )
 
                 // Extract installation progress information
                 val installationStatus = json.optString("status", "")
@@ -2869,9 +3607,15 @@ class MentraLive : SGCManager() {
                 val installationErrorMessage: String? = json.optString("error_message", null)
                 val installationTimestamp = json.optLong("timestamp", System.currentTimeMillis())
 
-                Bridge.log("LIVE: 🔧 OTA Installation Progress - Status: " + installationStatus +
-                      ", APK: " + apkPath +
-                      (if (installationErrorMessage != null) ", Error: " + installationErrorMessage else ""))
+                Bridge.log(
+                        "LIVE: 🔧 OTA Installation Progress - Status: " +
+                                installationStatus +
+                                ", APK: " +
+                                apkPath +
+                                (if (installationErrorMessage != null)
+                                        ", Error: " + installationErrorMessage
+                                else "")
+                )
 
                 // Emit EventBus event for AugmentosService on main thread
                 try {
@@ -2879,16 +3623,22 @@ class MentraLive : SGCManager() {
                     // final InstallationProgressEvent event;
                     when (installationStatus) {
                         "STARTED" -> {
-                            // installationEventStatus = InstallationProgressEvent.InstallationStatus.STARTED;
-                            // event = new InstallationProgressEvent(installationEventStatus, apkPath);
+                            // installationEventStatus =
+                            // InstallationProgressEvent.InstallationStatus.STARTED;
+                            // event = new InstallationProgressEvent(installationEventStatus,
+                            // apkPath);
                         }
                         "FINISHED" -> {
-                            // installationEventStatus = InstallationProgressEvent.InstallationStatus.FINISHED;
-                            // event = new InstallationProgressEvent(installationEventStatus, apkPath);
+                            // installationEventStatus =
+                            // InstallationProgressEvent.InstallationStatus.FINISHED;
+                            // event = new InstallationProgressEvent(installationEventStatus,
+                            // apkPath);
                         }
                         "FAILED" -> {
-                            // installationEventStatus = InstallationProgressEvent.InstallationStatus.FAILED;
-                            // event = new InstallationProgressEvent(installationEventStatus, apkPath, installationErrorMessage);
+                            // installationEventStatus =
+                            // InstallationProgressEvent.InstallationStatus.FAILED;
+                            // event = new InstallationProgressEvent(installationEventStatus,
+                            // apkPath, installationErrorMessage);
                         }
                         else -> {
                             // Log.w(TAG, "Unknown installation status: " + installationStatus);
@@ -2898,7 +3648,8 @@ class MentraLive : SGCManager() {
 
                     // Post event on main thread to ensure proper delivery
                     handler.post {
-                        // Bridge.log("LIVE: 📡 Posting installation progress event on main thread: " + installationEventStatus);
+                        // Bridge.log("LIVE: 📡 Posting installation progress event on main thread:
+                        // " + installationEventStatus);
                         // EventBus.getDefault().post(event);
                     }
                 } catch (e: Exception) {
@@ -2907,25 +3658,22 @@ class MentraLive : SGCManager() {
 
                 // Forward to data observable for cloud communication
                 // if (dataObservable != null) {
-                    // dataObservable.onNext(json);
+                // dataObservable.onNext(json);
                 // }
             }
-
             "mtk_update_complete" -> {
                 // Process MTK firmware update complete notification from ASG client
                 Bridge.log("LIVE: 🔄 Received MTK update complete from ASG client")
 
-                val updateMessage = json.optString("message", "MTK firmware updated. Please restart glasses.")
+                val updateMessage =
+                        json.optString("message", "MTK firmware updated. Please restart glasses.")
                 val updateTimestamp = json.optLong("timestamp", System.currentTimeMillis())
 
                 Bridge.log("LIVE: 🔄 MTK Update Message: " + updateMessage)
 
                 // Send to React Native via Bridge on main thread
-                handler.post {
-                    Bridge.sendMtkUpdateComplete(updateMessage)
-                }
+                handler.post { Bridge.sendMtkUpdateComplete(updateMessage) }
             }
-
             else -> {
                 // Flexible version_info parsing - handle any version_info* message
                 if (type.startsWith("version_info")) {
@@ -2964,25 +3712,55 @@ class MentraLive : SGCManager() {
                         DeviceStore.apply("glasses", "deviceModel", deviceModel)
                         // Determine LC3 audio support: base K900 doesn't support LC3, variants do
                         val supportsLC3Audio = "K900" != deviceModel
-                        Bridge.log("LIVE: 📱 LC3 audio support: " + supportsLC3Audio + " (device: " + deviceModel + ")")
+                        Bridge.log(
+                                "LIVE: 📱 LC3 audio support: " +
+                                        supportsLC3Audio +
+                                        " (device: " +
+                                        deviceModel +
+                                        ")"
+                        )
                     }
                     if (fields.containsKey("android_version")) {
-                        DeviceStore.apply("glasses", "androidVersion", fields["android_version"] as String)
+                        DeviceStore.apply(
+                                "glasses",
+                                "androidVersion",
+                                fields["android_version"] as String
+                        )
                     }
                     if (fields.containsKey("ota_version_url")) {
-                        DeviceStore.apply("glasses", "otaVersionUrl", fields["ota_version_url"] as String)
+                        DeviceStore.apply(
+                                "glasses",
+                                "otaVersionUrl",
+                                fields["ota_version_url"] as String
+                        )
                     }
                     if (fields.containsKey("firmware_version")) {
-                        DeviceStore.apply("glasses", "firmwareVersion", fields["firmware_version"] as String)
+                        DeviceStore.apply(
+                                "glasses",
+                                "firmwareVersion",
+                                fields["firmware_version"] as String
+                        )
                     }
                     if (fields.containsKey("bes_fw_version")) {
-                        DeviceStore.apply("glasses", "besFirmwareVersion", fields["bes_fw_version"] as String)
+                        DeviceStore.apply(
+                                "glasses",
+                                "besFirmwareVersion",
+                                fields["bes_fw_version"] as String
+                        )
                     }
                     if (fields.containsKey("mtk_fw_version")) {
-                        DeviceStore.apply("glasses", "mtkFirmwareVersion", fields["mtk_fw_version"] as String)
+                        DeviceStore.apply(
+                                "glasses",
+                                "mtkFirmwareVersion",
+                                fields["mtk_fw_version"] as String
+                        )
                     }
                     if (fields.containsKey("bt_mac_address")) {
-                        DeviceStore.apply("glasses", "bluetoothMacAddress", fields["bt_mac_address"] as String)
+                        DeviceStore.apply(
+                                "glasses",
+                                "bluetoothMacAddress",
+                                fields["bt_mac_address"] as String
+                        )
                     }
                     if (fields.containsKey("system_time_ms")) {
                         val v = fields["system_time_ms"]
@@ -3093,20 +3871,24 @@ class MentraLive : SGCManager() {
                 Log.w(TAG, "LIVE: Received malformed chunked message: " + json)
                 return
             }
-            if (chunkInfo.chunkId == null || chunkInfo.chunkId.isEmpty()
-                    || chunkInfo.totalChunks <= 0
-                    || chunkInfo.chunkIndex < 0
-                    || chunkInfo.chunkIndex >= chunkInfo.totalChunks
-                    || chunkInfo.data == null) {
+            if (chunkInfo.chunkId == null ||
+                            chunkInfo.chunkId.isEmpty() ||
+                            chunkInfo.totalChunks <= 0 ||
+                            chunkInfo.chunkIndex < 0 ||
+                            chunkInfo.chunkIndex >= chunkInfo.totalChunks ||
+                            chunkInfo.data == null
+            ) {
                 Log.w(TAG, "LIVE: Received invalid chunk metadata: " + json)
                 return
             }
 
-            val reassembled = incomingChunkReassembler.addChunk(
-                    chunkInfo.chunkId,
-                    chunkInfo.chunkIndex,
-                    chunkInfo.totalChunks,
-                    chunkInfo.data)
+            val reassembled =
+                    incomingChunkReassembler.addChunk(
+                            chunkInfo.chunkId,
+                            chunkInfo.chunkIndex,
+                            chunkInfo.totalChunks,
+                            chunkInfo.data
+                    )
             if (reassembled == null) {
                 return
             }
@@ -3117,25 +3899,27 @@ class MentraLive : SGCManager() {
             Log.e(TAG, "Error processing chunked JSON message", e)
         }
     }
-    /**
-     * Process K900 command format JSON messages (messages with "C" field)
-     */
-    /**
-     * Process BLE photo ready notification from glasses
-     */
+    /** Process K900 command format JSON messages (messages with "C" field) */
+    /** Process BLE photo ready notification from glasses */
     private fun processBlePhotoReady(json: JSONObject) {
         try {
             val bleImgId = json.optString("bleImgId", "")
             val requestId = json.optString("requestId", "")
             val compressionDurationMs = json.optLong("compressionDurationMs", 0)
 
-            Bridge.log("LIVE: 📸 BLE photo ready notification: bleImgId=" + bleImgId + ", requestId=" + requestId)
+            Bridge.log(
+                    "LIVE: 📸 BLE photo ready notification: bleImgId=" +
+                            bleImgId +
+                            ", requestId=" +
+                            requestId
+            )
 
             // Update the transfer with glasses compression duration
             val transfer = blePhotoTransfers[bleImgId]
             if (transfer != null) {
                 transfer.glassesCompressionDurationMs = compressionDurationMs
-                transfer.bleTransferStartTime = System.currentTimeMillis()  // BLE transfer starts now
+                transfer.bleTransferStartTime =
+                        System.currentTimeMillis() // BLE transfer starts now
                 Bridge.log("LIVE: ⏱️ Glasses compression took: " + compressionDurationMs + "ms")
             } else {
                 Log.w(TAG, "Received ble_photo_ready for unknown transfer: " + bleImgId)
@@ -3145,9 +3929,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Handle transfer timeout notification from glasses
-     */
+    /** Handle transfer timeout notification from glasses */
     private fun handleTransferTimeout(json: JSONObject) {
         try {
             val fileName = json.optString("fileName", "")
@@ -3159,7 +3941,13 @@ class MentraLive : SGCManager() {
                 val session = activeFileTransfers.remove(fileName)
                 if (session != null) {
                     Bridge.log("LIVE: 🧹 Cleaned up timed out transfer session for: " + fileName)
-                    Bridge.log("LIVE: 📊 Transfer stats - Received: " + session.receivedPackets.size + "/" + session.totalPackets + " packets")
+                    Bridge.log(
+                            "LIVE: 📊 Transfer stats - Received: " +
+                                    session.receivedPackets.size +
+                                    "/" +
+                                    session.totalPackets +
+                                    " packets"
+                    )
                 }
 
                 // Clean up any BLE photo transfer
@@ -3171,26 +3959,33 @@ class MentraLive : SGCManager() {
                 val photoTransfer = blePhotoTransfers.remove(bleImgId)
                 if (photoTransfer != null) {
                     Bridge.log("LIVE: 🧹 Cleaned up timed out BLE photo transfer for: " + bleImgId)
-                    Bridge.sendPhotoError(photoTransfer.requestId, "TRANSFER_TIMEOUT", "Transfer timed out for: " + fileName)
+                    Bridge.sendPhotoError(
+                            photoTransfer.requestId,
+                            "TRANSFER_TIMEOUT",
+                            "Transfer timed out for: " + fileName
+                    )
                 }
 
                 // Reset stale session on incident log relay so a retry starts fresh.
-                // Keep the relay entry itself — glasses will retry after receiving transfer_complete:false.
+                // Keep the relay entry itself — glasses will retry after receiving
+                // transfer_complete:false.
                 val incidentRelay = bleIncidentLogRelays[bleImgId]
                 if (incidentRelay != null) {
                     incidentRelay.session = null
-                    Bridge.log("LIVE: 🧹 Reset timed out BLE incident log relay session for: " + bleImgId)
+                    Bridge.log(
+                            "LIVE: 🧹 Reset timed out BLE incident log relay session for: " +
+                                    bleImgId
+                    )
                 }
             }
-
         } catch (e: Exception) {
             Log.e(TAG, "⏰ Error processing transfer timeout notification", e)
         }
     }
 
     /**
-     * Handle transfer failed notification from glasses
-     * Matches iOS MentraLive.swift handleTransferFailed pattern
+     * Handle transfer failed notification from glasses Matches iOS MentraLive.swift
+     * handleTransferFailed pattern
      */
     private fun handleTransferFailed(json: JSONObject) {
         try {
@@ -3200,7 +3995,11 @@ class MentraLive : SGCManager() {
 
             if (fileName.isEmpty()) {
                 Log.e(TAG, "❌ Transfer failed notification missing fileName: " + json.toString())
-                Bridge.sendPhotoError(requestId, "FILE_NAME_MISSING", "Transfer failed notification missing fileName")
+                Bridge.sendPhotoError(
+                        requestId,
+                        "FILE_NAME_MISSING",
+                        "Transfer failed notification missing fileName"
+                )
                 return
             }
 
@@ -3216,18 +4015,34 @@ class MentraLive : SGCManager() {
             }
 
             Log.e(TAG, "❌ Transfer failed for: " + fileName + " (reason: " + reason + ")")
-            Bridge.sendPhotoError(effectiveRequestId, "TRANSFER_FAILED", "Transfer failed for: " + fileName + " (reason: " + reason + ")")
+            Bridge.sendPhotoError(
+                    effectiveRequestId,
+                    "TRANSFER_FAILED",
+                    "Transfer failed for: " + fileName + " (reason: " + reason + ")"
+            )
 
             // Clean up any active transfer for this file
             val session = activeFileTransfers.remove(fileName)
             if (session != null) {
-                Bridge.log("LIVE: 📊 Transfer stats - Received: " + session.receivedPackets.size + "/" + session.totalPackets + " packets")
+                Bridge.log(
+                        "LIVE: 📊 Transfer stats - Received: " +
+                                session.receivedPackets.size +
+                                "/" +
+                                session.totalPackets +
+                                " packets"
+                )
             }
 
             // Clean up any BLE photo transfer
             photoTransfer = blePhotoTransfers.remove(bleImgId)
             if (photoTransfer != null) {
-                Bridge.log("LIVE: 🧹 Cleaned up failed BLE photo transfer for: " + bleImgId + " (requestId: " + photoTransfer.requestId + ")")
+                Bridge.log(
+                        "LIVE: 🧹 Cleaned up failed BLE photo transfer for: " +
+                                bleImgId +
+                                " (requestId: " +
+                                photoTransfer.requestId +
+                                ")"
+                )
             }
 
             if (bleIncidentLogRelays.remove(bleImgId) != null) {
@@ -3238,9 +4053,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Handle file transfer announcement from glasses
-     */
+    /** Handle file transfer announcement from glasses */
     private fun handleFileTransferAnnouncement(json: JSONObject) {
         try {
             // Extract data directly from JSON (same format as version_info)
@@ -3248,7 +4061,15 @@ class MentraLive : SGCManager() {
             val totalPackets = json.optInt("totalPackets", 0)
             val fileSize = json.optInt("fileSize", 0)
 
-            Bridge.log("LIVE: 📢 File transfer announcement: " + fileName + ", " + totalPackets + " packets, " + fileSize + " bytes")
+            Bridge.log(
+                    "LIVE: 📢 File transfer announcement: " +
+                            fileName +
+                            ", " +
+                            totalPackets +
+                            " packets, " +
+                            fileSize +
+                            " bytes"
+            )
 
             if (fileName.isEmpty() || totalPackets <= 0) {
                 Log.w(TAG, "📢 Invalid file transfer announcement")
@@ -3262,7 +4083,6 @@ class MentraLive : SGCManager() {
             activeFileTransfers[fileName] = session
 
             Bridge.log("LIVE: 📢 Prepared to receive " + totalPackets + " packets for " + fileName)
-
         } catch (e: Exception) {
             Log.e(TAG, "📢 Error processing file transfer announcement", e)
         }
@@ -3294,10 +4114,14 @@ class MentraLive : SGCManager() {
                         if (ready == 1) {
                             Bridge.log("LIVE: K900 SOC ready")
                             // Only send phone_ready if we haven't already established connection
-                            // This prevents re-initialization on every heartbeat after initial connection
-                            // The glassesReady flag is reset on disconnect/reconnect, so this won't prevent proper reconnection
+                            // This prevents re-initialization on every heartbeat after initial
+                            // connection
+                            // The glassesReady flag is reset on disconnect/reconnect, so this won't
+                            // prevent proper reconnection
                             if (!glassesReady) {
-                                Bridge.log("LIVE: 📱 Sending phone_ready to glasses - waiting for glasses_ready response")
+                                Bridge.log(
+                                        "LIVE: 📱 Sending phone_ready to glasses - waiting for glasses_ready response"
+                                )
                                 val readyMsg = JSONObject()
                                 readyMsg.put("type", "phone_ready")
                                 readyMsg.put("timestamp", System.currentTimeMillis())
@@ -3305,12 +4129,14 @@ class MentraLive : SGCManager() {
                                 // Send it through our data channel
                                 sendJson(readyMsg, true)
                             } else {
-                                Bridge.log("LIVE: ✅ Glasses already marked as ready, skipping phone_ready")
+                                Bridge.log(
+                                        "LIVE: ✅ Glasses already marked as ready, skipping phone_ready"
+                                )
                             }
                         }
                         val charg = bodyObj.optInt("charg", -1)
                         if (batteryPercentage != -1 && charg != -1)
-                            updateBatteryStatus(batteryPercentage, charg == 1)
+                                updateBatteryStatus(batteryPercentage, charg == 1)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error parsing sr_hrt response", e)
@@ -3327,9 +4153,18 @@ class MentraLive : SGCManager() {
                         // Convert to volts for logging
                         val voltageVolts = voltageMillivolts / 1000.0
 
-                        Bridge.log("LIVE: 🔋 K900 Battery Status - Voltage: " + voltageVolts + "V (" + voltageMillivolts + "mV), Level: " + batteryPercentage + "%")
+                        Bridge.log(
+                                "LIVE: 🔋 K900 Battery Status - Voltage: " +
+                                        voltageVolts +
+                                        "V (" +
+                                        voltageMillivolts +
+                                        "mV), Level: " +
+                                        batteryPercentage +
+                                        "%"
+                        )
 
-                        // Determine charging status based on voltage (K900 typical charging voltage is >4.0V)
+                        // Determine charging status based on voltage (K900 typical charging voltage
+                        // is >4.0V)
                         val isCharging = voltageMillivolts > 4000
 
                         // Update battery status using the existing method
@@ -3339,13 +4174,8 @@ class MentraLive : SGCManager() {
                     Log.e(TAG, "Error parsing sr_batv response", e)
                 }
             }
-
-            "sr_getvol" ->
-                handleSrGetvol(json)
-
-            "sr_vol" ->
-                handleSrVol(json)
-
+            "sr_getvol" -> handleSrGetvol(json)
+            "sr_vol" -> handleSrVol(json)
             "sr_vad" -> {
                 try {
                     val bodyObj = optK900Body(json)
@@ -3359,7 +4189,6 @@ class MentraLive : SGCManager() {
                     Log.e(TAG, "Error parsing sr_vad response", e)
                 }
             }
-
             "sr_swit" -> {
                 try {
                     val bodyObj = optK900Body(json)
@@ -3372,7 +4201,6 @@ class MentraLive : SGCManager() {
                     Log.e(TAG, "Error parsing sr_swit response", e)
                 }
             }
-
             "sr_shut" -> {
                 Bridge.log("LIVE: K900 shutdown command received - glasses shutting down")
                 lastShutdownTimeMs = System.currentTimeMillis()
@@ -3382,9 +4210,9 @@ class MentraLive : SGCManager() {
                 glassesReady = false
                 glassesReadyReceived = false
             }
-
             "sr_adota" -> {
-                // BES chip OTA progress — K900 path (serial busy during BES flash). Emit ota_status only.
+                // BES chip OTA progress — K900 path (serial busy during BES flash). Emit ota_status
+                // only.
                 try {
                     val bodyObj = json.optJSONObject("B")
                     if (bodyObj != null) {
@@ -3396,21 +4224,35 @@ class MentraLive : SGCManager() {
                         if (progress > 100) progress = 100
 
                         // Only send if progress changed to a new 5% increment
-                        if (progress == lastBesOtaProgress && "success" != type && "error" != type && "fail" != type) {
+                        if (progress == lastBesOtaProgress &&
+                                        "success" != type &&
+                                        "error" != type &&
+                                        "fail" != type
+                        ) {
                             return // Skip duplicate progress
                         }
                         lastBesOtaProgress = progress
 
-                        Bridge.log("LIVE: 📱 BES OTA progress via sr_adota - type: " + type + ", raw: " + rawProgress + "%, rounded: " + progress + "%")
+                        Bridge.log(
+                                "LIVE: 📱 BES OTA progress via sr_adota - type: " +
+                                        type +
+                                        ", raw: " +
+                                        rawProgress +
+                                        "%, rounded: " +
+                                        progress +
+                                        "%"
+                        )
 
                         // Determine status and error message based on type
                         val besOtaStatus: String
                         val besOtaProgressVal: Int
                         var besOtaErrorMessage: String? = null
 
-                        // Order matters here: check completion (rawProgress >= 100 OR success) BEFORE
+                        // Order matters here: check completion (rawProgress >= 100 OR success)
+                        // BEFORE
                         // type=="update", because some BES firmware emits the final 100% tick with
-                        // type=="update" rather than type=="success". Treating that as PROGRESS would
+                        // type=="update" rather than type=="success". Treating that as PROGRESS
+                        // would
                         // leave the UI stuck at 100% forever.
                         if ("success" == type || rawProgress >= 100) {
                             besOtaStatus = "FINISHED"
@@ -3441,15 +4283,28 @@ class MentraLive : SGCManager() {
                         val sid = if (cachedOtaSessionId != null) cachedOtaSessionId!! else ""
                         val totalSteps = if (cachedOtaTotalSteps > 0) cachedOtaTotalSteps else 1
                         val currentStep = if (cachedOtaCurrentStep > 0) cachedOtaCurrentStep else 1
-                        val besOverallPercent = computeBesOverallPercent(besOtaProgressVal, totalSteps, cachedOtaStepSequence)
-                        Bridge.sendOtaStatus(sid, totalSteps, currentStep, "bes", "install",
-                                besOtaProgressVal, besOverallPercent, syntheticStatus, besOtaErrorMessage)
+                        val besOverallPercent =
+                                computeBesOverallPercent(
+                                        besOtaProgressVal,
+                                        totalSteps,
+                                        cachedOtaStepSequence
+                                )
+                        Bridge.sendOtaStatus(
+                                sid,
+                                totalSteps,
+                                currentStep,
+                                "bes",
+                                "install",
+                                besOtaProgressVal,
+                                besOverallPercent,
+                                syntheticStatus,
+                                besOtaErrorMessage
+                        )
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Error processing sr_adota BES OTA progress", e)
                 }
             }
-
             "sr_tpevt" -> {
                 // K900 touchpad event - convert to touch_event for frontend
                 try {
@@ -3459,8 +4314,17 @@ class MentraLive : SGCManager() {
                         val gestureName = mapK900GestureType(gestureType)
 
                         if (gestureName != null) {
-                            Bridge.log("LIVE: 👆 K900 touchpad event - Type: " + gestureType + " -> " + gestureName)
-                            Bridge.sendTouchEvent(deviceModel, gestureName, System.currentTimeMillis())
+                            Bridge.log(
+                                    "LIVE: 👆 K900 touchpad event - Type: " +
+                                            gestureType +
+                                            " -> " +
+                                            gestureName
+                            )
+                            Bridge.sendTouchEvent(
+                                    deviceModel,
+                                    gestureName,
+                                    System.currentTimeMillis()
+                            )
                         } else {
                             Log.d(TAG, "Unknown K900 gesture type: " + gestureType)
                         }
@@ -3469,21 +4333,26 @@ class MentraLive : SGCManager() {
                     Log.e(TAG, "Error parsing sr_tpevt", e)
                 }
             }
-
             else -> {
                 Log.d(TAG, "Unknown K900 command: " + command)
 
                 // Check if this is a C-wrapped standard JSON message (not a true K900 command)
-                // This happens when ASG Client sends standard JSON messages through K900BluetoothManager
+                // This happens when ASG Client sends standard JSON messages through
+                // K900BluetoothManager
                 // which automatically C-wraps them
                 try {
                     // Try to parse the "C" field as JSON
                     val innerJson = JSONObject(command)
 
-                    // If it has a "type" field or chunk envelope, it's a standard message that got C-wrapped
+                    // If it has a "type" field or chunk envelope, it's a standard message that got
+                    // C-wrapped
                     if (innerJson.has("type") || MessageChunker.isChunkedMessage(innerJson)) {
                         val messageType = innerJson.optString("type", "")
-                        Log.d(TAG, "📦 Detected C-wrapped standard JSON message with type: " + messageType)
+                        Log.d(
+                                TAG,
+                                "📦 Detected C-wrapped standard JSON message with type: " +
+                                        messageType
+                        )
                         Log.d(TAG, "🔓 Unwrapping and processing through standard message handler")
 
                         // Process through the standard message handler
@@ -3492,20 +4361,23 @@ class MentraLive : SGCManager() {
                     }
                 } catch (e: JSONException) {
                     // Not valid JSON or doesn't have type field - treat as unknown K900 command
-                    Log.d(TAG, "Command is not a C-wrapped JSON message, passing to data observable")
+                    Log.d(
+                            TAG,
+                            "Command is not a C-wrapped JSON message, passing to data observable"
+                    )
                 }
 
                 // Pass to data observable for custom processing
                 // if (dataObservable != null) {
-                    // dataObservable.onNext(json);
+                // dataObservable.onNext(json);
                 // }
             }
         }
     }
 
     /**
-     * Map K900 sr_tpevt gesture type codes to gesture names.
-     * These match the gesture_name values sent by ASG Client in touch_event messages.
+     * Map K900 sr_tpevt gesture type codes to gesture names. These match the gesture_name values
+     * sent by ASG Client in touch_event messages.
      */
     private fun mapK900GestureType(type: Int): String? {
         when (type) {
@@ -3522,9 +4394,9 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Send the coreToken to the ASG client for direct backend authentication.
-     * Retries a few times with delay if token is empty (bridge may not have applied
-     * BluetoothSdkModule.update yet when glasses_ready runs).
+     * Send the coreToken to the ASG client for direct backend authentication. Retries a few times
+     * with delay if token is empty (bridge may not have applied BluetoothSdkModule.update yet when
+     * glasses_ready runs).
      */
     private fun sendCoreTokenToAsgClient() {
         Bridge.log("LIVE: Preparing to send coreToken to ASG client")
@@ -3534,11 +4406,25 @@ class MentraLive : SGCManager() {
         if (coreToken == null || coreToken.isEmpty()) {
             if (coreTokenRetryCount < CORE_TOKEN_MAX_RETRIES - 1) {
                 coreTokenRetryCount++
-                Log.d(TAG, "getCoreToken empty, retrying in " + CORE_TOKEN_RETRY_DELAY_MS + "ms (attempt " + (coreTokenRetryCount + 1) + "/" + CORE_TOKEN_MAX_RETRIES + ")")
+                Log.d(
+                        TAG,
+                        "getCoreToken empty, retrying in " +
+                                CORE_TOKEN_RETRY_DELAY_MS +
+                                "ms (attempt " +
+                                (coreTokenRetryCount + 1) +
+                                "/" +
+                                CORE_TOKEN_MAX_RETRIES +
+                                ")"
+                )
                 handler.postDelayed(this::sendCoreTokenToAsgClient, CORE_TOKEN_RETRY_DELAY_MS)
                 return
             }
-            Log.e(TAG, "No coreToken available to send to ASG client after " + CORE_TOKEN_MAX_RETRIES + " attempts")
+            Log.e(
+                    TAG,
+                    "No coreToken available to send to ASG client after " +
+                            CORE_TOKEN_MAX_RETRIES +
+                            " attempts"
+            )
             coreTokenRetryCount = 0
             return
         }
@@ -3552,15 +4438,12 @@ class MentraLive : SGCManager() {
 
             Bridge.log("LIVE: Sending coreToken to ASG client")
             sendJson(tokenMsg)
-
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating coreToken JSON message", e)
         }
     }
 
-    /**
-     * Send stored user email to the ASG client for Sentry crash reporting
-     */
+    /** Send stored user email to the ASG client for Sentry crash reporting */
     private fun sendStoredUserEmailToAsgClient() {
         val emailObj = DeviceStore.get("bluetooth", "auth_email")
         val storedEmail = if (emailObj is String) emailObj else ""
@@ -3574,20 +4457,18 @@ class MentraLive : SGCManager() {
         sendUserEmailToGlasses(storedEmail)
     }
 
-    /**
-     * Request battery status from the glasses
-     */
+    /** Request battery status from the glasses */
     private fun requestBatteryStatus() {
-        //JSONObject json = new JSONObject();
-        //json.put("type", "request_battery_state");
-        //sendDataToGlasses(json.toString());
+        // JSONObject json = new JSONObject();
+        // json.put("type", "request_battery_state");
+        // sendDataToGlasses(json.toString());
 
         requestBatteryK900()
     }
 
     /**
-     * Update battery status and notify listeners
-     * Matches iOS MentraLive.swift updateBatteryStatus pattern
+     * Update battery status and notify listeners Matches iOS MentraLive.swift updateBatteryStatus
+     * pattern
      */
     private fun updateBatteryStatus(level: Int, isCharging: Boolean) {
         // Update parent SGCManager fields
@@ -3606,7 +4487,9 @@ class MentraLive : SGCManager() {
 
     private fun handleSpeakingStatus(speaking: Boolean) {
         if (!isVoiceActivityDetectionEnabled()) {
-            Bridge.log("LIVE: Ignoring speaking status because Voice Activity Detection is disabled")
+            Bridge.log(
+                    "LIVE: Ignoring speaking status because Voice Activity Detection is disabled"
+            )
             return
         }
         Bridge.log("LIVE: Speaking status " + (if (speaking) "speaking" else "not speaking"))
@@ -3620,14 +4503,15 @@ class MentraLive : SGCManager() {
 
     private fun handleSwitchStatus(switchType: Int, switchValue: Int, timestamp: Long) {
         Bridge.sendSwitchStatus(switchType, switchValue, timestamp)
-        if (switchType == VOICE_ACTIVITY_DETECTION_SWITCH_TYPE && (switchValue == 0 || switchValue == 1)) {
+        if (switchType == VOICE_ACTIVITY_DETECTION_SWITCH_TYPE &&
+                        (switchValue == 0 || switchValue == 1)
+        ) {
             handleVoiceActivityDetectionStatus(switchValue == 1)
         }
     }
 
     /**
-     * Update WiFi status and notify listeners
-     * Matches iOS MentraLive.swift updateWifiStatus pattern
+     * Update WiFi status and notify listeners Matches iOS MentraLive.swift updateWifiStatus pattern
      */
     private fun updateWifiStatus(connected: Boolean, ssid: String, localIp: String) {
         Bridge.log("LIVE: 🌐 Updating WiFi status - connected: " + connected + ", SSID: " + ssid)
@@ -3642,10 +4526,15 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Update hotspot status and notify listeners
-     * Matches iOS MentraLive.swift updateHotspotStatus pattern
+     * Update hotspot status and notify listeners Matches iOS MentraLive.swift updateHotspotStatus
+     * pattern
      */
-    private fun updateHotspotStatus(enabled: Boolean, ssid: String, password: String, gatewayIp: String) {
+    private fun updateHotspotStatus(
+            enabled: Boolean,
+            ssid: String,
+            password: String,
+            gatewayIp: String
+    ) {
         Bridge.log("LIVE: 🔥 Updating hotspot status - enabled: " + enabled + ", SSID: " + ssid)
 
         // Update parent SGCManager fields
@@ -3658,9 +4547,7 @@ class MentraLive : SGCManager() {
         Bridge.sendHotspotStatusChange(enabled, ssid, password, gatewayIp)
     }
 
-    /**
-     * Handle hotspot error and notify React Native
-     */
+    /** Handle hotspot error and notify React Native */
     private fun handleHotspotError(errorMessage: String, timestamp: Long) {
         Bridge.log("LIVE: 🔥 ❌ Hotspot error: " + errorMessage)
 
@@ -3668,9 +4555,7 @@ class MentraLive : SGCManager() {
         Bridge.sendHotspotError(errorMessage, timestamp)
     }
 
-    /**
-     * Send battery status to connected phone via BLE
-     */
+    /** Send battery status to connected phone via BLE */
     private fun sendBatteryStatusOverBle(level: Int, charging: Boolean) {
         if (isConnected && bluetoothGatt != null) {
             try {
@@ -3682,9 +4567,13 @@ class MentraLive : SGCManager() {
 
                 // Convert to string and send via BLE
                 val jsonString = batteryStatus.toString()
-                Bridge.log("LIVE: 🔋 Sending battery status via BLE: " + level + "% " + (if (charging) "(charging)" else "(not charging)"))
+                Bridge.log(
+                        "LIVE: 🔋 Sending battery status via BLE: " +
+                                level +
+                                "% " +
+                                (if (charging) "(charging)" else "(not charging)")
+                )
                 sendDataToGlasses(jsonString, false)
-
             } catch (e: JSONException) {
                 Log.e(TAG, "Error creating battery status JSON", e)
             }
@@ -3693,9 +4582,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Request WiFi status from the glasses
-     */
+    /** Request WiFi status from the glasses */
     private fun requestWifiStatus() {
         try {
             val json = JSONObject()
@@ -3707,8 +4594,7 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Request WiFi scan from the glasses
-     * This will ask the glasses to scan for available networks
+     * Request WiFi scan from the glasses This will ask the glasses to scan for available networks
      */
     override fun requestWifiScan() {
         try {
@@ -3739,16 +4625,21 @@ class MentraLive : SGCManager() {
             json.put("incidentId", incidentId)
             json.put("apiBaseUrl", base)
             sendJson(json, true)
-            Bridge.log("LIVE: Sent incidentId to glasses for log upload: " + incidentId
-                    + " (BLE relay keys " + bKey + ", " + lKey + ")")
+            Bridge.log(
+                    "LIVE: Sent incidentId to glasses for log upload: " +
+                            incidentId +
+                            " (BLE relay keys " +
+                            bKey +
+                            ", " +
+                            lKey +
+                            ")"
+            )
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating upload_incident_logs command", e)
         }
     }
 
-    /**
-     * Query gallery status from the glasses
-     */
+    /** Query gallery status from the glasses */
     override fun queryGalleryStatus() {
         try {
             val json = JSONObject()
@@ -3761,9 +4652,8 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Send OTA start command to glasses.
-     * Called when user approves an update (onboarding or background mode).
-     * Triggers glasses to begin download and installation.
+     * Send OTA start command to glasses. Called when user approves an update (onboarding or
+     * background mode). Triggers glasses to begin download and installation.
      */
     fun sendOtaStart() {
         try {
@@ -3802,8 +4692,8 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Request version info from glasses.
-     * Glasses will respond with version_info message containing build number, firmware version, etc.
+     * Request version info from glasses. Glasses will respond with version_info message containing
+     * build number, firmware version, etc.
      */
     override fun requestVersionInfo() {
         try {
@@ -3838,9 +4728,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Send heartbeat ping to glasses and handle periodic battery requests
-     */
+    /** Send heartbeat ping to glasses and handle periodic battery requests */
     private fun sendHeartbeat() {
         if (!glassesReady || connectionState != ConnTypes.CONNECTED) {
             Bridge.log("LIVE: Skipping heartbeat - glasses not ready or not connected")
@@ -3862,18 +4750,17 @@ class MentraLive : SGCManager() {
 
             // Request battery status every N heartbeats
             if (heartbeatCounter % BATTERY_REQUEST_EVERY_N_HEARTBEATS == 0) {
-                Bridge.log("LIVE: 🔋 Requesting battery status (heartbeat #" + heartbeatCounter + ")")
+                Bridge.log(
+                        "LIVE: 🔋 Requesting battery status (heartbeat #" + heartbeatCounter + ")"
+                )
                 requestBatteryStatus()
             }
-
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating heartbeat message", e)
         }
     }
 
-    /**
-     * Start the heartbeat mechanism
-     */
+    /** Start the heartbeat mechanism */
     private fun startHeartbeat() {
         // Bridge.log("LIVE: 💓 Starting heartbeat mechanism");
         heartbeatCounter = 0
@@ -3884,9 +4771,7 @@ class MentraLive : SGCManager() {
         // startTestMessages();
     }
 
-    /**
-     * Stop the heartbeat mechanism
-     */
+    /** Stop the heartbeat mechanism */
     private fun stopHeartbeat() {
         Bridge.log("LIVE: 💓 Stopping heartbeat mechanism")
         heartbeatHandler.removeCallbacks(heartbeatRunnable!!)
@@ -3938,9 +4823,7 @@ class MentraLive : SGCManager() {
         Bridge.log("LIVE: 📶 RSSI: " + rssi + " dBm")
     }
 
-    /**
-     * Start the micbeat mechanism - periodically enable custom audio TX
-     */
+    /** Start the micbeat mechanism - periodically enable custom audio TX */
     private fun startMicBeat() {
         micOnCount++
         Bridge.log("LIVE: 🎤 Mic ON/OFF count: " + micOnCount + " on, " + micOffCount + " off")
@@ -3949,26 +4832,24 @@ class MentraLive : SGCManager() {
         // Initialize custom audio TX immediately
         sendEnableCustomAudioTxMessage(shouldUseGlassesMic)
 
-        micBeatRunnable = object : Runnable {
-            override fun run() {
-                Bridge.log("LIVE: 🎤 Sending micbeat - enabling custom audio TX")
+        micBeatRunnable =
+                object : Runnable {
+                    override fun run() {
+                        Bridge.log("LIVE: 🎤 Sending micbeat - enabling custom audio TX")
 
+                        sendEnableCustomAudioTxMessage(true)
+                        micBeatCount++
 
-                sendEnableCustomAudioTxMessage(true)
-                micBeatCount++
-
-                // Schedule next micbeat
-                micBeatHandler.postDelayed(this, MICBEAT_INTERVAL_MS)
-            }
-        }
+                        // Schedule next micbeat
+                        micBeatHandler.postDelayed(this, MICBEAT_INTERVAL_MS)
+                    }
+                }
 
         micBeatHandler.removeCallbacks(micBeatRunnable!!) // Remove any existing callbacks
         micBeatHandler.postDelayed(micBeatRunnable!!, MICBEAT_INTERVAL_MS)
     }
 
-    /**
-     * Stop the micbeat mechanism
-     */
+    /** Stop the micbeat mechanism */
     private fun stopMicBeat() {
         micOffCount++
         Bridge.log("LIVE: 🎤 Mic ON/OFF count: " + micOnCount + " on, " + micOffCount + " off")
@@ -3979,9 +4860,7 @@ class MentraLive : SGCManager() {
         micBeatCount = 0
     }
 
-    /**
-     * Send a periodic test message to verify ACK system
-     */
+    /** Send a periodic test message to verify ACK system */
     private fun sendTestMessage() {
         if (!glassesReady || connectionState != ConnTypes.CONNECTED) {
             Bridge.log("LIVE: Skipping test message - glasses not ready or not connected")
@@ -3997,29 +4876,32 @@ class MentraLive : SGCManager() {
             testMsg.put("message", "ACK test message #" + testMessageCounter)
             testMsg.put("deviceId", deviceId) // Include device ID for debugging
 
-            Bridge.log("LIVE: 🧪 Sending test message #" + testMessageCounter + " for ACK verification")
+            Bridge.log(
+                    "LIVE: 🧪 Sending test message #" + testMessageCounter + " for ACK verification"
+            )
             sendJson(testMsg, true) // This will include esoteric mId and ACK tracking
-
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating test message", e)
         }
     }
 
-    /**
-     * Start the periodic test message system
-     */
+    /** Start the periodic test message system */
     private fun startTestMessages() {
-        Bridge.log("LIVE: 🧪 Starting periodic test message system (every " + TEST_MESSAGE_INTERVAL_MS + "ms)")
+        Bridge.log(
+                "LIVE: 🧪 Starting periodic test message system (every " +
+                        TEST_MESSAGE_INTERVAL_MS +
+                        "ms)"
+        )
         testMessageCounter = 0
         if (testMessageRunnable != null) {
-            testMessageHandler.removeCallbacks(testMessageRunnable!!) // Remove any existing callbacks
+            testMessageHandler.removeCallbacks(
+                    testMessageRunnable!!
+            ) // Remove any existing callbacks
             testMessageHandler.postDelayed(testMessageRunnable!!, TEST_MESSAGE_INTERVAL_MS.toLong())
         }
     }
 
-    /**
-     * Stop the periodic test message system
-     */
+    /** Stop the periodic test message system */
     private fun stopTestMessages() {
         Bridge.log("LIVE: 🧪 Stopping periodic test message system")
         if (testMessageRunnable != null) {
@@ -4028,18 +4910,24 @@ class MentraLive : SGCManager() {
         testMessageCounter = 0
     }
 
-    /**
-     * Dump all thread states for debugging BLE failures
-     */
+    /** Dump all thread states for debugging BLE failures */
     private fun dumpThreadStates() {
         Log.e(TAG, "📸 THREAD STATE DUMP - START")
         try {
             val allThreads = Thread.getAllStackTraces()
             for ((thread, stack) in allThreads) {
-                Log.e(TAG, "📌 Thread: " + thread.name +
-                      " (ID: " + thread.id +
-                      ", State: " + thread.state +
-                      ", Priority: " + thread.priority + ")")
+                Log.e(
+                        TAG,
+                        "📌 Thread: " +
+                                thread.name +
+                                " (ID: " +
+                                thread.id +
+                                ", State: " +
+                                thread.state +
+                                ", Priority: " +
+                                thread.priority +
+                                ")"
+                )
 
                 // Only print first 5 stack frames to avoid log spam
                 for (i in 0 until Math.min(5, stack.size)) {
@@ -4055,16 +4943,16 @@ class MentraLive : SGCManager() {
         Log.e(TAG, "📸 THREAD STATE DUMP - END")
     }
 
-    /**
-     * Check if we have the necessary permissions
-     */
+    /** Check if we have the necessary permissions */
     private fun hasPermissions(): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            return ActivityCompat.checkSelfPermission(context!!, Manifest.permission.BLUETOOTH_CONNECT) ==
-                   PackageManager.PERMISSION_GRANTED
+            return ActivityCompat.checkSelfPermission(
+                    context!!,
+                    Manifest.permission.BLUETOOTH_CONNECT
+            ) == PackageManager.PERMISSION_GRANTED
         } else {
             return ActivityCompat.checkSelfPermission(context!!, Manifest.permission.BLUETOOTH) ==
-                   PackageManager.PERMISSION_GRANTED
+                    PackageManager.PERMISSION_GRANTED
         }
     }
 
@@ -4101,8 +4989,10 @@ class MentraLive : SGCManager() {
         // // Persist immediately so reconnection logic can find it in case this connection fails
         // SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         // prefs.edit().putString(PREF_DEVICE_NAME, id).apply();
-        // Log.i(TAG, "🔌 💾 Saved device name for future reconnection: " + connectedDevice.getName());
-        // Bridge.log("LIVE: Saved device name for future reconnection: " + connectedDevice.getName());
+        // Log.i(TAG, "🔌 💾 Saved device name for future reconnection: " +
+        // connectedDevice.getName());
+        // Bridge.log("LIVE: Saved device name for future reconnection: " +
+        // connectedDevice.getName());
         connectToSmartGlasses()
     }
 
@@ -4141,25 +5031,15 @@ class MentraLive : SGCManager() {
         Bridge.log("LIVE: [STUB]")
     }
 
-    override fun setSilentMode(enabled: Boolean) {
+    override fun setSilentMode(enabled: Boolean) {}
 
-    }
+    override fun getBatteryStatus() {}
 
-    override fun getBatteryStatus() {
+    override fun setHeadUpAngle(angle: Int) {}
 
-    }
+    override fun setDashboardPosition(height: Int, depth: Int) {}
 
-    override fun setHeadUpAngle(angle: Int) {
-
-    }
-
-    override fun setDashboardPosition(height: Int, depth: Int) {
-
-    }
-
-    override fun showDashboard() {
-
-    }
+    override fun showDashboard() {}
 
     override fun ping() {
         Bridge.log("LIVE: ping()")
@@ -4169,7 +5049,13 @@ class MentraLive : SGCManager() {
     override fun dbg1() {}
     override fun dbg2() {}
 
-    override fun displayBitmap(base64ImageData: String, x: Int?, y: Int?, width: Int?, height: Int?): Boolean {
+    override fun displayBitmap(
+            base64ImageData: String,
+            x: Int?,
+            y: Int?,
+            width: Int?,
+            height: Int?
+    ): Boolean {
         return false
     }
 
@@ -4210,10 +5096,15 @@ class MentraLive : SGCManager() {
             try {
                 val device = bluetoothAdapter!!.getRemoteDevice(lastDeviceAddress)
                 if (device != null) {
-                    Bridge.log("LIVE: Found saved device, connecting directly: " + lastDeviceAddress)
+                    Bridge.log(
+                            "LIVE: Found saved device, connecting directly: " + lastDeviceAddress
+                    )
                     connectToDevice(device)
                 } else {
-                    Bridge.log("LIVE: ERROR: Could not create device from address: " + lastDeviceAddress)
+                    Bridge.log(
+                            "LIVE: ERROR: Could not create device from address: " +
+                                    lastDeviceAddress
+                    )
                     updateConnectionState(ConnTypes.DISCONNECTED)
                     startScan() // Fallback to scanning
                 }
@@ -4246,10 +5137,13 @@ class MentraLive : SGCManager() {
         if (enabled) {
             // User wants mic ON
             // Check if we should suspend due to phone audio (only if BLOCK_AUDIO_DUPLEX is enabled)
-            if (BLOCK_AUDIO_DUPLEX && phoneAudioMonitor != null && phoneAudioMonitor!!.isPlaying()) {
+            if (BLOCK_AUDIO_DUPLEX && phoneAudioMonitor != null && phoneAudioMonitor!!.isPlaying()
+            ) {
                 // Phone is currently playing audio - don't start mic yet, mark as suspended
                 micSuspendedForAudio = true
-                Bridge.log("LIVE: 🎤 Mic requested but phone audio is playing - suspending until audio stops")
+                Bridge.log(
+                        "LIVE: 🎤 Mic requested but phone audio is playing - suspending until audio stops"
+                )
             } else {
                 // Safe to start mic
                 micSuspendedForAudio = false
@@ -4265,20 +5159,24 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Handle phone audio playback state changes
-     * Called by PhoneAudioMonitor when phone starts/stops playing audio
+     * Handle phone audio playback state changes Called by PhoneAudioMonitor when phone starts/stops
+     * playing audio
      *
      * State machine logic:
      * - When phone starts playing audio: suspend LC3 mic if it was running
      * - When phone stops playing audio: resume LC3 mic if it was suspended
      */
     private fun handlePhoneAudioStateChanged(isPlaying: Boolean) {
-        Bridge.log("LIVE: 🎵 Phone audio state changed: " + (if (isPlaying) "PLAYING" else "STOPPED"))
+        Bridge.log(
+                "LIVE: 🎵 Phone audio state changed: " + (if (isPlaying) "PLAYING" else "STOPPED")
+        )
 
         if (isPlaying) {
             // Phone started playing audio - suspend mic if it was running
             if (micIntentEnabled && !micSuspendedForAudio) {
-                Bridge.log("LIVE: 🎤 Phone audio started - suspending LC3 mic to avoid MCU overload")
+                Bridge.log(
+                        "LIVE: 🎤 Phone audio started - suspending LC3 mic to avoid MCU overload"
+                )
                 stopMicBeat()
                 micSuspendedForAudio = true
             }
@@ -4292,10 +5190,50 @@ class MentraLive : SGCManager() {
         }
     }
 
-    override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, flash: Boolean, save: Boolean, sound: Boolean, exposureTimeNs: Long?, iso: Int?) {
+    override fun requestPhoto(
+            requestId: String,
+            appId: String,
+            size: String,
+            webhookUrl: String?,
+            authToken: String?,
+            compress: String?,
+            flash: Boolean,
+            save: Boolean,
+            sound: Boolean,
+            exposureTimeNs: Long?,
+            iso: Int?
+    ) {
         val hasAuthToken = authToken != null && !authToken.isEmpty()
-        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (if (hasAuthToken) "***" else "none") + ", compress=" + compress + ", flash=" + flash + ", save=" + save + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs + ", iso=" + iso)
-        Bridge.log("LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry — requestId=" + requestId + ", appId=" + appId)
+        Bridge.log(
+                "LIVE: Requesting photo: " +
+                        requestId +
+                        " for app: " +
+                        appId +
+                        " with size: " +
+                        size +
+                        ", webhookUrl: " +
+                        webhookUrl +
+                        ", authToken: " +
+                        (if (hasAuthToken) "***" else "none") +
+                        ", compress=" +
+                        compress +
+                        ", flash=" +
+                        flash +
+                        ", save=" +
+                        save +
+                        ", sound=" +
+                        sound +
+                        ", exposureTimeNs=" +
+                        exposureTimeNs +
+                        ", iso=" +
+                        iso
+        )
+        Bridge.log(
+                "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry — requestId=" +
+                        requestId +
+                        ", appId=" +
+                        appId
+        )
 
         try {
             val json = JSONObject()
@@ -4320,7 +5258,13 @@ class MentraLive : SGCManager() {
             json.put("save", save)
             json.put("sound", sound)
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
-                Bridge.log("LIVE: Using manual exposure time for photo request " + requestId + ": " + exposureTimeNs + " ns")
+                Bridge.log(
+                        "LIVE: Using manual exposure time for photo request " +
+                                requestId +
+                                ": " +
+                                exposureTimeNs +
+                                " ns"
+                )
                 json.put("exposureTimeNs", exposureTimeNs)
             }
             if (iso != null && iso > 0) {
@@ -4344,7 +5288,11 @@ class MentraLive : SGCManager() {
             }
 
             Bridge.log("LIVE: Using auto transfer mode with BLE fallback ID: " + bleImgId)
-            Bridge.log("LIVE: PHOTO PIPELINE [5b/6] JSON ready — " + summarizeOutgoingMessage(json.toString()) + ", wakeup=true")
+            Bridge.log(
+                    "LIVE: PHOTO PIPELINE [5b/6] JSON ready — " +
+                            summarizeOutgoingMessage(json.toString()) +
+                            ", wakeup=true"
+            )
             Bridge.log("LIVE: PHOTO PIPELINE [6/6] Dispatching take_photo to sendJson()")
 
             sendJson(json, true)
@@ -4389,13 +5337,16 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Track a BLE photo transfer request
-     */
+    /** Track a BLE photo transfer request */
     private fun trackBlePhotoTransfer(bleImgId: String, requestId: String, webhookUrl: String?) {
         val transfer = BlePhotoTransfer(bleImgId, requestId, webhookUrl)
         blePhotoTransfers[bleImgId] = transfer
-        Bridge.log("LIVE: Tracking BLE photo transfer - bleImgId: " + bleImgId + ", requestId: " + requestId)
+        Bridge.log(
+                "LIVE: Tracking BLE photo transfer - bleImgId: " +
+                        bleImgId +
+                        ", requestId: " +
+                        requestId
+        )
     }
 
     /**
@@ -4403,7 +5354,7 @@ class MentraLive : SGCManager() {
      * @return true if connected to WiFi, false otherwise
      */
     fun isGlassesWifiConnected(): Boolean {
-        return wifiConnected  // Using parent SGCManager getter
+        return wifiConnected // Using parent SGCManager getter
     }
 
     /**
@@ -4414,9 +5365,7 @@ class MentraLive : SGCManager() {
         return wifiSsid
     }
 
-    /**
-     * Manually request a WiFi status update from the ASG client
-     */
+    /** Manually request a WiFi status update from the ASG client */
     fun refreshGlassesWifiStatus() {
         if (isConnected) {
             requestWifiStatus()
@@ -4438,12 +5387,11 @@ class MentraLive : SGCManager() {
     // SOC readiness check parameters
     private var readinessCheckRunnable: Runnable? = null
     private var readinessCheckCounter = 0
-    //private boolean glassesReady = false; // Track if glasses have confirmed they're ready
+    // private boolean glassesReady = false; // Track if glasses have confirmed they're ready
 
     /**
-     * Starts the glasses SOC readiness check loop
-     * This sends a "phone_ready" message every 5 seconds until
-     * we receive a "glasses_ready" response, indicating the SOC is booted
+     * Starts the glasses SOC readiness check loop This sends a "phone_ready" message every 5
+     * seconds until we receive a "glasses_ready" response, indicating the SOC is booted
      */
     private fun startReadinessCheckLoop() {
         // Stop any existing readiness check
@@ -4455,33 +5403,41 @@ class MentraLive : SGCManager() {
 
         Bridge.log("LIVE: 🔄 Starting glasses SOC readiness check loop")
 
-        readinessCheckRunnable = object : Runnable {
-            override fun run() {
-                if (isConnected && !isKilled && !glassesReady) {
-                    readinessCheckCounter++
+        readinessCheckRunnable =
+                object : Runnable {
+                    override fun run() {
+                        if (isConnected && !isKilled && !glassesReady) {
+                            readinessCheckCounter++
 
-                    Bridge.log("LIVE: 🔄 Readiness check #" + readinessCheckCounter + ": waiting for glasses SOC to boot")
-                    requestReadyK900()
+                            Bridge.log(
+                                    "LIVE: 🔄 Readiness check #" +
+                                            readinessCheckCounter +
+                                            ": waiting for glasses SOC to boot"
+                            )
+                            requestReadyK900()
 
-
-                    // Schedule next check only if glasses are still not ready
-                    if (!glassesReady) {
-                        handler.postDelayed(this, READINESS_CHECK_INTERVAL_MS.toLong())
+                            // Schedule next check only if glasses are still not ready
+                            if (!glassesReady) {
+                                handler.postDelayed(this, READINESS_CHECK_INTERVAL_MS.toLong())
+                            }
+                        } else {
+                            Bridge.log(
+                                    "LIVE: 🔄 Readiness check loop stopping - connected: " +
+                                            isConnected +
+                                            ", killed: " +
+                                            isKilled +
+                                            ", glassesReady: " +
+                                            glassesReady
+                            )
+                        }
                     }
-                } else {
-                    Bridge.log("LIVE: 🔄 Readiness check loop stopping - connected: " + isConnected +
-                          ", killed: " + isKilled + ", glassesReady: " + glassesReady)
                 }
-            }
-        }
 
         // Start the loop
         handler.post(readinessCheckRunnable!!)
     }
 
-    /**
-     * Stops the glasses SOC readiness check loop
-     */
+    /** Stops the glasses SOC readiness check loop */
     private fun stopReadinessCheckLoop() {
         if (readinessCheckRunnable != null) {
             handler.removeCallbacks(readinessCheckRunnable!!)
@@ -4494,100 +5450,176 @@ class MentraLive : SGCManager() {
     // CTKD (Cross-Transport Key Derivation) Implementation for BES Devices
     // ============================================================================
 
-    /**
-     * Initialize the bonding receiver for CTKD support
-     */
+    /** Initialize the bonding receiver for CTKD support */
     private fun initializeBondingReceiver() {
-        bondingReceiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                val action = intent.action
-                if (BluetoothDevice.ACTION_BOND_STATE_CHANGED == action) {
-                    val device = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
-                    val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)
-                    val previousBondState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR)
-                    // Hidden SystemApi extras — string keys are stable across Android versions.
-                    // EXTRA_REASON / EXTRA_UNBOND_REASON expose why the OS rejected/cleared a bond
-                    // (auth_failed, repeated_attempts, remote_auth_canceled, remote_device_down, etc.).
-                    val reason = intent.getIntExtra("android.bluetooth.device.extra.REASON", -1)
-                    val unbondReason = intent.getIntExtra("android.bluetooth.device.extra.UNBOND_REASON", -1)
+        bondingReceiver =
+                object : BroadcastReceiver() {
+                    override fun onReceive(context: Context, intent: Intent) {
+                        val action = intent.action
+                        if (BluetoothDevice.ACTION_BOND_STATE_CHANGED == action) {
+                            val device =
+                                    intent.getParcelableExtra<BluetoothDevice>(
+                                            BluetoothDevice.EXTRA_DEVICE
+                                    )
+                            val bondState =
+                                    intent.getIntExtra(
+                                            BluetoothDevice.EXTRA_BOND_STATE,
+                                            BluetoothDevice.ERROR
+                                    )
+                            val previousBondState =
+                                    intent.getIntExtra(
+                                            BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE,
+                                            BluetoothDevice.ERROR
+                                    )
+                            // Hidden SystemApi extras — string keys are stable across Android
+                            // versions.
+                            // EXTRA_REASON / EXTRA_UNBOND_REASON expose why the OS rejected/cleared
+                            // a bond
+                            // (auth_failed, repeated_attempts, remote_auth_canceled,
+                            // remote_device_down, etc.).
+                            val reason =
+                                    intent.getIntExtra("android.bluetooth.device.extra.REASON", -1)
+                            val unbondReason =
+                                    intent.getIntExtra(
+                                            "android.bluetooth.device.extra.UNBOND_REASON",
+                                            -1
+                                    )
 
-                    if (device != null && connectedDevice != null &&
-                        device.address == connectedDevice!!.address) {
+                            if (device != null &&
+                                            connectedDevice != null &&
+                                            device.address == connectedDevice!!.address
+                            ) {
 
-                        Bridge.log("LIVE: CTKD: Bond state changed for device " + device.name +
-                              " - Current: " + bondState + ", Previous: " + previousBondState +
-                              ", reason=" + reason + ", unbondReason=" + unbondReason)
+                                Bridge.log(
+                                        "LIVE: CTKD: Bond state changed for device " +
+                                                device.name +
+                                                " - Current: " +
+                                                bondState +
+                                                ", Previous: " +
+                                                previousBondState +
+                                                ", reason=" +
+                                                reason +
+                                                ", unbondReason=" +
+                                                unbondReason
+                                )
 
-                        when (bondState) {
-                            BluetoothDevice.BOND_BONDED -> run {
-                                Bridge.log("LIVE: CTKD: ✅ Successfully bonded with device - BT Classic connection established")
-                                if (isKilled) {
-                                    Bridge.log("LIVE: CTKD: Ignoring bond complete — SGC destroyed")
-                                    return@run
-                                }
-                                isBtClassicConnected = true
-                                audioConnected = true
-                                bondingRetryCount = 0 // Reset retry counter on success
-                                // Both BLE and BT Classic are now connected via CTKD
+                                when (bondState) {
+                                    BluetoothDevice.BOND_BONDED ->
+                                            run {
+                                                Bridge.log(
+                                                        "LIVE: CTKD: ✅ Successfully bonded with device - BT Classic connection established"
+                                                )
+                                                if (isKilled) {
+                                                    Bridge.log(
+                                                            "LIVE: CTKD: Ignoring bond complete — SGC destroyed"
+                                                    )
+                                                    return@run
+                                                }
+                                                isBtClassicConnected = true
+                                                audioConnected = true
+                                                bondingRetryCount =
+                                                        0 // Reset retry counter on success
+                                                // Both BLE and BT Classic are now connected via
+                                                // CTKD
 
-                                // If glasses_ready was already received, now we're fully ready
-                                if (glassesReadyReceived) {
-                                    Bridge.log("LIVE: Audio: Both audio and glasses_ready confirmed - marking as fully connected")
-                                    DeviceStore.apply("glasses", "fullyBooted", true)
-                                    updateConnectionState(ConnTypes.CONNECTED)
-                                }
+                                                // If glasses_ready was already received, now we're
+                                                // fully ready
+                                                if (glassesReadyReceived) {
+                                                    Bridge.log(
+                                                            "LIVE: Audio: Both audio and glasses_ready confirmed - marking as fully connected"
+                                                    )
+                                                    DeviceStore.apply(
+                                                            "glasses",
+                                                            "fullyBooted",
+                                                            true
+                                                    )
+                                                    updateConnectionState(ConnTypes.CONNECTED)
+                                                }
 
-                                // Send audio connected event for platform parity with iOS
-                                Bridge.sendAudioConnected(device.name)
-                            }
-
-                            BluetoothDevice.BOND_NONE -> {
-                                Bridge.log("LIVE: CTKD: ❌ Bonding failed or removed for device")
-                                isBtClassicConnected = false
-                                audioConnected = false
-                                if (previousBondState == BluetoothDevice.BOND_BONDING) {
-                                    // User cancelled or bonding failed - retry up to MAX_BONDING_RETRIES times
-                                    bondingRetryCount++
-                                    Bridge.log("LIVE: CTKD: Bonding process failed (attempt " + bondingRetryCount + "/" + MAX_BONDING_RETRIES + ")")
-
-                                    if (bondingRetryCount < MAX_BONDING_RETRIES && connectedDevice != null) {
-                                        Bridge.log("LIVE: CTKD: 🔄 Retrying bonding in " + BONDING_RETRY_DELAY_MS + "ms...")
-                                        handler.postDelayed(Runnable {
-                                            if (isKilled) {
-                                                return@Runnable
+                                                // Send audio connected event for platform parity
+                                                // with iOS
+                                                Bridge.sendAudioConnected(device.name)
                                             }
-                                            if (connectedDevice != null && connectedDevice!!.bondState != BluetoothDevice.BOND_BONDED) {
-                                                Bridge.log("LIVE: CTKD: 🔄 Initiating bonding retry #" + bondingRetryCount)
-                                                createBond(connectedDevice!!)
+                                    BluetoothDevice.BOND_NONE -> {
+                                        Bridge.log(
+                                                "LIVE: CTKD: ❌ Bonding failed or removed for device"
+                                        )
+                                        isBtClassicConnected = false
+                                        audioConnected = false
+                                        if (previousBondState == BluetoothDevice.BOND_BONDING) {
+                                            // User cancelled or bonding failed - retry up to
+                                            // MAX_BONDING_RETRIES times
+                                            bondingRetryCount++
+                                            Bridge.log(
+                                                    "LIVE: CTKD: Bonding process failed (attempt " +
+                                                            bondingRetryCount +
+                                                            "/" +
+                                                            MAX_BONDING_RETRIES +
+                                                            ")"
+                                            )
+
+                                            if (bondingRetryCount < MAX_BONDING_RETRIES &&
+                                                            connectedDevice != null
+                                            ) {
+                                                Bridge.log(
+                                                        "LIVE: CTKD: 🔄 Retrying bonding in " +
+                                                                BONDING_RETRY_DELAY_MS +
+                                                                "ms..."
+                                                )
+                                                handler.postDelayed(
+                                                        Runnable {
+                                                            if (isKilled) {
+                                                                return@Runnable
+                                                            }
+                                                            if (connectedDevice != null &&
+                                                                            connectedDevice!!
+                                                                                    .bondState !=
+                                                                                    BluetoothDevice
+                                                                                            .BOND_BONDED
+                                                            ) {
+                                                                Bridge.log(
+                                                                        "LIVE: CTKD: 🔄 Initiating bonding retry #" +
+                                                                                bondingRetryCount
+                                                                )
+                                                                createBond(connectedDevice!!)
+                                                            }
+                                                        },
+                                                        BONDING_RETRY_DELAY_MS
+                                                )
+                                            } else {
+                                                Bridge.log(
+                                                        "LIVE: CTKD: ❌ Max bonding retries reached - disconnecting device"
+                                                )
+                                                // Bridge.sendError("bt_classic_pairing_required",
+                                                // "Bluetooth Classic pairing is required. Please
+                                                // accept the pairing dialog to use your glasses.");
+                                                // Disconnect since we can't proceed without BT
+                                                // Classic
+                                                // disconnect();
                                             }
-                                        }, BONDING_RETRY_DELAY_MS)
-                                    } else {
-                                        Bridge.log("LIVE: CTKD: ❌ Max bonding retries reached - disconnecting device")
-                                        //Bridge.sendError("bt_classic_pairing_required", "Bluetooth Classic pairing is required. Please accept the pairing dialog to use your glasses.");
-                                        // Disconnect since we can't proceed without BT Classic
-                                        //disconnect();
+                                        } else if (previousBondState == BluetoothDevice.BOND_BONDED
+                                        ) {
+                                            // Send audio disconnected event for platform parity
+                                            // with iOS
+                                            Bridge.sendAudioDisconnected()
+                                        }
                                     }
-                                } else if (previousBondState == BluetoothDevice.BOND_BONDED) {
-                                    // Send audio disconnected event for platform parity with iOS
-                                    Bridge.sendAudioDisconnected()
+                                    BluetoothDevice.BOND_BONDING ->
+                                            Bridge.log(
+                                                    "LIVE: CTKD: 🔄 Bonding in progress with device"
+                                            )
+                                    else ->
+                                            Bridge.log(
+                                                    "LIVE: CTKD: Unknown bond state: " + bondState
+                                            )
                                 }
                             }
-
-                            BluetoothDevice.BOND_BONDING ->
-                                Bridge.log("LIVE: CTKD: 🔄 Bonding in progress with device")
-
-                            else ->
-                                Bridge.log("LIVE: CTKD: Unknown bond state: " + bondState)
                         }
                     }
                 }
-            }
-        }
     }
 
-    /**
-     * Register the bonding receiver for CTKD monitoring
-     */
+    /** Register the bonding receiver for CTKD monitoring */
     private fun registerBondingReceiver() {
         if (!isBondingReceiverRegistered && bondingReceiver != null) {
             val filter = IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
@@ -4597,9 +5629,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Unregister the bonding receiver
-     */
+    /** Unregister the bonding receiver */
     private fun unregisterBondingReceiver() {
         if (isBondingReceiverRegistered && bondingReceiver != null) {
             try {
@@ -4613,8 +5643,8 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Create bond with device for CTKD (Cross-Transport Key Derivation)
-     * This will establish both BLE and BT Classic connections automatically
+     * Create bond with device for CTKD (Cross-Transport Key Derivation) This will establish both
+     * BLE and BT Classic connections automatically
      */
     private fun createBond(device: BluetoothDevice?): Boolean {
         try {
@@ -4634,9 +5664,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Remove bond with device to disconnect BT Classic
-     */
+    /** Remove bond with device to disconnect BT Classic */
     private fun removeBond(device: BluetoothDevice?): Boolean {
         try {
             if (device == null) {
@@ -4656,52 +5684,54 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Check if BT Classic is connected via CTKD
-     */
+    /** Check if BT Classic is connected via CTKD */
     fun isBtClassicConnected(): Boolean {
         return isBtClassicConnected
     }
 
-    /**
-     * A2DP profile service listener for connecting to already-bonded devices
-     */
-    private val a2dpServiceListener: BluetoothProfile.ServiceListener = object : BluetoothProfile.ServiceListener {
-        override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
-            if (profile == BluetoothProfile.A2DP) {
-                if (isKilled) {
-                    Bridge.log("LIVE: A2DP: Ignoring onServiceConnected — SGC destroyed (stale profile callback)")
-                    try {
-                        if (bluetoothAdapter != null && proxy != null) {
-                            bluetoothAdapter!!.closeProfileProxy(BluetoothProfile.A2DP, proxy)
+    /** A2DP profile service listener for connecting to already-bonded devices */
+    private val a2dpServiceListener: BluetoothProfile.ServiceListener =
+            object : BluetoothProfile.ServiceListener {
+                override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
+                    if (profile == BluetoothProfile.A2DP) {
+                        if (isKilled) {
+                            Bridge.log(
+                                    "LIVE: A2DP: Ignoring onServiceConnected — SGC destroyed (stale profile callback)"
+                            )
+                            try {
+                                if (bluetoothAdapter != null && proxy != null) {
+                                    bluetoothAdapter!!.closeProfileProxy(
+                                            BluetoothProfile.A2DP,
+                                            proxy
+                                    )
+                                }
+                            } catch (e: Exception) {
+                                Bridge.log("LIVE: A2DP: Error closing stale proxy: " + e.message)
+                            }
+                            return
                         }
-                    } catch (e: Exception) {
-                        Bridge.log("LIVE: A2DP: Error closing stale proxy: " + e.message)
+                        a2dpProfile = proxy as BluetoothA2dp
+                        Bridge.log("LIVE: A2DP: Profile proxy obtained")
+
+                        // Now connect to the device if we have one pending
+                        if (connectedDevice != null &&
+                                        connectedDevice!!.bondState == BluetoothDevice.BOND_BONDED
+                        ) {
+                            connectA2dpWithProxy(connectedDevice!!)
+                        }
                     }
-                    return
                 }
-                a2dpProfile = proxy as BluetoothA2dp
-                Bridge.log("LIVE: A2DP: Profile proxy obtained")
 
-                // Now connect to the device if we have one pending
-                if (connectedDevice != null && connectedDevice!!.bondState == BluetoothDevice.BOND_BONDED) {
-                    connectA2dpWithProxy(connectedDevice!!)
+                override fun onServiceDisconnected(profile: Int) {
+                    if (profile == BluetoothProfile.A2DP) {
+                        Bridge.log("LIVE: A2DP: Profile proxy disconnected")
+                        a2dpProfile = null
+                        isA2dpProxyRegistered = false // Reset so we can request a new proxy
+                    }
                 }
             }
-        }
 
-        override fun onServiceDisconnected(profile: Int) {
-            if (profile == BluetoothProfile.A2DP) {
-                Bridge.log("LIVE: A2DP: Profile proxy disconnected")
-                a2dpProfile = null
-                isA2dpProxyRegistered = false  // Reset so we can request a new proxy
-            }
-        }
-    }
-
-    /**
-     * Helper to connect A2DP using the proxy - called from service listener or directly
-     */
+    /** Helper to connect A2DP using the proxy - called from service listener or directly */
     private fun connectA2dpWithProxy(device: BluetoothDevice?) {
         if (isKilled) {
             Bridge.log("LIVE: A2DP: Skipping connectA2dpWithProxy — SGC destroyed")
@@ -4722,7 +5752,8 @@ class MentraLive : SGCManager() {
             } else if (state == BluetoothProfile.STATE_DISCONNECTED) {
                 Bridge.log("LIVE: A2DP: Connecting to " + device.name)
                 // Use reflection to call connect() as it's a hidden API
-                val connectMethod = BluetoothA2dp::class.java.getMethod("connect", BluetoothDevice::class.java)
+                val connectMethod =
+                        BluetoothA2dp::class.java.getMethod("connect", BluetoothDevice::class.java)
                 val result = connectMethod.invoke(a2dpProfile, device) as Boolean
                 Bridge.log("LIVE: A2DP: Connect initiated, result: " + result)
 
@@ -4737,14 +5768,17 @@ class MentraLive : SGCManager() {
             } else {
                 // STATE_DISCONNECTING - wait and retry
                 Bridge.log("LIVE: A2DP: Device disconnecting, will retry in 500ms")
-                handler.postDelayed(Runnable {
-                    if (isKilled) {
-                        return@Runnable
-                    }
-                    if (connectedDevice != null && a2dpProfile != null) {
-                        connectA2dpWithProxy(connectedDevice)
-                    }
-                }, 500)
+                handler.postDelayed(
+                        Runnable {
+                            if (isKilled) {
+                                return@Runnable
+                            }
+                            if (connectedDevice != null && a2dpProfile != null) {
+                                connectA2dpWithProxy(connectedDevice)
+                            }
+                        },
+                        500
+                )
             }
         } catch (e: Exception) {
             Bridge.log("LIVE: A2DP: Error connecting: " + e.message)
@@ -4753,27 +5787,29 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Helper to mark audio as connected and notify
-     */
+    /** Helper to mark audio as connected and notify */
     private fun markAudioConnected(deviceName: String?) {
         if (isKilled) {
-            Bridge.log("LIVE: A2DP: Ignoring markAudioConnected — SGC destroyed (would confuse DeviceManager)")
+            Bridge.log(
+                    "LIVE: A2DP: Ignoring markAudioConnected — SGC destroyed (would confuse DeviceManager)"
+            )
             return
         }
         isBtClassicConnected = true
         audioConnected = true
         Bridge.sendAudioConnected(deviceName!!)
         if (glassesReadyReceived) {
-            Bridge.log("LIVE: A2DP: Both audio and glasses_ready confirmed - marking as fully connected")
+            Bridge.log(
+                    "LIVE: A2DP: Both audio and glasses_ready confirmed - marking as fully connected"
+            )
             DeviceStore.apply("glasses", "fullyBooted", true)
             updateConnectionState(ConnTypes.CONNECTED)
         }
     }
 
     /**
-     * Connect to A2DP audio profile for an already-bonded device
-     * This is needed because being bonded doesn't automatically connect the audio profile
+     * Connect to A2DP audio profile for an already-bonded device This is needed because being
+     * bonded doesn't automatically connect the audio profile
      */
     private fun connectA2dpProfile(device: BluetoothDevice?) {
         if (isKilled) {
@@ -4800,12 +5836,19 @@ class MentraLive : SGCManager() {
 
         // Get the A2DP profile proxy
         if (!isA2dpProxyRegistered) {
-            val result = bluetoothAdapter!!.getProfileProxy(context, a2dpServiceListener, BluetoothProfile.A2DP)
+            val result =
+                    bluetoothAdapter!!.getProfileProxy(
+                            context,
+                            a2dpServiceListener,
+                            BluetoothProfile.A2DP
+                    )
             if (result) {
                 isA2dpProxyRegistered = true
                 Bridge.log("LIVE: A2DP: Profile proxy request successful, waiting for callback")
             } else {
-                Bridge.log("LIVE: A2DP: Failed to get profile proxy, marking audio connected anyway")
+                Bridge.log(
+                        "LIVE: A2DP: Failed to get profile proxy, marking audio connected anyway"
+                )
                 // Still mark as connected - device is bonded and BLE audio (LC3) will work
                 markAudioConnected(device.name)
             }
@@ -4814,9 +5857,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Close the A2DP profile proxy
-     */
+    /** Close the A2DP profile proxy */
     private fun closeA2dpProxy() {
         if (a2dpProfile != null && bluetoothAdapter != null) {
             Bridge.log("LIVE: A2DP: Closing profile proxy")
@@ -4843,7 +5884,6 @@ class MentraLive : SGCManager() {
 
         // Close A2DP profile proxy
         closeA2dpProxy()
-
 
         // Stop readiness check loop
         stopReadinessCheckLoop()
@@ -4960,13 +6000,12 @@ class MentraLive : SGCManager() {
     override fun sendButtonVideoRecordingSettings() {
         try {
             val videoSettingsObj = DeviceStore.get("bluetooth", "button_video_settings")
-            var videoWidth = 1920  // defaults
+            var videoWidth = 1920 // defaults
             var videoHeight = 1080
             var videoFps = 30
 
             if (videoSettingsObj is Map<*, *>) {
-                @Suppress("UNCHECKED_CAST")
-                val videoSettings = videoSettingsObj as Map<String, Any>
+                @Suppress("UNCHECKED_CAST") val videoSettings = videoSettingsObj as Map<String, Any>
                 videoWidth = (videoSettings.getOrDefault("width", videoWidth) as Number).toInt()
                 videoHeight = (videoSettings.getOrDefault("height", videoHeight) as Number).toInt()
                 videoFps = (videoSettings.getOrDefault("fps", videoFps) as Number).toInt()
@@ -4990,9 +6029,22 @@ class MentraLive : SGCManager() {
         }
     }
 
-    fun sendButtonVideoRecordingSettings(requestId: String?, videoWidth: Int, videoHeight: Int, videoFps: Int) {
+    fun sendButtonVideoRecordingSettings(
+            requestId: String?,
+            videoWidth: Int,
+            videoHeight: Int,
+            videoFps: Int
+    ) {
         try {
-            Bridge.log("LIVE: 🎥 [SETTINGS_SYNC] Sending button video recording settings: " + videoWidth + "x" + videoHeight + "@" + videoFps + "fps")
+            Bridge.log(
+                    "LIVE: 🎥 [SETTINGS_SYNC] Sending button video recording settings: " +
+                            videoWidth +
+                            "x" +
+                            videoHeight +
+                            "@" +
+                            videoFps +
+                            "fps"
+            )
 
             val json = JSONObject()
             json.put("type", "button_video_recording_setting")
@@ -5064,15 +6116,24 @@ class MentraLive : SGCManager() {
     }
 
     fun displayRowsCard(rowStrings: Array<String>) {
-        Bridge.log("LIVE: [STUB] Device has no display. Cannot display rows card with " + rowStrings.size + " rows")
+        Bridge.log(
+                "LIVE: [STUB] Device has no display. Cannot display rows card with " +
+                        rowStrings.size +
+                        " rows"
+        )
     }
 
     fun showNaturalLanguageCommandScreen(prompt: String, naturalLanguageArgs: String) {
-        Bridge.log("LIVE: [STUB] Device has no display. Cannot show natural language command screen: " + prompt)
+        Bridge.log(
+                "LIVE: [STUB] Device has no display. Cannot show natural language command screen: " +
+                        prompt
+        )
     }
 
     fun updateNaturalLanguageCommandScreen(naturalLanguageArgs: String) {
-        Bridge.log("LIVE: [STUB] Device has no display. Cannot update natural language command screen")
+        Bridge.log(
+                "LIVE: [STUB] Device has no display. Cannot update natural language command screen"
+        )
     }
 
     fun scrollingTextViewIntermediateText(text: String) {
@@ -5092,19 +6153,34 @@ class MentraLive : SGCManager() {
     }
 
     fun displayReferenceCardImage(title: String, body: String, imgUrl: String) {
-        Bridge.log("LIVE: [STUB] Device has no display. Reference card with image would show: " + title)
+        Bridge.log(
+                "LIVE: [STUB] Device has no display. Reference card with image would show: " + title
+        )
     }
 
     override fun sendDoubleTextWall(top: String, bottom: String) {
-        Bridge.log("LIVE: [STUB] Device has no display. Double text wall would show: " + top + " / " + bottom)
+        Bridge.log(
+                "LIVE: [STUB] Device has no display. Double text wall would show: " +
+                        top +
+                        " / " +
+                        bottom
+        )
     }
 
     fun displayBulletList(title: String, bullets: Array<String>) {
-        Bridge.log("LIVE: [STUB] Device has no display. Bullet list would show: " + title + " with " + bullets.size + " items")
+        Bridge.log(
+                "LIVE: [STUB] Device has no display. Bullet list would show: " +
+                        title +
+                        " with " +
+                        bullets.size +
+                        " items"
+        )
     }
 
     fun startScrollingTextViewMode(title: String) {
-        Bridge.log("LIVE: [STUB] Device has no display. Scrolling text view would start with: " + title)
+        Bridge.log(
+                "LIVE: [STUB] Device has no display. Scrolling text view would start with: " + title
+        )
     }
 
     fun scrollingTextViewFinalText(text: String) {
@@ -5129,7 +6205,11 @@ class MentraLive : SGCManager() {
 
             val jsonStr = cmd.toString()
             Bridge.log("LIVE: Sending hrt command: " + jsonStr)
-            val packedData = K900ProtocolUtils.packDataToK900(jsonStr.toByteArray(StandardCharsets.UTF_8), K900ProtocolUtils.CMD_TYPE_STRING)
+            val packedData =
+                    K900ProtocolUtils.packDataToK900(
+                            jsonStr.toByteArray(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING
+                    )
 
             queueData(packedData)
         } catch (e: JSONException) {
@@ -5170,8 +6250,8 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Enable or disable audio playback through phone speakers when receiving LC3 audio from glasses.
-     * This allows you to hear what the glasses microphone is picking up in real-time.
+     * Enable or disable audio playback through phone speakers when receiving LC3 audio from
+     * glasses. This allows you to hear what the glasses microphone is picking up in real-time.
      * @param enable True to enable audio playback, false to disable.
      */
     fun enableAudioPlayback(enable: Boolean) {
@@ -5210,7 +6290,11 @@ class MentraLive : SGCManager() {
             // Clamp volume to valid range
             val clampedVolume = Math.max(0.0f, Math.min(1.0f, volume))
             // Note: LC3Player doesn't have setVolume method, using system volume
-            Bridge.log("LIVE: Audio playback volume request: " + clampedVolume + " (handled by system volume)")
+            Bridge.log(
+                    "LIVE: Audio playback volume request: " +
+                            clampedVolume +
+                            " (handled by system volume)"
+            )
         }
     }
 
@@ -5224,9 +6308,7 @@ class MentraLive : SGCManager() {
         return 1.0f // Default to full volume
     }
 
-    /**
-     * Stop any currently playing audio immediately.
-     */
+    /** Stop any currently playing audio immediately. */
     fun stopAudioPlayback() {
         if (lc3AudioPlayer != null) {
             lc3AudioPlayer!!.stopPlay()
@@ -5242,9 +6324,7 @@ class MentraLive : SGCManager() {
         return lc3AudioPlayer != null && audioPlaybackEnabled
     }
 
-    /**
-     * Pause audio playback.
-     */
+    /** Pause audio playback. */
     fun pauseAudioPlayback() {
         if (lc3AudioPlayer != null) {
             lc3AudioPlayer!!.stopPlay()
@@ -5252,9 +6332,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Resume audio playback.
-     */
+    /** Resume audio playback. */
     fun resumeAudioPlayback() {
         if (lc3AudioPlayer != null) {
             lc3AudioPlayer!!.startPlay()
@@ -5281,8 +6359,8 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Enable or disable rolling audio recording
-     * When enabled, saves the last 20 seconds of audio as M4A file every 20 seconds
+     * Enable or disable rolling audio recording When enabled, saves the last 20 seconds of audio as
+     * M4A file every 20 seconds
      * @param enable True to enable rolling recording, false to disable
      */
     fun enableRollingRecording(enable: Boolean) {
@@ -5308,10 +6386,14 @@ class MentraLive : SGCManager() {
             val cmdObject = JSONObject()
             cmdObject.put("C", "cs_hrt") // Video command
             // cmdObject.put("W", 1);        // Wake up MTK system
-            cmdObject.put("B", "")       // Add the body
+            cmdObject.put("B", "") // Add the body
             val jsonStr = cmdObject.toString()
             Bridge.log("LIVE: Sending hrt command: " + jsonStr)
-            val packedData = K900ProtocolUtils.packDataToK900(jsonStr.toByteArray(StandardCharsets.UTF_8), K900ProtocolUtils.CMD_TYPE_STRING)
+            val packedData =
+                    K900ProtocolUtils.packDataToK900(
+                            jsonStr.toByteArray(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING
+                    )
             queueData(packedData)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating video command", e)
@@ -5332,13 +6414,16 @@ class MentraLive : SGCManager() {
         try {
             val cmdObject = JSONObject()
             cmdObject.put("C", "cs_batv") // Video command
-            cmdObject.put("V", 1)        // Version is always 1
-            cmdObject.put("B", "")     // Add the body
+            cmdObject.put("V", 1) // Version is always 1
+            cmdObject.put("B", "") // Add the body
             val jsonStr = cmdObject.toString()
             Bridge.log("LIVE: Sending hotspot command: " + jsonStr)
-            val packedData = K900ProtocolUtils.packDataToK900(jsonStr.toByteArray(StandardCharsets.UTF_8), K900ProtocolUtils.CMD_TYPE_STRING)
+            val packedData =
+                    K900ProtocolUtils.packDataToK900(
+                            jsonStr.toByteArray(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING
+                    )
             queueData(packedData)
-
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating video command", e)
         }
@@ -5371,31 +6456,33 @@ class MentraLive : SGCManager() {
 
     private fun scheduleGlassesMediaVolumeTimeoutLocked() {
         cancelGlassesMediaVolumeTimeoutLocked()
-        glassesMediaVolumeTimeoutRunnable =
-                Runnable {
-                    var gOk: Consumer<Map<String, Any>>? = null
-                    var gErr: Consumer<String>? = null
-                    var sOk: Consumer<Map<String, Any>>? = null
-                    var sErr: Consumer<String>? = null
-                    synchronized(glassesMediaVolumeLock) {
-                        gOk = pendingGetGlassesVolumeSuccess
-                        gErr = pendingGetGlassesVolumeError
-                        sOk = pendingSetGlassesVolumeSuccess
-                        sErr = pendingSetGlassesVolumeError
-                        pendingGetGlassesVolumeSuccess = null
-                        pendingGetGlassesVolumeError = null
-                        pendingSetGlassesVolumeSuccess = null
-                        pendingSetGlassesVolumeError = null
-                        cancelGlassesMediaVolumeTimeoutLocked()
-                    }
-                    if (gErr != null) {
-                        handler.post { gErr!!.accept("glasses_volume_timeout") }
-                    }
-                    if (sErr != null) {
-                        handler.post { sErr!!.accept("glasses_volume_timeout") }
-                    }
-                }
-        handler.postDelayed(glassesMediaVolumeTimeoutRunnable!!, GLASSES_MEDIA_VOLUME_TIMEOUT_MS.toLong())
+        glassesMediaVolumeTimeoutRunnable = Runnable {
+            var gOk: Consumer<Map<String, Any>>? = null
+            var gErr: Consumer<String>? = null
+            var sOk: Consumer<Map<String, Any>>? = null
+            var sErr: Consumer<String>? = null
+            synchronized(glassesMediaVolumeLock) {
+                gOk = pendingGetGlassesVolumeSuccess
+                gErr = pendingGetGlassesVolumeError
+                sOk = pendingSetGlassesVolumeSuccess
+                sErr = pendingSetGlassesVolumeError
+                pendingGetGlassesVolumeSuccess = null
+                pendingGetGlassesVolumeError = null
+                pendingSetGlassesVolumeSuccess = null
+                pendingSetGlassesVolumeError = null
+                cancelGlassesMediaVolumeTimeoutLocked()
+            }
+            if (gErr != null) {
+                handler.post { gErr!!.accept("glasses_volume_timeout") }
+            }
+            if (sErr != null) {
+                handler.post { sErr!!.accept("glasses_volume_timeout") }
+            }
+        }
+        handler.postDelayed(
+                glassesMediaVolumeTimeoutRunnable!!,
+                GLASSES_MEDIA_VOLUME_TIMEOUT_MS.toLong()
+        )
     }
 
     private fun sendGlassesMediaVolumeGetCommand(): Boolean {
@@ -5408,7 +6495,8 @@ class MentraLive : SGCManager() {
             val packedData =
                     K900ProtocolUtils.packDataToK900(
                             jsonStr.toByteArray(StandardCharsets.UTF_8),
-                            K900ProtocolUtils.CMD_TYPE_STRING)
+                            K900ProtocolUtils.CMD_TYPE_STRING
+                    )
             Bridge.log("LIVE: AUDIO: Sending cs_getvol command: " + jsonStr)
             queueData(packedData)
             return true
@@ -5431,7 +6519,8 @@ class MentraLive : SGCManager() {
             val packedData =
                     K900ProtocolUtils.packDataToK900(
                             jsonStr.toByteArray(StandardCharsets.UTF_8),
-                            K900ProtocolUtils.CMD_TYPE_STRING)
+                            K900ProtocolUtils.CMD_TYPE_STRING
+                    )
             queueData(packedData)
             return true
         } catch (e: JSONException) {
@@ -5453,11 +6542,12 @@ class MentraLive : SGCManager() {
         synchronized(glassesMediaVolumeLock) {
             if (pendingGetGlassesVolumeSuccess == null) {
                 Bridge.log(
-                        "LIVE: sr_getvol with no pending request (status="
-                                + status
-                                + ", vol="
-                                + vol
-                                + ")")
+                        "LIVE: sr_getvol with no pending request (status=" +
+                                status +
+                                ", vol=" +
+                                vol +
+                                ")"
+                )
                 return
             }
             ok = pendingGetGlassesVolumeSuccess
@@ -5506,11 +6596,8 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Read glasses media step volume (0–15) via K900 cs_getvol / sr_getvol.
-     */
-    fun getGlassesMediaVolume(
-            onSuccess: Consumer<Map<String, Any>>, onError: Consumer<String>) {
+    /** Read glasses media step volume (0–15) via K900 cs_getvol / sr_getvol. */
+    fun getGlassesMediaVolume(onSuccess: Consumer<Map<String, Any>>, onError: Consumer<String>) {
         if (!glassesReady || connectionState != ConnTypes.CONNECTED) {
             handler.post { onError.accept("glasses_not_ready") }
             return
@@ -5534,11 +6621,12 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Set glasses media step volume (0–15) via K900 cs_vol / sr_vol.
-     */
+    /** Set glasses media step volume (0–15) via K900 cs_vol / sr_vol. */
     fun setGlassesMediaVolume(
-            level: Int, onSuccess: Consumer<Map<String, Any>>, onError: Consumer<String>) {
+            level: Int,
+            onSuccess: Consumer<Map<String, Any>>,
+            onError: Consumer<String>
+    ) {
         if (!glassesReady || connectionState != ConnTypes.CONNECTED) {
             handler.post { onError.accept("glasses_not_ready") }
             return
@@ -5562,13 +6650,12 @@ class MentraLive : SGCManager() {
         }
     }
 
-    //---------------------------------------
+    // ---------------------------------------
     // Power Control Methods
-    //---------------------------------------
+    // ---------------------------------------
 
     /**
-     * Send shutdown command to the glasses.
-     * This will initiate a graceful shutdown of the device.
+     * Send shutdown command to the glasses. This will initiate a graceful shutdown of the device.
      */
     override fun sendShutdown() {
         Bridge.log("LIVE: 🔌 Sending shutdown command to glasses")
@@ -5581,10 +6668,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Send reboot command to the glasses.
-     * This will initiate a reboot of the device.
-     */
+    /** Send reboot command to the glasses. This will initiate a reboot of the device. */
     override fun sendReboot() {
         Bridge.log("LIVE: 🔄 Sending reboot command to glasses")
         try {
@@ -5596,13 +6680,13 @@ class MentraLive : SGCManager() {
         }
     }
 
-    //---------------------------------------
+    // ---------------------------------------
     // IMU Methods
-    //---------------------------------------
+    // ---------------------------------------
 
     /**
-     * Request a single IMU reading from the glasses
-     * Power-optimized: sensors turn on briefly then off
+     * Request a single IMU reading from the glasses Power-optimized: sensors turn on briefly then
+     * off
      */
     fun requestImuSingle() {
         Bridge.log("LIVE: Requesting single IMU reading")
@@ -5633,9 +6717,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Stop IMU streaming from the glasses
-     */
+    /** Stop IMU streaming from the glasses */
     fun stopImuStream() {
         Bridge.log("LIVE: Stopping IMU stream")
         try {
@@ -5648,8 +6730,8 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Subscribe to gesture detection on the glasses
-     * Power-optimized: uses accelerometer-only at low rate
+     * Subscribe to gesture detection on the glasses Power-optimized: uses accelerometer-only at low
+     * rate
      * @param gestures List of gestures to detect ("head_up", "head_down", "nod_yes", "shake_no")
      */
     fun subscribeToImuGestures(gestures: List<String>) {
@@ -5664,9 +6746,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Unsubscribe from all gesture detection
-     */
+    /** Unsubscribe from all gesture detection */
     fun unsubscribeFromImuGestures() {
         Bridge.log("LIVE: Unsubscribing from IMU gestures")
         try {
@@ -5678,40 +6758,34 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Handle IMU response from glasses
-     */
+    /** Handle IMU response from glasses */
     private fun handleImuResponse(json: JSONObject) {
         try {
             val type = json.getString("type")
 
             when (type) {
                 "imu_response" ->
-                    // Single IMU reading
-                    handleSingleImuData(json)
-
+                        // Single IMU reading
+                        handleSingleImuData(json)
                 "imu_stream_response" ->
-                    // Stream of IMU readings
-                    handleStreamImuData(json)
-
+                        // Stream of IMU readings
+                        handleStreamImuData(json)
                 "imu_gesture_response" ->
-                    // Gesture detected
-                    handleImuGesture(json)
-
+                        // Gesture detected
+                        handleImuGesture(json)
                 "imu_gesture_subscribed" ->
-                    // Gesture subscription confirmed
-                    Bridge.log("LIVE: IMU gesture subscription confirmed: " + json.optJSONArray("gestures"))
-
+                        // Gesture subscription confirmed
+                        Bridge.log(
+                                "LIVE: IMU gesture subscription confirmed: " +
+                                        json.optJSONArray("gestures")
+                        )
                 "imu_ack" ->
-                    // Command acknowledgment
-                    Bridge.log("LIVE: IMU command acknowledged: " + json.optString("message"))
-
+                        // Command acknowledgment
+                        Bridge.log("LIVE: IMU command acknowledged: " + json.optString("message"))
                 "imu_error" ->
-                    // Error response
-                    Log.e(TAG, "IMU error: " + json.optString("error"))
-
-                else ->
-                    Log.w(TAG, "Unknown IMU response type: " + type)
+                        // Error response
+                        Log.e(TAG, "IMU error: " + json.optString("error"))
+                else -> Log.w(TAG, "Unknown IMU response type: " + type)
             }
         } catch (e: JSONException) {
             Log.e(TAG, "Error handling IMU response", e)
@@ -5727,18 +6801,42 @@ class MentraLive : SGCManager() {
             val quat = json.getJSONArray("quat")
             val euler = json.getJSONArray("euler")
 
-            Log.d(TAG, String.format("IMU Single Reading - Accel: [%.2f, %.2f, %.2f], Euler: [%.1f°, %.1f°, %.1f°]",
-                accel.getDouble(0), accel.getDouble(1), accel.getDouble(2),
-                euler.getDouble(0), euler.getDouble(1), euler.getDouble(2)))
+            Log.d(
+                    TAG,
+                    String.format(
+                            "IMU Single Reading - Accel: [%.2f, %.2f, %.2f], Euler: [%.1f°, %.1f°, %.1f°]",
+                            accel.getDouble(0),
+                            accel.getDouble(1),
+                            accel.getDouble(2),
+                            euler.getDouble(0),
+                            euler.getDouble(1),
+                            euler.getDouble(2)
+                    )
+            )
 
             // Send IMU data event via Bridge (matches iOS emitImuDataEvent)
-            val accelArray = doubleArrayOf(accel.getDouble(0), accel.getDouble(1), accel.getDouble(2))
+            val accelArray =
+                    doubleArrayOf(accel.getDouble(0), accel.getDouble(1), accel.getDouble(2))
             val gyroArray = doubleArrayOf(gyro.getDouble(0), gyro.getDouble(1), gyro.getDouble(2))
             val magArray = doubleArrayOf(mag.getDouble(0), mag.getDouble(1), mag.getDouble(2))
-            val quatArray = doubleArrayOf(quat.getDouble(0), quat.getDouble(1), quat.getDouble(2), quat.getDouble(3))
-            val eulerArray = doubleArrayOf(euler.getDouble(0), euler.getDouble(1), euler.getDouble(2))
+            val quatArray =
+                    doubleArrayOf(
+                            quat.getDouble(0),
+                            quat.getDouble(1),
+                            quat.getDouble(2),
+                            quat.getDouble(3)
+                    )
+            val eulerArray =
+                    doubleArrayOf(euler.getDouble(0), euler.getDouble(1), euler.getDouble(2))
 
-            Bridge.sendImuDataEvent(accelArray, gyroArray, magArray, quatArray, eulerArray, System.currentTimeMillis())
+            Bridge.sendImuDataEvent(
+                    accelArray,
+                    gyroArray,
+                    magArray,
+                    quatArray,
+                    eulerArray,
+                    System.currentTimeMillis()
+            )
         } catch (e: JSONException) {
             Log.e(TAG, "Error parsing single IMU data", e)
         }
@@ -5784,9 +6882,9 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Send data directly to the glasses using the K900 protocol utility.
-     * This method uses K900ProtocolUtils.packJsonToK900 to handle C-wrapping and protocol formatting.
-     * Large messages are automatically chunked if they exceed the 400-byte threshold.
+     * Send data directly to the glasses using the K900 protocol utility. This method uses
+     * K900ProtocolUtils.packJsonToK900 to handle C-wrapping and protocol formatting. Large messages
+     * are automatically chunked if they exceed the 400-byte threshold.
      *
      * @param data The string data to be sent to the glasses
      */
@@ -5800,7 +6898,12 @@ class MentraLive : SGCManager() {
             val outgoingSummary = summarizeOutgoingMessage(data)
             val isPhotoRequest = outgoingSummary.contains("type=take_photo")
             if (isPhotoRequest) {
-                Bridge.log("LIVE: PHOTO PIPELINE BLE handoff — sendDataToGlasses() start, wakeup=" + wakeup + ", " + outgoingSummary)
+                Bridge.log(
+                        "LIVE: PHOTO PIPELINE BLE handoff — sendDataToGlasses() start, wakeup=" +
+                                wakeup +
+                                ", " +
+                                outgoingSummary
+                )
             }
 
             // First check if the message needs chunking
@@ -5816,7 +6919,9 @@ class MentraLive : SGCManager() {
             if (MessageChunker.needsChunking(testWrappedJson)) {
                 Bridge.log("LIVE: Message exceeds threshold, chunking required")
                 if (isPhotoRequest) {
-                    Bridge.log("LIVE: PHOTO PIPELINE BLE handoff — chunking enabled for request payload")
+                    Bridge.log(
+                            "LIVE: PHOTO PIPELINE BLE handoff — chunking enabled for request payload"
+                    )
                 }
 
                 // Extract message ID if present for ACK tracking
@@ -5832,7 +6937,11 @@ class MentraLive : SGCManager() {
                 val chunks = MessageChunker.createChunks(data, messageId, wakeup)
                 Bridge.log("LIVE: Sending " + chunks.size + " chunks")
                 if (isPhotoRequest) {
-                    Bridge.log("LIVE: PHOTO PIPELINE BLE handoff — created " + chunks.size + " chunks for transmission")
+                    Bridge.log(
+                            "LIVE: PHOTO PIPELINE BLE handoff — created " +
+                                    chunks.size +
+                                    " chunks for transmission"
+                    )
                 }
 
                 // Send each chunk
@@ -5841,7 +6950,11 @@ class MentraLive : SGCManager() {
                     val chunkStr = chunk.toString()
 
                     // Pack each chunk using the normal K900 protocol
-                    val packedData = K900ProtocolUtils.packJsonToK900(chunkStr, wakeup && i == 0) // Only wakeup on first chunk
+                    val packedData =
+                            K900ProtocolUtils.packJsonToK900(
+                                    chunkStr,
+                                    wakeup && i == 0
+                            ) // Only wakeup on first chunk
 
                     // Queue the chunk for sending
                     queueData(packedData)
@@ -5870,10 +6983,13 @@ class MentraLive : SGCManager() {
                 // Queue the data for sending
                 queueData(packedData)
                 if (isPhotoRequest) {
-                    Bridge.log("LIVE: PHOTO PIPELINE BLE handoff — packedLen=" + packedData.size + " bytes queued")
+                    Bridge.log(
+                            "LIVE: PHOTO PIPELINE BLE handoff — packedLen=" +
+                                    packedData.size +
+                                    " bytes queued"
+                    )
                 }
             }
-
         } catch (e: Exception) {
             Log.e(TAG, "Error creating data JSON", e)
         }
@@ -5890,17 +7006,27 @@ class MentraLive : SGCManager() {
             val appId = obj.optString("appId", "none")
             val transferMethod = obj.optString("transferMethod", "none")
             val bleImgId = obj.optString("bleImgId", "none")
-            val exposure = if (obj.has("exposureTimeNs")) obj.optLong("exposureTimeNs").toString() else "none"
+            val exposure =
+                    if (obj.has("exposureTimeNs")) obj.optLong("exposureTimeNs").toString()
+                    else "none"
             val iso = if (obj.has("iso")) obj.optInt("iso").toString() else "none"
             val mId = if (obj.has("mId")) obj.optLong("mId").toString() else "none"
-            return "type=" + type +
-                    ", requestId=" + requestId +
-                    ", appId=" + appId +
-                    ", transferMethod=" + transferMethod +
-                    ", bleImgId=" + bleImgId +
-                    ", exposureTimeNs=" + exposure +
-                    ", iso=" + iso +
-                    ", mId=" + mId
+            return "type=" +
+                    type +
+                    ", requestId=" +
+                    requestId +
+                    ", appId=" +
+                    appId +
+                    ", transferMethod=" +
+                    transferMethod +
+                    ", bleImgId=" +
+                    bleImgId +
+                    ", exposureTimeNs=" +
+                    exposure +
+                    ", iso=" +
+                    iso +
+                    ", mId=" +
+                    mId
         } catch (ignored: JSONException) {
             return "type=non_json, payloadLen=" + payload.length
         }
@@ -5953,9 +7079,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Disconnect from WiFi on the glasses
-     */
+    /** Disconnect from WiFi on the glasses */
     fun disconnectFromWifi() {
         Bridge.log("LIVE: 📶 Sending WiFi disconnect command to glasses")
 
@@ -5970,8 +7094,8 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Forget a WiFi network on the glasses - removes cached credentials
-     * This sends the SSID so the K900 SystemUI can properly clear the cached credentials
+     * Forget a WiFi network on the glasses - removes cached credentials This sends the SSID so the
+     * K900 SystemUI can properly clear the cached credentials
      */
     override fun forgetWifiNetwork(ssid: String) {
         Bridge.log("LIVE: 📶 Sending WiFi forget command for SSID: " + ssid)
@@ -6044,16 +7168,19 @@ class MentraLive : SGCManager() {
             val type = json.optString("type", "")
 
             when (type) {
-                "request_wifi_scan" ->
-                    requestWifiScan()
-                "rgb_led_control_on",
-                "rgb_led_control_off" -> {
+                "request_wifi_scan" -> requestWifiScan()
+                "rgb_led_control_on", "rgb_led_control_off" -> {
                     // Forward LED control commands directly to glasses via BLE
                     Log.d(TAG, "💡 Forwarding LED control command to glasses: " + type)
                     sendJson(json, true)
                 }
                 else -> {
-                    Log.w(TAG, "Unknown custom command type: " + type + " - attempting to forward to glasses")
+                    Log.w(
+                            TAG,
+                            "Unknown custom command type: " +
+                                    type +
+                                    " - attempting to forward to glasses"
+                    )
                     // Forward unknown commands to glasses - they might handle them
                     sendJson(json, true)
                 }
@@ -6063,9 +7190,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Send a JSON object to the glasses without ACK tracking (for non-critical messages)
-     */
+    /** Send a JSON object to the glasses without ACK tracking (for non-critical messages) */
     private fun sendJsonWithoutAck(json: JSONObject?, wakeup: Boolean) {
         if (json != null) {
             val jsonStr = json.toString()
@@ -6094,7 +7219,11 @@ class MentraLive : SGCManager() {
             command.put("V", 1)
             command.put("B", bodyData.toString())
 
-            Bridge.log("LIVE: " + (if (claimControl) "📍 Claiming" else "📍 Releasing") + " RGB LED control authority")
+            Bridge.log(
+                    "LIVE: " +
+                            (if (claimControl) "📍 Claiming" else "📍 Releasing") +
+                            " RGB LED control authority"
+            )
             sendJson(command, false)
             rgbLedAuthorityClaimed = claimControl
         } catch (e: JSONException) {
@@ -6103,16 +7232,18 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Send RGB LED control command to glasses
-     * Matches iOS implementation for cross-platform consistency
+     * Send RGB LED control command to glasses Matches iOS implementation for cross-platform
+     * consistency
      */
-    override fun sendRgbLedControl(requestId: String,
-                                   packageName: String?,
-                                   action: String,
-                                   color: String?,
-                                   onDurationMs: Int,
-                                   offDurationMs: Int,
-                                   count: Int) {
+    override fun sendRgbLedControl(
+            requestId: String,
+            packageName: String?,
+            action: String,
+            color: String?,
+            onDurationMs: Int,
+            offDurationMs: Int,
+            count: Int
+    ) {
         if (!isConnected || !glassesReady) {
             Bridge.log("LIVE: Cannot handle RGB LED control - glasses not connected")
             Bridge.sendRgbLedControlResponse(requestId, false, "glasses_not_connected")
@@ -6140,8 +7271,7 @@ class MentraLive : SGCManager() {
                     command.put("offtime", offDurationMs)
                     command.put("count", count)
                 }
-                "off" ->
-                    command.put("type", "rgb_led_control_off")
+                "off" -> command.put("type", "rgb_led_control_off")
                 else -> {
                     Bridge.log("LIVE: Unsupported RGB LED action: " + action)
                     Bridge.sendRgbLedControlResponse(requestId, false, "unsupported_action")
@@ -6157,26 +7287,17 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Convert color string to LED index
-     * Matches iOS implementation
-     */
+    /** Convert color string to LED index Matches iOS implementation */
     private fun ledIndexForColor(color: String?): Int {
         if (color == null) return 0
 
         when (color.lowercase()) {
-            "red" ->
-                return 0
-            "green" ->
-                return 1
-            "blue" ->
-                return 2
-            "orange" ->
-                return 3
-            "white" ->
-                return 4
-            else ->
-                return 0
+            "red" -> return 0
+            "green" -> return 1
+            "blue" -> return 2
+            "orange" -> return 3
+            "white" -> return 4
+            else -> return 0
         }
     }
 
@@ -6205,20 +7326,29 @@ class MentraLive : SGCManager() {
         return stats.toString()
     }
 
-    //---------------------------------------
+    // ---------------------------------------
     // File Transfer Methods
-    //---------------------------------------
+    // ---------------------------------------
 
-    /**
-     * Process a received file packet
-     */
+    /** Process a received file packet */
     private fun processFilePacket(packetInfo: K900ProtocolUtils.FilePacketInfo) {
         // Calculate total packets based on actual pack size (not hardcoded FILE_PACK_SIZE)
-        val totalPackets = if (packetInfo.packSize > 0)
-            (packetInfo.fileSize + packetInfo.packSize - 1) / packetInfo.packSize else 1
-        Bridge.log("LIVE: 📦 Processing file packet: " + packetInfo.fileName +
-              " [" + packetInfo.packIndex + "/" + (totalPackets - 1) + "]" +
-              " (" + packetInfo.packSize + " bytes)")
+        val totalPackets =
+                if (packetInfo.packSize > 0)
+                        (packetInfo.fileSize + packetInfo.packSize - 1) / packetInfo.packSize
+                else 1
+        Bridge.log(
+                "LIVE: 📦 Processing file packet: " +
+                        packetInfo.fileName +
+                        " [" +
+                        packetInfo.packIndex +
+                        "/" +
+                        (totalPackets - 1) +
+                        "]" +
+                        " (" +
+                        packetInfo.packSize +
+                        " bytes)"
+        )
 
         // Check if this is a BLE photo transfer we're tracking
         // The filename might have an extension (.avif or .jpg), but we track by ID only
@@ -6236,11 +7366,20 @@ class MentraLive : SGCManager() {
 
             if (incidentRelay.session == null) {
                 activeFileTransfers.remove(packetInfo.fileName)
-                incidentRelay.session = FileTransferSession(packetInfo.fileName, packetInfo.fileSize)
+                incidentRelay.session =
+                        FileTransferSession(packetInfo.fileName, packetInfo.fileSize)
                 incidentRelay.session!!.recalculateTotalPackets(packetInfo.packSize)
-                Bridge.log("LIVE: 📦 Started BLE incident log transfer: " + packetInfo.fileName
-                        + " (" + packetInfo.fileSize + " bytes, " + incidentRelay.session!!.totalPackets
-                        + " packets, packSize=" + packetInfo.packSize + ")")
+                Bridge.log(
+                        "LIVE: 📦 Started BLE incident log transfer: " +
+                                packetInfo.fileName +
+                                " (" +
+                                packetInfo.fileSize +
+                                " bytes, " +
+                                incidentRelay.session!!.totalPackets +
+                                " packets, packSize=" +
+                                packetInfo.packSize +
+                                ")"
+                )
             }
 
             val added = incidentRelay.session!!.addPacket(packetInfo.packIndex, packetInfo.data)
@@ -6257,8 +7396,13 @@ class MentraLive : SGCManager() {
                     }
                 } else {
                     val missingPackets = incidentRelay.session!!.getMissingPackets()
-                    Log.e(TAG, "❌ BLE incident log transfer incomplete. Missing " + missingPackets.size
-                            + " packets: " + missingPackets)
+                    Log.e(
+                            TAG,
+                            "❌ BLE incident log transfer incomplete. Missing " +
+                                    missingPackets.size +
+                                    " packets: " +
+                                    missingPackets
+                    )
                     sendTransferCompleteConfirmation(packetInfo.fileName, false)
                     // Keep relay entry so glasses can retry after transfer_complete:false.
                     incidentRelay.session = null
@@ -6269,18 +7413,35 @@ class MentraLive : SGCManager() {
         }
 
         val photoTransfer = blePhotoTransfers[bleImgId]
-        Bridge.log("LIVE: 📦 BLE photo transfer for requestId: " + bleImgId + " found: " + (photoTransfer != null))
+        Bridge.log(
+                "LIVE: 📦 BLE photo transfer for requestId: " +
+                        bleImgId +
+                        " found: " +
+                        (photoTransfer != null)
+        )
         if (photoTransfer != null) {
             // This is a BLE photo transfer
-            Bridge.log("LIVE: 📦 BLE photo transfer packet for requestId: " + photoTransfer.requestId)
+            Bridge.log(
+                    "LIVE: 📦 BLE photo transfer packet for requestId: " + photoTransfer.requestId
+            )
 
             // Get or create session for this transfer
             if (photoTransfer.session == null) {
-                photoTransfer.session = FileTransferSession(packetInfo.fileName, packetInfo.fileSize)
+                photoTransfer.session =
+                        FileTransferSession(packetInfo.fileName, packetInfo.fileSize)
                 // Recalculate total packets based on actual pack size (handles variable MTU)
                 photoTransfer.session!!.recalculateTotalPackets(packetInfo.packSize)
-                Bridge.log("LIVE: 📦 Started BLE photo transfer: " + packetInfo.fileName +
-                      " (" + packetInfo.fileSize + " bytes, " + photoTransfer.session!!.totalPackets + " packets, packSize=" + packetInfo.packSize + ")")
+                Bridge.log(
+                        "LIVE: 📦 Started BLE photo transfer: " +
+                                packetInfo.fileName +
+                                " (" +
+                                packetInfo.fileSize +
+                                " bytes, " +
+                                photoTransfer.session!!.totalPackets +
+                                " packets, packSize=" +
+                                packetInfo.packSize +
+                                ")"
+                )
             }
 
             // Add packet to session
@@ -6292,15 +7453,27 @@ class MentraLive : SGCManager() {
                     // Transfer is complete - process successfully
                     val transferEndTime = System.currentTimeMillis()
                     val totalDuration = transferEndTime - photoTransfer.phoneStartTime
-                    val bleTransferDuration = if (photoTransfer.bleTransferStartTime > 0)
-                        (transferEndTime - photoTransfer.bleTransferStartTime) else 0
+                    val bleTransferDuration =
+                            if (photoTransfer.bleTransferStartTime > 0)
+                                    (transferEndTime - photoTransfer.bleTransferStartTime)
+                            else 0
 
                     Bridge.log("LIVE: ✅ BLE photo transfer complete: " + packetInfo.fileName)
-                    Bridge.log("LIVE: ⏱️ Total duration (request to complete): " + totalDuration + "ms")
-                    Bridge.log("LIVE: ⏱️ Glasses compression: " + photoTransfer.glassesCompressionDurationMs + "ms")
+                    Bridge.log(
+                            "LIVE: ⏱️ Total duration (request to complete): " + totalDuration + "ms"
+                    )
+                    Bridge.log(
+                            "LIVE: ⏱️ Glasses compression: " +
+                                    photoTransfer.glassesCompressionDurationMs +
+                                    "ms"
+                    )
                     if (bleTransferDuration > 0) {
                         Bridge.log("LIVE: ⏱️ BLE transfer duration: " + bleTransferDuration + "ms")
-                        Bridge.log("LIVE: 📊 Transfer rate: " + (packetInfo.fileSize * 1000 / bleTransferDuration) + " bytes/sec")
+                        Bridge.log(
+                                "LIVE: 📊 Transfer rate: " +
+                                        (packetInfo.fileSize * 1000 / bleTransferDuration) +
+                                        " bytes/sec"
+                        )
                     }
 
                     // Get complete image data (AVIF or JPEG)
@@ -6318,7 +7491,13 @@ class MentraLive : SGCManager() {
                 } else {
                     // Final packet received but transfer incomplete - tell glasses to retry
                     val missingPackets = photoTransfer.session!!.getMissingPackets()
-                    Log.e(TAG, "❌ BLE photo transfer incomplete after final packet. Missing " + missingPackets.size + " packets: " + missingPackets)
+                    Log.e(
+                            TAG,
+                            "❌ BLE photo transfer incomplete after final packet. Missing " +
+                                    missingPackets.size +
+                                    " packets: " +
+                                    missingPackets
+                    )
                     Log.e(TAG, "❌ Telling glasses to retry entire transfer")
 
                     // Tell glasses transfer failed, they will retry. Keep the photo transfer
@@ -6340,66 +7519,100 @@ class MentraLive : SGCManager() {
             session.recalculateTotalPackets(packetInfo.packSize)
             activeFileTransfers[packetInfo.fileName] = session
 
-            Bridge.log("LIVE: 📦 Started new file transfer: " + packetInfo.fileName +
-                  " (" + packetInfo.fileSize + " bytes, " + session.totalPackets + " packets, packSize=" + packetInfo.packSize + ")")
+            Bridge.log(
+                    "LIVE: 📦 Started new file transfer: " +
+                            packetInfo.fileName +
+                            " (" +
+                            packetInfo.fileSize +
+                            " bytes, " +
+                            session.totalPackets +
+                            " packets, packSize=" +
+                            packetInfo.packSize +
+                            ")"
+            )
         }
 
-            // Add packet to session
-            val added = session.addPacket(packetInfo.packIndex, packetInfo.data)
+        // Add packet to session
+        val added = session.addPacket(packetInfo.packIndex, packetInfo.data)
 
-            if (added) {
-                // BES chip handles ACKs automatically
-                Bridge.log("LIVE: 📦 Packet " + packetInfo.packIndex + " received successfully (BES will auto-ACK)")
+        if (added) {
+            // BES chip handles ACKs automatically
+            Bridge.log(
+                    "LIVE: 📦 Packet " +
+                            packetInfo.packIndex +
+                            " received successfully (BES will auto-ACK)"
+            )
 
-                // Check completion when final packet arrives or transfer is complete
-                if (session.shouldCheckCompletion(packetInfo.packIndex)) {
-                    if (session.isComplete) {
-                        // Transfer is complete - process successfully
-                        Bridge.log("LIVE: 📦 File transfer complete: " + packetInfo.fileName)
+            // Check completion when final packet arrives or transfer is complete
+            if (session.shouldCheckCompletion(packetInfo.packIndex)) {
+                if (session.isComplete) {
+                    // Transfer is complete - process successfully
+                    Bridge.log("LIVE: 📦 File transfer complete: " + packetInfo.fileName)
 
-                        // Assemble and save the file
-                        val fileData = session.assembleFile()
-                        if (fileData != null) {
-                            saveReceivedFile(packetInfo.fileName, fileData, packetInfo.fileType)
-                        }
-
-                        // Send completion confirmation to glasses
-                        sendTransferCompleteConfirmation(packetInfo.fileName, true)
-
-                        // Remove from active transfers
-                        activeFileTransfers.remove(packetInfo.fileName)
-                    } else {
-                        // Final packet received but transfer incomplete - tell glasses to retry
-                        val missingPackets = session.getMissingPackets()
-                        Log.e(TAG, "❌ File transfer incomplete after final packet. Missing " + missingPackets.size + " packets: " + missingPackets)
-                        Log.e(TAG, "❌ Expected " + session.totalPackets + " packets, received FILE_READ notifications: " + fileReadNotificationCount)
-                        Log.e(TAG, "❌ Telling glasses to retry entire transfer")
-
-                        // Tell glasses transfer failed, they will retry
-                        sendTransferCompleteConfirmation(packetInfo.fileName, false)
-                        activeFileTransfers.remove(packetInfo.fileName)
+                    // Assemble and save the file
+                    val fileData = session.assembleFile()
+                    if (fileData != null) {
+                        saveReceivedFile(packetInfo.fileName, fileData, packetInfo.fileType)
                     }
+
+                    // Send completion confirmation to glasses
+                    sendTransferCompleteConfirmation(packetInfo.fileName, true)
+
+                    // Remove from active transfers
+                    activeFileTransfers.remove(packetInfo.fileName)
+                } else {
+                    // Final packet received but transfer incomplete - tell glasses to retry
+                    val missingPackets = session.getMissingPackets()
+                    Log.e(
+                            TAG,
+                            "❌ File transfer incomplete after final packet. Missing " +
+                                    missingPackets.size +
+                                    " packets: " +
+                                    missingPackets
+                    )
+                    Log.e(
+                            TAG,
+                            "❌ Expected " +
+                                    session.totalPackets +
+                                    " packets, received FILE_READ notifications: " +
+                                    fileReadNotificationCount
+                    )
+                    Log.e(TAG, "❌ Telling glasses to retry entire transfer")
+
+                    // Tell glasses transfer failed, they will retry
+                    sendTransferCompleteConfirmation(packetInfo.fileName, false)
+                    activeFileTransfers.remove(packetInfo.fileName)
                 }
-            } else {
-                // Packet already received or invalid index
-                Log.w(TAG, "📦 Duplicate or invalid packet: " + packetInfo.packIndex)
-                // BES chip handles ACKs automatically
             }
+        } else {
+            // Packet already received or invalid index
+            Log.w(TAG, "📦 Duplicate or invalid packet: " + packetInfo.packIndex)
+            // BES chip handles ACKs automatically
+        }
     }
 
-    /**
-     * Request missing packets from glasses
-     */
+    /** Request missing packets from glasses */
     private fun requestMissingPackets(fileName: String, missingPackets: List<Int>) {
         if (missingPackets.isEmpty()) {
-            Bridge.log("LIVE: ✅ No missing packets for " + fileName + " - should not have been called")
+            Bridge.log(
+                    "LIVE: ✅ No missing packets for " + fileName + " - should not have been called"
+            )
             return
         }
 
         // Check if too many packets are missing (>50% = likely failure)
         val session = activeFileTransfers[fileName]
         if (session != null && missingPackets.size > session.totalPackets / 2) {
-            Log.e(TAG, "❌ Too many missing packets (" + missingPackets.size + "/" + session.totalPackets + ") for " + fileName + " - treating as failed transfer")
+            Log.e(
+                    TAG,
+                    "❌ Too many missing packets (" +
+                            missingPackets.size +
+                            "/" +
+                            session.totalPackets +
+                            ") for " +
+                            fileName +
+                            " - treating as failed transfer"
+            )
 
             // Send failure confirmation to glasses
             sendTransferCompleteConfirmation(fileName, false)
@@ -6409,7 +7622,14 @@ class MentraLive : SGCManager() {
             return
         }
 
-        Bridge.log("LIVE: 🔍 Requesting retransmission of " + missingPackets.size + " missing packets for " + fileName + ": " + missingPackets)
+        Bridge.log(
+                "LIVE: 🔍 Requesting retransmission of " +
+                        missingPackets.size +
+                        " missing packets for " +
+                        fileName +
+                        ": " +
+                        missingPackets
+        )
 
         try {
             // Send missing packets request to glasses
@@ -6424,15 +7644,12 @@ class MentraLive : SGCManager() {
             request.put("missingPackets", missingArray)
 
             sendJson(request, true) // Wake up glasses for this request
-
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating missing packets request", e)
         }
     }
 
-    /**
-     * Send transfer completion confirmation to glasses
-     */
+    /** Send transfer completion confirmation to glasses */
     private fun sendTransferCompleteConfirmation(fileName: String, success: Boolean) {
         try {
             val confirmation = JSONObject()
@@ -6441,17 +7658,22 @@ class MentraLive : SGCManager() {
             confirmation.put("success", success)
             confirmation.put("timestamp", System.currentTimeMillis())
 
-            Log.d(TAG, (if (success) "✅" else "❌") + " Sending transfer completion confirmation for: " + fileName + " (success: " + success + ")")
+            Log.d(
+                    TAG,
+                    (if (success) "✅" else "❌") +
+                            " Sending transfer completion confirmation for: " +
+                            fileName +
+                            " (success: " +
+                            success +
+                            ")"
+            )
             sendJson(confirmation, true)
-
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating transfer completion confirmation", e)
         }
     }
 
-    /**
-     * Save received file to storage
-     */
+    /** Save received file to storage */
     private fun saveReceivedFile(fileName: String, fileData: ByteArray, fileType: Byte) {
         try {
             // Get or create the directory for saving files
@@ -6476,10 +7698,8 @@ class MentraLive : SGCManager() {
                         extension = ".jpg" // Default to JPEG if no extension
                     }
                 }
-                K900ProtocolUtils.CMD_TYPE_VIDEO ->
-                    extension = ".mp4"
-                K900ProtocolUtils.CMD_TYPE_AUDIO ->
-                    extension = ".wav"
+                K900ProtocolUtils.CMD_TYPE_VIDEO -> extension = ".mp4"
+                K900ProtocolUtils.CMD_TYPE_AUDIO -> extension = ".wav"
                 else -> {
                     // Try to get extension from original filename
                     val dotIndex = fileName.lastIndexOf('.')
@@ -6507,15 +7727,12 @@ class MentraLive : SGCManager() {
                 // Notify about the received file
                 notifyFileReceived(file.absolutePath, fileType)
             }
-
         } catch (e: Exception) {
             Log.e(TAG, "Error saving received file: " + fileName, e)
         }
     }
 
-    /**
-     * Notify listeners about received file
-     */
+    /** Notify listeners about received file */
     private fun notifyFileReceived(filePath: String, fileType: Byte) {
         // Create event based on file type
         val event = JSONObject()
@@ -6527,7 +7744,7 @@ class MentraLive : SGCManager() {
 
             // Emit event through data observable
             // if (dataObservable != null) {
-                // dataObservable.onNext(event);
+            // dataObservable.onNext(event);
             // }
 
             // You could also post an EventBus event here if needed
@@ -6538,19 +7755,32 @@ class MentraLive : SGCManager() {
         }
     }
 
-    private fun uploadBleIncidentLogPayload(relay: BleIncidentLogRelay, fileName: String,
-                                           jsonUtf8: ByteArray) {
+    private fun uploadBleIncidentLogPayload(
+            relay: BleIncidentLogRelay,
+            fileName: String,
+            jsonUtf8: ByteArray
+    ) {
         val token = getCoreToken()
-        IncidentLogBleUploadService.upload(relay.apiBaseUrl, relay.incidentId, token, jsonUtf8
-        ) { success, message ->
+        IncidentLogBleUploadService.upload(relay.apiBaseUrl, relay.incidentId, token, jsonUtf8) {
+                success,
+                message ->
             Handler(Looper.getMainLooper()).post {
                 if (success) {
-                    Bridge.log("LIVE: ✅ Incident log BLE relay uploaded (" + relay.kind + "): "
-                            + relay.incidentId)
+                    Bridge.log(
+                            "LIVE: ✅ Incident log BLE relay uploaded (" +
+                                    relay.kind +
+                                    "): " +
+                                    relay.incidentId
+                    )
                     bleIncidentLogRelays.remove(relay.fileBaseKey)
                 } else {
-                    Log.e(TAG, "❌ Incident log BLE relay upload failed (" + relay.kind + "): "
-                            + message)
+                    Log.e(
+                            TAG,
+                            "❌ Incident log BLE relay upload failed (" +
+                                    relay.kind +
+                                    "): " +
+                                    message
+                    )
                     // Keep relay entry so glasses can retry after transfer_complete:false.
                     relay.session = null
                 }
@@ -6559,9 +7789,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Process and upload a BLE photo transfer
-     */
+    /** Process and upload a BLE photo transfer */
     private fun processAndUploadBlePhoto(transfer: BlePhotoTransfer, imageData: ByteArray) {
         Bridge.log("LIVE: Processing BLE photo for upload. RequestId: " + transfer.requestId)
         val uploadStartTime = System.currentTimeMillis()
@@ -6587,36 +7815,53 @@ class MentraLive : SGCManager() {
 
         // Use BlePhotoUploadService to handle decoding and upload
         BlePhotoUploadService.processAndUploadPhoto(
-            imageData,
-            transfer.requestId,
-            transfer.webhookUrl,
-            transfer.authToken,
-            object : BlePhotoUploadService.UploadCallback {
-                override fun onSuccess(requestId: String, responseBody: String?) {
-                    val uploadDuration = System.currentTimeMillis() - uploadStartTime
-                    val totalDuration = System.currentTimeMillis() - transfer.phoneStartTime
+                imageData,
+                transfer.requestId,
+                transfer.webhookUrl,
+                transfer.authToken,
+                object : BlePhotoUploadService.UploadCallback {
+                    override fun onSuccess(requestId: String, responseBody: String?) {
+                        val uploadDuration = System.currentTimeMillis() - uploadStartTime
+                        val totalDuration = System.currentTimeMillis() - transfer.phoneStartTime
 
-                    Bridge.log("LIVE: ✅ BLE photo uploaded successfully via phone relay for requestId: " + requestId)
-                    Bridge.log("LIVE: ⏱️ Upload duration: " + uploadDuration + "ms")
-                    Bridge.log("LIVE: ⏱️ Total end-to-end duration: " + totalDuration + "ms")
-                    sendPhotoTerminalSuccessResponse(requestId, transfer.webhookUrl, responseBody)
-                }
+                        Bridge.log(
+                                "LIVE: ✅ BLE photo uploaded successfully via phone relay for requestId: " +
+                                        requestId
+                        )
+                        Bridge.log("LIVE: ⏱️ Upload duration: " + uploadDuration + "ms")
+                        Bridge.log("LIVE: ⏱️ Total end-to-end duration: " + totalDuration + "ms")
+                        sendPhotoTerminalSuccessResponse(
+                                requestId,
+                                transfer.webhookUrl,
+                                responseBody
+                        )
+                    }
 
-                override fun onError(requestId: String, error: String?) {
-                    val uploadDuration = System.currentTimeMillis() - uploadStartTime
-                    Log.e(TAG, "❌ BLE photo upload failed for requestId: " + requestId + ", error: " + error)
-                    Log.e(TAG, "⏱️ Failed after: " + uploadDuration + "ms")
-                    Bridge.sendPhotoError(
-                            requestId,
-                            "PHONE_UPLOAD_FAILED",
-                            "BLE photo upload failed: " + error)
+                    override fun onError(requestId: String, error: String?) {
+                        val uploadDuration = System.currentTimeMillis() - uploadStartTime
+                        Log.e(
+                                TAG,
+                                "❌ BLE photo upload failed for requestId: " +
+                                        requestId +
+                                        ", error: " +
+                                        error
+                        )
+                        Log.e(TAG, "⏱️ Failed after: " + uploadDuration + "ms")
+                        Bridge.sendPhotoError(
+                                requestId,
+                                "PHONE_UPLOAD_FAILED",
+                                "BLE photo upload failed: " + error
+                        )
+                    }
                 }
-            }
         )
     }
 
     private fun sendPhotoTerminalSuccessResponse(
-            requestId: String, uploadUrl: String?, responseBody: String?) {
+            requestId: String,
+            uploadUrl: String?,
+            responseBody: String?
+    ) {
         val event = HashMap<String, Any>()
         event["type"] = "photo_response"
         event["state"] = "success"
@@ -6628,7 +7873,10 @@ class MentraLive : SGCManager() {
         Bridge.sendPhotoResponse(event)
     }
 
-    private fun copyPhotoUploadResponseMetadata(event: MutableMap<String, Any>, responseBody: String?) {
+    private fun copyPhotoUploadResponseMetadata(
+            event: MutableMap<String, Any>,
+            responseBody: String?
+    ) {
         if (responseBody == null || responseBody.trim().isEmpty()) {
             return
         }
@@ -6652,9 +7900,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Send photo upload success notification to glasses
-     */
+    /** Send photo upload success notification to glasses */
     private fun sendPhotoUploadSuccess(requestId: String) {
         try {
             val json = JSONObject()
@@ -6668,9 +7914,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Send photo upload error notification to glasses
-     */
+    /** Send photo upload error notification to glasses */
     private fun sendPhotoUploadError(requestId: String, error: String) {
         try {
             val json = JSONObject()
@@ -6686,9 +7930,8 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Get the core authentication token.
-     * Reads from DeviceStore first (synced from JS via BluetoothSdkModule.update), then falls back to
-     * SharedPreferences for backward compatibility.
+     * Get the core authentication token. Reads from DeviceStore first (synced from JS via
+     * BluetoothSdkModule.update), then falls back to SharedPreferences for backward compatibility.
      */
     private fun getCoreToken(): String {
         val fromStore = DeviceStore.get("bluetooth", "core_token")
@@ -6703,9 +7946,7 @@ class MentraLive : SGCManager() {
         return if (fromPrefs != null) fromPrefs else ""
     }
 
-    /**
-     * Send BLE transfer completion notification
-     */
+    /** Send BLE transfer completion notification */
     private fun sendBleTransferComplete(requestId: String, bleImgId: String, success: Boolean) {
         try {
             val json = JSONObject()
@@ -6722,10 +7963,9 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Send BLE MTU config to glasses so they can adjust file packet sizes.
-     * The BES2700 chip on the glasses truncates packets to 253 bytes (256 MTU - 3 ATT header)
-     * regardless of negotiated MTU. By sending the actual MTU, glasses can use smaller
-     * packet sizes that fit within this limit.
+     * Send BLE MTU config to glasses so they can adjust file packet sizes. The BES2700 chip on the
+     * glasses truncates packets to 253 bytes (256 MTU - 3 ATT header) regardless of negotiated MTU.
+     * By sending the actual MTU, glasses can use smaller packet sizes that fit within this limit.
      */
     private fun sendBleMtuConfig(mtu: Int) {
         try {
@@ -6740,9 +7980,7 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Send user settings to glasses after connection is established
-     */
+    /** Send user settings to glasses after connection is established */
     private fun sendUserSettings() {
         Bridge.log("LIVE: [VIDEO_SYNC] Sending user settings to glasses on connection")
 
@@ -6771,8 +8009,7 @@ class MentraLive : SGCManager() {
     override fun sendVoiceActivityDetectionSetting() {
         val value = DeviceStore.get("bluetooth", "voice_activity_detection_enabled")
         val enabled =
-                if (value is Boolean)
-                    value
+                if (value is Boolean) value
                 else BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
 
         Bridge.log("LIVE: 🎤 Sending Voice Activity Detection setting to glasses: " + enabled)
@@ -6795,7 +8032,8 @@ class MentraLive : SGCManager() {
             val packedData =
                     K900ProtocolUtils.packDataToK900(
                             cmdObject.toString().toByteArray(StandardCharsets.UTF_8),
-                            K900ProtocolUtils.CMD_TYPE_STRING)
+                            K900ProtocolUtils.CMD_TYPE_STRING
+                    )
             if (packedData == null) {
                 Bridge.log("LIVE: Failed to pack Voice Activity Detection setting command")
                 return
@@ -6807,33 +8045,26 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /**
-     * Send button photo settings to glasses
-     */
+    /** Send button photo settings to glasses */
     override fun sendButtonPhotoSettings() {
         val size = DeviceStore.get("bluetooth", "button_photo_size") as String?
         sendButtonPhotoSettings(null, size)
     }
 
-    /**
-     * Send button camera LED setting to glasses
-     */
+    /** Send button camera LED setting to glasses */
     override fun sendButtonCameraLedSetting() {
         val enabled = DeviceStore.get("bluetooth", "button_camera_led") as Boolean
         sendButtonCameraLedSetting(null, enabled)
     }
 
-    /**
-     * Send camera FOV setting to glasses (K900 / Mentra Live).
-     */
+    /** Send camera FOV setting to glasses (K900 / Mentra Live). */
     override fun sendCameraFovSetting() {
         var fov = 118
         var roiPosition = 0
         try {
             val raw = DeviceStore.get("bluetooth", "camera_fov")
             if (raw is Map<*, *>) {
-                @Suppress("UNCHECKED_CAST")
-                val map = raw as Map<String, Any>
+                @Suppress("UNCHECKED_CAST") val map = raw as Map<String, Any>
                 val f = map["fov"]
                 val r = map["roi_position"]
                 if (f is Number) fov = f.toInt()
@@ -6871,8 +8102,8 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Send button max recording time to glasses
-     * Matches iOS MentraLive.swift sendButtonMaxRecordingTime pattern
+     * Send button max recording time to glasses Matches iOS MentraLive.swift
+     * sendButtonMaxRecordingTime pattern
      */
     override fun sendButtonMaxRecordingTime() {
         val rawMinutes = DeviceStore.get("bluetooth", "button_max_recording_time")
@@ -6901,7 +8132,12 @@ class MentraLive : SGCManager() {
         }
     }
 
-    override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {
+    override fun startVideoRecording(
+            requestId: String,
+            save: Boolean,
+            flash: Boolean,
+            sound: Boolean
+    ) {
         startVideoRecording(requestId, save, flash, sound, 0, 0, 0) // Use defaults
     }
 
@@ -6915,9 +8151,32 @@ class MentraLive : SGCManager() {
      * @param height Video height (0 for default)
      * @param fps Video frame rate (0 for default)
      */
-    override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean, width: Int, height: Int, fps: Int) {
-        Bridge.log("LIVE: Starting video recording: requestId=" + requestId + ", save=" + save +
-                   ", flash=" + flash + ", sound=" + sound + ", resolution=" + width + "x" + height + "@" + fps + "fps")
+    override fun startVideoRecording(
+            requestId: String,
+            save: Boolean,
+            flash: Boolean,
+            sound: Boolean,
+            width: Int,
+            height: Int,
+            fps: Int
+    ) {
+        Bridge.log(
+                "LIVE: Starting video recording: requestId=" +
+                        requestId +
+                        ", save=" +
+                        save +
+                        ", flash=" +
+                        flash +
+                        ", sound=" +
+                        sound +
+                        ", resolution=" +
+                        width +
+                        "x" +
+                        height +
+                        "@" +
+                        fps +
+                        "fps"
+        )
 
         if (!isConnected) {
             Log.w(TAG, "Cannot start video recording - not connected")
@@ -6969,11 +8228,9 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Process incoming LC3 audio packet from the glasses.
-     * Packet Structure:
-     * Byte 0: 0xF1 (Audio data identifier)
-     * Byte 1: Sequence number (0-255)
-     * Bytes 2-401: LC3 encoded audio data (400 bytes - 10 frames × 40 bytes per frame)
+     * Process incoming LC3 audio packet from the glasses. Packet Structure: Byte 0: 0xF1 (Audio
+     * data identifier) Byte 1: Sequence number (0-255) Bytes 2-401: LC3 encoded audio data (400
+     * bytes - 10 frames × 40 bytes per frame)
      */
     private fun processLc3AudioPacket(data: ByteArray?) {
         // Bridge.log("LIVE: Processing LC3 audio packet: " + data.length + " bytes");
@@ -6990,8 +8247,16 @@ class MentraLive : SGCManager() {
             val receiveTime = System.currentTimeMillis()
 
             // Basic sequence validation
-            if (lastReceivedLc3Sequence != (-1).toByte() && (lastReceivedLc3Sequence + 1).toByte() != sequenceNumber) {
-                Log.w(TAG, "LC3 packet sequence mismatch. Expected: " + (lastReceivedLc3Sequence + 1) + ", Got: " + sequenceNumber)
+            if (lastReceivedLc3Sequence != (-1).toByte() &&
+                            (lastReceivedLc3Sequence + 1).toByte() != sequenceNumber
+            ) {
+                Log.w(
+                        TAG,
+                        "LC3 packet sequence mismatch. Expected: " +
+                                (lastReceivedLc3Sequence + 1) +
+                                ", Got: " +
+                                sequenceNumber
+                )
             }
             lastReceivedLc3Sequence = sequenceNumber
 
@@ -7001,33 +8266,39 @@ class MentraLive : SGCManager() {
             logLc3PacketDetails(lc3Data, sequenceNumber, receiveTime)
             // saveLc3AudioPacket(lc3Data, sequenceNumber);
 
-            // Bridge.log("LIVE: Received LC3 audio packet seq=" + sequenceNumber + ", size=" + lc3Data.length);
+            // Bridge.log("LIVE: Received LC3 audio packet seq=" + sequenceNumber + ", size=" +
+            // lc3Data.length);
 
             // Forward raw LC3 to DeviceManager (matches iOS behavior)
             // MentraLive uses 40-byte LC3 frames
             DeviceManager.getInstance().handleGlassesMicData(lc3Data, LC3_FRAME_SIZE)
 
             // Bridge.log("LIVE: 🔊 Audio playback enabled: " + audioPlaybackEnabled);
-        // } else {
-            // Log.w(TAG, "No audio processing callback registered - audio data will not be processed");
-        // }
+            // } else {
+            // Log.w(TAG, "No audio processing callback registered - audio data will not be
+            // processed");
+            // }
 
             // Play LC3 audio directly through LC3 player if enabled
             // This allows monitoring of the glasses microphone in real-time
             if (audioPlaybackEnabled && lc3AudioPlayer != null) {
                 // log 1/50th of the time:
                 if (Math.random() < 0.02) {
-                    Bridge.log("LIVE: 🔊 Playing LC3 audio through phone speakers: " + data.size + " bytes")
+                    Bridge.log(
+                            "LIVE: 🔊 Playing LC3 audio through phone speakers: " +
+                                    data.size +
+                                    " bytes"
+                    )
                 }
                 // The data array already contains the full packet with F1 header and sequence
                 // Just pass it directly to the LC3 player
                 lc3AudioPlayer!!.write(data, 0, data.size)
-                // Bridge.log("LIVE: 🔊 Playing LC3 audio through phone speakers: " + data.length + " bytes");
+                // Bridge.log("LIVE: 🔊 Playing LC3 audio through phone speakers: " + data.length +
+                // " bytes");
             } else if (!audioPlaybackEnabled) {
                 // Audio playback is disabled - only processing for PCM conversion
                 // Bridge.log("LIVE: 🔇 Audio playback disabled - processing for PCM only");
             }
-
         } else {
             Bridge.log("LIVE: ⚠️ Received non-audio packet on LC3 characteristic.")
         }
@@ -7035,7 +8306,8 @@ class MentraLive : SGCManager() {
 
     /**
      * Sends an LC3 audio packet to the glasses.
-     * @param lc3Data The raw LC3 encoded audio data (e.g., 400 bytes - 10 frames × 40 bytes per frame).
+     * @param lc3Data The raw LC3 encoded audio data (e.g., 400 bytes - 10 frames × 40 bytes per
+     * frame).
      */
     fun sendLc3AudioPacket(lc3Data: ByteArray?) {
         if (lc3WriteCharacteristic == null) {
@@ -7058,9 +8330,7 @@ class MentraLive : SGCManager() {
         queueData(packet)
     }
 
-    /**
-     * Initialize LC3 audio logging and file saving
-     */
+    /** Initialize LC3 audio logging and file saving */
     private fun initializeLc3Logging() {
         if (!LC3_LOGGING_ENABLED) {
             return
@@ -7080,7 +8350,13 @@ class MentraLive : SGCManager() {
                     // Try to get more info about why it failed
                     val parentDir = logsDir.parentFile
                     if (parentDir != null) {
-                        Log.e(TAG, "📁 Parent directory exists: " + parentDir.exists() + ", writable: " + parentDir.canWrite())
+                        Log.e(
+                                TAG,
+                                "📁 Parent directory exists: " +
+                                        parentDir.exists() +
+                                        ", writable: " +
+                                        parentDir.canWrite()
+                        )
                     }
                     return // Exit early if directory creation fails
                 }
@@ -7103,15 +8379,12 @@ class MentraLive : SGCManager() {
 
             Log.i(TAG, "🎵 LC3 Audio logging initialized - File: " + currentLc3FileName)
             Log.i(TAG, "📁 LC3 logs directory: " + logsDir.absolutePath)
-
         } catch (e: Exception) {
             Log.e(TAG, "❌ Failed to initialize LC3 audio logging", e)
         }
     }
 
-    /**
-     * Save LC3 audio packet to file
-     */
+    /** Save LC3 audio packet to file */
     private fun saveLc3AudioPacket(lc3Data: ByteArray, sequenceNumber: Byte) {
         Bridge.log("LIVE: 🎵 Saving LC3 audio packet to file: " + lc3Data.size + " bytes")
         if (!LC3_SAVING_ENABLED || lc3AudioFileStream == null) {
@@ -7128,14 +8401,14 @@ class MentraLive : SGCManager() {
             Log.i(TAG, "📁 LC3 Audio file path for saving failed %%%%%%%: " + currentLc3FileName)
         }
 
-
         try {
             // Write packet header: [timestamp][sequence][length][data]
             val timestamp = System.currentTimeMillis()
             val timeStr = lc3PacketTimestampFormat.format(Date(timestamp))
 
             // Write timestamp and metadata
-            val header = String.format("[%s] SEQ:%d LEN:%d\n", timeStr, sequenceNumber, lc3Data.size)
+            val header =
+                    String.format("[%s] SEQ:%d LEN:%d\n", timeStr, sequenceNumber, lc3Data.size)
             lc3AudioFileStream!!.write(header.toByteArray(StandardCharsets.UTF_8))
 
             // Write raw LC3 data
@@ -7143,15 +8416,12 @@ class MentraLive : SGCManager() {
             lc3AudioFileStream!!.write('\n'.code) // Newline separator
 
             lc3AudioFileStream!!.flush()
-
         } catch (e: Exception) {
             Log.e(TAG, "❌ Failed to save LC3 audio packet", e)
         }
     }
 
-    /**
-     * Log detailed LC3 packet information
-     */
+    /** Log detailed LC3 packet information */
     private fun logLc3PacketDetails(data: ByteArray, sequenceNumber: Byte, receiveTime: Long) {
         if (!LC3_LOGGING_ENABLED) {
             return
@@ -7173,7 +8443,8 @@ class MentraLive : SGCManager() {
         // Log detailed packet information
         // Log.i(TAG, String.format("🎵 LC3 PACKET #%d RECEIVED:", sequenceNumber));
         // Log.i(TAG, String.format("   📊 Size: %d bytes", data.length));
-        // Log.i(TAG, String.format("   ⏰ Time: %s", lc3PacketTimestampFormat.format(new Date(receiveTime))));
+        // Log.i(TAG, String.format("   ⏰ Time: %s", lc3PacketTimestampFormat.format(new
+        // Date(receiveTime))));
         // Log.i(TAG, String.format("   ⏱️  Since first: +%dms", timeSinceFirst));
         // Log.i(TAG, String.format("   ⏱️  Since last: +%dms", timeSinceLast));
         // Log.i(TAG, String.format("   📈 Total packets: %d", totalLc3PacketsReceived));
@@ -7191,28 +8462,31 @@ class MentraLive : SGCManager() {
         // Log packet statistics every 10 packets
         if (totalLc3PacketsReceived % 10 == 0) {
             val duration = lastLc3PacketTime - firstLc3PacketTime
-            val packetsPerSecond = if (duration > 0) (totalLc3PacketsReceived * 1000.0) / duration else 0.0
-            val bytesPerSecond = if (duration > 0) (totalLc3BytesReceived * 1000.0) / duration else 0.0
+            val packetsPerSecond =
+                    if (duration > 0) (totalLc3PacketsReceived * 1000.0) / duration else 0.0
+            val bytesPerSecond =
+                    if (duration > 0) (totalLc3BytesReceived * 1000.0) / duration else 0.0
 
             // Log.i(TAG, String.format("📊 LC3 STATS UPDATE:"));
             // Log.i(TAG, String.format("   🎯 Packets/sec: %.2f", packetsPerSecond));
             // Log.i(TAG, String.format("   🎯 Bytes/sec: %.2f", bytesPerSecond));
             // Log.i(TAG, String.format("   🎯 Average packet size: %.1f bytes",
-            //     totalLc3PacketsReceived > 0 ? (double) totalLc3BytesReceived / totalLc3PacketsReceived : 0));
+            //     totalLc3PacketsReceived > 0 ? (double) totalLc3BytesReceived /
+            // totalLc3PacketsReceived : 0));
         }
     }
 
-    /**
-     * Close LC3 audio logging and save final statistics
-     */
+    /** Close LC3 audio logging and save final statistics */
     private fun closeLc3Logging() {
         if (lc3AudioFileStream != null) {
             try {
                 // Write final statistics to file
                 if (totalLc3PacketsReceived > 0) {
                     val duration = lastLc3PacketTime - firstLc3PacketTime
-                    val packetsPerSecond = if (duration > 0) (totalLc3PacketsReceived * 1000.0) / duration else 0.0
-                    val bytesPerSecond = if (duration > 0) (totalLc3BytesReceived * 1000.0) / duration else 0.0
+                    val packetsPerSecond =
+                            if (duration > 0) (totalLc3PacketsReceived * 1000.0) / duration else 0.0
+                    val bytesPerSecond =
+                            if (duration > 0) (totalLc3BytesReceived * 1000.0) / duration else 0.0
 
                     var stats = String.format("\n=== LC3 AUDIO SESSION STATISTICS ===\n")
                     stats += String.format("Total packets received: %d\n", totalLc3PacketsReceived)
@@ -7220,10 +8494,12 @@ class MentraLive : SGCManager() {
                     stats += String.format("Session duration: %d ms\n", duration)
                     stats += String.format("Average packets/sec: %.2f\n", packetsPerSecond)
                     stats += String.format("Average bytes/sec: %.2f\n", bytesPerSecond)
-                    stats += String.format("Average packet size: %.1f bytes\n",
-                        totalLc3BytesReceived.toDouble() / totalLc3PacketsReceived)
-                    stats += String.format("Session ended: %s\n",
-                        lc3TimestampFormat.format(Date()))
+                    stats +=
+                            String.format(
+                                    "Average packet size: %.1f bytes\n",
+                                    totalLc3BytesReceived.toDouble() / totalLc3PacketsReceived
+                            )
+                    stats += String.format("Session ended: %s\n", lc3TimestampFormat.format(Date()))
                     stats += "==========================================\n"
 
                     lc3AudioFileStream!!.write(stats.toByteArray(StandardCharsets.UTF_8))
@@ -7232,45 +8508,57 @@ class MentraLive : SGCManager() {
                 lc3AudioFileStream!!.close()
                 lc3AudioFileStream = null
 
-                Log.i(TAG, "🎵 LC3 Audio logging closed - Final stats written to: " + currentLc3FileName)
-                Log.i(TAG, String.format("📊 Final Statistics: %d packets, %d bytes, %.2f packets/sec",
-                    totalLc3PacketsReceived, totalLc3BytesReceived,
-                    if (totalLc3PacketsReceived > 0) (totalLc3PacketsReceived * 1000.0) / (lastLc3PacketTime - firstLc3PacketTime) else 0.0))
-
+                Log.i(
+                        TAG,
+                        "🎵 LC3 Audio logging closed - Final stats written to: " +
+                                currentLc3FileName
+                )
+                Log.i(
+                        TAG,
+                        String.format(
+                                "📊 Final Statistics: %d packets, %d bytes, %.2f packets/sec",
+                                totalLc3PacketsReceived,
+                                totalLc3BytesReceived,
+                                if (totalLc3PacketsReceived > 0)
+                                        (totalLc3PacketsReceived * 1000.0) /
+                                                (lastLc3PacketTime - firstLc3PacketTime)
+                                else 0.0
+                        )
+                )
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Error closing LC3 audio logging", e)
             }
         }
     }
 
-    /**
-     * Public method to manually initialize LC3 logging (for testing/debugging)
-     */
+    /** Public method to manually initialize LC3 logging (for testing/debugging) */
     fun manualInitializeLc3Logging() {
         Log.i(TAG, "🔧 Manual LC3 logging initialization requested")
         initializeLc3Logging()
     }
 
-    /**
-     * Get current LC3 logging statistics
-     */
+    /** Get current LC3 logging statistics */
     fun getLc3LoggingStats(): String {
         if (totalLc3PacketsReceived == 0) {
             return "No LC3 packets received yet"
         }
 
         val duration = lastLc3PacketTime - firstLc3PacketTime
-        val packetsPerSecond = if (duration > 0) (totalLc3PacketsReceived * 1000.0) / duration else 0.0
+        val packetsPerSecond =
+                if (duration > 0) (totalLc3PacketsReceived * 1000.0) / duration else 0.0
         val bytesPerSecond = if (duration > 0) (totalLc3BytesReceived * 1000.0) / duration else 0.0
 
-        return String.format("LC3 Stats: %d packets, %d bytes, %.2f packets/sec, %.2f bytes/sec, avg size: %.1f bytes",
-            totalLc3PacketsReceived, totalLc3BytesReceived, packetsPerSecond, bytesPerSecond,
-            totalLc3BytesReceived.toDouble() / totalLc3PacketsReceived)
+        return String.format(
+                "LC3 Stats: %d packets, %d bytes, %.2f packets/sec, %.2f bytes/sec, avg size: %.1f bytes",
+                totalLc3PacketsReceived,
+                totalLc3BytesReceived,
+                packetsPerSecond,
+                bytesPerSecond,
+                totalLc3BytesReceived.toDouble() / totalLc3PacketsReceived
+        )
     }
 
-    /**
-     * Get the current LC3 log file path
-     */
+    /** Get the current LC3 log file path */
     fun getCurrentLc3LogFilePath(): String {
         if (currentLc3FileName == null) {
             return "No LC3 log file active"
@@ -7279,9 +8567,7 @@ class MentraLive : SGCManager() {
         return File(logsDir, currentLc3FileName).absolutePath
     }
 
-    /**
-     * List all LC3 log files with their sizes
-     */
+    /** List all LC3 log files with their sizes */
     fun listAllLc3LogFiles(): String {
         try {
             val logsDir = File(context!!.getExternalFilesDir(null), LC3_LOG_DIR)
@@ -7300,10 +8586,8 @@ class MentraLive : SGCManager() {
                 result.append(String.format("  📄 %s (%d KB)\n", file.name, sizeKB))
             }
             return result.toString()
-
         } catch (e: Exception) {
             return "Error listing LC3 log files: " + e.message
         }
     }
 }
-

@@ -213,7 +213,7 @@ describe("GallerySyncService", () => {
 
   it("aborts pre-flight quietly when glasses disconnect during any pre-flight await", async () => {
     const {checkConnectivityRequirementsUI} = require("@/utils/PermissionsUtils")
-    let resolveConnectivity: (() => void) | null = null
+    let resolveConnectivity: () => void = () => {}
     ;(checkConnectivityRequirementsUI as jest.Mock).mockImplementationOnce(
       () =>
         new Promise<boolean>((resolve) => {
@@ -230,7 +230,7 @@ describe("GallerySyncService", () => {
     // Disconnect while connectivity check is in flight — shouldAbortPreFlight catches it after the await
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
 
-    resolveConnectivity?.()
+    resolveConnectivity()
     await startPromise
 
     expect(useGallerySyncStore.getState().syncState).toBe("idle")
@@ -241,7 +241,7 @@ describe("GallerySyncService", () => {
 
   it("coalesces concurrent startSync calls into a single pre-flight attempt", async () => {
     const {checkConnectivityRequirementsUI} = require("@/utils/PermissionsUtils")
-    let resolveConnectivity: (() => void) | null = null
+    let resolveConnectivity: () => void = () => {}
     ;(checkConnectivityRequirementsUI as jest.Mock).mockImplementation(
       () =>
         new Promise<boolean>((resolve) => {
@@ -257,7 +257,7 @@ describe("GallerySyncService", () => {
     expect(gallerySyncService.isSyncStarting()).toBe(true)
     expect(checkConnectivityRequirementsUI).toHaveBeenCalledTimes(1)
 
-    resolveConnectivity?.()
+    resolveConnectivity()
     await Promise.all([first, second])
 
     expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")

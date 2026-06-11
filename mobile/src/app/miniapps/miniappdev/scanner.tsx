@@ -115,8 +115,10 @@ export default function MiniappDeveloperScannerScreen() {
       // Persist a home-tile record so the dev miniapp is re-launchable
       // without re-scanning. Dev apps load over HTTP and aren't installed
       // to disk, so the lmas/ scan can't surface them. registerDevApp owns
-      // the dev_url/dev_port keys (under DEV_APP_PACKAGE_NAME) so the launch
-      // chain reads them under the same single package name it routes by.
+      // the dev_url/dev_port keys (under DEV_APP_PACKAGE_NAME) and renames
+      // the tile to DEV_APP_NAME — pass the manifest's REAL packageName so
+      // it survives as sourcePackageName (clearDevArtifacts needs it to drop
+      // the dev slot when the released package is installed/uninstalled).
       if (manifest) {
         const portNum = devPort ? parseInt(devPort, 10) : NaN
         registerDevApp({
