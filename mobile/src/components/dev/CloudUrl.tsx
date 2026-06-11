@@ -1,5 +1,5 @@
 import {useState} from "react"
-import {TextInput, View, ViewStyle, TextStyle} from "react-native"
+import {TextInput, View} from "react-native"
 
 import {Button, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
@@ -7,7 +7,6 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {cloudClient, resolvedEndpoints} from "@/services/cloudClient"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
-import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 
 const AWS_DEV_CORE_URL = "https://core.us-west-2.dev.mentraglass.com"
@@ -43,7 +42,7 @@ async function testEndpoint(url: string): Promise<{ok: boolean; status?: number;
 }
 
 export default function CloudUrl() {
-  const {theme, themed} = useAppTheme()
+  const {theme} = useAppTheme()
   const [coreUrl, setCoreUrl] = useSetting(SETTINGS.cloud_core_url.key)
   const [runtimeUrl, setRuntimeUrl] = useSetting(SETTINGS.cloud_runtime_url.key)
   const [coreInput, setCoreInput] = useState("")
@@ -144,21 +143,21 @@ export default function CloudUrl() {
   }
 
   return (
-    <GlassView className="bg-primary-foreground rounded-2xl" style={themed($container)}>
-      <View style={themed($textContainer)}>
-        <Text style={themed($label)}>Cloud V2</Text>
-        <Text style={themed($subtitle)}>
+    <GlassView className="bg-primary-foreground rounded-2xl px-6 py-4">
+      <View className="flex-1">
+        <Text className="flex-wrap text-base text-foreground">Cloud V2</Text>
+        <Text className="mt-1 flex-wrap text-xs text-muted-foreground">
           New audio/captions cloud; the v1 backend URL above is the legacy cloud. Override the Cloud V2 core and
           runtime endpoints. Leave blank to use env/default.
         </Text>
 
-        <Text style={themed($fieldLabel)}>Core URL</Text>
-        <Text style={themed($subtitle)}>
+        <Text className="mt-3.5 text-[13px] font-semibold text-foreground">Core URL</Text>
+        <Text className="mt-1 flex-wrap text-xs text-muted-foreground">
           Currently using: {active.core}
           {describeOverride(coreUrl)}
         </Text>
         <TextInput
-          style={themed($urlInput)}
+          className="mt-1.5 mb-1 rounded-xl border border-primary bg-background px-3 py-2.5 text-sm text-foreground"
           placeholder="e.g., http://192.168.1.100:3000"
           placeholderTextColor={theme.colors.textDim}
           value={coreInput}
@@ -169,13 +168,13 @@ export default function CloudUrl() {
           editable={!isSaving}
         />
 
-        <Text style={themed($fieldLabel)}>Runtime URL</Text>
-        <Text style={themed($subtitle)}>
+        <Text className="mt-3.5 text-[13px] font-semibold text-foreground">Runtime URL</Text>
+        <Text className="mt-1 flex-wrap text-xs text-muted-foreground">
           Currently using: {active.runtime}
           {describeOverride(runtimeUrl)}
         </Text>
         <TextInput
-          style={themed($urlInput)}
+          className="mt-1.5 mb-1 rounded-xl border border-primary bg-background px-3 py-2.5 text-sm text-foreground"
           placeholder="e.g., http://192.168.1.100:3001"
           placeholderTextColor={theme.colors.textDim}
           value={runtimeInput}
@@ -186,7 +185,7 @@ export default function CloudUrl() {
           editable={!isSaving}
         />
 
-        <View style={themed($buttonRow)}>
+        <View className="mt-3 flex-row justify-between">
           <Button
             text={isSaving ? "Testing..." : "Save & Test"}
             onPress={handleSave}
@@ -198,7 +197,7 @@ export default function CloudUrl() {
         </View>
 
         {/* Paired env presets — a tap sets BOTH inputs so they never drift. */}
-        <View style={themed($buttonColumn)}>
+        <View className="mt-3 flex-row justify-between gap-3">
           <Button
             compact
             text="AWS us-west-2 (dev)"
@@ -224,57 +223,3 @@ export default function CloudUrl() {
     </GlassView>
   )
 }
-
-const $container: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  paddingHorizontal: spacing.s6,
-  paddingVertical: spacing.s4,
-})
-
-const $textContainer: ThemedStyle<ViewStyle> = () => ({
-  flex: 1,
-})
-
-const $label: ThemedStyle<TextStyle> = ({colors}) => ({
-  flexWrap: "wrap",
-  fontSize: 16,
-  color: colors.text,
-})
-
-const $subtitle: ThemedStyle<TextStyle> = ({colors}) => ({
-  flexWrap: "wrap",
-  fontSize: 12,
-  marginTop: 5,
-  color: colors.textDim,
-})
-
-const $fieldLabel: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 13,
-  fontWeight: "600",
-  color: colors.text,
-  marginTop: 14,
-})
-
-const $urlInput: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.background,
-  borderColor: colors.primary,
-  borderRadius: spacing.s3,
-  paddingHorizontal: 12,
-  paddingVertical: 10,
-  fontSize: 14,
-  marginTop: 6,
-  marginBottom: 4,
-  color: colors.text,
-})
-
-const $buttonRow: ThemedStyle<ViewStyle> = () => ({
-  flexDirection: "row",
-  justifyContent: "space-between",
-  marginTop: 12,
-})
-
-const $buttonColumn: ThemedStyle<ViewStyle> = () => ({
-  flexDirection: "row",
-  gap: 12,
-  justifyContent: "space-between",
-  marginTop: 12,
-})
