@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local webhook receiver for Mentra Live photo upload demos."""
+"""Local webhook receiver for Mentra Live media upload demos."""
 
 from __future__ import annotations
 
@@ -19,6 +19,10 @@ DEFAULT_PORT = 8787
 UPLOAD_ROUTE = "/upload"
 UPLOADS_ROUTE = "/uploads/"
 PHOTOS_ROUTE = "/photos/"
+MEDIA_ROUTE = "/media/"
+
+MEDIA_TYPE_PHOTO = "photo"
+MEDIA_TYPE_VIDEO = "video"
 
 
 def sanitize_id(value: str) -> str:
@@ -26,16 +30,27 @@ def sanitize_id(value: str) -> str:
     return cleaned.strip(".-") or f"photo-{int(time.time() * 1000)}"
 
 
+def sanitize_media_type(value: object | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    if normalized in {MEDIA_TYPE_PHOTO, "image", "jpeg", "jpg"}:
+        return MEDIA_TYPE_PHOTO
+    if normalized in {MEDIA_TYPE_VIDEO, "mp4", "movie"}:
+        return MEDIA_TYPE_VIDEO
+    return None
+
+
 def parse_options() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Receive Mentra Live webhook photo uploads and serve them back for preview."
+        description="Receive Mentra Live webhook photo/video uploads and serve them back for preview."
     )
     parser.add_argument("--host", default="0.0.0.0", help="Host interface to bind.")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="HTTP port to listen on.")
     parser.add_argument(
         "--uploads-dir",
         default=str(Path(__file__).with_name("uploads")),
-        help="Directory where uploaded photos and metadata are stored.",
+        help="Directory where uploaded media and metadata are stored.",
     )
     return parser.parse_args()
 
@@ -122,7 +137,7 @@ def local_ips() -> list[str]:
 
 
 class PhotoWebhookHandler(BaseHTTPRequestHandler):
-    server_version = "MentraPhotoWebhook/1.0"
+    server_version = "MentraMediaWebhook/1.0"
 
     @property
     def uploads_dir(self) -> Path:
@@ -154,10 +169,15 @@ class PhotoWebhookHandler(BaseHTTPRequestHandler):
             self.send_static_file(self.uploads_dir / filename)
             return
 
+        if request_path.startswith(MEDIA_ROUTE):
+            filename = Path(unquote(request_path[len(MEDIA_ROUTE) :])).name
+            self.send_static_file(self.uploads_dir / filename)
+            return
+
         self.send_error(HTTPStatus.NOT_FOUND, "Unknown route")
 
     def do_POST(self) -> None:
-        if self.path != UPLOAD_ROUTE:
+        if urlparse(self.path).path != UPLOAD_ROUTE:
             self.send_error(HTTPStatus.NOT_FOUND, "Use POST /upload")
             return
 
@@ -166,32 +186,98 @@ class PhotoWebhookHandler(BaseHTTPRequestHandler):
             content_type = self.headers.get("content-type", "")
             body = self.rfile.read(length)
             fields, files = parse_multipart(body, content_type)
-            photo = files.get("photo")
-            if not photo:
-                self.send_json({"success": False, "error": "Missing multipart file field named photo"}, HTTPStatus.BAD_REQUEST)
+            metadata = self.parse_metadata(fields)
+            upload_file, field_name = self.media_file(files)
+            if not upload_file:
+                self.send_json(
+                    {
+                        "success": False,
+                        "error": "Missing multipart file field named photo, video, or file",
+                    },
+                    HTTPStatus.BAD_REQUEST,
+                )
                 return
 
-            request_id = sanitize_id(fields.get("requestId", ""))
-            filename = f"{request_id}.jpg"
-            photo_path = self.uploads_dir / filename
-            photo_path.write_bytes(photo["content"])  # type: ignore[arg-type]
+            media_type = self.detect_media_type(field_name, upload_file, fields, metadata)
+            request_id = sanitize_id(
+                str(
+                    metadata.get("requestId")
+                    or fields.get("requestId")
+                    or f"{media_type}-{int(time.time() * 1000)}"
+                )
+            )
+            extension = self.file_extension(media_type, upload_file)
+            filename = f"{request_id}{extension}"
+            media_path = self.uploads_dir / filename
+            media_path.write_bytes(upload_file["content"])  # type: ignore[arg-type]
 
-            metadata = {
+            stored_metadata = {
+                **metadata,
                 "success": True,
                 "requestId": request_id,
                 "filename": filename,
-                "fileSizeBytes": photo_path.stat().st_size,
-                "contentType": photo.get("content_type", "image/jpeg"),
+                "fileSizeBytes": media_path.stat().st_size,
+                "contentType": upload_file.get("content_type", "application/octet-stream"),
+                "mediaType": media_type,
                 "uploadedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             }
-            self.write_metadata(metadata)
-            self.send_json(self.metadata_for_response(metadata), HTTPStatus.OK)
+            self.write_metadata(stored_metadata)
+            self.send_json(self.metadata_for_response(stored_metadata), HTTPStatus.OK)
             print(
-                f"Received photo requestId={request_id} "
-                f"fileSizeBytes={metadata['fileSizeBytes']} file={photo_path}"
+                f"Received {media_type} requestId={request_id} "
+                f"fileSizeBytes={stored_metadata['fileSizeBytes']} file={media_path}"
             )
         except Exception as error:  # noqa: BLE001 - demo server should return readable errors.
             self.send_json({"success": False, "error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def parse_metadata(self, fields: dict[str, str]) -> dict[str, object]:
+        raw_metadata = fields.get("metadata")
+        if not raw_metadata:
+            return {}
+        try:
+            metadata = json.loads(raw_metadata)
+            return metadata if isinstance(metadata, dict) else {}
+        except json.JSONDecodeError:
+            return {"metadataRaw": raw_metadata}
+
+    def media_file(
+        self,
+        files: dict[str, dict[str, bytes | str]],
+    ) -> tuple[dict[str, bytes | str] | None, str | None]:
+        for field_name in ("photo", "video", "file"):
+            upload_file = files.get(field_name)
+            if upload_file:
+                return upload_file, field_name
+        return None, None
+
+    def detect_media_type(
+        self,
+        field_name: str | None,
+        upload_file: dict[str, bytes | str],
+        fields: dict[str, str],
+        metadata: dict[str, object],
+    ) -> str:
+        for value in (
+            metadata.get("mediaType"),
+            fields.get("mediaType"),
+            field_name,
+            upload_file.get("content_type"),
+            upload_file.get("filename"),
+            fields.get("type"),
+        ):
+            normalized = sanitize_media_type(value)
+            if normalized:
+                return normalized
+            if isinstance(value, str) and "video" in value.lower():
+                return MEDIA_TYPE_VIDEO
+        return MEDIA_TYPE_PHOTO
+
+    def file_extension(self, media_type: str, upload_file: dict[str, bytes | str]) -> str:
+        filename = str(upload_file.get("filename", ""))
+        suffix = Path(filename).suffix.lower()
+        if media_type == MEDIA_TYPE_VIDEO:
+            return suffix if suffix in {".mp4", ".mov", ".m4v"} else ".mp4"
+        return suffix if suffix in {".jpg", ".jpeg", ".png", ".webp", ".avif"} else ".jpg"
 
     def write_metadata(self, metadata: dict[str, object]) -> None:
         request_id = str(metadata["requestId"])
@@ -206,7 +292,7 @@ class PhotoWebhookHandler(BaseHTTPRequestHandler):
 
     def send_index(self) -> None:
         body = {
-            "name": "Mentra photo webhook demo server",
+            "name": "Mentra media webhook demo server",
             "uploadUrl": self.absolute_url(UPLOAD_ROUTE),
             "latestUrl": self.absolute_url("/latest.json"),
         }
@@ -222,24 +308,67 @@ class PhotoWebhookHandler(BaseHTTPRequestHandler):
 
     def send_static_file(self, path: Path) -> None:
         if not path.exists() or not path.is_file():
-            self.send_error(HTTPStatus.NOT_FOUND, "Photo not found")
+            self.send_error(HTTPStatus.NOT_FOUND, "Media not found")
             return
 
         content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-        data = path.read_bytes()
-        self.send_response(HTTPStatus.OK)
+        file_size = path.stat().st_size
+        start, end = self.parse_range_header(file_size)
+        content_length = end - start + 1
+        self.send_response(HTTPStatus.PARTIAL_CONTENT if start > 0 or end < file_size - 1 else HTTPStatus.OK)
         self.send_cors_headers()
         self.send_header("Content-Type", content_type)
+        self.send_header("Accept-Ranges", "bytes")
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Length", str(content_length))
+        if start > 0 or end < file_size - 1:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
         self.end_headers()
-        self.wfile.write(data)
+        try:
+            with path.open("rb") as media_file:
+                media_file.seek(start)
+                remaining = content_length
+                while remaining > 0:
+                    chunk = media_file.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def parse_range_header(self, file_size: int) -> tuple[int, int]:
+        range_header = self.headers.get("Range", "")
+        if not range_header.startswith("bytes="):
+            return 0, max(0, file_size - 1)
+        raw_start, _, raw_end = range_header[len("bytes=") :].partition("-")
+        try:
+            if raw_start:
+                start = int(raw_start)
+                end = int(raw_end) if raw_end else file_size - 1
+            else:
+                suffix_length = int(raw_end)
+                start = max(0, file_size - suffix_length)
+                end = file_size - 1
+        except ValueError:
+            return 0, max(0, file_size - 1)
+        start = min(max(0, start), max(0, file_size - 1))
+        end = min(max(start, end), max(0, file_size - 1))
+        return start, end
 
     def metadata_for_response(self, metadata: dict[str, object]) -> dict[str, object]:
         filename = str(metadata["filename"])
         request_id = str(metadata["requestId"])
+        media_type = sanitize_media_type(metadata.get("mediaType")) or MEDIA_TYPE_PHOTO
+        route = PHOTOS_ROUTE if media_type == MEDIA_TYPE_PHOTO else MEDIA_ROUTE
+        media_url = self.absolute_url(f"{route}{filename}")
         response = dict(metadata)
-        response["photoUrl"] = self.absolute_url(f"{PHOTOS_ROUTE}{filename}")
+        response["url"] = media_url
+        response["mediaUrl"] = media_url
+        if media_type == MEDIA_TYPE_VIDEO:
+            response["videoUrl"] = media_url
+        else:
+            response["photoUrl"] = media_url
         response["statusUrl"] = self.absolute_url(f"{UPLOADS_ROUTE}{request_id}.json")
         return response
 

@@ -1,11 +1,11 @@
 # Local Demo Cloud
 
 This is the recommended local companion service for running the SDK example apps.
-It starts the photo upload webhook and a local MediaMTX streaming server from
+It starts the media upload webhook and a local MediaMTX streaming server from
 one command, then prints the URLs to paste into the Android, iOS, or React
 Native examples.
 
-The Python process owns the simple HTTP photo webhook. RTMP, SRT, HLS, and WebRTC
+The Python process owns the simple HTTP photo/video webhook. RTMP, SRT, HLS, and WebRTC
 media are delegated to MediaMTX because live media ingest and playback require a
 real media server, not just extra HTTP routes.
 
@@ -34,7 +34,7 @@ python3 examples/local-demo-cloud/server.py
 The command prints URLs like:
 
 ```text
-Photo upload URL:
+Media upload URL:
   http://192.168.1.42:8787/upload
 
 RTMP publish URL:
@@ -65,7 +65,7 @@ WHEP playback URL:
   http://192.168.1.42:8889/mentra-live/whep
 ```
 
-Paste the photo URL into the Camera screen. For RTMP, paste the RTMP publish URL
+Paste the media upload URL into the Camera screen. For RTMP, paste the RTMP publish URL
 into the Stream screen's RTMP field, or paste the SRT publish URL into the SRT
 field. The Android, iOS, and React Native examples derive the HLS playlist URL
 for RTMP/SRT and show it in the preview card after the stream starts; you can
@@ -90,7 +90,7 @@ Use the LAN URL printed by the script, not `localhost`, from the example app.
 The phone and glasses must be able to reach your computer's LAN IP.
 
 If Docker is not installed or not running, the command still starts the photo
-webhook and prints a streaming warning. This lets you test photo upload without
+and video webhook and prints a streaming warning. This lets you test media upload without
 installing streaming dependencies.
 
 ## Options
@@ -107,7 +107,7 @@ You can also change ports or the stream path:
 python3 examples/local-demo-cloud/server.py --photo-port 8788 --rtmp-port 1936 --srt-port 8891 --hls-port 8887 --rtmp-path live/my-stream --srt-path my-stream --webrtc-path my-stream
 ```
 
-Run only the photo webhook:
+Run only the media webhook:
 
 ```bash
 python3 examples/local-demo-cloud/server.py --photo-only
