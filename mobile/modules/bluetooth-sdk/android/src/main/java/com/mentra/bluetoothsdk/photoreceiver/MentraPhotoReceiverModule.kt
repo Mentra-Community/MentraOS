@@ -1,8 +1,11 @@
 package com.mentra.bluetoothsdk.photoreceiver
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.util.Log
+import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
@@ -129,6 +132,10 @@ class MentraPhotoReceiverModule : Module() {
   }
 
   private fun bestLocalIpv4Address(): String? {
+    val glassesLocalIp = (DeviceStore.get("glasses", "wifiLocalIp") as? String)
+      ?.trim()
+      ?.takeIf { it.isNotEmpty() }
+    val activeNetworkAddress = activeNetworkIpv4Address()
     val wifiPrivateCandidates = mutableListOf<Inet4Address>()
     val wifiCandidates = mutableListOf<Inet4Address>()
     val privateCandidates = mutableListOf<Inet4Address>()
@@ -153,12 +160,55 @@ class MentraPhotoReceiverModule : Module() {
       }
     }
 
+    if (activeNetworkAddress != null) {
+      val activeHost = activeNetworkAddress.hostAddress
+      if (sameIpv4Slash24(activeHost, glassesLocalIp)) {
+        emitStatus("Using active phone Wi-Fi address $activeHost for glasses $glassesLocalIp")
+        return activeHost
+      }
+    }
+
+    val sameSubnetCandidate = (
+      wifiPrivateCandidates +
+        wifiCandidates +
+        privateCandidates +
+        otherCandidates
+      ).firstOrNull { sameIpv4Slash24(it.hostAddress, glassesLocalIp) }
+    if (sameSubnetCandidate != null) {
+      emitStatus("Using same-subnet phone address ${sameSubnetCandidate.hostAddress} for glasses $glassesLocalIp")
+      return sameSubnetCandidate.hostAddress
+    }
+
+    if (activeNetworkAddress != null && isPrivateIpv4(activeNetworkAddress.hostAddress.orEmpty())) {
+      emitStatus("Using active phone network address ${activeNetworkAddress.hostAddress}")
+      return activeNetworkAddress.hostAddress
+    }
+
     return (
       wifiPrivateCandidates.firstOrNull() ?:
         wifiCandidates.firstOrNull() ?:
         privateCandidates.firstOrNull() ?:
         otherCandidates.firstOrNull()
       )?.hostAddress
+  }
+
+  private fun activeNetworkIpv4Address(): Inet4Address? {
+    val connectivityManager = reactContext()
+      .getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return null
+    val activeNetwork = connectivityManager.activeNetwork ?: return null
+    val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return null
+    val isLanNetwork = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+      capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+    if (!isLanNetwork) return null
+    val linkProperties = connectivityManager.getLinkProperties(activeNetwork) ?: return null
+    return linkProperties.linkAddresses
+      .map { it.address }
+      .filterIsInstance<Inet4Address>()
+      .firstOrNull { address ->
+        !address.isLoopbackAddress &&
+          !address.isLinkLocalAddress &&
+          isPrivateIpv4(address.hostAddress.orEmpty())
+      }
   }
 
   private fun receiverEndpoint(host: String, port: Int): ReceiverEndpoint {
@@ -188,6 +238,16 @@ class MentraPhotoReceiverModule : Module() {
     return host.startsWith("192.168.") ||
       host.startsWith("10.") ||
       host.matches(Regex("^172\\.(1[6-9]|2[0-9]|3[0-1])\\..*"))
+  }
+
+  private fun sameIpv4Slash24(first: String?, second: String?): Boolean {
+    if (first.isNullOrBlank() || second.isNullOrBlank()) return false
+    val firstParts = first.split(".")
+    val secondParts = second.split(".")
+    if (firstParts.size != 4 || secondParts.size != 4) return false
+    return firstParts[0] == secondParts[0] &&
+      firstParts[1] == secondParts[1] &&
+      firstParts[2] == secondParts[2]
   }
 
   private companion object {

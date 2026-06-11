@@ -72,6 +72,8 @@ public class MediaCaptureService {
     // Debug flag: Enable detailed end-to-end photo capture timing logs
     // true = log timing from request to capture, false = suppress timing logs
     private static final boolean ENABLE_PHOTO_TIMING_LOGS = true;
+    private static final int DEFAULT_PHOTO_UPLOAD_CONNECT_TIMEOUT_SECONDS = 5;
+    private static final int LOCAL_PHOTO_UPLOAD_CONNECT_TIMEOUT_SECONDS = 1;
 
     private final Context mContext;
     private final MediaUploadQueueManager mMediaQueueManager;
@@ -2518,13 +2520,28 @@ public class MediaCaptureService {
                                 // - 5 seconds to connect (allows time for DNS+TCP+TLS over WiFi)
                                 // - 10 seconds to write the photo data
                                 // - 5 seconds to read the response
+                                int connectTimeoutSeconds =
+                                        isLocalNetworkWebhook(webhookUrl)
+                                                ? LOCAL_PHOTO_UPLOAD_CONNECT_TIMEOUT_SECONDS
+                                                : DEFAULT_PHOTO_UPLOAD_CONNECT_TIMEOUT_SECONDS;
+                                if (connectTimeoutSeconds
+                                        < DEFAULT_PHOTO_UPLOAD_CONNECT_TIMEOUT_SECONDS) {
+                                    Log.d(
+                                            TAG,
+                                            "⚡ Using fast local receiver connect timeout ("
+                                                    + connectTimeoutSeconds
+                                                    + "s) for webhook: "
+                                                    + webhookUrl);
+                                }
+
                                 OkHttpClient client =
                                         new OkHttpClient.Builder()
                                                 .connectTimeout(
-                                                        5,
+                                                        connectTimeoutSeconds,
                                                         java.util.concurrent.TimeUnit
-                                                                .SECONDS) // Allow time for
-                                                // DNS+TCP+TLS on WiFi
+                                                                .SECONDS) // Local receiver
+                                                // failures should fall back quickly; public
+                                                // webhooks keep the normal WiFi allowance.
                                                 .writeTimeout(
                                                         10,
                                                         java.util.concurrent.TimeUnit
@@ -2865,6 +2882,41 @@ public class MediaCaptureService {
                             }
                         })
                 .start();
+    }
+
+    private boolean isLocalNetworkWebhook(String webhookUrl) {
+        try {
+            URI uri = URI.create(webhookUrl);
+            String host = uri.getHost();
+            if (host == null || host.isEmpty()) {
+                return false;
+            }
+            return isLocalIpv4Literal(host) || "localhost".equalsIgnoreCase(host);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private boolean isLocalIpv4Literal(String host) {
+        String[] parts = host.split("\\.");
+        if (parts.length != 4) {
+            return false;
+        }
+        int[] octets = new int[4];
+        for (int i = 0; i < parts.length; i++) {
+            try {
+                octets[i] = Integer.parseInt(parts[i]);
+            } catch (NumberFormatException e) {
+                return false;
+            }
+            if (octets[i] < 0 || octets[i] > 255) {
+                return false;
+            }
+        }
+        return octets[0] == 10
+                || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
+                || (octets[0] == 192 && octets[1] == 168)
+                || octets[0] == 127;
     }
 
     /** Upload a video file to AugmentOS Cloud Currently a stub - videos are kept on device */
