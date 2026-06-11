@@ -69,3 +69,14 @@ The laptop->daemon->BLE queue accepts ~1,300 updates/sec but that is queueing,
 not rendering — frames beyond the air/firmware rate coalesce. Practical
 implication: caption updates, spinners, and even character-grid animations
 (Matrix rain at 20fps, 7x26 glyphs) are comfortably within budget.
+
+## G2 display characterization (measured on hardware, 2026-06-11)
+
+- Text-update throughput: ~140 small updates/sec sustained over the raw BLE
+  link (300-update run, no backpressure); visual ceiling is the firmware's
+  repaint, which coalesces (last-write-wins). The in-app miniapp path is
+  deliberately throttled to ~3-5/sec by the display manager.
+- Line layout: the firmware AUTO-WRAPS at the text-container edge (newline-free
+  60-digit ruler wrapped after exactly 50 digits). Explicit \n is honored as a
+  line break. Default text wall fits ~50 narrow chars / ~35 M-width chars per
+  line.
