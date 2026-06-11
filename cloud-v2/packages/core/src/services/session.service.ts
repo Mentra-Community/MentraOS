@@ -102,6 +102,21 @@ export async function createSession(args: {
     oemUserId: identity.oemUserId,
   });
 
+  // Burn the subject token's jti BEFORE minting anything. The unique-index
+  // insert makes exactly one concurrent presentation win; doing it first means
+  // a replayed jti never has tokens minted or persisted for it, so there is no
+  // rollback path that can fail and leave a valid session behind.
+  if (identity.jti) {
+    if (typeof identity.exp !== "number") {
+      throw new InvalidGrant("subject_token missing 'exp' claim");
+    }
+    await recordSeenJti({
+      jti: identity.jti,
+      oemId: identity.oemId,
+      expUnixSec: identity.exp,
+    });
+  }
+
   const sessionId = `sess_${ulid()}`;
   const { token: accessToken } = await issueAccessToken({
     mentraUserId: user.mentraUserId,
@@ -113,22 +128,6 @@ export async function createSession(args: {
     mentraUserId: user.mentraUserId,
     oemId: identity.oemId,
   });
-
-  if (identity.jti) {
-    if (typeof identity.exp !== "number") {
-      throw new InvalidGrant("subject_token missing 'exp' claim");
-    }
-    try {
-      await recordSeenJti({
-        jti: identity.jti,
-        oemId: identity.oemId,
-        expUnixSec: identity.exp,
-      });
-    } catch (err) {
-      await RefreshTokenModel.deleteOne({ sessionId });
-      throw err;
-    }
-  }
 
   logger.info(
     { sessionId, mentraUserId: user.mentraUserId, oemId: identity.oemId },
