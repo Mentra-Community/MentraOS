@@ -49,3 +49,23 @@ connected -> disconnected. Same with and without an audio track.
   for managed streams — correlation relies on keep-alive ACKs only.
 - "Timeout waiting for stream to go live" uses maxAttempts=1, so prod logs a
   scary warn on every start even when the stream goes live 3s later.
+
+## UPDATE (post-purge): the live-input leak was NOT the stream killer
+
+After the purge (11,293 deleted, 0 failed, 492 remain — well under limits) the
+laptop RTMPS publish STILL died mid-stream. Discriminator test from the same
+machine/account: plain `rtmp://live.cloudflare.com:1935` streamed 16s clean
+(state=connected throughout); `rtmps://...:443` is killed mid-publish every
+time. Root cause of "streaming isn't working": **the office network kills
+long-lived RTMPS (TLS) connections on 443** — DPI/SSL-inspection middlebox
+signature. Glasses are always handed rtmps:443 URLs, so streaming fails for
+anyone on office WiFi and works elsewhere (matches Sean Mulhern's successes
+and prod's ~40% timeout rate).
+
+Fixes:
+- Short term: allowlist live.cloudflare.com (or RTMPS generally) in the office
+  firewall; or have devs test on hotspot.
+- Product hardening: fall back to rtmp:1935 or SRT when rtmps:443 publish dies
+  within seconds (StreamCommandHandler already supports srt/whip).
+- The live-input leak fixes (delete-on-stop, schedule the janitor, retry
+  backoff) are still required — the account was 11x over CF's documented limit.
