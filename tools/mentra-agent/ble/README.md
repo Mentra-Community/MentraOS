@@ -176,6 +176,27 @@ accepts the glasses' photo uploads, saving JPEGs into `ble/photos/`:
 
 **Mach1** — camera glasses, BLE, no WiFi.
 
+## Remote Glasses: the emulator app drives real glasses
+
+The daemon also runs a **remote-SGC bridge** on `0.0.0.0:<port+3>` (default
+`8802`): a plain-TCP, newline-delimited-JSON endpoint the app's dev-only
+`RemoteHarness` driver (in `mobile/modules/bluetooth-sdk`) connects to from the
+Android emulator (`10.0.2.2`). The app then behaves as if physically paired:
+its display/brightness/mic/battery calls land on the real glasses, and the real
+glasses microphone streams back into the app's normal audio pipeline (cloud
+transcription runs on real mic audio).
+
+```bash
+./gd.sh start && bun glasses.mjs connect <serial>   # daemon holds the glasses
+bun ../cli.ts rpc connectRemoteGlasses              # emulator app pairs to them
+bun ../cli.ts rpc glassesText '{"text":"hi"}'       # app -> real lens
+```
+
+Verified e2e: app text on a physical G2 lens, and speech at the G2 mic coming
+back as a final cloud transcript inside the emulator app. Gotcha: the dev
+setting `cloud_audio_codec=pcm` (for injected audio) corrupts the glasses-mic
+path — set it back to `lc3` and reconnect.
+
 ## Gotchas (learned the hard way)
 
 - **Glasses must be awake and OFF your phone** to be reachable — a BLE peripheral
