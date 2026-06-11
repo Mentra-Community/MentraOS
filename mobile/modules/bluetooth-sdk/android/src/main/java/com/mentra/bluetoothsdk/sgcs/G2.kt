@@ -2004,44 +2004,40 @@ class G2 : SGCManager() {
                             return false
                         }
 
-        // fw 2.2.4.34 renders ONLY single-fragment image streams (<=4096-byte
-        // BMP incl. 118B header); larger images must be tiled into <=4
-        // horizontal strip containers declared together in one rebuild.
-        // Clamp to the firmware's container limits (20-288 x 20-144).
-        val cw = rw.coerceIn(20, 288)
-        val ch = rh.coerceIn(20, 144)
-        val rowBytes = ((cw + 1) / 2 + 3) and 3.inv()
-        val maxRows = (4096 - 118) / rowBytes
-        val stripCount = (ch + maxRows - 1) / maxRows
-        if (stripCount > imageContainerIDPool.size) {
-            Bridge.log("G2: displayBitmap() - ${cw}x$ch needs $stripCount strips (>${imageContainerIDPool.size}); reduce size")
-            return false
-        }
-        val strips =
-                convertToG2BmpStrips(rawData, cw, ch, maxRows)
+        val bmpData =
+                convertToG2Bmp(rawData, containerWidth = rw, containerHeight = rh)
                         ?: run {
-                            Bridge.log("G2: displayBitmap() - failed to convert image to strips")
+                            Bridge.log("G2: displayBitmap() - failed to convert image to BMP")
                             return false
                         }
 
-        imageContainers.clear()
-        var sy = 0
-        for ((i, stripBmp) in strips.withIndex()) {
-            val sh = minOf(maxRows, ch - sy)
-            imageContainers.add(
-                    ImgContainer(
-                            id = imageContainerIDPool[i],
-                            x = rx,
-                            y = ry + sy,
-                            width = cw,
-                            height = sh,
-                            bmpData = stripBmp
-                    )
-            )
-            sy += sh
+        // Reuse an existing container if the rect matches exactly; otherwise add a new one.
+        val container: ImgContainer
+        val existingIndex = imageContainers.indexOfFirst { it.matches(rx, ry, rw, rh) }
+        if (existingIndex >= 0) {
+            imageContainers[existingIndex].bmpData = bmpData
+            container = imageContainers[existingIndex]
+            Bridge.log("G2: displayBitmap() - reusing container ${container.id} for rect $rx,$ry ${rw}x$rh")
+            displayScope.launch {
+                displayMutex.withLock {
+                    if (!pageCreated) {
+                        rebuildPage()
+                    } else {
+                        sendImageData(container.id, container.name, container.bmpData)
+                    }
+                }
+            }
+            return true
+        } else {
+            container = addImageContainer(rx, ry, rw, rh, bmpData)
+            Bridge.log("G2: displayBitmap() - added container ${container.id} for rect $rx,$ry ${rw}x$rh, rebuilding page")
+            displayScope.launch {
+                displayMutex.withLock {
+                    rebuildPage()
+                }
+            }
         }
-        Bridge.log("G2: displayBitmap() - ${strips.size} strip containers for ${cw}x$ch, rebuilding page")
-        displayScope.launch { displayMutex.withLock { rebuildPage() } }
+
         return true
     }
 
@@ -2468,68 +2464,6 @@ class G2 : SGCManager() {
     }
 
     // ---------- Bitmap Conversion ----------
-
-    /**
-     * Render an image to a grayscale canvas of containerWidth x containerHeight
-     * (aspect-fit on black, like convertToG2Bmp) and slice it into horizontal
-     * strips of at most maxRows rows, each encoded as its own 4-bit BMP. Every
-     * strip BMP is <= 4096 bytes so it ships as a single image fragment - the
-     * only stream shape this firmware renders.
-     */
-    private fun convertToG2BmpStrips(
-            data: ByteArray,
-            containerWidth: Int,
-            containerHeight: Int,
-            maxRows: Int
-    ): List<ByteArray>? {
-        val srcBitmap =
-                BitmapFactory.decodeByteArray(data, 0, data.size)
-                        ?: run {
-                            Bridge.log("G2: convertToG2BmpStrips - could not decode image")
-                            return null
-                        }
-        val scale =
-                minOf(
-                        containerWidth.toDouble() / srcBitmap.width,
-                        containerHeight.toDouble() / srcBitmap.height
-                )
-        val scaledW = maxOf(1, (srcBitmap.width * scale).toInt())
-        val scaledH = maxOf(1, (srcBitmap.height * scale).toInt())
-        val destBitmap =
-                Bitmap.createBitmap(containerWidth, containerHeight, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(destBitmap)
-        canvas.drawColor(Color.BLACK)
-        val dstRect =
-                Rect(
-                        (containerWidth - scaledW) / 2,
-                        (containerHeight - scaledH) / 2,
-                        (containerWidth - scaledW) / 2 + scaledW,
-                        (containerHeight - scaledH) / 2 + scaledH
-                )
-        canvas.drawBitmap(srcBitmap, Rect(0, 0, srcBitmap.width, srcBitmap.height), dstRect, Paint(Paint.FILTER_BITMAP_FLAG))
-
-        val gray = ByteArray(containerWidth * containerHeight)
-        for (y in 0 until containerHeight) {
-            for (x in 0 until containerWidth) {
-                val px = destBitmap.getPixel(x, y)
-                gray[y * containerWidth + x] =
-                        ((Color.red(px) * 299 + Color.green(px) * 587 + Color.blue(px) * 114) / 1000).toByte()
-            }
-        }
-        srcBitmap.recycle()
-        destBitmap.recycle()
-
-        val strips = mutableListOf<ByteArray>()
-        var sy = 0
-        while (sy < containerHeight) {
-            val sh = minOf(maxRows, containerHeight - sy)
-            val slice = gray.copyOfRange(sy * containerWidth, (sy + sh) * containerWidth)
-            val bmp = build4BitBmp(slice, containerWidth, sh) ?: return null
-            strips.add(bmp)
-            sy += sh
-        }
-        return strips
-    }
 
     private fun convertToG2Bmp(
             data: ByteArray,
