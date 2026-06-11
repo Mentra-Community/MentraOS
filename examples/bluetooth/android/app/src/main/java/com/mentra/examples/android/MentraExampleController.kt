@@ -168,6 +168,11 @@ private data class GalleryServerCheck(
     val eventText: String,
 )
 
+private data class WebhookReachability(
+    val healthUrl: String,
+    val host: String,
+)
+
 private data class PersistedCloudUrls(
     val streamProtocol: String?,
     val streamUrl: String?,
@@ -678,6 +683,24 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             state = state.copy(cameraStatus = "Camera: enter a valid http:// or https:// media upload URL")
             throw IllegalArgumentException("Enter a valid http:// or https:// media upload URL.")
         }
+        state = state.copy(cameraStatus = "Camera: checking media server before video")
+        val reachability = try {
+            checkWebhookReachable(uploadUrl)
+        } catch (error: Throwable) {
+            val message = webhookReachabilityErrorMessage(error)
+            state = state.copy(
+                cameraStatus = "Camera: media server check failed: $message",
+                videoPreviewDetails = VideoPreviewDetails(
+                    error = message,
+                    state = "error",
+                    uploadUrl = uploadUrl,
+                ),
+            )
+            addEvent("LIVE", "media server check failed: $message")
+            throw IllegalStateException("Media server check failed: $message", error)
+        }
+        state = state.copy(cameraStatus = "Camera: media server reachable (${reachability.host}); starting video")
+        addEvent("LIVE", "media server reachable for video ${reachability.healthUrl}")
 
         val requestId = "video-${System.currentTimeMillis()}"
         activeVideoRequestId = requestId
@@ -836,7 +859,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             state = state.copy(cameraStatus = "Camera: $message")
             throw IllegalArgumentException(message)
         }
-        val healthUrl = try {
+        try {
             webhookHealthUrl(uploadUrl)
         } catch (_: Exception) {
             state = state.copy(cameraStatus = "Camera: enter a valid http:// or https:// media upload URL")
@@ -844,31 +867,15 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
 
         state = state.copy(cameraStatus = "Camera: testing local webhook")
-        scope.launch(Dispatchers.IO) {
+        scope.launch {
             try {
-                val connection = URL(healthUrl).openConnection() as HttpURLConnection
-                connection.connectTimeout = 1500
-                connection.readTimeout = 1500
-                val code = connection.responseCode
-                if (code in 200..299) {
-                    connection.inputStream.close()
-                    scope.launch {
-                        state = state.copy(cameraStatus = "Camera: webhook reachable (${URL(healthUrl).host})")
-                        addEvent("LIVE", "webhook reachable $healthUrl")
-                    }
-                } else {
-                    scope.launch {
-                        state = state.copy(cameraStatus = "Camera: webhook returned HTTP $code")
-                        addEvent("LIVE", "webhook returned HTTP $code")
-                    }
-                }
-                connection.disconnect()
+                val reachability = checkWebhookReachable(uploadUrl)
+                state = state.copy(cameraStatus = "Camera: webhook reachable (${reachability.host})")
+                addEvent("LIVE", "webhook reachable ${reachability.healthUrl}")
             } catch (error: Exception) {
-                val message = error.message ?: error.javaClass.simpleName
-                scope.launch {
-                    state = state.copy(cameraStatus = "Camera: webhook test failed: $message")
-                    addEvent("LIVE", "webhook test failed: $message")
-                }
+                val message = webhookReachabilityErrorMessage(error)
+                state = state.copy(cameraStatus = "Camera: webhook test failed: $message")
+                addEvent("LIVE", "webhook test failed: $message")
             }
         }
     }
@@ -2145,6 +2152,29 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             putLong(CLOUD_URLS_SAVED_AT_KEY, System.currentTimeMillis())
         }.apply()
     }
+
+    private suspend fun checkWebhookReachable(uploadUrl: String): WebhookReachability = withContext(Dispatchers.IO) {
+        val healthUrl = webhookHealthUrl(uploadUrl)
+        val url = URL(healthUrl)
+        val connection = url.openConnection() as HttpURLConnection
+        try {
+            connection.connectTimeout = 3000
+            connection.readTimeout = 3000
+            val code = connection.responseCode
+            if (code !in 200..299) {
+                throw IllegalStateException("webhook returned HTTP $code")
+            }
+            connection.inputStream.close()
+            WebhookReachability(healthUrl = healthUrl, host = url.host)
+        } catch (error: java.net.SocketTimeoutException) {
+            throw IllegalStateException("request timed out", error)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun webhookReachabilityErrorMessage(error: Throwable): String =
+        error.message ?: error.javaClass.simpleName
 
     private fun isGlassesConnected(): Boolean = isGlassesConnected(state.glassesStatus)
 

@@ -24,6 +24,11 @@ private struct GalleryServerCheck {
     let eventText: String
 }
 
+private struct WebhookReachability {
+    let healthUrl: URL
+    let host: String
+}
+
 private struct PersistedCloudUrls {
     let streamProtocol: ExampleStreamProtocol?
     let streamUrl: String?
@@ -768,6 +773,19 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 cameraStatus = "Camera: \(message)"
                 throw ExampleActionError(message: message)
             }
+            cameraStatus = "Camera: checking media server before video"
+            do {
+                let reachability = try await checkWebhookReachable(uploadUrl)
+                cameraStatus = "Camera: media server reachable (\(reachability.host)); starting video"
+                append(tag: "LIVE", text: "media server reachable for video \(reachability.healthUrl.absoluteString)")
+            } catch {
+                let message = webhookReachabilityErrorMessage(error)
+                cameraStatus = "Camera: media server check failed: \(message)"
+                videoPreviewDetails = .pending(requestId: "", state: "error", uploadUrl: uploadUrl)
+                    .updated(error: message, state: "error")
+                append(tag: "LIVE", text: "media server check failed: \(message)")
+                throw ExampleActionError(message: "Media server check failed: \(message)")
+            }
             let requestId = "video-\(Int(Date().timeIntervalSince1970 * 1000))"
             activeVideoRequestId = requestId
             videoPollGeneration += 1
@@ -918,7 +936,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 append(tag: "TX", text: "Test webhook failed: \(validationMessage)")
                 throw ExampleActionError(message: validationMessage)
             }
-            guard let healthUrl = webhookHealthUrl(uploadUrl) else {
+            guard webhookHealthUrl(uploadUrl) != nil else {
                 let message = "Enter a valid http:// or https:// media upload URL."
                 cameraStatus = "Camera: \(message)"
                 append(tag: "TX", text: "Test webhook failed: invalid URL")
@@ -928,25 +946,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             cameraStatus = "Camera: testing local webhook"
             Task {
                 do {
-                    var request = URLRequest(url: URL(string: "\(healthUrl.absoluteString)?poll=\(Int(Date().timeIntervalSince1970 * 1000))")!)
-                    request.cachePolicy = .reloadIgnoringLocalCacheData
-                    request.timeoutInterval = 3
-                    let (_, response) = try await URLSession.shared.data(for: request)
-                    guard let http = response as? HTTPURLResponse else {
-                        cameraStatus = "Camera: webhook test failed: invalid response"
-                        append(tag: "LIVE", text: "webhook test failed: invalid response")
-                        return
-                    }
-                    guard (200 ..< 300).contains(http.statusCode) else {
-                        cameraStatus = "Camera: webhook returned HTTP \(http.statusCode)"
-                        append(tag: "LIVE", text: "webhook returned HTTP \(http.statusCode)")
-                        return
-                    }
-                    cameraStatus = "Camera: webhook reachable (\(healthUrl.host ?? "server"))"
-                    append(tag: "LIVE", text: "webhook reachable \(healthUrl.absoluteString)")
+                    let reachability = try await checkWebhookReachable(uploadUrl)
+                    cameraStatus = "Camera: webhook reachable (\(reachability.host))"
+                    append(tag: "LIVE", text: "webhook reachable \(reachability.healthUrl.absoluteString)")
                 } catch {
-                    cameraStatus = "Camera: webhook test failed: \(error.localizedDescription)"
-                    append(tag: "LIVE", text: "webhook test failed: \(error.localizedDescription)")
+                    let message = webhookReachabilityErrorMessage(error)
+                    cameraStatus = "Camera: webhook test failed: \(message)"
+                    append(tag: "LIVE", text: "webhook test failed: \(message)")
                 }
             }
         }
@@ -1854,6 +1860,43 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         cloudUrlDefaults.set(streamUrl, forKey: CloudUrlStorage.streamUrl)
         cloudUrlDefaults.set(webhookUrl, forKey: CloudUrlStorage.webhookUrl)
         cloudUrlDefaults.set(Date().timeIntervalSince1970, forKey: CloudUrlStorage.savedAt)
+    }
+
+    private func checkWebhookReachable(_ uploadUrl: String) async throws -> WebhookReachability {
+        guard let healthUrl = webhookHealthUrl(uploadUrl) else {
+            throw ExampleActionError(message: "Enter a valid http:// or https:// media upload URL.")
+        }
+        var request = URLRequest(url: cacheBustedUrl(healthUrl))
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 3
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw ExampleActionError(message: "invalid response")
+            }
+            guard (200 ..< 300).contains(http.statusCode) else {
+                throw ExampleActionError(message: "webhook returned HTTP \(http.statusCode)")
+            }
+            return WebhookReachability(healthUrl: healthUrl, host: healthUrl.host ?? "server")
+        } catch let error as ExampleActionError {
+            throw error
+        } catch let error as URLError where error.code == .timedOut {
+            throw ExampleActionError(message: "request timed out")
+        } catch {
+            throw error
+        }
+    }
+
+    private func cacheBustedUrl(_ url: URL) -> URL {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        var queryItems = components?.queryItems ?? []
+        queryItems.append(URLQueryItem(name: "poll", value: "\(Int(Date().timeIntervalSince1970 * 1000))"))
+        components?.queryItems = queryItems
+        return components?.url ?? url
+    }
+
+    private func webhookReachabilityErrorMessage(_ error: Error) -> String {
+        error.localizedDescription
     }
 
     private func applyDisconnectedState(status: String) {

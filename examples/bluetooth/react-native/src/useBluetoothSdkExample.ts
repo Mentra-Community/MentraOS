@@ -980,6 +980,22 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         setCameraStatus('Camera: enter a valid http:// or https:// media upload URL');
         throw new Error('Enter a valid http:// or https:// media upload URL.');
       }
+      setCameraStatus('Camera: checking media server before video');
+      try {
+        const reachability = await checkWebhookReachable(uploadUrlText);
+        setCameraStatus(`Camera: media server reachable (${reachability.host}); starting video`);
+        addEvent('LIVE', `media server reachable for video ${reachability.uploadUrl ?? reachability.healthUrl}`);
+      } catch (error) {
+        const message = formatError(error);
+        setCameraStatus(`Camera: media server check failed: ${message}`);
+        setVideoPreviewDetails({
+          error: message,
+          source: 'Cloud server',
+          state: 'error',
+          uploadUrl: uploadUrlText,
+        });
+        throw new Error(`Media server check failed: ${message}`);
+      }
 
       const requestId = `video-${Date.now()}`;
       activeVideoRequestIdRef.current = requestId;
@@ -1177,23 +1193,44 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
       setCameraStatus('Camera: testing local webhook');
       try {
-        const response = await fetch(cacheBustedUrl(healthUrl), {
-          cache: 'no-store',
-          headers: {'Cache-Control': 'no-cache', Pragma: 'no-cache'},
-        });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        const json = (await response.json()) as {uploadUrl?: string};
-        const host = new URL(healthUrl).host;
-        setCameraStatus(`Camera: webhook reachable (${host})`);
-        addEvent('LIVE', `webhook reachable ${json.uploadUrl ?? healthUrl}`);
+        const reachability = await checkWebhookReachable(uploadUrlText);
+        setCameraStatus(`Camera: webhook reachable (${reachability.host})`);
+        addEvent('LIVE', `webhook reachable ${reachability.uploadUrl ?? reachability.healthUrl}`);
       } catch (error) {
         const message = formatError(error);
         setCameraStatus(`Camera: webhook test failed: ${message}`);
         throw error;
       }
     });
+  }
+
+  async function checkWebhookReachable(uploadUrlText: string) {
+    const healthUrl = webhookHealthUrl(uploadUrlText);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    try {
+      const response = await fetch(cacheBustedUrl(healthUrl), {
+        cache: 'no-store',
+        headers: {'Cache-Control': 'no-cache', Pragma: 'no-cache'},
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new Error(`webhook returned HTTP ${response.status}`);
+      }
+      const json = (await response.json().catch(() => ({}))) as {uploadUrl?: string};
+      return {
+        healthUrl,
+        host: new URL(healthUrl).host,
+        uploadUrl: json.uploadUrl,
+      };
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw new Error('request timed out');
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   function handleDirectPhotoUpload(payload: PhotoReceiverUploadEvent) {
@@ -3647,4 +3684,8 @@ function roiPositionLabel(roiPosition: CameraRoiPosition) {
 
 function formatError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === 'AbortError';
 }
