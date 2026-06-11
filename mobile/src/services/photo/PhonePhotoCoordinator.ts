@@ -115,6 +115,12 @@ export class PhonePhotoCoordinator {
     //    photo_response success, so run it beside the cloud poll instead of
     //    awaiting it before polling. iOS auto-injects transferMethod: "auto"
     //    (WiFi direct with BLE fallback) — see MentraLive.swift.
+    // When the managed-photo upload URL is loopback (the local storage provider
+    // reached over `adb reverse`), the glasses cannot reach it over WiFi —
+    // localhost on the glasses is the glasses. Force BLE transfer so the phone
+    // (which CAN reach the reversed runtime) relays the bytes. A normal
+    // presigned r2/s3 URL is publicly reachable, so leave transfer on "auto".
+    const isLoopbackUpload = /^https?:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2)\b/.test(uploadUrl)
     try {
       void BluetoothSdk.requestPhoto({
         requestId,
@@ -122,6 +128,7 @@ export class PhonePhotoCoordinator {
         size: opts.size ?? "medium",
         webhookUrl: uploadUrl,
         authToken: null,
+        ...(isLoopbackUpload ? {transferMethod: "ble" as const} : {}),
         compress: toNativeCompression(opts.compress),
         save: opts.saveToGallery ?? false,
         sound: opts.sound ?? true,
