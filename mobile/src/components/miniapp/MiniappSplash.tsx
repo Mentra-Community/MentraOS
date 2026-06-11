@@ -27,6 +27,8 @@ interface MiniappSplashProps {
   error?: string
   label?: string
   devApp?: boolean
+  /** Render at full opacity immediately instead of fading in (fade out still applies). */
+  disableFadeIn?: boolean
 }
 
 const FADE_IN_DURATION_MS = 50
@@ -41,20 +43,23 @@ export default function MiniappSplash({
   error,
   label,
   devApp = false,
+  disableFadeIn = false,
 }: MiniappSplashProps) {
   const {theme} = useAppTheme()
   const size = 128
   const borderRadius = theme.spacing.s3
 
-  const opacity = useSharedValue(0)
+  const opacity = useSharedValue(disableFadeIn ? 1 : 0)
   const [hidden, setHidden] = useState(false)
   const [minVisibleElapsed, setMinVisibleElapsed] = useState(false)
 
   useEffect(() => {
-    opacity.value = withTiming(1, {duration: FADE_IN_DURATION_MS})
+    if (!disableFadeIn) {
+      opacity.value = withTiming(1, {duration: FADE_IN_DURATION_MS})
+    }
     const t = setTimeout(() => setMinVisibleElapsed(true), MIN_VISIBLE_MS)
     return () => clearTimeout(t)
-  }, [opacity])
+  }, [opacity, disableFadeIn])
 
   useEffect(() => {
     if (!isLoaded || !minVisibleElapsed) return

@@ -84,8 +84,6 @@ function LocalMiniappView({
   const [uiBaseDir, setUiBaseDir] = useState<string | null>(null)
   const [androidGatePassed, setAndroidGatePassed] = useState(false)
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
-  const [derivedIcon, setDerivedIcon] = useState<string | undefined>(iconUrl)
-  const [derivedAppName, setDerivedAppName] = useState<string | undefined>(appName)
 
   // ----- Load-state tracking -------------------------------------------------
   //
@@ -136,7 +134,7 @@ function LocalMiniappView({
   // Phase machine for the pre-WebView affordance. "ready" means we have a
   // uiUri and the WebView is mounted; the loading card is rendered for
   // every phase prior so the user always sees something happening.
-  const [label, setLabel] = useState<string | undefined>("initializing")
+  const [label, setLabel] = useState<string | undefined>(undefined)
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined)
 
   useEffect(() => {
@@ -218,7 +216,7 @@ function LocalMiniappView({
         // normal web-dev-server model. No zip download / file:// snapshot, so
         // a plain WebView.reload() (and a JSContext respawn) picks up freshly
         // built code. The bundle.zip / install path stays for store installs.
-        setLabel("loading")
+        // setLabel("loading")
         const portNum = resolveDevPort(devPort, packageName)
         if (portNum === null) {
           fail("no dev port configured")
@@ -475,19 +473,23 @@ function LocalMiniappView({
   // }
 
   let isDevApp = packageName == DEV_APP_PACKAGE_NAME
+  if (isDevApp) {
+    appName = undefined
+  }
 
   if (!uiUri) {
     return (
       <View className="flex-1">
         <MiniappSplash
-          name={derivedAppName}
-          iconUrl={derivedIcon}
+          name={appName}
+          iconUrl={iconUrl}
           bgColor={theme.colors.background}
           isLoaded={false}
           error={errorMessage}
           label={label}
           devApp={isDevApp}
         />
+        <CapsuleMenu forceShow={true} />
       </View>
     )
   }
@@ -555,11 +557,12 @@ function LocalMiniappView({
           />
         </View>
         <MiniappSplash
-          name={derivedAppName}
-          iconUrl={derivedIcon}
+          name={appName}
+          iconUrl={iconUrl}
           bgColor={theme.colors.background}
           isLoaded={false}
           devApp={isDevApp}
+          disableFadeIn={true}
         />
         <CapsuleMenu forceShow={true} />
       </View>
@@ -614,13 +617,14 @@ function LocalMiniappView({
         style={{flex: 1, borderRadius: theme.spacing.s12}}
       />
       <MiniappSplash
-        name={derivedAppName}
-        iconUrl={derivedIcon}
+        name={appName}
+        iconUrl={iconUrl}
         bgColor={theme.colors.background}
         isLoaded={connected}
         error={errorMessage}
         label={connectingLabel}
         devApp={isDevApp}
+        disableFadeIn={true}
       />
       {/* <View className="flex-1 bg-red-500"/> */}
       <CapsuleMenu forceShow={true} />
