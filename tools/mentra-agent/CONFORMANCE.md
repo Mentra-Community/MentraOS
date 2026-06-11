@@ -60,3 +60,12 @@ single live transcript with no session churn, wedge, or reconnect. This is the
 post-keepalive-fix behavior working over a realistic overnight span. (One probe
 "failed" only because its 30s expect-window closed before the final word
 finalized; the next probe passed.)
+
+## Display refresh ceiling (human-verified, G2 on-face)
+
+Paced text-wall updates at 20/10/5/2 Hz, 4s each: the wearer confirmed **20 Hz
+renders smoothly** on the G2 (sequential UPDATE_TEXT_DATA, single-packet frames).
+The laptop->daemon->BLE queue accepts ~1,300 updates/sec but that is queueing,
+not rendering — frames beyond the air/firmware rate coalesce. Practical
+implication: caption updates, spinners, and even character-grid animations
+(Matrix rain at 20fps, 7x26 glyphs) are comfortably within budget.
