@@ -53,10 +53,15 @@ export function createHealthApp(opts: HealthAppOptions): Hono {
         const ok = await rc.check();
         results.push({ name: rc.name, ok });
       } catch (err) {
+        console.error("readiness check failed", {
+          packageName: opts.packageName,
+          check: rc.name,
+          err,
+        });
         results.push({
           name: rc.name,
           ok: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: "readiness check failed",
         });
       }
     }
