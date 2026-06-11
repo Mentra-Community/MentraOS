@@ -26,6 +26,7 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withDelay,
+  withSequence,
   withSpring,
   withTiming,
 } from "react-native-reanimated"
@@ -65,6 +66,11 @@ const FADE_IN_DURATION_MS = Platform.OS === "ios" ? 450 : 1200
 const FADE_IN_SCALE_FROM = 0.4
 const FADE_OUT_DURATION_MS = 300
 const FADE_OUT_SCALE_TO = 0.4
+// iOS liquid-glass warm-up for offline-hosted apps: the overlay mounts fully
+// opaque (but shrunk to a dot) for this long so the glass views configure
+// under an opaque ancestor before the real open animation plays.
+const GLASS_WARMUP_MS = 10
+const GLASS_WARMUP_SCALE = 0.1
 
 export default function Compositor() {
   const foregroundApp = useForegroundApp()
@@ -288,12 +294,24 @@ export default function Compositor() {
       didSwipeToExit.current = false // reset the flag so we can animate out again
       swipeTranslateX.value = 0
       swipeTranslateY.value = 0
-      // Offline-hosted apps mount with NO open animation: their native
-      // liquid-glass surfaces misrender when configured while an ancestor
-      // animates opacity/scale, so the overlay snaps straight to rest state.
-      if (foregroundApp && isOfflineHosted(foregroundApp.packageName)) {
+      // iOS offline-hosted apps: liquid-glass surfaces misrender when they're
+      // configured while an ancestor animates opacity. Warm-up trick: mount
+      // fully OPAQUE but scaled to a dot for ~10ms so the glass initializes
+      // under an opaque ancestor, then snap to the normal animation's start
+      // state and play the usual fade+zoom.
+      if (Platform.OS === "ios" && foregroundApp && isOfflineHosted(foregroundApp.packageName)) {
         fadeOpacity.value = 1
-        fadeScale.value = 1
+        fadeScale.value = GLASS_WARMUP_SCALE
+        fadeOpacity.value = withSequence(
+          withTiming(1, {duration: GLASS_WARMUP_MS}), // hold opaque while glass configures
+          withTiming(0, {duration: 0}), // snap invisible
+          withTiming(1, {duration: FADE_IN_DURATION_MS}), // normal fade-in
+        )
+        fadeScale.value = withSequence(
+          withTiming(GLASS_WARMUP_SCALE, {duration: GLASS_WARMUP_MS}),
+          withTiming(FADE_IN_SCALE_FROM, {duration: 0}),
+          withTiming(1, {duration: FADE_IN_DURATION_MS}), // normal zoom-in
+        )
       } else {
         fadeOpacity.value = 0
         // Zoom-in on launch: scale up from FADE_IN_SCALE_FROM → 1 alongside the
