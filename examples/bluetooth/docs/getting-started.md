@@ -166,7 +166,7 @@ iOS apps should include permission copy in `Info.plist`:
 <key>NSMicrophoneUsageDescription</key>
 <string>This app uses the microphone when you enable audio or transcription features.</string>
 <key>NSLocalNetworkUsageDescription</key>
-<string>This app connects to local photo and streaming helpers during development.</string>
+<string>This app connects to local media upload and streaming helpers during development.</string>
 ```
 
 ## Background Operation On iOS
@@ -396,7 +396,7 @@ bun run android:dev
 
 `bun run ios:setup` installs the GStreamer iOS SDK used by the React Native example's direct phone WebRTC preview.
 
-For photo upload and RTMP/SRT/WebRTC demos, start the local helper from the repo root:
+For photo/video upload and RTMP/SRT/WebRTC demos, start the local helper from the repo root:
 
 ```bash
 python3 examples/local-demo-cloud/server.py

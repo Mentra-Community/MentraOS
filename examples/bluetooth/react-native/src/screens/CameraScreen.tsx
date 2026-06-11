@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Clipboard, Switch, PanResponder, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import Svg, { Circle, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
 import { useScrollBottomPadding } from '../components/keyboardLayout';
@@ -24,11 +25,13 @@ import {
   type PhotoCompression,
   type PhotoPreviewDetails,
   type PhotoSize,
+  type VideoPreviewDetails,
 } from '../useBluetoothSdkExample';
 
 const PHOTO_EXPOSURE_STEP_NS = 500_000;
 const PHOTO_ISO_STEP = 50;
 const CAMERA_FOV_STEP = 1;
+type CameraCaptureMode = 'photo' | 'video';
 
 function cameraSdkCall(
   size: PhotoSize,
@@ -46,9 +49,10 @@ function cameraSdkCall(
 console.log(\`Camera FOV applied at \${cameraFov.fov}°\`);
 `;
   if (!useCloudServer) {
-    return `${prefix}const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();
+    return `${prefix}const photoRequestId = \`photo-\${Date.now()}\`;
+const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();
 const photo = await BluetoothSdk.requestPhoto({
-  requestId,
+  requestId: photoRequestId,
   appId: PHOTO_APP_ID,
   size: "${size}",
   webhookUrl: uploadUrl,
@@ -60,8 +64,9 @@ ${isoLine}
 })
 console.log("Photo delivered", photo.photoUrl ?? photo.uploadUrl)`;
   }
-  return `${prefix}const photo = await BluetoothSdk.requestPhoto({
-  requestId,
+  return `${prefix}const photoRequestId = \`photo-\${Date.now()}\`;
+const photo = await BluetoothSdk.requestPhoto({
+  requestId: photoRequestId,
   appId: PHOTO_APP_ID,
   size: "${size}",
   webhookUrl,
@@ -71,15 +76,32 @@ console.log("Photo delivered", photo.photoUrl ?? photo.uploadUrl)`;
 ${exposureLine}
 ${isoLine}
 })
-console.log("Photo delivered", photo.photoUrl ?? photo.uploadUrl)`;
+console.log("Photo delivered", photo.photoUrl ?? photo.uploadUrl)
+
+const videoRequestId = \`video-\${Date.now()}\`;
+await BluetoothSdk.startVideoRecording(videoRequestId, true, true, {
+  maxRecordingTimeMinutes: 1,
+});
+const stopped = await BluetoothSdk.stopVideoRecording(videoRequestId, webhookUrl);
+console.log("Video stopped", stopped.status)`;
 }
 
 export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const scrollBottomPadding = useScrollBottomPadding();
+  const [captureMode, setCaptureMode] = React.useState<CameraCaptureMode>('photo');
   const [photoDetailsExpanded, setPhotoDetailsExpanded] = React.useState(false);
+  const [videoDetailsExpanded, setVideoDetailsExpanded] = React.useState(false);
   const connected = isGlassesConnected(sdk.glasses);
   const glassesWifiConnected = isGlassesWifiConnected(sdk.glasses);
   const wifiRequired = connected && !glassesWifiConnected;
+  const videoActionBusy =
+    sdk.activeAction === 'Start video recording' ||
+    sdk.activeAction === 'Stop & upload video';
+  const videoControlsDisabled =
+    !connected ||
+    !glassesWifiConnected ||
+    videoActionBusy ||
+    (!sdk.photoCloudServerEnabled && !sdk.videoRecording);
   const cameraStatusFailed = isCameraStatusFailure(sdk.cameraStatus);
   const photoStatusOverlay = photoStatusOverlayInfo(
     sdk.photoStatus,
@@ -91,6 +113,16 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
       'Wi-Fi upload failed; photo was compressed and delivered through Bluetooth.'
     : null;
   const setupHint = sdk.photoCloudServerEnabled ? localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus) : null;
+  const photoStateText = sdk.photoPreviewUrl
+    ? 'preview ready'
+    : sdk.photoStatus
+      ? photoStatusTitle(sdk.photoStatus, sdk.photoPreviewDetails)
+      : 'ready';
+  const videoStateText = sdk.videoRecording
+    ? 'recording'
+    : sdk.videoPreviewUrl
+      ? 'preview ready'
+      : sdk.videoPreviewDetails?.state ?? 'ready';
   const sdkCall = cameraSdkCall(
     sdk.photoSize,
     sdk.photoCompression,
@@ -101,6 +133,18 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
     sdk.cameraFov,
     sdk.cameraRoiPosition,
   );
+
+  React.useEffect(() => {
+    if (
+      sdk.videoRecording ||
+      sdk.activeAction === 'Start video recording' ||
+      sdk.activeAction === 'Stop & upload video'
+    ) {
+      setCaptureMode('video');
+    } else if (sdk.activeAction === 'Capture & upload') {
+      setCaptureMode('photo');
+    }
+  }, [sdk.activeAction, sdk.videoRecording]);
 
   return (
     <ScrollView
@@ -122,8 +166,15 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         </View>
       ) : null}
 
+      <CameraModeSelector activeMode={captureMode} onChange={setCaptureMode} />
+
       {/* Preview card */}
+      {captureMode === 'photo' ? (
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.card}>
+        <View style={styles.captureModeHeader}>
+          <Text style={styles.eyebrow}>PHOTO</Text>
+          <Text style={styles.videoStateText}>{photoStateText}</Text>
+        </View>
         <View style={styles.previewWrap}>
           <LinearGradient colors={['#1F4A33', '#3A8A56', '#7DD89E', '#26B870', '#163A26']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.preview}>
             {sdk.photoPreviewUrl ? (
@@ -213,7 +264,71 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             </Text>
           </LinearGradient>
         </Pressable>
+        <PhotoDetailsCard
+          details={sdk.photoPreviewDetails}
+          embedded
+          expanded={photoDetailsExpanded}
+          onToggle={() => setPhotoDetailsExpanded((value) => !value)}
+        />
       </LinearGradient>
+      ) : null}
+
+      {captureMode === 'video' ? (
+      <LinearGradient colors={['rgba(255,255,255,0.74)', 'rgba(255,255,255,0.52)']} style={styles.videoCard}>
+        <View style={styles.cardHead}>
+          <Text style={styles.eyebrow}>VIDEO RECORDING</Text>
+          <Text style={styles.videoStateText}>{videoStateText}</Text>
+        </View>
+        <View style={styles.videoPreviewWrap}>
+          {sdk.videoPreviewUrl ? (
+            <VideoPreviewPlayer url={sdk.videoPreviewUrl} />
+          ) : (
+            <LinearGradient
+              colors={['#101820', '#21383B', '#357064']}
+              start={{x: 0, y: 0}}
+              end={{x: 1, y: 1}}
+              style={styles.videoPlaceholder}>
+              <View style={styles.previewBottomShade} />
+              <View style={styles.previewBadge}>
+                <View style={{ width: 5, height: 5, borderRadius: 999, backgroundColor: colors.greenSoft }} />
+                <Text style={styles.previewBadgeText}>MP4 · waiting</Text>
+              </View>
+              <Text style={styles.previewMeta}>
+                {sdk.videoRecording ? 'recording' : 'ready'}
+              </Text>
+            </LinearGradient>
+          )}
+        </View>
+        <Pressable disabled={videoControlsDisabled} onPress={sdk.toggleVideoRecording}>
+          <LinearGradient colors={['#223F4D', '#182C38']} style={[styles.captureBtn, videoControlsDisabled && styles.disabled]}>
+            <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+              <Path d="m15 10 4.55-2.28A1 1 0 0 1 21 8.62v6.76a1 1 0 0 1-1.45.9L15 14" />
+              <Rect x={3} y={6} width={12} height={12} rx={2} />
+            </Svg>
+            <Text style={styles.captureText}>
+              {!connected
+                ? 'Connect glasses first'
+                : !glassesWifiConnected
+                  ? 'Connect glasses to Wi-Fi'
+                  : !sdk.photoCloudServerEnabled && !sdk.videoRecording
+                    ? 'Enable cloud server'
+                    : sdk.activeAction === 'Start video recording'
+                      ? 'Starting video…'
+                      : sdk.activeAction === 'Stop & upload video'
+                        ? 'Uploading video…'
+                        : sdk.videoRecording
+                          ? 'Stop & upload video'
+                          : 'Start video'}
+            </Text>
+          </LinearGradient>
+        </Pressable>
+        <VideoDetailsCard
+          details={sdk.videoPreviewDetails}
+          expanded={videoDetailsExpanded}
+          onToggle={() => setVideoDetailsExpanded((value) => !value)}
+        />
+      </LinearGradient>
+      ) : null}
 
       {/* SDK call card */}
       <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.sdkCard}>
@@ -239,25 +354,23 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           <View style={{ flex: 1 }}>
             <Text style={styles.statusTitle}>{sdk.cameraStatus}</Text>
             <Text style={styles.statusSub}>
-              {sdk.photoPreviewUrl
-                ? sdk.photoCloudServerEnabled
-                  ? 'Preview loaded from cloud server'
-                  : 'Preview loaded from phone receiver'
-                : sdk.photoCloudServerEnabled
-                  ? 'Waiting for cloud upload'
-                  : sdk.phonePhotoReceiverRunning
-                    ? 'Phone receiver ready'
-                    : 'Preparing phone receiver'}
+              {sdk.videoRecording
+                ? 'Recording MP4 on glasses'
+                : sdk.videoPreviewUrl
+                  ? 'Video preview loaded from cloud server'
+                  : sdk.photoPreviewUrl
+                    ? sdk.photoCloudServerEnabled
+                      ? 'Photo preview loaded from cloud server'
+                      : 'Photo preview loaded from phone receiver'
+                    : sdk.photoCloudServerEnabled
+                      ? 'Waiting for media upload'
+                      : sdk.phonePhotoReceiverRunning
+                        ? 'Phone receiver ready'
+                        : 'Preparing phone receiver'}
             </Text>
           </View>
         </View>
       </LinearGradient>
-
-      <PhotoDetailsCard
-        details={sdk.photoPreviewDetails}
-        expanded={photoDetailsExpanded}
-        onToggle={() => setPhotoDetailsExpanded((value) => !value)}
-      />
 
       {/* Upload to */}
       <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.uploadCard}>
@@ -272,7 +385,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           ) : null}
         </View>
         <View style={styles.cloudToggleRow}>
-          <Text style={styles.cloudToggleLabel}>Use cloud server</Text>
+          <Text style={styles.cloudToggleLabel}>Use media cloud server</Text>
           <Switch
             ios_backgroundColor="rgba(15,42,29,0.18)"
             onValueChange={sdk.setPhotoCloudServerEnabled}
@@ -284,7 +397,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         {sdk.photoCloudServerEnabled ? (
           <>
             <View style={styles.cardHead}>
-              <Text style={styles.modeHint}>Cloud server receives the JPEG upload.</Text>
+              <Text style={styles.modeHint}>Cloud server receives JPEG and MP4 uploads.</Text>
             </View>
             <View style={styles.urlBar}>
               <Text style={styles.method}>POST</Text>
@@ -294,7 +407,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
                 autoCorrect={false}
                 keyboardType="url"
                 onChangeText={sdk.setWebhookUrl}
-                placeholder="Photo upload URL"
+                placeholder="Media upload URL"
                 placeholderTextColor={colors.muted}
                 returnKeyType="done"
                 style={styles.url}
@@ -305,15 +418,22 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           </>
         ) : (
           <Text style={styles.setupHint}>
-            The phone keeps a local upload receiver ready on this tab and previews the JPEG when the glasses upload it.
+            The phone keeps a local upload receiver ready on this tab and previews JPEG photos when the glasses upload them.
           </Text>
         )}
-        <OptionGroup label="size">
+        {captureMode === 'video' && !sdk.photoCloudServerEnabled ? (
+          <Text style={styles.setupHint}>
+            Video upload uses the media cloud server. Turn it on here before starting a recording.
+          </Text>
+        ) : null}
+        {captureMode === 'photo' ? (
+          <>
+        <OptionGroup label="photo size">
           {PHOTO_SIZES.map((size) => (
             <Chip key={size} active={sdk.photoSize === size} value={size} onPress={() => sdk.setPhotoSize(size)} />
           ))}
         </OptionGroup>
-        <OptionGroup label="compress">
+        <OptionGroup label="photo compress">
           {PHOTO_COMPRESSIONS.map((compression) => (
             <Chip
               key={compression}
@@ -331,6 +451,8 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           iso={sdk.photoIso}
           value={sdk.photoExposureTimeNs}
         />
+          </>
+        ) : null}
         <CameraSettingsControl
           applying={sdk.cameraSettingsApplying}
           fov={sdk.cameraFov}
@@ -347,16 +469,18 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
 
 function PhotoDetailsCard({
   details,
+  embedded = false,
   expanded,
   onToggle,
 }: {
   details: PhotoPreviewDetails | null;
+  embedded?: boolean;
   expanded: boolean;
   onToggle: () => void;
 }) {
   const rows = photoDetailsRows(details);
-  return (
-    <LinearGradient colors={['rgba(255,255,255,0.74)', 'rgba(255,255,255,0.52)']} style={styles.detailsCard}>
+  const content = (
+    <>
       <Pressable onPress={onToggle} style={styles.detailsHeader}>
         <View style={{ flex: 1 }}>
           <Text style={styles.eyebrow}>PHOTO DETAILS</Text>
@@ -378,7 +502,263 @@ function PhotoDetailsCard({
           ))}
         </View>
       ) : null}
+    </>
+  );
+
+  if (embedded) {
+    return <View style={styles.videoDetailsPanel}>{content}</View>;
+  }
+
+  return (
+    <LinearGradient colors={['rgba(255,255,255,0.74)', 'rgba(255,255,255,0.52)']} style={styles.detailsCard}>
+      {content}
     </LinearGradient>
+  );
+}
+
+function CameraModeSelector({
+  activeMode,
+  onChange,
+}: {
+  activeMode: CameraCaptureMode;
+  onChange: (mode: CameraCaptureMode) => void;
+}) {
+  return (
+    <View style={styles.modeSelectorWrap}>
+      <View style={styles.modeSelector}>
+        <CameraModeButton active={activeMode === 'photo'} mode="photo" onChange={onChange} />
+        <CameraModeButton active={activeMode === 'video'} mode="video" onChange={onChange} />
+      </View>
+    </View>
+  );
+}
+
+function CameraModeButton({
+  active,
+  mode,
+  onChange,
+}: {
+  active: boolean;
+  mode: CameraCaptureMode;
+  onChange: (mode: CameraCaptureMode) => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{selected: active}}
+      onPress={() => onChange(mode)}
+      style={({pressed}) => [styles.modeButton, active && styles.modeButtonActive, pressed && styles.copyChipPressed]}>
+      <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={active ? colors.ink : colors.muted} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+        {mode === 'photo' ? (
+          <>
+            <Path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
+            <Circle cx={12} cy={13} r={4} />
+          </>
+        ) : (
+          <>
+            <Path d="m15 10 4.55-2.28A1 1 0 0 1 21 8.62v6.76a1 1 0 0 1-1.45.9L15 14" />
+            <Rect x={3} y={6} width={12} height={12} rx={2} />
+          </>
+        )}
+      </Svg>
+      <Text style={[styles.modeButtonText, active && styles.modeButtonTextActive]}>
+        {mode === 'photo' ? 'Photo' : 'Video'}
+      </Text>
+    </Pressable>
+  );
+}
+
+function sanitizeVideoMediaSeconds(seconds: number) {
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+}
+
+function formatVideoPlaybackSeconds(seconds: number) {
+  const totalSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainder = (totalSeconds % 60).toString().padStart(2, '0');
+  return `${minutes}:${remainder}`;
+}
+
+function VideoPreviewPlayer({url}: {url: string}) {
+  const player = useVideoPlayer(url, (videoPlayer) => {
+    videoPlayer.loop = false;
+    videoPlayer.muted = true;
+    videoPlayer.timeUpdateEventInterval = 0.25;
+    videoPlayer.play();
+  });
+  const [currentTime, setCurrentTime] = React.useState(0);
+  const [duration, setDuration] = React.useState(0);
+  const [playing, setPlaying] = React.useState(true);
+
+  React.useEffect(() => {
+    setCurrentTime(0);
+    setDuration(0);
+    setPlaying(true);
+    const interval = setInterval(() => {
+      const nextDuration = sanitizeVideoMediaSeconds(player.duration);
+      const nextCurrentTime = sanitizeVideoMediaSeconds(player.currentTime);
+      setDuration(nextDuration);
+      setCurrentTime(Math.min(nextCurrentTime, nextDuration || nextCurrentTime));
+      setPlaying(player.playing);
+    }, 250);
+    return () => clearInterval(interval);
+  }, [player, url]);
+
+  const seekTo = React.useCallback(
+    (seconds: number) => {
+      const upperBound = duration > 0 ? duration : seconds;
+      const nextTime = Math.max(0, Math.min(upperBound, seconds));
+      player.currentTime = nextTime;
+      setCurrentTime(nextTime);
+    },
+    [duration, player],
+  );
+
+  const togglePlayback = React.useCallback(() => {
+    if (player.playing) {
+      player.pause();
+      setPlaying(false);
+      return;
+    }
+    if (duration > 0 && currentTime >= duration - 0.2) {
+      player.currentTime = 0;
+      setCurrentTime(0);
+    }
+    player.play();
+    setPlaying(true);
+  }, [currentTime, duration, player]);
+
+  return (
+    <View style={styles.videoPreviewPlayer}>
+      <VideoView
+        contentFit="cover"
+        nativeControls={false}
+        player={player}
+        style={styles.videoPreviewFill}
+      />
+      <View style={styles.videoPlaybackControls}>
+        <Pressable
+          accessibilityLabel={playing ? 'Pause video preview' : 'Play video preview'}
+          accessibilityRole="button"
+          onPress={togglePlayback}
+          style={({pressed}) => [styles.videoPlaybackButton, pressed && styles.copyChipPressed]}>
+          <Svg width={14} height={14} viewBox="0 0 24 24" fill="none">
+            {playing ? (
+              <>
+                <Rect x={6} y={5} width={4} height={14} rx={1} fill="#fff" />
+                <Rect x={14} y={5} width={4} height={14} rx={1} fill="#fff" />
+              </>
+            ) : (
+              <Path d="M8 5v14l11-7z" fill="#fff" />
+            )}
+          </Svg>
+        </Pressable>
+        <Text style={styles.videoPlaybackTime}>{formatVideoPlaybackSeconds(currentTime)}</Text>
+        <PlaybackScrubber duration={duration} position={currentTime} onSeek={seekTo} />
+        <Text style={styles.videoPlaybackTime}>{duration > 0 ? formatVideoPlaybackSeconds(duration) : '--:--'}</Text>
+      </View>
+    </View>
+  );
+}
+
+function PlaybackScrubber({
+  duration,
+  onSeek,
+  position,
+}: {
+  duration: number;
+  onSeek: (seconds: number) => void;
+  position: number;
+}) {
+  const trackRef = React.useRef<React.ElementRef<typeof View>>(null);
+  const trackLeftRef = React.useRef(0);
+  const trackWidthRef = React.useRef(0);
+  const [trackWidth, setTrackWidth] = React.useState(0);
+  const enabled = duration > 0;
+  const progress = enabled ? Math.max(0, Math.min(1, position / duration)) : 0;
+
+  const updateFromPageX = React.useCallback(
+    (pageX: number, measuredLeft = trackLeftRef.current, measuredWidth = trackWidthRef.current || trackWidth) => {
+      if (!enabled || measuredWidth <= 0) {
+        return;
+      }
+      const x = pageX - measuredLeft;
+      const ratio = Math.max(0, Math.min(1, x / measuredWidth));
+      onSeek(ratio * duration);
+    },
+    [duration, enabled, onSeek, trackWidth],
+  );
+
+  const measureAndUpdate = React.useCallback(
+    (pageX: number) => {
+      trackRef.current?.measureInWindow((left, _top, width) => {
+        trackLeftRef.current = left;
+        trackWidthRef.current = width;
+        setTrackWidth(width);
+        updateFromPageX(pageX, left, width);
+      });
+    },
+    [updateFromPageX],
+  );
+
+  const panResponder = React.useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => enabled,
+        onMoveShouldSetPanResponder: () => enabled,
+        onPanResponderGrant: (event) => measureAndUpdate(event.nativeEvent.pageX),
+        onPanResponderMove: (_event, gestureState) => updateFromPageX(gestureState.moveX),
+      }),
+    [enabled, measureAndUpdate, updateFromPageX],
+  );
+
+  return (
+    <View
+      ref={trackRef}
+      {...panResponder.panHandlers}
+      onLayout={(event) => {
+        const width = event.nativeEvent.layout.width;
+        trackWidthRef.current = width;
+        setTrackWidth(width);
+      }}
+      style={[styles.videoPlaybackTrack, !enabled && styles.sliderDisabled]}>
+      <View style={styles.videoPlaybackTrackBase} />
+      <View style={[styles.videoPlaybackTrackFill, {width: `${progress * 100}%`}]} />
+      <View style={[styles.videoPlaybackThumb, {left: `${progress * 100}%`}]} />
+    </View>
+  );
+}
+
+function VideoDetailsCard({
+  details,
+  expanded,
+  onToggle,
+}: {
+  details: VideoPreviewDetails | null;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const rows = videoDetailsRows(details);
+  return (
+    <View style={styles.videoDetailsPanel}>
+      <Pressable onPress={onToggle} style={styles.detailsHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.eyebrow}>VIDEO DETAILS</Text>
+          <Text style={styles.detailsSummary}>{videoDetailsSummary(details)}</Text>
+        </View>
+        <Text style={styles.detailsChevron}>{expanded ? 'Hide' : 'Show'}</Text>
+      </Pressable>
+      {expanded ? (
+        <View style={styles.detailsBody}>
+          {rows.map((row) => (
+            <View key={row.label} style={styles.detailsRow}>
+              <Text style={styles.detailsLabel}>{row.label}</Text>
+              <Text style={styles.detailsValue}>{row.value}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -1013,6 +1393,43 @@ function photoDetailsRows(details: PhotoPreviewDetails | null) {
   return rows;
 }
 
+function videoDetailsSummary(details: VideoPreviewDetails | null) {
+  if (!details) {
+    return 'Waiting for first video preview';
+  }
+  if (details.state === 'error') {
+    return `Error · ${details.error ?? 'Video failed'}`;
+  }
+  return [
+    details.source,
+    details.byteCount ? formatBytes(details.byteCount) : null,
+    details.durationMs ? formatDurationMs(details.durationMs) : null,
+    details.status ? details.status.replace(/_/g, ' ') : details.state,
+  ].filter(Boolean).join(' · ');
+}
+
+function videoDetailsRows(details: VideoPreviewDetails | null) {
+  if (!details) {
+    return [{label: 'Status', value: 'No video metadata received yet'}];
+  }
+  const rows: DetailRow[] = [
+    {label: 'Source', value: details.source},
+    {label: 'State', value: details.state},
+  ];
+  if (details.status) rows.push({label: 'SDK status', value: details.status});
+  if (details.requestId) rows.push({label: 'Request ID', value: details.requestId});
+  if (details.durationMs) rows.push({label: 'Duration', value: formatDurationMs(details.durationMs)});
+  if (details.byteCount) rows.push({label: 'Size', value: formatBytes(details.byteCount)});
+  if (details.contentType) rows.push({label: 'Content type', value: details.contentType});
+  if (details.uploadUrl) rows.push({label: 'Upload URL', value: details.uploadUrl});
+  if (details.mediaUrl) rows.push({label: 'SDK media URL', value: details.mediaUrl});
+  if (details.previewUrl) rows.push({label: 'Preview URL', value: details.previewUrl});
+  if (details.timestamp) rows.push({label: 'SDK timestamp', value: new Date(details.timestamp).toLocaleTimeString()});
+  if (details.uploadedAt) rows.push({label: 'Uploaded at', value: details.uploadedAt});
+  if (details.error) rows.push({label: 'Error', value: details.error});
+  return rows;
+}
+
 const AE_MODE_LABELS: Record<number, string> = {
   0: 'OFF',
   1: 'ON',
@@ -1120,6 +1537,19 @@ function formatBytes(bytes: number) {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
+function formatDurationMs(ms: number) {
+  if (ms < 1000) {
+    return `${Math.round(ms)} ms`;
+  }
+  const seconds = ms / 1000;
+  if (seconds < 60) {
+    return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainder = Math.round(seconds % 60).toString().padStart(2, '0');
+  return `${minutes}:${remainder}`;
+}
+
 function formatFovEstimate(fov: NonNullable<PhotoPreviewDetails['estimatedFov']>) {
   return [
     `${Math.round(fov.diagonalDegrees)}° diag`,
@@ -1186,7 +1616,7 @@ function localCameraSetupHint(webhookUrl: string, status: string) {
   if (!needsSetup) {
     return null;
   }
-  return 'Local setup: run python3 examples/local-demo-cloud/server.py from the Starter Kit repo root, then paste the printed Photo upload URL here. It looks like http://<computer-ip>:8787/upload.';
+  return 'Local setup: run python3 examples/local-demo-cloud/server.py from the Starter Kit repo root, then paste the printed Media upload URL here. It looks like http://<computer-ip>:8787/upload.';
 }
 
 function OptionGroup({ children, label }: { children: React.ReactNode; label: string }) {
@@ -1210,7 +1640,14 @@ const styles = StyleSheet.create({
   cameraButtonNoticeWrap: { alignItems: 'flex-end', marginTop: -2, marginHorizontal: 16, marginBottom: 6 },
   cameraButtonNotice: { maxWidth: 260, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,59,48,0.28)', backgroundColor: 'rgba(255,59,48,0.1)', paddingVertical: 8, paddingHorizontal: 10 },
   cameraButtonNoticeText: { color: colors.red, fontSize: 11, fontWeight: '800', lineHeight: 15, textAlign: 'right' },
+  modeSelectorWrap: { marginHorizontal: 16, marginTop: 8 },
+  modeSelector: { flexDirection: 'row', gap: 6, borderRadius: 16, backgroundColor: 'rgba(15,42,29,0.05)', padding: 4, borderWidth: 1, borderColor: 'rgba(15,42,29,0.08)' },
+  modeButton: { flex: 1, minHeight: 42, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  modeButtonActive: { backgroundColor: '#fff', borderWidth: 1, borderColor: 'rgba(15,42,29,0.08)' },
+  modeButtonText: { color: colors.muted, fontSize: 13, fontWeight: '700' },
+  modeButtonTextActive: { color: colors.ink },
   card: { marginHorizontal: 16, marginTop: 8, borderRadius: 28, paddingTop: 8, paddingBottom: 14, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 8 },
+  captureModeHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8, paddingTop: 4, paddingBottom: 10 },
   previewWrap: { borderRadius: 22, overflow: 'hidden', height: 160 },
   preview: { flex: 1 },
   previewImage: { ...StyleSheet.absoluteFillObject },
@@ -1245,6 +1682,21 @@ const styles = StyleSheet.create({
   captureBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 18, paddingVertical: 16, marginTop: 14, marginHorizontal: 6, gap: 10 },
   captureText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   disabled: { opacity: 0.45 },
+
+  videoCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, paddingTop: 14, paddingBottom: 14, paddingHorizontal: 14, borderWidth: 1, borderColor: colors.borderSoft },
+  videoStateText: { color: colors.greenAccent, fontSize: 11, fontWeight: '800', textTransform: 'uppercase' },
+  videoPreviewWrap: { borderRadius: 18, overflow: 'hidden', height: 170, marginTop: 12, backgroundColor: '#101820' },
+  videoPlaceholder: { flex: 1 },
+  videoPreviewPlayer: { flex: 1, backgroundColor: '#101820' },
+  videoPreviewFill: { flex: 1 },
+  videoPlaybackControls: { position: 'absolute', left: 10, right: 10, bottom: 10, minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', backgroundColor: 'rgba(6,16,20,0.72)', paddingVertical: 7, paddingHorizontal: 8 },
+  videoPlaybackButton: { width: 28, height: 28, borderRadius: 999, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.18)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+  videoPlaybackTime: { width: 38, color: '#fff', fontSize: 10, fontWeight: '700', textAlign: 'center' },
+  videoPlaybackTrack: { flex: 1, height: 28, justifyContent: 'center' },
+  videoPlaybackTrackBase: { position: 'absolute', left: 0, right: 0, height: 5, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.2)' },
+  videoPlaybackTrackFill: { position: 'absolute', left: 0, height: 5, borderRadius: 999, backgroundColor: colors.greenSoft },
+  videoPlaybackThumb: { position: 'absolute', marginLeft: -7, width: 14, height: 14, borderRadius: 999, backgroundColor: '#fff', borderWidth: 2, borderColor: colors.greenSoft },
+  videoDetailsPanel: { marginTop: 12, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(15,42,29,0.08)', backgroundColor: 'rgba(15,42,29,0.04)', paddingVertical: 12, paddingHorizontal: 12 },
 
   sdkCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderSoft },
   sdkBlock: { backgroundColor: '#0E1A14', paddingVertical: 14, paddingHorizontal: 16, gap: 8 },

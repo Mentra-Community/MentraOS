@@ -6,6 +6,7 @@ import BluetoothSdk, {
   DeviceModels,
   type AudioConnectedEvent,
   type ButtonPressEvent,
+  type BluetoothSdkEventMap,
   type CameraFovResult,
   type CameraRoiPosition,
   type CompatibleGlassesSearchStopEvent,
@@ -23,6 +24,7 @@ import BluetoothSdk, {
   type SpeakingStatusEvent,
   type StreamStatusEvent,
   type TouchEvent,
+  type VideoRecordingStatusEvent,
   type VoiceActivityDetectionStatusEvent,
 } from '@mentra/bluetooth-sdk';
 import {
@@ -67,6 +69,8 @@ export type StreamPreviewTarget = {
   kind: 'hls' | 'web';
   url: string;
 };
+type MediaUploadSuccessEvent = BluetoothSdkEventMap['media_success'];
+type MediaUploadErrorEvent = BluetoothSdkEventMap['media_error'];
 
 function isDisplayableOtaStatus(payload: OtaStatusEvent) {
   return payload.status !== 'idle' || Boolean(payload.error_message);
@@ -144,6 +148,22 @@ export type PhotoPreviewDetails = {
   uploadUrl?: string;
   uploadedAt?: string;
   width?: number;
+};
+
+export type VideoPreviewDetails = {
+  byteCount?: number;
+  contentType?: string;
+  durationMs?: number;
+  error?: string;
+  mediaUrl?: string;
+  previewUrl?: string;
+  requestId?: string | null;
+  source: 'Cloud server';
+  state: 'recording' | 'uploading' | 'preview' | 'error';
+  status?: string;
+  timestamp?: number;
+  uploadUrl?: string;
+  uploadedAt?: string;
 };
 
 export type BarcodeScanDetails = {
@@ -262,6 +282,10 @@ export type BluetoothSdkExampleState = {
   photoPreviewUrl: string | null;
   photoStatus: PhotoStatusEvent | null;
   photoSize: PhotoSize;
+  videoPreviewDetails: VideoPreviewDetails | null;
+  videoPreviewUrl: string | null;
+  videoRecording: boolean;
+  videoStatus: VideoRecordingStatusEvent | null;
   cameraFov: number;
   cameraRoiPosition: CameraRoiPosition;
   cameraSettingsApplying: boolean;
@@ -331,6 +355,7 @@ export type BluetoothSdkExampleActions = {
   testWebhook: () => Promise<void>;
   toggleHotspot: () => Promise<void>;
   toggleMic: () => Promise<void>;
+  toggleVideoRecording: () => Promise<void>;
   toggleStream: () => Promise<void>;
 };
 
@@ -338,6 +363,7 @@ export type BluetoothSdkExampleModel = BluetoothSdkExampleState & BluetoothSdkEx
 
 const PHOTO_APP_ID = 'com.mentra.examples.reactnative';
 const PHOTO_POLL_ATTEMPTS = 45;
+const VIDEO_POLL_ATTEMPTS = 180;
 const DIRECT_PHOTO_UPLOAD_TIMEOUT_MS = 75_000;
 const DIRECT_WEBRTC_RECEIVER_WARMUP_MS = 1000;
 const BARCODE_SCAN_VISIBLE_TIMEOUT_MS = 2_500;
@@ -393,6 +419,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     useState<PhotoPreviewDetails | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoStatus, setPhotoStatus] = useState<PhotoStatusEvent | null>(null);
+  const [videoPreviewDetails, setVideoPreviewDetails] =
+    useState<VideoPreviewDetails | null>(null);
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
+  const [videoRecording, setVideoRecording] = useState(false);
+  const [videoStatus, setVideoStatus] = useState<VideoRecordingStatusEvent | null>(null);
   const [photoSize, setPhotoSize] = useState<PhotoSize>('full');
   const [photoCompression, setPhotoCompression] = useState<PhotoCompression>('none');
   const [photoExposureManual, setPhotoExposureManual] = useState(false);
@@ -446,9 +477,12 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [ledMode, setLedMode] = useState<LedMode>('Off');
   const [rawJsonExpanded, setRawJsonExpanded] = useState(false);
   const activePhotoRequestIdRef = useRef<string | null>(null);
+  const activeVideoRequestIdRef = useRef<string | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
+  const videoRecordingRef = useRef(false);
   const streamStartPendingRef = useRef(false);
   const pollGenerationRef = useRef(0);
+  const videoPollGenerationRef = useRef(0);
   const photoCloudServerEnabledRef = useRef(false);
   const streamCloudServerEnabledRef = useRef(false);
   const activeTabRef = useRef<ExampleTabKey>('device');
@@ -555,6 +589,9 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       MentraVideoStreamReceiver.addListener('streamFrame', handleDirectStreamFrame),
       MentraVideoStreamReceiver.addListener('streamFirstFrame', handleDirectStreamFirstFrame),
       BluetoothSdk.addListener('photo_status', handlePhotoStatus),
+      BluetoothSdk.addListener('video_recording_status', handleVideoRecordingStatus),
+      BluetoothSdk.addListener('media_success', handleMediaUpload),
+      BluetoothSdk.addListener('media_error', handleMediaUpload),
       BluetoothSdk.addListener('stream_status', (payload: StreamStatusEvent) => {
         applyStreamStatus(payload);
         if (streamCloudServerEnabledRef.current) {
@@ -627,9 +664,12 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       void stopPhonePhotoReceiver().catch(() => undefined);
       void MentraVideoStreamReceiver.stopWebRtcReceiver().catch(() => undefined);
       activeStreamIdRef.current = null;
+      activeVideoRequestIdRef.current = null;
+      videoRecordingRef.current = false;
       streamStartPendingRef.current = false;
       activePhotoRequestIdRef.current = null;
       pollGenerationRef.current += 1;
+      videoPollGenerationRef.current += 1;
       stopMicElapsedTimer();
       stopMicPlaybackSync();
     };
@@ -879,6 +919,122 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   }
   captureAndUploadRef.current = captureAndUpload;
 
+  async function toggleVideoRecording() {
+    clearCameraButtonNotice();
+    resetBarcodeScan();
+    if (videoRecordingRef.current || activeVideoRequestIdRef.current) {
+      await stopVideoRecording();
+      return;
+    }
+    await startVideoRecording();
+  }
+
+  async function startVideoRecording() {
+    await runAction('Start video recording', async () => {
+      requireConnected('record video');
+      requireGlassesWifi('record video');
+      if (!photoCloudServerEnabledRef.current) {
+        const message = 'Enable the cloud server to upload and preview video.';
+        setCameraStatus(`Camera: ${message}`);
+        throw new Error(message);
+      }
+      const uploadUrlText = webhookUrl.trim();
+      const validationMessage = photoUploadValidationMessage(uploadUrlText);
+      if (validationMessage) {
+        setCameraStatus(`Camera: ${validationMessage}`);
+        throw new Error(validationMessage);
+      }
+      try {
+        photoStatusUrl(uploadUrlText, '');
+      } catch {
+        setCameraStatus('Camera: enter a valid http:// or https:// media upload URL');
+        throw new Error('Enter a valid http:// or https:// media upload URL.');
+      }
+
+      const requestId = `video-${Date.now()}`;
+      activeVideoRequestIdRef.current = requestId;
+      videoRecordingRef.current = true;
+      videoPollGenerationRef.current += 1;
+      setVideoRecording(true);
+      setVideoStatus(null);
+      setVideoPreviewUrl(null);
+      setVideoPreviewDetails({
+        requestId,
+        source: 'Cloud server',
+        state: 'recording',
+        uploadUrl: uploadUrlText,
+      });
+      setCameraStatus(`Camera: recording video (${requestId})`);
+
+      try {
+        const response = await BluetoothSdk.startVideoRecording(requestId, true, true, {
+          maxRecordingTimeMinutes: 1,
+        });
+        handleVideoRecordingStatus(response);
+      } catch (error) {
+        activeVideoRequestIdRef.current = null;
+        videoRecordingRef.current = false;
+        setVideoRecording(false);
+        setVideoPreviewDetails({
+          error: formatError(error),
+          requestId,
+          source: 'Cloud server',
+          state: 'error',
+          uploadUrl: uploadUrlText,
+        });
+        throw error;
+      }
+    });
+  }
+
+  async function stopVideoRecording() {
+    await runAction('Stop & upload video', async () => {
+      const requestId = activeVideoRequestIdRef.current;
+      if (!requestId) {
+        const message = 'No active video recording to stop.';
+        setCameraStatus(`Camera: ${message}`);
+        throw new Error(message);
+      }
+      const uploadUrlText = webhookUrl.trim();
+      const validationMessage = photoUploadValidationMessage(uploadUrlText);
+      if (validationMessage) {
+        setCameraStatus(`Camera: ${validationMessage}`);
+        throw new Error(validationMessage);
+      }
+      const statusUrl = photoStatusUrl(uploadUrlText, requestId);
+      videoPollGenerationRef.current += 1;
+      const pollGeneration = videoPollGenerationRef.current;
+      videoRecordingRef.current = false;
+      setVideoRecording(false);
+      setVideoPreviewDetails((current) => ({
+        ...current,
+        requestId,
+        source: 'Cloud server',
+        state: 'uploading',
+        uploadUrl: uploadUrlText,
+      }));
+      setCameraStatus(`Camera: stopping video and uploading (${requestId})`);
+
+      try {
+        const response = await BluetoothSdk.stopVideoRecording(requestId, uploadUrlText);
+        handleVideoRecordingStatus(response);
+      } catch (error) {
+        activeVideoRequestIdRef.current = null;
+        setVideoPreviewDetails((current) => ({
+          ...current,
+          error: formatError(error),
+          requestId,
+          source: 'Cloud server',
+          state: 'error',
+          uploadUrl: uploadUrlText,
+        }));
+        throw error;
+      }
+
+      await pollVideoPreview(requestId, statusUrl, pollGeneration);
+    });
+  }
+
   async function captureAndUploadToCloud() {
       const uploadUrlText = webhookUrl.trim();
       const validationMessage = photoUploadValidationMessage(uploadUrlText);
@@ -890,8 +1046,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       try {
         statusUrl = photoStatusUrl(uploadUrlText, '');
       } catch {
-        setCameraStatus('Camera: enter a valid http:// or https:// Photo upload URL');
-        throw new Error('Enter a valid http:// or https:// Photo upload URL.');
+        setCameraStatus('Camera: enter a valid http:// or https:// media upload URL');
+        throw new Error('Enter a valid http:// or https:// media upload URL.');
       }
 
       const requestId = `photo-${Date.now()}`;
@@ -985,8 +1141,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       try {
         healthUrl = webhookHealthUrl(uploadUrlText);
       } catch {
-        setCameraStatus('Camera: enter a valid http:// or https:// Photo upload URL');
-        throw new Error('Enter a valid http:// or https:// Photo upload URL.');
+        setCameraStatus('Camera: enter a valid http:// or https:// media upload URL');
+        throw new Error('Enter a valid http:// or https:// media upload URL.');
       }
 
       setCameraStatus('Camera: testing local webhook');
@@ -1208,6 +1364,119 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     );
   }
 
+  function handleVideoRecordingStatus(payload: VideoRecordingStatusEvent) {
+    const activeRequestId = activeVideoRequestIdRef.current;
+    if (activeRequestId && payload.requestId && payload.requestId !== activeRequestId) {
+      addEvent('LIVE', `ignoring stale video status ${payload.requestId}`);
+      return;
+    }
+    if (!activeRequestId && payload.requestId) {
+      addEvent('LIVE', `external video status ${payload.status}`);
+    }
+
+    setVideoStatus(payload);
+    const requestId = payload.requestId ?? activeRequestId;
+    const durationMs = typeof payload.data?.duration_ms === 'number'
+      ? payload.data.duration_ms
+      : undefined;
+    const failed = !payload.success || videoStatusIsFailure(payload.status);
+
+    if (payload.status === 'recording_started' || payload.data?.recording === true) {
+      videoRecordingRef.current = true;
+      setVideoRecording(true);
+      setVideoPreviewDetails((current) => ({
+        ...current,
+        requestId,
+        source: 'Cloud server',
+        state: 'recording',
+        status: payload.status,
+        timestamp: payload.timestamp,
+      }));
+      setCameraStatus('Camera: recording video');
+    } else if (payload.status === 'recording_stopped') {
+      videoRecordingRef.current = false;
+      setVideoRecording(false);
+      setVideoPreviewDetails((current) => ({
+        ...current,
+        durationMs,
+        requestId,
+        source: 'Cloud server',
+        state: 'uploading',
+        status: payload.status,
+        timestamp: payload.timestamp,
+      }));
+      setCameraStatus('Camera: video stopped; waiting for upload preview');
+    } else if (failed) {
+      videoRecordingRef.current = false;
+      setVideoRecording(false);
+      activeVideoRequestIdRef.current = null;
+      setVideoPreviewDetails((current) => ({
+        ...current,
+        durationMs,
+        error: payload.details ?? payload.status,
+        requestId,
+        source: 'Cloud server',
+        state: 'error',
+        status: payload.status,
+        timestamp: payload.timestamp,
+      }));
+      setCameraStatus(`Camera: video failed (${payload.details ?? payload.status})`);
+    } else {
+      setVideoPreviewDetails((current) => ({
+        ...current,
+        durationMs,
+        requestId,
+        source: 'Cloud server',
+        state: current?.state ?? 'recording',
+        status: payload.status,
+        timestamp: payload.timestamp,
+      }));
+      setCameraStatus(`Camera: video ${payload.status.replace(/_/g, ' ')}`);
+    }
+
+    addEvent('LIVE', `video status ${payload.status}`);
+  }
+
+  function handleMediaUpload(payload: MediaUploadSuccessEvent | MediaUploadErrorEvent) {
+    const activeRequestId = activeVideoRequestIdRef.current;
+    const isVideo = payload.mediaType === 2;
+    if (!isVideo) {
+      return;
+    }
+    if (activeRequestId && payload.requestId !== activeRequestId) {
+      addEvent('LIVE', `ignoring stale video upload ${payload.requestId}`);
+      return;
+    }
+
+    if (payload.type === 'media_error') {
+      activeVideoRequestIdRef.current = null;
+      videoRecordingRef.current = false;
+      setVideoRecording(false);
+      setVideoPreviewDetails((current) => ({
+        ...current,
+        error: payload.errorMessage,
+        requestId: payload.requestId,
+        source: 'Cloud server',
+        state: 'error',
+        timestamp: payload.timestamp,
+      }));
+      setCameraStatus(`Camera: video upload failed (${payload.errorMessage})`);
+      addEvent('LIVE', `video upload failed ${payload.errorMessage}`);
+      return;
+    }
+
+    setVideoPreviewDetails((current) => ({
+      ...current,
+      mediaUrl: payload.mediaUrl,
+      requestId: payload.requestId,
+      source: 'Cloud server',
+      state: current?.state === 'preview' ? 'preview' : 'uploading',
+      timestamp: payload.timestamp,
+    }));
+    setCameraStatus('Camera: video uploaded; loading preview');
+    addEvent('LIVE', `video uploaded ${payload.mediaUrl}`);
+  }
+
   function handleVideoStreamReceiverStatus(payload: VideoStreamReceiverStatusEvent) {
     if (payload.kind === 'stream') {
       if (payload.message.toLowerCase().includes('ready at')) {
@@ -1336,6 +1605,77 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }
     if (activePhotoRequestIdRef.current === requestId) {
       setCameraStatus('Camera: timed out waiting for local server upload');
+    }
+  }
+
+  async function pollVideoPreview(
+    requestId: string,
+    statusUrl: string,
+    pollGeneration: number,
+  ) {
+    for (let attempt = 0; attempt < VIDEO_POLL_ATTEMPTS; attempt += 1) {
+      if (
+        activeVideoRequestIdRef.current !== requestId ||
+        videoPollGenerationRef.current !== pollGeneration
+      ) {
+        return;
+      }
+      try {
+        const response = await fetch(cacheBustedUrl(statusUrl), {
+          cache: 'no-store',
+          headers: {'Cache-Control': 'no-cache', Pragma: 'no-cache'},
+        });
+        if (response.ok) {
+          const json = (await response.json()) as {
+            contentType?: string;
+            fileSizeBytes?: number;
+            mediaType?: string;
+            mediaUrl?: string;
+            requestId?: string;
+            uploadedAt?: string;
+            url?: string;
+            videoUrl?: string;
+          };
+          const previewUrl = json.videoUrl ?? (json.mediaType === 'video' ? json.mediaUrl ?? json.url : undefined);
+          if (previewUrl) {
+            setVideoPreviewUrl(previewUrl);
+            setVideoPreviewDetails((current) => ({
+              ...current,
+              byteCount: typeof json.fileSizeBytes === 'number' ? json.fileSizeBytes : current?.byteCount,
+              contentType: json.contentType ?? current?.contentType,
+              mediaUrl: json.mediaUrl ?? json.url ?? current?.mediaUrl,
+              previewUrl,
+              requestId: json.requestId ?? requestId,
+              source: 'Cloud server',
+              state: 'preview',
+              uploadedAt: json.uploadedAt ?? current?.uploadedAt,
+            }));
+            setCameraStatus('Camera: loaded video preview');
+            addEvent('LIVE', `local video ready ${previewUrl}`);
+            activeVideoRequestIdRef.current = null;
+            return;
+          }
+        }
+        if (attempt === 0 || attempt % 10 === 9) {
+          addEvent('LIVE', `waiting for video upload ${requestId}: ${response.status}`);
+        }
+      } catch (error) {
+        if (attempt === 0 || attempt % 10 === 9) {
+          addEvent('LIVE', `waiting for local video server: ${formatError(error)}`);
+        }
+      }
+      await delay(1000);
+    }
+    if (activeVideoRequestIdRef.current === requestId) {
+      activeVideoRequestIdRef.current = null;
+      setVideoPreviewDetails((current) => ({
+        ...current,
+        error: 'Timed out waiting for local server upload',
+        requestId,
+        source: 'Cloud server',
+        state: 'error',
+      }));
+      setCameraStatus('Camera: timed out waiting for local server video upload');
     }
   }
 
@@ -1552,7 +1892,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       pollGenerationRef.current += 1;
       if (enabled) {
         await stopPhonePhotoReceiver().catch(() => undefined);
-        setCameraStatus('Camera: enter the cloud Photo upload URL');
+        setCameraStatus('Camera: enter the cloud media upload URL');
         return;
       }
       setCameraStatus('Camera: ready to capture to phone');
@@ -2146,7 +2486,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       return;
     }
     const message = `Connect glasses first to ${feature}.`;
-    if (feature.includes('photo') || feature.includes('capture')) {
+    if (feature.includes('photo') || feature.includes('capture') || feature.includes('video')) {
       setCameraStatus(message);
     }
     if (feature.includes('stream')) {
@@ -2161,7 +2501,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       return;
     }
     const message = `Connect the glasses to Wi-Fi from the System tab before you ${feature}.`;
-    if (feature.includes('photo') || feature.includes('capture')) {
+    if (feature.includes('photo') || feature.includes('capture') || feature.includes('video')) {
       setCameraStatus(`Camera: ${message}`);
     }
     if (feature.includes('stream')) {
@@ -2186,8 +2526,13 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     activeStreamIdRef.current = null;
     setStreamStartPendingValue(false);
     const disconnectedPhotoRequestId = activePhotoRequestIdRef.current;
+    const disconnectedVideoRequestId = activeVideoRequestIdRef.current;
     const hadPhotoRequest = disconnectedPhotoRequestId !== null;
+    const hadVideoRequest = disconnectedVideoRequestId !== null || videoRecordingRef.current;
     activePhotoRequestIdRef.current = null;
+    activeVideoRequestIdRef.current = null;
+    videoRecordingRef.current = false;
+    setVideoRecording(false);
     if (hadPhotoRequest) {
       pollGenerationRef.current += 1;
       setCameraStatus('Disconnected before photo upload completed');
@@ -2199,6 +2544,25 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         errorCode: 'DISCONNECTED',
         errorMessage: 'Disconnected before photo upload completed',
       });
+    }
+    if (hadVideoRequest) {
+      videoPollGenerationRef.current += 1;
+      setCameraStatus('Disconnected before video upload completed');
+      setVideoStatus({
+        type: 'video_recording_status',
+        requestId: disconnectedVideoRequestId ?? 'disconnected',
+        success: false,
+        status: 'error',
+        timestamp: Date.now(),
+        details: 'Disconnected before video upload completed',
+      });
+      setVideoPreviewDetails((current) => ({
+        ...current,
+        error: 'Disconnected before video upload completed',
+        requestId: disconnectedVideoRequestId ?? current?.requestId ?? null,
+        source: 'Cloud server',
+        state: 'error',
+      }));
     }
     setStreamRequested(false);
     setDirectStreamReceiverRunning(false);
@@ -2355,6 +2719,10 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     photoPreviewUrl,
     photoStatus,
     photoSize,
+    videoPreviewDetails,
+    videoPreviewUrl,
+    videoRecording,
+    videoStatus,
     playMicRecording,
     rawJsonExpanded,
     requestWifiScan,
@@ -2397,6 +2765,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     testWebhook,
     toggleHotspot,
     toggleMic,
+    toggleVideoRecording,
     toggleStream,
     voiceActivityDetectionEnabled,
     webhookUrl,
@@ -2646,7 +3015,7 @@ export function streamPreviewTarget(protocol: StreamProtocol, streamUrl: string)
 function photoUploadValidationMessage(uploadUrlText: string) {
   const value = uploadUrlText.trim();
   if (value.length === 0) {
-    return 'Paste the Photo upload URL printed by local demo cloud.';
+    return 'Paste the media upload URL printed by local demo cloud.';
   }
   if (value.includes('<computer-ip>')) {
     return 'Replace <computer-ip> with the IP printed by local demo cloud.';
@@ -3018,6 +3387,21 @@ function photoBleFallbackProgressMessage(status: string, currentMessage?: string
 
 function photoStatusStartsNewCapture(status: string) {
   return status === 'accepted' || status === 'queued' || status === 'configuring';
+}
+
+function videoStatusIsFailure(status: string) {
+  return [
+    'already_recording',
+    'not_recording',
+    'request_id_mismatch',
+    'service_unavailable',
+    'json_error',
+    'battery_low',
+    'camera_busy',
+    'storage_unavailable',
+    'integrity_failed',
+    'error',
+  ].includes(status);
 }
 
 function isCameraActionButtonPress(payload: ButtonPressEvent) {

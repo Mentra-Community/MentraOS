@@ -16,11 +16,14 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Camera
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,9 +37,16 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.mentra.examples.android.MentraExampleController
 import com.mentra.examples.android.CAMERA_FOV_DEFAULT
@@ -50,6 +60,7 @@ import com.mentra.examples.android.PHOTO_ISO_MAX
 import com.mentra.examples.android.PHOTO_ISO_MIN
 import com.mentra.examples.android.PhotoPreviewDetails
 import com.mentra.examples.android.PhotoDestination
+import com.mentra.examples.android.VideoPreviewDetails
 import com.mentra.examples.android.cameraRoiPositions
 import com.mentra.examples.android.cameraSdkCall
 import com.mentra.examples.android.isGlassesConnected
@@ -68,6 +79,11 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 
+private enum class CameraCaptureMode {
+    PHOTO,
+    VIDEO,
+}
+
 @Composable
 fun CameraScreen(controller: MentraExampleController) {
     val state = controller.state
@@ -76,6 +92,11 @@ fun CameraScreen(controller: MentraExampleController) {
     val wifiRequired = connected && !glassesWifiConnected
     val cloudServerEnabled = state.photoDestination == PhotoDestination.MACBOOK_SERVER
     val directPhone = !cloudServerEnabled
+    val videoActionBusy = state.activeAction == "Start video recording" || state.activeAction == "Stop & upload video"
+    val videoControlsEnabled = connected &&
+        glassesWifiConnected &&
+        !videoActionBusy &&
+        (cloudServerEnabled || state.videoRecording)
     val cameraStatusFailed = isCameraStatusFailure(state.cameraStatus)
     val setupHint = if (cloudServerEnabled) localCameraSetupHint(state.webhookUrl, state.cameraStatus) else null
     val sdkCall = cameraSdkCall(
@@ -88,7 +109,17 @@ fun CameraScreen(controller: MentraExampleController) {
         state.cameraRoiPosition,
     )
     val clipboardManager = LocalClipboardManager.current
+    var captureMode by remember { mutableStateOf(CameraCaptureMode.PHOTO) }
     var photoDetailsExpanded by remember { mutableStateOf(false) }
+    var videoDetailsExpanded by remember { mutableStateOf(false) }
+    LaunchedEffect(state.activeAction, state.videoRecording) {
+        when {
+            state.videoRecording ||
+                state.activeAction == "Start video recording" ||
+                state.activeAction == "Stop & upload video" -> captureMode = CameraCaptureMode.VIDEO
+            state.activeAction == "Capture & upload" -> captureMode = CameraCaptureMode.PHOTO
+        }
+    }
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         PageHeader("Camera")
         if (!connected) {
@@ -100,69 +131,187 @@ fun CameraScreen(controller: MentraExampleController) {
             )
         }
 
+        CaptureModeSelector(
+            activeMode = captureMode,
+            onModeChange = { captureMode = it },
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        )
+
         // Preview card
-        GlassCard(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            padding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth().height(160.dp)
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(Brush.linearGradient(listOf(Color(0xFF1F4A33), Color(0xFF3A8A56), Color(0xFF7DD89E), Color(0xFF26B870), Color(0xFF163A26))))
+        if (captureMode == CameraCaptureMode.PHOTO) {
+            GlassCard(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                padding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
             ) {
-                if (state.photoPreviewUrl != null) {
-                    AsyncImage(
-                        model = state.photoPreviewUrl,
-                        contentDescription = "Latest photo preview",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Box(modifier = Modifier.align(Alignment.TopEnd).offset(x = (-50).dp, y = 30.dp).size(80.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.55f)))
-                    Row(modifier = Modifier.align(Alignment.BottomStart).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(999.dp))
-                                .background(Color.Black.copy(alpha = 0.35f))
-                                .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(999.dp))
-                                .padding(horizontal = 10.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(AppColor.greenSoft))
-                            Text("JPEG · waiting", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-                    Text("ready", color = Color.White.copy(alpha = 0.85f), fontSize = 10.sp, fontWeight = FontWeight.Medium, modifier = Modifier.align(Alignment.BottomEnd).padding(14.dp))
-                }
-            }
-            Spacer(Modifier.height(14.dp))
-            Box(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Brush.verticalGradient(listOf(Color(0xFF26473A), Color(0xFF1F3A2A))))
-                    .clickable(enabled = connected && glassesWifiConnected) { controller.captureAndUpload() }
-                    .padding(vertical = 16.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Icon(Icons.Outlined.Camera, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Eyebrow("PHOTO")
                     Text(
-                        if (!connected) {
-                            "Connect glasses first"
-                        } else if (!glassesWifiConnected) {
-                            "Connect glasses to Wi-Fi"
-                        } else if (state.activeAction == "Capture & upload") {
-                            "Capturing..."
-                        } else {
-                            "Capture photo"
-                        },
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold
+                        photoStateLabel(state.photoPreviewUrl, state.photoPreviewDetails),
+                        color = AppColor.greenAccent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
                     )
                 }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth().height(160.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(Brush.linearGradient(listOf(Color(0xFF1F4A33), Color(0xFF3A8A56), Color(0xFF7DD89E), Color(0xFF26B870), Color(0xFF163A26))))
+                ) {
+                    if (state.photoPreviewUrl != null) {
+                        AsyncImage(
+                            model = state.photoPreviewUrl,
+                            contentDescription = "Latest photo preview",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Box(modifier = Modifier.align(Alignment.TopEnd).offset(x = (-50).dp, y = 30.dp).size(80.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.55f)))
+                        Row(modifier = Modifier.align(Alignment.BottomStart).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(Color.Black.copy(alpha = 0.35f))
+                                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(999.dp))
+                                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(AppColor.greenSoft))
+                                Text("JPEG · waiting", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                        Text("ready", color = Color.White.copy(alpha = 0.85f), fontSize = 10.sp, fontWeight = FontWeight.Medium, modifier = Modifier.align(Alignment.BottomEnd).padding(14.dp))
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Brush.verticalGradient(listOf(Color(0xFF26473A), Color(0xFF1F3A2A))))
+                        .clickable(enabled = connected && glassesWifiConnected) { controller.captureAndUpload() }
+                        .padding(vertical = 16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Icon(Icons.Outlined.Camera, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Text(
+                            if (!connected) {
+                                "Connect glasses first"
+                            } else if (!glassesWifiConnected) {
+                                "Connect glasses to Wi-Fi"
+                            } else if (state.activeAction == "Capture & upload") {
+                                "Capturing..."
+                            } else {
+                                "Capture photo"
+                            },
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                PhotoDetailsCard(
+                    details = state.photoPreviewDetails,
+                    embedded = true,
+                    expanded = photoDetailsExpanded,
+                    onToggle = { photoDetailsExpanded = !photoDetailsExpanded },
+                    modifier = Modifier.padding(horizontal = 6.dp)
+                )
+            }
+        }
+
+        if (captureMode == CameraCaptureMode.VIDEO) {
+            GlassCard(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                corner = 22,
+                padding = PaddingValues(horizontal = 14.dp, vertical = 14.dp)
+            ) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Eyebrow("VIDEO RECORDING")
+                    Text(
+                        when {
+                            state.videoRecording -> "recording"
+                            state.videoPreviewUrl != null -> "preview ready"
+                            else -> state.videoPreviewDetails?.state ?: "ready"
+                        }.uppercase(Locale.US),
+                        color = AppColor.greenAccent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(170.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Brush.linearGradient(listOf(Color(0xFF101820), Color(0xFF21383B), Color(0xFF357064))))
+                ) {
+                    if (state.videoPreviewUrl != null) {
+                        VideoPreview(state.videoPreviewUrl, modifier = Modifier.fillMaxSize())
+                    } else {
+                        Row(modifier = Modifier.align(Alignment.BottomStart).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(Color.Black.copy(alpha = 0.35f))
+                                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(999.dp))
+                                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(AppColor.greenSoft))
+                                Text("MP4 · waiting", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                        Text(
+                            if (state.videoRecording) "recording" else "ready",
+                            color = Color.White.copy(alpha = 0.85f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(14.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Brush.verticalGradient(listOf(Color(0xFF223F4D), Color(0xFF182C38))))
+                        .clickable(enabled = videoControlsEnabled) { controller.toggleVideoRecording() }
+                        .padding(vertical = 16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Icon(Icons.Outlined.Videocam, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Text(
+                            when {
+                                !connected -> "Connect glasses first"
+                                !glassesWifiConnected -> "Connect glasses to Wi-Fi"
+                                !cloudServerEnabled && !state.videoRecording -> "Enable cloud server"
+                                state.activeAction == "Start video recording" -> "Starting video..."
+                                state.activeAction == "Stop & upload video" -> "Uploading video..."
+                                state.videoRecording -> "Stop & upload video"
+                                else -> "Start video"
+                            },
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                VideoDetailsPanel(
+                    details = state.videoPreviewDetails,
+                    expanded = videoDetailsExpanded,
+                    onToggle = { videoDetailsExpanded = !videoDetailsExpanded },
+                )
             }
         }
 
@@ -218,11 +367,13 @@ fun CameraScreen(controller: MentraExampleController) {
                     Text(state.cameraStatus, color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     Text(
                         when {
-                            state.photoPreviewUrl != null && directPhone -> "Preview loaded from phone receiver"
-                            state.photoPreviewUrl != null -> "Preview loaded from cloud server"
+                            state.videoRecording -> "Recording MP4 on glasses"
+                            state.videoPreviewUrl != null -> "Video preview loaded from cloud server"
+                            state.photoPreviewUrl != null && directPhone -> "Photo preview loaded from phone receiver"
+                            state.photoPreviewUrl != null -> "Photo preview loaded from cloud server"
                             directPhone && state.phonePhotoServerRunning -> "Phone receiver ready"
                             directPhone -> "Phone receiver starts on capture"
-                            else -> "Waiting for capture"
+                            else -> "Waiting for media upload"
                         },
                         color = AppColor.muted,
                         fontSize = 11.sp,
@@ -231,12 +382,6 @@ fun CameraScreen(controller: MentraExampleController) {
                 }
             }
         }
-
-        PhotoDetailsCard(
-            details = state.photoPreviewDetails,
-            expanded = photoDetailsExpanded,
-            onToggle = { photoDetailsExpanded = !photoDetailsExpanded },
-        )
 
         // Upload card
         GlassCard(
@@ -280,7 +425,7 @@ fun CameraScreen(controller: MentraExampleController) {
                         modifier = Modifier.weight(1f),
                         decorationBox = { inner ->
                             if (state.webhookUrl.isBlank()) {
-                                Text("Photo upload URL", color = AppColor.muted, fontSize = 13.sp)
+                                Text("Media upload URL", color = AppColor.muted, fontSize = 13.sp)
                             }
                             inner()
                         }
@@ -319,19 +464,33 @@ fun CameraScreen(controller: MentraExampleController) {
                 Spacer(Modifier.height(12.dp))
             }
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                CameraOptionGroup("size") {
-                    photoSizeOptions.forEach { size ->
-                        OptionChip(size, state.photoSize == size) { controller.setPhotoSize(size) }
-                    }
-                }
-                CameraOptionGroup("compress") {
-                    photoCompressionOptions.forEach { compression ->
-                        OptionChip(compression, state.photoCompression == compression) {
-                            controller.setPhotoCompression(compression)
+                if (captureMode == CameraCaptureMode.PHOTO) {
+                    CameraOptionGroup("photo size") {
+                        photoSizeOptions.forEach { size ->
+                            OptionChip(size, state.photoSize == size) { controller.setPhotoSize(size) }
                         }
                     }
+                    CameraOptionGroup("photo compress") {
+                        photoCompressionOptions.forEach { compression ->
+                            OptionChip(compression, state.photoCompression == compression) {
+                                controller.setPhotoCompression(compression)
+                            }
+                        }
+                    }
+                    ExposureSettingsCard(controller)
+                } else if (!cloudServerEnabled) {
+                    Text(
+                        "Video upload uses the media cloud server. Turn it on here before starting a recording.",
+                        color = AppColor.muted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(AppColor.ink.copy(alpha = 0.04f))
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                    )
                 }
-                ExposureSettingsCard(controller)
                 CameraFovSettingsCard(controller)
             }
         }
@@ -509,12 +668,15 @@ private fun CameraFovSettingsCard(controller: MentraExampleController) {
 }
 
 @Composable
-private fun PhotoDetailsCard(details: PhotoPreviewDetails?, expanded: Boolean, onToggle: () -> Unit) {
-    GlassCard(
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-        corner = 18,
-        padding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
-    ) {
+private fun PhotoDetailsCard(
+    details: PhotoPreviewDetails?,
+    embedded: Boolean = false,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+) {
+    @Composable
+    fun Content() {
         Row(
             modifier = Modifier.fillMaxWidth().clickable { onToggle() },
             verticalAlignment = Alignment.CenterVertically,
@@ -551,6 +713,184 @@ private fun PhotoDetailsCard(details: PhotoPreviewDetails?, expanded: Boolean, o
             }
         }
     }
+
+    if (embedded) {
+        Column(
+            modifier = modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(AppColor.ink.copy(alpha = 0.04f))
+                .border(1.dp, AppColor.ink.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+                .padding(horizontal = 12.dp, vertical = 12.dp)
+        ) {
+            Content()
+        }
+        return
+    }
+
+    GlassCard(
+        modifier = modifier,
+        corner = 18,
+        padding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Content()
+    }
+}
+
+@Composable
+private fun CaptureModeSelector(
+    activeMode: CameraCaptureMode,
+    onModeChange: (CameraCaptureMode) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(AppColor.ink.copy(alpha = 0.05f))
+            .border(1.dp, AppColor.ink.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        CaptureModeButton(
+            label = "Photo",
+            active = activeMode == CameraCaptureMode.PHOTO,
+            icon = { tint -> Icon(Icons.Outlined.Camera, null, tint = tint, modifier = Modifier.size(15.dp)) },
+            modifier = Modifier.weight(1f),
+            onClick = { onModeChange(CameraCaptureMode.PHOTO) },
+        )
+        CaptureModeButton(
+            label = "Video",
+            active = activeMode == CameraCaptureMode.VIDEO,
+            icon = { tint -> Icon(Icons.Outlined.Videocam, null, tint = tint, modifier = Modifier.size(15.dp)) },
+            modifier = Modifier.weight(1f),
+            onClick = { onModeChange(CameraCaptureMode.VIDEO) },
+        )
+    }
+}
+
+@Composable
+private fun CaptureModeButton(
+    label: String,
+    active: Boolean,
+    icon: @Composable (Color) -> Unit,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = modifier
+            .heightIn(min = 42.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (active) Color.White else Color.Transparent)
+            .border(
+                1.dp,
+                if (active) AppColor.ink.copy(alpha = 0.08f) else Color.Transparent,
+                RoundedCornerShape(12.dp)
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        icon(if (active) AppColor.ink else AppColor.muted)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            label,
+            color = if (active) AppColor.ink else AppColor.muted,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+private fun photoStateLabel(previewUrl: String?, details: PhotoPreviewDetails?): String =
+    when {
+        previewUrl != null -> "PREVIEW READY"
+        details?.state == "error" -> "ERROR"
+        details?.state == "acknowledged" -> "ACKNOWLEDGED"
+        else -> "READY"
+    }
+
+@Composable
+private fun VideoPreview(url: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val player = remember(url) {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(url))
+            volume = 0f
+            playWhenReady = true
+            repeatMode = Player.REPEAT_MODE_ALL
+            prepare()
+        }
+    }
+    DisposableEffect(player) {
+        onDispose { player.release() }
+    }
+    AndroidView(
+        modifier = modifier.background(Color.Black),
+        factory = { viewContext ->
+            PlayerView(viewContext).apply {
+                useController = true
+                controllerAutoShow = true
+                controllerShowTimeoutMs = 0
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                this.player = player
+                showController()
+            }
+        },
+        update = {
+            it.player = player
+            it.showController()
+        }
+    )
+}
+
+@Composable
+private fun VideoDetailsPanel(details: VideoPreviewDetails?, expanded: Boolean, onToggle: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(AppColor.ink.copy(alpha = 0.04f))
+            .border(1.dp, AppColor.ink.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+            .padding(horizontal = 12.dp, vertical = 12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { onToggle() },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Eyebrow("VIDEO DETAILS")
+                Text(videoDetailsSummary(details), color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Text(if (expanded) "Hide" else "Show", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+        if (expanded) {
+            Spacer(Modifier.height(12.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(AppColor.ink.copy(alpha = 0.08f)))
+            Spacer(Modifier.height(8.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                videoDetailsRows(details).forEach { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(row.first, color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            row.second,
+                            color = AppColor.ink,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.End
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 private fun photoDetailsSummary(details: PhotoPreviewDetails?): String {
@@ -562,6 +902,36 @@ private fun photoDetailsSummary(details: PhotoPreviewDetails?): String {
         if (details.width != null && details.height != null) "${details.width} x ${details.height}" else null,
         if (details.state == "acknowledged") "acknowledged" else "preview ready",
     ).joinToString(" · ")
+}
+
+private fun videoDetailsSummary(details: VideoPreviewDetails?): String {
+    if (details == null) return "Waiting for first video preview"
+    if (details.state == "error") return "Error · ${details.error ?: "Video failed"}"
+    return listOfNotNull(
+        details.source,
+        details.byteCount?.let(::formatBytes),
+        details.durationMs?.let(::formatDurationMs),
+        details.status?.replace("_", " ") ?: details.state,
+    ).joinToString(" · ")
+}
+
+private fun videoDetailsRows(details: VideoPreviewDetails?): List<Pair<String, String>> {
+    if (details == null) return listOf("Status" to "No video metadata received yet")
+    return buildList {
+        add("Source" to details.source)
+        add("State" to details.state)
+        details.status?.let { add("SDK status" to it) }
+        details.requestId?.let { add("Request ID" to it) }
+        details.durationMs?.let { add("Duration" to formatDurationMs(it)) }
+        details.byteCount?.let { add("Size" to formatBytes(it)) }
+        details.contentType?.let { add("Content type" to it) }
+        details.uploadUrl?.let { add("Upload URL" to it) }
+        details.mediaUrl?.let { add("SDK media URL" to it) }
+        details.previewUrl?.let { add("Preview URL" to it) }
+        details.timestamp?.let { add("SDK timestamp" to SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(it))) }
+        details.uploadedAt?.let { add("Uploaded at" to it) }
+        details.error?.let { add("Error" to it) }
+    }
 }
 
 private fun photoDetailsRows(details: PhotoPreviewDetails?): List<Pair<String, String>> {
@@ -586,6 +956,13 @@ private fun formatBytes(bytes: Int): String =
         String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
     } else {
         "${maxOf(1, (bytes + 1023) / 1024)} KB"
+    }
+
+private fun formatDurationMs(ms: Long): String =
+    when {
+        ms < 1000 -> "$ms ms"
+        ms < 60_000 -> String.format(Locale.US, "%.1fs", ms / 1000.0)
+        else -> "${ms / 60_000}:${((ms % 60_000) / 1000).toString().padStart(2, '0')}"
     }
 
 private fun isCameraStatusFailure(status: String): Boolean {
@@ -615,7 +992,7 @@ private fun localCameraSetupHint(webhookUrl: String, status: String): String? {
     if (!needsSetup) {
         return null
     }
-    return "Cloud server setup: run python3 examples/local-demo-cloud/server.py from the Starter Kit repo root, then paste the printed Photo upload URL here. It looks like http://<computer-ip>:8787/upload."
+    return "Cloud server setup: run python3 examples/local-demo-cloud/server.py from the Starter Kit repo root, then paste the printed Media upload URL here. It looks like http://<computer-ip>:8787/upload."
 }
 
 private fun exposureLabel(ns: Int): String {
@@ -653,7 +1030,7 @@ private fun CloudServerToggle(enabled: Boolean, onEnabledChange: (Boolean) -> Un
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(
-            "Use cloud server",
+            "Use media cloud server",
             color = AppColor.ink,
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,

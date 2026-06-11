@@ -62,6 +62,9 @@ import com.mentra.bluetoothsdk.StreamResolvedConfig
 import com.mentra.bluetoothsdk.StreamStatus
 import com.mentra.bluetoothsdk.StreamVideoConfig
 import com.mentra.bluetoothsdk.TouchEvent
+import com.mentra.bluetoothsdk.MediaUploadEvent
+import com.mentra.bluetoothsdk.VideoRecordingRequest
+import com.mentra.bluetoothsdk.VideoRecordingStatusEvent
 import com.mentra.bluetoothsdk.VoiceActivityDetectionStatusEvent
 import com.mentra.bluetoothsdk.WifiScanResult
 import com.mentra.bluetoothsdk.WifiStatus
@@ -77,6 +80,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
@@ -126,6 +130,22 @@ data class PhotoPreviewDetails(
     val uploadUrl: String? = null,
     val uploadedAt: String? = null,
     val width: Int? = null,
+)
+
+data class VideoPreviewDetails(
+    val byteCount: Int? = null,
+    val contentType: String? = null,
+    val durationMs: Long? = null,
+    val error: String? = null,
+    val mediaUrl: String? = null,
+    val previewUrl: String? = null,
+    val requestId: String? = null,
+    val source: String = "Cloud server",
+    val state: String,
+    val status: String? = null,
+    val timestamp: Long? = null,
+    val uploadUrl: String? = null,
+    val uploadedAt: String? = null,
 )
 
 private data class RgbLedPattern(
@@ -196,6 +216,9 @@ data class MentraExampleState(
     val photoDestination: PhotoDestination = PhotoDestination.THIS_PHONE,
     val photoPreviewDetails: PhotoPreviewDetails? = null,
     val photoPreviewUrl: String? = null,
+    val videoPreviewDetails: VideoPreviewDetails? = null,
+    val videoPreviewUrl: String? = null,
+    val videoRecording: Boolean = false,
     val photoCompression: String = "none",
     val photoSize: String = "full",
     val photoExposureManual: Boolean = false,
@@ -249,8 +272,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         onUpload = ::handleDirectPhotoUpload,
     )
     private var activePhotoRequestId: String? = null
+    private var activeVideoRequestId: String? = null
     private var activeStreamId: String? = null
     private var pollGeneration = 0
+    private var videoPollGeneration = 0
     private var directPhotoTimeoutJob: Job? = null
     private var gStreamerWhipReceiver: GStreamerWhipReceiver? = null
     private var whipHeaderProxy: WhipHeaderProxy? = null
@@ -440,7 +465,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
         if (destination == PhotoDestination.MACBOOK_SERVER) {
             stopPhonePhotoServer()
-            state = state.copy(cameraStatus = "Camera: enter a Photo upload URL")
+            state = state.copy(cameraStatus = "Camera: enter a media upload URL")
         } else {
             state = state.copy(cameraStatus = "Camera: phone receiver will start before capture")
         }
@@ -525,8 +550,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         val statusUrl = try {
             photoStatusUrl(uploadUrl, requestId)
         } catch (_: Exception) {
-            state = state.copy(cameraStatus = "Camera: enter a valid http:// or https:// Photo upload URL")
-            throw IllegalArgumentException("Enter a valid http:// or https:// Photo upload URL.")
+            state = state.copy(cameraStatus = "Camera: enter a valid http:// or https:// media upload URL")
+            throw IllegalArgumentException("Enter a valid http:// or https:// media upload URL.")
         }
         activePhotoRequestId = requestId
         pollGeneration += 1
@@ -607,6 +632,126 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("TX", "requestPhoto requestId=$requestId webhookUrl=$uploadUrl")
     }
 
+    fun toggleVideoRecording() {
+        if (activeVideoRequestId != null || state.videoRecording) {
+            stopVideoRecording()
+        } else {
+            startVideoRecording()
+        }
+    }
+
+    private fun startVideoRecording() = runAction("Start video recording") {
+        requireConnected("record video")
+        requireGlassesWifi("record video")
+        if (state.photoDestination != PhotoDestination.MACBOOK_SERVER) {
+            val message = "Enable the cloud server to upload and preview video."
+            state = state.copy(cameraStatus = "Camera: $message")
+            throw IllegalStateException(message)
+        }
+        val uploadUrl = state.webhookUrl.trim()
+        photoUploadValidationMessage(uploadUrl)?.let { message ->
+            state = state.copy(cameraStatus = "Camera: $message")
+            throw IllegalArgumentException(message)
+        }
+        try {
+            photoStatusUrl(uploadUrl, "")
+        } catch (_: Exception) {
+            state = state.copy(cameraStatus = "Camera: enter a valid http:// or https:// media upload URL")
+            throw IllegalArgumentException("Enter a valid http:// or https:// media upload URL.")
+        }
+
+        val requestId = "video-${System.currentTimeMillis()}"
+        activeVideoRequestId = requestId
+        videoPollGeneration += 1
+        state = state.copy(
+            cameraStatus = "Camera: recording video ($requestId)",
+            videoPreviewDetails = VideoPreviewDetails(
+                requestId = requestId,
+                state = "recording",
+                uploadUrl = uploadUrl,
+            ),
+            videoPreviewUrl = null,
+            videoRecording = true,
+        )
+        val statusEvent = try {
+            withContext(Dispatchers.IO) {
+                mentraBluetoothSdk.startVideoRecording(
+                    VideoRecordingRequest(
+                        requestId = requestId,
+                        save = true,
+                        sound = true,
+                        maxRecordingTimeMinutes = 1,
+                    )
+                )
+            }
+        } catch (error: Throwable) {
+            if (activeVideoRequestId == requestId) {
+                activeVideoRequestId = null
+            }
+            state = state.copy(
+                cameraStatus = "Camera: video failed (${error.message ?: "start failed"})",
+                videoPreviewDetails = VideoPreviewDetails(
+                    error = error.message ?: error::class.java.simpleName,
+                    requestId = requestId,
+                    state = "error",
+                    uploadUrl = uploadUrl,
+                ),
+                videoRecording = false,
+            )
+            throw error
+        }
+        handleVideoRecordingStatus(statusEvent)
+    }
+
+    private fun stopVideoRecording() = runAction("Stop & upload video") {
+        val requestId = activeVideoRequestId
+            ?: throw IllegalStateException("No active video recording to stop.")
+        val uploadUrl = state.webhookUrl.trim()
+        photoUploadValidationMessage(uploadUrl)?.let { message ->
+            state = state.copy(cameraStatus = "Camera: $message")
+            throw IllegalArgumentException(message)
+        }
+        val statusUrl = try {
+            photoStatusUrl(uploadUrl, requestId)
+        } catch (_: Exception) {
+            state = state.copy(cameraStatus = "Camera: enter a valid http:// or https:// media upload URL")
+            throw IllegalArgumentException("Enter a valid http:// or https:// media upload URL.")
+        }
+        videoPollGeneration += 1
+        val generation = videoPollGeneration
+        state = state.copy(
+            cameraStatus = "Camera: stopping video and uploading ($requestId)",
+            videoPreviewDetails = state.videoPreviewDetails.copyForVideoUpload(
+                requestId = requestId,
+                state = "uploading",
+                uploadUrl = uploadUrl,
+            ),
+            videoRecording = false,
+        )
+        val statusEvent = try {
+            withContext(Dispatchers.IO) {
+                mentraBluetoothSdk.stopVideoRecording(requestId, uploadUrl)
+            }
+        } catch (error: Throwable) {
+            if (activeVideoRequestId == requestId) {
+                activeVideoRequestId = null
+            }
+            state = state.copy(
+                cameraStatus = "Camera: video upload failed (${error.message ?: "stop failed"})",
+                videoPreviewDetails = state.videoPreviewDetails.copyForVideoUpload(
+                    error = error.message ?: error::class.java.simpleName,
+                    requestId = requestId,
+                    state = "error",
+                    uploadUrl = uploadUrl,
+                ),
+                videoRecording = false,
+            )
+            throw error
+        }
+        handleVideoRecordingStatus(statusEvent)
+        pollVideoPreview(requestId, statusUrl, generation)
+    }
+
     private fun startPhonePhotoServer(): String {
         val host = bestLocalIpv4Address()
         if (host == null) {
@@ -675,8 +820,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         val healthUrl = try {
             webhookHealthUrl(uploadUrl)
         } catch (_: Exception) {
-            state = state.copy(cameraStatus = "Camera: enter a valid http:// or https:// Photo upload URL")
-            throw IllegalArgumentException("Enter a valid http:// or https:// Photo upload URL.")
+            state = state.copy(cameraStatus = "Camera: enter a valid http:// or https:// media upload URL")
+            throw IllegalArgumentException("Enter a valid http:// or https:// media upload URL.")
         }
 
         state = state.copy(cameraStatus = "Camera: testing local webhook")
@@ -1499,6 +1644,114 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("LIVE", "photo response $requestId")
     }
 
+    override fun onVideoRecordingStatus(event: VideoRecordingStatusEvent) {
+        handleVideoRecordingStatus(event)
+    }
+
+    private fun handleVideoRecordingStatus(event: VideoRecordingStatusEvent) {
+        val requestId = event.requestId.ifBlank { activeVideoRequestId.orEmpty() }
+        val activeRequest = activeVideoRequestId
+        if (activeRequest != null && requestId.isNotBlank() && requestId != activeRequest) {
+            addEvent("LIVE", "ignoring stale video status $requestId")
+            return
+        }
+        val durationMs = (event.data?.get("duration_ms") as? Number)?.toLong()
+        val failed = !event.success || videoStatusIsFailure(event.status)
+        when {
+            event.status == "recording_started" || event.data?.get("recording") == true -> {
+                activeVideoRequestId = requestId
+                state = state.copy(
+                    cameraStatus = "Camera: recording video",
+                    videoPreviewDetails = state.videoPreviewDetails.copyForVideoUpload(
+                        durationMs = durationMs,
+                        requestId = requestId,
+                        state = "recording",
+                        status = event.status,
+                        timestamp = event.timestamp,
+                    ),
+                    videoRecording = true,
+                )
+            }
+            event.status == "recording_stopped" -> {
+                state = state.copy(
+                    cameraStatus = "Camera: video stopped; waiting for upload preview",
+                    videoPreviewDetails = state.videoPreviewDetails.copyForVideoUpload(
+                        durationMs = durationMs,
+                        requestId = requestId,
+                        state = "uploading",
+                        status = event.status,
+                        timestamp = event.timestamp,
+                    ),
+                    videoRecording = false,
+                )
+            }
+            failed -> {
+                activeVideoRequestId = null
+                state = state.copy(
+                    cameraStatus = "Camera: video failed (${event.details ?: event.status})",
+                    videoPreviewDetails = state.videoPreviewDetails.copyForVideoUpload(
+                        durationMs = durationMs,
+                        error = event.details ?: event.status,
+                        requestId = requestId,
+                        state = "error",
+                        status = event.status,
+                        timestamp = event.timestamp,
+                    ),
+                    videoRecording = false,
+                )
+            }
+            else -> {
+                state = state.copy(
+                    cameraStatus = "Camera: video ${event.status.replace("_", " ")}",
+                    videoPreviewDetails = state.videoPreviewDetails.copyForVideoUpload(
+                        durationMs = durationMs,
+                        requestId = requestId,
+                        state = state.videoPreviewDetails?.state ?: "recording",
+                        status = event.status,
+                        timestamp = event.timestamp,
+                    ),
+                )
+            }
+        }
+        addEvent("LIVE", "video status ${event.status}")
+    }
+
+    override fun onMediaUpload(event: MediaUploadEvent) {
+        if (!event.isVideo) {
+            return
+        }
+        val activeRequest = activeVideoRequestId
+        if (activeRequest != null && event.requestId != activeRequest) {
+            addEvent("LIVE", "ignoring stale video upload ${event.requestId}")
+            return
+        }
+        if (!event.isSuccess) {
+            activeVideoRequestId = null
+            state = state.copy(
+                cameraStatus = "Camera: video upload failed (${event.errorMessage ?: "upload failed"})",
+                videoPreviewDetails = state.videoPreviewDetails.copyForVideoUpload(
+                    error = event.errorMessage ?: "upload failed",
+                    requestId = event.requestId,
+                    state = "error",
+                    timestamp = event.timestamp,
+                ),
+                videoRecording = false,
+            )
+            addEvent("LIVE", "video upload failed ${event.errorMessage ?: ""}".trim())
+            return
+        }
+        state = state.copy(
+            cameraStatus = "Camera: video uploaded; loading preview",
+            videoPreviewDetails = state.videoPreviewDetails.copyForVideoUpload(
+                mediaUrl = event.mediaUrl,
+                requestId = event.requestId,
+                state = if (state.videoPreviewDetails?.state == "preview") "preview" else "uploading",
+                timestamp = event.timestamp,
+            ),
+        )
+        addEvent("LIVE", "video uploaded ${event.mediaUrl ?: ""}".trim())
+    }
+
     override fun onStreamStatus(event: com.mentra.bluetoothsdk.StreamStatusEvent) {
         applyStreamStatus(event.status)
         event.resolvedConfig?.let { resolvedConfig ->
@@ -1853,7 +2106,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             return
         }
         val message = "Connect the glasses to Wi-Fi from the System tab before you $feature."
-        if ("photo" in feature || "capture" in feature) {
+        if ("photo" in feature || "capture" in feature || "video" in feature) {
             state = state.copy(cameraStatus = "Camera: $message")
         }
         if ("stream" in feature) {
@@ -1868,7 +2121,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             return
         }
         val message = "Connect glasses first to $feature."
-        if ("photo" in feature || "capture" in feature) {
+        if ("photo" in feature || "capture" in feature || "video" in feature) {
             state = state.copy(cameraStatus = message)
         }
         if ("stream" in feature) {
@@ -1933,12 +2186,17 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         stopDirectPhoneStreamReceiver(status)
         activeStreamId = null
         val hadPhotoRequest = activePhotoRequestId != null
+        val hadVideoRequest = activeVideoRequestId != null || state.videoRecording
         activePhotoRequestId = null
+        activeVideoRequestId = null
         directPhotoTimeoutJob?.cancel()
         directPhotoTimeoutJob = null
         photoUploadServer.stop()
         if (hadPhotoRequest) {
             pollGeneration += 1
+        }
+        if (hadVideoRequest) {
+            videoPollGeneration += 1
         }
         state = state.copy(
             glassesStatus = disconnectedGlassesStatus(state.glassesStatus),
@@ -1958,7 +2216,21 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             phoneAudioRoute = currentAudioOutputRouteLabel(),
             phonePhotoServerRunning = false,
             phonePhotoUploadUrl = "Phone receiver not started",
-            cameraStatus = if (hadPhotoRequest) "Disconnected before photo upload completed" else state.cameraStatus,
+            videoRecording = false,
+            videoPreviewDetails = if (hadVideoRequest) {
+                state.videoPreviewDetails.copyForVideoUpload(
+                    error = "Disconnected before video upload completed",
+                    requestId = state.videoPreviewDetails?.requestId,
+                    state = "error",
+                )
+            } else {
+                state.videoPreviewDetails
+            },
+            cameraStatus = when {
+                hadVideoRequest -> "Disconnected before video upload completed"
+                hadPhotoRequest -> "Disconnected before photo upload completed"
+                else -> state.cameraStatus
+            },
             wifiPendingSsid = null,
         )
         stopMicElapsedTimer()
@@ -2318,11 +2590,12 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                     connection.readTimeout = 1500
                     if (connection.responseCode == 200) {
                         val body = connection.inputStream.bufferedReader().use { it.readText() }
-                        val photoUrl = Regex("\"photoUrl\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+                        val json = JSONObject(body)
+                        val photoUrl = json.optString("photoUrl").takeIf { it.isNotBlank() }
                         if (photoUrl != null) {
-                            val bytes = Regex("\"fileSizeBytes\"\\s*:\\s*(\\d+)").find(body)?.groupValues?.get(1)?.toIntOrNull()
-                            val contentType = Regex("\"contentType\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
-                            val uploadedAt = Regex("\"uploadedAt\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+                            val bytes = json.optIntOrNull("fileSizeBytes")
+                            val contentType = json.optNonBlankString("contentType")
+                            val uploadedAt = json.optNonBlankString("uploadedAt")
                             scope.launch {
                                 state = state.copy(
                                     photoPreviewDetails = state.photoPreviewDetails.copyForUpload(
@@ -2354,6 +2627,73 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             }
             if (activePhotoRequestId == requestId) {
                 scope.launch { state = state.copy(cameraStatus = "Camera: timed out waiting for local server upload") }
+            }
+        }
+    }
+
+    private fun pollVideoPreview(requestId: String, statusUrl: String, generation: Int) {
+        scope.launch(Dispatchers.IO) {
+            repeat(180) { attempt ->
+                if (activeVideoRequestId != requestId || generation != videoPollGeneration) return@launch
+                try {
+                    val url = URL("$statusUrl?poll=${System.currentTimeMillis()}")
+                    val connection = url.openConnection() as HttpURLConnection
+                    connection.connectTimeout = 1500
+                    connection.readTimeout = 1500
+                    if (connection.responseCode == 200) {
+                        val body = connection.inputStream.bufferedReader().use { it.readText() }
+                        val json = JSONObject(body)
+                        val mediaType = json.optNonBlankString("mediaType")
+                        val videoUrl = json.optNonBlankString("videoUrl")
+                            ?: if (mediaType == "video") json.optNonBlankString("mediaUrl") ?: json.optNonBlankString("url") else null
+                        if (videoUrl != null) {
+                            val bytes = json.optIntOrNull("fileSizeBytes")
+                            val contentType = json.optNonBlankString("contentType")
+                            val uploadedAt = json.optNonBlankString("uploadedAt")
+                            val mediaUrl = json.optNonBlankString("mediaUrl") ?: json.optNonBlankString("url")
+                            scope.launch {
+                                state = state.copy(
+                                    videoPreviewDetails = state.videoPreviewDetails.copyForVideoUpload(
+                                        byteCount = bytes,
+                                        contentType = contentType,
+                                        mediaUrl = mediaUrl,
+                                        previewUrl = videoUrl,
+                                        requestId = requestId,
+                                        state = "preview",
+                                        uploadedAt = uploadedAt,
+                                    ),
+                                    videoPreviewUrl = videoUrl,
+                                    cameraStatus = "Camera: loaded video preview",
+                                )
+                                addEvent("LIVE", "local video ready $videoUrl")
+                            }
+                            activeVideoRequestId = null
+                            return@launch
+                        }
+                    }
+                    if (attempt == 0 || attempt % 10 == 9) {
+                        scope.launch { addEvent("LIVE", "waiting for video upload $requestId") }
+                    }
+                } catch (_: Exception) {
+                    if (attempt == 0 || attempt % 10 == 9) {
+                        scope.launch { addEvent("LIVE", "waiting for local video server") }
+                    }
+                }
+                delay(1000)
+            }
+            if (activeVideoRequestId == requestId) {
+                activeVideoRequestId = null
+                scope.launch {
+                    state = state.copy(
+                        cameraStatus = "Camera: timed out waiting for local server video upload",
+                        videoPreviewDetails = state.videoPreviewDetails.copyForVideoUpload(
+                            error = "Timed out waiting for local server upload",
+                            requestId = requestId,
+                            state = "error",
+                        ),
+                        videoRecording = false,
+                    )
+                }
             }
         }
     }
@@ -2403,8 +2743,21 @@ val photo = mentraBluetoothSdk.requestPhoto(
       iso = ${if (exposureManual) iso else "null"},
     )
 )
-println("Photo delivered: ${'$'}{photo.response.requestId}")
-""".trimIndent()
+	println("Photo delivered: ${'$'}{photo.response.requestId}")
+
+	val videoRequestId = "video-${'$'}{System.currentTimeMillis()}"
+	val started = mentraBluetoothSdk.startVideoRecording(
+	    VideoRecordingRequest(
+	      requestId = videoRequestId,
+	      save = true,
+	      sound = true,
+	      maxRecordingTimeMinutes = 1,
+	    )
+	)
+	println("Video started: ${'$'}{started.status}")
+	val stopped = mentraBluetoothSdk.stopVideoRecording(videoRequestId, uploadUrl)
+	println("Video stopped: ${'$'}{stopped.status}")
+	""".trimIndent()
 
 fun photoStatusUrl(uploadUrlText: String, requestId: String): String {
     val url = URL(uploadUrlText)
@@ -2426,7 +2779,7 @@ fun webhookHealthUrl(uploadUrlText: String): String {
 fun photoUploadValidationMessage(uploadUrlText: String): String? {
     val value = uploadUrlText.trim()
     if (value.isEmpty()) {
-        return "Enter the cloud server Photo upload URL."
+        return "Enter the cloud server media upload URL."
     }
     if (value.contains("<computer-ip>")) {
         return "Replace <computer-ip> with the cloud server IP."
@@ -2877,6 +3230,54 @@ private fun PhotoPreviewDetails?.copyForUpload(
         state = "preview",
         uploadedAt = uploadedAt ?: this?.uploadedAt,
         width = width ?: this?.width,
+    )
+
+private fun VideoPreviewDetails?.copyForVideoUpload(
+    byteCount: Int? = null,
+    contentType: String? = null,
+    durationMs: Long? = null,
+    error: String? = null,
+    mediaUrl: String? = null,
+    previewUrl: String? = null,
+    requestId: String? = null,
+    state: String,
+    status: String? = null,
+    timestamp: Long? = null,
+    uploadUrl: String? = null,
+    uploadedAt: String? = null,
+): VideoPreviewDetails =
+    (this ?: VideoPreviewDetails(state = state)).copy(
+        byteCount = byteCount ?: this?.byteCount,
+        contentType = contentType ?: this?.contentType,
+        durationMs = durationMs ?: this?.durationMs,
+        error = error,
+        mediaUrl = mediaUrl ?: this?.mediaUrl,
+        previewUrl = previewUrl ?: this?.previewUrl,
+        requestId = requestId ?: this?.requestId,
+        state = state,
+        status = status ?: this?.status,
+        timestamp = timestamp ?: this?.timestamp,
+        uploadUrl = uploadUrl ?: this?.uploadUrl,
+        uploadedAt = uploadedAt ?: this?.uploadedAt,
+    )
+
+private fun JSONObject.optNonBlankString(name: String): String? =
+    optString(name).takeIf { it.isNotBlank() }
+
+private fun JSONObject.optIntOrNull(name: String): Int? =
+    if (has(name)) optInt(name) else null
+
+private fun videoStatusIsFailure(status: String): Boolean =
+    status in setOf(
+        "not_recording",
+        "request_id_mismatch",
+        "service_unavailable",
+        "json_error",
+        "battery_low",
+        "camera_busy",
+        "storage_unavailable",
+        "integrity_failed",
+        "error",
     )
 
 private fun imageDimensions(file: File): Pair<Int, Int>? {

@@ -56,12 +56,12 @@ For production iOS apps that need BLE or microphone behavior while backgrounded 
 The example has five tabs:
 
 - **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state, and explicitly check/start OTA updates once the glasses are connected to Wi-Fi.
-- **Camera**: request photo upload to the local demo cloud or directly to this iPhone, tune manual exposure and ISO, then preview the received JPEG.
+- **Camera**: request photo upload to the local demo cloud or directly to this iPhone, record and upload videos to the media webhook, tune manual exposure and ISO, then preview received media.
 - **Stream**: start RTMP, SRT, or WebRTC streams with SDK-managed keep-alives and preview HLS/WebRTC output. WebRTC can be received directly on the iPhone through the app-hosted GStreamer WHIP receiver.
 - **System**: scan/connect/forget Wi-Fi, toggle hotspot, change gallery mode, receive microphone PCM, and send RGB LED controls.
-- **Console**: watch button, touch, swipe, BLE, TX, STORE, hotspot, stream, photo, microphone, and SDK diagnostic events.
+- **Console**: watch button, touch, swipe, BLE, TX, STORE, hotspot, stream, photo, video upload, microphone, and SDK diagnostic events.
 
-## Local Photo And Streaming Helper
+## Local Media And Streaming Helper
 
 From the repo root:
 
@@ -69,7 +69,7 @@ From the repo root:
 python3 examples/local-demo-cloud/server.py
 ```
 
-Paste the printed LAN `/upload` URL into the Camera screen. Paste the printed RTMP, SRT, or WHIP publish URL into the Stream screen. If Docker is not installed or not running, the helper still starts the photo webhook and skips streaming with a warning.
+Paste the printed LAN `/upload` URL into the Camera screen. Paste the printed RTMP, SRT, or WHIP publish URL into the Stream screen. If Docker is not installed or not running, the helper still starts the media webhook and skips streaming with a warning.
 
 Do not use `localhost` in the app. The glasses, iPhone, and computer must be on a network where the glasses can reach the printed LAN address.
 
