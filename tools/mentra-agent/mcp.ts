@@ -51,7 +51,11 @@ async function speechPcmBase64(phrase: string): Promise<string> {
   const buf = new Uint8Array(await Bun.file(wav).arrayBuffer())
   const idx = Buffer.from(buf).indexOf("data")
   if (idx < 0) throw new Error("no data chunk in WAV")
-  return Buffer.from(buf.subarray(idx + 8)).toString("base64")
+  const speech = buf.subarray(idx + 8)
+  // 1s of trailing silence so the STT provider finalizes the last word (see cli.ts).
+  const padded = new Uint8Array(speech.length + 16000 * 2)
+  padded.set(speech, 0)
+  return Buffer.from(padded).toString("base64")
 }
 
 interface ToolDef {

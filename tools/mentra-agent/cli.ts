@@ -62,7 +62,13 @@ async function speechPcm(phrase: string): Promise<Uint8Array> {
   // Locate the WAV "data" chunk; PCM follows the 8-byte chunk header.
   const idx = Buffer.from(buf).indexOf("data")
   if (idx < 0) throw new Error("no data chunk in WAV")
-  return buf.subarray(idx + 8)
+  const speech = buf.subarray(idx + 8)
+  // Append 1s of silence: with no trailing audio the STT provider holds the
+  // last word in its decode buffer indefinitely (it only finalized when the
+  // NEXT injection arrived), so expectations on the final word always missed.
+  const padded = new Uint8Array(speech.length + 16000 * 2)
+  padded.set(speech, 0)
+  return padded
 }
 
 function b64(bytes: Uint8Array): string {
