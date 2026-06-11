@@ -64,13 +64,13 @@ export default function DeveloperSettingsScreen() {
               <Icon name="alert-triangle" size={16} color={theme.colors.destructive} />
               <Text tx="warning:warning" className="text-lg font-bold" />
             </View>
-            <Text tx="warning:developerSettingsWarning" className="text-sm font-medium" />
+            <Text tx="warning:debugSettingsWarning" className="text-sm font-medium" />
           </View>
 
           <Group title="Settings">
             <ToggleSetting
-              label="Developer Mode"
-              subtitle="Enable developer mode"
+              label="Debug Mode"
+              subtitle="Enable debug mode"
               value={devMode}
               onValueChange={(value) => setDevMode(value)}
             />

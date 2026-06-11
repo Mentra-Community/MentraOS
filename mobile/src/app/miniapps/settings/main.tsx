@@ -91,8 +91,8 @@ export default function MainSettingsPage() {
               {devMode && (
                 <RouteButton
                   icon={<Icon name="user-code" size={24} color={theme.colors.secondary_foreground} />}
-                  label={translate("settings:developerSettings")}
-                  onPress={() => push("/miniapps/settings/developer")}
+                  label={translate("settings:debugSettings")}
+                  onPress={() => push("/miniapps/settings/debug")}
                   onLongPress={() => superMode && push("/miniapps/settings/super")}
                 />
               )}

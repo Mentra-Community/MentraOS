@@ -68,7 +68,7 @@ export const VersionInfo = () => {
 
     // Handle different press counts
     if (pressCount.current === maxPressCount) {
-      showAlert(translate("dev:developerModeEnabled"), translate("dev:developerModeEnabled"), [
+      showAlert(translate("debug:debugModeEnabled"), translate("debug:debugModeEnabled"), [
         {text: translate("common:ok")},
       ])
       setDevMode(true)
@@ -77,8 +77,8 @@ export const VersionInfo = () => {
       const remaining = maxPressCount - pressCount.current
       Toast.show({
         type: "info",
-        text1: translate("dev:developerMode"),
-        text2: translate("dev:developerModeMoreTaps", {number: remaining}),
+        text1: translate("debug:debugMode"),
+        text2: translate("debug:debugModeMoreTaps", {number: remaining}),
         position: "bottom",
         topOffset: 80,
         visibilityTime: 1000,
@@ -116,7 +116,7 @@ export const VersionInfo = () => {
     if (devMode) {
       Toast.show({
         type: "info",
-        text1: translate("dev:versionInfoCopied"),
+        text1: translate("debug:versionInfoCopied"),
         position: "bottom",
         topOffset: 80,
         visibilityTime: 1000,
@@ -127,10 +127,10 @@ export const VersionInfo = () => {
   const handlePressIn = () => {
     longPressTimer.current = setTimeout(() => {
       setSuperMode(true)
-      // showAlert(translate("dev:superMode"), translate("dev:superModeActivated"), [{text: translate("common:ok")}])
+      // showAlert(translate("debug:superMode"), translate("debug:superModeActivated"), [{text: translate("common:ok")}])
       Toast.show({
         type: "success",
-        text1: translate("dev:superModeActivated"),
+        text1: translate("debug:superModeActivated"),
         position: "bottom",
         topOffset: 80,
         visibilityTime: 2000,

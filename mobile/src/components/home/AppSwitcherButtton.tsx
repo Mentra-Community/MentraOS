@@ -20,6 +20,7 @@ import {LinearGradient} from "expo-linear-gradient"
 import MaskedView from "@react-native-masked-view/masked-view"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import GlassView from "@/components/ui/GlassView"
+import {OPEN_SPRING, SWIPE_DISTANCE_THRESHOLD, SWIPE_PERCENT_THRESHOLD} from "@/stores/appSwitcher"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {hapticBuzz} from "@/utils/utils"
 import showAlert from "@/contexts/ModalContext"
@@ -30,9 +31,7 @@ interface AppSwitcherButtonProps {
   blurTargetRef: RefObject<View | null>
 }
 
-const SWIPE_DISTANCE_THRESHOLD = 300 // Distance needed to trigger open
 const SWIPE_DISTANCE_MULTIPLIER = 1
-const SWIPE_PERCENT_THRESHOLD = 0.2
 // const SWIPE_VELOCITY_THRESHOLD = 800 // Velocity threshold for quick swipes
 
 export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blurTargetRef}: AppSwitcherButtonProps) {
@@ -94,12 +93,7 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
       const shouldOpen = swipeProgress.value > SWIPE_PERCENT_THRESHOLD || swipeDistance > SWIPE_DISTANCE_THRESHOLD
 
       if (shouldOpen) {
-        swipeProgress.value = withSpring(1, {
-          damping: 20,
-          stiffness: 2000,
-          overshootClamping: true,
-          // velocity: velocity,
-        })
+        swipeProgress.value = withSpring(1, OPEN_SPRING)
       } else {
         swipeProgress.value = withSpring(0, {
           damping: 20,
