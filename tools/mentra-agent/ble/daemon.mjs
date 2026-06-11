@@ -27,8 +27,8 @@ import { G2Manager } from "./manager.mjs"
 import * as bmp from "./bmp.mjs"
 
 const DIR = dirname(fileURLToPath(import.meta.url))
-const LOG_FILE = join(DIR, "daemon.log")
-const PID_FILE = join(DIR, "daemon.pid")
+const LOG_FILE = join(DIR, `daemon-${process.argv.includes("--port") ? process.argv[process.argv.indexOf("--port")+1] : "8799"}.log`)
+const PID_FILE = join(DIR, `daemon-${process.argv.includes("--port") ? process.argv[process.argv.indexOf("--port")+1] : "8799"}.pid`)
 const portIdx = process.argv.indexOf("--port")
 const PORT = Number(portIdx >= 0 ? process.argv[portIdx + 1] : 8799)
 

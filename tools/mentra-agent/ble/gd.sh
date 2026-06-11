@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 PORT="${2:-8799}"
-PIDF="daemon.pid"
+PIDF="daemon-$PORT.pid"
 
 case "${1:-start}" in
   start)

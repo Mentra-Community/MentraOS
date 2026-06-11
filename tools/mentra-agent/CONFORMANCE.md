@@ -15,7 +15,7 @@ AWS us-west-2 dev. Driven via CDP (tools/mentra-agent/cdp.ts).
 | **managed photo (cloud-v2, local)** | ✅ service proven | Full local e2e via curl standing in for the device: supabase→core token exchange (`/api/client/auth/exchange`, OAuth token-exchange grant, EdDSA access token) → `POST /api/camera/photo` presigns local upload+read URLs → simulated device PUT (204) → read-back 200 with exact bytes. Confirms the only missing piece is the device-capture trigger. |
 | session.camera | ✅ pipeline proven / ❌ dev-backend storage | Full loop ran: miniapp → host → V1 mint (devapi) → DeviceManager → RemoteHarness (chunked K900) → daemon → REAL Live camera captured → upload attempt → structured error back to the miniapp in ~14s: `{"code":"upload_failed","message":"The specified bucket does not exist."}` — devapi's S3 bucket is missing (cloud-infra bug, report to team). Every hop including error propagation works. (Older notes: | Permission gate works (clean PERMISSION_NOT_DECLARED until CAMERA added to miniapp.json — the example shipped without it despite having a camera tester page). **Major finding:** the local-SDK photo path mints its upload URL from the V1 backend (`POST {backend_url}/api/v2/client/photo/request`); on prod `api.mentra.glass` that endpoint is **HTTP 404** (not deployed) — miniapp photos are broken against prod. It EXISTS on `devapi.mentra.glass` (401 unauth = present); with `backend_url=devapi.mentra.glass` the mint succeeds and the pipeline reaches the SGC driver. Also: cloud-v2's managed-photo service presigns but has no device trigger; the phone coordinator has the trigger but mints from V1 — the two halves of managed photo live in different stacks. |
 | session.stream | ✅ runtime service proven (local) | `POST /api/camera/stream` on the LOCAL runtime provisions real Cloudflare Stream coordinates (rtmps ingest + HLS playback); `DELETE` tears down (200). Unmanaged RTMP to a local listener already proven at the daemon level (15s h264 recording). |
-| session.input | ⏸ needs human | Decode path proven at daemon level earlier (`sr_tpevt` → tap/swipe); end-to-end needs a physical tap — user AFK overnight. |
+| session.input | ✅ human-verified (daemon level) | Wearer swiped the Live touchpad: `swipe_back` decoded from `sr_tpevt` and relayed cross-device onto the G2 lens in real time. (The SDK-iface variant through the emulator app remains optional follow-up.) |
 | session.location | ✅ | `getOnce` → `{lat:37.4219983, lng:-122.084, accuracy:100}` (emulator mock GPS through the host location service). |
 | session.storage | ✅ | `set`/`get` round-trip exact ("overnight_value_42"). |
 | session.system | ✅ | `copyToClipboard` ok. |
@@ -106,3 +106,11 @@ G2_PROFILE):
 Action for display-utils owner: shrink displayWidthPx to ~568 for G2, fix the
 'a' and '1' entries, and consider a G2-specific profile instead of inheriting
 G1 verbatim.
+
+## Dual-device control (verified)
+
+Two daemon instances (per-port pidfiles/logs) held BOTH glasses families
+simultaneously: daemon A :8799 -> Even G2 (worn), daemon B :8899 -> Mentra Live.
+Demo: the Live's camera captured a 179KB JPEG to the laptop while the G2 lens
+narrated the countdown and result live; then a touchpad swipe on the Live was
+relayed onto the G2 lens. Target a daemon with GLASSES_PORT=<port>.
