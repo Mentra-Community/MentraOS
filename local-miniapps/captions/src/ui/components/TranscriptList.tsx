@@ -66,7 +66,6 @@ export function TranscriptList({
               transcript={transcript}
               isFirst={index === 0}
               isLast={index === transcripts.length - 1}
-              accentColor={accentColor}
             />
           ))
         )}

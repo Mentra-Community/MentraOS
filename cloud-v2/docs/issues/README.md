@@ -42,10 +42,13 @@ lands.
 | **[006-dev-toolkit](./006-dev-toolkit/)** | | developer toolkit |
 | [local-sdk](./006-dev-toolkit/local-sdk/) | Spiked | findings + open questions, not yet a proposal. Left: spec + design |
 | [cli](./006-dev-toolkit/cli/) | Stub | needs spec |
+| **[007-runtime-auth-independence](./007-runtime-auth-independence/)** | Draft | runtime auth split issue: make Runtime Services able to accept trusted runtime tokens without live Core dependency; define optional Core endpoint/client behavior |
 
 ## Open decisions
 
-- None blocking right now. Recently decided: audio subscription transport
+- Runtime auth split: should runtime-only cloud-client construction omit
+  `cloud.core`, expose a disabled module, or use a separate RuntimeClient?
+  Recently decided: audio subscription transport
   (Option 2a, REST + stream control entry, see
   [`002-cloud-runtime/audio/wire.md`](./002-cloud-runtime/audio/wire.md));
   `mentraUserId` = `users._id`; the Mentra-as-OEM core-token migration bridge.
