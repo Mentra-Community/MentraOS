@@ -37,6 +37,14 @@ struct StreamScreen: View {
         model.streamRequested || model.streamStartedAt != nil
     }
 
+    private var streamStarting: Bool {
+        model.streamStartPending && !streamActive
+    }
+
+    private var streamButtonDisabled: Bool {
+        streamStarting || ((!model.glassesConnected || !model.glassesWifiConnected) && !streamActive)
+    }
+
     private var sdkCall: String {
         streamSdkCall(fps: model.streamFps)
     }
@@ -108,14 +116,14 @@ struct StreamScreen: View {
                             .font(.system(size: 18, weight: .bold))
                             .frame(width: 18, height: 18)
                     }
-                    Text(!model.glassesConnected && !streamActive ? "Connect glasses first" : !model.glassesWifiConnected && !streamActive ? "Connect glasses to Wi-Fi" : streamActive ? "End stream" : "Start stream").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
+                    Text(!model.glassesConnected && !streamActive ? "Connect glasses first" : !model.glassesWifiConnected && !streamActive ? "Connect glasses to Wi-Fi" : streamStarting ? "Starting stream..." : streamActive ? "End stream" : "Start stream").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
                 .background(LinearGradient(colors: streamActive ? [Color(hex: 0xDE3A30), Color(hex: 0xC43B30)] : [Color(hex: 0x26473A), Color(hex: 0x1F3A2A)], startPoint: .top, endPoint: .bottom))
                 .clipShape(RoundedRectangle(cornerRadius: 18))
             }
-            .disabled((!model.glassesConnected || !model.glassesWifiConnected) && !streamActive)
-            .opacity((!model.glassesConnected || !model.glassesWifiConnected) && !streamActive ? 0.55 : 1)
+            .disabled(streamButtonDisabled)
+            .opacity(streamButtonDisabled ? 0.55 : 1)
             .padding(.horizontal, 6).padding(.top, 14)
         }
     }
@@ -156,11 +164,11 @@ struct StreamScreen: View {
                 Circle().fill(AppColor.greenSoft.opacity(0.3)).frame(width: 240, height: 240).blur(radius: 10).offset(x: 100, y: 110)
 
                 VStack {
-                    previewChrome(label: streamActive ? "STARTING" : "READY", detail: streamActive ? "Waiting for preview" : cloudServerEnabled ? "Ready · enter stream URL" : "Ready · phone receiver starts on stream")
+                    previewChrome(label: streamActive || streamStarting ? "STARTING" : "READY", detail: streamActive || streamStarting ? "Waiting for preview" : cloudServerEnabled ? "Ready · enter stream URL" : "Ready · phone receiver starts on stream")
 
                     Spacer()
 
-                    if streamActive {
+                    if streamActive || streamStarting {
                         Text("Starting stream...\nWaiting for preview")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(.white)

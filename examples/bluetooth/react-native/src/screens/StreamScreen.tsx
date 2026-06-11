@@ -51,8 +51,11 @@ export function StreamScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const connected = isGlassesConnected(sdk.glasses);
   const glassesWifiConnected = isGlassesWifiConnected(sdk.glasses);
   const streamActive = sdk.streamRequested || sdk.streamStartedAt !== null;
+  const streamStarting = sdk.streamStartPending && !streamActive;
+  const streamButtonDisabled = streamStarting || ((!connected || !glassesWifiConnected) && !streamActive);
   const wifiRequired = connected && !glassesWifiConnected && !streamActive;
   const previewReady = streamActive && sdk.streamPreviewReady;
+  const previewPending = streamActive || streamStarting;
   const uptime = streamUptime(sdk.streamStartedAt);
   const setupHint = sdk.streamCloudServerEnabled
     ? localStreamSetupHint(sdk.streamProtocol, sdk.streamUrl, sdk.streamStatus)
@@ -100,17 +103,17 @@ export function StreamScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
               <MentraVideoStreamReceiverView style={styles.previewFill} />
             ) : (
               <PlaceholderStreamPreview
-                message={streamActive ? streamPreviewWaitingMessage(sdk.streamStatus) : undefined}
+                message={previewPending ? streamPreviewWaitingMessage(sdk.streamStatus) : undefined}
               />
             )}
             <View style={styles.livePill}>
-              <View style={[styles.liveDot, !streamActive && styles.readyDot]} />
-              <Text style={styles.liveText}>{previewReady ? 'LIVE' : streamActive ? 'STARTING' : 'READY'}</Text>
+              <View style={[styles.liveDot, !previewPending && styles.readyDot]} />
+              <Text style={styles.liveText}>{previewReady ? 'LIVE' : previewPending ? 'STARTING' : 'READY'}</Text>
             </View>
             <Text style={styles.timer}>{uptime}</Text>
             {!previewReady ? (
               <Text style={styles.previewMeta}>
-                {streamActive
+                {previewPending
                   ? 'Waiting for preview'
                   : sdk.streamCloudServerEnabled
                     ? 'Ready · enter stream URL'
@@ -120,14 +123,16 @@ export function StreamScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           </View>
         </View>
 
-        <Pressable disabled={(!connected || !glassesWifiConnected) && !streamActive} onPress={handleStreamPress}>
-          <LinearGradient colors={streamActive ? ['#DE3A30', '#C43B30'] : ['#26473A', '#1F3A2A']} style={[styles.endBtn, (!connected || !glassesWifiConnected) && !streamActive && styles.disabled]}>
+        <Pressable disabled={streamButtonDisabled} onPress={handleStreamPress}>
+          <LinearGradient colors={streamActive ? ['#DE3A30', '#C43B30'] : ['#26473A', '#1F3A2A']} style={[styles.endBtn, streamButtonDisabled && styles.disabled]}>
             {streamActive ? <View style={styles.stopSquare} /> : <StreamPlayIcon />}
             <Text style={styles.endText}>
               {!connected && !streamActive
                 ? 'Connect glasses first'
                 : !glassesWifiConnected && !streamActive
                   ? 'Connect glasses to Wi-Fi'
+                  : streamStarting
+                    ? 'Starting stream...'
                   : streamActive
                     ? 'End stream'
                     : 'Start stream'}

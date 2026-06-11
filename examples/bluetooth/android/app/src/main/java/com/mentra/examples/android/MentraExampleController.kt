@@ -223,6 +223,7 @@ data class MentraExampleState(
     val streamRequested: Boolean = false,
     val streamPreviewReady: Boolean = false,
     val streamResolvedConfig: StreamResolvedConfig? = null,
+    val streamStartPending: Boolean = false,
     val streamStartedAt: Long? = null,
     val streamStatus: String = "Ready to stream WebRTC to this phone",
     val streamUrl: String = defaultStreamUrl("webrtc"),
@@ -777,12 +778,21 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     fun toggleStream() {
+        if (state.streamStartPending) {
+            state = state.copy(streamStatus = "Stream start already in progress")
+            addEvent("TX", "duplicate stream start ignored")
+            return
+        }
         if (streamConfigurationChangeInProgress) {
             state = state.copy(streamStatus = "Waiting for stream configuration update")
             addEvent("TX", "stream action ignored while configuration update is running")
             return
         }
-        runAction(if (!state.streamRequested && state.streamStartedAt == null) "Start stream" else "Stop stream") {
+        val startingStream = !state.streamRequested && state.streamStartedAt == null
+        if (startingStream) {
+            state = state.copy(streamStartPending = true, streamStatus = "Starting stream")
+        }
+        runAction(if (startingStream) "Start stream" else "Stop stream") {
             if (state.streamRequested || state.streamStartedAt != null) {
                 stopPreviewHealthPoll()
                 stopDirectStreamFrameWatchdog()
@@ -832,48 +842,39 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 )
                 return@runAction
             }
-            requireConnected("start streaming")
-            requireGlassesWifi("start streaming")
-            if (isDirectPhoneWebRtcSelected()) {
-                startDirectPhoneWebRtcStream()
-                return@runAction
-            }
-            val streamUrl = state.streamUrl.trim()
-            streamUrlValidationMessage(streamUrl)?.let { message ->
-                state = state.copy(streamStatus = message)
-                throw IllegalArgumentException(message)
-            }
-            val streamId = "android-${System.currentTimeMillis()}"
-            val selectedProtocol = state.streamProtocol
-            if (selectedProtocol == "rtmp" || selectedProtocol == "srt" || selectedProtocol == "webrtc") {
-                state = state.copy(streamStatus = "Checking local ${selectedProtocol.uppercase()} server")
-                scope.launch(Dispatchers.IO) {
-                    val reachabilityMessage = when (selectedProtocol) {
-                        "rtmp" -> localRtmpReachabilityMessage(streamUrl)
-                        "srt" -> localSrtReachabilityMessage(streamUrl)
-                        else -> localWebrtcReachabilityMessage(streamUrl)
+            try {
+                requireConnected("start streaming")
+                requireGlassesWifi("start streaming")
+                if (isDirectPhoneWebRtcSelected()) {
+                    startDirectPhoneWebRtcStream()
+                    return@runAction
+                }
+                val streamUrl = state.streamUrl.trim()
+                streamUrlValidationMessage(streamUrl)?.let { message ->
+                    state = state.copy(streamStatus = message)
+                    throw IllegalArgumentException(message)
+                }
+                val streamId = "android-${System.currentTimeMillis()}"
+                val selectedProtocol = state.streamProtocol
+                if (selectedProtocol == "rtmp" || selectedProtocol == "srt" || selectedProtocol == "webrtc") {
+                    state = state.copy(streamStatus = "Checking local ${selectedProtocol.uppercase()} server")
+                    val reachabilityMessage = withContext(Dispatchers.IO) {
+                        when (selectedProtocol) {
+                            "rtmp" -> localRtmpReachabilityMessage(streamUrl)
+                            "srt" -> localSrtReachabilityMessage(streamUrl)
+                            else -> localWebrtcReachabilityMessage(streamUrl)
+                        }
                     }
-                    scope.launch {
-                        if (reachabilityMessage != null) {
-                            state = state.copy(streamStatus = reachabilityMessage)
-                            addEvent("TX", "stream failed: $reachabilityMessage")
-                            return@launch
-                        }
-                        try {
-                            startStream(streamUrl, streamId, selectedProtocol)
-                        } catch (error: Throwable) {
-                            val message = error.message ?: error::class.java.simpleName
-                            state = state.copy(
-                                lastAction = "Failed: Start stream - $message",
-                                streamStatus = message,
-                            )
-                            addEvent("TX", "stream failed: $message")
-                        }
+                    if (reachabilityMessage != null) {
+                        state = state.copy(streamStatus = reachabilityMessage)
+                        addEvent("TX", "stream failed: $reachabilityMessage")
+                        throw IllegalStateException(reachabilityMessage)
                     }
                 }
-                return@runAction
+                startStream(streamUrl, streamId, selectedProtocol)
+            } finally {
+                state = state.copy(streamStartPending = false)
             }
-            startStream(streamUrl, streamId, selectedProtocol)
         }
     }
 

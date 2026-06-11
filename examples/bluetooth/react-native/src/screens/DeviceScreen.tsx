@@ -267,7 +267,7 @@ function glassesImageFor(status: BluetoothSdkExampleModel['glasses']) {
 }
 
 function canStartOta(sdk: BluetoothSdkExampleModel) {
-  if (!isGlassesConnected(sdk.glasses) || !isGlassesWifiConnected(sdk.glasses) || !sdk.otaUpdateAvailable) {
+  if (!isGlassesConnected(sdk.glasses) || !isGlassesWifiConnected(sdk.glasses)) {
     return false;
   }
   return !isOtaInProgress(sdk);

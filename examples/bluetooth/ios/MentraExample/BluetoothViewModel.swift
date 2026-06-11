@@ -218,6 +218,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var streamRequested = false
     @Published private(set) var streamPreviewReady = false
     @Published private(set) var streamResolvedConfig: StreamResolvedConfig?
+    @Published private(set) var streamStartPending = false
     @Published private(set) var streamStartedAt: Date?
     @Published private(set) var streamStatus = "Ready to start stream"
     @Published private(set) var galleryModeEnabled = false
@@ -748,6 +749,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func toggleStream() {
+        guard !streamStartPending else {
+            streamStatus = "Stream start already in progress"
+            append(tag: "TX", text: "duplicate stream start ignored")
+            return
+        }
         guard !streamConfigurationChangeInProgress else {
             streamStatus = "Waiting for stream configuration update"
             append(tag: "TX", text: "stream action ignored while configuration update is running")
@@ -805,7 +811,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             return
         }
 
+        streamStartPending = true
+        streamStatus = "Starting stream"
         runAsyncAction("Start stream") { [self] in
+            defer { streamStartPending = false }
             try requireConnected("start streaming")
             try requireGlassesWifi("start streaming")
             if isDirectPhoneWebRtcSelected {
@@ -821,28 +830,18 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             let selectedProtocol = streamProtocol
             if selectedProtocol == .rtmp || selectedProtocol == .srt || selectedProtocol == .webrtc {
                 streamStatus = "Checking local \(selectedProtocol.rawValue.uppercased()) server"
-                Task {
-                    do {
-                        if selectedProtocol == .rtmp {
-                            try await checkLocalRtmpServer(rtmpUrl: url)
-                        } else if selectedProtocol == .srt {
-                            try await checkLocalSrtServer(srtUrl: url)
-                        } else {
-                            try await checkLocalWebrtcServer(whipUrl: url)
-                        }
-                        guard streamUrl.trimmingCharacters(in: .whitespacesAndNewlines) == url,
-                              streamProtocol == selectedProtocol,
-                              !streamRequested,
-                              streamStartedAt == nil
-                        else { return }
-                        try await startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
-                    } catch {
-                        let message = error.localizedDescription
-                        streamStatus = message
-                        append(tag: "TX", text: "stream failed: \(message)")
-                    }
+                if selectedProtocol == .rtmp {
+                    try await checkLocalRtmpServer(rtmpUrl: url)
+                } else if selectedProtocol == .srt {
+                    try await checkLocalSrtServer(srtUrl: url)
+                } else {
+                    try await checkLocalWebrtcServer(whipUrl: url)
                 }
-                return
+                guard streamUrl.trimmingCharacters(in: .whitespacesAndNewlines) == url,
+                      streamProtocol == selectedProtocol,
+                      !streamRequested,
+                      streamStartedAt == nil
+                else { return }
             }
             try await startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
         }

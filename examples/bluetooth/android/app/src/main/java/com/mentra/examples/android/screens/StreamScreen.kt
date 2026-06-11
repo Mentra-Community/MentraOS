@@ -93,8 +93,11 @@ fun StreamScreen(controller: MentraExampleController) {
     val connected = isGlassesConnected(state.glassesStatus)
     val glassesWifiConnected = isGlassesWifiConnected(state.glassesStatus)
     val streamActive = state.streamRequested || state.streamStartedAt != null
+    val streamStarting = state.streamStartPending && !streamActive
+    val streamButtonEnabled = !streamStarting && ((connected && glassesWifiConnected) || streamActive)
     val wifiRequired = connected && !glassesWifiConnected && !streamActive
     val previewReady = streamActive && state.streamPreviewReady
+    val previewPending = streamActive || streamStarting
     val cloudServerEnabled = state.streamCloudServerEnabled
     val directPhoneWebRtc = !cloudServerEnabled
     val streamIndicatorColor = when {
@@ -142,14 +145,14 @@ fun StreamScreen(controller: MentraExampleController) {
                 if (directPhoneWebRtc) {
                     DirectPhoneStreamPreview(
                         frame = state.directStreamFrame,
-                        message = if (streamActive && !previewReady) state.streamStatus else null,
+                        message = if (previewPending && !previewReady) state.streamStatus else null,
                         modifier = Modifier.matchParentSize()
                     )
                 } else if (previewTarget != null) {
                     LiveStreamPreview(previewTarget, modifier = Modifier.matchParentSize())
                 } else {
                     PlaceholderStreamPreview(
-                        message = if (streamActive) "Starting stream...\nWaiting for preview" else null,
+                        message = if (previewPending) "Starting stream...\nWaiting for preview" else null,
                         modifier = Modifier.matchParentSize()
                     )
                 }
@@ -164,16 +167,16 @@ fun StreamScreen(controller: MentraExampleController) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (streamActive) AppColor.redLive else AppColor.greenSoft))
-                    Text(if (previewReady) "LIVE" else if (streamActive) "STARTING" else "READY", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (previewPending) AppColor.redLive else AppColor.greenSoft))
+                    Text(if (previewReady) "LIVE" else if (previewPending) "STARTING" else "READY", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
                 }
                 Text(uptime, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.TopEnd).padding(14.dp))
 
                 if (!previewReady) {
                     Text(
-                        if (directPhoneWebRtc && streamActive) {
+                        if (directPhoneWebRtc && previewPending) {
                             "Waiting for first frame"
-                        } else if (streamActive) {
+                        } else if (previewPending) {
                             "Waiting for preview"
                         } else if (directPhoneWebRtc) {
                             "Ready · phone receiver starts on stream"
@@ -193,7 +196,7 @@ fun StreamScreen(controller: MentraExampleController) {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .background(Brush.verticalGradient(if (streamActive) listOf(Color(0xFFDE3A30), Color(0xFFC43B30)) else listOf(Color(0xFF26473A), Color(0xFF1F3A2A))))
-                    .clickable(enabled = (connected && glassesWifiConnected) || streamActive) {
+                    .clickable(enabled = streamButtonEnabled) {
                         if (cloudServerEnabled && shouldFocusStreamUrlTemplate(state.streamUrl, streamActive)) {
                             streamUrlFocusRequester.requestFocus()
                             keyboardController?.show()
@@ -214,6 +217,8 @@ fun StreamScreen(controller: MentraExampleController) {
                             "Connect glasses first"
                         } else if (!glassesWifiConnected && !streamActive) {
                             "Connect glasses to Wi-Fi"
+                        } else if (streamStarting) {
+                            "Starting stream..."
                         } else if (streamActive) {
                             "End stream"
                         } else {

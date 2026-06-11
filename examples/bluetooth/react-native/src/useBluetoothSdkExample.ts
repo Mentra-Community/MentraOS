@@ -278,6 +278,7 @@ export type BluetoothSdkExampleState = {
   streamPreviewReady: boolean;
   streamRequested: boolean;
   streamResolvedConfig: StreamResolvedConfig | null;
+  streamStartPending: boolean;
   streamStartedAt: number | null;
   streamStatus: string;
   streamUrl: string;
@@ -413,6 +414,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [streamFps, setStreamFps] = useState(STREAM_DEFAULT_FPS);
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
   const [streamRequested, setStreamRequested] = useState(false);
+  const [streamStartPending, setStreamStartPending] = useState(false);
   const [streamPreviewReady, setStreamPreviewReady] = useState(false);
   const [streamResolvedConfig, setStreamResolvedConfig] =
     useState<StreamResolvedConfig | null>(null);
@@ -445,6 +447,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const [rawJsonExpanded, setRawJsonExpanded] = useState(false);
   const activePhotoRequestIdRef = useRef<string | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
+  const streamStartPendingRef = useRef(false);
   const pollGenerationRef = useRef(0);
   const photoCloudServerEnabledRef = useRef(false);
   const streamCloudServerEnabledRef = useRef(false);
@@ -624,6 +627,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       void stopPhonePhotoReceiver().catch(() => undefined);
       void MentraVideoStreamReceiver.stopWebRtcReceiver().catch(() => undefined);
       activeStreamIdRef.current = null;
+      streamStartPendingRef.current = false;
       activePhotoRequestIdRef.current = null;
       pollGenerationRef.current += 1;
       stopMicElapsedTimer();
@@ -1589,20 +1593,41 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setStreamFps(nextFps);
   }
 
+  function setStreamStartPendingValue(pending: boolean) {
+    streamStartPendingRef.current = pending;
+    setStreamStartPending(pending);
+  }
+
   async function toggleStream() {
+    if (streamStartPendingRef.current) {
+      setStreamStatus('Stream start already in progress');
+      addEvent('TX', 'duplicate stream start ignored');
+      return;
+    }
+
     if (streamRequested || streamStartedAt) {
       await runAction('Stop stream', () => stopActiveStream('Stopped'));
       return;
     }
 
+    setStreamStartPendingValue(true);
+    setStreamStatus(
+      streamCloudServerEnabledRef.current
+        ? `Starting ${streamProtocol.toUpperCase()} stream`
+        : 'Starting WebRTC stream to phone',
+    );
     await runAction('Start stream', async () => {
-      requireConnected('start streaming');
-      requireGlassesWifi('start streaming');
-      if (streamCloudServerEnabledRef.current) {
-        await startCloudStream();
-        return;
+      try {
+        requireConnected('start streaming');
+        requireGlassesWifi('start streaming');
+        if (streamCloudServerEnabledRef.current) {
+          await startCloudStream();
+          return;
+        }
+        await startPhoneWebRtcStream();
+      } finally {
+        setStreamStartPendingValue(false);
       }
-      await startPhoneWebRtcStream();
     });
   }
 
@@ -1676,6 +1701,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     stopPreviewHealthPoll();
     stopDirectStreamFrameWatchdog();
     activeStreamIdRef.current = null;
+    setStreamStartPendingValue(false);
     if (isGlassesConnected(glasses)) {
       const status = await BluetoothSdk.stopStream();
       addEvent('LIVE', `stream ${status.status}`);
@@ -2158,6 +2184,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     clearPhotoUploadTimeout();
     void MentraVideoStreamReceiver.stopWebRtcReceiver().catch(() => undefined);
     activeStreamIdRef.current = null;
+    setStreamStartPendingValue(false);
     const disconnectedPhotoRequestId = activePhotoRequestIdRef.current;
     const hadPhotoRequest = disconnectedPhotoRequestId !== null;
     activePhotoRequestIdRef.current = null;
@@ -2238,6 +2265,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       stopPreviewHealthPoll();
       stopDirectStreamFrameWatchdog();
       activeStreamIdRef.current = null;
+      setStreamStartPendingValue(false);
       void MentraVideoStreamReceiver.stopWebRtcReceiver().catch(() => undefined);
       setDirectStreamReceiverRunning(false);
       setDirectStreamWhipUrl(null);
@@ -2362,6 +2390,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     streamPreviewReady,
     streamRequested,
     streamResolvedConfig,
+    streamStartPending,
     streamStartedAt,
     streamStatus,
     streamUrl,
