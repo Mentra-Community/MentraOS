@@ -130,8 +130,14 @@ export class TesterController {
         // so the UI's "subscription open?" toggle is consistent.
         return () => {}
       }
-      case "imu":
-        return this.session.imu.onHeadPosition((data) => emit("head", data))
+      case "imu": {
+        const h = this.session.imu.onHeadPosition((data) => emit("head", data))
+        const a = this.session.imu.onAccel((data) => emit("accel", data))
+        return () => {
+          h()
+          a()
+        }
+      }
       case "location":
         return this.session.location.onUpdate((data) => emit("update", data))
       case "mic": {

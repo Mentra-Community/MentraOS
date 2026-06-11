@@ -2,6 +2,8 @@
  * @mentra/types - App/Applet types for client interfaces
  */
 
+import type { ReactNode } from "react";
+
 import { HardwareRequirement } from "./hardware";
 
 /**
@@ -43,6 +45,7 @@ export interface AppletInterface {
   name: string;
   webviewUrl: string;
   logoUrl: string;
+  iconComponent?: ReactNode;
   type: AppletType;
   permissions: AppletPermission[];
   running: boolean;

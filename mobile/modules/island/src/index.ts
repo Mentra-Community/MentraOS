@@ -6,6 +6,11 @@ export {
   normalizeManifestPermissions,
   buildHardwareRequirements,
   saveLocalAppRunningState,
+  registerDevApp,
+  unregisterDevApp,
+  getDevAppRecords,
+  DEV_APP_PACKAGE_NAME,
+  type DevAppRecord,
 } from "./services/AppRegistry"
 export {default as devServerBridge} from "./services/DevServerBridge"
 export {default as displayProcessor} from "./services/DisplayProcessor"

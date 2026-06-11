@@ -147,6 +147,14 @@ flowchart LR
     PhoneSdk -->|"listener / hook update"| App
 ```
 
+Every command follows this path, including the camera capture/upload commands.
+For example `stop_video_recording` carries an optional `webhookUrl` + `authToken`
+(supplied at stop time so the token is fresh when the upload runs), and
+`start_video_recording` carries an optional `maxRecordingTimeMinutes` — these are
+threaded JS → SDK native → BLE JSON exactly like `requestPhoto`'s `webhookUrl` /
+`authToken`. An empty/absent `webhookUrl` means "keep the video on device, no
+upload". See `agents/asg-video-webhook-upload.md`.
+
 ## Trace Boundaries
 
 ```mermaid

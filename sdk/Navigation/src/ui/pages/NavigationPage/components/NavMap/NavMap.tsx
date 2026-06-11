@@ -1,28 +1,65 @@
 import {useEffect, useRef, useState} from "react"
-import {motion} from "motion/react"
+import {motion, useMotionValue, useTransform} from "motion/react"
 
 import {useNavStore} from "@/ui/store/navStore"
-import {bearingDeg, detectCrossings, haversineMeters, rdpSmooth} from "@/ui/lib/geometry"
+import {bearingDeg, haversineMeters, rdpSmooth} from "@/ui/lib/geometry"
+import {formatDistance} from "@/ui/lib/formatDistance"
+import {MinusIcon, PlusIcon, RecenterIcon} from "@/ui/components/icons"
+
+// Experiment toggle: render the route line with RDP smoothing applied or
+// straight from the raw points Google returned. Flip to false to see the
+// unsmoothed path — useful for verifying turn-dot positions against the
+// actual polyline vertices rather than the visually-smoothed line.
+const SMOOTH_ROUTE_LINE = false
 import type {LatLng} from "@/shared/types"
 import {isDev} from "@/ui/lib/env"
+import {useDevOverride} from "@/ui/lib/devOverride"
+import {getGoogleMaps} from "@/ui/lib/googleMaps"
+import {useDrawerOffset} from "@/ui/components/Drawer/DrawerOffsetContext"
 
 export function NavMap({
   me,
   destination,
   routePoints,
+  previewTurns,
+  showPivots = true,
+  showOffRouteLine = false,
   savedPlaces = [],
   autoFollow = true,
+  hideControls = false,
   onLongPress,
+  onPlaceTap,
 }: {
   me: LatLng | null
   destination: LatLng | null
   /** Full walking-route polyline emitted by Nav SDK. If null, falls back
    *  to a straight me→destination line so the map has *something*. */
   routePoints?: Array<LatLng> | null
+  /** Dev-only turn points for the previewed route, drawn as red debug
+   *  dots with a hovering road-name label. Supplied while previewing
+   *  (the SDK's live pivot list is empty until a trip starts). When
+   *  null/running, NavMap fetches the live pivot list via the
+   *  nav:get-pivots RPC instead (those have no label). */
+  previewTurns?: Array<{
+    lat: number
+    lng: number
+    label?: string | null
+    /** Coarse turn direction ("Turn left"/"Turn right") metadata. */
+    direction?: "Turn left" | "Turn right" | null
+  }> | null
+  /** Dev-toggle: when false, suppress the red turn-pivot dots + labels even
+   *  if dev mode is on. Default true. */
+  showPivots?: boolean
+  /** Dev-toggle: when false, suppress the blue me→route connector line +
+   *  distance label even if dev mode is on. Default false (off). */
+  showOffRouteLine?: boolean
   /** Stars / home / work pins to drop while the map is idle. Empty while
    *  a trip is running so the route stays uncluttered. */
   savedPlaces?: Array<{lat: number; lng: number; placeId: string; type?: "home" | "work"; savedName?: string}>
   autoFollow?: boolean
+  /** Hide the floating zoom/recenter rail — e.g. while a full-screen
+   *  search overlay is covering the map. */
+  hideControls?: boolean
   /**
    * Fires when the user holds a single finger on the map for ~2s
    * without panning. Receives the lat/lng under the pressed point.
@@ -30,11 +67,55 @@ export function NavMap({
    * search this location"). Parent decides what to do with it.
    */
   onLongPress?: (coord: LatLng) => void
+  /**
+   * Fires when the user taps a built-in Google Maps POI icon (a
+   * Safeway, restaurant, etc). Receives the Google placeId. Parent
+   * resolves it to a PlaceDetails (via the `places:details` RPC) and
+   * decides what to do — typically set it as the selected destination
+   * so the preview drawer opens. Omitted → POI taps fall through to
+   * Google's default place card.
+   */
+  onPlaceTap?: (placeId: string) => void
 }) {
-  const ready = useNavStore((s) => s.mapsReady)
+  // Map readiness is local — driven directly by the Google Maps script
+  // load. Decoupled from `useNavStore` so a stalled background handshake
+  // (no CONNECT_ACK, no snapshot push) can't keep the map grey.
+  const [ready, setReady] = useState(false)
+
+  // Dev-only debug chrome (pivot dots + labels rendered as map overlays)
+  // shows when the build is dev OR when the user has unlocked the
+  // override via the 5-second hold on the search bar. See lib/devOverride.
+  const devOverride = useDevOverride()
+  const devEnabled = isDev || devOverride
+
+  // Anchor the floating right-rail (zoom / recenter buttons) just
+  // above whichever drawer is currently mounted. `useDrawerOffset()`
+  // publishes the drawer's visible height as a MotionValue, so we
+  // can bind the rail's `bottom` directly without re-rendering each
+  // drag frame. The 12px adds a small breathing gap between the rail
+  // and the drawer's top edge.
+  const drawerOffset = useDrawerOffset()
+  const fallbackZero = useMotionValue(0)
+  const railBottom = useTransform(drawerOffset ?? fallbackZero, (h: number) => h + 12)
+  useEffect(() => {
+    let alive = true
+    getGoogleMaps()
+      .whenReady()
+      .then(
+        () => {
+          if (alive) setReady(true)
+        },
+        () => {
+          if (alive) setReady(false)
+        },
+      )
+    return () => {
+      alive = false
+    }
+  }, [])
   const compassHeading = useNavStore((s) => s.heading)
-  // mapsError is no longer tracked separately — mapsReady=false implies
-  // either still-loading or failed; the loading spinner covers both.
+  // mapsError is no longer tracked separately — ready=false covers
+  // both "still-loading" and "failed"; the loading overlay handles both.
   const error: string | null = null
 
   // Right-rail buttons are pinned vertically near the middle of the
@@ -69,12 +150,15 @@ export function NavMap({
   const destMarkerRef = useRef<any | null>(null)
   const routeRef = useRef<any | null>(null)
   const pastRouteRef = useRef<any | null>(null)
+  // Dev: blue connector line from `me` to the closest point on the
+  // route, with a midpoint label showing the distance. Active whenever
+  // a route polyline is present (preview + live).
+  const offRouteLineRef = useRef<any | null>(null)
+  const offRouteLabelRef = useRef<any | null>(null)
   /** Debug: red dots at each detected pivot (turn point). */
   const pivotDotsRef = useRef<any[]>([])
-  // One Polyline per detected crossing leg. Blue, semi-transparent,
-  // thicker than the route line so it visually highlights the crossing
-  // segment we'd skip when "Skip crossings" is on.
-  const crossingMarkersRef = useRef<any[]>([])
+  /** Debug: hovering road-name labels paired with the pivot dots. */
+  const pivotLabelsRef = useRef<any[]>([])
   // Saved-place markers (home / work / starred) shown while idle.
   // Map keyed by placeId so we only churn markers whose payload changed.
   const savedMarkersRef = useRef<Map<string, any>>(new Map())
@@ -106,7 +190,10 @@ export function NavMap({
       zoomControl: false,
       gestureHandling: "greedy",
       mapTypeId: "roadmap",
-      clickableIcons: false,
+      // POI icons are tappable so the parent can hook them up as
+      // "pick this Safeway as my destination" (Google-Maps style).
+      // Set false to opt out and suppress the icon hit-area entirely.
+      clickableIcons: true,
       mapId: "e21e99f3286922559250c28e",
     })
 
@@ -130,49 +217,6 @@ export function NavMap({
     })
     console.log("[NavMap] map init complete, initial heading:", mapRef.current.getHeading?.())
 
-    // Pinch-leak fix: Google Maps' gesture recognizer can stay in zoom mode
-    // after one finger lifts from a 2-finger pinch, so the surviving
-    // finger's pan keeps zooming. Suppressing events doesn't reset the
-    // recognizer — it just delays the bug. The reliable fix is to dispatch
-    // a synthetic `touchcancel` to the map's deepest touch target so the
-    // recognizer fully resets, then let the next touchstart begin a fresh
-    // gesture cleanly.
-    let pinching = false
-    const cancelGesture = (e: TouchEvent) => {
-      const target = (e.target as Element | null) ?? container
-      try {
-        const synthetic = new TouchEvent("touchcancel", {
-          bubbles: true,
-          cancelable: false,
-          touches: [],
-          targetTouches: [],
-          changedTouches: [],
-        })
-        target.dispatchEvent(synthetic)
-      } catch {
-        // Some WebViews disallow synthetic TouchEvent construction. Fall
-        // back to a CustomEvent — Google Maps' recognizer treats any
-        // touchcancel-shaped event as a reset signal.
-        target.dispatchEvent(new Event("touchcancel", {bubbles: true}))
-      }
-    }
-    const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length >= 2) pinching = true
-    }
-    const onTouchEnd = (e: TouchEvent) => {
-      if (pinching && e.touches.length === 1) {
-        // Pinch ended but a finger remains. Reset the recognizer so the
-        // surviving finger starts a fresh single-touch gesture.
-        cancelGesture(e)
-        pinching = false
-      } else if (e.touches.length === 0) {
-        pinching = false
-      }
-    }
-    container.addEventListener("touchstart", onTouchStart, {passive: true, capture: true})
-    container.addEventListener("touchend", onTouchEnd, {passive: true, capture: true})
-    container.addEventListener("touchcancel", onTouchEnd, {passive: true, capture: true})
-
     // Skip GPS-driven panTo while the user is touching the map — otherwise
     // every coords update fights the in-flight gesture. `isTouching` ref
     // is read by the me-marker effect.
@@ -183,6 +227,19 @@ export function NavMap({
     container.addEventListener("touchstart", onTouchActive, {passive: true, capture: true})
     container.addEventListener("touchend", onTouchInactive, {passive: true, capture: true})
     container.addEventListener("touchcancel", onTouchInactive, {passive: true, capture: true})
+
+    // POI taps: Google Maps fires `click` with an IconMouseEvent (carries
+    // `placeId`) when the user taps a built-in icon (Safeway, a cafe,
+    // etc). Suppress Google's default place card via e.stop() and let
+    // the parent decide what to do — typically resolve the placeId via
+    // `places:details` and open our own preview drawer.
+    mapRef.current.addListener("click", (e: any) => {
+      const placeId = e?.placeId
+      if (!placeId) return
+      if (typeof e.stop === "function") e.stop()
+      const handler = onPlaceTapRef.current
+      if (handler) handler(placeId)
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready])
 
@@ -199,6 +256,13 @@ export function NavMap({
   // The latest handler is read via a ref so a parent re-render doesn't
   // tear down the listeners.
   const onLongPressRef = useRef(onLongPress)
+  // Same ref pattern for POI taps — the parent typically gates this on
+  // `running` and `isSearching`, both of which re-render often, and we
+  // don't want to detach/reattach the Maps click listener every time.
+  const onPlaceTapRef = useRef(onPlaceTap)
+  useEffect(() => {
+    onPlaceTapRef.current = onPlaceTap
+  }, [onPlaceTap])
   useEffect(() => {
     onLongPressRef.current = onLongPress
   }, [onLongPress])
@@ -219,11 +283,69 @@ export function NavMap({
     let downAt = 0
     let armed = false
     let cancelled = false
+    // Lat/lng resolved from the touch point AT pointerdown time. We pin
+    // to this rather than re-projecting `downX/downY` when the press
+    // fires ~600ms later: the map can pan under a still finger (GPS
+    // auto-follow recenters), and a re-projection would then convert the
+    // same pixel against a moved map → a pin offset from where the user
+    // actually pressed. Capturing the world coordinate up front freezes
+    // the target to the spot under the finger at touch-down.
+    let downCoord: LatLng | null = null
+    // Project a client (viewport) pixel to a lat/lng using the overlay's
+    // current map projection. Returns null when the projection isn't
+    // ready yet.
+    const projectClientPoint = (clientX: number, clientY: number): LatLng | null => {
+      const rect = container.getBoundingClientRect()
+      const point = new g.maps.Point(clientX - rect.left, clientY - rect.top)
+      const proj =
+        meDotRef.current && typeof meDotRef.current.getProjection === "function"
+          ? meDotRef.current.getProjection()
+          : null
+      const ll = proj?.fromContainerPixelToLatLng?.(point)
+      return ll ? {lat: ll.lat(), lng: ll.lng()} : null
+    }
+    // Long-press synthesis timer for iOS. WKWebView never dispatches
+    // `contextmenu` for a finger long-press — the page sees pointerdown
+    // → pointerup ~700ms later with no contextmenu in between. We fire
+    // our own long-press signal after LONG_PRESS_MS without movement.
+    // On Android the OS still fires contextmenu first; whichever path
+    // reaches `fireLongPress(...)` first wins, the other is gated by
+    // `armed = false`.
+    const LONG_PRESS_MS = 600
+    let longPressTimer: ReturnType<typeof setTimeout> | null = null
+    const clearLongPressTimer = () => {
+      if (longPressTimer != null) {
+        clearTimeout(longPressTimer)
+        longPressTimer = null
+      }
+    }
+    const fireLongPress = (source: "timer" | "contextmenu") => {
+      if (!armed || cancelled) return
+      armed = false
+      clearLongPressTimer()
+      // Prefer the coordinate captured at pointerdown so the pin lands
+      // exactly under the finger even if the map panned during the press.
+      // Fall back to a fresh projection only if the down-time capture
+      // failed (projection wasn't ready yet at touch-down).
+      const coord = downCoord ?? projectClientPoint(downX, downY)
+      if (!coord) {
+        console.warn("[NavMap] long-press: no projection available; pin not dropped")
+        return
+      }
+      console.log(
+        `[NavMap] long-press @`,
+        coord.lat.toFixed(6),
+        coord.lng.toFixed(6),
+        `(via ${source})`,
+      )
+      onLongPressRef.current?.(coord)
+    }
     const onDown = (e: PointerEvent) => {
       if (!e.isPrimary) {
         // Second finger arrived (pinch). Disarm.
         armed = false
         cancelled = true
+        clearLongPressTimer()
         return
       }
       downX = e.clientX
@@ -231,7 +353,12 @@ export function NavMap({
       downAt = Date.now()
       armed = true
       cancelled = false
-      console.log("[NavMap] pointerdown — armed for long-press")
+      // Freeze the target coordinate at touch-down so a map pan during
+      // the press can't drag the pin off the spot under the finger.
+      downCoord = projectClientPoint(e.clientX, e.clientY)
+      // Start the iOS fallback timer.
+      clearLongPressTimer()
+      longPressTimer = setTimeout(() => fireLongPress("timer"), LONG_PRESS_MS)
     }
     const onMove = (e: PointerEvent) => {
       if (!armed) return
@@ -240,42 +367,43 @@ export function NavMap({
       if (dx * dx + dy * dy > MAX_MOVE_PX * MAX_MOVE_PX) {
         armed = false
         cancelled = true
-        console.log("[NavMap] long-press disarmed — finger moved >", MAX_MOVE_PX, "px")
+        // User panned — kill the fallback timer so it doesn't fire
+        // after they release.
+        clearLongPressTimer()
       }
     }
-    // The WebView's `contextmenu` event IS the OS-level long-press
-    // signal. We can't stretch the duration past it because the
-    // WebView synthesizes a pointerup right after, killing the
-    // gesture. Treat contextmenu itself as "the user long-pressed
-    // here" — same approach google.com/maps uses.
+    // pointerup before the timer fires = short tap; cancel the long
+    // press so it doesn't trigger ~hundreds of ms later.
+    const onUp = () => {
+      clearLongPressTimer()
+    }
+    const onCancel = () => {
+      armed = false
+      cancelled = true
+      clearLongPressTimer()
+    }
+    // Android still fires `contextmenu` at ~500ms; iOS never does.
+    // Whichever path reaches `fireLongPress` first wins, and the second
+    // is gated by `armed = false`. Keeping both means we get the
+    // OS-native long-press feel on Android and a 600ms timer fallback
+    // on iOS without conditional platform code.
     const onContextMenu = (e: Event) => {
       e.preventDefault()
-      console.log("[NavMap] contextmenu fired", {armed, cancelled, sinceDown: Date.now() - downAt})
       if (!armed || cancelled) return
       if (Date.now() - downAt > MAX_CONTEXTMENU_DELAY_MS) return
-      armed = false
-      const rect = container.getBoundingClientRect()
-      const point = new g.maps.Point(downX - rect.left, downY - rect.top)
-      const proj =
-        meDotRef.current && typeof meDotRef.current.getProjection === "function"
-          ? meDotRef.current.getProjection()
-          : null
-      const ll = proj?.fromContainerPixelToLatLng?.(point)
-      if (!ll) {
-        console.warn("[NavMap] long-press: no projection available; pin not dropped")
-        return
-      }
-      const lat = ll.lat()
-      const lng = ll.lng()
-      console.log("[NavMap] long-press @", lat.toFixed(6), lng.toFixed(6))
-      onLongPressRef.current?.({lat, lng})
+      fireLongPress("contextmenu")
     }
     container.addEventListener("pointerdown", onDown, {capture: true})
     container.addEventListener("pointermove", onMove, {capture: true})
+    container.addEventListener("pointerup", onUp, {capture: true})
+    container.addEventListener("pointercancel", onCancel, {capture: true})
     container.addEventListener("contextmenu", onContextMenu)
     return () => {
+      clearLongPressTimer()
       container.removeEventListener("pointerdown", onDown, {capture: true} as any)
       container.removeEventListener("pointermove", onMove, {capture: true} as any)
+      container.removeEventListener("pointerup", onUp, {capture: true} as any)
+      container.removeEventListener("pointercancel", onCancel, {capture: true} as any)
       container.removeEventListener("contextmenu", onContextMenu)
     }
   }, [ready])
@@ -448,10 +576,14 @@ export function NavMap({
     const g = window.google
 
     // Smooth out the squiggly raw polyline before rendering. The SDK returns
-    // points every 1-3m which produces visible jitter on screen; RDP at 6m
-    // collapses that into clean straight runs without losing real corners.
+    // points every 1-3m which produces visible jitter on screen; RDP at 14m
+    // absorbs curb-cut zigzags and sidewalk-side flips so the rendered line
+    // visually reads as following road centerlines, while preserving real
+    // intersection corners. Was 6m — at that epsilon the polyline still
+    // hugged sidewalk geometry and looked like it was stepping off curbs at
+    // every intersection.
     const rawPath: LatLng[] = routePoints && routePoints.length > 1 ? routePoints : []
-    const path: LatLng[] = rawPath.length > 1 ? rdpSmooth(rawPath, 6) : rawPath
+    const path: LatLng[] = SMOOTH_ROUTE_LINE && rawPath.length > 1 ? rdpSmooth(rawPath, 14) : rawPath
 
     if (path.length < 2) {
       routeRef.current?.setMap(null)
@@ -540,80 +672,303 @@ export function NavMap({
     }
   }, [ready, me?.lat, me?.lng, destination?.lat, destination?.lng, routePoints])
 
-  // Debug overlay: render a blue line across each detected crossing
-  // leg. Same heuristic the simulator's skip-crossings walker uses, so
-  // visually verifying these markers is also verifying what the walker
-  // will skip. Rebuilt on every route change.
+  // Dev: blue connector line from `me` → closest point on the route,
+  // with a midpoint label showing the distance. Tears itself down when
+  // there's no route to project onto. Uses the raw (unsmoothed)
+  // polyline so the distance reflects the real route geometry, not the
+  // visually smoothed rendering.
   useEffect(() => {
-    if (!isDev) return
     if (!ready || !mapRef.current) return
     const g = window.google
-    const path: LatLng[] = routePoints && routePoints.length > 1 ? routePoints : []
-    const crossings = path.length > 3 ? detectCrossings(path) : []
 
-    for (const m of crossingMarkersRef.current) m.setMap(null)
-    crossingMarkersRef.current = []
+    function teardown() {
+      offRouteLineRef.current?.setMap(null)
+      offRouteLineRef.current = null
+      offRouteLabelRef.current?.setMap(null)
+      offRouteLabelRef.current = null
+    }
 
-    for (const c of crossings) {
-      const line = new g.maps.Polyline({
+    // Dev-only and off by default — tear down if disabled or there's no
+    // route to project onto.
+    if (!devEnabled || !showOffRouteLine || !me || !routePoints || routePoints.length < 2) {
+      teardown()
+      return
+    }
+
+    let bestSegment = 0
+    let bestT = 0
+    let minDist = Infinity
+    for (let i = 0; i < routePoints.length - 1; i++) {
+      const ax = routePoints[i].lng, ay = routePoints[i].lat
+      const bx = routePoints[i + 1].lng, by = routePoints[i + 1].lat
+      const px = me.lng, py = me.lat
+      const dx = bx - ax, dy = by - ay
+      const lenSq = dx * dx + dy * dy
+      const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq))
+      const cx = ax + t * dx, cy = ay + t * dy
+      const d = Math.hypot(px - cx, py - cy)
+      if (d < minDist) { minDist = d; bestSegment = i; bestT = t }
+    }
+    const projected: LatLng = {
+      lat: routePoints[bestSegment].lat + bestT * (routePoints[bestSegment + 1].lat - routePoints[bestSegment].lat),
+      lng: routePoints[bestSegment].lng + bestT * (routePoints[bestSegment + 1].lng - routePoints[bestSegment].lng),
+    }
+    const distMeters = haversineMeters(me, projected)
+    const midpoint: LatLng = {
+      lat: (me.lat + projected.lat) / 2,
+      lng: (me.lng + projected.lng) / 2,
+    }
+
+    const path = [
+      new g.maps.LatLng(me.lat, me.lng),
+      new g.maps.LatLng(projected.lat, projected.lng),
+    ]
+    if (!offRouteLineRef.current) {
+      offRouteLineRef.current = new g.maps.Polyline({
         map: mapRef.current,
-        path: [
-          new g.maps.LatLng(c.start.lat, c.start.lng),
-          new g.maps.LatLng(c.end.lat, c.end.lng),
-        ],
-        strokeColor: "#3B82F6",
-        strokeOpacity: 0.9,
-        strokeWeight: 10,
+        path,
+        strokeColor: "#1E88FF",
+        strokeOpacity: 0.95,
+        strokeWeight: 3,
         zIndex: 4,
       })
-      crossingMarkersRef.current.push(line)
+    } else {
+      offRouteLineRef.current.setPath(path)
+      offRouteLineRef.current.setMap(mapRef.current)
     }
-    return () => {
-      for (const m of crossingMarkersRef.current) m.setMap(null)
-      crossingMarkersRef.current = []
-    }
-  }, [ready, routePoints])
 
-  // Debug overlay: render a red dot at each detected pivot. Lets us
-  // visually verify that the SDK placed turn points where they belong.
+    class OffRouteLabelOverlay extends g.maps.OverlayView {
+      private pos: any
+      private text: string
+      private div: HTMLDivElement | null = null
+      constructor(pos: any, text: string) {
+        super()
+        this.pos = pos
+        this.text = text
+      }
+      onAdd() {
+        const div = document.createElement("div")
+        div.style.cssText =
+          "position:absolute;transform:translate(-50%,-50%);pointer-events:none;" +
+          "padding:2px 6px;border-radius:6px;background:#1E88FF;color:#FFFFFF;" +
+          "font:600 11px/1.2 system-ui,sans-serif;white-space:nowrap;" +
+          "box-shadow:0 2px 6px #00000040;border:1px solid #FFFFFF99;z-index:5"
+        div.textContent = this.text
+        this.div = div
+        this.getPanes()!.overlayMouseTarget.appendChild(div)
+      }
+      draw() {
+        if (!this.div) return
+        const proj = this.getProjection()
+        const pt = proj?.fromLatLngToDivPixel(this.pos)
+        if (!pt) return
+        this.div.style.left = `${pt.x}px`
+        this.div.style.top = `${pt.y}px`
+      }
+      setLabel(pos: any, text: string) {
+        this.pos = pos
+        if (this.div) this.div.textContent = text
+        this.text = text
+        this.draw()
+      }
+      onRemove() {
+        this.div?.parentNode?.removeChild(this.div)
+        this.div = null
+      }
+    }
+    const labelText = formatDistance(distMeters)
+    const labelPos = new g.maps.LatLng(midpoint.lat, midpoint.lng)
+    if (!offRouteLabelRef.current) {
+      const overlay = new OffRouteLabelOverlay(labelPos, labelText)
+      overlay.setMap(mapRef.current)
+      offRouteLabelRef.current = overlay
+    } else {
+      offRouteLabelRef.current.setLabel(labelPos, labelText)
+    }
+
+    return teardown
+  }, [ready, me?.lat, me?.lng, routePoints, devEnabled, showOffRouteLine])
+
+  // Debug overlay: render a red dot at each turn point. Lets us visually
+  // verify that turns land where they belong.
   //
-  // The full pivot list previously came from `user.navigation.getPivots()`
-  // (background-owned). Now that the UI lives behind a channel boundary,
-  // the background only broadcasts the active + upcoming pivots — not
-  // the full list. Falling back to an empty array keeps the rest of the
-  // map rendering correctly; adding a `nav:get-pivots` RPC would restore
-  // the full debug markers.
+  // Two sources, depending on trip phase:
+  //   - Previewing (not yet started): `previewTurns` carries turns the
+  //     parent derived from the computed route's step list. The SDK's
+  //     getPivots() is empty here because no trip is active.
+  //   - Running: we pull the live pivot list via the `nav:get-pivots`
+  //     RPC (the `nav:pivots` broadcast only ships active + upcoming).
+  //
+  // Refetch whenever the route or preview turns change. `cancelled`
+  // guards against an async RPC resolve landing after teardown.
   useEffect(() => {
-    if (!isDev) return
+    if (!devEnabled || !showPivots) return
     if (!ready || !mapRef.current) return
-    const pivots: Array<LatLng> = []
 
-    // Tear down previous markers
-    for (const dot of pivotDotsRef.current) dot.setMap(null)
-    pivotDotsRef.current = []
-
-    if (pivots.length === 0) return
-    const g = window.google
-    for (const p of pivots) {
-      const dot = new g.maps.Circle({
-        map: mapRef.current,
-        center: {lat: p.lat, lng: p.lng},
-        radius: 3, // 3m visual marker
-        fillColor: "#FF3030",
-        fillOpacity: 1,
-        strokeColor: "#FFFFFF",
-        strokeOpacity: 1,
-        strokeWeight: 1.5,
-        clickable: false,
-        zIndex: 5,
-      })
-      pivotDotsRef.current.push(dot)
-    }
-    return () => {
+    function teardown() {
       for (const dot of pivotDotsRef.current) dot.setMap(null)
       pivotDotsRef.current = []
+      for (const label of pivotLabelsRef.current) label.setMap(null)
+      pivotLabelsRef.current = []
     }
-  }, [ready, routePoints])
+
+    // Tear down previous markers up front so a stale route's dots clear
+    // immediately, before any new dots are drawn.
+    teardown()
+
+    // A small square badge anchored above a turn dot. Shows the turn
+    // direction ("Turn left"/"Turn right") on top, then the road
+    // transition ("Market St → Franklin St") below — both in one box.
+    // Defined here (like MeOverlay) because OverlayView only exists once
+    // the Maps script has loaded — which `ready` guarantees.
+    const g = window.google
+    class PivotLabelOverlay extends g.maps.OverlayView {
+      private pos: any
+      private text: string
+      private direction: string | null
+      private div: HTMLDivElement | null = null
+      constructor(pos: any, text: string, direction: string | null) {
+        super()
+        this.pos = pos
+        this.text = text
+        this.direction = direction
+      }
+      onAdd() {
+        const div = document.createElement("div")
+        div.style.cssText =
+          "position:absolute;transform:translate(-50%,calc(-100% - 8px));pointer-events:none;" +
+          "padding:3px 7px;border-radius:6px;background:#FF3030;color:#FFFFFF;" +
+          "font:600 11px/1.3 system-ui,sans-serif;white-space:nowrap;text-align:center;" +
+          "box-shadow:0 2px 6px #00000040;border:1px solid #FFFFFF99;z-index:6"
+        if (this.direction) {
+          const dir = document.createElement("div")
+          // Slightly bolder/brighter top line for the direction prompt.
+          dir.style.cssText = "font-weight:700;letter-spacing:0.01em"
+          dir.textContent = this.direction
+          div.appendChild(dir)
+        }
+        const road = document.createElement("div")
+        // De-emphasize the road line a touch when a direction sits above it.
+        if (this.direction) road.style.cssText = "opacity:0.92;font-weight:600"
+        road.textContent = this.text
+        div.appendChild(road)
+        this.div = div
+        this.getPanes()!.overlayMouseTarget.appendChild(div)
+      }
+      draw() {
+        if (!this.div) return
+        const proj = this.getProjection()
+        const pt = proj?.fromLatLngToDivPixel(this.pos)
+        if (!pt) return
+        this.div.style.left = `${pt.x}px`
+        this.div.style.top = `${pt.y}px`
+      }
+      onRemove() {
+        this.div?.parentNode?.removeChild(this.div)
+        this.div = null
+      }
+    }
+
+    function drawDots(
+      turns: Array<{lat: number; lng: number; label?: string | null; direction?: string | null}>,
+    ) {
+      if (!mapRef.current) return
+      for (const p of turns) {
+        const dot = new g.maps.Circle({
+          map: mapRef.current,
+          center: {lat: p.lat, lng: p.lng},
+          radius: 3, // 3m visual marker
+          fillColor: "#FF3030",
+          fillOpacity: 1,
+          strokeColor: "#FFFFFF",
+          strokeOpacity: 1,
+          strokeWeight: 1.5,
+          clickable: false,
+          zIndex: 5,
+        })
+        pivotDotsRef.current.push(dot)
+
+        // Hovering badge above the dot: direction on top, road below.
+        if (p.label) {
+          const label = new PivotLabelOverlay(
+            new g.maps.LatLng(p.lat, p.lng),
+            p.label,
+            p.direction ?? null,
+          )
+          label.setMap(mapRef.current)
+          pivotLabelsRef.current.push(label)
+        }
+      }
+    }
+
+    // Preview path: parent supplied turns synchronously, draw immediately.
+    if (previewTurns && previewTurns.length > 0) {
+      drawDots(previewTurns)
+      return teardown
+    }
+
+    // Running path: fetch the live pivot list over the channel boundary.
+    // The SDK's Pivot carries fromRoad/toRoad/direction separately; format
+    // them into the same `{label, direction}` shape the preview uses so
+    // the same red box (direction on top, "From → To" below) renders for
+    // an active trip too. Pivots whose direction isn't a real left/right
+    // (e.g. CROSS_STREET) fall back to a plain "Cross" prompt.
+    //
+    // We fetch TWICE: once immediately to render the geometry-derived
+    // pivots the SDK builds on the synchronous `onRoute` event, then
+    // again ~700ms later to pick up the instruction-derived pivots the
+    // SDK swaps in once its async Routes-API computeRoute resolves
+    // (typical REST + bridge round trip is 200-500ms). The second fetch
+    // produces "Market St → Dolores St"-quality labels; the first
+    // produces something less precise but immediately visible.
+    let cancelled = false
+    const fetchAndDraw = () => {
+      mentra
+        .request("nav:get-pivots", undefined)
+        .then((pivots) => {
+          if (cancelled) return
+          // Clear any prior pass so we don't double-draw when the second
+          // fetch arrives with a different anchor set.
+          for (const dot of pivotDotsRef.current) dot.setMap(null)
+          pivotDotsRef.current = []
+          for (const label of pivotLabelsRef.current) label.setMap(null)
+          pivotLabelsRef.current = []
+
+          // CROSS_STREET pivots get their own label ("Cross to X") and
+          // no left/right direction line — the user just needs to know
+          // a crossing is coming up, not which way to turn.
+          // Turn pivots get "Turn left/right" on top and "From → To"
+          // beneath.
+          const formatted = pivots.map((p) => {
+            if (p.maneuver === "CROSS_STREET") {
+              return {
+                lat: p.lat,
+                lng: p.lng,
+                label: p.toRoad ? `Cross to ${p.toRoad}` : "Cross the street",
+                direction: null,
+              }
+            }
+            const direction: "Turn left" | "Turn right" | null =
+              p.direction === "left" ? "Turn left" : p.direction === "right" ? "Turn right" : null
+            const label =
+              p.fromRoad && p.toRoad ? `${p.fromRoad} → ${p.toRoad}` : (p.toRoad ?? p.fromRoad ?? null)
+            return {lat: p.lat, lng: p.lng, label, direction}
+          })
+          drawDots(formatted)
+        })
+        .catch((err) => {
+          console.warn("[NavMap] nav:get-pivots failed:", err)
+        })
+    }
+    fetchAndDraw()
+    const refetchHandle = setTimeout(fetchAndDraw, 700)
+
+    return () => {
+      cancelled = true
+      clearTimeout(refetchHandle)
+      teardown()
+    }
+  }, [ready, routePoints, previewTurns, devEnabled, showPivots])
 
   if (error) {
     return <div className="p-3 text-red-700 text-[13px]">Map failed to load: {error}</div>
@@ -647,13 +1002,15 @@ export function NavMap({
 
 
 
-      {ready ? (
-        <div
-          // Vertical center on the map. Drawer is z-40 and overlays the
-          // rail when expanded; we sit at z-30 so the drawer naturally
-          // hides us when it covers this region rather than chasing it.
-          className="absolute right-3 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-2">
-          
+      {ready && !hideControls ? (
+        <motion.div
+          // Anchored to the drawer's top edge via `bottom={railBottom}`
+          // (a MotionValue that tracks drawer height + 12px gap). z-50
+          // keeps the rail above every drawer (drawers are z-40) so
+          // the buttons stay tappable no matter which drawer is open.
+          style={{bottom: railBottom}}
+          className="absolute right-3 z-50 flex flex-col gap-2">
+
 
           <button
             type="button"
@@ -664,9 +1021,7 @@ export function NavMap({
               if (!m) return
               m.setZoom(Math.min((m.getZoom() ?? 17) + 1, 21))
             }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-              <path d="M12 5V19M5 12H19" stroke="#000000D9" strokeWidth="2.4" strokeLinecap="round" />
-            </svg>
+            <PlusIcon size={20} color="#000000D9" />
           </button>
 
           <button
@@ -678,9 +1033,7 @@ export function NavMap({
               if (!m) return
               m.setZoom(Math.max((m.getZoom() ?? 17) - 1, 3))
             }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-              <path d="M5 12H19" stroke="#000000D9" strokeWidth="2.4" strokeLinecap="round" />
-            </svg>
+            <MinusIcon />
           </button>
 
           <button
@@ -693,13 +1046,9 @@ export function NavMap({
               m.panTo(new window.google.maps.LatLng(me.lat, me.lng))
               setFollowUser(true)
             }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-              <circle cx="12" cy="12" r="3" fill={followUser ? "#0A84FF" : "#1a1a1a"} />
-              <circle cx="12" cy="12" r="7" stroke="#000000D9" strokeWidth="1.6" />
-              <path d="M12 1V4M12 20V23M1 12H4M20 12H23" stroke="#000000D9" strokeWidth="2" strokeLinecap="round" />
-            </svg>
+            <RecenterIcon active={followUser} />
           </button>
-        </div>
+        </motion.div>
       ) : null}
     </div>
   )

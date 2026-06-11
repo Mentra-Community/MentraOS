@@ -23,6 +23,49 @@ export type Route =
   | {name: "navigation"}
   | {name: "add-place"; presetType?: "home" | "work"}
 
+// Lets feature-level popstate handlers (e.g. LocationSearch's
+// back-to-close-drawer) tell the router "I just consumed this back
+// press — don't pop the route stack." Kept for backward compatibility
+// with existing call sites (LocationSearch). New code should prefer
+// `registerBackInterceptor` below, which avoids popstate listener
+// ordering races.
+let suppressNextRouterPop = false
+export function suppressNextRouterPopOnce(): void {
+  console.log("[router] suppressNextRouterPopOnce() called")
+  suppressNextRouterPop = true
+}
+// Reset the suppress flag without consuming a popstate. For callers that
+// set the flag in anticipation of a history.back() that then throws (or
+// otherwise never fires popstate) — leaving the flag armed would swallow
+// the user's next genuine back press.
+export function clearSuppressNextRouterPop(): void {
+  console.log("[router] clearSuppressNextRouterPop() called")
+  suppressNextRouterPop = false
+}
+
+/**
+ * Back-press interceptor. Registered handlers run inside the router's
+ * own popstate listener (no second window listener needed), so there's
+ * no race over which listener wins. If any handler returns `true`, the
+ * router skips popping the route stack — i.e. the handler "consumed"
+ * the back press.
+ *
+ * Why this exists: stacking two `window.addEventListener("popstate")`
+ * calls is fragile because popstate's capture/bubble phase doesn't
+ * apply to events dispatched directly on `window` — listeners fire in
+ * registration order. The router mounts first, so it always won the
+ * race. Going through a registry guarantees feature handlers run
+ * before the router's stack-mutation logic regardless of mount order.
+ */
+type BackInterceptor = (e: PopStateEvent) => boolean
+const backInterceptors = new Set<BackInterceptor>()
+export function registerBackInterceptor(fn: BackInterceptor): () => void {
+  backInterceptors.add(fn)
+  return () => {
+    backInterceptors.delete(fn)
+  }
+}
+
 type RouterContextValue = {
   route: Route
   push: (r: Route) => void
@@ -88,7 +131,31 @@ export function RouterProvider({children}: {children: ReactNode}) {
   // All three converge here. We trim one frame off the React stack to
   // match the new history cursor.
   useEffect(() => {
-    function onPopState() {
+    function onPopState(e: PopStateEvent) {
+      console.log("[router] popstate", {
+        suppress: suppressNextRouterPop,
+        interceptors: backInterceptors.size,
+        state: e.state,
+      })
+      // Legacy flag-based path (LocationSearch still uses this).
+      if (suppressNextRouterPop) {
+        suppressNextRouterPop = false
+        console.log("[router] suppress flag honored — NOT popping route stack")
+        return
+      }
+      // Run registered interceptors. First one to return `true`
+      // consumes the back press.
+      for (const fn of backInterceptors) {
+        try {
+          if (fn(e)) {
+            console.log("[router] interceptor consumed back press — NOT popping route stack")
+            return
+          }
+        } catch (err) {
+          console.warn("[router] back interceptor threw:", err)
+        }
+      }
+      console.log("[router] popping route stack")
       setStack((s) => (s.length > 1 ? s.slice(0, -1) : s))
     }
     window.addEventListener("popstate", onPopState)

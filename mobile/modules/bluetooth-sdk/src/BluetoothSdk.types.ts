@@ -21,6 +21,14 @@ export type TouchEvent = {
   timestamp: number
 }
 
+export type AccelEvent = {
+  type: "accel_event"
+  x: number
+  y: number
+  z: number
+  timestamp: number
+}
+
 export type HeadUpEvent = {
   up: boolean
 }
@@ -299,6 +307,24 @@ export type VideoRecordingSuccessStatusEvent =
   | VideoRecordingStartedStatusEvent
   | VideoRecordingStoppedStatusEvent
 
+export type MediaUploadSuccessEvent = {
+  type: "media_success"
+  requestId: string
+  mediaUrl: string
+  mediaType: number
+  timestamp: number
+}
+
+export type MediaUploadErrorEvent = {
+  type: "media_error"
+  requestId: string
+  errorMessage: string
+  mediaType: number
+  timestamp: number
+}
+
+export type MediaUploadEvent = MediaUploadSuccessEvent | MediaUploadErrorEvent
+
 export type GalleryStatusEvent = {
   type: "gallery_status"
   photos: number
@@ -396,7 +422,7 @@ export type SettingsAckSuccessEvent = Omit<SettingsAckEvent, "status"> & {
 export type RgbLedAction = "on" | "off"
 export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
 export type PhotoSize = "small" | "medium" | "large" | "full"
-export type ButtonPhotoSize = "small" | "medium" | "large"
+export type ButtonPhotoSize = "small" | "medium" | "large" | "max"
 export type PhotoCompression = "none" | "medium" | "heavy"
 
 /**
@@ -408,6 +434,12 @@ export interface VideoRecordingSettings {
   width?: number
   height?: number
   fps?: number
+  /**
+   * Optional auto-stop timer in minutes, sent on `start_video_recording`.
+   * `0` (the default) means record until stopped or interrupted
+   * (battery/storage/thermal/error).
+   */
+  maxRecordingTimeMinutes?: number
 }
 export const DeviceModels = {
   Simulated: "Simulated Glasses",
@@ -722,6 +754,7 @@ export type BluetoothSdkModuleEvents = {
   glasses_not_ready: (event: GlassesNotReadyEvent) => void
   button_press: (event: ButtonPressEvent) => void
   touch_event: (event: TouchEvent) => void
+  accel_event: (event: AccelEvent) => void
   head_up: (event: HeadUpEvent) => void
   voice_activity_detection_status: (event: VoiceActivityDetectionStatusEvent) => void
   speaking_status: (event: SpeakingStatusEvent) => void
@@ -734,6 +767,8 @@ export type BluetoothSdkModuleEvents = {
   photo_response: (event: PhotoResponseEvent) => void
   photo_status: (event: PhotoStatusEvent) => void
   video_recording_status: (event: VideoRecordingStatusEvent) => void
+  media_success: (event: MediaUploadSuccessEvent) => void
+  media_error: (event: MediaUploadErrorEvent) => void
   gallery_status: (event: GalleryStatusEvent) => void
   compatible_glasses_search_stop: (event: CompatibleGlassesSearchStopEvent) => void
   heartbeat_sent: (event: HeartbeatSentEvent) => void
@@ -796,6 +831,7 @@ export type BluetoothSdkEventMap = {
   glasses_not_ready: GlassesNotReadyEvent
   button_press: ButtonPressEvent
   touch_event: TouchEvent
+  accel_event: AccelEvent
   head_up: HeadUpEvent
   voice_activity_detection_status: VoiceActivityDetectionStatusEvent
   speaking_status: SpeakingStatusEvent
@@ -808,6 +844,8 @@ export type BluetoothSdkEventMap = {
   photo_response: PhotoResponseEvent
   photo_status: PhotoStatusEvent
   video_recording_status: VideoRecordingStatusEvent
+  media_success: MediaUploadSuccessEvent
+  media_error: MediaUploadErrorEvent
   gallery_status: GalleryStatusEvent
   compatible_glasses_search_stop: CompatibleGlassesSearchStopEvent
   swipe_volume_status: SwipeVolumeStatusEvent
@@ -865,6 +903,7 @@ export interface BluetoothSdkPublicModule {
   showDashboard(): Promise<void>
   setDashboardPosition(height: number, depth: number): Promise<void>
   setHeadUpAngle(angleDegrees: number): Promise<void>
+  setImuEnabled(enabled: boolean): Promise<void>
   setScreenDisabled(disabled: boolean): Promise<void>
 
   requestWifiScan(): Promise<WifiSearchResult[]>
@@ -887,7 +926,18 @@ export interface BluetoothSdkPublicModule {
     sound: boolean,
     settings?: VideoRecordingSettings,
   ): Promise<VideoRecordingStartedStatusEvent>
-  stopVideoRecording(requestId: string): Promise<VideoRecordingStoppedStatusEvent>
+  /**
+   * Stop the active recording. When {@link webhookUrl} is provided, the glasses
+   * upload the recorded video to it (multipart) using {@link authToken}. These
+   * are supplied at stop time (not start) so the token is fresh when the upload
+   * runs — a recording can last arbitrarily long. An empty/omitted webhook keeps
+   * the video on device (no upload).
+   */
+  stopVideoRecording(
+    requestId: string,
+    webhookUrl?: string,
+    authToken?: string,
+  ): Promise<VideoRecordingStoppedStatusEvent>
 
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
   stopStream(): Promise<StreamStatusEvent>
@@ -1140,6 +1190,7 @@ export type BluetoothSettingsUpdate = Partial<{
   screen_disabled: boolean
   contextual_dashboard: boolean
   head_up_angle: number
+  imu_enabled: boolean
   brightness: number
   auto_brightness: boolean
   dashboard_height: number

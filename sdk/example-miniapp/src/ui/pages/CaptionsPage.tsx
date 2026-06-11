@@ -1,6 +1,6 @@
 import {useEffect, useRef, useState} from "react"
 import {useNavigate} from "react-router-dom"
-import {MiniappHeader, useVisibility} from "@mentra/miniapp/ui"
+import {MiniappHeader} from "@mentra/miniapp/ui"
 
 import "../../shared/channels"
 import {useChannel} from "../hooks/useChannel"
@@ -24,7 +24,6 @@ import {Shell} from "./Shell"
  *   - "Clear"        → "captions:clear"
  */
 export default function CaptionsPage() {
-  const visibility = useVisibility()
   const navigate = useNavigate()
 
   const snapshot = useChannel("captions:snapshot")
@@ -39,7 +38,7 @@ export default function CaptionsPage() {
   const liveTranscript = liveUpdate?.text ?? snapshot?.liveTranscript ?? ""
   const history = historyUpdate?.history ?? snapshot?.history ?? []
   const lastButton = lastButtonUpdate?.label ?? snapshot?.lastButton ?? ""
-  const mirrorToGlasses = settingsUpdate?.mirrorToGlasses ?? snapshot?.settings?.mirrorToGlasses ?? true
+  const mirrorToGlasses = settingsUpdate?.mirrorToGlasses ?? snapshot?.settings?.mirrorToGlasses ?? false
   const capabilities = snapshot?.capabilities
   const connected = snapshot?.connection?.connected ?? false
 
@@ -67,11 +66,28 @@ export default function CaptionsPage() {
     <Shell>
       <MiniappHeader
         left={
-          <span
-            className={`h-2 w-2 rounded-full ${connected ? "bg-mentra-green shadow-[0_0_8px_var(--mentra-green-10)]" : "bg-destructive"}`}
-          />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              aria-label="Back"
+              onClick={() => navigate("/")}
+              className="-ml-2 inline-flex h-8 w-8 items-center justify-center rounded-lg text-foreground/80 transition hover:text-foreground">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M15 18l-6-6 6-6"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+            <span
+              className={`h-2 w-2 rounded-full ${connected ? "bg-mentra-green shadow-[0_0_8px_var(--mentra-green-10)]" : "bg-destructive"}`}
+            />
+          </div>
         }
-        title="Mentra Example"
+        title="Captions Example"
       />
 
       <div className="flex flex-wrap gap-1.5 border-b border-border px-5 pb-3 pt-2">
@@ -86,9 +102,6 @@ export default function CaptionsPage() {
         <span>
           Device: <span className="font-mono text-foreground/80">{modelName || "no glasses"}</span>
         </span>
-        <Button variant="outline" size="sm" onClick={() => navigate("/tester")}>
-          SDK Tester →
-        </Button>
       </div>
 
       <Card className="mx-5 mt-1 gap-2 py-4">
@@ -140,12 +153,11 @@ export default function CaptionsPage() {
         )}
       </div>
 
-      <footer className="flex justify-between border-t border-border px-5 py-2.5 text-[11px] text-muted-foreground">
+      <footer className="flex justify-between border-t border-border pr-12 py-2.5 text-[11px] text-muted-foreground">
         {lastButton ? <span>Button: {lastButton}</span> : <span />}
         <span>
           {history.length} sentence{history.length !== 1 ? "s" : ""}
         </span>
-        <span>{visibility}</span>
       </footer>
     </Shell>
   )

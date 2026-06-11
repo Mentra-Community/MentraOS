@@ -1,7 +1,12 @@
 # Releasing the iOS Swift Package
 
-This is the current manual process for publishing the public SwiftPM mirror at
-`Mentra-Community/mentra-bluetooth-sdk-ios`.
+The normal release path is the GitHub Actions workflow documented in
+`RELEASING_CI.md`. It exports and tags the public SwiftPM mirror at
+`Mentra-Community/mentra-bluetooth-sdk-ios` when
+`mobile/modules/bluetooth-sdk/package.json` changes on `dev`.
+
+This manual process remains useful for local verification, emergency recovery,
+or inspecting the generated mirror before CI is enabled.
 
 The source of truth stays in this monorepo under `mobile/modules/bluetooth-sdk`.
 The public SwiftPM repository is a generated release mirror, not a second source
@@ -12,7 +17,8 @@ tree.
 Run the export from the branch or commit that contains the complete SDK feature
 set for the release. Do not run the export from a partial split PR branch unless
 that branch intentionally contains every Swift source file expected in the
-public package.
+public package. In CI, that branch is `dev` after the SDK package version bump
+has merged.
 
 The export copies `ios/Source` by default and excludes only known
 MentraOS-internal or non-SPM-compatible paths. If the export verification fails
@@ -30,6 +36,8 @@ add an explicit exclusion with a short explanation in the export script.
 
 - Xcode with the iOS platform installed.
 - Push permission to `Mentra-Community/mentra-bluetooth-sdk-ios`.
+- For CI, a `MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN` repository secret with write
+  access to the SwiftPM mirror repository.
 
 ## Export and Verify
 
@@ -68,7 +76,7 @@ already contains the version being tagged before exporting.
 
 ## Commit and Tag
 
-Use the same version format as existing SwiftPM tags, for example `0.1.8`
+Use the same version format as existing SwiftPM tags, for example `0.1.11`
 without a leading `v`.
 
 ```bash

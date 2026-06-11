@@ -13,7 +13,10 @@ import com.google.android.libraries.navigation.RoadSnappedLocationProvider
 import com.google.android.libraries.navigation.RoutingOptions
 import com.google.android.libraries.navigation.SimulationOptions
 import com.google.android.libraries.navigation.TermsAndConditionsCheckOption
+import com.google.android.libraries.navigation.TermsAndConditionsUIParams
 import com.google.android.libraries.navigation.Waypoint
+import android.graphics.Color
+import android.graphics.Typeface
 
 /**
  * NavigationManager
@@ -130,6 +133,23 @@ object NavigationManager {
    */
   private val DEVIATE_OFF_ROUTE_TRIGGER_M = 12.0
 
+  /**
+   * Phase 2 of route-source promotion: the JS layer derives the trip's
+   * source-of-truth polyline + steps from the Routes REST API and
+   * synthesizes its own onRoute event from `navigation.start()`. The
+   * Nav SDK still runs in the background for position fixes, reroute
+   * detection, and live announcements — but its polyline and step
+   * emissions are NOT the source of truth and must never reach the
+   * miniapp.
+   *
+   * Latching: set true on every `start()`, cleared on `stop()`. While
+   * true, `emitRoute()` (and the deferred re-emit it can spawn) early-
+   * return without calling `callbacks.onRoute()`. This intentionally
+   * also drops native reroute emits — Phase 3 wires those back through
+   * a REST round trip + synthetic emit instead.
+   */
+  @Volatile private var suppressNativeRouteEmits: Boolean = false
+
   data class ManeuverPayload(
     /**
      * Categorical type of the upcoming maneuver, derived from the
@@ -240,6 +260,43 @@ object NavigationManager {
     val speedMultiplier: Float = 5f,
   )
 
+  // Dev-only: clear every "terms accepted" cache so the next
+  // ensureTermsAccepted() re-shows Google's dialog. Clears the SDK's
+  // own flag, our SharedPreferences cache, and the in-process flag.
+  fun resetTermsAccepted(activity: Activity) {
+    NavigationApi.resetTermsAccepted(activity.application)
+    activity.applicationContext
+      .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      .edit()
+      .remove(PREF_TERMS_ACCEPTED)
+      .apply()
+    termsAcceptedThisProcess = false
+    Log.d(TAG, "resetTermsAccepted — all caches cleared")
+  }
+
+  // Mentra-themed chrome for Google's mandatory T&C dialog. The body
+  // copy / legal text is owned by Google and not configurable; only
+  // background, fonts, and colors are. Roughly mirrors the Paper "Let's
+  // navigate, safely" card — flat, no blur (the SDK doesn't expose
+  // backdrop-filter), dark accent button.
+  private fun mentraTermsDialogUIParams(): TermsAndConditionsUIParams {
+    val sans = Typeface.create("sans-serif", Typeface.NORMAL)
+    val sansSemibold = Typeface.create("sans-serif-medium", Typeface.BOLD)
+    return TermsAndConditionsUIParams.builder()
+      .setBackgroundColor(Color.parseColor("#F5F5F5"))
+      .setTitleColor(Color.parseColor("#1A1A1A"))
+      .setTitleTypeface(sansSemibold)
+      .setTitleTextSize(22)
+      .setMainTextColor(Color.parseColor("#8C000000"))
+      .setMainTextTypeface(sans)
+      .setMainTextTextSize(14)
+      .setButtonsTypeface(sansSemibold)
+      .setButtonsTextSize(16)
+      .setAcceptButtonTextColor(Color.parseColor("#1A1A1A"))
+      .setCancelButtonTextColor(Color.parseColor("#8C000000"))
+      .build()
+  }
+
   /**
    * Ensure the Google Nav SDK Terms & Conditions dialog has been accepted,
    * without starting a trip. Resolves immediately when acceptance is
@@ -268,6 +325,8 @@ object NavigationManager {
     NavigationApi.showTermsAndConditionsDialog(
       activity,
       "Mentra",
+      "Welcome to Mentra Maps",
+      mentraTermsDialogUIParams(),
       object : NavigationApi.OnTermsResponseListener {
         override fun onTermsResponse(accepted: Boolean) {
           Log.d(TAG, "T&C dialog response: accepted=$accepted")
@@ -278,6 +337,7 @@ object NavigationManager {
           onResult(accepted)
         }
       },
+      TermsAndConditionsCheckOption.ENABLED,
     )
   }
 
@@ -297,16 +357,35 @@ object NavigationManager {
       callbacks.onError("at least one stop is required")
       return
     }
+    // Latch native-route suppression on for the lifetime of the trip.
+    // JS is dispatching the source-of-truth polyline + steps from the
+    // Routes REST API itself; every Nav SDK route emission during this
+    // trip (the multiple emits the SDK fires at start as the route
+    // settles, plus reroute emits later) must be ignored. Cleared in
+    // stop().
+    suppressNativeRouteEmits = true
     // Fall back to showing the T&C dialog here if a miniapp didn't call
     // ensureTermsAccepted() up front. Once accepted, proceed straight
     // into navigator init.
     ensureTermsAccepted(activity) { accepted ->
       if (!accepted) {
-        callbacks.onError("Navigation terms not accepted")
+        failStart(callbacks, "Navigation terms not accepted")
         return@ensureTermsAccepted
       }
       startNavigatorSkippingTerms(activity, options, callbacks)
     }
+  }
+
+  /**
+   * Abort a start that already armed `suppressNativeRouteEmits`.
+   * Releases the latch — so a later trip or external `emitRoute()` isn't
+   * silently suppressed by a stale flag — before surfacing the error.
+   * These failure paths never reach `stop()`, which is otherwise the
+   * only place the latch is cleared.
+   */
+  private fun failStart(callbacks: Callbacks, message: String) {
+    suppressNativeRouteEmits = false
+    callbacks.onError(message)
   }
 
   private fun startNavigatorSkippingTerms(
@@ -347,7 +426,7 @@ object NavigationManager {
         override fun onError(errorCode: Int) {
           val msg = errorCodeToString(errorCode)
           Log.e(TAG, "navigator init error: $msg")
-          callbacks.onError(msg)
+          failStart(callbacks, msg)
         }
       },
       TermsAndConditionsCheckOption.SKIPPED,
@@ -799,6 +878,12 @@ object NavigationManager {
         Log.e(TAG, "stop failed", e)
       }
     }
+    // Release the trip's route-emit suppression so a subsequent start
+    // arms it cleanly. Cleared AFTER detachListeners(nav) above so a
+    // teardown-time SDK route callback (e.g. fired by clearDestinations)
+    // can't slip through emitRoute() to the miniapp during stop().
+    // Belt-and-suspenders — start() also sets it true on the next trip.
+    suppressNativeRouteEmits = false
     NavInfoHolder.reset()
     lastSpeedMps = null
     offRouteFired = false
@@ -877,7 +962,7 @@ object NavigationManager {
           .build()
       }
     } catch (e: Waypoint.UnsupportedPlaceIdException) {
-      callbacks.onError("Unsupported destination: ${e.message}")
+      failStart(callbacks, "Unsupported destination: ${e.message}")
       return
     }
 
@@ -918,7 +1003,7 @@ object NavigationManager {
         else -> {
           val msg = "route status: $status"
           Log.e(TAG, msg)
-          callbacks.onError(msg)
+          failStart(callbacks, msg)
         }
       }
     }
@@ -956,6 +1041,13 @@ object NavigationManager {
    * it. Called on initial route + after any reroute.
    */
   private fun emitRoute(nav: Navigator, callbacks: Callbacks) {
+    if (suppressNativeRouteEmits) {
+      // Clear any pending deferred re-emit too — a late-arriving NavInfo
+      // would otherwise call callbacks.onRoute() directly, bypassing
+      // this gate and surfacing the native polyline to the miniapp.
+      NavInfoHolder.onAllStepsAvailable = null
+      return
+    }
     try {
       val segments = nav.routeSegments ?: return
       val points = mutableListOf<RoutePoint>()
@@ -1030,7 +1122,21 @@ object NavigationManager {
     val out = ArrayList<RouteStep>(src.size)
     val totalPolylineMeters = cumPolylineMeters.last()
     var cumStepOffset = 0.0
-    for (s in src) {
+    // Google's StepInfo.distanceFromPrevStepMeters is the distance from
+    // the PREVIOUS step's start to THIS step's start — i.e., the length
+    // of the previous step, not the length of this one. So:
+    //   - allSteps[0] (currentStep) anchors at offset 0 (start of polyline)
+    //   - allSteps[i] for i ≥ 1 anchors at offset += allSteps[i].distanceMeters
+    // Advancing BEFORE adding (instead of after) lines step i up at the
+    // correct cumulative distance. Previously we advanced by the current
+    // step's own value, which shifted every anchor by one step's length
+    // and made the pivot matcher pick the next step's road, producing
+    // labels like "Dolores → 15th" at the Market & Dolores corner.
+    for ((i, s) in src.withIndex()) {
+      if (i > 0) {
+        cumStepOffset = (cumStepOffset + s.distanceMeters.coerceAtLeast(0))
+          .coerceAtMost(totalPolylineMeters)
+      }
       val idx = closestPolylineIndexByDistance(cumPolylineMeters, cumStepOffset)
       out.add(
         RouteStep(
@@ -1042,13 +1148,6 @@ object NavigationManager {
           distanceMeters = s.distanceMeters,
         ),
       )
-      // Advance the offset by this step's own length so the next step
-      // anchors at the right cumulative distance. `distanceMeters` on
-      // a remaining step is the length of that step, so adding it
-      // moves us to the start of the next. Cap at the polyline total
-      // so a slight distance overshoot doesn't push us out of bounds.
-      cumStepOffset = (cumStepOffset + s.distanceMeters.coerceAtLeast(0))
-        .coerceAtMost(totalPolylineMeters)
     }
     return if (out.isEmpty()) null else out
   }

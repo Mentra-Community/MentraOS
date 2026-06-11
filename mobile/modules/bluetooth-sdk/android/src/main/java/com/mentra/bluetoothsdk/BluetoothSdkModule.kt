@@ -2,8 +2,11 @@ package com.mentra.bluetoothsdk
 
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.DeviceTypes
+import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class BluetoothSdkModule : Module() {
     private var sdk: MentraBluetoothSdk? = null
@@ -117,6 +120,10 @@ class BluetoothSdkModule : Module() {
                     sendEvent("video_recording_status", event.values)
                 }
 
+                override fun onMediaUpload(event: MediaUploadEvent) {
+                    sendEvent(event.type, event.values)
+                }
+
                 override fun onRgbLedControlResponse(event: RgbLedControlResponseEvent) {
                     sendEvent("rgb_led_control_response", event.values)
                 }
@@ -195,6 +202,9 @@ class BluetoothSdkModule : Module() {
             "glasses_not_ready",
             "button_press",
             "touch_event",
+            "accel_event",
+            "CompassHeadingEvent",
+            "CompassCalibrationEvent",
             "head_up",
             "voice_activity_detection_status",
             "speaking_status",
@@ -207,6 +217,8 @@ class BluetoothSdkModule : Module() {
             "photo_response",
             "photo_status",
             "video_recording_status",
+            "media_success",
+            "media_error",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",
@@ -499,12 +511,18 @@ class BluetoothSdkModule : Module() {
                             dim("width"),
                             dim("height"),
                             dim("fps"),
+                            dim("maxRecordingTimeMinutes"),
                     )
             ).values
         }
 
-        AsyncFunction("stopVideoRecording") { requestId: String ->
-            requireSdk().stopVideoRecording(requestId).values
+        // webhookUrl/authToken are supplied at stop (not start) so the token is
+        // fresh when the upload runs. Empty/null webhook = keep on device.
+        AsyncFunction("stopVideoRecording") {
+                requestId: String,
+                webhookUrl: String?,
+                authToken: String? ->
+            requireSdk().stopVideoRecording(requestId, webhookUrl, authToken).values
         }
 
         // MARK: - Stream Commands
@@ -534,7 +552,12 @@ class BluetoothSdkModule : Module() {
             )
         }
 
-        AsyncFunction("restartTranscriber") { deviceManager?.restartTranscriber() }
+        // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue: restart()
+        // does a synchronous JNI model reload that would otherwise block every other
+        // native call in the app until it completes.
+        AsyncFunction("restartTranscriber") Coroutine { ->
+            withContext(Dispatchers.IO) { deviceManager?.restartTranscriber() }
+        }
 
         // MARK: - Audio Playback Monitoring
 
@@ -542,14 +565,17 @@ class BluetoothSdkModule : Module() {
             sdk?.setOwnAppAudioPlaying(playing)
         }
 
-        AsyncFunction("getGlassesMediaVolume") {
+        // *Blocking on Dispatchers.IO, not the shared AsyncFunctionQueue: these wait on
+        // a CountDownLatch (up to 5s) for a BLE round-trip, which would otherwise stall
+        // every other native call queued behind them.
+        AsyncFunction("getGlassesMediaVolume") Coroutine { ->
             val cm = deviceManager ?: throw IllegalStateException("device_manager_null")
-            cm.getGlassesMediaVolumeBlocking()
+            withContext(Dispatchers.IO) { cm.getGlassesMediaVolumeBlocking() }
         }
 
-        AsyncFunction("setGlassesMediaVolume") { level: Int ->
+        AsyncFunction("setGlassesMediaVolume") Coroutine { level: Int ->
             val cm = deviceManager ?: throw IllegalStateException("device_manager_null")
-            cm.setGlassesMediaVolumeBlocking(level)
+            withContext(Dispatchers.IO) { cm.setGlassesMediaVolumeBlocking(level) }
         }
 
         // MARK: - RGB LED Control
@@ -605,8 +631,13 @@ class BluetoothSdkModule : Module() {
             com.mentra.bluetoothsdk.stt.STTTools.validateSTTModel(path)
         }
 
-        AsyncFunction("extractTarBz2") { sourcePath: String, destinationPath: String ->
-            com.mentra.bluetoothsdk.stt.STTTools.extractTarBz2(sourcePath, destinationPath)
+        // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue: bz2/tar
+        // extraction of the 100–350MB model is a multi-minute, CPU-bound job. On the
+        // shared queue it froze every other native call in the app until it finished.
+        AsyncFunction("extractTarBz2") Coroutine { sourcePath: String, destinationPath: String ->
+            withContext(Dispatchers.IO) {
+                com.mentra.bluetoothsdk.stt.STTTools.extractTarBz2(sourcePath, destinationPath)
+            }
         }
 
         // MARK: - TTS Commands
@@ -647,7 +678,9 @@ class BluetoothSdkModule : Module() {
             com.mentra.core.tts.TTSTools.validateTTSModel(path)
         }
 
-        AsyncFunction("generateTtsAudio") {
+        // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue: TTS synthesis
+        // is a synchronous JNI call that would otherwise block other native calls.
+        AsyncFunction("generateTtsAudio") Coroutine {
                 text: String,
                 modelPath: String,
                 outputPath: String,
@@ -657,14 +690,16 @@ class BluetoothSdkModule : Module() {
                     appContext.reactContext
                             ?: appContext.currentActivity
                                     ?: throw IllegalStateException("No context available")
-            com.mentra.core.tts.TTSTools.generateTtsAudio(
-                    context,
-                    text,
-                    modelPath,
-                    outputPath,
-                    speakerId,
-                    speed.toFloat()
-            )
+            withContext(Dispatchers.IO) {
+                com.mentra.core.tts.TTSTools.generateTtsAudio(
+                        context,
+                        text,
+                        modelPath,
+                        outputPath,
+                        speakerId,
+                        speed.toFloat()
+                )
+            }
         }
     }
 }

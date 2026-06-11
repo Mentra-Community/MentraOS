@@ -274,7 +274,7 @@ React Native narrows returned values to success shapes where the raw listener ev
 | --- | --- | --- |
 | `requestPhoto(...)` | Terminal `PhotoSuccessResponseEvent` with `state: "success"` after capture and delivery finish. `uploadUrl` is always present; webhook JSON metadata such as `photoUrl`, `statusUrl`, `contentType`, or `fileSizeBytes` is included when the receiver returns it. | Rejects when raw `photo_response.state === "error"`, the SDK cannot send the command, or the terminal photo response times out. |
 | `startVideoRecording(...)` | `VideoRecordingStartedStatusEvent` with `success: true` and `status: "recording_started"`. | Rejects on `success: false` statuses such as `already_recording`, send failure, or timeout. |
-| `stopVideoRecording(...)` | `VideoRecordingStoppedStatusEvent` with `success: true` and `status: "recording_stopped"`. | Rejects on `success: false` statuses such as `not_recording`, send failure, or timeout. |
+| `stopVideoRecording(...)` | `VideoRecordingStoppedStatusEvent` with `success: true` and `status: "recording_stopped"`. When a webhook URL is supplied, resolves after the video upload succeeds. | Rejects on `success: false` statuses such as `not_recording`, webhook upload failure, send failure, or timeout. |
 | `rgbLedControl(...)` | `RgbLedControlSuccessResponseEvent` with `state: "success"`. | Rejects when raw `rgb_led_control_response.state === "error"` or the response times out. |
 | `checkForOtaUpdate()` / `retryOtaVersionCheck()` | `OtaQueryResult`, either `ota_update_available` or current `ota_status`. | Rejects on command transport timeout/failure. A returned `ota_status.status === "failed"` is glasses OTA state, not a command rejection. |
 
@@ -332,7 +332,7 @@ For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `e
 
 Use `setCameraFov({fov, roiPosition})` to configure Mentra Live camera field of view and crop position. FOV is clamped to 62-118 degrees; ROI position is `"center"`, `"bottom"`, or `"top"`. You can also call `setCameraFov({preset: "narrow" | "standard" | "wide"})`; presets map to 82, 102, and 118 degrees with center ROI. The returned `CameraFovResult` resolves only after the ASG client reports that the setting was applied to camera hardware after the restart cooldown, and the promise rejects if the glasses report an error, persist the setting without hardware application, or time out. Raw `settings_ack` events remain available through `addListener("settings_ack", ...)` for diagnostic fields such as `hardwareApplied`. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
 
-`startVideoRecording(...)` and `stopVideoRecording(...)` resolve from successful ASG `video_recording_status` events only when the status matches the requested operation (`recording_started` or `recording_stopped`) and reject when the ASG reports `success: false`. Raw `video_recording_status` events remain available through listeners, including `recording_status` query events with `data.recording`.
+`startVideoRecording(...)` resolves from the ASG `video_recording_status` event whose status is `recording_started`. `stopVideoRecording(...)` without a webhook resolves from `recording_stopped`; with a webhook it waits for `recording_stopped` plus a video `media_success`, and rejects on `media_error`. Raw `video_recording_status`, `media_success`, and `media_error` events remain available through listeners.
 
 ## Streaming
 
@@ -409,7 +409,7 @@ For bare native iOS apps, use the public SwiftPM repository:
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Add the `MentraBluetoothSDK` product to your app target at version `0.1.7` or newer.
+Add the `MentraBluetoothSDK` product to your app target at version `0.1.11` or newer.
 
 For local SDK development, add this package folder directly in Xcode:
 
@@ -426,6 +426,10 @@ Maintainers publishing the public SwiftPM mirror should follow
 
 Maintainers publishing the native Android artifacts to Maven Central should
 follow [RELEASING_ANDROID_MAVEN.md](./RELEASING_ANDROID_MAVEN.md).
+
+Public Maven publishing uses a public SDK mode that omits MentraOS-only Android
+integrations from the artifact metadata while normal MentraOS app builds keep
+those integrations enabled.
 
 Use `android/gradle.properties.example` as the template for Sonatype Central and
 GPG signing properties. Put real values in `~/.gradle/gradle.properties` or CI

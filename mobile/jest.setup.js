@@ -189,7 +189,7 @@ jest.mock("expo-audio", () => ({
 
 // Mock react-native-nitro-bg-timer for non-native Jest runs
 jest.mock("react-native-nitro-bg-timer", () => ({
-  BgTimer: {
+  BackgroundTimer: {
     setInterval: jest.fn((callback, delay) => setInterval(callback, delay)),
     clearInterval: jest.fn((id) => clearInterval(id)),
     setTimeout: jest.fn((callback, delay) => setTimeout(callback, delay)),
@@ -256,6 +256,7 @@ jest.mock("@mentra/island", () => {
       clearTimeout: jest.fn((id) => clearTimeout(id)),
     },
     useApps: jest.fn(() => appStatusState.apps),
+    useForegroundApp: jest.fn(() => null),
     useAppStatusStore,
     useRefresh: jest.fn(() => appStatusState.refresh),
     useStopAll: jest.fn(() => appStatusState.stopAll),

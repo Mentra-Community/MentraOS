@@ -27,7 +27,7 @@ export default function CameraPage() {
 
   return (
     <Shell>
-      <MiniappHeader title="session.camera" onBack={() => navigate("/tester")} />
+      <MiniappHeader title="session.camera" onBack={() => navigate("/")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
           Capture a photo through the glasses camera. Requires{" "}

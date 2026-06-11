@@ -518,7 +518,7 @@ export function GalleryScreen() {
 
   // Handle sync button press - delegate to service
   const handleSyncPress = () => {
-    if (gallerySyncService.isSyncing()) {
+    if (gallerySyncService.isSyncing() || gallerySyncService.isSyncStarting()) {
       console.log("[GalleryScreen] Already syncing, ignoring press")
       return
     }
@@ -606,24 +606,52 @@ export function GalleryScreen() {
 
     try {
       const photosToShare = allPhotos.filter((p) => p.photo && selectedPhotos.has(p.photo.name)).map((p) => p.photo!)
-      const shareUrls: string[] = []
+
       const cacheDir = `${RNFS.CachesDirectoryPath}/share`
       await RNFS.mkdir(cacheDir)
 
-      for (const [index, photo] of photosToShare.entries()) {
+      // Track resolved file paths to avoid duplicating the same physical file
+      const seenFilePaths = new Set<string>()
+      const shareUrls: string[] = []
+
+      for (const photo of photosToShare) {
         let filePath = ""
         if (photo.filePath) {
-          filePath = photo.filePath.startsWith("file://") ? photo.filePath.replace("file://", "") : photo.filePath
+          filePath = photo.filePath.startsWith("file://") ? photo.filePath.slice("file://".length) : photo.filePath
         } else if (photo.download?.startsWith("file://")) {
-          filePath = photo.download.replace("file://", "")
+          filePath = photo.download.slice("file://".length)
         }
-        if (!filePath) continue
+
+        if (!filePath) {
+          console.warn(`[GalleryShare] Skipping ${photo.name}: no local file path`)
+          continue
+        }
+
+        // Skip duplicate file paths — prevents sharing the same physical file N times
+        if (seenFilePaths.has(filePath)) {
+          console.warn(`[GalleryShare] Skipping ${photo.name}: duplicate filePath ${filePath}`)
+          continue
+        }
+        seenFilePaths.add(filePath)
 
         const exists = await RNFS.exists(filePath)
-        if (!exists) continue
+        if (!exists) {
+          console.warn(`[GalleryShare] Skipping ${photo.name}: file not found at ${filePath}`)
+          continue
+        }
 
-        const basename = filePath.split("/").pop() || photo.name
-        const cachePath = `${cacheDir}/${String(index + 1).padStart(3, "0")}-${basename}`
+        // Use the photo's unique name (not the basename of filePath) as the cache filename.
+        // For v2 capture-aware photos every filePath ends with the same leaf (e.g. "base.jpg.processed.jpg"),
+        // so basing the cache name on filePath.split("/").pop() would make every cache file appear
+        // identical to the receiving app even though they have different content.
+        // Prefix with a zero-padded index so two photos whose names sanitize to the same string
+        // (e.g. "My Photo!" and "My Photo?") don't collide in the cache directory.
+        const ext = filePath.includes(".") ? filePath.slice(filePath.lastIndexOf(".")) : ""
+        const safeName = photo.name.replace(/[^a-zA-Z0-9_.-]/g, "_")
+        const cacheIndex = String(shareUrls.length + 1).padStart(3, "0")
+        const cachePath = `${cacheDir}/${cacheIndex}-${safeName}${ext}`
+
+        console.log(`[GalleryShare] Copying ${photo.name}: ${filePath} → ${cachePath}`)
         await RNFS.unlink(cachePath).catch(() => {})
         await RNFS.copyFile(filePath, cachePath)
         shareUrls.push(`file://${cachePath}`)
@@ -634,7 +662,15 @@ export function GalleryScreen() {
         return
       }
 
-      await Share.open({urls: shareUrls})
+      console.log(`[GalleryShare] Sharing ${shareUrls.length} file(s)`)
+
+      // Determine a shared MIME type so Android ACTION_SEND_MULTIPLE works correctly.
+      // Mixed image+video → "*/*"; all images → "image/*"; all videos → "video/*".
+      const hasVideo = photosToShare.some((p) => p.is_video)
+      const hasPhoto = photosToShare.some((p) => !p.is_video)
+      const mimeType = hasVideo && hasPhoto ? "*/*" : hasVideo ? "video/*" : "image/*"
+
+      await Share.open({urls: shareUrls, type: mimeType})
 
       // Clean up cache copies
       for (const url of shareUrls) {

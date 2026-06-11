@@ -3,15 +3,33 @@ package com.mentra.asg_client.service.core;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import com.mentra.asg_client.io.bes.BesOtaRegistry;
+import com.mentra.asg_client.io.bluetooth.core.BluetoothManagerFactory;
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.io.network.core.NetworkManagerFactory;
+import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
+import com.mentra.asg_client.io.peripheral.IPeripheralBus;
+import com.mentra.asg_client.io.peripheral.SimplePeripheralBus;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.service.communication.managers.CommunicationManager;
 import com.mentra.asg_client.service.communication.managers.ResponseBuilder;
 import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
 import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
+import com.mentra.asg_client.service.core.handlers.subscribers.BatteryEventSubscriber;
+import com.mentra.asg_client.service.core.handlers.subscribers.BesOtaAuthEventSubscriber;
+import com.mentra.asg_client.service.core.handlers.subscribers.BesVersionEventSubscriber;
+import com.mentra.asg_client.service.core.handlers.subscribers.BtMacEventSubscriber;
+import com.mentra.asg_client.service.core.handlers.subscribers.ButtonEventSubscriber;
+import com.mentra.asg_client.service.core.handlers.subscribers.FileTransferAckEventSubscriber;
+import com.mentra.asg_client.service.core.handlers.subscribers.HotspotEventSubscriber;
+import com.mentra.asg_client.service.core.handlers.subscribers.ShutdownEventSubscriber;
+import com.mentra.asg_client.service.core.handlers.subscribers.SwipeVolumeEventSubscriber;
+import com.mentra.asg_client.service.core.handlers.subscribers.SwitchEventSubscriber;
+import com.mentra.asg_client.service.core.handlers.subscribers.TouchEventSubscriber;
+import com.mentra.asg_client.service.core.handlers.subscribers.VoiceActivityEventSubscriber;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
@@ -47,14 +65,18 @@ public final class ServiceInitializer {
             @NonNull BesOtaRegistry besOtaRegistry) {
         android.content.Context context = service;
 
-        this.communicationManager = new CommunicationManager(null);
+        // Create transport and network first — both are passed to CommunicationManager and
+        // AsgClientServiceManager so neither holds a circular reference to the other.
+        ICompanionTransport transport = BluetoothManagerFactory.getBluetoothManager(context);
+        INetworkManager network = NetworkManagerFactory.getNetworkManager(context);
+
+        this.communicationManager = new CommunicationManager(transport, network);
 
         this.serviceManager =
                 new AsgClientServiceManager(
-                        context, service, communicationManager, fileManager, besOtaRegistry);
+                        context, service, communicationManager, fileManager, besOtaRegistry,
+                        transport, network);
         this.notificationManager = new AsgNotificationManager(context);
-
-        ((CommunicationManager) this.communicationManager).setServiceManager(serviceManager);
         this.configurationManager = new ConfigurationManager(context);
         this.stateManager = new StateManager(serviceManager);
         serviceManager.setStateManager(this.stateManager);
@@ -70,6 +92,24 @@ public final class ServiceInitializer {
                 new OtaCommandHandler(otaHelper, communicationManager);
         otaHelper.setPhoneConnectionProvider((CommunicationManager) communicationManager);
 
+        // Create the peripheral event bus and register all MCU event subscribers. Inbound BES/MCU
+        // commands are parsed into typed events by K900CommandHandler and dispatched here.
+        IPeripheralBus peripheralBus = new SimplePeripheralBus();
+        peripheralBus.subscribe(
+                new BatteryEventSubscriber(hardwareManager, stateManager, serviceManager));
+        peripheralBus.subscribe(
+                new ButtonEventSubscriber(serviceManager, hardwareManager, stateManager));
+        peripheralBus.subscribe(new ShutdownEventSubscriber(serviceManager, context));
+        peripheralBus.subscribe(new BesVersionEventSubscriber(serviceManager));
+        peripheralBus.subscribe(new BtMacEventSubscriber(context));
+        peripheralBus.subscribe(new BesOtaAuthEventSubscriber(serviceManager));
+        peripheralBus.subscribe(new HotspotEventSubscriber(serviceManager));
+        peripheralBus.subscribe(new FileTransferAckEventSubscriber(serviceManager));
+        peripheralBus.subscribe(new TouchEventSubscriber(serviceManager));
+        peripheralBus.subscribe(new SwitchEventSubscriber(serviceManager));
+        peripheralBus.subscribe(new SwipeVolumeEventSubscriber(serviceManager));
+        peripheralBus.subscribe(new VoiceActivityEventSubscriber());
+
         this.commandProcessor =
                 new CommandProcessor(
                         context,
@@ -81,7 +121,8 @@ public final class ServiceInitializer {
                         serviceManager,
                         fileManager,
                         rgbLedHandler,
-                        otaCommandHandler);
+                        otaCommandHandler,
+                        peripheralBus);
 
         this.lifecycleManager =
                 new ServiceLifecycleManager(

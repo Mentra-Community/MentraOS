@@ -126,7 +126,7 @@ public class PhotoQueueManager {
                 photoFilePath,
                 new CameraNeoService.PhotoCaptureCallback() {
                     @Override
-                    public void onPhotoCaptured(String filePath) {
+                    public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
                         callback.onPhotoCaptured(filePath);
                     }
                     

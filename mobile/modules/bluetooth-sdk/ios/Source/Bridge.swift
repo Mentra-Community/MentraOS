@@ -251,6 +251,16 @@ class Bridge {
         Bridge.sendTypedMessage("touch_event", body: body)
     }
 
+    static func sendAccelEvent(x: Float, y: Float, z: Float, timestamp: Int64) {
+        let body: [String: Any] = [
+            "x": x,
+            "y": y,
+            "z": z,
+            "timestamp": timestamp,
+        ]
+        Bridge.sendTypedMessage("accel_event", body: body)
+    }
+
     static func sendSwipeVolumeStatus(enabled: Bool, timestamp: Int64) {
         let body: [String: Any] = [
             "enabled": enabled,
@@ -291,6 +301,12 @@ class Bridge {
         var body = values
         body["type"] = "video_recording_status"
         Bridge.sendTypedMessage("video_recording_status", body: body)
+    }
+
+    static func sendMediaUploadEvent(type: String, values: [String: Any]) {
+        var body = values
+        body["type"] = type
+        Bridge.sendTypedMessage(type, body: body)
     }
 
     static func sendVersionInfo(_ values: [String: Any]) {

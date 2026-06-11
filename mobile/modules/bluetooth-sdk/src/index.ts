@@ -8,6 +8,7 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "glasses_not_ready",
   "button_press",
   "touch_event",
+  "accel_event",
   "head_up",
   "voice_activity_detection_status",
   "speaking_status",
@@ -20,6 +21,8 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "photo_response",
   "photo_status",
   "video_recording_status",
+  "media_success",
+  "media_error",
   "gallery_status",
   "compatible_glasses_search_stop",
   "swipe_volume_status",
@@ -65,6 +68,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   showDashboard: PrivateBluetoothSdkModule.showDashboard.bind(PrivateBluetoothSdkModule),
   setDashboardPosition: PrivateBluetoothSdkModule.setDashboardPosition.bind(PrivateBluetoothSdkModule),
   setHeadUpAngle: PrivateBluetoothSdkModule.setHeadUpAngle.bind(PrivateBluetoothSdkModule),
+  setImuEnabled: PrivateBluetoothSdkModule.setImuEnabled.bind(PrivateBluetoothSdkModule),
   setScreenDisabled: PrivateBluetoothSdkModule.setScreenDisabled.bind(PrivateBluetoothSdkModule),
   requestWifiScan: PrivateBluetoothSdkModule.requestWifiScan.bind(PrivateBluetoothSdkModule),
   sendWifiCredentials: PrivateBluetoothSdkModule.sendWifiCredentials.bind(PrivateBluetoothSdkModule),
@@ -124,6 +128,7 @@ export {
 } from "./BluetoothSdk.types"
 
 export type {
+  AccelEvent,
   AudioConnectedEvent,
   AudioDisconnectedEvent,
   AudioPairingNeededEvent,
