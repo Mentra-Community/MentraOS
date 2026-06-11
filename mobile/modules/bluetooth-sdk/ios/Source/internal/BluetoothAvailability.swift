@@ -20,7 +20,7 @@ final class BluetoothAvailability: NSObject, CBCentralManagerDelegate {
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         state = central.state
-        for listener in listeners.values {
+        for listener in Array(listeners.values) {
             listener(state)
         }
     }

@@ -1016,19 +1016,23 @@ public final class MentraBluetoothSDK {
     private func handleBluetoothAvailability(_ state: CBManagerState) {
         switch state {
         case .poweredOff, .resetting, .unauthorized, .unsupported:
-            cancelActiveScanSessions(reason: .cancelled)
-            clearBluetoothDiscoveryState()
-            if glassesStatus.connected || glassesStatus.connectionState == .connected {
-                DeviceManager.shared.disconnect()
-            }
+            handleBluetoothUnavailable()
         case .poweredOn, .unknown:
             break
         @unknown default:
-            cancelActiveScanSessions(reason: .cancelled)
-            clearBluetoothDiscoveryState()
-            if glassesStatus.connected || glassesStatus.connectionState == .connected {
-                DeviceManager.shared.disconnect()
-            }
+            handleBluetoothUnavailable()
+        }
+    }
+
+    private func handleBluetoothUnavailable() {
+        cancelActiveScanSessions(reason: .cancelled)
+        clearBluetoothDiscoveryState()
+        disconnectIfGlassesConnectionActive()
+    }
+
+    private func disconnectIfGlassesConnectionActive() {
+        if glassesStatus.connected || glassesStatus.connectionState != .disconnected {
+            DeviceManager.shared.disconnect()
         }
     }
 
@@ -1041,7 +1045,12 @@ public final class MentraBluetoothSDK {
 
     private func cancelActiveScanSessions(reason: ScanStopReason) {
         let ids = Array(activeScanSessions.keys)
-        guard !ids.isEmpty else { return }
+        guard !ids.isEmpty else {
+            if bluetoothStatus.searching || bluetoothStatus.searchingController {
+                stopScan(reason: reason)
+            }
+            return
+        }
         for (index, id) in ids.enumerated() {
             finishScanSession(id, reason: reason, shouldStopScan: index == 0)
         }
