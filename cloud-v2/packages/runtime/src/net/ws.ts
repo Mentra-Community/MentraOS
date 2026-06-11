@@ -564,20 +564,27 @@ async function handleConnectionInit(
   // so audio that starts flowing right after the ack is transcribed against the
   // right subscriptions instead of an empty set. We seed at version 0 with this
   // session's id (the same id the client echoes in REST writes); subsequent REST
-  // writes are guarded against this baseline. We seed even an empty set so the
-  // key exists and carries the session's baseline version. Mid-session changes
-  // arrive later via the REST subscriptions endpoint.
+  // writes are guarded against this baseline. If another still-live socket for
+  // this user already seeded the key, the seed is ignored so we don't clobber
+  // that session's guard. Mid-session changes arrive later via REST.
   const subs = init.audio?.initialSubscriptions ?? [];
   try {
-    await seedSubscriptions(ws.data.mentraUserId, {
+    const seeded = await seedSubscriptions(ws.data.mentraUserId, {
       subscriptions: subs,
       sessionId: ws.data.audioSessionId,
       version: 0,
     });
-    // Nudge the local worker to reconcile from the freshly seeded key. The key
-    // is the source of truth; the worker re-reads it rather than trusting any
-    // passed snapshot. Cross-pod writes use the control stream instead.
-    reconcileSubscriptions(ws.data.mentraUserId);
+    if (seeded) {
+      // Nudge the local worker to reconcile from the freshly seeded key. The key
+      // is the source of truth; the worker re-reads it rather than trusting any
+      // passed snapshot. Cross-pod writes use the control stream instead.
+      reconcileSubscriptions(ws.data.mentraUserId);
+    } else {
+      logger.warn(
+        { mentraUserId: ws.data.mentraUserId, audioSessionId: ws.data.audioSessionId },
+        "connection.init subscription seed skipped; another session is authoritative",
+      );
+    }
   } catch (err) {
     logger.error(
       { err, mentraUserId: ws.data.mentraUserId },
