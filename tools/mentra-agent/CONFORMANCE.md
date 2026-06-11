@@ -21,6 +21,13 @@ AWS us-west-2 dev. Driven via CDP (tools/mentra-agent/cdp.ts).
 
 ## Infrastructure findings (count as conformance results too)
 
+- **K900 chunking is mandatory for large commands**: the glasses silently drop
+  frames whose C-wrapped JSON exceeds ~200 bytes. A `take_photo` carrying a
+  presigned webhookUrl (~500+ chars) vanished without any error — the earlier
+  photo tests passed only because the local media-receiver URL was short.
+  Ported MessageChunker ({t:"ck",id,c,n,d} envelopes, packed ≤253B, ~50ms gaps)
+  into live.mjs `packCommands`; verified lossless round-trip in selftest.
+
 - **manager stale-protocol bug (fixed)**: reconnecting a different glasses
   family on the same daemon kept the previous family's protocol
   (`device = device || detected`); a Live was driven as a G2. Fixed: reset on

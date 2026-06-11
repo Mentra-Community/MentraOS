@@ -309,13 +309,13 @@ export class G2Manager extends EventEmitter {
   }
 
   // ---- serialized writes ----
-  _write(packets, { left, right }) {
+  _write(packets, { left, right }, gapMs = 30) {
     this._q = this._q
       .then(async () => {
         for (const pkt of packets) {
           if (left && this.arms.L) await this.arms.L.writeChar.writeAsync(pkt, true)
           if (right && this.arms.R) await this.arms.R.writeChar.writeAsync(pkt, true)
-          if (packets.length > 1) await sleep(30)
+          if (packets.length > 1) await sleep(gapMs)
         }
       })
       .catch((e) => this.log(`write error: ${e.message || e}`))
@@ -344,7 +344,9 @@ export class G2Manager extends EventEmitter {
   }
 
   _live(obj, wakeup = true) {
-    return this._write([live.packCommand(obj, wakeup)], { left: true, right: true })
+    // packCommands chunks oversized commands (>200B C-wrapped); the glasses
+    // need ~50ms between chunk frames, which _write's multi-packet gap covers.
+    return this._write(live.packCommands(obj, wakeup), { left: true, right: true }, 50)
   }
 
   async _liveInit() {

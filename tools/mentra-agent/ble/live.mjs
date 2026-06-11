@@ -18,6 +18,49 @@ const START = 0x23 // '#'
 const END = 0x24 // '$'
 const TYPE_STRING = 0x30
 
+// ---------- chunking (K900 MessageChunker port) ----------
+// Frames whose C-wrapped JSON exceeds 200 bytes are dropped by the glasses, so
+// large commands (e.g. take_photo with a presigned webhookUrl) must be split
+// into chunk envelopes {t:"ck", id, c, n, d} whose PACKED size is <=253B each;
+// `d` carries UTF-8-safe slices of the ORIGINAL inner JSON. Mirrors
+// MessageChunker.java (threshold 200, slice search 80..4, max packed 253).
+function splitUtf8(buf, size) {
+  const out = []
+  let off = 0
+  while (off < buf.length) {
+    let end = Math.min(off + size, buf.length)
+    while (end > off && end < buf.length && (buf[end] & 0xc0) === 0x80) end--
+    out.push(buf.subarray(off, end).toString("utf8"))
+    off = end
+  }
+  return out
+}
+
+// Returns the list of wire frames for a command: one frame for small commands,
+// chunk-envelope frames for large ones. Write them in order with ~50ms gaps.
+export function packCommands(obj, wakeup = true) {
+  const inner = JSON.stringify(obj)
+  const wrapped = JSON.stringify(wakeup ? { C: inner, W: 1 } : { C: inner })
+  if (Buffer.byteLength(wrapped, "utf8") <= 200) return [packCommand(obj, wakeup)]
+  const bytes = Buffer.from(inner, "utf8")
+  const mId = Math.floor(Math.random() * 1e9)
+  const chunkId = `${mId}_${Date.now()}`
+  for (let size = 80; size >= 4; size--) {
+    const slices = splitUtf8(bytes, size)
+    const frames = []
+    let fit = true
+    for (let i = 0; i < slices.length; i++) {
+      const ck = { t: "ck", id: chunkId, c: i, n: slices.length, d: slices[i] }
+      if (i === slices.length - 1) ck.mId = mId
+      const frame = packCommand(ck, wakeup && i === 0)
+      if (frame.length > 253) { fit = false; break }
+      frames.push(frame)
+    }
+    if (fit) return frames
+  }
+  throw new Error("cannot chunk command within 253-byte frames")
+}
+
 // ---------- frame a JSON command for the wire ----------
 export function packCommand(obj, wakeup = true) {
   const inner = JSON.stringify(obj)
