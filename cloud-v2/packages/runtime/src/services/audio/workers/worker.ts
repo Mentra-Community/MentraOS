@@ -200,7 +200,7 @@ const POD_ID = process.env.POD_ID ?? "pod"
 const CONSUMER_NAME = `${POD_ID}:${WORKER_ID}`
 
 const XREAD_COUNT_PER_STREAM = 100
-const XREAD_BLOCK_MS = 1000
+const XREAD_IDLE_SLEEP_MS = 50
 const XAUTOCLAIM_COUNT = 500
 const XAUTOCLAIM_MIN_IDLE_MS = 0
 const XAUTOCLAIM_LOOP_INTERVAL_MS = 2_000
@@ -638,43 +638,43 @@ async function freshReadLoop(): Promise<void> {
       continue
     }
 
-    // STREAMS k1 k2 k3 ... > > > ... — one `>` per stream means
-    // "give me entries no one in this group has seen yet."
-    const streams = users.map(audioStreamKey)
-    const ids = users.map(() => ">")
+    let sawEntries = false
+    for (const userId of users) {
+      try {
+        // One stream per command: Redis Cluster requires all keys in a command
+        // to share a hash slot, and each user's audio stream intentionally
+        // hashes to that user. A per-user read avoids CROSSSLOT while keeping
+        // the worker's ownership set unchanged.
+        const result = (await streamsClient.xreadgroup(
+          "GROUP",
+          AUDIO_STREAM_GROUP,
+          CONSUMER_NAME,
+          "COUNT",
+          XREAD_COUNT_PER_STREAM,
+          "STREAMS",
+          audioStreamKey(userId),
+          ">",
+        )) as Array<[string, Array<[string, string[]]>]> | null
 
-    try {
-      const result = (await streamsClient.xreadgroup(
-        "GROUP",
-        AUDIO_STREAM_GROUP,
-        CONSUMER_NAME,
-        "COUNT",
-        XREAD_COUNT_PER_STREAM,
-        "BLOCK",
-        XREAD_BLOCK_MS,
-        "STREAMS",
-        ...streams,
-        ...ids,
-      )) as Array<[string, Array<[string, string[]]>]> | null
-
-      if (result) await processBatch(result, "live")
-    } catch (err) {
-      const msg = (err as Error).message ?? ""
-      // NOGROUP can happen if a stream got DEL'd out from under us (tests
-      // wipe Redis between cases; production this would only happen if
-      // someone manually nuked a stream key). Re-ensure groups for all
-      // currently-owned users — the next iteration picks up cleanly.
-      // We DON'T remove the user from readyUsers because the user is
-      // still legitimately owned; the stream just needs recreating.
-      if (msg.includes("NOGROUP")) {
-        for (const userId of [...readyUsers]) {
-          await ensureConsumerGroup(userId)
+        if (result) {
+          sawEntries = true
+          await processBatch(result, "live")
         }
-        continue
+      } catch (err) {
+        const msg = (err as Error).message ?? ""
+        // NOGROUP can happen if a stream got DEL'd out from under us (tests
+        // wipe Redis between cases; production this would only happen if
+        // someone manually nuked a stream key). Re-ensure this user's group;
+        // the next iteration picks up cleanly.
+        if (msg.includes("NOGROUP")) {
+          await ensureConsumerGroup(userId)
+          continue
+        }
+        console.error("[audio-worker] xreadgroup failed:", err)
+        await Bun.sleep(500)
       }
-      console.error("[audio-worker] xreadgroup failed:", err)
-      await Bun.sleep(500)
     }
+    if (!sawEntries) await Bun.sleep(XREAD_IDLE_SLEEP_MS)
   }
 }
 
