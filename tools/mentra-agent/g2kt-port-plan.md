@@ -45,7 +45,7 @@ Status (2026-06-11 ~13:30): G2.kt items DONE in commit 7824a34b9 — ID pool
 2-5, sendImageData single-fragment guard + session+=2, createPageWithContainers
 owns page via text-only CREATE then declares containers via REBUILD.
 DONE also: (a) displayBitmap strip tiling (commit on agent-harness).
-REMAINING: (b) optional Floyd-Steinberg dither in
+DONE: (b skipped - optional), (c) G2.swift mirrored (3877d1081, swiftc -parse clean), (d) :mentra-bluetooth-sdk:compileDebugKotlin BUILD SUCCESSFUL. REMAINING ONLY: (e) on-hardware verify (app must own the G2 - free it from the daemon; chip dismissed as superseded). Old remaining list: (b) optional Floyd-Steinberg dither in
 convertToG2Bmp; (c) mirror all changes into ios/Source/sgcs/G2.swift;
 (d) compile check (cd mobile && bun expo prebuild already done previously;
 gradle compile via android studio/CI — at minimum kotlin syntax review);
