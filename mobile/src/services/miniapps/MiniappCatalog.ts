@@ -513,7 +513,7 @@ class MiniappCatalog {
       },
     ]
 
-    if (useSettingsStore.getState().getSetting(SETTINGS.dev_mode.key)) {
+    if (useSettingsStore.getState().getSetting(SETTINGS.miniapp_dev_mode.key) || useSettingsStore.getState().getSetting(SETTINGS.debug_mode.key)) {
       apps.push({
         packageName: lmaInstallerPackageName,
         name: translate("miniApps:lmaInstaller"),

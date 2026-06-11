@@ -5,23 +5,24 @@ import ToggleSetting from "@/components/settings/ToggleSetting"
 import {Group} from "@/components/ui/Group"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@/stores/settings"
+import {translate} from "@/i18n"
 
-export default function DevModeSettingsScreen() {
+export default function MiniappDeveloperModeSettingsScreen() {
   const {goBack} = useNavigationStore.getState()
-  const [devMode, setDevMode] = useSetting(SETTINGS.public_dev_mode.key)
+  const [miniappDevMode, setMiniappDevMode] = useSetting(SETTINGS.miniapp_dev_mode.key)
 
   return (
     <Screen preset="fixed">
-      <Header title="Super Settings" leftIcon="chevron-left" onLeftPress={() => goBack()} />
+      <Header titleTx="miniappDeveloperSettings:title" leftIcon="chevron-left" onLeftPress={() => goBack()} />
 
       <ScrollView className="flex px-6 -mx-6">
         <View className="flex gap-6 mt-6">
           <Group title="Settings">
             <ToggleSetting
-              label="Dev Mode"
-              subtitle="Enable dev mode"
-              value={devMode}
-              onValueChange={(value) => setDevMode(value)}
+              label={translate("miniappDeveloperSettings:miniappDeveloperMode")}
+              subtitle={translate("miniappDeveloperSettings:miniappDeveloperModeSubtitle")}
+              value={miniappDevMode}
+              onValueChange={(value) => setMiniappDevMode(value)}
             />
           </Group>
         </View>

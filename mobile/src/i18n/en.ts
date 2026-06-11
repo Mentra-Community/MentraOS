@@ -535,6 +535,7 @@ const en = {
     glassesWifiDescription: "Configure WiFi settings for your smart glasses.",
     wifiUnavailable: "Connect a pair of glasses that support WiFi to access WiFi settings.",
     debugSettings: "Debug settings",
+    miniappDeveloperSettings: "Miniapp Developer Settings",
     disconnectGlasses: "Disconnect Glasses",
     forgetGlasses: "Unpair glasses",
     forgetGlassesConfirm:
@@ -628,6 +629,11 @@ const en = {
     miniappDevLoadUrlSubtitle: "Enter a dev server URL to load a mini app",
     miniappDevScanLabel: "Scan Mini App QR Code",
     miniappDevScanSubtitle: "Scan a QR code from your dev server",
+  },
+  miniappDeveloperSettings: {
+    title: "Miniapp Developer Settings",
+    miniappDeveloperMode: "Miniapp Developer Mode",
+    miniappDeveloperModeSubtitle: "Enable miniapp developer mode",
   },
   transcription: {
     downloadModelToEnableLocalTranscription: "Download a model to enable local transcription",

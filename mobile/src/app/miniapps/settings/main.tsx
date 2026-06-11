@@ -16,7 +16,7 @@ import {useRegisterCapsule} from "@/stores/capsule"
 export default function MainSettingsPage() {
   const {theme, themed} = useAppTheme()
   const {push} = useNavigationStore.getState()
-  const [devMode] = useSetting(SETTINGS.dev_mode.key)
+  const [debugMode] = useSetting(SETTINGS.debug_mode.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const viewShotRef = useRef<View>(null)
@@ -88,7 +88,7 @@ export default function MainSettingsPage() {
             </Group>
 
             <Group title={translate("deviceSettings:advancedSettings")}>
-              {devMode && (
+              {debugMode && (
                 <RouteButton
                   icon={<Icon name="user-code" size={24} color={theme.colors.secondary_foreground} />}
                   label={translate("settings:debugSettings")}
@@ -96,6 +96,11 @@ export default function MainSettingsPage() {
                   onLongPress={() => superMode && push("/miniapps/settings/super")}
                 />
               )}
+              <RouteButton
+                icon={<Icon name="user-code" size={24} color={theme.colors.secondary_foreground} />}
+                label={translate("settings:miniappDeveloperSettings")}
+                onPress={() => push("/miniapps/settings/dev")}
+              />
             </Group>
           </View>
 

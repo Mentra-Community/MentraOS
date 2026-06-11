@@ -30,11 +30,11 @@ const LC3_FRAME_SIZE_OPTIONS = [
   {label: "48 kbps", value: "60"},
 ]
 
-export default function DeveloperSettingsScreen() {
+export default function DebugSettingsScreen() {
   const {theme} = useAppTheme()
   const {goBack, push, replaceAll, clearHistoryAndGoHome} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const [devMode, setDevMode] = useSetting(SETTINGS.dev_mode.key)
+  const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [powerSavingMode, setPowerSavingMode] = useSetting(SETTINGS.power_saving_mode.key)
   const [reconnectOnAppForeground, setReconnectOnAppForeground] = useSetting(SETTINGS.reconnect_on_app_foreground.key)
@@ -55,7 +55,7 @@ export default function DeveloperSettingsScreen() {
 
   return (
     <Screen preset="fixed">
-      <Header title="Developer Settings" leftIcon="chevron-left" onLeftPress={() => goBack()} />
+      <Header title="Debug Settings" leftIcon="chevron-left" onLeftPress={() => goBack()} />
 
       <ScrollView className="flex px-6 -mx-6">
         <View className="flex gap-6">
@@ -71,8 +71,8 @@ export default function DeveloperSettingsScreen() {
             <ToggleSetting
               label="Debug Mode"
               subtitle="Enable debug mode"
-              value={devMode}
-              onValueChange={(value) => setDevMode(value)}
+              value={debugMode}
+              onValueChange={(value) => setDebugMode(value)}
             />
             <ToggleSetting
               label={translate("settings:reconnectOnAppForeground")}
