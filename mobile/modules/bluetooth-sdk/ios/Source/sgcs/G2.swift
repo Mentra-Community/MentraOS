@@ -1532,9 +1532,7 @@ class G2: NSObject, SGCManager {
     private var imageContainers: [ImgContainer] = []
     private var textContainers: [TextContainer] = []
     /// Fixed pool of container IDs the page protocol expects.
-    // fw 2.2.4.34 never registers image containers with ids 10-13 (and id 1
-    // collides with the default text container) — ids 2..5 are the proven pool.
-    private let imageContainerIDPool: [Int32] = [2, 3, 4, 5]
+    private let imageContainerIDPool: [Int32] = [10, 11, 12, 13]
     private let textContainerIDPool: [Int32] = [1, 2, 3, 4, 5, 6]
     /// Default container seeded into every fresh page: 100x100 in the top-left.
     private static let defaultImgContainer = (
@@ -2035,14 +2033,7 @@ class G2: NSObject, SGCManager {
     /// Send BMP data to an image container via fragmented updateImageRawData
     private func sendImageData(containerID: Int32, containerName: String, bmpData: Data) async {
         let fragmentSize = 4096
-        // fw 2.2.4.34: multi-fragment image streams NEVER render (fragment 0
-        // acks success, every continuation is rejected). Tile larger images
-        // into <=4096-byte strips (see displayBitmap).
-        if bmpData.count > fragmentSize {
-            Bridge.log("G2: sendImageData(\(containerName)) - \(bmpData.count)B exceeds the single-fragment limit; NOT sending (tile the image)")
-            return
-        }
-        imageSessionCounter += 2 // sessions wedge after failures; skip by 2
+        imageSessionCounter += 1
         let sessionId = imageSessionCounter
         let totalSize = Int32(bmpData.count)
         var fragmentIndex: Int32 = 0
@@ -2104,37 +2095,38 @@ class G2: NSObject, SGCManager {
             return false
         }
 
-        // fw 2.2.4.34 renders ONLY single-fragment image streams; tile into
-        // <=4 horizontal strip containers, clamped to fw limits (20-288 x 20-144).
-        let cw = Swift.min(Swift.max(Int(rw), 20), 288)
-        let ch = Swift.min(Swift.max(Int(rh), 20), 144)
-        let rowBytes = ((cw + 1) / 2 + 3) & ~3
-        let maxRows = (4096 - 118) / rowBytes
-        let stripCount = (ch + maxRows - 1) / maxRows
-        if stripCount > imageContainerIDPool.count {
-            Bridge.log("G2: displayBitmap() - \(cw)x\(ch) needs \(stripCount) strips (>\(imageContainerIDPool.count)); reduce size")
-            return false
-        }
-        guard let strips = convertToG2BmpStrips(rawData, containerWidth: cw, containerHeight: ch, maxRows: maxRows)
+        guard
+            let bmpData = convertToG2Bmp(rawData, containerWidth: Int(rw), containerHeight: Int(rh))
         else {
-            Bridge.log("G2: displayBitmap() - failed to convert image to strips")
+            Bridge.log("G2: failed to convert image to BMP")
             return false
         }
 
-        imageContainers.removeAll()
-        var sy: Int32 = 0
-        for (i, stripBmp) in strips.enumerated() {
-            let sh = Int32(min(maxRows, ch - Int(sy)))
-            imageContainers.append(
-                ImgContainer(
-                    id: imageContainerIDPool[i], x: rx, y: ry + sy, width: Int32(cw), height: sh,
-                    bmpData: stripBmp
-                )
+        // Reuse an existing container if the rect matches exactly; otherwise add a new one.
+        var container: ImgContainer
+        if let i = imageContainers.firstIndex(where: {
+            $0.matches(x: rx, y: ry, width: rw, height: rh)
+        }) {
+            imageContainers[i].bmpData = bmpData
+            container = imageContainers[i]
+            Bridge.log(
+                "G2: displayBitmap() - reusing container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh)"
             )
-            sy += sh
+            if !pageCreated {
+                await rebuildPage()
+                return true
+            }
+            await sendImageData(
+                containerID: container.id, containerName: container.name, bmpData: container.bmpData
+            )
+            return true
+        } else {
+            container = addImageContainer(x: rx, y: ry, width: rw, height: rh, bmpData: bmpData)
+            Bridge.log(
+                "G2: displayBitmap() - added container \(container.id) for rect \(rx),\(ry) \(rw)x\(rh), rebuilding page"
+            )
+            await rebuildPage()
         }
-        Bridge.log("G2: displayBitmap() - \(strips.count) strip containers for \(cw)x\(ch), rebuilding page")
-        await rebuildPage()
         return true
     }
 
@@ -2300,63 +2292,6 @@ class G2: NSObject, SGCManager {
     }
 
     // MARK: - Bitmap Conversion
-
-
-
-    /// Render to a grayscale canvas (aspect-fit on black, like convertToG2Bmp)
-    /// and slice into horizontal strips of at most maxRows rows, each encoded
-    /// as its own 4-bit BMP <= 4096 bytes — the only image stream shape this
-    /// firmware renders (multi-fragment streams are rejected after fragment 0).
-    private func convertToG2BmpStrips(
-        _ data: Data, containerWidth: Int, containerHeight: Int, maxRows: Int
-    ) -> [Data]? {
-        guard let image = UIImage(data: data), let cgImage = image.cgImage else {
-            Bridge.log("G2: convertToG2BmpStrips - could not decode image")
-            return nil
-        }
-        let scale = min(
-            Double(containerWidth) / Double(cgImage.width),
-            Double(containerHeight) / Double(cgImage.height)
-        )
-        let scaledW = max(1, Int(Double(cgImage.width) * scale))
-        let scaledH = max(1, Int(Double(cgImage.height) * scale))
-        guard
-            let ctx = CGContext(
-                data: nil,
-                width: containerWidth,
-                height: containerHeight,
-                bitsPerComponent: 8,
-                bytesPerRow: containerWidth,
-                space: CGColorSpaceCreateDeviceGray(),
-                bitmapInfo: CGImageAlphaInfo.none.rawValue
-            )
-        else { return nil }
-        ctx.setFillColor(gray: 0, alpha: 1)
-        ctx.fill(CGRect(x: 0, y: 0, width: containerWidth, height: containerHeight))
-        ctx.interpolationQuality = .high
-        ctx.draw(
-            cgImage,
-            in: CGRect(
-                x: (containerWidth - scaledW) / 2, y: (containerHeight - scaledH) / 2,
-                width: scaledW, height: scaledH
-            )
-        )
-        guard let rendered = ctx.makeImage(),
-            let pixels = rendered.dataProvider?.data as Data?
-        else { return nil }
-
-        var strips: [Data] = []
-        var sy = 0
-        while sy < containerHeight {
-            let sh = min(maxRows, containerHeight - sy)
-            let slice = pixels.subdata(in: (sy * containerWidth)..<((sy + sh) * containerWidth))
-            guard let bmp = build4BitBmp(grayscalePixels: slice, width: containerWidth, height: sh)
-            else { return nil }
-            strips.append(bmp)
-            sy += sh
-        }
-        return strips
-    }
 
     /// Scale source image to fit within containerWidth x containerHeight (maintaining aspect ratio),
     /// centered on a black background. Output BMP always matches container dimensions exactly.
@@ -2700,29 +2635,25 @@ class G2: NSObject, SGCManager {
             )
         }
 
-        // fw 2.2.4.34: image containers only register via REBUILD_PAGE on a page
-        // this session owns — containers carried in a CREATE never register, and
-        // a repeat CREATE over a live page is silently ignored. Own a page with
-        // a text-only CREATE first, then declare the full set via REBUILD.
+        let msg: Data
         if !pageCreated {
-            Bridge.log("G2: createPageWithContainers() - creating page (text-only) before container rebuild")
-            sendEvenHubCommand(EvenHubProto.createPageMessage(
-                textContainers: textContainerProps,
-                imageContainers: [],
-                magicRandom: sendManager.nextMagicRandom(),
-                appId: activeMenuAppId
-            ))
-            pageCreated = true
-        }
-        if !imageContainerProps.isEmpty {
-            Bridge.log("G2: createPageWithContainers() - declaring containers via rebuildPageMessage")
-            sendEvenHubCommand(EvenHubProto.rebuildPageMessage(
+            Bridge.log("G2: createPageWithContainers() - using createPageMessage (first time)")
+            msg = EvenHubProto.createPageMessage(
                 textContainers: textContainerProps,
                 imageContainers: imageContainerProps,
                 magicRandom: sendManager.nextMagicRandom(),
                 appId: activeMenuAppId
-            ))
+            )
+        } else {
+            Bridge.log("G2: createPageWithContainers() - using rebuildPageMessage")
+            msg = EvenHubProto.rebuildPageMessage(
+                textContainers: textContainerProps,
+                imageContainers: imageContainerProps,
+                magicRandom: sendManager.nextMagicRandom(),
+                appId: activeMenuAppId
+            )
         }
+        sendEvenHubCommand(msg)
         pageCreated = true
     }
 
