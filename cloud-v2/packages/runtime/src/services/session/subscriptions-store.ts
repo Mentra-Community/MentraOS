@@ -147,6 +147,27 @@ export async function deleteSubscriptions(mentraUserId: string): Promise<void> {
   await getRedis().del(subscriptionsKey(mentraUserId));
 }
 
+/**
+ * Delete the key only if it is still owned by one of the given sessions.
+ * Used when a pod loses user ownership: its sessions are being torn down, but
+ * the new owner may have already seeded this key for a NEWER session — an
+ * unconditional delete from the stale pod would wipe the live owner's
+ * subscription state cluster-wide. Returns true when the key was deleted.
+ */
+export async function deleteSubscriptionsIfSessionIn(
+  mentraUserId: string,
+  sessionIds: string[],
+): Promise<boolean> {
+  if (sessionIds.length === 0) return false;
+  const deleted = (await getRedis().eval(
+    DELETE_IF_SESSION_SCRIPT,
+    1,
+    subscriptionsKey(mentraUserId),
+    JSON.stringify(sessionIds),
+  )) as number;
+  return deleted === 1;
+}
+
 // === Lua ===
 //
 // Atomic guarded write. KEYS[1] is the subscription key. ARGV: [1] the new
@@ -184,6 +205,24 @@ local record = string.format(
 )
 redis.call("SET", KEYS[1], record, "EX", ttl)
 return {1, "", newVersion}
+`;
+
+// Conditional delete. ARGV[1] is a JSON array of sessionIds being torn down;
+// the key is removed only when its record's sessionId is one of them.
+const DELETE_IF_SESSION_SCRIPT = `
+local existing = redis.call("GET", KEYS[1])
+if not existing then
+  return 0
+end
+local decoded = cjson.decode(existing)
+local sessions = cjson.decode(ARGV[1])
+for _, id in ipairs(sessions) do
+  if decoded.sessionId == id then
+    redis.call("DEL", KEYS[1])
+    return 1
+  end
+end
+return 0
 `;
 
 const SEED_SCRIPT = `

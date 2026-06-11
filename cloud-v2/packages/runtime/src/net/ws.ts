@@ -52,7 +52,7 @@ import {
   setUserCodec,
 } from "../services/audio/workers/pool";
 import {
-  deleteSubscriptions,
+  deleteSubscriptionsIfSessionIn,
   refreshSubscriptions,
   seedSubscriptions,
 } from "../services/session/subscriptions-store";
@@ -154,7 +154,14 @@ export function dropUserSessionsForLostOwnership(mentraUserId: string): void {
 
   sessionsPerUser.delete(mentraUserId);
   releaseUser(mentraUserId);
-  deleteSubscriptions(mentraUserId).catch((err) => {
+  // Only delete the subscription key if it still belongs to one of the
+  // sessions being dropped here. Losing ownership usually means ANOTHER pod
+  // now owns this user and may have seeded the key for its own live session —
+  // an unconditional delete from this stale pod would wipe that live state.
+  deleteSubscriptionsIfSessionIn(
+    mentraUserId,
+    entries.map((entry) => entry.data.audioSessionId),
+  ).catch((err) => {
     logger.warn(
       { err, mentraUserId },
       "subscription key delete failed after lost ownership",
@@ -511,9 +518,13 @@ export const wsHandlers: WebSocketHandler<WsData> = {
           );
         });
         // Drop the subscription key on a clean last-session close so the next
-        // session for this user starts from its own seed, not stale subs. If this
-        // fails the key TTLs out shortly anyway.
-        deleteSubscriptions(ws.data.mentraUserId).catch((err) => {
+        // session for this user starts from its own seed, not stale subs — but
+        // only when the key still belongs to THIS closing session: on a fast
+        // reconnect the replacement socket may have seeded its own record
+        // before this close handler runs. If this fails the key TTLs out.
+        deleteSubscriptionsIfSessionIn(ws.data.mentraUserId, [
+          ws.data.audioSessionId,
+        ]).catch((err) => {
           logger.warn(
             { err, mentraUserId: ws.data.mentraUserId },
             "subscription key delete failed (will TTL out)",
