@@ -27,6 +27,7 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSpring,
+  withTiming,
   type SharedValue,
 } from "react-native-reanimated"
 
@@ -60,6 +61,9 @@ const COMMIT_FRACTION = 0.5
 const COMMIT_VELOCITY = 500
 const MIN_FLICK_TRANSLATION = 12
 const MAX_COMMIT_VELOCITY = 3000
+// Duration of the non-interactive push/pop transitions (slide in/out from the
+// right), approximating a native stack's feel.
+const PUSH_POP_ANIM_MS = 250
 
 export default function OfflineAppHost({packageName, appName, iconUrl, onExit, onShouldCapture}: OfflineAppHostProps) {
   const def = offlineAppRegistry[packageName]
@@ -81,13 +85,35 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
   const onShouldCaptureRef = useRef(onShouldCapture)
   onShouldCaptureRef.current = onShouldCapture
 
+  // Shared values driving the push/pop slide transitions. The transform binds
+  // to a specific entry INDEX (not "whoever is top"), so after a committed pop
+  // the outgoing screen stays parked off-screen until React unmounts it —
+  // resetting the translation before the unmount flashed the old screen back
+  // over the revealed one for a frame.
+  const screenWidth = Dimensions.get("window").width
+  const popTranslateX = useSharedValue(0)
+  const popTargetIndex = useSharedValue(-1)
+  const popAnimatingRef = useRef(false)
+
+  const commitPop = useCallback(() => {
+    popAnimatingRef.current = false
+    setStack((s) => (s.length > 1 ? s.slice(0, -1) : s))
+  }, [])
+
   const popOrExit = useCallback(() => {
     if (stackRef.current.length > 1) {
-      setStack((s) => s.slice(0, -1))
+      // Animated programmatic pop (header back / Android back): slide the top
+      // screen off to the right, then commit — same exit the swipe gesture has.
+      if (popAnimatingRef.current) return
+      popAnimatingRef.current = true
+      popTargetIndex.value = stackRef.current.length - 1
+      popTranslateX.value = withTiming(screenWidth, {duration: PUSH_POP_ANIM_MS}, (finished) => {
+        if (finished) runOnJS(commitPop)()
+      })
     } else {
       onExitRef.current()
     }
-  }, [])
+  }, [commitPop, popTargetIndex, popTranslateX, screenWidth])
 
   // The host stays mounted through the Compositor's fade-out (renderedApp
   // lingers after clearForeground). During that window the interceptor must
@@ -105,6 +131,11 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
         if (def.routes[path]) {
           const top = stackRef.current[stackRef.current.length - 1]
           if (top?.path !== path) {
+            // Stage the slide-in BEFORE the new entry mounts: its first
+            // painted frame must sit off-screen right. The depth effect
+            // below animates it to 0 after the commit.
+            popTargetIndex.value = stackRef.current.length
+            popTranslateX.value = screenWidth
             setStack((s) => [...s, {path, params}])
           }
           return true
@@ -186,29 +217,28 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
     return () => setForceGestureEnabled(false)
   }, [depth, setForceGestureEnabled])
 
+  // Drive the transitions around stack commits:
+  //   depth grew   → a push was staged off-screen right; slide it in.
+  //   depth shrank → a pop committed; the popped index no longer exists, so
+  //                  clearing the values can't visibly snap anything.
+  const prevDepthRef = useRef(depth)
+  useEffect(() => {
+    const prevDepth = prevDepthRef.current
+    prevDepthRef.current = depth
+    if (depth > prevDepth) {
+      popTranslateX.value = withTiming(0, {duration: PUSH_POP_ANIM_MS}, (finished) => {
+        if (finished) popTargetIndex.value = -1
+      })
+    } else if (depth < prevDepth) {
+      popTargetIndex.value = -1
+      popTranslateX.value = 0
+    }
+  }, [depth, popTargetIndex, popTranslateX])
+
   // Interactive iOS pop swipe for depth > 1 (e.g. appearance → main): the top
   // screen follows the finger and slides off, revealing the screen beneath
   // (which stays mounted behind it). Commit criteria mirror the Compositor's
   // minimize swipe so the two gestures feel identical.
-  const screenWidth = Dimensions.get("window").width
-  const popTranslateX = useSharedValue(0)
-  // Index of the entry the gesture is dragging. The transform binds to THIS
-  // index (not "whoever is top"), so after a committed pop the outgoing
-  // screen stays parked off-screen until React unmounts it — resetting the
-  // translation before the unmount flashed the old screen back over the
-  // revealed one for a frame.
-  const popTargetIndex = useSharedValue(-1)
-  const popTop = useCallback(() => {
-    setStack((s) => (s.length > 1 ? s.slice(0, -1) : s))
-  }, [])
-
-  // Clear the gesture values only after the pop has committed; by then the
-  // popped index no longer exists, so nothing visibly snaps.
-  useEffect(() => {
-    popTargetIndex.value = -1
-    popTranslateX.value = 0
-  }, [depth, popTargetIndex, popTranslateX])
-
   const topIndex = depth - 1
   const popSwipeGesture = Gesture.Pan()
     .activeOffsetX(10)
@@ -231,7 +261,7 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
           screenWidth,
           {damping: 50, stiffness: 800, velocity, overshootClamping: true},
           (finished) => {
-            if (finished) runOnJS(popTop)()
+            if (finished) runOnJS(commitPop)()
           },
         )
       } else {

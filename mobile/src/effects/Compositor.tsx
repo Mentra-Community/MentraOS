@@ -70,7 +70,7 @@ const FADE_OUT_SCALE_TO = 0.4
 // opaque (but shrunk to a dot) for this long so the glass views configure
 // under an opaque ancestor before the real open animation plays.
 const GLASS_WARMUP_MS = 10
-const GLASS_WARMUP_SCALE = 0.1
+const GLASS_WARMUP_SCALE = 0.15
 
 export default function Compositor() {
   const foregroundApp = useForegroundApp()
