@@ -284,6 +284,50 @@ public struct VideoRecordingStatusEvent: CustomStringConvertible {
     }
 }
 
+public struct MediaUploadEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        self.values = values
+    }
+
+    public var type: String {
+        stringValue(values, "type") ?? ""
+    }
+
+    public var requestId: String {
+        stringValue(values, "requestId") ?? ""
+    }
+
+    public var mediaUrl: String? {
+        stringValue(values, "mediaUrl")
+    }
+
+    public var errorMessage: String? {
+        stringValue(values, "errorMessage")
+    }
+
+    public var mediaType: Int? {
+        intValue(values["mediaType"])
+    }
+
+    public var timestamp: Int {
+        intValue(values["timestamp"]) ?? Int(Date().timeIntervalSince1970 * 1000)
+    }
+
+    public var isSuccess: Bool {
+        type == "media_success"
+    }
+
+    public var isVideo: Bool {
+        mediaType == 2
+    }
+
+    public var description: String {
+        "MediaUploadEvent(requestId: \(requestId), type: \(type), mediaType: \(mediaType ?? -1))"
+    }
+}
+
 public enum PhotoResponse: CustomStringConvertible, Equatable {
     public enum State: String {
         case success

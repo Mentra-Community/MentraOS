@@ -307,6 +307,24 @@ export type VideoRecordingSuccessStatusEvent =
   | VideoRecordingStartedStatusEvent
   | VideoRecordingStoppedStatusEvent
 
+export type MediaUploadSuccessEvent = {
+  type: "media_success"
+  requestId: string
+  mediaUrl: string
+  mediaType: number
+  timestamp: number
+}
+
+export type MediaUploadErrorEvent = {
+  type: "media_error"
+  requestId: string
+  errorMessage: string
+  mediaType: number
+  timestamp: number
+}
+
+export type MediaUploadEvent = MediaUploadSuccessEvent | MediaUploadErrorEvent
+
 export type GalleryStatusEvent = {
   type: "gallery_status"
   photos: number
@@ -749,6 +767,8 @@ export type BluetoothSdkModuleEvents = {
   photo_response: (event: PhotoResponseEvent) => void
   photo_status: (event: PhotoStatusEvent) => void
   video_recording_status: (event: VideoRecordingStatusEvent) => void
+  media_success: (event: MediaUploadSuccessEvent) => void
+  media_error: (event: MediaUploadErrorEvent) => void
   gallery_status: (event: GalleryStatusEvent) => void
   compatible_glasses_search_stop: (event: CompatibleGlassesSearchStopEvent) => void
   heartbeat_sent: (event: HeartbeatSentEvent) => void
@@ -824,6 +844,8 @@ export type BluetoothSdkEventMap = {
   photo_response: PhotoResponseEvent
   photo_status: PhotoStatusEvent
   video_recording_status: VideoRecordingStatusEvent
+  media_success: MediaUploadSuccessEvent
+  media_error: MediaUploadErrorEvent
   gallery_status: GalleryStatusEvent
   compatible_glasses_search_stop: CompatibleGlassesSearchStopEvent
   swipe_volume_status: SwipeVolumeStatusEvent

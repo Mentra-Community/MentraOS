@@ -242,6 +242,19 @@ data class VideoRecordingStatusEvent(
     val data: Map<String, Any>? get() = stringMapValue(values["data"])
 }
 
+data class MediaUploadEvent(
+    val values: Map<String, Any>,
+) {
+    val type: String get() = stringValue(values, "type").orEmpty()
+    val requestId: String get() = stringValue(values, "requestId").orEmpty()
+    val mediaUrl: String? get() = stringValue(values, "mediaUrl")
+    val errorMessage: String? get() = stringValue(values, "errorMessage")
+    val mediaType: Int? get() = numberValue(values, "mediaType")
+    val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()
+    val isSuccess: Boolean get() = type == "media_success"
+    val isVideo: Boolean get() = mediaType == 2
+}
+
 data class GalleryStatusEvent(
     val values: Map<String, Any>,
 )
