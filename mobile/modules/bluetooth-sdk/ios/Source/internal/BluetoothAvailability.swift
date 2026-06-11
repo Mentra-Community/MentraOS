@@ -27,6 +27,9 @@ final class BluetoothAvailability: NSObject, CBCentralManagerDelegate {
 
     @discardableResult
     func addStateListener(_ listener: @escaping (CBManagerState) -> Void) -> UUID {
+        // `listeners` is unsynchronized; it is only safe because the central
+        // manager queue is `.main` and all callers are main-thread bound.
+        dispatchPrecondition(condition: .onQueue(.main))
         let id = UUID()
         listeners[id] = listener
         listener(state)
@@ -34,6 +37,7 @@ final class BluetoothAvailability: NSObject, CBCentralManagerDelegate {
     }
 
     func removeStateListener(_ id: UUID) {
+        dispatchPrecondition(condition: .onQueue(.main))
         listeners[id] = nil
     }
 
