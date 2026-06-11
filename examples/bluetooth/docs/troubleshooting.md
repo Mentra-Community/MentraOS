@@ -26,7 +26,11 @@ If your app also uses Firebase with static frameworks, Firebase modular header c
 - Run `bunx expo prebuild` after adding the SDK plugin to `app.json`.
 - Confirm `@mentra/bluetooth-sdk` is installed in the app that is being prebuilt.
 - On iOS, rerun `bunx expo run:ios` after changing native module dependencies.
-- If you are testing a local SDK package, set `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` to the same package path you installed with Bun.
+- If you are testing a local SDK package, symlink
+  `node_modules/@mentra/bluetooth-sdk` to the local source checkout and set
+  `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` to that same path. The symlink is for Expo
+  native autolinking; the environment variable is for Metro JavaScript
+  resolution.
 
 ## Bluetooth Permission Problems
 

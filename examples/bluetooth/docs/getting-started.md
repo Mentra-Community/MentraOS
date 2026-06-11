@@ -137,12 +137,31 @@ bunx expo run:android
 
 The React Native starter example also includes `bun run android:dev`, which starts Metro first, forwards the device's `localhost:8081` over USB, installs the native app, and opens the Expo dev-client URL so the first launch does not land on the blank launcher screen.
 
-For unreleased SDK development, install a local package path and set the package path for Metro/native resolution:
+For unreleased React Native SDK development, point the installed package folder
+at your local SDK checkout and set the same path for Metro. This works even
+when the local source package version does not match the published version in
+`package.json`, because Expo native autolinking reads the symlinked package
+folder directly.
 
 ```bash
-bun add --no-save /path/to/MentraOS/mobile/modules/bluetooth-sdk
-MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk bunx expo run:ios
+cd examples/react-native
+SDK_PATH="/path/to/MentraOS-dev/mobile/modules/bluetooth-sdk"
+
+mkdir -p node_modules/@mentra
+rm -rf node_modules/@mentra/bluetooth-sdk
+ln -s "$SDK_PATH" node_modules/@mentra/bluetooth-sdk
+
+export MENTRA_BLUETOOTH_SDK_PACKAGE_PATH="$SDK_PATH"
+bunx expo run:ios
+# or
+bun run android:dev
 ```
+
+Do not use `bun add --no-save` for this override. The local SDK package has the
+same package name as the published dependency, so Bun can treat the override as a
+self-dependency loop. If you run `bun install`, recreate the symlink before
+testing from source again. To return to the published package, remove the
+symlink and run `bun install`.
 
 ## Permissions
 
