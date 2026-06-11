@@ -21,14 +21,14 @@ The public SwiftPM repository is:
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-In Xcode, choose **File > Add Package Dependencies**, enter that URL, select version `0.1.10` or newer, and add the `MentraBluetoothSDK` product to your app target.
+In Xcode, choose **File > Add Package Dependencies**, enter that URL, select version `0.1.11` or newer, and add the `MentraBluetoothSDK` product to your app target.
 
 For `Package.swift` consumers:
 
 ```swift
 .package(
   url: "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git",
-  from: "0.1.10"
+  from: "0.1.11"
 )
 ```
 
@@ -45,7 +45,7 @@ For local SDK development, add the package folder directly in Xcode:
 ```
 
 <Warning>
-The SwiftPM package currently builds the core Bluetooth SDK only. It does not build the optional local STT, Nex/SwiftProtobuf, Vuzix/Ultralite, or tar.bz2 extraction code paths.
+The SwiftPM package currently builds the core Bluetooth SDK only. It does not build optional local STT or tar.bz2 extraction code paths.
 </Warning>
 
 ## Permissions
