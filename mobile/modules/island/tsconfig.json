@@ -5,6 +5,8 @@
     "outDir": "./build",
     "baseUrl": ".",
     "paths": {
+      "@mentra/cloud-client": ["../../../cloud-v2/packages/cloud-client/src/index.ts"],
+      "@mentra/cloud-client/*": ["../../../cloud-v2/packages/cloud-client/*"],
       "@mentra/cloud-runtime/protocol": ["../../../cloud-v2/packages/runtime/src/protocol/index.ts"],
       "@mentra/cloud-runtime/protocol/*": ["../../../cloud-v2/packages/runtime/src/protocol/*"]
     }

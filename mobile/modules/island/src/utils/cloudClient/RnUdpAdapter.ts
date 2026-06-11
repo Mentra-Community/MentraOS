@@ -10,8 +10,13 @@
 import dgram from "react-native-udp"
 import type {UdpSocketLike} from "@mentra/cloud-client"
 
+type CloudUdpSocket = ReturnType<typeof dgram.createSocket> & {
+  on(event: "error", cb: (err: Error) => void): void
+  on(event: "message", cb: (msg: Uint8Array) => void): void
+}
+
 export function createCloudUdpSocket(): UdpSocketLike {
-  const socket = dgram.createSocket({type: "udp4"})
+  const socket = dgram.createSocket({type: "udp4"}) as CloudUdpSocket
   let onBytes: ((bytes: Uint8Array) => void) | null = null
 
   socket.on("error", (err: Error) => {
@@ -25,10 +30,6 @@ export function createCloudUdpSocket(): UdpSocketLike {
 
   return {
     send(bytes: Uint8Array, host: string, port: number): void {
-      // react-native-udp accepts a Uint8Array directly and base64-encodes it
-      // internally via the pure-JS `buffer` package, so we avoid
-      // @craftzdog/react-native-buffer (which is backed by the QuickBase64 C++
-      // TurboModule). One less native dependency in the hot audio path.
       socket.send(bytes, 0, bytes.length, port, host, (err?: Error) => {
         if (err) console.warn(`[cloud-client udp] send failed: ${err.message}`)
       })
