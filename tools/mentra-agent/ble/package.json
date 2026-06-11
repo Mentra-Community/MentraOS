@@ -1,0 +1,11 @@
+{
+  "name": "mentra-agent-ble",
+  "private": true,
+  "type": "module",
+  "description": "Desktop BLE bridge to Even Realities glasses (ports the G2 protocol from android_core for the mentra-agent harness)",
+  "dependencies": {
+    "@abandonware/noble": "^1.9.2-26",
+    "tweetnacl": "^1.0.3",
+    "ws": "^8.21.0"
+  }
+}

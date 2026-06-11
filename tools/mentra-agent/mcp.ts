@@ -27,6 +27,19 @@ async function rpc(method: string, params?: unknown): Promise<unknown> {
   return body.result
 }
 
+// The glasses daemon (tools/mentra-agent/ble) holds the live BLE link to the
+// real Even G2 hardware; these tools drive it over its localhost control API.
+const GLASSES_BASE = process.env.GLASSES_DAEMON_URL ?? "http://127.0.0.1:8799"
+async function glasses(method: "GET" | "POST", path: string, body?: unknown): Promise<unknown> {
+  const res = await fetch(`${GLASSES_BASE}${path}`, {
+    method,
+    headers: body ? {"content-type": "application/json"} : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  }).catch(() => null)
+  if (!res) throw new Error(`glasses daemon unreachable on ${GLASSES_BASE} — start it: tools/mentra-agent/ble/gd.sh start`)
+  return res.json()
+}
+
 async function speechPcmBase64(phrase: string): Promise<string> {
   const stamp = `${process.pid}-${phrase.replace(/\W+/g, "").slice(0, 16)}`
   const aiff = `/tmp/mentra-mcp-say-${stamp}.aiff`
@@ -153,6 +166,83 @@ const TOOLS: ToolDef[] = [
       if (a.filter) url.searchParams.set("filter", String(a.filter))
       return (await fetch(url)).json()
     },
+  },
+  {
+    name: "glasses_status",
+    description:
+      "Status of the live BLE link to the REAL Even G2 glasses (via the glasses daemon, no phone): connected, which arms, audio frame count, last text shown. Requires the daemon: tools/mentra-agent/ble/gd.sh start.",
+    inputSchema: {type: "object", properties: {}},
+    run: () => glasses("GET", "/status"),
+  },
+  {
+    name: "glasses_connect",
+    description:
+      "Connect the daemon to the real glasses by factory-serial suffix (e.g. 3248). Glasses must be awake (unfolded) and off the phone (BLE single-central).",
+    inputSchema: {
+      type: "object",
+      properties: {serial: {type: "string"}, waitSeconds: {type: "number"}},
+      required: ["serial"],
+    },
+    run: (a) => glasses("POST", "/connect", {serial: a.serial, waitMs: Number(a.waitSeconds ?? 30) * 1000}),
+  },
+  {
+    name: "glasses_text",
+    description: "Display text on the REAL glasses lens over the live BLE link.",
+    inputSchema: {type: "object", properties: {text: {type: "string"}}, required: ["text"]},
+    run: (a) => glasses("POST", "/text", {text: a.text}),
+  },
+  {
+    name: "glasses_mic",
+    description:
+      "Enable/disable the real glasses microphone (auto-creates a display page first, which the mic requires). Pair with the captions bridge (ble/cap.sh) for transcripts.",
+    inputSchema: {type: "object", properties: {enable: {type: "boolean"}}, required: ["enable"]},
+    run: (a) => glasses("POST", "/mic", {enable: !!a.enable}),
+  },
+  {
+    name: "glasses_brightness",
+    description: "Set the real glasses display brightness (level 0-255, optional auto mode).",
+    inputSchema: {
+      type: "object",
+      properties: {level: {type: "number"}, auto: {type: "boolean"}},
+      required: ["level"],
+    },
+    run: (a) => glasses("POST", "/brightness", {level: Number(a.level), auto: !!a.auto}),
+  },
+  {
+    name: "glasses_image",
+    description:
+      "Display an image on the real G2 lens. Pass bmpBase64 (a 4-bit grayscale BMP) to show your own image, or omit it to render a built-in demo test pattern. width/height/x/y position it (G2 only).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bmpBase64: {type: "string"},
+        width: {type: "number"},
+        height: {type: "number"},
+        x: {type: "number"},
+        y: {type: "number"},
+      },
+    },
+    run: (a) => glasses("POST", "/image", a),
+  },
+  {
+    name: "glasses_info",
+    description: "Query the real glasses for battery %, charging state, and firmware version (works on G1 and G2).",
+    inputSchema: {type: "object", properties: {}},
+    run: () => glasses("GET", "/info"),
+  },
+  {
+    name: "glasses_imu",
+    description:
+      "Enable/disable IMU head-orientation reporting on the real G2 (samples appear in glasses_status.imu). G2 only.",
+    inputSchema: {type: "object", properties: {enable: {type: "boolean"}, freq: {type: "number"}}, required: ["enable"]},
+    run: (a) => glasses("POST", "/imu", {enable: !!a.enable, freq: Number(a.freq ?? 100)}),
+  },
+  {
+    name: "glasses_photo",
+    description:
+      "Capture a photo on a Mentra Live (camera glasses). Returns the glasses' photo_response (success + any error). Mentra Live only.",
+    inputSchema: {type: "object", properties: {size: {type: "string", description: "small|medium|large"}}},
+    run: (a) => glasses("POST", "/photo", {size: a.size ?? "medium"}),
   },
 ]
 

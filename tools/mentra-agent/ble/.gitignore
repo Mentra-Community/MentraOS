@@ -1,0 +1,13 @@
+# BLE bridge — host-specific / generated artifacts. Rebuilt by make-app.sh + npm install.
+node_modules/
+# The wrapper app embeds a COPY of the host's node binary (~100MB, nvm-path specific).
+# Rebuild locally with `./make-app.sh`; never commit the binary.
+MentraBLE.app/Contents/MacOS/
+MentraBLE.app/Contents/_CodeSignature/
+# Keep the Info.plist tracked so the bundle definition is reproducible:
+!MentraBLE.app/Contents/Info.plist
+# scratch
+*.log
+scan-result*.json
+daemon.pid
+photos/

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>MentraBLE</string>
+  <key>CFBundleDisplayName</key><string>Mentra BLE Bridge</string>
+  <key>CFBundleIdentifier</key><string>glass.mentra.ble-bridge</string>
+  <key>CFBundleVersion</key><string>1.0</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleExecutable</key><string>node</string>
+  <key>LSUIElement</key><true/>
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>The MentraOS test harness uses Bluetooth to connect directly to Even Realities glasses for development and QA.</string>
+  <key>NSBluetoothPeripheralUsageDescription</key>
+  <string>The MentraOS test harness uses Bluetooth to connect directly to Even Realities glasses for development and QA.</string>
+</dict>
+</plist>
