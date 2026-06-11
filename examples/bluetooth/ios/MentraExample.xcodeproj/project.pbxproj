@@ -419,7 +419,7 @@
 			repositoryURL = "https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git";
 			requirement = {
 				kind = exactVersion;
-				version = 0.1.11;
+				version = 0.1.12;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

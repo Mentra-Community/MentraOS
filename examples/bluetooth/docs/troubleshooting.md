@@ -16,7 +16,7 @@
 
 ## iOS Swift Package Resolution Fails
 
-Check that your iOS deployment target is at least `15.1`, that the package URL is `https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git`, and that Xcode resolves version `0.1.11` or newer. If Xcode has stale package state, reset package caches and resolve packages again from Xcode.
+Check that your iOS deployment target is at least `15.1`, that the package URL is `https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git`, and that Xcode resolves version `0.1.12` or newer. If Xcode has stale package state, reset package caches and resolve packages again from Xcode.
 
 If your app also uses Firebase with static frameworks, Firebase modular header configuration belongs in your app, not in the Bluetooth SDK.
 
