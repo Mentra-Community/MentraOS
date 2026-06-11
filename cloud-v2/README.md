@@ -29,7 +29,7 @@ cloud-v2/
 ## Quick start
 
 Prerequisites:
-- Bun >= 1.2.0 (`curl -fsSL https://bun.sh/install | bash`)
+- Bun >= 1.3.0 (`curl -fsSL https://bun.sh/install | bash`) — 1.2.x has a node:tls bug that breaks MongoDB Atlas's SNI handshake (the production image pins 1.3.x for the same reason)
 - Docker (for local Redis)
 - Doppler CLI (for secrets; once configured)
 

@@ -21,7 +21,7 @@ const COMPOSE_FILE = TEST_MODE ? "docker-compose.test.yml" : "docker-compose.dev
 const REDIS_CONTAINER = TEST_MODE ? "cloud-v2-redis-test" : "cloud-v2-redis-dev";
 const MONGO_CONTAINER = "cloud-v2-mongo-test";
 const MIN_BUN_MAJOR = 1;
-const MIN_BUN_MINOR = 2;
+const MIN_BUN_MINOR = 3;
 
 function step(msg: string) {
   console.log(`\x1b[2m→\x1b[0m ${msg}`);
