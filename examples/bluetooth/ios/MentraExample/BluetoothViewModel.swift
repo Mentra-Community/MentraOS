@@ -773,11 +773,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 cameraStatus = "Camera: \(message)"
                 throw ExampleActionError(message: message)
             }
-            cameraStatus = "Camera: checking media server before video"
+            cameraStatus = "Camera: checking this app can reach the media server before video"
             do {
                 let reachability = try await checkWebhookReachable(uploadUrl)
-                cameraStatus = "Camera: media server reachable (\(reachability.host)); starting video"
-                append(tag: "LIVE", text: "media server reachable for video \(reachability.healthUrl.absoluteString)")
+                cameraStatus = "Camera: this app reached media server (\(reachability.host)); starting video"
+                append(tag: "LIVE", text: "app reached media server for video \(reachability.healthUrl.absoluteString)")
             } catch {
                 let message = webhookReachabilityErrorMessage(error)
                 cameraStatus = "Camera: media server check failed: \(message)"
@@ -1875,13 +1875,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 throw ExampleActionError(message: "invalid response")
             }
             guard (200 ..< 300).contains(http.statusCode) else {
-                throw ExampleActionError(message: "webhook returned HTTP \(http.statusCode)")
+                throw ExampleActionError(
+                    message: "This app reached \(healthUrl.absoluteString), but the media server returned HTTP \(http.statusCode)."
+                )
             }
             return WebhookReachability(healthUrl: healthUrl, host: healthUrl.host ?? "server")
         } catch let error as ExampleActionError {
             throw error
-        } catch let error as URLError where error.code == .timedOut {
-            throw ExampleActionError(message: "request timed out")
+        } catch let error as URLError {
+            throw ExampleActionError(message: webhookReachabilityErrorMessage(error, healthUrl: healthUrl))
         } catch {
             throw error
         }
@@ -1897,6 +1899,21 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func webhookReachabilityErrorMessage(_ error: Error) -> String {
         error.localizedDescription
+    }
+
+    private func webhookReachabilityErrorMessage(_ error: URLError, healthUrl: URL) -> String {
+        switch error.code {
+        case .timedOut:
+            return "Timed out after 3s while this app tried to GET \(healthUrl.absoluteString). This only checks app-device-to-media-server reachability."
+        case .cannotFindHost:
+            return "This app could not resolve \(healthUrl.host ?? "the media server host") while checking \(healthUrl.absoluteString). Check that the media server URL uses a host this device can reach."
+        case .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet:
+            return "This app could not GET \(healthUrl.absoluteString). Check that the media server is running and that this device can reach that host on the local network."
+        case .appTransportSecurityRequiresSecureConnection:
+            return "iOS blocked \(healthUrl.absoluteString) because App Transport Security requires HTTPS for this host."
+        default:
+            return "This app could not GET \(healthUrl.absoluteString): \(error.localizedDescription)"
+        }
     }
 
     private func applyDisconnectedState(status: String) {

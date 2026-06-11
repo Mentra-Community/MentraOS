@@ -83,12 +83,15 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.URI
+import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.URLDecoder
+import java.net.UnknownHostException
 import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -683,7 +686,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             state = state.copy(cameraStatus = "Camera: enter a valid http:// or https:// media upload URL")
             throw IllegalArgumentException("Enter a valid http:// or https:// media upload URL.")
         }
-        state = state.copy(cameraStatus = "Camera: checking media server before video")
+        state = state.copy(cameraStatus = "Camera: checking this app can reach the media server before video")
         val reachability = try {
             checkWebhookReachable(uploadUrl)
         } catch (error: Throwable) {
@@ -699,8 +702,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             addEvent("LIVE", "media server check failed: $message")
             throw IllegalStateException("Media server check failed: $message", error)
         }
-        state = state.copy(cameraStatus = "Camera: media server reachable (${reachability.host}); starting video")
-        addEvent("LIVE", "media server reachable for video ${reachability.healthUrl}")
+        state = state.copy(cameraStatus = "Camera: this app reached media server (${reachability.host}); starting video")
+        addEvent("LIVE", "app reached media server for video ${reachability.healthUrl}")
 
         val requestId = "video-${System.currentTimeMillis()}"
         activeVideoRequestId = requestId
@@ -2162,12 +2165,31 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             connection.readTimeout = 3000
             val code = connection.responseCode
             if (code !in 200..299) {
-                throw IllegalStateException("webhook returned HTTP $code")
+                throw IllegalStateException(
+                    "This app reached $healthUrl, but the media server returned HTTP $code."
+                )
             }
             connection.inputStream.close()
             WebhookReachability(healthUrl = healthUrl, host = url.host)
-        } catch (error: java.net.SocketTimeoutException) {
-            throw IllegalStateException("request timed out", error)
+        } catch (error: SocketTimeoutException) {
+            throw IllegalStateException(
+                "Timed out after 3s while this app tried to GET $healthUrl. " +
+                    "This only checks app-device-to-media-server reachability.",
+                error,
+            )
+        } catch (error: UnknownHostException) {
+            throw IllegalStateException(
+                "This app could not resolve ${url.host} while checking $healthUrl. " +
+                    "Check that the media server URL uses a host this device can reach.",
+                error,
+            )
+        } catch (error: IOException) {
+            throw IllegalStateException(
+                "This app could not GET $healthUrl. Check that the media server is running " +
+                    "and that this device can reach that host on the local network. " +
+                    "(${error.message ?: error.javaClass.simpleName})",
+                error,
+            )
         } finally {
             connection.disconnect()
         }

@@ -980,11 +980,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         setCameraStatus('Camera: enter a valid http:// or https:// media upload URL');
         throw new Error('Enter a valid http:// or https:// media upload URL.');
       }
-      setCameraStatus('Camera: checking media server before video');
+      setCameraStatus('Camera: checking this app can reach the media server before video');
       try {
         const reachability = await checkWebhookReachable(uploadUrlText);
-        setCameraStatus(`Camera: media server reachable (${reachability.host}); starting video`);
-        addEvent('LIVE', `media server reachable for video ${reachability.uploadUrl ?? reachability.healthUrl}`);
+        setCameraStatus(`Camera: this app reached media server (${reachability.host}); starting video`);
+        addEvent('LIVE', `app reached media server for video ${reachability.uploadUrl ?? reachability.healthUrl}`);
       } catch (error) {
         const message = formatError(error);
         setCameraStatus(`Camera: media server check failed: ${message}`);
@@ -1215,7 +1215,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         signal: controller.signal,
       });
       if (!response.ok) {
-        throw new Error(`webhook returned HTTP ${response.status}`);
+        throw new Error(`This app reached ${healthUrl}, but the media server returned HTTP ${response.status}.`);
       }
       const json = (await response.json().catch(() => ({}))) as {uploadUrl?: string};
       return {
@@ -1224,10 +1224,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         uploadUrl: json.uploadUrl,
       };
     } catch (error) {
-      if (isAbortError(error)) {
-        throw new Error('request timed out');
-      }
-      throw error;
+      throw new Error(webhookReachabilityErrorMessage(error, healthUrl));
     } finally {
       clearTimeout(timeout);
     }
@@ -3684,6 +3681,17 @@ function roiPositionLabel(roiPosition: CameraRoiPosition) {
 
 function formatError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function webhookReachabilityErrorMessage(error: unknown, healthUrl: string) {
+  if (isAbortError(error)) {
+    return `Timed out after 3s while this app tried to GET ${healthUrl}. This only checks app-device-to-media-server reachability.`;
+  }
+  const message = formatError(error);
+  if (message === 'Network request failed' || error instanceof TypeError) {
+    return `This app could not GET ${healthUrl}. Check that the media server is running and that this device can reach that host on the local network.`;
+  }
+  return message;
 }
 
 function isAbortError(error: unknown) {
