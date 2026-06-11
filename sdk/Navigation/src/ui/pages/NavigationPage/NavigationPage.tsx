@@ -230,6 +230,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [isSearching, setIsSearching] = useState(false)
   const [rawMapOpen, setRawMapOpen] = useState(false)
   const [showPivots, setShowPivots] = useState(false)
+  const [showOffRouteLine, setShowOffRouteLine] = useState(false)
   const [showMinimap, setShowMinimap] = useState(false)
   const [devTab, setDevTab] = useState<"nav" | "display">("nav")
 
@@ -754,6 +755,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           // identical end-to-end).
           previewTurns={running ? liveTurns : previewTurns}
           showPivots={showPivots}
+          showOffRouteLine={showOffRouteLine}
           // Idle map shows saved-place pins so the user can see their
           // home / work / starred locations at a glance. Hide them
           // while running so they don't compete with the active route.
@@ -1030,6 +1032,17 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   showPivots ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
                 }`}>
                 {showPivots ? "On" : "Off"}
+              </button>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700">Off-route distance line</span>
+              <button
+                type="button"
+                onClick={() => setShowOffRouteLine((v) => !v)}
+                className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${
+                  showOffRouteLine ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
+                }`}>
+                {showOffRouteLine ? "On" : "Off"}
               </button>
             </div>
             <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
