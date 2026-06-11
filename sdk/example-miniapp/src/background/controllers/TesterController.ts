@@ -70,7 +70,15 @@ export class TesterController {
       if (!module) throw new Error(`unknown iface "${iface}"`)
       const fn = module[method] as ((...a: unknown[]) => unknown) | undefined
       if (typeof fn !== "function") throw new Error(`unknown method "${iface}.${method}"`)
-      return await Promise.resolve(fn.apply(module, args ?? []))
+      try {
+        return await Promise.resolve(fn.apply(module, args ?? []))
+      } catch (err) {
+        // Non-Error rejections (the host's structured {code, message} results)
+        // collapse to "[object Object]" across the RPC boundary — log the full
+        // shape here so failures stay diagnosable.
+        console.log(`[tester] ${iface}.${method} failed:`, JSON.stringify(err))
+        throw err
+      }
     })
   }
 

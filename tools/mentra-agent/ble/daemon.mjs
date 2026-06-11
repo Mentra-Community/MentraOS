@@ -185,6 +185,7 @@ mgr.on("state", (s) => sgcBroadcast({ event: "status", connected: s.connected, d
 
 async function sgcHandle(sock, msg) {
   const reply = (obj) => sgcSend(sock, { id: msg.id, ...obj })
+  if (msg.cmd !== "ping") log(`remote-sgc cmd: ${msg.cmd}${msg.cmd === "photo" ? " " + JSON.stringify(msg.opts || {}).slice(0, 120) : ""}`)
   try {
     switch (msg.cmd) {
       case "ping": return reply({ ok: true, pong: true })

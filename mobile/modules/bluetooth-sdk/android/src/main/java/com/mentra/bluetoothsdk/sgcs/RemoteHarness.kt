@@ -81,6 +81,7 @@ class RemoteHarness : SGCManager() {
                 w.write(line)
                 w.write("\n")
                 w.flush()
+                Bridge.log("REMOTE: tx ${line.take(60)}")
             } catch (e: Exception) {
                 Bridge.log("REMOTE: tx failed (${e.javaClass.simpleName}: ${e.message}); closing socket")
                 try { socket?.close() } catch (_: Exception) {}
@@ -131,6 +132,17 @@ class RemoteHarness : SGCManager() {
                 remoteDevice = o.optString("device", o.optString("match", ""))
                 if (remoteConnected) {
                     Bridge.log("REMOTE: daemon holds real glasses (${remoteDevice}); marking connected")
+                    // Report the UNDERLYING device family as the model so hardware
+                    // capabilities resolve to the real hardware's profile (an
+                    // unknown model falls back to NONE, which silently gates
+                    // display/camera/mic for every miniapp).
+                    val model = when (remoteDevice) {
+                        "g2" -> DeviceTypes.G2
+                        "g1" -> DeviceTypes.G1
+                        "live" -> DeviceTypes.LIVE
+                        else -> type
+                    }
+                    DeviceStore.apply("glasses", "deviceModel", model)
                     DeviceStore.apply("glasses", "fullyBooted", true)
                     DeviceStore.apply("glasses", "connected", true)
                     DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTED)

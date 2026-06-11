@@ -72,7 +72,23 @@ const CLICK_BY_TEXT = (text: string) => `
 const [cmd, ...rest] = process.argv.slice(2)
 const ws = await attach()
 try {
-  if (cmd === "eval") {
+  if (cmd === "watch") {
+    // watch "<click text>" [seconds] — click, then stream the page's console.
+    const secs = Number(rest[1] ?? 6)
+    await call(ws, "Runtime.enable", {})
+    ws.addEventListener("message", (ev: MessageEvent) => {
+      const m = JSON.parse(String(ev.data))
+      if (m.method === "Runtime.consoleAPICalled") {
+        const args = (m.params.args ?? []).map((a: any) => a.value ?? a.description ?? "").join(" ")
+        console.log(`[console.${m.params.type}]`, args.slice(0, 300))
+      }
+      if (m.method === "Runtime.exceptionThrown") {
+        console.log("[exception]", m.params.exceptionDetails?.exception?.description?.slice(0, 300))
+      }
+    })
+    if (rest[0]) console.log(await evalJs(ws, CLICK_BY_TEXT(rest[0])))
+    await new Promise((r) => setTimeout(r, secs * 1000))
+  } else if (cmd === "eval") {
     console.log(JSON.stringify(await evalJs(ws, rest.join(" ")), null, 2))
   } else if (cmd === "click") {
     console.log(await evalJs(ws, CLICK_BY_TEXT(rest.join(" "))))

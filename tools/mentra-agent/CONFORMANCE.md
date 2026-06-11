@@ -7,12 +7,12 @@ AWS us-west-2 dev. Driven via CDP (tools/mentra-agent/cdp.ts).
 
 | iface | status | notes |
 |---|---|---|
-| session.display | testing | Live has no display; checking graceful degradation |
+| session.display | ✅ correctly gated | `showTextWall` returns ok to the miniapp (fire-and-forget); the island's capability arbitration silently drops the event because Mentra Live has `hasDisplay:false`. Graceful: no error, no crash. Root finding: an UNKNOWN deviceModel falls back to NONE capabilities and gates *everything* silently — the RemoteHarness driver now impersonates the underlying family (live/g2/g1) so capabilities resolve to the real hardware. |
 | session.speaker | pending | TTS / play URL — cloud audio service |
 | session.mic | pending | Live mic streaming is an open question |
 | session.transcription | pending | known-good on G2; checking via Live path |
 | session.translation | pending | |
-| session.camera | pending | takePhoto on the REAL Live camera |
+| session.camera | 🔶 in progress | Permission gate works (clean PERMISSION_NOT_DECLARED until CAMERA added to miniapp.json — the example shipped without it despite having a camera tester page). **Major finding:** the local-SDK photo path mints its upload URL from the V1 backend (`POST {backend_url}/api/v2/client/photo/request`); on prod `api.mentra.glass` that endpoint is **HTTP 404** (not deployed) — miniapp photos are broken against prod. It EXISTS on `devapi.mentra.glass` (401 unauth = present); with `backend_url=devapi.mentra.glass` the mint succeeds and the pipeline reaches the SGC driver. Also: cloud-v2's managed-photo service presigns but has no device trigger; the phone coordinator has the trigger but mints from V1 — the two halves of managed photo live in different stacks. |
 | session.stream | pending | managed/unmanaged RTMP |
 | session.input | pending | touchpad/buttons (needs human tap; user AFK) |
 | session.location | pending | emulator GPS |
