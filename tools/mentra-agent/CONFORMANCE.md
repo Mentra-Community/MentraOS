@@ -51,3 +51,12 @@ AWS us-west-2 dev. Driven via CDP (tools/mentra-agent/cdp.ts).
   watchdog fires every 5s forever — re-sending mic-enable. Harmless once sends
   are queued, but the watchdog churn is itself a finding: a mic-less/mic-silent
   device keeps the reinit loop hot.
+
+## Long-session stability (overnight observation)
+
+The local runtime held ONE continuous Soniox transcription session across 4+
+hours of hourly probes (21:54 → 02:02) — every hourly phrase accumulated into a
+single live transcript with no session churn, wedge, or reconnect. This is the
+post-keepalive-fix behavior working over a realistic overnight span. (One probe
+"failed" only because its 30s expect-window closed before the final word
+finalized; the next probe passed.)
