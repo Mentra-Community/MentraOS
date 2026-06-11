@@ -205,6 +205,32 @@ export function updateTextMessage(containerID, content, magic = 0) {
   return evenHubMessage(EvenHubCmd.UPDATE_TEXT_DATA, 9, upgrade.buf(), magic)
 }
 
+// REBUILD_PAGE re-declares the page's containers on the live page. Required for
+// image containers: a repeat CREATE_STARTUP_PAGE does NOT rebuild firmware
+// state, so containers added that way never exist and UPDATE_IMAGE_RAW_DATA
+// fails with errorCode 5 (community RE: g2-kit-unofficial, r1-re captures).
+export function rebuildPageMessage(textProps, imageProps = [], magic = 0, appId = null) {
+  const total = textProps.length + imageProps.length
+  const msg = createStartupPageContainer(total, textProps, imageProps)
+  return evenHubMessage(EvenHubCmd.REBUILD_PAGE, 7, msg, magic, appId)
+}
+
+export function shutdownMessage(exitMode = 0, magic = 0) {
+  const sub = new PB().int32(1, exitMode).buf()
+  return evenHubMessage(EvenHubCmd.SHUTDOWN_PAGE, 11, sub, magic)
+}
+
+// The default full-screen event-capture text container the app seeds into every
+// page (the firmware appears to require an event-capture container).
+export function defaultTextProp(content = " ") {
+  return textContainerProperty({
+    x: 0, y: 0, width: 576, height: 288,
+    borderWidth: 0, borderColor: 0, borderRadius: 0, paddingLength: 4,
+    containerID: 1, containerName: "text-1", isEventCapture: true,
+    content,
+  })
+}
+
 export function heartbeatMessage(magic = 0) {
   return evenHubMessage(EvenHubCmd.HEARTBEAT, 14, Buffer.alloc(0), magic)
 }

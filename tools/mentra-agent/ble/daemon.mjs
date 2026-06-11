@@ -44,6 +44,9 @@ const mgr = new G2Manager()
 mgr.on("log", (m) => log(m))
 mgr.on("state", (s) => log(`state: ${JSON.stringify(s)}`))
 mgr.on("gesture", (g) => log(`gesture: ${g.gesture}`))
+mgr.on("notify", (n) => {
+  if (n.serviceId === 0xe0) log(`evenhub-reply ${n.side} cmd=${n.cmd} ${n.hex}`)
+})
 mgr.on("status", (s) => log(`device: battery=${s.battery ?? "?"} charging=${s.charging ?? "?"} fw=${s.rightFirmware ?? s.leftFirmware ?? "?"}`))
 mgr.on("photo", (p) => log(`photo: ${JSON.stringify(p)}`))
 mgr.on("liveEvent", (e) => log(`live: ${e.type ?? JSON.stringify(e)}`))
@@ -297,7 +300,7 @@ const server = http.createServer(async (req, res) => {
       const height = Number(b.height ?? 100)
       // Use a supplied 4-bit BMP (base64), else generate a demo test pattern.
       const img = b.bmpBase64 ? Buffer.from(b.bmpBase64, "base64") : bmp.encode4BitBmp(bmp.demoImage(width, height))
-      return json(res, 200, await mgr.displayImage(img, { x: Number(b.x ?? 188), y: Number(b.y ?? 44), width, height }))
+      return json(res, 200, await mgr.displayImage(img, { x: Number(b.x ?? 188), y: Number(b.y ?? 44), width, height, label: b.label, imageOnly: !!b.imageOnly, settleMs: Number(b.settleMs ?? 300) }))
     }
     if (req.method === "POST" && url === "/imu") {
       const b = await body(req)

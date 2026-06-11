@@ -190,6 +190,7 @@ export class G2Manager extends EventEmitter {
     }
     p.once("disconnect", () => this._onDisconnect(side))
     this.arms[side] = { peripheral: p, writeChar, audioChar }
+    this.log(`${side} mtu: ${p.mtu ?? "unknown"}`)
     this.log(`${side} ready`)
   }
 
@@ -448,25 +449,40 @@ export class G2Manager extends EventEmitter {
   // Display a 4-bit BMP (Buffer) on the lens, in a container of the given
   // geometry. Creates an image page, then streams the bitmap in 4096-byte
   // fragments (200ms apart, per G2.kt sendImageData).
-  async displayImage(bmp, { x = 188, y = 44, width = 200, height = 100 } = {}) {
+  async displayImage(bmp, { x = 188, y = 44, width = 200, height = 100, label = " ", imageOnly = false, settleMs = 300 } = {}) {
     if (!this.connected) throw new Error("not connected")
     if (this.device !== "g2") throw new Error("image display is wired for G2 (G1 bitmap is in g1.mjs; Live has no display)")
+    // Firmware limits (community RE): container width 20-288, height 20-144,
+    // name <= 14 chars, fragments <= 4096B, BMP dims must equal container dims.
+    if (width < 20 || width > 288 || height < 20 || height > 144)
+      throw new Error(`G2 image container must be 20-288 x 20-144 (got ${width}x${height})`)
     const id = 10
     const name = `img-${id}`
     const prop = g2.imageContainerProperty({ x, y, width, height, containerID: id, containerName: name })
-    await this._evenHub(g2.imagePageMessage(prop, this.send.nextMagic()))
-    this.pageCreated = false // image page replaces any text page
-    await sleep(300)
-    const session = (this._imgSession = (this._imgSession || 0) + 1)
+    const textProps = imageOnly ? [] : [g2.defaultTextProp(label)]
+    // The image container must be declared via REBUILD_PAGE on a live page —
+    // a repeat CREATE does not rebuild firmware state and image data then
+    // fails with errorCode 5. So: ensure a page exists, then REBUILD with
+    // text + image containers, settle, then stream fragments.
+    if (!this.pageCreated) {
+      await this._evenHub(g2.defaultTextPage(label, this.send.nextMagic()))
+      this.pageCreated = true
+      await sleep(300)
+    }
+    await this._evenHub(g2.rebuildPageMessage(textProps, [prop], this.send.nextMagic()))
+    await sleep(settleMs)
+    // Sessions wedge after any failed stream; advance by 2 to skip inherited state.
+    const session = (this._imgSession = (this._imgSession || 40) + 2)
     const FRAG = 4096
     let frag = 0
     for (let off = 0; off < bmp.length; off += FRAG) {
       const chunk = bmp.subarray(off, Math.min(off + FRAG, bmp.length))
+      // unique magic per fragment: it is the firmware's ack-correlation key
       await this._evenHub(g2.updateImageMessage(id, name, session, bmp.length, frag, chunk, this.send.nextMagic()))
       frag++
       await sleep(200)
     }
-    return { ok: true, bytes: bmp.length, fragments: frag, geometry: { x, y, width, height } }
+    return { ok: true, bytes: bmp.length, fragments: frag, session, geometry: { x, y, width, height } }
   }
 
   async setImu(enable, freq = 100) {
