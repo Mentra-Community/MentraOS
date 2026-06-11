@@ -5,10 +5,10 @@
  *   miniapp → SDK → LocalMiniappRuntime → photo runtime hook
  *          → coordinator.takePhoto(packageName, opts)
  *            ├── (precheck) glasses connected + hasCamera
- *            ├── v2PhotoApi.requestPhoto → {requestId, uploadUrl, uploadToken}
- *            ├── BluetoothSdk.requestPhoto(requestId, packageName, size, uploadUrl, uploadToken, compress, sound)
+ *            ├── cloudClient.startManagedPhoto → {requestId, uploadUrl, readUrl}  (cloud-v2 runtime presign)
+ *            ├── BluetoothSdk.requestPhoto(requestId, packageName, size, uploadUrl, compress, sound)
  *            └── race:
- *                  - v2PhotoApi.pollUntilReady(requestId) resolves on /upload
+ *                  - cloudClient.awaitManagedPhotoReady(requestId) resolves on photo.ready push
  *                  - BluetoothSdk.requestPhoto rejects if terminal photo_response is an error
  *                  - handlePhotoError(requestId, code, message) rejects if MantleManager observes
  *                    the same BLE photo_response error before the native promise crosses the bridge
@@ -21,7 +21,8 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {getRuntimeHooks} from "@mentra/island"
 
-import {freePhoto, pollUntilReady, requestPhoto, type PhotoResult} from "./v2PhotoApi"
+import {cloudClient} from "@/services/cloudClient"
+import {type PhotoResult} from "./v2PhotoApi"
 
 export interface PhotoOpts {
   size?: "small" | "medium" | "large" | "full"
@@ -83,15 +84,18 @@ export class PhonePhotoCoordinator {
       throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected")
     }
 
-    // 1) Mint token + upload URL.
+    // 1) Presign via the cloud-v2 managed-photo service. Local miniapps use
+    //    ONLY the cloud-v2 path: the runtime presigns upload+read URLs and the
+    //    phone (as the device controller) delivers the bytes; the legacy
+    //    backend_url mint is gone from this flow.
     let requestId: string
     let uploadUrl: string
-    let uploadToken: string
+    let readUrl: string
     try {
-      const r = await requestPhoto()
+      const r = await cloudClient.startManagedPhoto({size: opts.size ?? "medium"})
       requestId = r.requestId
       uploadUrl = r.uploadUrl
-      uploadToken = r.uploadToken
+      readUrl = r.readUrl
     } catch (err) {
       throw this.toPhotoError(err, "PHOTO_REQUEST_FAILED")
     }
@@ -117,7 +121,7 @@ export class PhonePhotoCoordinator {
         appId: packageName,
         size: opts.size ?? "medium",
         webhookUrl: uploadUrl,
-        authToken: uploadToken,
+        authToken: null,
         compress: toNativeCompression(opts.compress),
         save: opts.saveToGallery ?? false,
         sound: opts.sound ?? true,
@@ -127,25 +131,21 @@ export class PhonePhotoCoordinator {
         if (!e) return
         e.abort.abort()
         e.reject(this.toPhotoError(err, "BLE_SEND_FAILED"))
-        // Best-effort free the slot on cloud — saves orphan slots.
-        void freePhoto(requestId)
       })
     } catch (err) {
       this.activeRequests.delete(requestId)
-      // Best-effort free the slot on cloud — saves orphan slots.
-      void freePhoto(requestId)
       throw this.toPhotoError(err, "BLE_SEND_FAILED")
     }
 
-    // 4) Kick off the long-poll. settleFromPoll() resolves or rejects via
-    //    the entry; handlePhotoError races against it and uses the same
-    //    entry to reject first.
-    pollUntilReady(requestId, abort.signal)
+    // 4) Await the runtime's photo.ready push (replaces the legacy long-poll).
+    //    handlePhotoError races against it and uses the same entry to reject
+    //    first.
+    cloudClient
+      .awaitManagedPhotoReady(requestId)
       .then((res) => {
         const e = this.activeRequests.get(requestId)
         if (!e) return // already settled by handlePhotoError
-        if (res.kind === "ready") e.resolve(res.result)
-        else e.reject(new PhotoError(res.code, res.message))
+        e.resolve({photoUrl: res.readUrl ?? readUrl, mimeType: "image/jpeg", size: -1})
       })
       .catch((err) => {
         const e = this.activeRequests.get(requestId)
@@ -181,8 +181,7 @@ export class PhonePhotoCoordinator {
     // Abort the in-flight long-poll first so we don't double-resolve.
     entry.abort.abort()
     entry.reject(new PhotoError(errorCode || "GLASSES_ERROR", errorMessage || "Glasses error"))
-    // Best-effort: tell cloud to drop the (now-orphan) slot.
-    void freePhoto(requestId)
+    // cloud-v2 pending photo requests TTL out on their own; nothing to free.
   }
 
   private toPhotoError(err: unknown, fallbackCode: string): PhotoError {

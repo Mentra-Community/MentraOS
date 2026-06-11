@@ -113,20 +113,43 @@ cameraApi.delete("/stream/:id", async (c) => {
 // the provider. They are unauthenticated dev endpoints (the "presigned" local
 // URL is not actually signed), which is acceptable for local dev / CI.
 
-cameraApi.put("/blob/:key{.+}", async (c) => {
+async function readUploadBody(c: Context): Promise<{
+  bytes: Uint8Array;
+  contentType: string;
+}> {
+  const contentType = c.req.header("content-type") ?? "application/octet-stream";
+  // Glasses firmware uploads multipart/form-data (a "photo" file part) rather
+  // than a raw body; accept both so devices can hit the local upload endpoint
+  // directly. Presigned r2/s3 URLs remain PUT-only — this is local-provider
+  // convenience for dev and CI.
+  if (contentType.startsWith("multipart/form-data")) {
+    const form = await c.req.formData();
+    const values = [...form.values()] as unknown[];
+    const file = values.find((v): v is File => typeof v !== "string" && typeof (v as Blob)?.arrayBuffer === "function");
+    if (!file) throw new Error("multipart upload missing a file part");
+    return { bytes: new Uint8Array(await file.arrayBuffer()), contentType: file.type || "image/jpeg" };
+  }
+  return { bytes: new Uint8Array(await c.req.arrayBuffer()), contentType };
+}
+
+async function handleBlobUpload(c: Context) {
   const provider = getStorageProvider();
   if (!provider.servesBytes || !provider.put) {
     return c.json({ error: "blob upload not served by this provider" }, 404);
   }
   const key = c.req.param("key");
-  const bytes = new Uint8Array(await c.req.arrayBuffer());
-  const contentType = c.req.header("content-type") ?? "application/octet-stream";
+  if (!key) return c.json({ error: "missing key" }, 400);
+  const { bytes, contentType } = await readUploadBody(c);
   await provider.put(key, bytes, contentType);
   // The runtime served the upload, so completion is known now.
   await camera.completeUpload(key);
   logger.info({ key, bytes: bytes.byteLength }, "local blob uploaded");
   return c.body(null, 204);
-});
+}
+
+cameraApi.put("/blob/:key{.+}", handleBlobUpload);
+// Glasses firmware POSTs multipart; accept it on the same route.
+cameraApi.post("/blob/:key{.+}", handleBlobUpload);
 
 cameraApi.get("/blob/:key{.+}", async (c) => {
   const provider = getStorageProvider();

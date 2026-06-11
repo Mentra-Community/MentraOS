@@ -281,6 +281,16 @@ function buildAdapter(): CloudRuntimeAdapter {
  * in.
  */
 export const cloudClient = {
+  /** Device-side managed photo (cloud-v2): presign now, deliver bytes, await ready. */
+  startManagedPhoto(opts: Record<string, unknown> = {}) {
+    if (!client) throw new Error("cloud client not connected")
+    return client.runtime.startManagedPhoto(opts)
+  },
+  awaitManagedPhotoReady(requestId: string) {
+    if (!client) throw new Error("cloud client not connected")
+    return client.runtime.awaitManagedPhotoReady(requestId)
+  },
+
   /**
    * Construct (once) and connect the CloudClient, returning the runtime adapter
    * the island runtime wires in. Idempotent: repeated calls return the same
