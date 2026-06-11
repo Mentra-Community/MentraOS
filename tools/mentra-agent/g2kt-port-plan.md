@@ -41,5 +41,14 @@ File: mobile/modules/bluetooth-sdk/android/src/main/java/com/mentra/bluetoothsdk
   NOT possible for this path (app must own the BLE link) — needs a phone test
   or the user's G2 freed from the daemon.
 
-Status: NOT started in app code (chip task_e6e5cbb9 also covers this).
-Harness-side reference implementation is complete and human-verified.
+Status (2026-06-11 ~13:30): G2.kt items DONE in commit 7824a34b9 — ID pool
+2-5, sendImageData single-fragment guard + session+=2, createPageWithContainers
+owns page via text-only CREATE then declares containers via REBUILD.
+REMAINING: (a) displayBitmap strip tiling for BMPs > 4096B (slice the
+grayscale canvas into <=4 horizontal strip containers, one BMP each — mirror
+manager.mjs displayImageTiled); (b) optional Floyd-Steinberg dither in
+convertToG2Bmp; (c) mirror all changes into ios/Source/sgcs/G2.swift;
+(d) compile check (cd mobile && bun expo prebuild already done previously;
+gradle compile via android studio/CI — at minimum kotlin syntax review);
+(e) hardware verify needs the app owning the G2 (free it from the daemon).
+Chip task_e6e5cbb9 covers the same ground — dismiss or point it at this plan.
