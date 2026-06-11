@@ -19,12 +19,21 @@
  * internal stack change (effects keyed on depth) — the host always wins.
  */
 
-import {useCallback, useEffect, useRef, useState} from "react"
-import {View} from "react-native"
+import {useCallback, useEffect, useRef, useState, type ReactNode} from "react"
+import {Dimensions, Platform, StyleSheet, View} from "react-native"
+import {Gesture, GestureDetector} from "react-native-gesture-handler"
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  type SharedValue,
+} from "react-native-reanimated"
 
 import CapsuleMenu from "@/effects/CapsuleMenu"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {offlineAppRegistry} from "@/components/miniapp/offlineAppRegistry"
+import {useAppTheme} from "@/contexts/ThemeContext"
 import {useCapsuleStore} from "@/stores/capsule"
 import {useNavigationStore, type NavInterceptor} from "@/stores/navigation"
 import {BgTimer, useAppStatusStore} from "@mentra/island"
@@ -44,6 +53,14 @@ interface StackEntry {
   params?: any
 }
 
+// Internal pop swipe — same feel/thresholds as the Compositor's edge swipe
+// (see Compositor.tsx for the rationale behind each value).
+const EDGE_HIT_WIDTH = 24
+const COMMIT_FRACTION = 0.5
+const COMMIT_VELOCITY = 500
+const MIN_FLICK_TRANSLATION = 12
+const MAX_COMMIT_VELOCITY = 3000
+
 export default function OfflineAppHost({packageName, appName, iconUrl, onExit, onShouldCapture}: OfflineAppHostProps) {
   const def = offlineAppRegistry[packageName]
 
@@ -54,6 +71,8 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
 
   const viewShotRef = useRef<View | null>(null)
   const setForceGestureEnabled = useNavigationStore((s) => s.setForceGestureEnabled)
+
+  const {theme} = useAppTheme()
 
   // Latest-callback refs so the mount-once interceptor never closes over
   // stale props.
@@ -160,13 +179,76 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
     }
   }, [packageName, appName, iconUrl, depth])
 
-  // Compositor edge-swipe backgrounds the app only from the root screen;
-  // deeper screens use back (header/hardware) to pop, like LocalMiniappView
-  // does with WebView history.
+  // The Compositor's own edge swipe (minimize-to-home) is only armed at the
+  // root screen; deeper screens get the host's pop swipe below instead.
   useEffect(() => {
     setForceGestureEnabled(depth === 1)
     return () => setForceGestureEnabled(false)
   }, [depth, setForceGestureEnabled])
+
+  // Interactive iOS pop swipe for depth > 1 (e.g. appearance → main): the top
+  // screen follows the finger and slides off, revealing the screen beneath
+  // (which stays mounted behind it). Commit criteria mirror the Compositor's
+  // minimize swipe so the two gestures feel identical.
+  const screenWidth = Dimensions.get("window").width
+  const popTranslateX = useSharedValue(0)
+  // Index of the entry the gesture is dragging. The transform binds to THIS
+  // index (not "whoever is top"), so after a committed pop the outgoing
+  // screen stays parked off-screen until React unmounts it — resetting the
+  // translation before the unmount flashed the old screen back over the
+  // revealed one for a frame.
+  const popTargetIndex = useSharedValue(-1)
+  const popTop = useCallback(() => {
+    setStack((s) => (s.length > 1 ? s.slice(0, -1) : s))
+  }, [])
+
+  // Clear the gesture values only after the pop has committed; by then the
+  // popped index no longer exists, so nothing visibly snaps.
+  useEffect(() => {
+    popTargetIndex.value = -1
+    popTranslateX.value = 0
+  }, [depth, popTargetIndex, popTranslateX])
+
+  const topIndex = depth - 1
+  const popSwipeGesture = Gesture.Pan()
+    .activeOffsetX(10)
+    .failOffsetY([-15, 15])
+    .onStart(() => {
+      popTargetIndex.value = topIndex
+    })
+    .onUpdate((e) => {
+      popTranslateX.value = Math.min(screenWidth, Math.max(0, e.translationX))
+    })
+    .onEnd((e) => {
+      let committed =
+        e.translationX > screenWidth * COMMIT_FRACTION ||
+        (e.velocityX > COMMIT_VELOCITY && e.translationX > MIN_FLICK_TRANSLATION)
+      if (e.velocityX < -100) committed = false
+
+      if (committed) {
+        const velocity = Math.min(Math.max(e.velocityX, 0), MAX_COMMIT_VELOCITY)
+        popTranslateX.value = withSpring(
+          screenWidth,
+          {damping: 50, stiffness: 800, velocity, overshootClamping: true},
+          (finished) => {
+            if (finished) runOnJS(popTop)()
+          },
+        )
+      } else {
+        popTranslateX.value = withSpring(
+          0,
+          {
+            velocity: e.velocityX,
+            damping: 50,
+            stiffness: 800,
+            overshootClamping: true,
+          },
+          (finished) => {
+            if (finished) popTargetIndex.value = -1
+          },
+        )
+      }
+    })
 
   if (!def) {
     console.error(`OfflineAppHost: no registry entry for ${packageName}`)
@@ -174,19 +256,75 @@ export default function OfflineAppHost({packageName, appName, iconUrl, onExit, o
   }
 
   return (
-    <View style={{flex: 1}} ref={viewShotRef} collapsable={false}>
+    // Opaque themed backdrop: the Compositor's Screen wrapper is transparent
+    // (so its scale animation reveals home behind the overlay), but liquid
+    // glass surfaces in the hosted screens sample whatever is behind them —
+    // without this they'd pick up the home screen instead of the app
+    // background they sat on when pushed as routes.
+    <View style={{flex: 1, backgroundColor: theme.colors.background}} ref={viewShotRef} collapsable={false}>
       {stack.map((entry, i) => {
         const RouteComponent = def.routes[entry.path]
         if (!RouteComponent) return null
+        const isTop = i === depth - 1
+        // The entry directly beneath the top stays visible (fully covered by
+        // the opaque top screen) so the pop swipe reveals it mid-gesture.
+        const isUnderTop = i === depth - 2
         return (
           // Keep every entry mounted (hidden when not top) so sub-screen
           // state survives back navigation, like a native stack.
-          <View key={`${entry.path}-${i}`} style={{flex: 1, display: i === depth - 1 ? "flex" : "none"}}>
+          <HostStackEntry
+            key={`${entry.path}-${i}`}
+            index={i}
+            visible={isTop || isUnderTop}
+            popTargetIndex={popTargetIndex}
+            popTranslateX={popTranslateX}>
             <RouteComponent />
-          </View>
+          </HostStackEntry>
         )
       })}
+      {depth > 1 && Platform.OS === "ios" && (
+        <GestureDetector gesture={popSwipeGesture}>
+          <View
+            style={{
+              position: "absolute",
+              top: 0,
+              bottom: 0,
+              left: 0,
+              width: EDGE_HIT_WIDTH,
+              zIndex: 10,
+            }}
+          />
+        </GestureDetector>
+      )}
       <CapsuleMenu forceShow={true} />
     </View>
+  )
+}
+
+/**
+ * One mounted screen of the host's internal stack. Owns its own animated
+ * style so the pop translation applies only to the entry whose index the
+ * gesture targeted — see popTargetIndex above.
+ */
+function HostStackEntry({
+  index,
+  visible,
+  popTargetIndex,
+  popTranslateX,
+  children,
+}: {
+  index: number
+  visible: boolean
+  popTargetIndex: SharedValue<number>
+  popTranslateX: SharedValue<number>
+  children: ReactNode
+}) {
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{translateX: popTargetIndex.value === index ? popTranslateX.value : 0}],
+  }))
+  return (
+    <Animated.View style={[StyleSheet.absoluteFill, animatedStyle, {display: visible ? "flex" : "none"}]}>
+      {children}
+    </Animated.View>
   )
 }
