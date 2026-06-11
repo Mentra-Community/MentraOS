@@ -23,8 +23,6 @@ replace the presence check in `src/index.ts` with signature verification of a
 signed session token. Until then, the **real abuse guardrail is the hard GCP
 quota cap + API restriction** on the Places key.
 
-See `issues/proxy-trust-model.md` for the full reasoning.
-
 ## Routes
 
 | Method | Path | Forwards to |

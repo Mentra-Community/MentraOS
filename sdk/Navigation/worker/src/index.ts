@@ -15,8 +15,7 @@
  *   and anyone can forge. It exists purely as the swap-in seam for the real
  *   auth layer later (verify a signed session token here instead of checking
  *   presence). Until then, the ACTUAL abuse guardrail is the hard GCP quota
- *   cap + API restriction on GOOGLE_NAV_PLACES_KEY. See:
- *   issues/proxy-trust-model.md
+ *   cap + API restriction on GOOGLE_NAV_PLACES_KEY.
  *
  * Egress allowlist:
  *   The Worker ONLY ever forwards to places.googleapis.com. This prevents the

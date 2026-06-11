@@ -16,7 +16,7 @@
  */
 
 import { Hono } from "hono";
-import { clientAuth, requireUserSession } from "../middleware/client.middleware";
+import { clientAuth } from "../middleware/client.middleware";
 import { logger as rootLogger } from "../../../services/logging/pino-logger";
 import type { AppEnv, AppContext } from "../../../types/hono";
 
@@ -44,8 +44,12 @@ const app = new Hono<AppEnv>();
 // Routes
 // ============================================================================
 
-app.post("/route", clientAuth, requireUserSession, computeRoute);
-app.post("/reverse-geocode", clientAuth, requireUserSession, reverseGeocode);
+// clientAuth only — deliberately NO requireUserSession. These are stateless
+// REST pass-throughs that need identity, not a live WebSocket session: a
+// route request must still work while the app's WS is down/reconnecting
+// (e.g. right after app resume), where a session requirement would 503.
+app.post("/route", clientAuth, computeRoute);
+app.post("/reverse-geocode", clientAuth, reverseGeocode);
 
 // ============================================================================
 // Handlers
@@ -59,7 +63,7 @@ app.post("/reverse-geocode", clientAuth, requireUserSession, reverseGeocode);
  * routeModifiers, polylineQuality, ...). Returns the Routes API JSON verbatim.
  */
 async function computeRoute(c: AppContext) {
-  const userSession = c.get("userSession")!;
+  const email = c.get("email")!;
   const reqLogger = c.get("logger") || logger;
 
   const apiKey = process.env.GOOGLE_NAV_API_KEY;
@@ -86,14 +90,20 @@ async function computeRoute(c: AppContext) {
 
     const text = await res.text();
     if (!res.ok) {
-      reqLogger.warn({ status: res.status }, `Routes API error for user ${userSession.userId}`);
+      // Google's error body carries the useful detail (INVALID_ARGUMENT,
+      // malformed waypoints, ...) — log it truncated so failures are
+      // debuggable, but keep the client response generic.
+      reqLogger.warn(
+        { status: res.status, body: text.slice(0, 500) },
+        `Routes API error for user ${email}`,
+      );
       return c.json({ success: false, message: `Routes API ${res.status}` }, 502);
     }
 
     // Pass Google's JSON through unchanged; the client decodes it.
     return c.body(text, 200, { "Content-Type": "application/json" });
   } catch (error) {
-    reqLogger.error(error, `Error proxying Routes API for user ${userSession.userId}`);
+    reqLogger.error(error, `Error proxying Routes API for user ${email}`);
     return c.json({ success: false, message: "Failed to compute route" }, 500);
   }
 }
@@ -106,7 +116,7 @@ async function computeRoute(c: AppContext) {
  * Returns the Geocoding API JSON verbatim.
  */
 async function reverseGeocode(c: AppContext) {
-  const userSession = c.get("userSession")!;
+  const email = c.get("email")!;
   const reqLogger = c.get("logger") || logger;
 
   const apiKey = process.env.GOOGLE_NAV_API_KEY;
@@ -130,13 +140,17 @@ async function reverseGeocode(c: AppContext) {
     const res = await fetch(url);
     const text = await res.text();
     if (!res.ok) {
-      reqLogger.warn({ status: res.status }, `Geocoding API error for user ${userSession.userId}`);
+      // Log Google's error detail (truncated); keep the client response generic.
+      reqLogger.warn(
+        { status: res.status, body: text.slice(0, 500) },
+        `Geocoding API error for user ${email}`,
+      );
       return c.json({ success: false, message: `Geocoding API ${res.status}` }, 502);
     }
 
     return c.body(text, 200, { "Content-Type": "application/json" });
   } catch (error) {
-    reqLogger.error(error, `Error proxying Geocoding API for user ${userSession.userId}`);
+    reqLogger.error(error, `Error proxying Geocoding API for user ${email}`);
     return c.json({ success: false, message: "Failed to reverse-geocode" }, 500);
   }
 }

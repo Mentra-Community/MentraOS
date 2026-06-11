@@ -1,8 +1,8 @@
 /**
  * Places client — talks to Google Places (New) Autocomplete + Details
- * THROUGH the secret-proxy Worker, so the Google API key never ships in
- * this bundle. The Worker holds the key and forwards to Google.
- * (See cloud/workers/secret-proxy + issues/proxy-trust-model.md.)
+ * THROUGH the secret-proxy Worker (sdk/Navigation/worker), so the Google
+ * API key never ships in this bundle. The Worker holds the key and
+ * forwards to Google.
  *
  * Auth is a placeholder: we send an `X-User-Email` header. When a real
  * logged-in session exists, `session.userId` carries it; otherwise we fall
