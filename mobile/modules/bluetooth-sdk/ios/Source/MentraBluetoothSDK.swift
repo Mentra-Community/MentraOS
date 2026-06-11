@@ -151,6 +151,7 @@ public final class MentraBluetoothSDK {
 
     private let configuration: MentraBluetoothSDKConfiguration
     private var discoveredDeviceNames = Set<String>()
+    private var bluetoothAvailabilityListenerId: UUID?
     private var bridgeEventSinkId: String?
     private var storeListenerId: String?
     private let defaultDeviceKeys: Set<String> = ["default_wearable", "device_name", "device_address"]
@@ -175,7 +176,11 @@ public final class MentraBluetoothSDK {
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
         self.configuration = configuration
-        _ = BluetoothAvailability.shared
+        bluetoothAvailabilityListenerId = BluetoothAvailability.shared.addStateListener { [weak self] state in
+            Task { @MainActor [weak self] in
+                self?.handleBluetoothAvailability(state)
+            }
+        }
         bridgeEventSinkId = Bridge.addEventSink { [weak self] eventName, data in
             Task { @MainActor [weak self] in
                 self?.dispatchBridgeEvent(eventName, data)
@@ -993,6 +998,10 @@ public final class MentraBluetoothSDK {
 
     public func invalidate() {
         stopStreamKeepAliveMonitor()
+        if let bluetoothAvailabilityListenerId {
+            BluetoothAvailability.shared.removeStateListener(bluetoothAvailabilityListenerId)
+            self.bluetoothAvailabilityListenerId = nil
+        }
         if let bridgeEventSinkId {
             Bridge.removeEventSink(bridgeEventSinkId)
             self.bridgeEventSinkId = nil
@@ -1002,6 +1011,40 @@ public final class MentraBluetoothSDK {
             self.storeListenerId = nil
         }
         delegate = nil
+    }
+
+    private func handleBluetoothAvailability(_ state: CBManagerState) {
+        switch state {
+        case .poweredOff, .resetting, .unauthorized, .unsupported:
+            cancelActiveScanSessions(reason: .cancelled)
+            clearBluetoothDiscoveryState()
+            if glassesStatus.connected || glassesStatus.connectionState == .connected {
+                DeviceManager.shared.disconnect()
+            }
+        case .poweredOn, .unknown:
+            break
+        @unknown default:
+            cancelActiveScanSessions(reason: .cancelled)
+            clearBluetoothDiscoveryState()
+            if glassesStatus.connected || glassesStatus.connectionState == .connected {
+                DeviceManager.shared.disconnect()
+            }
+        }
+    }
+
+    private func clearBluetoothDiscoveryState() {
+        discoveredDeviceNames.removeAll()
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "searching", false)
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "searchingController", false)
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "searchResults", [] as [[String: Any]])
+    }
+
+    private func cancelActiveScanSessions(reason: ScanStopReason) {
+        let ids = Array(activeScanSessions.keys)
+        guard !ids.isEmpty else { return }
+        for (index, id) in ids.enumerated() {
+            finishScanSession(id, reason: reason, shouldStopScan: index == 0)
+        }
     }
 
     private func startStreamKeepAliveMonitor(streamId: String, intervalSeconds requestedIntervalSeconds: Int) {
