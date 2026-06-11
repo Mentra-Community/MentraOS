@@ -18,6 +18,7 @@ import {
 } from "@mentra/island"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
+import { DEV_APP_NAME } from "@mentra/island/src/services/AppRegistry"
 
 export default function MiniappDeveloperScannerScreen() {
   const {theme} = useAppTheme()
@@ -119,8 +120,9 @@ export default function MiniappDeveloperScannerScreen() {
       if (manifest) {
         const portNum = devPort ? parseInt(devPort, 10) : NaN
         registerDevApp({
-          packageName,
-          name: name ?? packageName,
+          packageName: DEV_APP_PACKAGE_NAME,
+          name: DEV_APP_NAME,
+          // name: name ?? packageName,
           iconUrl: iconUrl ?? `${devUrl.replace(/\/$/, "")}/icon.png`,
           devUrl,
           devPort: Number.isFinite(portNum) ? portNum : undefined,

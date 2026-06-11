@@ -892,7 +892,7 @@ const DEV_APPS_INDEX_KEY = "dev_apps_index"
  * the dev URL/port and foreground target used the manifest name.
  */
 export const DEV_APP_PACKAGE_NAME = "com.dev"
-// const DEV_APP_NAME = "Dev App"
+export const DEV_APP_NAME = "Dev"
 
 /**
  * Register (or replace) THE dev miniapp. Persists the home-tile metadata AND
