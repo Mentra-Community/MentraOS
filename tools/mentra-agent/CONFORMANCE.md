@@ -8,16 +8,17 @@ AWS us-west-2 dev. Driven via CDP (tools/mentra-agent/cdp.ts).
 | iface | status | notes |
 |---|---|---|
 | session.display | ✅ correctly gated | `showTextWall` returns ok to the miniapp (fire-and-forget); the island's capability arbitration silently drops the event because Mentra Live has `hasDisplay:false`. Graceful: no error, no crash. Root finding: an UNKNOWN deviceModel falls back to NONE capabilities and gates *everything* silently — the RemoteHarness driver now impersonates the underlying family (live/g2/g1) so capabilities resolve to the real hardware. |
-| session.speaker | pending | TTS / play URL — cloud audio service |
-| session.mic | pending | Live mic streaming is an open question |
-| session.transcription | pending | known-good on G2; checking via Live path |
-| session.translation | pending | |
+| session.speaker | ✅ | `speak` returned `{"completed":true,"duration":2062}` — TTS synthesized and played (volume kept at 20% for the office). |
+| session.mic | 🚫 device | Mentra Live mic never streams LC3 (0 frames in all sessions; likely needs a record/VAD trigger in firmware) — the mic watchdog refires every 5s forever as a side effect. G2 mic fully proven earlier. Open product question. |
+| session.transcription | ✅ local + AWS | LOCAL cloud runtime: PASS ("quick brown fox" via injected audio over WS transport; UDP after stack refresh). Real-G2-mic path proven earlier on AWS. First local attempt returned noise only — cold provider warm-up; retry passed. |
+| session.translation | ✅ AWS / 🚫 local (quota) | EN→ES proven on AWS earlier ("Hola, ¿dónde está la estación de tren?"). LOCAL: the runtime correctly provisions an `en>es` Soniox session but the SHARED org concurrency quota is exhausted (429 limit_exceeded ×18) — dev/local/AWS all burn the same org key. Also: the provider self-heal retries a 429 every 500ms — needs stronger backoff on limit_exceeded (same family as the language-hint spin). |
+| **managed photo (cloud-v2, local)** | ✅ service proven | Full local e2e via curl standing in for the device: supabase→core token exchange (`/api/client/auth/exchange`, OAuth token-exchange grant, EdDSA access token) → `POST /api/camera/photo` presigns local upload+read URLs → simulated device PUT (204) → read-back 200 with exact bytes. Confirms the only missing piece is the device-capture trigger. |
 | session.camera | ✅ pipeline proven / ❌ dev-backend storage | Full loop ran: miniapp → host → V1 mint (devapi) → DeviceManager → RemoteHarness (chunked K900) → daemon → REAL Live camera captured → upload attempt → structured error back to the miniapp in ~14s: `{"code":"upload_failed","message":"The specified bucket does not exist."}` — devapi's S3 bucket is missing (cloud-infra bug, report to team). Every hop including error propagation works. (Older notes: | Permission gate works (clean PERMISSION_NOT_DECLARED until CAMERA added to miniapp.json — the example shipped without it despite having a camera tester page). **Major finding:** the local-SDK photo path mints its upload URL from the V1 backend (`POST {backend_url}/api/v2/client/photo/request`); on prod `api.mentra.glass` that endpoint is **HTTP 404** (not deployed) — miniapp photos are broken against prod. It EXISTS on `devapi.mentra.glass` (401 unauth = present); with `backend_url=devapi.mentra.glass` the mint succeeds and the pipeline reaches the SGC driver. Also: cloud-v2's managed-photo service presigns but has no device trigger; the phone coordinator has the trigger but mints from V1 — the two halves of managed photo live in different stacks. |
-| session.stream | pending | managed/unmanaged RTMP |
-| session.input | pending | touchpad/buttons (needs human tap; user AFK) |
-| session.location | pending | emulator GPS |
-| session.storage | pending | host-local |
-| session.system | pending | |
+| session.stream | ✅ runtime service proven (local) | `POST /api/camera/stream` on the LOCAL runtime provisions real Cloudflare Stream coordinates (rtmps ingest + HLS playback); `DELETE` tears down (200). Unmanaged RTMP to a local listener already proven at the daemon level (15s h264 recording). |
+| session.input | ⏸ needs human | Decode path proven at daemon level earlier (`sr_tpevt` → tap/swipe); end-to-end needs a physical tap — user AFK overnight. |
+| session.location | ✅ | `getOnce` → `{lat:37.4219983, lng:-122.084, accuracy:100}` (emulator mock GPS through the host location service). |
+| session.storage | ⏸ not exercised | Host-local KV; tester page has no simple invoke surface. Low risk. |
+| session.system | ✅ | `copyToClipboard` ok. |
 
 ## Infrastructure findings (count as conformance results too)
 
