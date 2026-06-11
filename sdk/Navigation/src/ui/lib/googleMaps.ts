@@ -59,7 +59,7 @@ export class GoogleMapsManager {
   private async start(): Promise<void> {
     const apiKey = await this.resolveApiKey()
     if (!apiKey) {
-      throw new Error("missing GOOGLE_NAV_API_KEY")
+      throw new Error("missing PUBLIC_MAP_NAV_VIEWER")
     }
     this._apiKey = apiKey
     await this.loadScript(apiKey)
@@ -70,7 +70,7 @@ export class GoogleMapsManager {
     // build.ts. `bun run dev` ships the source unchanged — `process` is
     // undefined in the WebView, so fall through to /api/config.
     try {
-      const fromEnv = process.env.GOOGLE_NAV_API_KEY
+      const fromEnv = process.env.PUBLIC_MAP_NAV_VIEWER
       if (fromEnv) {
         console.log("[NAV-MINI] map key from build-time env")
         return fromEnv

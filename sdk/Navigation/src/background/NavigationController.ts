@@ -134,7 +134,10 @@ export class NavigationController {
     this.display = new DisplayManager(session)
     this.navigation = new NavigationManager(session)
     this.storage = new SimpleStorageManager(session)
-    this.places = new PlacesManager()
+    // session.userId carries the logged-in user when a real session backs the
+    // miniapp; PlacesManager forwards it to the proxy as X-User-Email (with a
+    // placeholder fallback when it's empty).
+    this.places = new PlacesManager(session.userId)
   }
 
   start(): void {

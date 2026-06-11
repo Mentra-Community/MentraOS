@@ -1,12 +1,14 @@
 /**
- * Places client — talks directly to Google Places (New) Autocomplete +
- * Details from the WebView.
+ * Places client — talks to Google Places (New) Autocomplete + Details
+ * THROUGH the secret-proxy Worker, so the Google API key never ships in
+ * this bundle. The Worker holds the key and forwards to Google.
+ * (See cloud/workers/secret-proxy + issues/proxy-trust-model.md.)
  *
- * Key resolution mirrors GoogleMapsManager: prod build inlines
- * `GOOGLE_NAV_API_KEY` via build.ts; dev fetches it from `/api/config`.
- * The key is shared with the maps loader — one GCP key covers both
- * Maps JavaScript API and Places API (New). Restrict by API in GCP
- * since the key ships in the client bundle.
+ * Auth is a placeholder: we send an `X-User-Email` header. When a real
+ * logged-in session exists, `session.userId` carries it; otherwise we fall
+ * back to a hardcoded address (PLACEHOLDER_USER_EMAIL). This is NOT real
+ * auth — it's the swap-in seam for the future signed-token layer. The real
+ * guardrail today is the GCP quota cap on the (now server-side) Places key.
  *
  * One PlacesSession represents one autocomplete-then-details flow. Google
  * bills the autocomplete keystrokes + the final details call as a single
@@ -51,47 +53,33 @@ export type SavedPlace = PlaceDetails & {
   type?: SavedPlaceType
 }
 
-let cachedKeyPromise: Promise<string> | null = null
+// Base URL of the secret-proxy Worker (sdk/Navigation/worker). The Worker
+// holds the Google Places key and forwards to Google; this bundle never sees
+// the key. Injected at build time via build.ts `define`.
+const PROXY_BASE_URL = process.env.PROXY_BASE_URL ?? ""
 
-async function getApiKey(): Promise<string> {
-  if (cachedKeyPromise) return cachedKeyPromise
-  cachedKeyPromise = (async () => {
-    try {
-      const fromEnv = process.env.GOOGLE_NAV_API_KEY
-      if (fromEnv) return fromEnv
-    } catch {
-      // process is not defined in the dev WebView — fall through.
-    }
-    try {
-      const res = await fetch("/api/config")
-      if (res.ok) {
-        const {googleMapsApiKey} = (await res.json()) as {googleMapsApiKey?: string}
-        return googleMapsApiKey ?? ""
-      }
-    } catch {
-      // /api/config not reachable.
-    }
-    return ""
-  })()
-  return cachedKeyPromise
-}
+// Placeholder identity sent to the proxy as X-User-Email. When a real
+// logged-in session exists, `session.userId` is threaded in (see
+// PlacesSession constructor); otherwise we fall back to this. NOT real auth —
+// the swap-in seam for the future signed-token layer.
+const PLACEHOLDER_USER_EMAIL = "something@mentraglass.com"
 
 export class PlacesSession {
   private token: string
+  private readonly userEmail: string
 
-  constructor() {
+  constructor(userEmail?: string) {
     this.token = newToken()
+    this.userEmail = userEmail && userEmail.trim() ? userEmail : PLACEHOLDER_USER_EMAIL
   }
 
   async autocomplete(input: string, signal?: AbortSignal): Promise<PlaceSuggestion[]> {
     if (!input.trim()) return []
-    const key = await getApiKey()
-    if (!key) throw new Error("missing GOOGLE_NAV_API_KEY")
-    const res = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
+    const res = await fetch(`${PROXY_BASE_URL}/places/autocomplete`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Goog-Api-Key": key,
+        "X-User-Email": this.userEmail,
       },
       body: JSON.stringify({input, sessionToken: this.token}),
       signal,
@@ -120,13 +108,14 @@ export class PlacesSession {
   }
 
   async details(placeId: string, signal?: AbortSignal): Promise<PlaceDetails> {
-    const key = await getApiKey()
-    if (!key) throw new Error("missing GOOGLE_NAV_API_KEY")
-    const url = `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?sessionToken=${encodeURIComponent(this.token)}`
+    const url =
+      `${PROXY_BASE_URL}/places/details/${encodeURIComponent(placeId)}` +
+      `?sessionToken=${encodeURIComponent(this.token)}`
     const res = await fetch(url, {
       headers: {
-        "X-Goog-Api-Key": key,
-        // Field mask keeps us in the cheapest pricing tier.
+        "X-User-Email": this.userEmail,
+        // Field mask keeps us in the cheapest pricing tier. The Worker
+        // forwards this through to Google.
         "X-Goog-FieldMask": "id,location,displayName,formattedAddress",
       },
       signal,
