@@ -302,6 +302,14 @@ export default function Compositor() {
       if (Platform.OS === "ios" && foregroundApp && isOfflineHosted(foregroundApp.packageName)) {
         fadeOpacity.value = 1
         fadeScale.value = GLASS_WARMUP_SCALE
+        // Park the overlay off-screen during the warm-up so the opaque
+        // surface never actually paints in view; snap back as the real
+        // animation starts.
+        // swipeTranslateY.value = screenHeight
+        // swipeTranslateY.value = withSequence(
+        //   withTiming(screenHeight, {duration: GLASS_WARMUP_MS}),
+        //   withTiming(0, {duration: 0}),
+        // )
         fadeOpacity.value = withSequence(
           withTiming(1, {duration: GLASS_WARMUP_MS}), // hold opaque while glass configures
           withTiming(0, {duration: 0}), // snap invisible
