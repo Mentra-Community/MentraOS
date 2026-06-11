@@ -2943,7 +2943,16 @@ public class MediaCaptureService {
                                 Log.d(TAG, "🌐 Sending video to: " + webhookUrl);
 
                                 // Video files are large; use generous timeouts. write/read are
-                                // per-stall (idle) timeouts; callTimeout bounds the whole upload.
+                                // per-stall (idle) timeouts that abort a truly stalled socket.
+                                // The whole-call deadline is derived from the file size against a
+                                // conservative throughput floor so a healthy-but-slow link isn't
+                                // aborted mid-transfer on long recordings — it only guards against
+                                // a connection that never stalls yet never finishes. A flat cap
+                                // (e.g. 300s) would routinely fail multi-minute uploads even at
+                                // healthy speeds, and video has no BLE fallback so that is terminal.
+                                long minThroughputBytesPerSec = 64L * 1024L; // ~0.5 Mbps floor
+                                long callTimeoutSeconds =
+                                        60L + (videoFile.length() / minThroughputBytesPerSec);
                                 OkHttpClient client =
                                         new OkHttpClient.Builder()
                                                 .connectTimeout(
@@ -2953,7 +2962,8 @@ public class MediaCaptureService {
                                                 .readTimeout(
                                                         30, java.util.concurrent.TimeUnit.SECONDS)
                                                 .callTimeout(
-                                                        300, java.util.concurrent.TimeUnit.SECONDS)
+                                                        callTimeoutSeconds,
+                                                        java.util.concurrent.TimeUnit.SECONDS)
                                                 .build();
 
                                 RequestBody fileBody =
