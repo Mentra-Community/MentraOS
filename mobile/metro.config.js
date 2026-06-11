@@ -78,15 +78,10 @@ const baseResolveRequest = config.resolver.resolveRequest
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   const aliased = CLOUD_V2_ALIASES[moduleName]
   if (aliased) return {type: "sourceFile", filePath: aliased}
-  // @mentra/island -> src/index.ts; @mentra/island/foo -> src/foo. Let Metro's
-  // default resolver (via sourceExts) pick the .ts/.tsx extension off the
-  // resulting path so we don't hardcode file extensions here.
+  // @mentra/island -> src/index.ts. Keep this limited to the public root export
+  // so future island internals do not become implicit app import surface area.
   if (moduleName === "@mentra/island") {
     return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ISLAND_SRC, "index"), platform)
-  }
-  if (moduleName.startsWith("@mentra/island/")) {
-    const subpath = moduleName.slice("@mentra/island/".length)
-    return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ISLAND_SRC, subpath), platform)
   }
   return (baseResolveRequest ?? context.resolveRequest)(context, moduleName, platform)
 }
