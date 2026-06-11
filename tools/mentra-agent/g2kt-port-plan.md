@@ -51,3 +51,13 @@ convertToG2Bmp; (c) mirror all changes into ios/Source/sgcs/G2.swift;
 gradle compile via android studio/CI — at minimum kotlin syntax review);
 (e) hardware verify needs the app owning the G2 (free it from the daemon).
 Chip task_e6e5cbb9 covers the same ground — dismiss or point it at this plan.
+
+## REVERTED (2026-06-11 ~14:20)
+
+The user wants NO agent edits to .kt/.swift files. All app-code changes were
+reverted (commits 30659cd31/8f1e36d45/30f7ad4ff/673fc09ad); mobile/ is
+byte-identical to pre-session. This plan stands as the spec for a human-owned
+PR. The reverted implementation can be recovered from git history
+(7824a34b9, edd2ae240, 3877d1081, and 8fba3de87 for the RemoteHarness bridge)
+if the team wants it as a starting point — it compiled (Kotlin) and parsed
+(Swift) clean.
