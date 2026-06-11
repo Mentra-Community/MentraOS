@@ -1396,7 +1396,9 @@ class G2 : SGCManager() {
     private val imageContainers: MutableList<ImgContainer> = mutableListOf()
     private val textContainers: MutableList<TextContainer> = mutableListOf()
     /** Fixed pool of container IDs the page protocol expects. */
-    private val imageContainerIDPool: List<Int> = listOf(10, 11, 12, 13)
+    // fw 2.2.4.34 never registers image containers with ids 10-13 (and id 1
+    // collides with the default text container) — ids 2..5 are the proven pool.
+    private val imageContainerIDPool: List<Int> = listOf(2, 3, 4, 5)
     private val textContainerIDPool: List<Int> = listOf(1, 2, 3, 4, 5, 6)
     /** Default container seeded into every fresh page: 200x100 centered at 188,44. */
     private val defaultImgX = 188
@@ -2160,7 +2162,16 @@ class G2 : SGCManager() {
             bmpData: ByteArray
     ) {
         val fragmentSize = 4096
-        imageSessionCounter++
+        // fw 2.2.4.34: multi-fragment image streams NEVER render (fragment 0 acks
+        // success, every continuation is rejected with ImgRes errorCode 5).
+        // Callers must tile larger images into <=4096-byte strip containers
+        // (see displayBitmap). Guard here so a too-big BMP fails loudly instead
+        // of silently never rendering.
+        if (bmpData.size > fragmentSize) {
+            Bridge.log("G2: sendImageData($containerName) - ${bmpData.size}B exceeds the single-fragment limit; NOT sending (tile the image)")
+            return
+        }
+        imageSessionCounter += 2 // sessions wedge after failures; skip by 2
         val sessionId = imageSessionCounter
         val totalSize = bmpData.size
         var fragmentIndex = 0
@@ -2400,28 +2411,34 @@ class G2 : SGCManager() {
                     )
                 }
 
-        val msg: ByteArray
+        // fw 2.2.4.34: image containers only register via REBUILD_PAGE on a page
+        // this session owns — containers carried in a CREATE never register
+        // (data to them NACKs ImgRes code 5), and a repeat CREATE over a live
+        // page is silently ignored. So: own a page with a text-only CREATE
+        // first, then ALWAYS declare the full container set via REBUILD.
         if (!pageCreated) {
-            Bridge.log("G2: using createPageMessage (first time)")
-            msg =
+            Bridge.log("G2: creating page (text-only) before container rebuild")
+            sendEvenHubCommand(
                     EvenHubProto.createPageMessage(
                             textContainers = textContainerProps,
-                            imageContainers = imageContainerProps,
+                            imageContainers = emptyList(),
                             magicRandom = sendManager.nextMagicRandom(),
                             appId = activeMenuAppId
                     )
-        } else {
-            Bridge.log("G2: using rebuildPageMessage")
-            msg =
+            )
+            pageCreated = true
+        }
+        if (imageContainerProps.isNotEmpty()) {
+            Bridge.log("G2: declaring containers via rebuildPageMessage")
+            sendEvenHubCommand(
                     EvenHubProto.rebuildPageMessage(
                             textContainers = textContainerProps,
                             imageContainers = imageContainerProps,
                             magicRandom = sendManager.nextMagicRandom(),
                             appId = activeMenuAppId
                     )
+            )
         }
-        sendEvenHubCommand(msg)
-        pageCreated = true
     }
 
     @Synchronized
