@@ -271,12 +271,33 @@ async function handle(req: RpcRequest): Promise<unknown> {
     }
 
     case "launchMiniapp": {
-      // Local island miniapps mount at /applet/local keyed by packageName; the
-      // route runs the same launch chain a home-tile tap does.
       const packageName = String(params.packageName ?? "")
       if (!packageName) throw new Error("packageName required")
-      lazyNav().getState().push("/applet/local", {packageName})
-      return {launched: packageName}
+      // A DEV miniapp (installed via `install-miniapp`) registers under the
+      // single DEV_APP_PACKAGE_NAME slot, NOT its real package name — so
+      // foregrounding it by real name throws "setForeground — app not found".
+      // If this package is a registered dev app, foreground the dev slot the way
+      // the dev-URL launch does; otherwise route to the installed-miniapp path.
+      const island = require("@mentra/island") as {
+        getDevAppRecords: () => Array<{packageName: string}>
+        DEV_APP_PACKAGE_NAME: string
+        useAppStatusStore: {getState: () => {apps: Array<{packageName: string}>; refresh: () => Promise<void>; setForeground: (p: string) => Promise<void>}}
+      }
+      const isDev = island.getDevAppRecords().some((r) => r.packageName === packageName)
+      if (isDev) {
+        await island.useAppStatusStore.getState().refresh()
+        await island.useAppStatusStore.getState().setForeground(island.DEV_APP_PACKAGE_NAME)
+        return {launched: packageName, via: "dev-slot"}
+      }
+      const isInstalled = (island.useAppStatusStore.getState().apps ?? []).some((a) => a.packageName === packageName)
+      if (isInstalled) {
+        lazyNav().getState().push("/applet/local", {packageName})
+        return {launched: packageName, via: "applet/local"}
+      }
+      // Not installed and not a registered dev app. Return a clean RPC error
+      // instead of pushing /applet/local, which would call the app's
+      // setForeground() and log a red "app not found" console.error.
+      throw new Error(`miniapp not available: ${packageName} (for a local dev miniapp, run install-miniapp <url> first)`)
     }
 
     case "installDevMiniapp": {

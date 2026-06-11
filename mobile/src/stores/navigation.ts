@@ -135,7 +135,11 @@ export const useNavigationStore = create<NavigationState>((set, get) => ({
     console.info("NAV: clearHistory()")
     set({history: [], historyParams: []})
     try {
-      router.dismissAll()
+      // Guard with canDismiss(): calling dismissAll() when the stack is already
+      // at its root dispatches a POP_TO_TOP that no navigator handles, which
+      // React Navigation logs as a (dev-only) console.error. The guard avoids
+      // the dispatch when there is nothing to dismiss.
+      if (router.canDismiss()) router.dismissAll()
     } catch {}
     try {
       router.dismissTo("/home")

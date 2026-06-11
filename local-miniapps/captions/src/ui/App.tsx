@@ -132,7 +132,11 @@ function getCloudPresentation(cloudStatus?: {status: string; audioTransport: str
   accentForeground: string
   dark: boolean
 } {
-  const status = cloudStatus ?? {status: "disconnected", audioTransport: "none"}
+  // Before the first cloud-status update arrives, status is unknown — that means
+  // "still connecting", not "confirmed down". Defaulting to "connecting" avoids
+  // flashing an alarming "Cloud unavailable" banner during normal startup; once a
+  // real status arrives it takes over (including a genuine "disconnected").
+  const status = cloudStatus ?? {status: "connecting", audioTransport: "none"}
   if (status.audioTransport === "offline") {
     return {
       label: "Offline captions",
