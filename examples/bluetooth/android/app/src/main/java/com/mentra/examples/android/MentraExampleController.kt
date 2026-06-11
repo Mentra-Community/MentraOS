@@ -168,6 +168,12 @@ private data class GalleryServerCheck(
     val eventText: String,
 )
 
+private data class PersistedCloudUrls(
+    val streamProtocol: String?,
+    val streamUrl: String?,
+    val webhookUrl: String?,
+)
+
 val rgbLedColorOptions = RgbLedColor.values().map { it.value }
 val scanModelOptions = listOf(DeviceModel.MENTRA_LIVE, DeviceModel.G2)
 const val MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD = "00001111"
@@ -263,6 +269,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private val defaultDevicePrefs =
         appContext.getSharedPreferences("mentra_example_default_device", Context.MODE_PRIVATE)
+    private val cloudUrlPrefs =
+        appContext.getSharedPreferences("mentra_example_cloud_urls", Context.MODE_PRIVATE)
     private val mentraBluetoothSdk = MentraBluetoothSdk.create(appContext, this)
     private val controllerJob = Job()
     private val scope = CoroutineScope(Dispatchers.Main + controllerJob)
@@ -310,6 +318,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         private const val DEFAULT_DEVICE_NAME_KEY = "name"
         private const val DEFAULT_DEVICE_ADDRESS_KEY = "address"
         private const val DEFAULT_DEVICE_SAVED_AT_KEY = "saved_at"
+        private const val CLOUD_URLS_SCHEMA_KEY = "version"
+        private const val CLOUD_URLS_STREAM_PROTOCOL_KEY = "stream_protocol"
+        private const val CLOUD_URLS_STREAM_KEY = "stream_url"
+        private const val CLOUD_URLS_WEBHOOK_KEY = "webhook_url"
+        private const val CLOUD_URLS_SAVED_AT_KEY = "saved_at"
     }
 
     private val audioDeviceCallback = object : AudioDeviceCallback() {
@@ -356,6 +369,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     init {
         val savedDefaultDevice = loadPersistedDefaultDevice()
+        val savedCloudUrls = loadPersistedCloudUrls()
+        val savedStreamProtocol = savedCloudUrls.streamProtocol
         savedDefaultDevice?.let { mentraBluetoothSdk.setDefaultDevice(it) }
         val initialState = mentraBluetoothSdk.getState()
         state = state.copy(
@@ -365,6 +380,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             galleryModeEnabled = galleryModeEnabled(initialState.sdk),
             hotspotEnabled = enabledHotspotStatus(initialState.glasses) != null,
             phoneAudioRoute = currentAudioOutputRouteLabel(),
+            streamProtocol = savedStreamProtocol ?: state.streamProtocol,
+            streamUrl = savedCloudUrls.streamUrl
+                ?: savedStreamProtocol?.let(::defaultStreamUrl)
+                ?: state.streamUrl,
+            webhookUrl = savedCloudUrls.webhookUrl ?: state.webhookUrl,
         )
         registerAudioStateObservers()
         refreshAudioSystemState()
@@ -456,7 +476,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     fun setWebhookUrl(url: String) {
+        if (state.webhookUrl == url) {
+            return
+        }
         state = state.copy(webhookUrl = url)
+        savePersistedCloudUrls()
     }
 
     fun setPhotoDestination(destination: PhotoDestination) {
@@ -868,6 +892,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 streamStatus = if (stoppedStream) "Ready to start stream" else state.streamStatus,
                 streamResolvedConfig = null,
             )
+            savePersistedCloudUrls()
         }
     }
 
@@ -888,6 +913,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                     streamResolvedConfig = null,
                     directStreamFrame = null,
                 )
+                if (shouldUseDefault) {
+                    savePersistedCloudUrls()
+                }
                 return@runStreamConfigurationChange
             }
 
@@ -912,6 +940,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 streamStatus = if (stoppedStream) "Ready to start stream" else state.streamStatus,
                 streamResolvedConfig = null,
             )
+            savePersistedCloudUrls()
         }
     }
 
@@ -2096,6 +2125,29 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 putString(DEFAULT_DEVICE_ADDRESS_KEY, device.address.orEmpty())
                 putLong(DEFAULT_DEVICE_SAVED_AT_KEY, System.currentTimeMillis())
             }
+        }.apply()
+    }
+
+    private fun loadPersistedCloudUrls(): PersistedCloudUrls {
+        val version = cloudUrlPrefs.getInt(CLOUD_URLS_SCHEMA_KEY, 0)
+        if (version != 1) {
+            return PersistedCloudUrls(streamProtocol = null, streamUrl = null, webhookUrl = null)
+        }
+        val streamProtocol = cloudUrlPrefs.getString(CLOUD_URLS_STREAM_PROTOCOL_KEY, null)
+        return PersistedCloudUrls(
+            streamProtocol = streamProtocol?.takeIf { it in streamDefaultUrls.keys },
+            streamUrl = cloudUrlPrefs.getString(CLOUD_URLS_STREAM_KEY, null),
+            webhookUrl = cloudUrlPrefs.getString(CLOUD_URLS_WEBHOOK_KEY, null),
+        )
+    }
+
+    private fun savePersistedCloudUrls() {
+        cloudUrlPrefs.edit().apply {
+            putInt(CLOUD_URLS_SCHEMA_KEY, 1)
+            putString(CLOUD_URLS_STREAM_PROTOCOL_KEY, state.streamProtocol)
+            putString(CLOUD_URLS_STREAM_KEY, state.streamUrl)
+            putString(CLOUD_URLS_WEBHOOK_KEY, state.webhookUrl)
+            putLong(CLOUD_URLS_SAVED_AT_KEY, System.currentTimeMillis())
         }.apply()
     }
 

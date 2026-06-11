@@ -24,6 +24,12 @@ private struct GalleryServerCheck {
     let eventText: String
 }
 
+private struct PersistedCloudUrls {
+    let streamProtocol: ExampleStreamProtocol?
+    let streamUrl: String?
+    let webhookUrl: String?
+}
+
 private func describeSettingsAck(_ ack: SettingsAckEvent) -> String {
     var parts = ["\(ack.setting) \(ack.status)"]
     if let fov = ack.values["fov"] {
@@ -258,7 +264,12 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var activeActionOrder: [Int] = []
     private var streamConfigurationChangeInProgress = false
     @Published private(set) var cameraStatus = "Camera: phone receiver will start before capture"
-    @Published var webhookUrl = defaultPhotoUploadUrl
+    @Published var webhookUrl = defaultPhotoUploadUrl {
+        didSet {
+            guard webhookUrl != oldValue else { return }
+            savePersistedCloudUrls()
+        }
+    }
     @Published private(set) var photoPreviewDetails: PhotoPreviewDetails?
     @Published private(set) var photoPreviewUrl: URL?
     @Published private(set) var photoPreviewImage: UIImage?
@@ -277,8 +288,18 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var cameraSettingsStatus = "Camera settings: default"
     @Published private(set) var phonePhotoServerRunning = false
     @Published private(set) var phonePhotoUploadUrl = "Phone receiver not started"
-    @Published var streamProtocol: ExampleStreamProtocol = .webrtc
-    @Published var streamUrl = ExampleStreamProtocol.webrtc.defaultUrl
+    @Published var streamProtocol: ExampleStreamProtocol = .webrtc {
+        didSet {
+            guard streamProtocol != oldValue else { return }
+            savePersistedCloudUrls()
+        }
+    }
+    @Published var streamUrl = ExampleStreamProtocol.webrtc.defaultUrl {
+        didSet {
+            guard streamUrl != oldValue else { return }
+            savePersistedCloudUrls()
+        }
+    }
     @Published private(set) var streamFps = 15
     @Published private(set) var streamCloudServerEnabled = false
     @Published private(set) var directStreamReceiverRunning = false
@@ -334,6 +355,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var micPlayer: AVAudioPlayer?
     private let validLedColors = Set(["red", "green", "blue", "orange", "white"])
     private let defaultDeviceDefaults = UserDefaults.standard
+    private let cloudUrlDefaults = UserDefaults.standard
     private let directWhipProxy = WhipHeaderProxy()
     private nonisolated(unsafe) var photoUploadServer: LocalPhotoUploadServer?
 
@@ -343,6 +365,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         static let name = "mentra.example.defaultDevice.name"
         static let identifier = "mentra.example.defaultDevice.identifier"
         static let savedAt = "mentra.example.defaultDevice.savedAt"
+    }
+
+    private enum CloudUrlStorage {
+        static let version = "mentra.example.cloudUrls.version"
+        static let streamProtocol = "mentra.example.cloudUrls.streamProtocol"
+        static let streamUrl = "mentra.example.cloudUrls.streamUrl"
+        static let webhookUrl = "mentra.example.cloudUrls.webhookUrl"
+        static let savedAt = "mentra.example.cloudUrls.savedAt"
     }
 
     var glassesConnected: Bool {
@@ -383,6 +413,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             }
         )
         let savedDefaultDevice = loadPersistedDefaultDevice()
+        let savedCloudUrls = loadPersistedCloudUrls()
         if let savedDevice = savedDefaultDevice {
             mentraBluetoothSdk.setDefaultDevice(savedDevice)
         }
@@ -392,6 +423,19 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         applySdkState(mentraBluetoothSdk.sdkState)
         if let value = ProcessInfo.processInfo.environment["MENTRA_PHOTO_WEBHOOK_URL"] {
             webhookUrl = value
+        } else if let value = savedCloudUrls.webhookUrl {
+            webhookUrl = value
+        }
+        let environmentStreamUrl = ProcessInfo.processInfo.environment["MENTRA_STREAM_URL"]
+        if environmentStreamUrl == nil, let value = savedCloudUrls.streamProtocol {
+            streamProtocol = value
+        }
+        if let value = environmentStreamUrl {
+            streamUrl = value
+        } else if let value = savedCloudUrls.streamUrl {
+            streamUrl = value
+        } else if let value = savedCloudUrls.streamProtocol {
+            streamUrl = value.defaultUrl
         }
         if savedDefaultDevice != nil {
             scheduleAutoConnectDefaultOnStartup()
@@ -1794,6 +1838,27 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         defaultDeviceDefaults.set(device.name, forKey: DefaultDeviceStorage.name)
         defaultDeviceDefaults.set(device.identifier ?? "", forKey: DefaultDeviceStorage.identifier)
         defaultDeviceDefaults.set(Date().timeIntervalSince1970, forKey: DefaultDeviceStorage.savedAt)
+    }
+
+    private func loadPersistedCloudUrls() -> PersistedCloudUrls {
+        guard cloudUrlDefaults.integer(forKey: CloudUrlStorage.version) == 1 else {
+            return PersistedCloudUrls(streamProtocol: nil, streamUrl: nil, webhookUrl: nil)
+        }
+        let streamProtocol = cloudUrlDefaults.string(forKey: CloudUrlStorage.streamProtocol)
+            .flatMap(ExampleStreamProtocol.init(rawValue:))
+        return PersistedCloudUrls(
+            streamProtocol: streamProtocol,
+            streamUrl: cloudUrlDefaults.string(forKey: CloudUrlStorage.streamUrl),
+            webhookUrl: cloudUrlDefaults.string(forKey: CloudUrlStorage.webhookUrl)
+        )
+    }
+
+    private func savePersistedCloudUrls() {
+        cloudUrlDefaults.set(1, forKey: CloudUrlStorage.version)
+        cloudUrlDefaults.set(streamProtocol.rawValue, forKey: CloudUrlStorage.streamProtocol)
+        cloudUrlDefaults.set(streamUrl, forKey: CloudUrlStorage.streamUrl)
+        cloudUrlDefaults.set(webhookUrl, forKey: CloudUrlStorage.webhookUrl)
+        cloudUrlDefaults.set(Date().timeIntervalSince1970, forKey: CloudUrlStorage.savedAt)
     }
 
     private func applyDisconnectedState(status: String) {

@@ -194,6 +194,13 @@ type PersistedDefaultDevice = Device & {
   savedAt: number;
   version: 1;
 };
+type PersistedCloudUrls = {
+  streamProtocol?: StreamProtocol;
+  savedAt: number;
+  streamUrl?: string;
+  version: 1;
+  webhookUrl?: string;
+};
 
 export const RGB_LED_COLORS: LedColor[] = ['red', 'green', 'blue', 'orange', 'white'];
 export const PHOTO_SIZES: PhotoSize[] = ['small', 'medium', 'large', 'full'];
@@ -372,6 +379,7 @@ const MIC_SAMPLE_RATE = 16000;
 const MIC_CHANNEL_COUNT = 1;
 const MIC_BITS_PER_SAMPLE = 16;
 const DEFAULT_DEVICE_FILE = 'mentra-default-device.json';
+const CLOUD_URLS_FILE = 'mentra-cloud-urls.json';
 const IOS_AUDIO_ROUTE_HINT =
   'Audio output: iOS cannot pair audio from the app. Open Settings > Bluetooth and connect/select the glasses before playback.';
 
@@ -399,7 +407,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       ? 'Permissions: not requested'
       : 'Permissions: iOS prompts as needed',
   );
-  const [webhookUrl, setWebhookUrl] = useState(
+  const [webhookUrl, setWebhookUrlState] = useState(
     process.env?.EXPO_PUBLIC_MENTRA_PHOTO_WEBHOOK_URL ?? PHOTO_UPLOAD_DEFAULT_URL,
   );
   const [photoCloudServerEnabled, setPhotoCloudServerEnabledState] = useState(false);
@@ -532,6 +540,33 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
   const selectedScanModel = scanModelFromDeviceModel(bluetooth.scan.model);
   activeTabRef.current = activeTab;
   galleryModeEnabledRef.current = galleryModeEnabled;
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadPersistedCloudUrls().then((persisted) => {
+      if (cancelled || !persisted) {
+        return;
+      }
+      if (!process.env?.EXPO_PUBLIC_MENTRA_PHOTO_WEBHOOK_URL && typeof persisted.webhookUrl === 'string') {
+        setWebhookUrlState(persisted.webhookUrl);
+      }
+      const streamUrlOverride = process.env?.EXPO_PUBLIC_MENTRA_STREAM_URL;
+      if (!streamUrlOverride && persisted.streamProtocol) {
+        setStreamProtocol(persisted.streamProtocol);
+      }
+      if (!streamUrlOverride && typeof persisted.streamUrl === 'string') {
+        setStreamUrlState(persisted.streamUrl);
+      } else if (!streamUrlOverride && persisted.streamProtocol) {
+        setStreamUrlState(STREAM_DEFAULT_URLS[persisted.streamProtocol]);
+      }
+    }).catch((error) => {
+      addEvent('LIVE', `cloud URL restore failed: ${formatError(error)}`);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (didAutoConnectDefaultRef.current || glassesConnected) {
@@ -1873,12 +1908,24 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }
     setStreamResolvedConfig(null);
     setStreamProtocol(protocol);
-    setStreamUrlState((current) => {
-      const trimmed = current.trim();
-      if (!trimmed || STREAM_DEFAULT_URL_VALUES.has(trimmed)) {
-        return STREAM_DEFAULT_URLS[protocol];
-      }
-      return current;
+    const trimmed = streamUrl.trim();
+    const nextUrl = !trimmed || STREAM_DEFAULT_URL_VALUES.has(trimmed)
+      ? STREAM_DEFAULT_URLS[protocol]
+      : streamUrl;
+    setStreamUrlState(nextUrl);
+    void savePersistedCloudUrls({
+      streamProtocol: protocol,
+      streamUrl: nextUrl,
+      webhookUrl,
+    });
+  }
+
+  function setWebhookUrlAction(url: string) {
+    setWebhookUrlState(url);
+    void savePersistedCloudUrls({
+      streamProtocol,
+      streamUrl,
+      webhookUrl: url,
     });
   }
 
@@ -1923,6 +1970,11 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     }
     setStreamResolvedConfig(null);
     setStreamUrlState(url);
+    void savePersistedCloudUrls({
+      streamProtocol,
+      streamUrl: url,
+      webhookUrl,
+    });
   }
 
   function setStreamFpsAction(fps: number) {
@@ -2747,7 +2799,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     setStreamCloudServerEnabled: setStreamCloudServerEnabledAction,
     setStreamFps: setStreamFpsAction,
     setStreamUrl: setStreamUrlAction,
-    setWebhookUrl,
+    setWebhookUrl: setWebhookUrlAction,
     setVoiceActivityDetectionEnabled: setVoiceActivityDetectionEnabledAction,
     selectedDiscoveredDevice,
     startScan,
@@ -2850,6 +2902,49 @@ async function savePersistedDefaultDevice(device: Device | null) {
   file.write(JSON.stringify(persisted, null, 2));
 }
 
+async function loadPersistedCloudUrls(): Promise<PersistedCloudUrls | null> {
+  const file = new File(Paths.document, CLOUD_URLS_FILE);
+  if (!file.exists) {
+    return null;
+  }
+  return parsePersistedCloudUrls(JSON.parse(await file.text()));
+}
+
+async function savePersistedCloudUrls(urls: {
+  streamProtocol: StreamProtocol;
+  streamUrl: string;
+  webhookUrl: string;
+}) {
+  const file = new File(Paths.document, CLOUD_URLS_FILE);
+  const persisted: PersistedCloudUrls = {
+    savedAt: Date.now(),
+    streamProtocol: urls.streamProtocol,
+    streamUrl: urls.streamUrl,
+    version: 1,
+    webhookUrl: urls.webhookUrl,
+  };
+  file.create({intermediates: true, overwrite: true});
+  file.write(JSON.stringify(persisted, null, 2));
+}
+
+function parsePersistedCloudUrls(value: unknown): PersistedCloudUrls | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const values = value as Record<string, unknown>;
+  const version = values.version;
+  if (version !== 1) {
+    return null;
+  }
+  return {
+    savedAt: typeof values.savedAt === 'number' ? values.savedAt : 0,
+    streamProtocol: streamProtocolValue(values, 'streamProtocol') ?? undefined,
+    streamUrl: stringValue(values, 'streamUrl') ?? undefined,
+    version,
+    webhookUrl: stringValue(values, 'webhookUrl') ?? undefined,
+  };
+}
+
 function parseDefaultDevice(value: unknown): Device | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -2887,6 +2982,14 @@ function deviceModelValue(
     return undefined;
   }
   return (Object.values(DeviceModels) as string[]).includes(value) ? (value as DeviceModel) : undefined;
+}
+
+function streamProtocolValue(
+  values: Record<string, unknown>,
+  key: string,
+): StreamProtocol | undefined {
+  const value = stringValue(values, key);
+  return value === 'rtmp' || value === 'srt' || value === 'webrtc' ? value : undefined;
 }
 
 export function durationText(seconds: number) {
