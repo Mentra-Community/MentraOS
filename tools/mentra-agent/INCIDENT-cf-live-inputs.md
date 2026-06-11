@@ -69,3 +69,14 @@ Fixes:
   within seconds (StreamCommandHandler already supports srt/whip).
 - The live-input leak fixes (delete-on-stop, schedule the janitor, retry
   backoff) are still required — the account was 11x over CF's documented limit.
+
+## RESOLUTION PROVEN ON HARDWARE (2026-06-11 14:18 PT)
+
+A real Mentra Live streamed via **SRT (srt://live.cloudflare.com:778)** from the
+office network: glasses reported initializing -> streaming in 3s, Cloudflare
+held `state=connected, ingestProtocol=srt` for a sustained 40s poll with zero
+drops — on the same network where RTMPS:443 is killed mid-publish every time.
+The glasses-side SRT path (StreamPack CameraSrtLiveStreamer) works as-shipped;
+no firmware change needed. Product fix: the cloud should hand out SRT ingest
+URLs (Cloudflare provides them on every live input) instead of — or as fallback
+to — RTMPS. One-line-ish change where the start_stream URL is chosen.
