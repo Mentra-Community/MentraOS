@@ -16,7 +16,9 @@
   "dependencies": {
     "hono": "^4.11.1",
     "jose": "^5.9.6",
-    "pino": "^9.6.0",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
     "pino-pretty": "^11.3.0"
   }
 }
