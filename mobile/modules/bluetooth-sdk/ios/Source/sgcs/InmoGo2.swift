@@ -679,6 +679,7 @@ class InmoGo2: NSObject, SGCManager {
         fullyBooted = true
         connected   = true
         updateConnectionState(ConnTypes.CONNECTED)
+        CoreManager.shared.handleDeviceReady()
     }
 
     // -----------------------------------------------------------------------
