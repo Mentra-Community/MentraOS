@@ -15,9 +15,9 @@ cd Mentra-Bluetooth-SDK-Starter-Kit
 
 - Scanning for Mentra Live, connecting, disconnecting, and reconnecting to a saved/default device.
 - Reading typed glasses and Bluetooth status snapshots.
-- Handling button, touch, swipe, head-up, battery, Wi-Fi, hotspot, stream, photo, audio, and SDK log events.
+- Handling button, touch, swipe, head-up, battery, Wi-Fi, hotspot, stream, photo, video upload, audio, and SDK log events.
 - Controlling Mentra Live features such as gallery mode, button photo/video settings, speaker playback, RGB LED patterns, Wi-Fi, hotspot, microphone, camera, and streaming.
-- Running the default glasses-to-phone photo and streaming demos, plus optional cloud-server demos for external upload and streaming endpoints.
+- Running the default glasses-to-phone photo and streaming demos, plus optional cloud-server demos for external media upload and streaming endpoints.
 
 ## Android
 
@@ -50,11 +50,11 @@ bun run android:dev
 
 The React Native example installs the SDK as `@mentra/bluetooth-sdk` and demonstrates the same Device, Camera, Stream, System, and Console flows as the native examples.
 
-## Optional Local Photo And Streaming Helper
+## Optional Local Media And Streaming Helper
 
 The Camera and Stream screens default to a glasses-to-phone flow where the example app starts a receiver on the phone and sends the glasses output there. You do not need this helper for that default path.
 
-Use this helper only when you turn on **Use cloud server** in the example app and want to test an external endpoint without deploying your own photo webhook or streaming server. Production apps can use any reachable HTTPS upload endpoint and any reachable RTMP, SRT, or WHIP ingest URL.
+Use this helper only when you turn on **Use cloud server** in the example app and want to test an external endpoint without deploying your own media upload webhook or streaming server. Production apps can use any reachable HTTPS upload endpoint and any reachable RTMP, SRT, or WHIP ingest URL.
 
 From the repo root:
 
@@ -62,7 +62,7 @@ From the repo root:
 python3 examples/local-demo-cloud/server.py
 ```
 
-After enabling **Use cloud server**, paste the printed LAN `/upload` URL into the Camera screen, or paste the printed RTMP, SRT, or WHIP publish URL into the Stream screen. If Docker is not installed or not running, the helper starts the photo webhook and skips streaming with a warning.
+After enabling **Use cloud server**, paste the printed LAN `/upload` URL into the Camera screen, or paste the printed RTMP, SRT, or WHIP publish URL into the Stream screen. If Docker is not installed or not running, the helper starts the media upload webhook and skips streaming with a warning.
 
 <Warning>
 Do not use `localhost` in the app. The glasses, phone, and computer must be on a network where the glasses can reach the printed LAN address.

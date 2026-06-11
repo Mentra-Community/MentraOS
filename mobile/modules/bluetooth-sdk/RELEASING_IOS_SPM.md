@@ -76,7 +76,7 @@ already contains the version being tagged before exporting.
 
 ## Commit and Tag
 
-Use the same version format as existing SwiftPM tags, for example `0.1.11`
+Use the same version format as existing SwiftPM tags, for example `0.1.12`
 without a leading `v`.
 
 ```bash

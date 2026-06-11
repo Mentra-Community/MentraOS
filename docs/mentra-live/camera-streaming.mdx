@@ -1,6 +1,6 @@
 ---
 title: "Camera And Streaming"
-description: "Request photos and start RTMP, SRT, or WebRTC streams from supported smart glasses."
+description: "Request photos, record videos, and start RTMP, SRT, or WebRTC streams from supported smart glasses."
 icon: "camera"
 ---
 
@@ -105,6 +105,91 @@ useBluetoothEvent('photo_status', (event) => {
 | `captured` | `captureMetadata` | Read the actual HAL-applied still capture values, including exposure time, ISO, frame duration, AE state/name, noise reduction mode, edge mode, sensor timestamp, and MFNR hint when available. |
 
 Upload and BLE transfer statuses such as `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring` are transport progress only. They do not carry capture metadata, so use the `captured` event when you need the actual exposure/ISO/frame data for debugging or UI. `ble_fallback_compression` means the direct Wi-Fi/webhook upload failed and the glasses are compressing the already-captured photo for Bluetooth fallback delivery.
+
+## Video Recording
+
+Use `startVideoRecording(...)` when your app needs a clip instead of a still image. Pass per-recording settings only when you want to override the saved button-video defaults; `maxRecordingTimeMinutes` is an auto-stop guard, and `0` or an omitted value records until your app stops recording or the glasses interrupt it.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+const requestId = `video-${Date.now()}`;
+
+const started = await BluetoothSdk.startVideoRecording(requestId, true, true, {
+  width: 1280,
+  height: 720,
+  fps: 30,
+  maxRecordingTimeMinutes: 1,
+});
+console.log('video started', started.status);
+
+const stopped = await BluetoothSdk.stopVideoRecording(
+  requestId,
+  'https://api.example.com/mentra/video',
+  'optional-token',
+);
+console.log('video uploaded', stopped.status);
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+val requestId = "video-${System.currentTimeMillis()}"
+
+val started = sdk.startVideoRecording(
+    VideoRecordingRequest(
+        requestId = requestId,
+        save = true,
+        sound = true,
+        width = 1280,
+        height = 720,
+        fps = 30,
+        maxRecordingTimeMinutes = 1,
+    )
+)
+println("video started: ${started.status}")
+
+val stopped = sdk.stopVideoRecording(
+    requestId = requestId,
+    webhookUrl = "https://api.example.com/mentra/video",
+    authToken = "optional-token",
+)
+println("video uploaded: ${stopped.status}")
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+let requestId = "video-\(Date().timeIntervalSince1970)"
+
+let started = try await sdk.startVideoRecording(
+    VideoRecordingRequest(
+        requestId: requestId,
+        save: true,
+        sound: true,
+        width: 1280,
+        height: 720,
+        fps: 30,
+        maxRecordingTimeMinutes: 1
+    )
+)
+print("video started: \(started.status)")
+
+let stopped = try await sdk.stopVideoRecording(
+    requestId: requestId,
+    webhookUrl: "https://api.example.com/mentra/video",
+    authToken: "optional-token"
+)
+print("video uploaded: \(stopped.status)")
+```
+
+  </Tab>
+</Tabs>
+
+`startVideoRecording(...)` resolves from `recording_started`. `stopVideoRecording(...)` without a webhook resolves from `recording_stopped`; when you pass a webhook URL, it waits for `recording_stopped` plus video `media_success`, and rejects on video `media_error`. Raw `video_recording_status`, `media_success`, and `media_error` events remain available for listeners that need the glasses event stream directly. The video upload webhook should accept multipart form data with a `video` or `file` field and `requestId`. Pass the webhook URL and auth token at stop time so upload credentials can be fresh when the recording ends.
 
 ## Gallery Mode
 
