@@ -416,6 +416,12 @@ export interface VideoRecordingSettings {
   width?: number
   height?: number
   fps?: number
+  /**
+   * Optional auto-stop timer in minutes, sent on `start_video_recording`.
+   * `0` (the default) means record until stopped or interrupted
+   * (battery/storage/thermal/error).
+   */
+  maxRecordingTimeMinutes?: number
 }
 export const DeviceModels = {
   Simulated: "Simulated Glasses",
@@ -898,7 +904,18 @@ export interface BluetoothSdkPublicModule {
     sound: boolean,
     settings?: VideoRecordingSettings,
   ): Promise<VideoRecordingStartedStatusEvent>
-  stopVideoRecording(requestId: string): Promise<VideoRecordingStoppedStatusEvent>
+  /**
+   * Stop the active recording. When {@link webhookUrl} is provided, the glasses
+   * upload the recorded video to it (multipart) using {@link authToken}. These
+   * are supplied at stop time (not start) so the token is fresh when the upload
+   * runs — a recording can last arbitrarily long. An empty/omitted webhook keeps
+   * the video on device (no upload).
+   */
+  stopVideoRecording(
+    requestId: string,
+    webhookUrl?: string,
+    authToken?: string,
+  ): Promise<VideoRecordingStoppedStatusEvent>
 
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
   stopStream(): Promise<StreamStatusEvent>

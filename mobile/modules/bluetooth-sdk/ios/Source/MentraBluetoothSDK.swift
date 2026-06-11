@@ -825,7 +825,8 @@ public final class MentraBluetoothSDK {
             request.sound,
             request.width,
             request.height,
-            request.fps
+            request.fps,
+            request.maxRecordingTimeMinutes
         )
         do {
             let event = try await pending.wait()
@@ -837,7 +838,9 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    public func stopVideoRecording(requestId: String) async throws -> VideoRecordingStatusEvent {
+    public func stopVideoRecording(
+        requestId: String, webhookUrl: String?, authToken: String?
+    ) async throws -> VideoRecordingStatusEvent {
         guard !requestId.isEmpty else {
             throw BluetoothError(code: "missing_request_id", message: "requestId is required to stop video recording.")
         }
@@ -852,7 +855,7 @@ public final class MentraBluetoothSDK {
             expectedStatus: "recording_stopped",
             pending: pending
         )
-        DeviceManager.shared.stopVideoRecording(requestId)
+        DeviceManager.shared.stopVideoRecording(requestId, webhookUrl, authToken)
         do {
             let event = try await pending.wait()
             pendingVideoRecordingRequests.removeValue(forKey: requestId)

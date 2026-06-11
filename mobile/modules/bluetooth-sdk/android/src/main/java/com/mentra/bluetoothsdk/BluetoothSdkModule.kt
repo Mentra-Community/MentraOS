@@ -505,12 +505,18 @@ class BluetoothSdkModule : Module() {
                             dim("width"),
                             dim("height"),
                             dim("fps"),
+                            dim("maxRecordingTimeMinutes"),
                     )
             ).values
         }
 
-        AsyncFunction("stopVideoRecording") { requestId: String ->
-            requireSdk().stopVideoRecording(requestId).values
+        // webhookUrl/authToken are supplied at stop (not start) so the token is
+        // fresh when the upload runs. Empty/null webhook = keep on device.
+        AsyncFunction("stopVideoRecording") {
+                requestId: String,
+                webhookUrl: String?,
+                authToken: String? ->
+            requireSdk().stopVideoRecording(requestId, webhookUrl, authToken).values
         }
 
         // MARK: - Stream Commands
