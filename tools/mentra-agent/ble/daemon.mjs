@@ -285,6 +285,42 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === "GET" && url === "/status")
       return json(res, 200, { ...mgr.status(), audioPort: AUDIO_PORT, mediaPort: MEDIA_PORT, lanIp: lanIp(), photos: photos.length, imu: lastImu })
+    if (req.method === "GET" && url === "/mirror.json") {
+      return json(res, 200, mgr.mirror ?? { text: null, images: {} })
+    }
+    if (req.method === "GET" && url === "/mirror") {
+      res.writeHead(200, { "Content-Type": "text/html" })
+      res.end(`<!doctype html><title>G2 mirror</title>
+<body style="background:#111;color:#9f9;font-family:monospace;text-align:center">
+<h3>Even G2 lens mirror (576x288, ~10Hz)</h3>
+<canvas id=c width=576 height=288 style="border:1px solid #333;background:#000;image-rendering:pixelated;width:864px;height:432px"></canvas>
+<script>
+const cv = document.getElementById("c"), ctx = cv.getContext("2d")
+async function tick() {
+  try {
+    const m = await (await fetch("/mirror.json")).json()
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, 576, 288)
+    for (const [id, im] of Object.entries(m.images || {})) {
+      if (!im.gray) continue
+      const bytes = Uint8Array.from(atob(im.gray), (c) => c.charCodeAt(0))
+      const img = ctx.createImageData(im.w, im.h)
+      for (let i = 0; i < bytes.length; i++) {
+        const v = bytes[i] & 0xf0 // 16-level quantized, green phosphor look
+        img.data[i*4] = 0; img.data[i*4+1] = v; img.data[i*4+2] = v>>2; img.data[i*4+3] = 255
+      }
+      ctx.putImageData(img, im.x, im.y)
+    }
+    if (m.text) {
+      ctx.fillStyle = "#4f4"; ctx.font = "22px sans-serif"; ctx.textBaseline = "top"
+      m.text.split("\n").slice(0, 5).forEach((line, i) => ctx.fillText(line, 8, 8 + i * 30, 560))
+    }
+  } catch {}
+  setTimeout(tick, 100)
+}
+tick()
+</script>`)
+      return
+    }
     if (req.method === "GET" && url === "/logs") return json(res, 200, { logs: logs.slice(-80) })
     if (req.method === "POST" && url === "/connect") {
       const b = await body(req)
@@ -294,7 +330,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === "POST" && url === "/text") {
       const b = await body(req)
-      return json(res, 200, await mgr.displayText(String(b.text ?? "")))
+      return json(res, 200, await mgr.displayText(String(b.text ?? ""), { arms: b.arms }))
     }
     if (req.method === "POST" && url === "/clear") return json(res, 200, await mgr.clear())
     if (req.method === "POST" && url === "/mic") {
@@ -331,7 +367,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url === "/imageUpdate") {
       const b = (await body(req)) || {}
       const frame = { w: Number(b.width), h: Number(b.height), data: new Uint8Array(Buffer.from(b.grayBase64, "base64")) }
-      return json(res, 200, await mgr.updateImage(frame, { id: Number(b.id ?? 1), ackGate: b.ackGate !== false, gapMs: Number(b.gapMs ?? 30) }))
+      return json(res, 200, await mgr.updateImage(frame, { id: Number(b.id ?? 1), ackGate: b.ackGate !== false, gapMs: Number(b.gapMs ?? 30), arms: b.arms }))
     }
     if (req.method === "POST" && url === "/imu") {
       const b = await body(req)

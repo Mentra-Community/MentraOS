@@ -45,6 +45,9 @@ export class G2Manager extends EventEmitter {
     this._rx = Buffer.alloc(0) // Mentra Live K900 frame reassembly buffer
     this._fileRx = Buffer.alloc(0) // Mentra Live file-packet (72FF) reassembly buffer
     this._fileTransfers = new Map() // fileName -> { fileSize, packs: Map(index->Buffer) }
+    // Mirror of the display state we have driven (for the /mirror web view):
+    // text container content + image containers' geometry and last gray frame.
+    this.mirror = { text: null, images: {} }
   }
 
   log(m) {
@@ -437,7 +440,7 @@ export class G2Manager extends EventEmitter {
   }
 
   // ---- public commands ----
-  async displayText(text) {
+  async displayText(text, opts = {}) {
     if (!this.connected) throw new Error("not connected")
     if (this.device === "live") throw new Error("Mentra Live is a camera (no display) — use takePhoto/mic/info")
     this.lastText = text
@@ -455,9 +458,15 @@ export class G2Manager extends EventEmitter {
       await this._evenHub(g2.defaultTextPage(text, this.send.nextMagic()))
       this.pageCreated = true
       this.pageHasText = true
+      this.mirror = { text, images: {} } // fresh page
     } else {
-      // live update of container 1 — no page flicker
-      await this._evenHub(g2.updateTextMessage(1, text.length === 0 ? " " : text, this.send.nextMagic()))
+      // live update of container 1 — no page flicker. arms override (test/perf):
+      // "left"/"right" sends to one arm only (firmware may mirror via its own link).
+      const lr = arguments[1]?.arms === "right" ? { left: false, right: true }
+        : arguments[1]?.arms === "left" ? { left: true, right: false }
+        : { left: true, right: true }
+      await this._evenHub(g2.updateTextMessage(1, text.length === 0 ? " " : text, this.send.nextMagic()), lr)
+      this.mirror.text = text
     }
     return { ok: true, text }
   }
@@ -657,6 +666,7 @@ export class G2Manager extends EventEmitter {
       g2.imageContainerProperty({ x: t.x, y: t.y, width: t.width, height: t.height, containerID: t.id, containerName: `img-${t.id}` }))
     const ack = await this._rebuildOwned([g2.defaultTextProp(text)], props, text)
     this.pageHasText = true
+    this.mirror = { text, images: Object.fromEntries(tiles.map((t) => [t.id, { x: t.x, y: t.y, w: t.width, h: t.height, gray: null }])) }
     return { ok: ack?.rebuildCode === 6, rebuildAck: ack?.rebuildCode ?? "timeout", tiles: tiles.map((t) => t.id) }
   }
 
@@ -667,20 +677,23 @@ export class G2Manager extends EventEmitter {
   updateImage(frame, opts = {}) {
     return (this._imgQ = this._imgQ.catch(() => {}).then(() => this._updateImageNow(frame, opts)))
   }
-  async _updateImageNow(frame, { id = 1, ackGate = true, gapMs = 30 } = {}) {
+  async _updateImageNow(frame, { id = 1, ackGate = true, gapMs = 30, arms } = {}) {
     if (!this.connected) throw new Error("not connected")
     const bmpBuf = bmpEncode4(frame)
     if (bmpBuf.length > 4096) throw new Error(`BMP ${bmpBuf.length}B > 4096 single-fragment limit`)
     const session = (this._imgSession = (this._imgSession || 40) + 2)
     const m = this.send.nextMagic()
     const t0 = Date.now()
+    const lr = arms === "right" ? { left: false, right: true } : arms === "left" ? { left: true, right: false } : undefined
     if (!ackGate) {
-      await this._evenHub(g2.updateImageMessage(id, `img-${id}`, session, bmpBuf.length, 0, bmpBuf, m), undefined, gapMs)
+      await this._evenHub(g2.updateImageMessage(id, `img-${id}`, session, bmpBuf.length, 0, bmpBuf, m), lr, gapMs)
+      if (this.mirror.images[id]) Object.assign(this.mirror.images[id], { w: frame.w, h: frame.h, gray: Buffer.from(frame.data).toString("base64") })
       return { ok: true, ms: Date.now() - t0, bytes: bmpBuf.length, ack: null }
     }
     const ackP = this._awaitAck((a) => a.imgCode != null && a.magic === m, 5000)
-    await this._evenHub(g2.updateImageMessage(id, `img-${id}`, session, bmpBuf.length, 0, bmpBuf, m), undefined, gapMs)
+    await this._evenHub(g2.updateImageMessage(id, `img-${id}`, session, bmpBuf.length, 0, bmpBuf, m), lr, gapMs)
     const a = await ackP
+    if (this.mirror.images[id]) Object.assign(this.mirror.images[id], { w: frame.w, h: frame.h, gray: Buffer.from(frame.data).toString("base64") })
     return { ok: a?.imgCode === 4, ms: Date.now() - t0, bytes: bmpBuf.length, ack: a?.imgCode ?? "timeout" }
   }
 

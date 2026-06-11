@@ -17,6 +17,6 @@ for (;;) {
     if (Math.random() < 0.85) d.y = (d.y + 1) % ROWS
     if (Math.random() < 0.02) d.len = 3 + Math.floor(Math.random() * 4)
   }
-  await post("/text", { text: grid.map((r) => r.join("")).join("\n") }).catch(() => {})
+  await post("/text", { text: grid.map((r) => r.join("")).join("\n"), arms: "right" }).catch(() => {})
   await sleep(1000 / fps)
 }
