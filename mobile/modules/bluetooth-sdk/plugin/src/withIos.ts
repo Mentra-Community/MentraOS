@@ -62,9 +62,8 @@ const withXcodeEnvLocal: ConfigPlugin = (config) => {
 function resolveAnalyticsProps(props: BluetoothSdkPluginProps | undefined) {
   const analytics = props?.analytics
   const disabled =
-    props?.disableAnalytics === true ||
     analytics === false ||
-    (typeof analytics === "object" ? analytics.disabled === true || analytics.enabled === false : undefined)
+    (typeof analytics === "object" && analytics.enabled !== undefined ? !analytics.enabled : undefined)
 
   return {
     disabled,

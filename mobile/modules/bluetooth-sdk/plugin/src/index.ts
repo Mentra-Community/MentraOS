@@ -6,12 +6,10 @@ import {withIosConfiguration} from "./withIos"
 export interface BluetoothSdkPluginProps {
   node?: boolean
   analytics?: boolean | BluetoothSdkAnalyticsPluginProps
-  disableAnalytics?: boolean
 }
 
 export interface BluetoothSdkAnalyticsPluginProps {
   enabled?: boolean
-  disabled?: boolean
   postHogApiKey?: string
   postHogHost?: string
 }
