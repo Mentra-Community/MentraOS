@@ -202,7 +202,7 @@ const CONSUMER_NAME = `${POD_ID}:${WORKER_ID}`
 const XREAD_COUNT_PER_STREAM = 100
 const XREAD_BLOCK_MS = 1000
 const XAUTOCLAIM_COUNT = 500
-const XAUTOCLAIM_MIN_IDLE_MS = 5_000
+const XAUTOCLAIM_MIN_IDLE_MS = 0
 const XAUTOCLAIM_LOOP_INTERVAL_MS = 2_000
 
 // Note: we DO want offline queue here, unlike the audio-ingress XADD path.
