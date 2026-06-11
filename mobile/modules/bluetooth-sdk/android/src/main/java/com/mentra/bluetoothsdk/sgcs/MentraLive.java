@@ -2354,6 +2354,15 @@ public class MentraLive extends SGCManager {
                 emitVideoRecordingStatus(json);
                 break;
 
+            case "media_success":
+            case "media_error":
+                try {
+                    Bridge.sendMediaUploadEvent(type, jsonObjectToMap(json));
+                } catch (JSONException e) {
+                    Log.e(TAG, "Error converting media upload event to Map", e);
+                }
+                break;
+
             case "voice_activity_detection_status":
                 handleVoiceActivityDetectionStatus(
                         json.optBoolean(
@@ -4370,7 +4379,7 @@ public class MentraLive extends SGCManager {
             json.put("type", "take_photo");
             json.put("requestId", requestId);
             json.put("appId", appId);
-            if (webhookUrl != null && !webhookUrl.isEmpty()) {
+            if (webhookUrl != null && !webhookUrl.trim().isEmpty()) {
                 json.put("webhookUrl", webhookUrl);
             }
             if (hasAuthToken) {

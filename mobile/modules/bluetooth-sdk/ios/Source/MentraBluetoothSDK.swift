@@ -81,10 +81,14 @@ private final class PendingHotspotStatusRequest {
 private final class PendingVideoRecordingRequest {
     let expectedStatus: String
     let pending: PendingResponse<VideoRecordingStatusEvent>
+    let waitForUpload: Bool
+    var stoppedEvent: VideoRecordingStatusEvent?
+    var uploadSucceeded = false
 
-    init(expectedStatus: String, pending: PendingResponse<VideoRecordingStatusEvent>) {
+    init(expectedStatus: String, pending: PendingResponse<VideoRecordingStatusEvent>, waitForUpload: Bool = false) {
         self.expectedStatus = expectedStatus
         self.pending = pending
+        self.waitForUpload = waitForUpload
     }
 }
 
@@ -150,6 +154,7 @@ public final class MentraBluetoothSDK {
     private var bridgeEventSinkId: String?
     private var storeListenerId: String?
     private let defaultDeviceKeys: Set<String> = ["default_wearable", "device_name", "device_address"]
+    private let videoUploadStopTimeoutMs = 10 * 60 * 1000
     private var suppressDefaultDeviceEvents = false
     private var defaultDeviceApplyGeneration = 0
     private var activeScanSessions: [UUID: ActiveScanSession] = [:]
@@ -209,6 +214,15 @@ public final class MentraBluetoothSDK {
 
     public var defaultDevice: Device? {
         currentDefaultDevice()
+    }
+
+    private func requireGlassesConnected(operation: String) throws {
+        guard glassesStatus.connected else {
+            throw BluetoothError(
+                code: "glasses_not_connected",
+                message: "Cannot \(operation) because glasses are not connected."
+            )
+        }
     }
 
     public func getDefaultDevice() -> Device? {
@@ -806,6 +820,7 @@ public final class MentraBluetoothSDK {
         guard !request.requestId.isEmpty else {
             throw BluetoothError(code: "missing_request_id", message: "requestId is required to start video recording.")
         }
+        try requireGlassesConnected(operation: "start video recording")
         let pending = PendingResponse<VideoRecordingStatusEvent>(
             operation: "start video recording \(request.requestId)"
         )
@@ -839,11 +854,12 @@ public final class MentraBluetoothSDK {
     }
 
     public func stopVideoRecording(
-        requestId: String, webhookUrl: String?, authToken: String?
+        requestId: String, webhookUrl: String? = nil, authToken: String? = nil
     ) async throws -> VideoRecordingStatusEvent {
         guard !requestId.isEmpty else {
             throw BluetoothError(code: "missing_request_id", message: "requestId is required to stop video recording.")
         }
+        try requireGlassesConnected(operation: "stop video recording")
         let pending = PendingResponse<VideoRecordingStatusEvent>(operation: "stop video recording \(requestId)")
         guard pendingVideoRecordingRequests[requestId] == nil else {
             throw BluetoothError(
@@ -851,13 +867,16 @@ public final class MentraBluetoothSDK {
                 message: "A video recording command is already waiting for requestId \(requestId)."
             )
         }
+        let waitForUpload = !(webhookUrl?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         pendingVideoRecordingRequests[requestId] = PendingVideoRecordingRequest(
             expectedStatus: "recording_stopped",
-            pending: pending
+            pending: pending,
+            waitForUpload: waitForUpload
         )
         DeviceManager.shared.stopVideoRecording(requestId, webhookUrl, authToken)
         do {
-            let event = try await pending.wait()
+            let timeoutMs = waitForUpload ? videoUploadStopTimeoutMs : 15_000
+            let event = try await pending.wait(timeoutMs: timeoutMs)
             pendingVideoRecordingRequests.removeValue(forKey: requestId)
             return event
         } catch {
@@ -1165,13 +1184,40 @@ public final class MentraBluetoothSDK {
         guard let request = pendingVideoRecordingRequests[event.requestId] else { return }
         if event.success {
             if event.status == request.expectedStatus {
-                request.pending.resolve(event)
+                if request.waitForUpload {
+                    request.stoppedEvent = event
+                    if request.uploadSucceeded {
+                        request.pending.resolve(event)
+                    }
+                } else {
+                    request.pending.resolve(event)
+                }
             }
         } else {
             request.pending.reject(
                 BluetoothError(
                     code: event.status.isEmpty ? "video_recording_failed" : event.status,
                     message: event.details ?? "Video recording command failed."
+                )
+            )
+        }
+    }
+
+    private func handleMediaUploadForRequests(_ event: MediaUploadEvent) {
+        guard event.isVideo, let request = pendingVideoRecordingRequests[event.requestId], request.waitForUpload else {
+            return
+        }
+        if event.isSuccess {
+            if let stoppedEvent = request.stoppedEvent {
+                request.pending.resolve(stoppedEvent)
+            } else {
+                request.uploadSucceeded = true
+            }
+        } else {
+            request.pending.reject(
+                BluetoothError(
+                    code: "video_upload_failed",
+                    message: event.errorMessage ?? "Video upload failed."
                 )
             )
         }
@@ -1427,6 +1473,10 @@ public final class MentraBluetoothSDK {
             let event = VideoRecordingStatusEvent(values: data)
             handleVideoRecordingStatusForRequests(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .videoRecordingStatus(event))
+        case "media_success", "media_error":
+            let event = MediaUploadEvent(values: data)
+            handleMediaUploadForRequests(event)
+            delegate?.mentraBluetoothSDK(self, didReceive: .mediaUpload(event))
         case "rgb_led_control_response":
             let event = RgbLedControlResponseEvent(values: data)
             handleRgbLedResponseForRequests(event)

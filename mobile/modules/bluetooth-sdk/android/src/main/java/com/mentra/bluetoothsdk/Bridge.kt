@@ -418,6 +418,16 @@ public class Bridge private constructor() {
         }
 
         @JvmStatic
+        fun sendMediaUploadEvent(type: String, values: Map<String, Any>) {
+            val body = HashMap<String, Any>()
+            body["type"] = type
+            values.forEach { (key, value) ->
+                body[key] = value
+            }
+            sendTypedMessage(type, body)
+        }
+
+        @JvmStatic
         fun sendVersionInfo(values: Map<String, Any>) {
             fun stringField(vararg keys: String): String =
                     keys.firstNotNullOfOrNull { key -> values[key] as? String } ?: ""

@@ -303,6 +303,12 @@ class Bridge {
         Bridge.sendTypedMessage("video_recording_status", body: body)
     }
 
+    static func sendMediaUploadEvent(type: String, values: [String: Any]) {
+        var body = values
+        body["type"] = type
+        Bridge.sendTypedMessage(type, body: body)
+    }
+
     static func sendVersionInfo(_ values: [String: Any]) {
         var body: [String: Any] = [
             "type": "version_info",

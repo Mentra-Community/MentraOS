@@ -120,6 +120,10 @@ class BluetoothSdkModule : Module() {
                     sendEvent("video_recording_status", event.values)
                 }
 
+                override fun onMediaUpload(event: MediaUploadEvent) {
+                    sendEvent(event.type, event.values)
+                }
+
                 override fun onRgbLedControlResponse(event: RgbLedControlResponseEvent) {
                     sendEvent("rgb_led_control_response", event.values)
                 }
@@ -213,6 +217,8 @@ class BluetoothSdkModule : Module() {
             "photo_response",
             "photo_status",
             "video_recording_status",
+            "media_success",
+            "media_error",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",

@@ -2171,6 +2171,9 @@ class MentraLive: NSObject, SGCManager {
         case "video_recording_status":
             emitVideoRecordingStatus(json)
 
+        case "media_success", "media_error":
+            Bridge.sendMediaUploadEvent(type: type, values: json)
+
         case "photo_status":
             emitPhotoStatus(json)
 
