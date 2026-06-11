@@ -443,7 +443,7 @@ class SocketComms {
     // bypass it from the cloud side. The cloud's bypassVad hint is ignored.
     const bypassVad = false
     const requiredDataStrings = msg.requiredData || []
-    console.log(`SOCKET: mic_state_change: requiredData = [${requiredDataStrings}]`)
+    // console.log(`SOCKET: mic_state_change: requiredData = [${requiredDataStrings}]`)
     let shouldSendPcmData = false
     let shouldSendTranscript = false
     if (requiredDataStrings.includes("pcm")) {
@@ -575,14 +575,18 @@ class SocketComms {
   private handle_start_stream(msg: any) {
     const streamUrl = msg.streamUrl
     if (streamUrl) {
-      BluetoothSdk.startExternallyManagedStream(msg)
+      void BluetoothSdk.startExternallyManagedStream(msg).catch((error) => {
+        console.warn("SOCKET: start_stream failed:", error)
+      })
     } else {
       console.log("Invalid stream request: missing stream URL")
     }
   }
 
   private handle_stop_stream() {
-    BluetoothSdk.stopStream()
+    void BluetoothSdk.stopStream().catch((error) => {
+      console.warn("SOCKET: stop_stream failed:", error)
+    })
   }
 
   private handle_keep_stream_alive(msg: any) {
@@ -598,17 +602,35 @@ class SocketComms {
     // Optional per-recording video settings; when absent the glasses use their
     // saved button-video settings. Only forward fields that are present.
     const s = msg.settings ?? {}
+    // Optional auto-stop timer (minutes); 0/absent = record until stopped. Accept it from the
+    // canonical nested location (settings.maxRecordingTimeMinutes, per VideoRecordingSettings) or
+    // the legacy top-level location, preferring nested. `??` (not `||`) preserves an explicit 0.
+    const rawMaxRecordingTimeMinutes = s.maxRecordingTimeMinutes ?? msg.maxRecordingTimeMinutes
+    const maxRecordingTimeMinutes =
+      typeof rawMaxRecordingTimeMinutes === "number" ? rawMaxRecordingTimeMinutes : undefined
     const settings =
-      s.width != null || s.height != null || s.fps != null
-        ? {width: s.width, height: s.height, fps: s.fps}
+      s.width != null || s.height != null || s.fps != null || maxRecordingTimeMinutes != null
+        ? {width: s.width, height: s.height, fps: s.fps, maxRecordingTimeMinutes}
         : undefined
-    BluetoothSdk.startVideoRecording(videoRequestId, save, sound, settings)
+    BluetoothSdk.startVideoRecording(videoRequestId, save, sound, settings).catch((error) => {
+      console.warn("SOCKET: startVideoRecording failed:", error)
+    })
   }
 
   private handle_stop_video_recording(msg: any) {
-    console.log(`SOCKET: Received STOP_VIDEO_RECORDING: ${JSON.stringify(msg)}`)
     const stopRequestId = msg.requestId || ""
-    BluetoothSdk.stopVideoRecording(stopRequestId)
+    // Upload target supplied at stop (not start) so the auth token is fresh when
+    // the upload runs. Empty webhook = keep the video on device (no upload).
+    const webhookUrl = msg.webhookUrl ?? ""
+    const authToken = typeof msg.authToken === "string" && msg.authToken.length > 0 ? msg.authToken : ""
+    // Don't log the full payload: the auth token is a secret. Log presence, not the value
+    // (mirrors the photo pipeline redaction above).
+    console.log(
+      `SOCKET: Received STOP_VIDEO_RECORDING requestId=${stopRequestId} webhookUrl=${webhookUrl || "none"} authToken=${authToken ? "set" : "none"}`,
+    )
+    BluetoothSdk.stopVideoRecording(stopRequestId, webhookUrl, authToken).catch((error) => {
+      console.warn("SOCKET: stopVideoRecording failed:", error)
+    })
   }
 
   private handle_rgb_led_control(msg: any) {
@@ -622,7 +644,7 @@ class SocketComms {
       return Number.isFinite(coerced) ? coerced : fallback
     }
 
-    BluetoothSdk.rgbLedControl(
+    void BluetoothSdk.rgbLedControl(
       msg.requestId,
       msg.packageName ?? null,
       normalizeRgbLedAction(msg.action),
@@ -630,7 +652,12 @@ class SocketComms {
       coerceNumber(msg.ontime, 1000),
       coerceNumber(msg.offtime, 0),
       coerceNumber(msg.count, 1),
-    )
+    ).catch((err: unknown) => {
+      console.log(
+        `SOCKET: rgb_led_control failed requestId=${msg.requestId}:`,
+        err instanceof Error ? err.message : err,
+      )
+    })
   }
 
   private handle_camera_fov_set(msg: any) {

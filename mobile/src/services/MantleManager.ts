@@ -52,6 +52,7 @@ import {logE2EMetric} from "@/utils/e2eMetrics"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
+import {Buffer} from "@craftzdog/react-native-buffer"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
 
@@ -242,6 +243,9 @@ class MantleManager {
         stopRecording: (pkg, recordingId) => phoneVideoCoordinator.stopRecording(pkg, recordingId),
         stopForApp: (pkg) => phoneVideoCoordinator.stopForApp(pkg),
       },
+      cameraSettings: {
+        setFov: (_pkg, request) => BluetoothSdk.setCameraFov(request),
+      },
       // Google Nav SDK adapter — the island runtime fan-outs nav events to
       // miniapps subscribed to navigation_*. Delegates straight to the host's
       // singleton NavigationService.
@@ -258,6 +262,7 @@ class MantleManager {
         setSkipCrossings: (enabled) => navigationService.setSkipCrossings(enabled),
         requestPermission: () => navigationService.requestPermission(),
         computeRoute: (payload) => navigationService.computeRoute(payload),
+        reverseGeocodeRoad: (coord) => navigationService.reverseGeocodeRoad(coord),
       },
       heading: {
         addListener: (l) => headingService.addListener(l),
@@ -411,6 +416,12 @@ class MantleManager {
         const {packageName, version} = parsed
 
         if (appRegistry.getInstalledVersions(packageName).includes(version)) {
+          continue
+        }
+
+        let superMode = await useSettingsStore.getState().getSetting(SETTINGS.super_mode.key)
+        if (!superMode && packageName === "com.mentra.example") {
+          // skip installing the example miniapp if super mode is not enabled
           continue
         }
 
@@ -609,21 +620,13 @@ class MantleManager {
         BluetoothSdk.addListener("photo_response", (event) => {
           // Local miniapps' photos are tracked by phonePhotoCoordinator. If
           // glasses report an error (BATTERY_LOW, CAMERA_BUSY, ...) for a
-          // phone-owned requestId, short-circuit the in-flight long-poll
-          // with the typed error. Cloud-app photos (third-party SDK) still
-          // forward to cloud's PhotoManager.
+          // phone-owned requestId, short-circuit the in-flight long-poll with
+          // the typed error. Terminal success is ignored here because the
+          // coordinator resolves from the phone/cloud upload result. Cloud-app
+          // photos (third-party SDK) still forward to cloud's PhotoManager.
           //
-          // Note: glasses only emit photo_response on ERROR (verified in
-          // asg_client/.../MediaCaptureService.java — only sendPhotoErrorResponse
-          // emits this event). Successful uploads land directly on cloud's
-          // /api/v2/client/photo/upload and the coordinator learns via its
-          // long-poll. So the state === "success" branch is unreachable for
-          // phone-owned requestIds.
-          //
-          // Caveat: BLE-fallback upload failures on the phone-side
-          // BlePhotoUploadService only log (no photo_response is emitted),
-          // so the coordinator falls back to the 30s long-poll timeout in
-          // that path. Pre-existing v1 behavior; not regressed here.
+          // Error responses are the only photo_response events that settle
+          // the coordinator directly.
           if (event.requestId && phonePhotoCoordinator.owns(event.requestId)) {
             if (event.state === "error") {
               phonePhotoCoordinator.handlePhotoError(
@@ -690,6 +693,20 @@ class MantleManager {
         BluetoothSdk.addListener("touch_event", (event) => {
           socketComms.sendTouchEvent(event)
           localMiniappRuntime.forwardEvent("touch_event", event)
+        }),
+      )
+
+      // Raw accelerometer readings from the glasses IMU (G2). The native
+      // payload {x, y, z, timestamp} already matches the miniapp AccelData
+      // shape, so forward it as-is (runtime maps accel_event → accel_data).
+      this.subs.push(
+        BluetoothSdk.addListener("accel_event", (event) => {
+          localMiniappRuntime.forwardEvent("accel_event", {
+            x: event.x,
+            y: event.y,
+            z: event.z,
+            timestamp: typeof event.timestamp === "number" ? event.timestamp : Date.now(),
+          })
         }),
       )
 

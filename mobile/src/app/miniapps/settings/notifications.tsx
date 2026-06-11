@@ -30,12 +30,6 @@ export default function NotificationSettingsScreen() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
 
-  useRegisterCapsule({
-    packageName: notifyPackageName,
-    viewShotRef,
-    visibleOnRoutes: ["/miniapps/settings/notifications"],
-  })
-
   useEffect(() => {
     loadInstalledApps()
   }, [])

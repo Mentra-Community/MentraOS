@@ -11,9 +11,11 @@ import {
   CAMERA_FOV_DEFAULT,
   CAMERA_FOV_MAX,
   CAMERA_FOV_MIN,
-  CameraFov,
   CameraFovPreset,
+  CameraFovRequest,
+  CameraFovResult,
   CameraFovSetting,
+  CameraRoiPosition,
   ConnectOptions,
   DashboardMenuItem,
   Device,
@@ -21,17 +23,30 @@ import {
   GlassesMediaVolumeGetResult,
   GlassesMediaVolumeSetResult,
   GlassesStatus,
+  GalleryStatusEvent,
+  HotspotStatusChangeEvent,
   MicPreference,
   ObservableStoreCategory,
+  OtaQueryResult,
+  OtaStartAckEvent,
   PhotoRequestParams,
+  PhotoSuccessResponseEvent,
   PublicBluetoothStatus,
   RgbLedAction,
   RgbLedColor,
+  RgbLedControlSuccessResponseEvent,
   ScanModelOptions,
   ScanOptions,
+  SettingsAckSuccessEvent,
   StreamKeepAliveRequest,
   StreamStartRequest,
+  StreamStatusEvent,
+  VideoRecordingStartedStatusEvent,
   VideoRecordingSettings,
+  VideoRecordingStoppedStatusEvent,
+  VersionInfoResult,
+  WifiSearchResult,
+  WifiStatusChangeEvent,
 } from "../BluetoothSdk.types"
 import {photoRequestParamsForNative} from "./photoRequestPayload"
 
@@ -87,6 +102,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setDashboardMenu(items: DashboardMenuItem[]): Promise<void>
   setCalendarEvents(events: CalendarEvent[]): Promise<void>
   setHeadUpAngle(angleDegrees: number): Promise<void>
+  setImuEnabled(enabled: boolean): Promise<void>
   setScreenDisabled(disabled: boolean): Promise<void>
   ping(): Promise<void>
   dbg1(): Promise<void>
@@ -96,36 +112,36 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   sendIncidentId(incidentId: string, apiBaseUrl?: string | null): Promise<void>
 
   // WiFi Commands
-  requestWifiScan(): Promise<void>
-  sendWifiCredentials(ssid: string, password: string): Promise<void>
-  forgetWifiNetwork(ssid: string): Promise<void>
-  setHotspotState(enabled: boolean): Promise<void>
+  requestWifiScan(): Promise<WifiSearchResult[]>
+  sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
+  forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
+  setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
   /** Set glasses system clock (Mentra Live only) when phone detects clock skew. */
   setSystemTime(timestampMs: number): Promise<void>
   /** Logs current WiFi frequency (MHz) and 5 GHz band to Android logcat. */
   logCurrentWifiFrequency(): Promise<void>
 
   // Gallery Commands
-  setGalleryModeEnabled(enabled: boolean): Promise<void>
+  setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
-  setButtonPhotoSettings(size: ButtonPhotoSize): Promise<void>
-  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<void>
-  setButtonCameraLed(enabled: boolean): Promise<void>
-  setButtonMaxRecordingTime(minutes: number): Promise<void>
-  setCameraFov(fov: CameraFov): Promise<void>
-  queryGalleryStatus(): Promise<void>
-  requestPhoto(params: PhotoRequestParams): Promise<void>
+  setButtonPhotoSettings(size: ButtonPhotoSize): Promise<SettingsAckSuccessEvent>
+  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
+  setButtonCameraLed(enabled: boolean): Promise<SettingsAckSuccessEvent>
+  setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckSuccessEvent>
+  setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  queryGalleryStatus(): Promise<GalleryStatusEvent>
+  requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
 
   // OTA Commands
-  sendOtaStart(): Promise<void>
-  sendOtaQueryStatus(): Promise<void>
+  sendOtaStart(): Promise<OtaStartAckEvent>
+  sendOtaQueryStatus(): Promise<OtaQueryResult>
   /** Re-run glasses-side OTA version check (called after a clock fix invalidates a TLS failure). */
-  retryOtaVersionCheck(): Promise<void>
-  checkForOtaUpdate(): Promise<void>
-  startOtaUpdate(): Promise<void>
+  retryOtaVersionCheck(): Promise<OtaQueryResult>
+  checkForOtaUpdate(): Promise<OtaQueryResult>
+  startOtaUpdate(): Promise<OtaStartAckEvent>
 
   // Version Info Commands
-  requestVersionInfo(): Promise<void>
+  requestVersionInfo(): Promise<VersionInfoResult>
 
   // Video Recording Commands
   startVideoRecording(
@@ -133,13 +149,17 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     save: boolean,
     sound: boolean,
     settings?: VideoRecordingSettings,
-  ): Promise<void>
-  stopVideoRecording(requestId: string): Promise<void>
+  ): Promise<VideoRecordingStartedStatusEvent>
+  stopVideoRecording(
+    requestId: string,
+    webhookUrl?: string,
+    authToken?: string,
+  ): Promise<VideoRecordingStoppedStatusEvent>
 
   // Stream Commands
-  startStream(params: StreamStartRequest): Promise<void>
-  startExternallyManagedStream(params: StreamStartRequest): Promise<void>
-  stopStream(): Promise<void>
+  startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
+  startExternallyManagedStream(params: StreamStartRequest): Promise<StreamStatusEvent>
+  stopStream(): Promise<StreamStatusEvent>
   sendExternallyManagedStreamKeepAlive(params: StreamKeepAliveRequest): Promise<void>
 
   // Microphone Commands
@@ -166,7 +186,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     onDurationMs: number,
     offDurationMs: number,
     count: number,
-  ): Promise<void>
+  ): Promise<RgbLedControlSuccessResponseEvent>
 
   // STT Commands
   setSttModelDetails(path: string, languageCode: string): Promise<void>
@@ -212,8 +232,27 @@ const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
 
 const DEFAULT_SCAN_TIMEOUT_MS = 15_000
 
+function bindNativeMethod<T extends (...args: never[]) => unknown>(
+  module: Record<string, unknown>,
+  name: string,
+): T {
+  const method = module[name]
+  if (typeof method !== "function") {
+    console.warn(`[BluetoothSdk] Native method "${name}" is unavailable — rebuild the app (bun android / bun ios)`)
+    return (async () => {
+      throw new Error(`BluetoothSdk.${name} is not available in this native build. Rebuild the app.`)
+    }) as T
+  }
+  return method.bind(module) as T
+}
+
 const CAMERA_ROI_MIN = 0
 const CAMERA_ROI_MAX = 2
+const CAMERA_ROI_POSITION_VALUES: Record<CameraRoiPosition, CameraFovSetting["roiPosition"]> = {
+  center: 0,
+  bottom: 1,
+  top: 2,
+}
 
 // Named presets are a convenience layer over the numeric {fov, roiPosition} API.
 // "narrow" uses 82, a device-tested FOV; "standard" matches CAMERA_FOV_DEFAULT.
@@ -227,22 +266,23 @@ function clampInteger(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.round(value)))
 }
 
-function normalizeCameraFov(setting: CameraFov): CameraFovSetting {
-  if (typeof setting === "string") {
-    return CAMERA_FOV_PRESETS[setting] ?? CAMERA_FOV_PRESETS.standard
+function normalizeCameraFov(request: CameraFovRequest): CameraFovSetting {
+  if ("preset" in request) {
+    return CAMERA_FOV_PRESETS[request.preset] ?? CAMERA_FOV_PRESETS.standard
   }
+
+  const roiPosition = request.roiPosition ?? "center"
 
   return {
     fov: clampInteger(
-      Number.isFinite(setting.fov) ? setting.fov : CAMERA_FOV_DEFAULT,
+      Number.isFinite(request.fov) ? request.fov : CAMERA_FOV_DEFAULT,
       CAMERA_FOV_MIN,
       CAMERA_FOV_MAX,
     ),
-    roiPosition: clampInteger(
-      Number.isFinite(setting.roiPosition ?? 0) ? (setting.roiPosition ?? 0) : 0,
-      CAMERA_ROI_MIN,
-      CAMERA_ROI_MAX,
-    ) as CameraFovSetting["roiPosition"],
+    roiPosition: clampInteger(CAMERA_ROI_POSITION_VALUES[roiPosition] ?? 0, CAMERA_ROI_MIN, CAMERA_ROI_MAX) as
+      | 0
+      | 1
+      | 2,
   }
 }
 
@@ -406,43 +446,24 @@ NativeBluetoothSdkModule.setHeadUpAngle = function (angleDegrees: number) {
   return this.updateBluetoothSettings({head_up_angle: angleDegrees})
 }
 
-NativeBluetoothSdkModule.setScreenDisabled = function (disabled: boolean) {
-  return this.updateBluetoothSettings({screen_disabled: disabled})
+NativeBluetoothSdkModule.setImuEnabled = function (enabled: boolean) {
+  return this.updateBluetoothSettings({imu_enabled: enabled})
 }
 
-NativeBluetoothSdkModule.setGalleryModeEnabled = function (enabled: boolean) {
-  return this.updateBluetoothSettings({gallery_mode: enabled})
+NativeBluetoothSdkModule.setScreenDisabled = function (disabled: boolean) {
+  return this.updateBluetoothSettings({screen_disabled: disabled})
 }
 
 NativeBluetoothSdkModule.setVoiceActivityDetectionEnabled = function (enabled: boolean) {
   return this.updateBluetoothSettings({voice_activity_detection_enabled: enabled})
 }
 
-NativeBluetoothSdkModule.setButtonPhotoSettings = function (size: ButtonPhotoSize) {
-  return this.updateBluetoothSettings({button_photo_size: size})
-}
-
-NativeBluetoothSdkModule.setButtonVideoRecordingSettings = function (width: number, height: number, fps: number) {
-  return this.updateBluetoothSettings({
-    button_video_width: width,
-    button_video_height: height,
-    button_video_fps: fps,
-  })
-}
-
-NativeBluetoothSdkModule.setButtonCameraLed = function (enabled: boolean) {
-  return this.updateBluetoothSettings({button_camera_led: enabled})
-}
-
-NativeBluetoothSdkModule.setButtonMaxRecordingTime = function (minutes: number) {
-  return this.updateBluetoothSettings({button_max_recording_time: minutes})
-}
-
-NativeBluetoothSdkModule.setCameraFov = function (fov: CameraFov) {
-  const setting = normalizeCameraFov(fov)
-  return this.updateBluetoothSettings({
-    camera_fov: {fov: setting.fov, roi_position: setting.roiPosition},
-  })
+const nativeSetCameraFov = bindNativeMethod<
+  (fov: CameraFovSetting) => MaybePromise<CameraFovResult>
+>(NativeBluetoothSdkModule as unknown as Record<string, unknown>, "setCameraFov")
+NativeBluetoothSdkModule.setCameraFov = function (request: CameraFovRequest) {
+  const setting = normalizeCameraFov(request)
+  return Promise.resolve(nativeSetCameraFov(setting))
 }
 
 NativeBluetoothSdkModule.setMicState = function (

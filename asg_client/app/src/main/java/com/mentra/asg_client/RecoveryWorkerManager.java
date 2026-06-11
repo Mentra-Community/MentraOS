@@ -62,6 +62,14 @@ public class RecoveryWorkerManager {
         try {
             purgeLegacyUpdaterIfNeeded();
             int currentVersion = getInstalledVersion(RECOVERY_PACKAGE);
+            if (!isRecoveryAssetBundled()) {
+                if (currentVersion != -1) {
+                    launchRecoveryWorker();
+                } else {
+                    Log.d(TAG, "No bundled recovery worker asset and none installed; skipping");
+                }
+                return;
+            }
             int bundledVersion = getBundledRecoveryVersionCode();
             if (needsRecoveryRedeploy(currentVersion, bundledVersion)) {
                 deployRecoveryWorkerFromAssets();
@@ -71,6 +79,19 @@ public class RecoveryWorkerManager {
         } catch (Exception e) {
             Log.e(TAG, "Failed to ensure recovery worker", e);
             launchRecoveryWorker();
+        }
+    }
+
+    private boolean isRecoveryAssetBundled() {
+        try {
+            String[] assets = context.getAssets().list("");
+            if (assets == null) return false;
+            for (String asset : assets) {
+                if (RECOVERY_APK_ASSET_NAME.equals(asset)) return true;
+            }
+            return false;
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -108,6 +129,10 @@ public class RecoveryWorkerManager {
     }
 
     private void deployRecoveryWorkerFromAssets() {
+        if (!isRecoveryAssetBundled()) {
+            Log.d(TAG, "No bundled recovery worker asset; skipping deploy");
+            return;
+        }
         try {
             File recoveryFile = new File(RECOVERY_APK_FILE_PATH);
             File parentDir = recoveryFile.getParentFile();
@@ -142,6 +167,10 @@ public class RecoveryWorkerManager {
         }
         if (startRecoveryLauncherIfAvailable()) {
             Log.d(TAG, "Triggered recovery worker launcher activity");
+            return;
+        }
+        if (!isRecoveryAssetBundled()) {
+            Log.d(TAG, "Recovery worker not installed and no bundled asset; nothing to do");
             return;
         }
         int installedVersion = getInstalledVersion(RECOVERY_PACKAGE);
@@ -179,6 +208,9 @@ public class RecoveryWorkerManager {
             while ((bytesRead = assetStream.read(buffer)) != -1) {
                 fos.write(buffer, 0, bytesRead);
             }
+        } catch (java.io.FileNotFoundException e) {
+            Log.d(TAG, "No bundled recovery worker asset; skipping version read");
+            return -1;
         } catch (Exception e) {
             Log.w(TAG, "Failed to read bundled recovery worker version", e);
             return -1;
@@ -221,6 +253,9 @@ public class RecoveryWorkerManager {
     }
 
     private boolean startRecoveryLauncherIfAvailable() {
+        if (getInstalledVersion(RECOVERY_PACKAGE) == -1) {
+            return false;
+        }
         try {
             Intent launchIntent = new Intent();
             launchIntent.setClassName(RECOVERY_PACKAGE, RECOVERY_LAUNCHER_ACTIVITY);

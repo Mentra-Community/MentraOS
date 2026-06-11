@@ -35,8 +35,20 @@ public interface IMediaManager {
     /** Send video recording status response */
     void sendVideoRecordingStatusResponse(boolean success, String status, String details);
 
+    /** Send video recording status response correlated to a command request. */
+    default void sendVideoRecordingStatusResponse(
+            String requestId, boolean success, String status, String details) {
+        sendVideoRecordingStatusResponse(success, status, details);
+    }
+
     /** Send video recording status response with JSON object */
     void sendVideoRecordingStatusResponse(boolean success, JSONObject statusObject);
+
+    /** Send video recording status response with JSON object correlated to a command request. */
+    default void sendVideoRecordingStatusResponse(
+            String requestId, boolean success, JSONObject statusObject) {
+        sendVideoRecordingStatusResponse(success, statusObject);
+    }
 
     /** Get the shared streaming status callback instance */
     StreamingStatusCallback getStreamingStatusCallback();

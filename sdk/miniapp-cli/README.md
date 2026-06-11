@@ -34,7 +34,7 @@ What it does:
 2. Spawns `bun run --hot server.ts` in the project. The starter template ships a tiny Bun.serve that serves `index.html`, `miniapp.json`, `icon.png`, and any assets under `public/`.
 3. Polls `http://localhost:<port>` until the server is reachable.
 4. Starts a **dev sidecar** on `port + 1` — a WebSocket the phone connects to for live reload + console-log forwarding back to your terminal. Failure here is non-fatal; the miniapp still runs without live reload.
-5. Detects the LAN IP, builds a `mentra-miniapp://dev?url=…&name=…&package=…&dev=<sidecarPort>` URL, and prints a terminal QR + the raw URL.
+5. Detects the LAN IP, builds a `miniapp://dev?url=…&name=…&package=…&dev=<sidecarPort>` URL, and prints a terminal QR + the raw URL.
 6. Watches for LAN-IP changes (Wi-Fi switch) every 10s and reprints the QR.
 
 Default `port` is `3000`; override with a `"port": <n>` field in `miniapp.json`.
@@ -65,12 +65,12 @@ Flow:
    - `GET /icon.png`
    - `GET /bundle.zip`
    - `GET /__mentra_release/health`
-6. Prints a `mentra-miniapp://release?url=<lan-base>&package=…&version=…&name=…` URL + QR.
+6. Prints a `miniapp://release?url=<lan-base>&package=…&version=…&name=…` URL + QR.
 7. Stays up so multiple devices can install. Each `/bundle.zip` fetch logs `✓ Install #N — <name>@<version> → <remote>`.
 
 `Ctrl+C` to stop the server.
 
-**On the phone:** the MentraOS app's QR scanner branches on `mentra-miniapp://release` and uses the dev composer to download + install the bundle. The miniapp lands in `lmas/<package>/<version>/` and behaves like any installed local miniapp — runs offline, persists across restarts, no laptop required after install.
+**On the phone:** the MentraOS app's QR scanner branches on `miniapp://release` and uses the dev composer to download + install the bundle. The miniapp lands in `lmas/<package>/<version>/` and behaves like any installed local miniapp — runs offline, persists across restarts, no laptop required after install.
 
 > **Why "release" and not "install":** `install` collides with package managers (`bun run install` is reserved). Naming the action after the artifact you're producing avoids that collision and matches Android's `installRelease` mental model.
 

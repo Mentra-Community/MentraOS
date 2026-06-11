@@ -21,6 +21,14 @@ export type TouchEvent = {
   timestamp: number
 }
 
+export type AccelEvent = {
+  type: "accel_event"
+  x: number
+  y: number
+  z: number
+  timestamp: number
+}
+
 export type HeadUpEvent = {
   up: boolean
 }
@@ -128,12 +136,37 @@ export type HotspotErrorEvent = {
   timestamp: number
 }
 
+export type VersionInfoResult = {
+  androidVersion: string
+  firmwareVersion: string
+  besFirmwareVersion: string
+  mtkFirmwareVersion: string
+  buildNumber: string
+  systemTimeMs?: number
+  otaVersionUrl: string
+  appVersion: string
+}
+
+export type VersionInfoEvent = VersionInfoResult & {
+  type: "version_info"
+}
+
+export type WifiScanResultEvent = {
+  type: "wifi_scan_result"
+  networks: WifiSearchResult[]
+  scanComplete?: boolean
+}
+
 export type PhotoResponseEvent =
   | {
       type: "photo_response"
       state: "success"
       requestId: string
       uploadUrl: string
+      photoUrl?: string
+      statusUrl?: string
+      contentType?: string
+      fileSizeBytes?: number
       timestamp: number
     }
   | {
@@ -144,6 +177,8 @@ export type PhotoResponseEvent =
       errorCode?: string
       errorMessage: string
     }
+
+export type PhotoSuccessResponseEvent = Extract<PhotoResponseEvent, {state: "success"}>
 
 export type PhotoStatusState =
   | "accepted"
@@ -228,6 +263,68 @@ export type PhotoStatusEvent = {
   errorMessage?: string
 }
 
+export type VideoRecordingStatusEvent = {
+  type: "video_recording_status"
+  requestId?: string
+  success: boolean
+  status: VideoRecordingStatusState
+  details?: string | null
+  timestamp: number
+  data?: {
+    recording?: boolean
+    duration_ms?: number
+    duration_formatted?: string
+    [key: string]: unknown
+  }
+}
+
+export type VideoRecordingStatusState =
+  | "recording_started"
+  | "recording_status"
+  | "already_recording"
+  | "recording_stopped"
+  | "not_recording"
+  | "request_id_mismatch"
+  | "service_unavailable"
+  | "json_error"
+  | "battery_low"
+  | "camera_busy"
+  | "storage_unavailable"
+  | "integrity_failed"
+  | "error"
+
+export type VideoRecordingStartedStatusEvent = Omit<VideoRecordingStatusEvent, "success" | "status"> & {
+  success: true
+  status: "recording_started"
+}
+
+export type VideoRecordingStoppedStatusEvent = Omit<VideoRecordingStatusEvent, "success" | "status"> & {
+  success: true
+  status: "recording_stopped"
+}
+
+export type VideoRecordingSuccessStatusEvent =
+  | VideoRecordingStartedStatusEvent
+  | VideoRecordingStoppedStatusEvent
+
+export type MediaUploadSuccessEvent = {
+  type: "media_success"
+  requestId: string
+  mediaUrl: string
+  mediaType: number
+  timestamp: number
+}
+
+export type MediaUploadErrorEvent = {
+  type: "media_error"
+  requestId: string
+  errorMessage: string
+  mediaType: number
+  timestamp: number
+}
+
+export type MediaUploadEvent = MediaUploadSuccessEvent | MediaUploadErrorEvent
+
 export type GalleryStatusEvent = {
   type: "gallery_status"
   photos: number
@@ -236,6 +333,7 @@ export type GalleryStatusEvent = {
   totalSize?: number
   hasContent: boolean
   cameraBusy: boolean
+  cameraBusyReason?: "video" | "stream" | (string & {})
 }
 
 export type CompatibleGlassesSearchStopEvent = {
@@ -283,10 +381,48 @@ export type RgbLedControlResponseEvent =
       errorCode: string
     }
 
+export type RgbLedControlSuccessResponseEvent = Extract<RgbLedControlResponseEvent, {state: "success"}>
+
+export type SettingsAckStatus = "applied" | "ready" | "error" | "failed" | "failure" | "rejected"
+
+export type SettingsAckSetting =
+  | "gallery_mode"
+  | "button_photo"
+  | "button_video_recording"
+  | "button_camera_led"
+  | "button_max_recording_time"
+  | "camera_fov"
+
+export type SettingsAckEvent = {
+  type: "settings_ack"
+  requestId: string
+  setting: SettingsAckSetting
+  status: SettingsAckStatus
+  timestamp: number
+  fov?: number
+  roiPosition?: CameraRoiPositionValue
+  hardwareApplied?: boolean
+  active?: boolean
+  size?: ButtonPhotoSize | string
+  width?: number
+  height?: number
+  fps?: number
+  enabled?: boolean
+  minutes?: number
+  errorCode?: string
+  errorMessage?: string
+}
+
+export type SettingsAckSuccessStatus = Exclude<SettingsAckStatus, "error" | "failed" | "failure" | "rejected">
+
+export type SettingsAckSuccessEvent = Omit<SettingsAckEvent, "status"> & {
+  status: SettingsAckSuccessStatus
+}
+
 export type RgbLedAction = "on" | "off"
 export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
 export type PhotoSize = "small" | "medium" | "large" | "full"
-export type ButtonPhotoSize = "small" | "medium" | "large"
+export type ButtonPhotoSize = "small" | "medium" | "large" | "max"
 export type PhotoCompression = "none" | "medium" | "heavy"
 
 /**
@@ -298,6 +434,12 @@ export interface VideoRecordingSettings {
   width?: number
   height?: number
   fps?: number
+  /**
+   * Optional auto-stop timer in minutes, sent on `start_video_recording`.
+   * `0` (the default) means record until stopped or interrupted
+   * (battery/storage/thermal/error).
+   */
+  maxRecordingTimeMinutes?: number
 }
 export const DeviceModels = {
   Simulated: "Simulated Glasses",
@@ -324,24 +466,34 @@ export const CAMERA_FOV_MIN = 62
 export const CAMERA_FOV_MAX = 118
 export const CAMERA_FOV_DEFAULT = 102
 
-export type CameraRoiPosition = 0 | 1 | 2
+export type CameraRoiPosition = "center" | "bottom" | "top"
+export type CameraRoiPositionValue = 0 | 1 | 2
 export type CameraFovPreset = "narrow" | "standard" | "wide"
 
-export type CameraFovValue = {
-  fov: number
-  roiPosition?: CameraRoiPosition
-}
+export type CameraFovRequest =
+  | {
+      fov: number
+      roiPosition?: CameraRoiPosition
+    }
+  | {
+      preset: CameraFovPreset
+    }
 
-export type CameraFov = CameraFovValue | CameraFovPreset
+export type CameraFovResult = {
+  requestId: string
+  fov: number
+  roiPosition: CameraRoiPosition
+  timestamp: number
+}
 
 export type CameraFovSetting = {
   fov: number
-  roiPosition: CameraRoiPosition
+  roiPosition: CameraRoiPositionValue
 }
 
 type NativeCameraFovSetting = {
   fov: number
-  roi_position: CameraRoiPosition
+  roi_position: CameraRoiPositionValue
 }
 
 export type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
@@ -575,6 +727,8 @@ export type OtaStatusEvent = {
   error_message?: string
 }
 
+export type OtaQueryResult = OtaUpdateAvailableEvent | OtaStatusEvent
+
 /** Nex BLE protobuf trace (NexEventUtils); payload matches native Map keys. */
 export type BleCommandTraceEvent = {
   command: string
@@ -600,16 +754,21 @@ export type BluetoothSdkModuleEvents = {
   glasses_not_ready: (event: GlassesNotReadyEvent) => void
   button_press: (event: ButtonPressEvent) => void
   touch_event: (event: TouchEvent) => void
+  accel_event: (event: AccelEvent) => void
   head_up: (event: HeadUpEvent) => void
   voice_activity_detection_status: (event: VoiceActivityDetectionStatusEvent) => void
   speaking_status: (event: SpeakingStatusEvent) => void
   battery_status: (event: BatteryStatusEvent) => void
   local_transcription: (event: LocalTranscriptionEvent) => void
   wifi_status_change: (event: WifiStatusChangeEvent) => void
+  wifi_scan_result: (event: WifiScanResultEvent) => void
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
   hotspot_error: (event: HotspotErrorEvent) => void
   photo_response: (event: PhotoResponseEvent) => void
   photo_status: (event: PhotoStatusEvent) => void
+  video_recording_status: (event: VideoRecordingStatusEvent) => void
+  media_success: (event: MediaUploadSuccessEvent) => void
+  media_error: (event: MediaUploadErrorEvent) => void
   gallery_status: (event: GalleryStatusEvent) => void
   compatible_glasses_search_stop: (event: CompatibleGlassesSearchStopEvent) => void
   heartbeat_sent: (event: HeartbeatSentEvent) => void
@@ -617,6 +776,7 @@ export type BluetoothSdkModuleEvents = {
   swipe_volume_status: (event: SwipeVolumeStatusEvent) => void
   switch_status: (event: SwitchStatusEvent) => void
   rgb_led_control_response: (event: RgbLedControlResponseEvent) => void
+  settings_ack: (event: SettingsAckEvent) => void
   pair_failure: (event: PairFailureEvent) => void
   audio_pairing_needed: (event: AudioPairingNeededEvent) => void
   audio_connected: (event: AudioConnectedEvent) => void
@@ -632,6 +792,7 @@ export type BluetoothSdkModuleEvents = {
   ota_update_available: (event: OtaUpdateAvailableEvent) => void
   ota_start_ack: (event: OtaStartAckEvent) => void
   ota_status: (event: OtaStatusEvent) => void
+  version_info: (event: VersionInfoEvent) => void
   send_command_to_ble: (event: BleCommandTraceEvent) => void
   receive_command_from_ble: (event: BleCommandTraceEvent) => void
   miniapp_selected: (event: MiniappSelectedEvent) => void
@@ -670,21 +831,27 @@ export type BluetoothSdkEventMap = {
   glasses_not_ready: GlassesNotReadyEvent
   button_press: ButtonPressEvent
   touch_event: TouchEvent
+  accel_event: AccelEvent
   head_up: HeadUpEvent
   voice_activity_detection_status: VoiceActivityDetectionStatusEvent
   speaking_status: SpeakingStatusEvent
   battery_status: BatteryStatusEvent
   local_transcription: LocalTranscriptionEvent
   wifi_status_change: WifiStatusChangeEvent
+  wifi_scan_result: WifiScanResultEvent
   hotspot_status_change: HotspotStatusChangeEvent
   hotspot_error: HotspotErrorEvent
   photo_response: PhotoResponseEvent
   photo_status: PhotoStatusEvent
+  video_recording_status: VideoRecordingStatusEvent
+  media_success: MediaUploadSuccessEvent
+  media_error: MediaUploadErrorEvent
   gallery_status: GalleryStatusEvent
   compatible_glasses_search_stop: CompatibleGlassesSearchStopEvent
   swipe_volume_status: SwipeVolumeStatusEvent
   switch_status: SwitchStatusEvent
   rgb_led_control_response: RgbLedControlResponseEvent
+  settings_ack: SettingsAckEvent
   pair_failure: PairFailureEvent
   audio_pairing_needed: AudioPairingNeededEvent
   audio_connected: AudioConnectedEvent
@@ -695,6 +862,7 @@ export type BluetoothSdkEventMap = {
   ota_update_available: OtaUpdateAvailableEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
+  version_info: VersionInfoEvent
   extraction_progress: ExtractionProgressEvent
 }
 
@@ -749,32 +917,44 @@ export interface BluetoothSdkPublicModule {
   showDashboard(): Promise<void>
   setDashboardPosition(height: number, depth: number): Promise<void>
   setHeadUpAngle(angleDegrees: number): Promise<void>
+  setImuEnabled(enabled: boolean): Promise<void>
   setScreenDisabled(disabled: boolean): Promise<void>
 
-  requestWifiScan(): Promise<void>
-  sendWifiCredentials(ssid: string, password: string): Promise<void>
-  forgetWifiNetwork(ssid: string): Promise<void>
-  setHotspotState(enabled: boolean): Promise<void>
+  requestWifiScan(): Promise<WifiSearchResult[]>
+  sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
+  forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
+  setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
 
-  setGalleryModeEnabled(enabled: boolean): Promise<void>
+  setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
-  setButtonPhotoSettings(size: ButtonPhotoSize): Promise<void>
-  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<void>
-  setButtonCameraLed(enabled: boolean): Promise<void>
-  setButtonMaxRecordingTime(minutes: number): Promise<void>
-  setCameraFov(fov: CameraFov): Promise<void>
-  queryGalleryStatus(): Promise<void>
-  requestPhoto(params: PhotoRequestParams): Promise<void>
+  setButtonPhotoSettings(size: ButtonPhotoSize): Promise<SettingsAckSuccessEvent>
+  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
+  setButtonCameraLed(enabled: boolean): Promise<SettingsAckSuccessEvent>
+  setButtonMaxRecordingTime(minutes: number): Promise<SettingsAckSuccessEvent>
+  setCameraFov(request: CameraFovRequest): Promise<CameraFovResult>
+  queryGalleryStatus(): Promise<GalleryStatusEvent>
+  requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
   startVideoRecording(
     requestId: string,
     save: boolean,
     sound: boolean,
     settings?: VideoRecordingSettings,
-  ): Promise<void>
-  stopVideoRecording(requestId: string): Promise<void>
+  ): Promise<VideoRecordingStartedStatusEvent>
+  /**
+   * Stop the active recording. When {@link webhookUrl} is provided, the glasses
+   * upload the recorded video to it (multipart) using {@link authToken}. These
+   * are supplied at stop time (not start) so the token is fresh when the upload
+   * runs — a recording can last arbitrarily long. An empty/omitted webhook keeps
+   * the video on device (no upload).
+   */
+  stopVideoRecording(
+    requestId: string,
+    webhookUrl?: string,
+    authToken?: string,
+  ): Promise<VideoRecordingStoppedStatusEvent>
 
-  startStream(params: StreamStartRequest): Promise<void>
-  stopStream(): Promise<void>
+  startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
+  stopStream(): Promise<StreamStatusEvent>
 
   setMicState(enabled: boolean, useGlassesMic?: boolean, sendTranscript?: boolean, sendLc3Data?: boolean): Promise<void>
   setPreferredMic(preferredMic: MicPreference): Promise<void>
@@ -790,15 +970,15 @@ export interface BluetoothSdkPublicModule {
     onDurationMs: number,
     offDurationMs: number,
     count: number,
-  ): Promise<void>
+  ): Promise<RgbLedControlSuccessResponseEvent>
 
-  requestVersionInfo(): Promise<void>
+  requestVersionInfo(): Promise<VersionInfoResult>
   /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
-  checkForOtaUpdate(): Promise<void>
+  checkForOtaUpdate(): Promise<OtaQueryResult>
   /** Start the OTA flow after your app has presented the available update to the user. */
-  startOtaUpdate(): Promise<void>
+  startOtaUpdate(): Promise<OtaStartAckEvent>
   /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
-  retryOtaVersionCheck(): Promise<void>
+  retryOtaVersionCheck(): Promise<OtaQueryResult>
 
   // // stt commands (MOVE TO CRUST)
   // setSttModelDetails(path: string, languageCode: string): Promise<void>
@@ -1024,6 +1204,7 @@ export type BluetoothSettingsUpdate = Partial<{
   screen_disabled: boolean
   contextual_dashboard: boolean
   head_up_angle: number
+  imu_enabled: boolean
   brightness: number
   auto_brightness: boolean
   dashboard_height: number

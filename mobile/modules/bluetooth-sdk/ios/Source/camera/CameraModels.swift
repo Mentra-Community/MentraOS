@@ -11,6 +11,7 @@ public enum ButtonPhotoSize: String {
     case small
     case medium
     case large
+    case max
 }
 
 public enum PhotoCompression: String {
@@ -39,14 +40,36 @@ public struct ButtonVideoRecordingSettings {
     }
 }
 
+public enum CameraRoiPosition: Int {
+    case center = 0
+    case bottom = 1
+    case top = 2
+
+    public var label: String {
+        switch self {
+        case .center:
+            return "center"
+        case .bottom:
+            return "bottom"
+        case .top:
+            return "top"
+        }
+    }
+
+    public static func from(rawValue: Int?) -> CameraRoiPosition {
+        guard let rawValue else {
+            return .center
+        }
+        return CameraRoiPosition(rawValue: rawValue) ?? .center
+    }
+}
+
 public struct CameraFov {
     public static let minFov = 62
     public static let maxFov = 118
     public static let defaultFov = 102
     public static let narrowFov = 82
-    public static let minRoiPosition = 0
-    public static let maxRoiPosition = 2
-    public static let defaultRoiPosition = 0
+    public static let defaultRoiPosition = CameraRoiPosition.center
     public static let narrow = CameraFov(
         fov: CameraFov.narrowFov,
         roiPosition: CameraFov.defaultRoiPosition
@@ -61,15 +84,57 @@ public struct CameraFov {
     )
 
     public let fov: Int
-    public let roiPosition: Int
+    public let roiPosition: CameraRoiPosition
 
-    public init(fov: Int = CameraFov.defaultFov, roiPosition: Int = CameraFov.defaultRoiPosition) {
+    public init(fov: Int = CameraFov.defaultFov, roiPosition: CameraRoiPosition = CameraFov.defaultRoiPosition) {
         self.fov = min(max(fov, CameraFov.minFov), CameraFov.maxFov)
-        self.roiPosition = min(max(roiPosition, CameraFov.minRoiPosition), CameraFov.maxRoiPosition)
+        self.roiPosition = roiPosition
     }
 
     var value: [String: Int] {
-        ["fov": fov, "roi_position": roiPosition]
+        ["fov": fov, "roi_position": roiPosition.rawValue]
+    }
+}
+
+public struct CameraFovResult: CustomStringConvertible {
+    public let requestId: String
+    public let fov: Int
+    public let roiPosition: CameraRoiPosition
+    public let timestamp: Int
+
+    public var values: [String: Any] {
+        [
+            "requestId": requestId,
+            "fov": fov,
+            "roiPosition": roiPosition.label,
+            "timestamp": timestamp,
+        ]
+    }
+
+    public var description: String {
+        "CameraFovResult(fov: \(fov), roiPosition: \(roiPosition.label))"
+    }
+
+    static func from(ack: SettingsAckEvent, fallback: CameraFov) throws -> CameraFovResult {
+        if ack.status == "error" {
+            throw BluetoothError(
+                code: ack.errorCode ?? "camera_fov_failed",
+                message: ack.errorMessage ?? "Camera FOV request failed."
+            )
+        }
+        if !ack.hardwareApplied {
+            throw BluetoothError(
+                code: "camera_fov_not_applied",
+                message: "Camera FOV was saved but not applied to hardware."
+            )
+        }
+
+        return CameraFovResult(
+            requestId: ack.requestId,
+            fov: ack.fov ?? fallback.fov,
+            roiPosition: CameraRoiPosition.from(rawValue: ack.roiPosition ?? fallback.roiPosition.rawValue),
+            timestamp: ack.timestamp
+        )
     }
 }
 
@@ -164,9 +229,12 @@ public struct VideoRecordingRequest {
     public let width: Int
     public let height: Int
     public let fps: Int
+    // Optional auto-stop timer in minutes; 0 = record until stopped/interrupted.
+    public let maxRecordingTimeMinutes: Int
 
     public init(
-        requestId: String, save: Bool, sound: Bool, width: Int = 0, height: Int = 0, fps: Int = 0
+        requestId: String, save: Bool, sound: Bool, width: Int = 0, height: Int = 0, fps: Int = 0,
+        maxRecordingTimeMinutes: Int = 0
     ) {
         self.requestId = requestId
         self.save = save
@@ -174,6 +242,89 @@ public struct VideoRecordingRequest {
         self.width = width
         self.height = height
         self.fps = fps
+        self.maxRecordingTimeMinutes = maxRecordingTimeMinutes
+    }
+}
+
+public struct VideoRecordingStatusEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        var values = values
+        values["type"] = "video_recording_status"
+        self.values = values
+    }
+
+    public var requestId: String {
+        stringValue(values, "requestId") ?? ""
+    }
+
+    public var success: Bool {
+        boolValue(values, "success") ?? false
+    }
+
+    public var status: String {
+        stringValue(values, "status") ?? ""
+    }
+
+    public var details: String? {
+        stringValue(values, "details")
+    }
+
+    public var timestamp: Int {
+        intValue(values["timestamp"]) ?? Int(Date().timeIntervalSince1970 * 1000)
+    }
+
+    public var data: [String: Any]? {
+        values["data"] as? [String: Any]
+    }
+
+    public var description: String {
+        "VideoRecordingStatusEvent(requestId: \(requestId), status: \(status), success: \(success))"
+    }
+}
+
+public struct MediaUploadEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        self.values = values
+    }
+
+    public var type: String {
+        stringValue(values, "type") ?? ""
+    }
+
+    public var requestId: String {
+        stringValue(values, "requestId") ?? ""
+    }
+
+    public var mediaUrl: String? {
+        stringValue(values, "mediaUrl")
+    }
+
+    public var errorMessage: String? {
+        stringValue(values, "errorMessage")
+    }
+
+    public var mediaType: Int? {
+        intValue(values["mediaType"])
+    }
+
+    public var timestamp: Int {
+        intValue(values["timestamp"]) ?? Int(Date().timeIntervalSince1970 * 1000)
+    }
+
+    public var isSuccess: Bool {
+        type == "media_success"
+    }
+
+    public var isVideo: Bool {
+        mediaType == 2
+    }
+
+    public var description: String {
+        "MediaUploadEvent(requestId: \(requestId), type: \(type), mediaType: \(mediaType ?? -1))"
     }
 }
 
@@ -183,24 +334,39 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
         case error
     }
 
-    case success(requestId: String, uploadUrl: String, timestamp: Int)
+    case success(
+        requestId: String,
+        uploadUrl: String,
+        photoUrl: String?,
+        statusUrl: String?,
+        contentType: String?,
+        fileSizeBytes: Int?,
+        timestamp: Int
+    )
     case error(requestId: String, errorCode: String?, errorMessage: String, timestamp: Int)
 
     public init(values: [String: Any]) {
         let requestId = stringValue(values, "requestId") ?? ""
         let timestamp = intValue(values["timestamp"]) ?? Int(Date().timeIntervalSince1970 * 1000)
         let state = stringValue(values, "state")?.lowercased()
-        if state == State.success.rawValue {
+        let success = state == State.success.rawValue || boolValue(values, "success") == true
+        if success {
             self = .success(
                 requestId: requestId,
                 uploadUrl: stringValue(values, "uploadUrl") ?? "",
+                photoUrl: stringValue(values, "photoUrl"),
+                statusUrl: stringValue(values, "statusUrl"),
+                contentType: stringValue(values, "contentType") ?? stringValue(values, "mimeType"),
+                fileSizeBytes: intValue(values["fileSizeBytes"]) ?? intValue(values["bytes"])
+                    ?? intValue(values["size"]),
                 timestamp: timestamp
             )
         } else {
             self = .error(
                 requestId: requestId,
                 errorCode: stringValue(values, "errorCode"),
-                errorMessage: stringValue(values, "errorMessage") ?? "Unknown photo error",
+                errorMessage: stringValue(values, "errorMessage") ?? stringValue(values, "error")
+                    ?? "Unknown photo error",
                 timestamp: timestamp
             )
         }
@@ -217,27 +383,40 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
 
     public var requestId: String {
         switch self {
-        case let .success(requestId, _, _), let .error(requestId, _, _, _):
+        case let .success(requestId, _, _, _, _, _, _), let .error(requestId, _, _, _):
             requestId
         }
     }
 
     public var timestamp: Int {
         switch self {
-        case let .success(_, _, timestamp), let .error(_, _, _, timestamp):
+        case let .success(_, _, _, _, _, _, timestamp), let .error(_, _, _, timestamp):
             timestamp
         }
     }
 
     public var values: [String: Any] {
         switch self {
-        case let .success(requestId, uploadUrl, timestamp):
-            return [
+        case let .success(requestId, uploadUrl, photoUrl, statusUrl, contentType, fileSizeBytes, timestamp):
+            var values: [String: Any] = [
                 "state": State.success.rawValue,
                 "requestId": requestId,
                 "uploadUrl": uploadUrl,
                 "timestamp": timestamp,
             ]
+            if let photoUrl, !photoUrl.isEmpty {
+                values["photoUrl"] = photoUrl
+            }
+            if let statusUrl, !statusUrl.isEmpty {
+                values["statusUrl"] = statusUrl
+            }
+            if let contentType, !contentType.isEmpty {
+                values["contentType"] = contentType
+            }
+            if let fileSizeBytes {
+                values["fileSizeBytes"] = fileSizeBytes
+            }
+            return values
         case let .error(requestId, errorCode, errorMessage, timestamp):
             var values: [String: Any] = [
                 "state": State.error.rawValue,
@@ -334,5 +513,47 @@ public struct PhotoStatusEvent: CustomStringConvertible {
 
     public var description: String {
         "PhotoStatusEvent(requestId: \(requestId), status: \(status))"
+    }
+}
+
+public struct GalleryStatusEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        var values = values
+        values["type"] = "gallery_status"
+        self.values = values
+    }
+
+    public var photos: Int {
+        intValue(values["photos"]) ?? 0
+    }
+
+    public var videos: Int {
+        intValue(values["videos"]) ?? 0
+    }
+
+    public var total: Int {
+        intValue(values["total"]) ?? 0
+    }
+
+    public var totalSize: Int? {
+        intValue(values["totalSize"]) ?? intValue(values["total_size"])
+    }
+
+    public var hasContent: Bool {
+        boolValue(values, "hasContent", "has_content") ?? false
+    }
+
+    public var cameraBusy: Bool {
+        boolValue(values, "cameraBusy", "camera_busy") ?? false
+    }
+
+    public var cameraBusyReason: String? {
+        stringValue(values, "cameraBusyReason", "camera_busy")
+    }
+
+    public var description: String {
+        "GalleryStatusEvent(total: \(total), photos: \(photos), videos: \(videos))"
     }
 }

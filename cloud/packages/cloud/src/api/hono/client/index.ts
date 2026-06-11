@@ -12,6 +12,7 @@ export { default as feedbackApi } from "./feedback.api";
 export { default as incidentLogsApi } from "./incident-logs.api";
 export { default as locationApi } from "./location.api";
 export { default as minVersionApi } from "./min-version.api";
+export { default as navigationApi } from "./navigation.api";
 export { default as notificationsApi } from "./notifications.api";
 export { default as photoApi } from "./photo.api";
 export { default as userSettingsApi } from "./user-settings.api";

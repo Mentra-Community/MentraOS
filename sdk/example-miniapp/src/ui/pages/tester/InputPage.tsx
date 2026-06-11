@@ -20,7 +20,7 @@ export default function InputPage() {
 
   return (
     <Shell>
-      <MiniappHeader title="session.input" onBack={() => navigate("/tester")} />
+      <MiniappHeader title="session.input" onBack={() => navigate("/")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
           Physical controls on the glasses — buttons + touch. Background's

@@ -79,7 +79,7 @@ export default function StreamingPage() {
 
   return (
     <Shell>
-      <MiniappHeader title="session.stream" onBack={() => navigate("/tester")} />
+      <MiniappHeader title="session.stream" onBack={() => navigate("/")} />
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         <p className="mb-3 text-[13px] text-muted-foreground">
           Glasses-side RTMP/SRT/WHIP publishing. Unmanaged uses your URL

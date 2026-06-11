@@ -2,7 +2,6 @@ import {HashRouter, Navigate, Route, Routes} from "react-router-dom"
 
 import CaptionsPage from "./pages/CaptionsPage"
 import CameraPage from "./pages/tester/CameraPage"
-import ComingSoonPage from "./pages/tester/ComingSoonPage"
 import DisplayPage from "./pages/tester/DisplayPage"
 import StreamingPage from "./pages/tester/StreamingPage"
 import GlassesPage from "./pages/tester/GlassesPage"
@@ -23,8 +22,8 @@ export default function App() {
   return (
     <HashRouter>
       <Routes>
-        <Route path="/" element={<CaptionsPage />} />
-        <Route path="/tester" element={<TesterMenu />} />
+        <Route path="/" element={<TesterMenu />} />
+        <Route path="/captions" element={<CaptionsPage />} />
         <Route path="/tester/display" element={<DisplayPage />} />
         <Route path="/tester/speaker" element={<SpeakerPage />} />
         <Route path="/tester/mic" element={<MicrophonePage />} />
@@ -38,7 +37,6 @@ export default function App() {
         <Route path="/tester/system" element={<SystemPage />} />
         <Route path="/tester/led" element={<LedPage />} />
         <Route path="/tester/storage" element={<StoragePage />} />
-        <Route path="/tester/coming-soon" element={<ComingSoonPage />} />
         <Route path="/tester/camera" element={<CameraPage />} />
         <Route path="/tester/stream" element={<StreamingPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />

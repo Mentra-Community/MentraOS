@@ -39,6 +39,32 @@ export type SavedPlace = PlaceDetails & {
  * `running` is true while `status` ∈ {"navigating","rerouting"}, false
  * otherwise. Collapsing into a single field is a separate refactor.
  */
+/**
+ * One step in the active trip's route, mirrored from the SDK's
+ * `NavStep` minus internal fields the UI doesn't need (`routeIndex`).
+ * Carries the resolved road name (host-side hybrid resolver) so the
+ * UI can build live turn dots from road→road transitions, matching
+ * the preview path. `maneuver` is the SDK's `ManeuverKind` string —
+ * widened to `string` here to avoid pulling the union into the
+ * shared types boundary (the channel layer doesn't gain anything
+ * from the narrower type).
+ */
+export type NavRouteStep = {
+  lat: number
+  lng: number
+  road: string | null
+  maneuver: string
+  distanceMeters: number
+  /**
+   * Google's verbatim turn-by-turn text for this step (e.g. "Head west
+   * on Hayes St toward Gough St"). Populated from the preview-time
+   * Routes API response and refetched on reroute. Null when no cached
+   * preview is available — consumers fall back to the constructed
+   * "Turn left onto Octavia St" rendering.
+   */
+  instruction: string | null
+}
+
 export type TripState = {
   status: NavStatus
   running: boolean
@@ -46,7 +72,25 @@ export type TripState = {
   activeDestination: LatLng | null
   activeDestinationName: string | null
   routePoints: LatLng[] | null
+  /**
+   * Step list for the active route, populated alongside `routePoints`
+   * from the SDK's onRoute event. Null until the first route lands.
+   * Used by NavigationPage to build live turn dots that mirror the
+   * preview from→to/direction labels — preview reads steps directly
+   * from `computeRoute`, live reads them from here.
+   */
+  routeSteps: NavRouteStep[] | null
   offRouteAt: number | null
+  /**
+   * Side of the final route segment the destination pin sits on, from
+   * the walker's perspective. Captured at the moment we fire arrival
+   * (either from the early ≤7m-remaining trigger or the SDK's own
+   * arrived event) and held alongside `status === "arrived"` so the
+   * HUD can render "You have arrived at X, on your left|right".
+   * Null while not arrived, or when the route was too short to derive
+   * a side.
+   */
+  arrivalSide: "left" | "right" | null
 }
 
 export type DevSettings = {
@@ -54,12 +98,18 @@ export type DevSettings = {
   speedMultiplier: number
   wrongSidewalk: boolean
   skipCrossings: boolean
+  /**
+   * Debug toggle. When on, the maneuver card and glasses HUD swap their
+   * constructed "Turn right onto Octavia St" phrasing for Google's raw
+   * navigationInstruction string (e.g. "Head west on Hayes St toward
+   * Gough St"). The distance suffix ("in 198 m") is preserved.
+   */
+  useRawInstructions: boolean
 }
 
 export type NavSnapshot = {
   coords: Coords | null
   heading: number | null
-  mapsReady: boolean
   trip: TripState
   activePivot: Pivot | null
   upcomingPivot: Pivot | null

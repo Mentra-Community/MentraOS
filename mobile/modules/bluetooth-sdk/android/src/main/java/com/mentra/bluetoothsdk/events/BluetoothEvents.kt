@@ -104,6 +104,35 @@ data class OtaStatusEvent(
     }
 }
 
+data class OtaQueryResult(
+    val values: Map<String, Any>,
+) {
+    val type: String get() = stringValue(values, "type").orEmpty()
+    val status: String? get() = stringValue(values, "status")
+}
+
+data class SettingsAckEvent(
+    val values: Map<String, Any>,
+) {
+    val requestId: String get() = stringValue(values, "requestId").orEmpty()
+    val setting: String get() = stringValue(values, "setting").orEmpty()
+    val status: String get() = stringValue(values, "status") ?: "applied"
+    val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()
+    val fov: Int? get() = numberValue(values, "fov")
+    val roiPosition: Int? get() = numberValue(values, "roiPosition", "roi_position")
+    val hardwareApplied: Boolean get() = boolValue(values, "hardwareApplied", "hardware_applied") ?: false
+    val errorCode: String? get() = stringValue(values, "errorCode")
+    val errorMessage: String? get() = stringValue(values, "errorMessage")
+}
+
+data class RgbLedControlResponseEvent(
+    val values: Map<String, Any>,
+) {
+    val requestId: String get() = stringValue(values, "requestId").orEmpty()
+    val state: String get() = stringValue(values, "state") ?: "error"
+    val errorCode: String? get() = stringValue(values, "errorCode")
+}
+
 interface MentraBluetoothSdkListener {
     fun onStateChanged(state: MentraBluetoothState) {}
     fun onGlassesChanged(glasses: GlassesRuntimeState) {}
@@ -124,11 +153,16 @@ interface MentraBluetoothSdkListener {
     fun onGalleryStatus(event: GalleryStatusEvent) {}
     fun onPhotoResponse(event: PhotoResponseEvent) {}
     fun onPhotoStatus(event: PhotoStatusEvent) {}
+    fun onVideoRecordingStatus(event: VideoRecordingStatusEvent) {}
+    fun onMediaUpload(event: MediaUploadEvent) {}
+    fun onRgbLedControlResponse(event: RgbLedControlResponseEvent) {}
     fun onStreamStatus(event: StreamStatusEvent) {}
     fun onKeepAliveAck(event: KeepAliveAckEvent) {}
     fun onOtaUpdateAvailable(event: OtaUpdateAvailableEvent) {}
     fun onOtaStartAck(event: OtaStartAckEvent) {}
     fun onOtaStatus(event: OtaStatusEvent) {}
+    fun onSettingsAck(event: SettingsAckEvent) {}
+    fun onVersionInfo(event: VersionInfoResult) {}
     fun onMicPcm(event: MicPcmEvent) {}
     fun onMicLc3(event: MicLc3Event) {}
     fun onLocalTranscription(event: LocalTranscriptionEvent) {}

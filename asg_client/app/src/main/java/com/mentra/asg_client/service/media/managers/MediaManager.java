@@ -141,6 +141,12 @@ public class MediaManager implements IMediaManager {
 
     @Override
     public void sendVideoRecordingStatusResponse(boolean success, String status, String details) {
+        sendVideoRecordingStatusResponse(null, success, status, details);
+    }
+
+    @Override
+    public void sendVideoRecordingStatusResponse(
+            String requestId, boolean success, String status, String details) {
         if (!isBleConnected()) {
             Log.w(TAG, "Cannot send video recording status response - not connected to BLE device");
             return;
@@ -148,6 +154,9 @@ public class MediaManager implements IMediaManager {
         try {
             JSONObject response = new JSONObject();
             response.put("type", "video_recording_status");
+            if (requestId != null && !requestId.isEmpty()) {
+                response.put("requestId", requestId);
+            }
             response.put("success", success);
             response.put("status", status);
             response.put("details", details);
@@ -162,6 +171,12 @@ public class MediaManager implements IMediaManager {
 
     @Override
     public void sendVideoRecordingStatusResponse(boolean success, JSONObject statusObject) {
+        sendVideoRecordingStatusResponse(null, success, statusObject);
+    }
+
+    @Override
+    public void sendVideoRecordingStatusResponse(
+            String requestId, boolean success, JSONObject statusObject) {
         if (!isBleConnected()) {
             Log.w(TAG, "Cannot send video recording status response - not connected to BLE device");
             return;
@@ -169,7 +184,14 @@ public class MediaManager implements IMediaManager {
         try {
             JSONObject response = new JSONObject();
             response.put("type", "video_recording_status");
+            if (requestId != null && !requestId.isEmpty()) {
+                response.put("requestId", requestId);
+            }
             response.put("success", success);
+            String status = statusObject.optString("status", "");
+            if (!status.isEmpty()) {
+                response.put("status", status);
+            }
             response.put("data", statusObject);
             response.put("timestamp", System.currentTimeMillis());
             String jsonString = response.toString();

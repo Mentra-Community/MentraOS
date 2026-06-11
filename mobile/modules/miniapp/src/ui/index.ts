@@ -87,12 +87,10 @@ export {
   type MentraProviderProps,
 } from "../react/MentraProvider"
 export {MiniappHeader} from "../react/MiniappHeader"
-export {useSession} from "../react/useSession"
 export {useColorScheme} from "../react/useColorScheme"
 export {useCapabilities} from "../react/useCapabilities"
 export {useConnected} from "../react/useConnected"
 export {useSafeArea} from "../react/useSafeArea"
-export {useVisibility} from "../react/useVisibility"
 export {useCapsuleHeaderStyle} from "../react/useCapsuleHeaderStyle"
 export {useRpc, type RpcCallable} from "../react/useRpc"
 

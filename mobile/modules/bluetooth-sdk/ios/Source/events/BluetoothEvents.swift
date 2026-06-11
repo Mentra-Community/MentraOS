@@ -141,6 +141,98 @@ public struct OtaStatusEvent: CustomStringConvertible {
     }
 }
 
+public struct OtaQueryResult: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        self.values = values
+    }
+
+    public var type: String {
+        stringValue(values, "type") ?? ""
+    }
+
+    public var status: String? {
+        stringValue(values, "status")
+    }
+
+    public var description: String {
+        "OtaQueryResult(type: \(type), status: \(status ?? "unknown"))"
+    }
+}
+
+public struct SettingsAckEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        self.values = values
+    }
+
+    public var requestId: String {
+        stringValue(values, "requestId") ?? ""
+    }
+
+    public var setting: String {
+        stringValue(values, "setting") ?? ""
+    }
+
+    public var status: String {
+        stringValue(values, "status") ?? "applied"
+    }
+
+    public var timestamp: Int {
+        intValue(values["timestamp"]) ?? Int(Date().timeIntervalSince1970 * 1000)
+    }
+
+    public var fov: Int? {
+        intValue(values["fov"])
+    }
+
+    public var roiPosition: Int? {
+        intValue(values["roiPosition"]) ?? intValue(values["roi_position"])
+    }
+
+    public var hardwareApplied: Bool {
+        boolValue(values, "hardwareApplied") ?? boolValue(values, "hardware_applied") ?? false
+    }
+
+    public var errorCode: String? {
+        stringValue(values, "errorCode")
+    }
+
+    public var errorMessage: String? {
+        stringValue(values, "errorMessage")
+    }
+
+    public var description: String {
+        "SettingsAckEvent(setting: \(setting), status: \(status))"
+    }
+}
+
+public struct RgbLedControlResponseEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        self.values = values
+    }
+
+    public var requestId: String {
+        stringValue(values, "requestId") ?? ""
+    }
+
+    public var state: String {
+        stringValue(values, "state") ?? "error"
+    }
+
+    public var errorCode: String? {
+        stringValue(values, "errorCode")
+    }
+
+    public var description: String {
+        "RgbLedControlResponseEvent(requestId: \(requestId), state: \(state))"
+    }
+}
+
 public enum BluetoothEvent: CustomStringConvertible {
     case buttonPress(ButtonPressEvent)
     case touch(TouchEvent)
@@ -151,11 +243,16 @@ public enum BluetoothEvent: CustomStringConvertible {
     case hotspotError(HotspotErrorEvent)
     case photoResponse(PhotoResponseEvent)
     case photoStatus(PhotoStatusEvent)
+    case videoRecordingStatus(VideoRecordingStatusEvent)
+    case mediaUpload(MediaUploadEvent)
+    case rgbLedControlResponse(RgbLedControlResponseEvent)
     case streamStatus(StreamStatusEvent)
     case keepAliveAck(KeepAliveAckEvent)
     case otaUpdateAvailable(OtaUpdateAvailableEvent)
     case otaStartAck(OtaStartAckEvent)
     case otaStatus(OtaStatusEvent)
+    case settingsAck(SettingsAckEvent)
+    case versionInfo(VersionInfoResult)
     case localTranscription(LocalTranscriptionEvent)
     case raw(name: String, values: [String: Any])
 
@@ -179,6 +276,12 @@ public enum BluetoothEvent: CustomStringConvertible {
             event.description
         case let .photoStatus(event):
             event.description
+        case let .videoRecordingStatus(event):
+            event.description
+        case let .mediaUpload(event):
+            event.description
+        case let .rgbLedControlResponse(event):
+            event.description
         case let .streamStatus(event):
             event.description
         case let .keepAliveAck(event):
@@ -188,6 +291,10 @@ public enum BluetoothEvent: CustomStringConvertible {
         case let .otaStartAck(event):
             event.description
         case let .otaStatus(event):
+            event.description
+        case let .settingsAck(event):
+            event.description
+        case let .versionInfo(event):
             event.description
         case let .localTranscription(event):
             event.description

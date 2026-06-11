@@ -18,7 +18,16 @@ import {PlacesSession} from "../lib/places"
 import type {PlaceDetails, PlaceSuggestion} from "../lib/places"
 
 export class PlacesManager {
-  private session = new PlacesSession()
+  private session: PlacesSession
+
+  /**
+   * @param userEmail Identity forwarded to the secret-proxy Worker as
+   *   X-User-Email. Pass `session.userId` (the logged-in user) when available;
+   *   PlacesSession falls back to a placeholder when it's empty.
+   */
+  constructor(userEmail?: string) {
+    this.session = new PlacesSession(userEmail)
+  }
 
   autocomplete(
     query: string,
