@@ -667,11 +667,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private fun startVideoRecording() = runAction("Start video recording") {
         requireConnected("record video")
         requireGlassesWifi("record video")
-        if (state.photoDestination != PhotoDestination.MACBOOK_SERVER) {
-            val message = "Enable the cloud server to upload and preview video."
-            state = state.copy(cameraStatus = "Camera: $message")
-            throw IllegalStateException(message)
-        }
         val uploadUrl = state.webhookUrl.trim()
         photoUploadValidationMessage(uploadUrl)?.let { message ->
             state = state.copy(cameraStatus = "Camera: $message")
@@ -2771,6 +2766,7 @@ fun roiPositionLabel(roiPosition: Int): String =
     cameraRoiPositions.firstOrNull { it.second == roiPosition }?.first ?: "Center"
 
 fun cameraSdkCall(
+    mode: String,
     size: String,
     compression: String,
     exposureManual: Boolean,
@@ -2778,11 +2774,32 @@ fun cameraSdkCall(
     iso: Int,
     cameraFov: Int,
     cameraRoiPosition: Int,
-): String = """
+): String {
+    val prefix = """
 val cameraFovResult = mentraBluetoothSdk.setCameraFov(
     CameraFov(fov = $cameraFov, roiPosition = CameraRoiPosition.fromValue($cameraRoiPosition))
 )
 println("Camera FOV applied at ${'$'}{cameraFovResult.fov}°")
+""".trimIndent()
+    if (mode == "video") {
+        return """
+$prefix
+val videoRequestId = "video-${'$'}{System.currentTimeMillis()}"
+val started = mentraBluetoothSdk.startVideoRecording(
+    VideoRecordingRequest(
+      requestId = videoRequestId,
+      save = true,
+      sound = true,
+      maxRecordingTimeMinutes = 1,
+    )
+)
+println("Video started: ${'$'}{started.status}")
+val stopped = mentraBluetoothSdk.stopVideoRecording(videoRequestId, uploadUrl)
+println("Video stopped: ${'$'}{stopped.status}")
+""".trimIndent()
+    }
+    return """
+$prefix
 val photo = mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
       requestId = requestId,
@@ -2795,21 +2812,9 @@ val photo = mentraBluetoothSdk.requestPhoto(
       iso = ${if (exposureManual) iso else "null"},
     )
 )
-	println("Photo delivered: ${'$'}{photo.response.requestId}")
-
-	val videoRequestId = "video-${'$'}{System.currentTimeMillis()}"
-	val started = mentraBluetoothSdk.startVideoRecording(
-	    VideoRecordingRequest(
-	      requestId = videoRequestId,
-	      save = true,
-	      sound = true,
-	      maxRecordingTimeMinutes = 1,
-	    )
-	)
-	println("Video started: ${'$'}{started.status}")
-	val stopped = mentraBluetoothSdk.stopVideoRecording(videoRequestId, uploadUrl)
-	println("Video stopped: ${'$'}{stopped.status}")
-	""".trimIndent()
+println("Photo delivered: ${'$'}{photo.response.requestId}")
+""".trimIndent()
+}
 
 fun photoStatusUrl(uploadUrlText: String, requestId: String): String {
     val url = URL(uploadUrlText)

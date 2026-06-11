@@ -95,11 +95,13 @@ fun CameraScreen(controller: MentraExampleController) {
     val videoActionBusy = state.activeAction == "Start video recording" || state.activeAction == "Stop & upload video"
     val videoControlsEnabled = connected &&
         glassesWifiConnected &&
-        !videoActionBusy &&
-        (cloudServerEnabled || state.videoRecording)
+        !videoActionBusy
     val cameraStatusFailed = isCameraStatusFailure(state.cameraStatus)
-    val setupHint = if (cloudServerEnabled) localCameraSetupHint(state.webhookUrl, state.cameraStatus) else null
+    var captureMode by remember { mutableStateOf(CameraCaptureMode.PHOTO) }
+    val videoMode = captureMode == CameraCaptureMode.VIDEO
+    val setupHint = if (cloudServerEnabled || videoMode) localCameraSetupHint(state.webhookUrl, state.cameraStatus) else null
     val sdkCall = cameraSdkCall(
+        if (videoMode) "video" else "photo",
         state.photoSize,
         state.photoCompression,
         state.photoExposureManual,
@@ -109,7 +111,6 @@ fun CameraScreen(controller: MentraExampleController) {
         state.cameraRoiPosition,
     )
     val clipboardManager = LocalClipboardManager.current
-    var captureMode by remember { mutableStateOf(CameraCaptureMode.PHOTO) }
     var photoDetailsExpanded by remember { mutableStateOf(false) }
     var videoDetailsExpanded by remember { mutableStateOf(false) }
     LaunchedEffect(state.activeAction, state.videoRecording) {
@@ -294,7 +295,6 @@ fun CameraScreen(controller: MentraExampleController) {
                             when {
                                 !connected -> "Connect glasses first"
                                 !glassesWifiConnected -> "Connect glasses to Wi-Fi"
-                                !cloudServerEnabled && !state.videoRecording -> "Enable cloud server"
                                 state.activeAction == "Start video recording" -> "Starting video..."
                                 state.activeAction == "Stop & upload video" -> "Uploading video..."
                                 state.videoRecording -> "Stop & upload video"
@@ -366,14 +366,20 @@ fun CameraScreen(controller: MentraExampleController) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(state.cameraStatus, color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     Text(
-                        when {
-                            state.videoRecording -> "Recording MP4 on glasses"
-                            state.videoPreviewUrl != null -> "Video preview loaded from cloud server"
+                        if (videoMode) {
+                            when {
+                                state.videoRecording -> "Recording MP4 on glasses"
+                                state.videoPreviewUrl != null -> "Video preview loaded from media server"
+                                else -> "MP4 uploads to the media server after recording stops"
+                            }
+                        } else {
+                            when {
                             state.photoPreviewUrl != null && directPhone -> "Photo preview loaded from phone receiver"
                             state.photoPreviewUrl != null -> "Photo preview loaded from cloud server"
                             directPhone && state.phonePhotoServerRunning -> "Phone receiver ready"
                             directPhone -> "Phone receiver starts on capture"
                             else -> "Waiting for media upload"
+                            }
                         },
                         color = AppColor.muted,
                         fontSize = 11.sp,
@@ -391,7 +397,7 @@ fun CameraScreen(controller: MentraExampleController) {
         ) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Eyebrow("UPLOAD TO")
-                if (cloudServerEnabled) {
+                if (videoMode || cloudServerEnabled) {
                     Text(
                         "test webhook",
                         color = AppColor.greenAccent,
@@ -402,14 +408,17 @@ fun CameraScreen(controller: MentraExampleController) {
                 }
             }
             Spacer(Modifier.height(12.dp))
-            CloudServerToggle(
-                enabled = cloudServerEnabled,
-                onEnabledChange = { enabled ->
-                    controller.setPhotoDestination(if (enabled) PhotoDestination.MACBOOK_SERVER else PhotoDestination.THIS_PHONE)
-                },
-            )
-            Spacer(Modifier.height(12.dp))
-            if (cloudServerEnabled) {
+            if (videoMode) {
+                FixedMediaServerRow()
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Cloud server receives MP4 uploads.",
+                    color = AppColor.muted,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AppColor.ink.copy(alpha = 0.04f)).padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -433,21 +442,61 @@ fun CameraScreen(controller: MentraExampleController) {
                 }
                 Spacer(Modifier.height(12.dp))
             } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AppColor.ink.copy(alpha = 0.04f)).padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (state.phonePhotoServerRunning) AppColor.greenAccent else AppColor.muted))
-                    Text(
-                        if (state.phonePhotoServerRunning) "Phone receiver ready" else "Phone receiver starts on capture",
-                        color = AppColor.ink,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                CloudServerToggle(
+                    enabled = cloudServerEnabled,
+                    onEnabledChange = { enabled ->
+                        controller.setPhotoDestination(if (enabled) PhotoDestination.MACBOOK_SERVER else PhotoDestination.THIS_PHONE)
+                    },
+                )
                 Spacer(Modifier.height(12.dp))
+                if (cloudServerEnabled) {
+                    Text(
+                        "Cloud server receives photo uploads.",
+                        color = AppColor.muted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AppColor.ink.copy(alpha = 0.04f)).padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("POST", color = AppColor.greenAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+                        Box(modifier = Modifier.size(width = 1.dp, height = 14.dp).background(AppColor.ink.copy(alpha = 0.12f)))
+                        BasicTextField(
+                            value = state.webhookUrl,
+                            onValueChange = controller::setWebhookUrl,
+                            singleLine = true,
+                            textStyle = androidx.compose.ui.text.TextStyle(color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+                            modifier = Modifier.weight(1f),
+                            decorationBox = { inner ->
+                                if (state.webhookUrl.isBlank()) {
+                                    Text("Media upload URL", color = AppColor.muted, fontSize = 13.sp)
+                                }
+                                inner()
+                            }
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AppColor.ink.copy(alpha = 0.04f)).padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (state.phonePhotoServerRunning) AppColor.greenAccent else AppColor.muted))
+                        Text(
+                            if (state.phonePhotoServerRunning) "Phone receiver ready" else "Phone receiver starts on capture",
+                            color = AppColor.ink,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                }
             }
             if (setupHint != null) {
                 Text(
@@ -478,18 +527,6 @@ fun CameraScreen(controller: MentraExampleController) {
                         }
                     }
                     ExposureSettingsCard(controller)
-                } else if (!cloudServerEnabled) {
-                    Text(
-                        "Video upload uses the media cloud server. Turn it on here before starting a recording.",
-                        color = AppColor.muted,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(AppColor.ink.copy(alpha = 0.04f))
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                    )
                 }
                 CameraFovSettingsCard(controller)
             }
@@ -1015,6 +1052,37 @@ private fun SliderNudgeButton(label: String, enabled: Boolean, onClick: () -> Un
             .clickable(enabled = enabled) { onClick() }
             .wrapContentSize(Alignment.Center)
     )
+}
+
+@Composable
+private fun FixedMediaServerRow() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(AppColor.ink.copy(alpha = 0.04f))
+            .heightIn(min = 44.dp)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            "Media cloud server",
+            color = AppColor.ink,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            "MP4",
+            color = AppColor.greenAccent,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.ExtraBold,
+            modifier = Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(AppColor.greenAccent.copy(alpha = 0.14f))
+                .padding(horizontal = 10.dp, vertical = 5.dp)
+        )
+    }
 }
 
 @Composable

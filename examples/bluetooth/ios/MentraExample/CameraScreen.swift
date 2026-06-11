@@ -13,6 +13,7 @@ private enum CameraCaptureMode {
 }
 
 private func cameraSdkCall(
+    mode: CameraCaptureMode,
     size: String,
     compression: String,
     exposureManual: Bool,
@@ -27,11 +28,31 @@ private func cameraSdkCall(
     let isoLine = exposureManual
         ? "      iso: \(iso)"
         : "      iso: nil // auto ISO"
-    return """
+    let prefix = """
     let cameraFovResult = try await mentraBluetoothSdk.setCameraFov(
         CameraFov(fov: \(cameraFov), roiPosition: CameraRoiPosition.from(rawValue: \(cameraRoiPosition)))
     )
     print("Camera FOV applied at \\(cameraFovResult.fov)°")
+    """
+    if mode == .video {
+        return """
+        \(prefix)
+        let videoRequestId = "video-\\(Int(Date().timeIntervalSince1970 * 1000))"
+        let started = try await mentraBluetoothSdk.startVideoRecording(
+            VideoRecordingRequest(
+              requestId: videoRequestId,
+              save: true,
+              sound: true,
+              maxRecordingTimeMinutes: 1
+            )
+        )
+        print("Video started: \\(started.status)")
+        let stopped = try await mentraBluetoothSdk.stopVideoRecording(requestId: videoRequestId, webhookUrl: uploadUrl)
+        print("Video stopped: \\(stopped.status)")
+        """
+    }
+    return """
+    \(prefix)
     let photo = try await mentraBluetoothSdk.requestPhoto(
         PhotoRequest(
           requestId: requestId,
@@ -45,19 +66,6 @@ private func cameraSdkCall(
         )
     )
     print("Photo delivered: \\(photo.requestId)")
-
-    let videoRequestId = "video-\\(Int(Date().timeIntervalSince1970 * 1000))"
-    let started = try await mentraBluetoothSdk.startVideoRecording(
-        VideoRecordingRequest(
-          requestId: videoRequestId,
-          save: true,
-          sound: true,
-          maxRecordingTimeMinutes: 1
-        )
-    )
-    print("Video started: \\(started.status)")
-    let stopped = try await mentraBluetoothSdk.stopVideoRecording(requestId: videoRequestId, webhookUrl: uploadUrl)
-    print("Video stopped: \\(stopped.status)")
     """
 }
 
@@ -89,11 +97,11 @@ struct CameraScreen: View {
     }
 
     private var videoControlsEnabled: Bool {
-        model.glassesConnected && model.glassesWifiConnected && !videoActionBusy && (cloudServerEnabled || model.videoRecording)
+        model.glassesConnected && model.glassesWifiConnected && !videoActionBusy
     }
 
     private var setupHint: String? {
-        guard !directPhone else { return nil }
+        guard captureMode == .video || !directPhone else { return nil }
         return localCameraSetupHint(webhookUrl: model.webhookUrl, status: model.cameraStatus)
     }
 
@@ -292,7 +300,6 @@ struct CameraScreen: View {
     private var videoButtonLabel: String {
         if !model.glassesConnected { return "Connect glasses first" }
         if !model.glassesWifiConnected { return "Connect glasses to Wi-Fi" }
-        if !cloudServerEnabled && !model.videoRecording { return "Enable cloud server" }
         if model.activeAction == "Start video recording" { return "Starting video..." }
         if model.activeAction == "Stop & upload video" { return "Uploading video..." }
         return model.videoRecording ? "Stop & upload video" : "Start video"
@@ -354,6 +361,7 @@ struct CameraScreen: View {
 
     private var sdkCard: some View {
         let sdkCall = cameraSdkCall(
+            mode: captureMode,
             size: model.photoSize.rawValue,
             compression: model.photoCompression.rawValue,
             exposureManual: model.photoExposureManual,
@@ -413,7 +421,7 @@ struct CameraScreen: View {
             HStack {
                 Text("UPLOAD TO").font(.system(size: 10, weight: .semibold)).tracking(1.2).foregroundColor(AppColor.muted)
                 Spacer()
-                if cloudServerEnabled {
+                if captureMode == .video || cloudServerEnabled {
                     Button {
                         model.testWebhook()
                     } label: {
@@ -424,24 +432,14 @@ struct CameraScreen: View {
             }
             .padding(.bottom, 12)
 
-            Toggle(isOn: Binding(
-                get: { cloudServerEnabled },
-                set: { enabled in
-                    model.setPhotoDestination(enabled ? .macBookServer : .thisPhone)
-                }
-            )) {
-                Text("Use media cloud server")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(AppColor.ink)
-            }
-            .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(AppColor.ink.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .padding(.bottom, 12)
-
-            if cloudServerEnabled {
+            if captureMode == .video {
+                FixedMediaServerRow()
+                    .padding(.bottom, 12)
+                Text("Cloud server receives MP4 uploads.")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(AppColor.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 12)
                 HStack(spacing: 10) {
                     Text("POST").font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundColor(AppColor.greenAccent)
                     Rectangle().fill(AppColor.ink.opacity(0.12)).frame(width: 1, height: 14)
@@ -459,18 +457,58 @@ struct CameraScreen: View {
                 .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
                 .padding(.bottom, 12)
             } else {
-                HStack(spacing: 10) {
-                    Circle()
-                        .fill(model.phonePhotoServerRunning ? AppColor.greenAccent : AppColor.muted.opacity(0.5))
-                        .frame(width: 8, height: 8)
-                    Text(model.phonePhotoServerRunning ? "Phone receiver ready" : "Phone receiver starts on capture")
+                Toggle(isOn: Binding(
+                    get: { cloudServerEnabled },
+                    set: { enabled in
+                        model.setPhotoDestination(enabled ? .macBookServer : .thisPhone)
+                    }
+                )) {
+                    Text("Use media cloud server")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(AppColor.ink)
-                    Spacer()
                 }
-                .padding(.horizontal, 14).padding(.vertical, 12)
+                .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
                 .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
                 .padding(.bottom, 12)
+
+                if cloudServerEnabled {
+                    Text("Cloud server receives photo uploads.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(AppColor.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 12)
+                    HStack(spacing: 10) {
+                        Text("POST").font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundColor(AppColor.greenAccent)
+                        Rectangle().fill(AppColor.ink.opacity(0.12)).frame(width: 1, height: 14)
+                        TextField("Media upload URL", text: $model.webhookUrl)
+                            .focused($webhookUrlFocused)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .submitLabel(.done)
+                            .onSubmit { webhookUrlFocused = false }
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(AppColor.ink)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 12)
+                    .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.bottom, 12)
+                } else {
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(model.phonePhotoServerRunning ? AppColor.greenAccent : AppColor.muted.opacity(0.5))
+                            .frame(width: 8, height: 8)
+                        Text(model.phonePhotoServerRunning ? "Phone receiver ready" : "Phone receiver starts on capture")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(AppColor.ink)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 12)
+                    .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.bottom, 12)
+                }
             }
 
             if let setupHint {
@@ -502,15 +540,6 @@ struct CameraScreen: View {
                     }
 
                     ExposureSettingsCard(model: model)
-                } else if !cloudServerEnabled {
-                    Text("Video upload uses the media cloud server. Turn it on here before starting a recording.")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(AppColor.muted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(AppColor.ink.opacity(0.04))
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
                 CameraFovSettingsCard(model: model)
             }
@@ -591,14 +620,17 @@ struct CameraScreen: View {
     }
 
     private var sdkStatusDetail: String {
-        if model.videoRecording {
-            return "Recording video on glasses"
-        }
-        if model.activeAction == "Stop & upload video" {
-            return "Uploading video to media server"
-        }
-        if model.videoPreviewUrl != nil {
-            return "Video preview loaded from cloud server"
+        if captureMode == .video {
+            if model.videoRecording {
+                return "Recording MP4 on glasses"
+            }
+            if model.activeAction == "Stop & upload video" {
+                return "Uploading video to media server"
+            }
+            if model.videoPreviewUrl != nil {
+                return "Video preview loaded from media server"
+            }
+            return "MP4 uploads to the media server after recording stops"
         }
         if model.photoPreviewUrl != nil || model.photoPreviewImage != nil {
             return directPhone ? "Photo preview loaded from phone receiver" : "Photo preview loaded from cloud server"
@@ -1164,6 +1196,28 @@ struct CameraOptionGroup<Content: View>: View {
                 content
             }
         }
+    }
+}
+
+private struct FixedMediaServerRow: View {
+    var body: some View {
+        HStack {
+            Text("Media cloud server")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(AppColor.ink)
+            Spacer()
+            Text("MP4")
+                .font(.system(size: 11, weight: .heavy))
+                .foregroundColor(AppColor.greenAccent)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(AppColor.greenAccent.opacity(0.14))
+                .clipShape(Capsule())
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(AppColor.ink.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 

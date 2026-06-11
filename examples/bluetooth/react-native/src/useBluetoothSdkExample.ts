@@ -968,11 +968,6 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     await runAction('Start video recording', async () => {
       requireConnected('record video');
       requireGlassesWifi('record video');
-      if (!photoCloudServerEnabledRef.current) {
-        const message = 'Enable the cloud server to upload and preview video.';
-        setCameraStatus(`Camera: ${message}`);
-        throw new Error(message);
-      }
       const uploadUrlText = webhookUrl.trim();
       const validationMessage = photoUploadValidationMessage(uploadUrlText);
       if (validationMessage) {

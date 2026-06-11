@@ -33,7 +33,7 @@ const PHOTO_ISO_STEP = 50;
 const CAMERA_FOV_STEP = 1;
 type CameraCaptureMode = 'photo' | 'video';
 
-function cameraSdkCall(
+function photoSdkCall(
   size: PhotoSize,
   compression: PhotoCompression,
   useCloudServer: boolean,
@@ -76,8 +76,15 @@ const photo = await BluetoothSdk.requestPhoto({
 ${exposureLine}
 ${isoLine}
 })
-console.log("Photo delivered", photo.photoUrl ?? photo.uploadUrl)
+console.log("Photo delivered", photo.photoUrl ?? photo.uploadUrl)`;
+}
 
+function videoSdkCall(
+  cameraFov: number,
+  cameraRoiPosition: (typeof CAMERA_ROI_POSITIONS)[number]['value'],
+) {
+  return `const cameraFov = await BluetoothSdk.setCameraFov({ fov: ${cameraFov}, roiPosition: "${cameraRoiPosition}" });
+console.log(\`Camera FOV applied at \${cameraFov.fov}°\`);
 const videoRequestId = \`video-\${Date.now()}\`;
 await BluetoothSdk.startVideoRecording(videoRequestId, true, true, {
   maxRecordingTimeMinutes: 1,
@@ -100,8 +107,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const videoControlsDisabled =
     !connected ||
     !glassesWifiConnected ||
-    videoActionBusy ||
-    (!sdk.photoCloudServerEnabled && !sdk.videoRecording);
+    videoActionBusy;
   const cameraStatusFailed = isCameraStatusFailure(sdk.cameraStatus);
   const photoStatusOverlay = photoStatusOverlayInfo(
     sdk.photoStatus,
@@ -112,7 +118,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
     ? sdk.photoPreviewDetails.bleFallbackMessage ??
       'Wi-Fi upload failed; photo was compressed and delivered through Bluetooth.'
     : null;
-  const setupHint = sdk.photoCloudServerEnabled ? localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus) : null;
+  const cloudSetupHint = localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus);
   const photoStateText = sdk.photoPreviewUrl
     ? 'preview ready'
     : sdk.photoStatus
@@ -123,16 +129,18 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
     : sdk.videoPreviewUrl
       ? 'preview ready'
       : sdk.videoPreviewDetails?.state ?? 'ready';
-  const sdkCall = cameraSdkCall(
-    sdk.photoSize,
-    sdk.photoCompression,
-    sdk.photoCloudServerEnabled,
-    sdk.photoExposureManual,
-    sdk.photoExposureTimeNs,
-    sdk.photoIso,
-    sdk.cameraFov,
-    sdk.cameraRoiPosition,
-  );
+  const sdkCall = captureMode === 'video'
+    ? videoSdkCall(sdk.cameraFov, sdk.cameraRoiPosition)
+    : photoSdkCall(
+        sdk.photoSize,
+        sdk.photoCompression,
+        sdk.photoCloudServerEnabled,
+        sdk.photoExposureManual,
+        sdk.photoExposureTimeNs,
+        sdk.photoIso,
+        sdk.cameraFov,
+        sdk.cameraRoiPosition,
+      );
 
   React.useEffect(() => {
     if (
@@ -310,9 +318,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
                 ? 'Connect glasses first'
                 : !glassesWifiConnected
                   ? 'Connect glasses to Wi-Fi'
-                  : !sdk.photoCloudServerEnabled && !sdk.videoRecording
-                    ? 'Enable cloud server'
-                    : sdk.activeAction === 'Start video recording'
+                  : sdk.activeAction === 'Start video recording'
                       ? 'Starting video…'
                       : sdk.activeAction === 'Stop & upload video'
                         ? 'Uploading video…'
@@ -354,11 +360,13 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           <View style={{ flex: 1 }}>
             <Text style={styles.statusTitle}>{sdk.cameraStatus}</Text>
             <Text style={styles.statusSub}>
-              {sdk.videoRecording
-                ? 'Recording MP4 on glasses'
-                : sdk.videoPreviewUrl
-                  ? 'Video preview loaded from cloud server'
-                  : sdk.photoPreviewUrl
+              {captureMode === 'video'
+                ? sdk.videoRecording
+                  ? 'Recording MP4 on glasses'
+                  : sdk.videoPreviewUrl
+                    ? 'Video preview loaded from media server'
+                    : 'MP4 uploads to the media server after recording stops'
+                : sdk.photoPreviewUrl
                     ? sdk.photoCloudServerEnabled
                       ? 'Photo preview loaded from cloud server'
                       : 'Photo preview loaded from phone receiver'
@@ -376,7 +384,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
       <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.uploadCard}>
         <View style={styles.cardHead}>
           <Text style={styles.eyebrow}>UPLOAD TO</Text>
-          {sdk.photoCloudServerEnabled ? (
+          {captureMode === 'video' || sdk.photoCloudServerEnabled ? (
             <Pressable onPress={sdk.testWebhook}>
               {({pressed}) => (
                 <Text style={[styles.linkRight, { color: colors.greenAccent, opacity: pressed ? 0.6 : 1 }]}>test webhook</Text>
@@ -384,20 +392,16 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             </Pressable>
           ) : null}
         </View>
-        <View style={styles.cloudToggleRow}>
-          <Text style={styles.cloudToggleLabel}>Use media cloud server</Text>
-          <Switch
-            ios_backgroundColor="rgba(15,42,29,0.18)"
-            onValueChange={sdk.setPhotoCloudServerEnabled}
-            thumbColor="#fff"
-            trackColor={{ false: 'rgba(15,42,29,0.18)', true: colors.greenAccent }}
-            value={sdk.photoCloudServerEnabled}
-          />
-        </View>
-        {sdk.photoCloudServerEnabled ? (
+        {captureMode === 'video' ? (
           <>
+            <View style={styles.cloudToggleRow}>
+              <Text style={styles.cloudToggleLabel}>Media cloud server</Text>
+              <View style={styles.fixedDestinationBadge}>
+                <Text style={styles.fixedDestinationBadgeText}>MP4</Text>
+              </View>
+            </View>
             <View style={styles.cardHead}>
-              <Text style={styles.modeHint}>Cloud server receives JPEG and MP4 uploads.</Text>
+              <Text style={styles.modeHint}>Cloud server receives MP4 uploads.</Text>
             </View>
             <View style={styles.urlBar}>
               <Text style={styles.method}>POST</Text>
@@ -414,20 +418,47 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
                 value={sdk.webhookUrl}
               />
             </View>
-            {setupHint ? <Text style={styles.setupHint}>{setupHint}</Text> : null}
+            {cloudSetupHint ? <Text style={styles.setupHint}>{cloudSetupHint}</Text> : null}
+          </>
+        ) : (
+          <>
+            <View style={styles.cloudToggleRow}>
+              <Text style={styles.cloudToggleLabel}>Use media cloud server</Text>
+              <Switch
+                ios_backgroundColor="rgba(15,42,29,0.18)"
+                onValueChange={sdk.setPhotoCloudServerEnabled}
+                thumbColor="#fff"
+                trackColor={{ false: 'rgba(15,42,29,0.18)', true: colors.greenAccent }}
+                value={sdk.photoCloudServerEnabled}
+              />
+            </View>
+        {sdk.photoCloudServerEnabled ? (
+          <>
+            <View style={styles.cardHead}>
+              <Text style={styles.modeHint}>Cloud server receives photo uploads.</Text>
+            </View>
+            <View style={styles.urlBar}>
+              <Text style={styles.method}>POST</Text>
+              <View style={styles.divider} />
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                onChangeText={sdk.setWebhookUrl}
+                placeholder="Media upload URL"
+                placeholderTextColor={colors.muted}
+                returnKeyType="done"
+                style={styles.url}
+                value={sdk.webhookUrl}
+              />
+            </View>
+            {cloudSetupHint ? <Text style={styles.setupHint}>{cloudSetupHint}</Text> : null}
           </>
         ) : (
           <Text style={styles.setupHint}>
             The phone keeps a local upload receiver ready on this tab and previews JPEG photos when the glasses upload them.
           </Text>
         )}
-        {captureMode === 'video' && !sdk.photoCloudServerEnabled ? (
-          <Text style={styles.setupHint}>
-            Video upload uses the media cloud server. Turn it on here before starting a recording.
-          </Text>
-        ) : null}
-        {captureMode === 'photo' ? (
-          <>
         <OptionGroup label="photo size">
           {PHOTO_SIZES.map((size) => (
             <Chip key={size} active={sdk.photoSize === size} value={size} onPress={() => sdk.setPhotoSize(size)} />
@@ -452,7 +483,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           value={sdk.photoExposureTimeNs}
         />
           </>
-        ) : null}
+        )}
         <CameraSettingsControl
           applying={sdk.cameraSettingsApplying}
           fov={sdk.cameraFov}
@@ -1729,6 +1760,8 @@ const styles = StyleSheet.create({
   eyebrow: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 1.2 },
   cloudToggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 44, backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 12, paddingVertical: 9, paddingHorizontal: 12 },
   cloudToggleLabel: { color: colors.ink, fontSize: 14, fontWeight: '600' },
+  fixedDestinationBadge: { minHeight: 24, borderRadius: 999, backgroundColor: 'rgba(52,199,89,0.14)', paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center' },
+  fixedDestinationBadgeText: { color: colors.greenAccent, fontSize: 11, fontWeight: '800' },
   modeHint: { flex: 1, color: colors.muted, fontSize: 12, fontWeight: '500', lineHeight: 16 },
   urlBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, gap: 10 },
   setupHint: { color: colors.muted, fontSize: 12, fontWeight: '500', lineHeight: 16, backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12 },

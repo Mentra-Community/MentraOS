@@ -758,11 +758,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAsyncAction("Start video recording") { [self] in
             try requireConnected("record video")
             try requireGlassesWifi("record video")
-            guard photoDestination == .macBookServer else {
-                let message = "Enable the cloud server to upload and preview video."
-                cameraStatus = "Camera: \(message)"
-                throw ExampleActionError(message: message)
-            }
             let uploadUrl = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines)
             if let validationMessage = photoUploadValidationMessage(uploadUrl) {
                 cameraStatus = "Camera: \(validationMessage)"
