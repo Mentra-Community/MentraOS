@@ -1031,6 +1031,11 @@ public final class MentraBluetoothSDK {
     }
 
     private func disconnectIfGlassesConnectionActive() {
+        if glassesStatus.deviceModel == DeviceTypes.SIMULATED
+            || DeviceManager.shared.sgc?.type.contains(DeviceTypes.SIMULATED) == true
+        {
+            return
+        }
         if glassesStatus.connected || glassesStatus.connectionState != .disconnected {
             DeviceManager.shared.disconnect()
         }
