@@ -157,3 +157,15 @@ relayed onto the G2 lens. Target a daemon with GLASSES_PORT=<port>.
   refresh. (Same family as the emulator finding that the background JSContext
   keeps a stale manifest until app restart — dev-app registration changes
   don't propagate to consumers.)
+
+## Merged-code verification (origin/cloud-v2 -> agent-harness, 36 commits)
+
+Conflicts resolved: kept the Metro singleton dedupe + adopted Codex's narrowed
+island alias; kept the UDP-block QA hook inside the relocated island
+RnUdpAdapter (now exported from island's public surface). Verified on the
+emulator post-merge: cloud connect (UDP), captions e2e via the local runtime
+(phoneme-perfect), and the UDP-block -> WS fallback — which exercises the moved
+adapter, the new export path, and the fallback state machine in one test.
+Codex's batch includes runtime fixes directly relevant to the reported
+"transcripts delayed / cloud backed up" symptom (reclaim pending audio,
+Redis client leak, per-user audio streams, session detach).
