@@ -116,16 +116,19 @@ final class BluetoothSdkAnalytics {
     }
 
     private func baseProperties(configuration: BluetoothSdkAnalyticsConfiguration) -> [String: Any] {
-        [
+        var properties: [String: Any] = [
             "$process_person_profile": false,
             "event_source": "mentra_bluetooth_sdk",
             "sdk_platform": "ios",
             "sdk_surface": configuration.surface,
-            "sdk_version": BluetoothSdkDefaults.sdkVersion,
             "app_bundle_identifier": Bundle.main.bundleIdentifier ?? "",
             "os_platform": "ios",
             "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
         ]
+        if let sdkVersion = BluetoothSdkDefaults.sdkVersion {
+            properties["sdk_version"] = sdkVersion
+        }
+        return properties
     }
 
     private func distinctId() -> String {
