@@ -15,6 +15,8 @@ import CrustModule from "crust"
 
 import {decodePolyline, parseDurationSeconds} from "./navigation/routesApiCodec"
 import {resolveStepRoads} from "./navigation/roadNameResolver"
+import restComms from "./RestComms"
+import {useSettingsStore} from "@/stores/settings"
 
 const LOG_TAG = "NAV_SERVICE"
 
@@ -435,7 +437,30 @@ export default navigationService
 // Routes API (REST)
 // ---------------------------------------------------------------------------
 
-const ROUTES_API_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
+// Web-service calls (Routes + Geocoding) go through the MentraOS cloud, which
+// holds the Google web-service key server-side. The key is never shipped in the
+// app — only the on-device Navigation SDK key lives here (in the native
+// manifest/Info.plist), locked down by application restriction in GCP.
+const NAV_ROUTE_ENDPOINT = "/api/client/navigation/route"
+const NAV_REVERSE_GEOCODE_ENDPOINT = "/api/client/navigation/reverse-geocode"
+
+/**
+ * Auth header + absolute URL for a cloud navigation endpoint. Uses the same
+ * core token and backend base URL as RestComms so these calls follow whichever
+ * backend the app is pointed at (local/staging/prod).
+ */
+function navCloudRequest(endpoint: string): {url: string; headers: Record<string, string>} | null {
+  const token = restComms.getCoreToken()
+  if (!token) return null
+  const baseUrl = useSettingsStore.getState().getRestUrl()
+  return {
+    url: `${baseUrl}${endpoint}`,
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`,
+    },
+  }
+}
 
 /**
  * Phone-side helper: hit Google Routes API directly. Lives here (not in
@@ -483,8 +508,8 @@ async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promi
     return {ok: false, error: "computeRoute: at least one stop required"}
   }
 
-  const apiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY ?? ""
-  if (!apiKey) return {ok: false, error: "computeRoute: missing API key"}
+  const req = navCloudRequest(NAV_ROUTE_ENDPOINT)
+  if (!req) return {ok: false, error: "computeRoute: not authenticated"}
 
   const finalDest = stops[stops.length - 1]
   const intermediates = stops.slice(0, -1).map((s) => ({location: {latLng: {latitude: s.lat, longitude: s.lng}}}))
@@ -507,22 +532,11 @@ async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promi
   if (intermediates.length > 0) body.intermediates = intermediates
 
   try {
-    const res = await fetch(ROUTES_API_URL, {
+    // The cloud proxy adds the Google web-service key and the X-Goog-FieldMask
+    // server-side, then returns the Routes API JSON unchanged.
+    const res = await fetch(req.url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": [
-          "routes.polyline.encodedPolyline",
-          "routes.distanceMeters",
-          "routes.duration",
-          "routes.description",
-          "routes.legs.steps.startLocation",
-          "routes.legs.steps.endLocation",
-          "routes.legs.steps.distanceMeters",
-          "routes.legs.steps.navigationInstruction",
-        ].join(","),
-      },
+      headers: req.headers,
       body: JSON.stringify(body),
     })
     if (!res.ok) {
@@ -593,37 +607,34 @@ function routesApiTravelMode(mode: string): string {
   }
 }
 
-const GEOCODING_API_URL = "https://maps.googleapis.com/maps/api/geocode/json"
-
 /**
- * Reverse-geocode a coordinate via Google's Geocoding REST API and
- * return the short name of the `route` address component (e.g.
- * "Octavia Blvd"). When no route component is present in any of the
- * returned results — the coordinate is genuinely off-grid (water,
- * park interior) — resolves with `{ok: true, road: null}`. Network
- * failures and missing API keys resolve with `{ok: false, error}`.
+ * Reverse-geocode a coordinate via the MentraOS cloud (which proxies Google's
+ * Geocoding REST API with the server-side key) and return the short name of the
+ * `route` address component (e.g. "Octavia Blvd"). When no route component is
+ * present in any of the returned results — the coordinate is genuinely off-grid
+ * (water, park interior) — resolves with `{ok: true, road: null}`. Network
+ * failures and missing auth resolve with `{ok: false, error}`.
  *
- * The Geocoding REST API doesn't require the same field-mask discipline
- * as Routes; we keep the response cheap by relying on Google to
- * default-order results from most-specific to least, then taking the
- * first `route` we encounter.
+ * The cloud applies `result_type=route` and returns the Geocoding JSON
+ * unchanged; we rely on Google to default-order results from most-specific to
+ * least, then take the first `route` we encounter.
  */
 async function reverseGeocodeRoadViaGeocodingApi(coord: {lat: number; lng: number}): Promise<{
   ok: boolean
   road?: string | null
   error?: string
 }> {
-  const apiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY ?? ""
-  if (!apiKey) return {ok: false, error: "reverseGeocode: missing API key"}
   if (!Number.isFinite(coord.lat) || !Number.isFinite(coord.lng)) {
     return {ok: false, error: "reverseGeocode: invalid coord"}
   }
-  // Geocoding API accepts lat,lng as a query param. result_type=route
-  // filters to street/route components, dropping building-level hits
-  // we don't care about for a pivot-corner lookup.
-  const url = `${GEOCODING_API_URL}?latlng=${coord.lat},${coord.lng}&result_type=route&key=${apiKey}`
+  const req = navCloudRequest(NAV_REVERSE_GEOCODE_ENDPOINT)
+  if (!req) return {ok: false, error: "reverseGeocode: not authenticated"}
   try {
-    const res = await fetch(url)
+    const res = await fetch(req.url, {
+      method: "POST",
+      headers: req.headers,
+      body: JSON.stringify({lat: coord.lat, lng: coord.lng}),
+    })
     if (!res.ok) return {ok: false, error: `Geocoding API ${res.status}`}
     const json = (await res.json()) as {
       status?: string

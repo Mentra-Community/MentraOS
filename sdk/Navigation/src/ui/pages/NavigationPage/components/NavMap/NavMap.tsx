@@ -23,6 +23,7 @@ export function NavMap({
   routePoints,
   previewTurns,
   showPivots = true,
+  showOffRouteLine = false,
   savedPlaces = [],
   autoFollow = true,
   hideControls = false,
@@ -49,6 +50,9 @@ export function NavMap({
   /** Dev-toggle: when false, suppress the red turn-pivot dots + labels even
    *  if dev mode is on. Default true. */
   showPivots?: boolean
+  /** Dev-toggle: when false, suppress the blue me→route connector line +
+   *  distance label even if dev mode is on. Default false (off). */
+  showOffRouteLine?: boolean
   /** Stars / home / work pins to drop while the map is idle. Empty while
    *  a trip is running so the route stays uncluttered. */
   savedPlaces?: Array<{lat: number; lng: number; placeId: string; type?: "home" | "work"; savedName?: string}>
@@ -279,6 +283,27 @@ export function NavMap({
     let downAt = 0
     let armed = false
     let cancelled = false
+    // Lat/lng resolved from the touch point AT pointerdown time. We pin
+    // to this rather than re-projecting `downX/downY` when the press
+    // fires ~600ms later: the map can pan under a still finger (GPS
+    // auto-follow recenters), and a re-projection would then convert the
+    // same pixel against a moved map → a pin offset from where the user
+    // actually pressed. Capturing the world coordinate up front freezes
+    // the target to the spot under the finger at touch-down.
+    let downCoord: LatLng | null = null
+    // Project a client (viewport) pixel to a lat/lng using the overlay's
+    // current map projection. Returns null when the projection isn't
+    // ready yet.
+    const projectClientPoint = (clientX: number, clientY: number): LatLng | null => {
+      const rect = container.getBoundingClientRect()
+      const point = new g.maps.Point(clientX - rect.left, clientY - rect.top)
+      const proj =
+        meDotRef.current && typeof meDotRef.current.getProjection === "function"
+          ? meDotRef.current.getProjection()
+          : null
+      const ll = proj?.fromContainerPixelToLatLng?.(point)
+      return ll ? {lat: ll.lat(), lng: ll.lng()} : null
+    }
     // Long-press synthesis timer for iOS. WKWebView never dispatches
     // `contextmenu` for a finger long-press — the page sees pointerdown
     // → pointerup ~700ms later with no contextmenu in between. We fire
@@ -298,21 +323,22 @@ export function NavMap({
       if (!armed || cancelled) return
       armed = false
       clearLongPressTimer()
-      const rect = container.getBoundingClientRect()
-      const point = new g.maps.Point(downX - rect.left, downY - rect.top)
-      const proj =
-        meDotRef.current && typeof meDotRef.current.getProjection === "function"
-          ? meDotRef.current.getProjection()
-          : null
-      const ll = proj?.fromContainerPixelToLatLng?.(point)
-      if (!ll) {
+      // Prefer the coordinate captured at pointerdown so the pin lands
+      // exactly under the finger even if the map panned during the press.
+      // Fall back to a fresh projection only if the down-time capture
+      // failed (projection wasn't ready yet at touch-down).
+      const coord = downCoord ?? projectClientPoint(downX, downY)
+      if (!coord) {
         console.warn("[NavMap] long-press: no projection available; pin not dropped")
         return
       }
-      const lat = ll.lat()
-      const lng = ll.lng()
-      console.log(`[NavMap] long-press @`, lat.toFixed(6), lng.toFixed(6), `(via ${source})`)
-      onLongPressRef.current?.({lat, lng})
+      console.log(
+        `[NavMap] long-press @`,
+        coord.lat.toFixed(6),
+        coord.lng.toFixed(6),
+        `(via ${source})`,
+      )
+      onLongPressRef.current?.(coord)
     }
     const onDown = (e: PointerEvent) => {
       if (!e.isPrimary) {
@@ -327,6 +353,9 @@ export function NavMap({
       downAt = Date.now()
       armed = true
       cancelled = false
+      // Freeze the target coordinate at touch-down so a map pan during
+      // the press can't drag the pin off the spot under the finger.
+      downCoord = projectClientPoint(e.clientX, e.clientY)
       // Start the iOS fallback timer.
       clearLongPressTimer()
       longPressTimer = setTimeout(() => fireLongPress("timer"), LONG_PRESS_MS)
@@ -659,7 +688,9 @@ export function NavMap({
       offRouteLabelRef.current = null
     }
 
-    if (!me || !routePoints || routePoints.length < 2) {
+    // Dev-only and off by default — tear down if disabled or there's no
+    // route to project onto.
+    if (!devEnabled || !showOffRouteLine || !me || !routePoints || routePoints.length < 2) {
       teardown()
       return
     }
@@ -756,7 +787,7 @@ export function NavMap({
     }
 
     return teardown
-  }, [ready, me?.lat, me?.lng, routePoints])
+  }, [ready, me?.lat, me?.lng, routePoints, devEnabled, showOffRouteLine])
 
   // Debug overlay: render a red dot at each turn point. Lets us visually
   // verify that turns land where they belong.
