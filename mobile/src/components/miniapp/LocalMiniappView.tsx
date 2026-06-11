@@ -573,8 +573,6 @@ function LocalMiniappView({
     connectingLabel = `Loading… (attempt ${loadAttempts + 1} of ${MAX_LOAD_ATTEMPTS})`
   }
 
-  console.log("LocalMiniappView: connected:", connected, packageName)
-
   return (
     <View className="flex-1 bg-black" style={{borderRadius: theme.spacing.s12}}>
       <WebView
