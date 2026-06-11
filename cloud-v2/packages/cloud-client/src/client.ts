@@ -53,9 +53,8 @@ const DEFAULT_RECONNECT = { baseMs: 500, maxMs: 5_000, jitter: true };
  * now the handshake announces the device default so audio that starts immediately
  * after connect is decoded correctly.
  */
-const DEFAULT_AUDIO_CODEC = "lc3" as const;
+const DEFAULT_AUDIO_CODEC = "pcm" as const;
 const DEFAULT_AUDIO_SAMPLE_RATE = 16_000;
-const DEFAULT_LC3_FRAME_SIZE_BYTES = 20 as const;
 
 /**
  * The protocol semver this client build speaks, announced in `connection.init`.
@@ -183,7 +182,11 @@ export class CloudClient {
       audio: {
         codec: config.audio?.codec ?? DEFAULT_AUDIO_CODEC,
         sampleRate: config.audio?.sampleRate ?? DEFAULT_AUDIO_SAMPLE_RATE,
-        frameSizeBytes: config.audio?.frameSizeBytes ?? DEFAULT_LC3_FRAME_SIZE_BYTES,
+        // Only LC3 carries a frame size; the config type forces LC3 hosts to
+        // state theirs explicitly (decoder is sized from this — no safe guess).
+        ...(config.audio?.codec === "lc3"
+          ? { frameSizeBytes: config.audio.frameSizeBytes }
+          : {}),
         initialSubscriptions: subscriptions.currentSet(),
       },
     });
