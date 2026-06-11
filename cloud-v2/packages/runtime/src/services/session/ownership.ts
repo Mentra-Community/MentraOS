@@ -202,6 +202,7 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null;
 export function startOwnershipRefreshLoop(opts: {
   podId: string;
   getOwnedUserIds: () => Iterable<string>;
+  onLostOwnership?: (mentraUserId: string) => void;
 }): void {
   if (refreshTimer) return;
   refreshTimer = setInterval(async () => {
@@ -217,6 +218,7 @@ export function startOwnershipRefreshLoop(opts: {
             { mentraUserId: userId, podId: opts.podId },
             "ownership refresh failed, claim no longer ours",
           );
+          opts.onLostOwnership?.(userId);
         }
       }
     } catch (err) {

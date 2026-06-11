@@ -146,6 +146,45 @@ export function getOwnedUserIds(): Iterable<string> {
   return sessionsPerUser.keys();
 }
 
+/** Detach local sessions after Redis says this pod no longer owns the user. */
+export function dropUserSessionsForLostOwnership(mentraUserId: string): void {
+  const entries = [...sessionByTag.values()].filter(
+    (entry) => entry.data.mentraUserId === mentraUserId,
+  );
+
+  sessionsPerUser.delete(mentraUserId);
+  releaseUser(mentraUserId);
+  deleteSubscriptions(mentraUserId).catch((err) => {
+    logger.warn(
+      { err, mentraUserId },
+      "subscription key delete failed after lost ownership",
+    );
+  });
+
+  for (const entry of entries) {
+    sessionByTag.delete(entry.data.sessionTag);
+    const interval = refreshIntervals.get(entry.data.sessionTag);
+    if (interval) {
+      clearInterval(interval);
+      refreshIntervals.delete(entry.data.sessionTag);
+    }
+    unregisterSessionTag(entry.data.sessionTag).catch((err) => {
+      logger.warn(
+        { err, sessionTag: entry.data.sessionTag },
+        "sessionTag unregister failed after lost ownership",
+      );
+    });
+    try {
+      entry.ws.close(1012, "ownership lost");
+    } catch (err) {
+      logger.warn(
+        { err, sessionTag: entry.data.sessionTag },
+        "ws close failed after lost ownership",
+      );
+    }
+  }
+}
+
 /**
  * Send a worker-emitted message to all of the user's open WebSocket sessions
  * on this pod (typically one). Called by `worker-pool.onTranscript`.
@@ -459,27 +498,30 @@ export const wsHandlers: WebSocketHandler<WsData> = {
 
     // Decrement per-user session count; if zero, release the ownership claim
     // AND detach the user from its worker.
-    const remaining = (sessionsPerUser.get(ws.data.mentraUserId) ?? 1) - 1;
-    if (remaining <= 0) {
-      sessionsPerUser.delete(ws.data.mentraUserId);
-      releaseUser(ws.data.mentraUserId);
-      releaseOwnership(ws.data.mentraUserId, getPodId()).catch((err) => {
-        logger.warn(
-          { err, mentraUserId: ws.data.mentraUserId },
-          "ownership release failed (will TTL out)",
-        );
-      });
-      // Drop the subscription key on a clean last-session close so the next
-      // session for this user starts from its own seed, not stale subs. If this
-      // fails the key TTLs out shortly anyway.
-      deleteSubscriptions(ws.data.mentraUserId).catch((err) => {
-        logger.warn(
-          { err, mentraUserId: ws.data.mentraUserId },
-          "subscription key delete failed (will TTL out)",
-        );
-      });
-    } else {
-      sessionsPerUser.set(ws.data.mentraUserId, remaining);
+    const currentCount = sessionsPerUser.get(ws.data.mentraUserId);
+    if (currentCount !== undefined) {
+      const remaining = currentCount - 1;
+      if (remaining <= 0) {
+        sessionsPerUser.delete(ws.data.mentraUserId);
+        releaseUser(ws.data.mentraUserId);
+        releaseOwnership(ws.data.mentraUserId, getPodId()).catch((err) => {
+          logger.warn(
+            { err, mentraUserId: ws.data.mentraUserId },
+            "ownership release failed (will TTL out)",
+          );
+        });
+        // Drop the subscription key on a clean last-session close so the next
+        // session for this user starts from its own seed, not stale subs. If this
+        // fails the key TTLs out shortly anyway.
+        deleteSubscriptions(ws.data.mentraUserId).catch((err) => {
+          logger.warn(
+            { err, mentraUserId: ws.data.mentraUserId },
+            "subscription key delete failed (will TTL out)",
+          );
+        });
+      } else {
+        sessionsPerUser.set(ws.data.mentraUserId, remaining);
+      }
     }
 
     // Best-effort cleanup. If this fails the entry TTLs out shortly anyway.

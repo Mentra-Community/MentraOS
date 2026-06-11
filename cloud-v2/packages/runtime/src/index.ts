@@ -24,6 +24,7 @@ import {
 import os from "node:os";
 import {
   configureAudioSession,
+  dropUserSessionsForLostOwnership,
   forwardToUserSessions,
   getOwnedUserIds,
   HTTP_FALLTHROUGH,
@@ -155,7 +156,11 @@ export async function startRuntime(opts: StartRuntimeOptions = {}): Promise<Runt
   // Refresh-owned-claims loop: keeps each owned user's Redis claim alive
   // while this pod holds their WS. Idempotent in case startRuntime is called
   // twice in a test.
-  startOwnershipRefreshLoop({ podId, getOwnedUserIds });
+  startOwnershipRefreshLoop({
+    podId,
+    getOwnedUserIds,
+    onLostOwnership: dropUserSessionsForLostOwnership,
+  });
 
   // The REST surface (Hono): subscriptions today, health, camera later. The WS
   // upgrade is tried first; everything else falls through to this app.
