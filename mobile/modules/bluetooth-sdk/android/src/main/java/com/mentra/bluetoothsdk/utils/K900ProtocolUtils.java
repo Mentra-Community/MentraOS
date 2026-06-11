@@ -29,7 +29,7 @@ public class K900ProtocolUtils {
     public static final byte CMD_TYPE_DATA = 0x35; // Generic data type
 
     // File transfer constants
-    public static final int FILE_PACK_SIZE = 400; // Max data size per packet
+    public static final int FILE_PACK_SIZE = 470; // Phase 2 max data size per packet (512 MTU)
     public static final int LENGTH_FILE_START = 2;
     public static final int LENGTH_FILE_TYPE = 1;
     public static final int LENGTH_FILE_PACKSIZE = 2;

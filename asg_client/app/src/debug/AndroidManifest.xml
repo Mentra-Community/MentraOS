@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application>
+        <!-- Allow adb shell am broadcast to reach BleTransferMode in debug builds. -->
+        <receiver
+            android:name="com.mentra.asg_client.io.bluetooth.managers.BleTransferModeReceiver"
+            android:exported="true"
+            tools:replace="android:exported" />
+    </application>
+</manifest>

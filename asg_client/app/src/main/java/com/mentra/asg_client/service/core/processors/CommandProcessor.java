@@ -27,6 +27,7 @@ import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
 import com.mentra.asg_client.service.core.handlers.ServiceHeartbeatCommandHandler;
 import com.mentra.asg_client.service.core.handlers.SettingsCommandHandler;
 import com.mentra.asg_client.service.core.handlers.StreamCommandHandler;
+import com.mentra.asg_client.service.core.handlers.BleReadyAckCommandHandler;
 import com.mentra.asg_client.service.core.handlers.TransferCompleteCommandHandler;
 import com.mentra.asg_client.service.core.handlers.UploadIncidentLogsCommandHandler;
 import com.mentra.asg_client.service.core.handlers.UserEmailCommandHandler;
@@ -408,6 +409,9 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(
                     new TransferCompleteCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered TransferCompleteCommandHandler");
+
+            commandHandlerRegistry.registerHandler(new BleReadyAckCommandHandler());
+            Log.d(TAG, "✅ Registered BleReadyAckCommandHandler");
 
             commandHandlerRegistry.registerHandler(rgbLedCommandHandler);
             Log.d(TAG, "✅ Registered RgbLedCommandHandler");

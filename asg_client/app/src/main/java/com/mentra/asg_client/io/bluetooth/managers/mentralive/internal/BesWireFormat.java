@@ -27,11 +27,11 @@ public class BesWireFormat {
     public static final byte CMD_TYPE_AUDIO = 0x34; // Audio file type
     public static final byte CMD_TYPE_DATA = 0x35; // Generic data type
 
-    // File transfer constants
-    public static final int FILE_PACK_SIZE_MAX =
-            221; // 256 MTU - 3 ATT bytes - 32 protocol overhead
-    public static final int FILE_PACK_SIZE_DEFAULT =
-            FILE_PACK_SIZE_MAX; // Safe default before phone MTU config arrives
+    // File transfer constants (Phase 2: ~470B payload for 512 MTU)
+    public static final int FILE_PROTOCOL_OVERHEAD = 32;
+    public static final int FLOW_VERSION_2 = 2;
+    public static final int FILE_PACK_SIZE_MAX = 470; // 512 MTU - 3 ATT - 32 overhead
+    public static final int FILE_PACK_SIZE_DEFAULT = FILE_PACK_SIZE_MAX;
     public static final int FILE_PACK_SIZE_MIN = 100; // Minimum safe packet size
     private static int filePackSize = FILE_PACK_SIZE_DEFAULT; // Configurable packet size
     public static final int LENGTH_FILE_START = 2;
@@ -72,6 +72,11 @@ public class BesWireFormat {
     public static void resetFilePackSize() {
         filePackSize = FILE_PACK_SIZE_DEFAULT;
         Log.i("BesWireFormat", "📦 File pack size reset to default: " + filePackSize + " bytes");
+    }
+
+    /** Phase 2 flow version encoded in the 16-bit flags field (high byte). */
+    public static int flowVersionFlags(int packIndex) {
+        return packIndex == 0 ? (FLOW_VERSION_2 << 8) : 0;
     }
 
     public static final int LENGTH_FILE_TYPE = 1;

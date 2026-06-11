@@ -198,6 +198,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- Debug: exported via src/debug/AndroidManifest.xml for adb toggles -->
+        <receiver
+            android:name="com.mentra.asg_client.io.bluetooth.managers.BleTransferModeReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.mentra.BLE_TRANSFER_MODE" />
+            </intent-filter>
+        </receiver>
+
         <!-- Intent IPC receiver for third-party app commands -->
         <receiver
             android:name="com.mentra.asg_client.receiver.IntentCommandReceiver"

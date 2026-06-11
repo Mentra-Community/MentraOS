@@ -21,7 +21,9 @@ import com.mentra.asg_client.io.storage.StorageManager;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
 import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
+import com.mentra.asg_client.io.bluetooth.managers.BlePhotoReadyAck;
 import com.mentra.asg_client.io.bluetooth.managers.BleTransferMode;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesWireFormat;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.core.CameraRestartCooldown;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
@@ -128,22 +130,23 @@ public class MediaCaptureService {
     }
 
     private BleParams resolveBleParams(String requestedSize) {
-        // BLE transfer is limited by BES2700 TX buffer (~88 packets before overflow)
-        // With 221-byte pack size, max reliable transfer is ~19KB
-        // Target file sizes accordingly with aggressive compression
+        // Phase 2: 470B packs @ 512 MTU — target file sizes for bandwidth bench / tier.
         switch (requestedSize) {
             case "small":
                 // Target ~8KB: 400x400 @ quality 28
                 return new BleParams(400, 400, 28);
             case "large":
-                // Target ~25KB: 800x800 @ quality 32 (may hit BLE limit)
+                // Target ~25KB: 800x800 @ quality 32
                 return new BleParams(800, 800, 32);
             case "full":
-                // Target ~35KB: 1024x1024 @ quality 35 (will likely hit BLE limit)
+                // Target ~35KB: 1024x1024 @ quality 35
                 return new BleParams(1024, 1024, 35);
+            case "max":
+                // Bench / max tier: sensor capture + ~80-150KB AVIF over BLE
+                return new BleParams(1920, 1920, 40);
             case "medium":
             default:
-                // Target ~15KB: 640x640 @ quality 30 - safe for BLE
+                // Target ~15KB: 640x640 @ quality 30
                 return new BleParams(640, 640, 30);
         }
     }
@@ -3571,17 +3574,22 @@ public class MediaCaptureService {
                 // BLE is available - send the ready message first (phone expects this for timing
                 // tracking)
                 recordTiming(requestId, "ble_ready_msg");
+                BlePhotoReadyAck.prepare(requestId);
                 sendBlePhotoReadyMsg(compressedPath, bleImgId, requestId, transferStartTime);
 
-                // Add delay to ensure JSON packet completes transmission through MCU before file
-                // packets start
-                // This prevents packet interleaving at the BLE MTU boundary
-                try {
-                    int preDelay = BleTransferMode.preTransferDelayMs();
-                    Thread.sleep(preDelay);
-                    Log.d(TAG, "⏱️ Waited " + preDelay + "ms for JSON packet [" + BleTransferMode.get() + "]");
-                } catch (InterruptedException e) {
-                    Log.w(TAG, "Delay interrupted", e);
+                // Phase 2: wait for phone ble_ready_ack instead of fixed sleep.
+                long ackWaitMs = BleTransferMode.preTransferDelayMs();
+                boolean ackReceived = BlePhotoReadyAck.await(requestId, ackWaitMs);
+                if (ackReceived) {
+                    Log.i(TAG, "⏱️ ble_ready_ack received [" + BleTransferMode.get() + "]");
+                } else {
+                    Log.w(
+                            TAG,
+                            "⏱️ ble_ready_ack not received within "
+                                    + ackWaitMs
+                                    + "ms, continuing ["
+                                    + BleTransferMode.get()
+                                    + "]");
                 }
 
                 // Then try to start the file transfer
@@ -3639,7 +3647,8 @@ public class MediaCaptureService {
             json.put("type", "ble_photo_ready");
             json.put("requestId", requestId);
             json.put("bleImgId", bleImgId);
-            json.put("compressionDurationMs", compressionDuration); // Send duration, not timestamp
+            json.put("flowVersion", BesWireFormat.FLOW_VERSION_2);
+            json.put("compressionDurationMs", compressionDuration);
             sendPhotoStatus(requestId, "ready_for_transfer");
 
             // Send through bluetooth if available
