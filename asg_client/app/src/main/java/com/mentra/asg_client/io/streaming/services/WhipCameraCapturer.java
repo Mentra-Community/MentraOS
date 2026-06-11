@@ -331,10 +331,12 @@ public class WhipCameraCapturer implements VideoCapturer {
                         @Override
                         public void onConfigured(@NonNull CameraCaptureSession session) {
                             synchronized (mCameraStateLock) {
-                                if (mStopRequested || mCameraDevice == null) {
+                                if (mStopRequested
+                                        || mCameraDevice == null
+                                        || session.getDevice() != mCameraDevice) {
                                     Log.w(
                                             TAG,
-                                            "WHIP capture session configured after capture stopped; closing stale session");
+                                            "WHIP capture session configured after capture stopped or camera changed; closing stale session");
                                     session.close();
                                     return;
                                 }
@@ -355,6 +357,12 @@ public class WhipCameraCapturer implements VideoCapturer {
                     cameraHandler);
         } catch (CameraAccessException e) {
             Log.e(TAG, "Failed to create capture session", e);
+            if (!isStopRequested()) {
+                mObserver.onCapturerStarted(false);
+                cleanupAfterStartFailure();
+            }
+        } catch (RuntimeException e) {
+            Log.e(TAG, "Failed to create capture session due to stale camera state", e);
             if (!isStopRequested()) {
                 mObserver.onCapturerStarted(false);
                 cleanupAfterStartFailure();
