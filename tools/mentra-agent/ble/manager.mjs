@@ -66,6 +66,11 @@ export class G2Manager extends EventEmitter {
   // ---- connection ----
   async start(match, { waitMs = 30000 } = {}) {
     this.match = match
+    // A fresh start may target a DIFFERENT device family than the last session
+    // (e.g. G2 then a Live on the same daemon); never carry the old protocol over.
+    this.device = null
+    this.pageCreated = false
+    this.status_ = null
     await this._ready()
     const found = await this._scan(match, waitMs)
     if (!found.L && !found.R) throw new Error(`no arms matched "${match}" (wake glasses, off phone)`)

@@ -12,6 +12,7 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
 
@@ -43,6 +44,14 @@ class RemoteHarness : SGCManager() {
     @Volatile private var remoteDevice: String = ""
     @Volatile private var remoteConnected = false
 
+    /**
+     * Outbound queue drained by a dedicated writer thread. Callers (often the
+     * MAIN thread — e.g. the glasses-mic watchdog) must never touch the socket
+     * directly: Android throws NetworkOnMainThreadException (message: null),
+     * which once masqueraded as a dead socket and churned the connection.
+     */
+    private val outbox = LinkedBlockingQueue<String>()
+
     init {
         type = DeviceTypes.REMOTE_HARNESS
         hasMic = true // the daemon streams the real glasses mic to us
@@ -56,6 +65,27 @@ class RemoteHarness : SGCManager() {
             BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
         )
         Thread({ runLoop() }, "RemoteHarnessIO").apply { isDaemon = true }.start()
+        Thread({ writeLoop() }, "RemoteHarnessTX").apply { isDaemon = true }.start()
+    }
+
+    /** Drain the outbox onto the live socket; never runs on a caller's thread. */
+    private fun writeLoop() {
+        while (alive.get()) {
+            val line = try { outbox.take() } catch (_: InterruptedException) { return }
+            val w = writer
+            if (w == null) {
+                Bridge.log("REMOTE: drop queued cmd (no socket)")
+                continue
+            }
+            try {
+                w.write(line)
+                w.write("\n")
+                w.flush()
+            } catch (e: Exception) {
+                Bridge.log("REMOTE: tx failed (${e.javaClass.simpleName}: ${e.message}); closing socket")
+                try { socket?.close() } catch (_: Exception) {}
+            }
+        }
     }
 
     // ---------- socket loop ----------
@@ -149,21 +179,15 @@ class RemoteHarness : SGCManager() {
     }
 
     private fun send(cmd: String, fill: (JSONObject) -> Unit = {}) {
-        val w = writer ?: run {
-            Bridge.log("REMOTE: drop '$cmd' (no socket)")
-            return
-        }
+        // Enqueue only — actual socket I/O happens on the writer thread, so this
+        // is safe to call from any thread (including main).
         try {
             val o = JSONObject()
             o.put("cmd", cmd)
             fill(o)
-            synchronized(this) {
-                w.write(o.toString())
-                w.write("\n")
-                w.flush()
-            }
+            outbox.offer(o.toString())
         } catch (e: Exception) {
-            Bridge.log("REMOTE: send '$cmd' failed: ${e.message}")
+            Bridge.log("REMOTE: send '$cmd' failed to build: ${e.message}")
         }
     }
 

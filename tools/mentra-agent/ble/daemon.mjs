@@ -224,9 +224,9 @@ const sgcServer = net.createServer((sock) => {
       try { void sgcHandle(sock, JSON.parse(line)) } catch {}
     }
   })
-  const drop = () => { sgcClients.delete(sock); log("remote-sgc client disconnected") }
-  sock.on("close", drop)
-  sock.on("error", drop)
+  sock.on("close", (hadError) => { sgcClients.delete(sock); log(`remote-sgc client closed (hadError=${hadError})`) })
+  sock.on("error", (e) => { sgcClients.delete(sock); log(`remote-sgc client error: ${e?.message}`) })
+  sock.setKeepAlive(true, 5000)
 })
 sgcServer.listen(SGC_PORT, "0.0.0.0", () => log(`remote-sgc bridge on 0.0.0.0:${SGC_PORT}`))
 let lastImu = null // IMU is high-rate; keep only the latest sample (exposed via /status)
