@@ -77,6 +77,12 @@ implication: caption updates, spinners, and even character-grid animations
   repaint, which coalesces (last-write-wins). The in-app miniapp path is
   deliberately throttled to ~3-5/sec by the display manager.
 - Line layout: the firmware AUTO-WRAPS at the text-container edge (newline-free
-  60-digit ruler wrapped after exactly 50 digits). Explicit \n is honored as a
-  line break. Default text wall fits ~50 narrow chars / ~35 M-width chars per
-  line.
+  60-digit ruler wrapped after exactly 50 digits); explicit \n is honored.
+  Exact model (island/src/utils/display/profiles/g1.ts, inherited by
+  G2_PROFILE): usable width 576px, 5 lines, rendered glyph width =
+  (glyphWidth+1)*2 -> digits 12px ('1' 8px), M 16px, space 6px, hyphen 10px,
+  default 16px. Hardware validation: model predicts 49 digits/line, lens shows
+  50 (utils ~4px conservative over a full line, <1 char error); M capacity
+  576/16 = 36/line, consistent with the observed overflow. The app path wraps
+  pixel-accurately via TextWrapper BEFORE sending; firmware wrap is the
+  fallback for raw/bypass senders.
