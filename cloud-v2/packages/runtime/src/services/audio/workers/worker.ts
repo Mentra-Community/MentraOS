@@ -31,7 +31,12 @@ import {LC3Decoder} from "./lc3"
 import {createMockProvider} from "../providers/mock"
 import {createSonioxProvider} from "../providers/soniox"
 import type {TranscriptionProvider, TranscriptEvent} from "../providers/provider"
-import type {AudioSubscription, LanguageSource, TranscriptionSubscription} from "../../session/subscriptions"
+import {
+  subscriptionKey,
+  type AudioSubscription,
+  type LanguageSource,
+  type TranscriptionSubscription,
+} from "../../session/subscriptions"
 
 // === Worker IPC types ===
 
@@ -308,7 +313,7 @@ async function reconcileProviders(mentraUserId: string, subs: AudioSubscription[
   // carry a `kind` discriminator so the client knows which is which.
   const desired = new Map<string, AudioSubscription>()
   for (const sub of subs) {
-    desired.set(subscriptionKeyFor(sub), sub)
+    desired.set(subscriptionKey(sub), sub)
   }
 
   // Close providers whose subs are gone.
@@ -365,20 +370,7 @@ function shouldKeepProvider(mentraUserId: string, key: string): boolean {
   if (!ownedUsers.has(mentraUserId)) return false
   if (!userProviders.has(mentraUserId)) return false
   const subs = userSubs.get(mentraUserId) ?? []
-  return subs.some((sub) => subscriptionKeyFor(sub) === key)
-}
-
-function subscriptionKeyFor(sub: AudioSubscription): string {
-  if (sub.kind === "transcription") {
-    return `t:${langKey(sub.language)}`
-  }
-  return `x:${langKey(sub.source)}>${sub.target}`
-}
-
-function langKey(lang: LanguageSource): string {
-  if (lang.mode === "specific") return `s:${lang.code}`
-  const hints = lang.hints ? [...lang.hints].sort().join(",") : ""
-  return `a:${hints}`
+  return subs.some((sub) => subscriptionKey(sub) === key)
 }
 
 function langCode(lang: LanguageSource): string {
