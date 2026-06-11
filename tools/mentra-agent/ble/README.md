@@ -207,3 +207,30 @@ path — set it back to `lc3` and reconnect.
   captions bridge retries the connect.
 - **Transcription language is bare ISO** (`en`, not `en-US`) — Soniox rejects
   BCP-47 region codes.
+
+## G2 images: the protocol that actually works (fw 2.2.4.34, 2026-06-11)
+
+The repo's G2.kt displayBitmap path never rendered on real firmware. Rules
+discovered by hardware experiment + community RE (see CONFORMANCE.md):
+
+1. Only SINGLE-fragment image streams render (whole 4-bit BMP <= 4096 bytes,
+   118-byte header included). Multi-fragment always fails frag 1+ (ack code 5).
+   Big images tile into <= 4 single-fragment strip containers.
+2. Image containers register only via REBUILD_PAGE on a page this BLE session
+   owns (shutdown -> create first). Repeat CREATEs are silently ignored.
+3. Text container id 1 is reserved; image ids 2+ coexist with text. IMU/touch
+   events require an event-capture (text) container on the page.
+4. Ack-gate everything: replies echo your magic; ImgRes code 4 ok / 5 fail,
+   RebuildRes 6 ok / 7 fail. Use 8ms BLE packet gaps for image streams.
+
+Daemon API:
+  POST /image        {bmpBase64|, width, height, x, y, label, imageOnly}  one image (+page)
+  POST /image        {tiled:true, grayBase64, width, height}              tiled photo (4 strips)
+  POST /imagePage    {text, tiles:[{id,x,y,width,height}]}                declare game/UI page
+  POST /imageUpdate  {id, grayBase64, width, height, gapMs:8}             partial update (fast)
+
+Rates (ack-gated): 32px 11fps, 48px 8.4, 64px 4.4, 88px 2.5 (fps ~= 9500/bytes).
+Dithers in bmp.mjs: ditherTo16 (Floyd-Steinberg), ditherAtkinson, ditherBayer
+(Bayer for animation: stable pattern, no shimmer). Demos: lens-clock.mjs,
+lens-balance.mjs (head-tilt ball game), button-to-lens.mjs (Live button ->
+photo on G2 lens, IMU auto-orientation, inverted+dithered).
