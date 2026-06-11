@@ -313,16 +313,8 @@ class RemoteHarness : SGCManager() {
             width: Int?,
             height: Int?
     ): Boolean {
-        // The daemon decodes/scales/dithers and renders via the tiled
-        // single-fragment path (the G2 firmware rejects multi-fragment images).
-        send("bitmap") {
-            it.put("b64", base64ImageData)
-            x?.let { v -> it.put("x", v) }
-            y?.let { v -> it.put("y", v) }
-            width?.let { v -> it.put("width", v) }
-            height?.let { v -> it.put("height", v) }
-        }
-        return true
+        Bridge.log("REMOTE: displayBitmap not supported in v1")
+        return false
     }
 
     override fun showDashboard() {}
