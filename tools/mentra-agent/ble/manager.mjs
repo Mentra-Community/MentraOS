@@ -471,7 +471,12 @@ export class G2Manager extends EventEmitter {
 
   async setImu(enable, freq = 100) {
     if (!this.connected) throw new Error("not connected")
-    if (this.device !== "g2") throw new Error("IMU control is G2-only")
+    if (this.device === "live") {
+      await this._live({ type: enable ? "imu_stream_start" : "imu_stream_stop" }, true)
+      this.imuEnabled = enable
+      return { ok: true, imu: enable }
+    }
+    if (this.device !== "g2") throw new Error("IMU not supported on this device")
     await this._evenHub(g2.imuControlMessage(enable, freq, this.send.nextMagic()))
     this.imuEnabled = enable
     return { ok: true, imu: enable }

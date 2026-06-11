@@ -17,8 +17,9 @@ AWS us-west-2 dev. Driven via CDP (tools/mentra-agent/cdp.ts).
 | session.stream | ✅ runtime service proven (local) | `POST /api/camera/stream` on the LOCAL runtime provisions real Cloudflare Stream coordinates (rtmps ingest + HLS playback); `DELETE` tears down (200). Unmanaged RTMP to a local listener already proven at the daemon level (15s h264 recording). |
 | session.input | ⏸ needs human | Decode path proven at daemon level earlier (`sr_tpevt` → tap/swipe); end-to-end needs a physical tap — user AFK overnight. |
 | session.location | ✅ | `getOnce` → `{lat:37.4219983, lng:-122.084, accuracy:100}` (emulator mock GPS through the host location service). |
-| session.storage | ⏸ not exercised | Host-local KV; tester page has no simple invoke surface. Low risk. |
+| session.storage | ✅ | `set`/`get` round-trip exact ("overnight_value_42"). |
 | session.system | ✅ | `copyToClipboard` ok. |
+| session.imu | ✅ full loop on real hardware | Added `setImuEnabled` proxying to RemoteHarness + Live `imu_stream_start` support in the daemon. miniapp subscribe → host → driver → daemon → REAL Live 9-axis IMU → back up the chain: the host derived `{kind:"head", position:"down"}` (the glasses are lying flat on the desk). |
 
 ## Infrastructure findings (count as conformance results too)
 

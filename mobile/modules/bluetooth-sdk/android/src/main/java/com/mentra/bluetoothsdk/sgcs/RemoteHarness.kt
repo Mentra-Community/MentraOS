@@ -164,6 +164,24 @@ class RemoteHarness : SGCManager() {
             "gesture" -> {
                 Bridge.sendTouchEvent(type, o.optString("gesture", "tap"), System.currentTimeMillis(), 0)
             }
+            "imu" -> {
+                // Daemon relays the glasses IMU (Live: 9-axis arrays; G2: x/y/z accel).
+                fun arr(name: String, fallback: DoubleArray): DoubleArray {
+                    val a = o.optJSONArray(name) ?: return fallback
+                    return DoubleArray(a.length()) { a.optDouble(it, 0.0) }
+                }
+                val zero3 = DoubleArray(3)
+                val accel = if (o.has("accel")) arr("accel", zero3)
+                            else doubleArrayOf(o.optDouble("x", 0.0), o.optDouble("y", 0.0), o.optDouble("z", 0.0))
+                Bridge.sendImuDataEvent(
+                    accel,
+                    arr("gyro", zero3),
+                    arr("mag", zero3),
+                    arr("quat", DoubleArray(4)),
+                    arr("euler", zero3),
+                    System.currentTimeMillis()
+                )
+            }
             "audio" -> {
                 val b64 = o.optString("b64", "")
                 if (b64.isNotEmpty() && micEnabled) {
@@ -208,6 +226,10 @@ class RemoteHarness : SGCManager() {
     override fun setMicEnabled(enabled: Boolean) {
         DeviceStore.apply("glasses", "micEnabled", enabled)
         send("mic") { it.put("enable", enabled) }
+    }
+
+    override suspend fun setImuEnabled(enabled: Boolean) {
+        send("imuEnable") { it.put("enable", enabled) }
     }
 
     override fun sortMicRanking(list: MutableList<String>): MutableList<String> = list
