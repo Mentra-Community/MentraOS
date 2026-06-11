@@ -17,7 +17,6 @@ interface TranscriptItemProps {
   transcript: Transcript;
   isFirst: boolean;
   isLast: boolean;
-  accentColor?: string;
 }
 
 // Speaker colors matching the design
@@ -33,12 +32,11 @@ export function TranscriptItem({
   transcript,
   isFirst,
   isLast,
-  accentColor,
 }: TranscriptItemProps) {
   // Extract speaker number from "Speaker 1", "Speaker 2", etc.
   const speakerNumber = parseInt(transcript.speaker.replace(/\D/g, "")) || 1;
   const speakerIndex = (speakerNumber - 1) % SPEAKER_COLORS.length;
-  const colors = accentColor ? { bg: accentColor, text: accentColor } : SPEAKER_COLORS[speakerIndex];
+  const colors = SPEAKER_COLORS[speakerIndex];
 
   return (
     <div
