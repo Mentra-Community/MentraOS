@@ -163,6 +163,26 @@ self-dependency loop. If you run `bun install`, recreate the symlink before
 testing from source again. To return to the published package, remove the
 symlink and run `bun install`.
 
+To switch a React Native example back from local SDK source to the published
+package, unset the Metro override, remove the symlinked package folder, and
+install the published SDK version:
+
+```bash
+cd examples/react-native
+
+unset MENTRA_BLUETOOTH_SDK_PACKAGE_PATH
+rm -rf node_modules/@mentra/bluetooth-sdk
+
+bun add @mentra/bluetooth-sdk@0.1.12
+bun install
+```
+
+For the native Android example, unset `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` before
+building and omit `-PmentraUseMavenLocal=true` when you want Maven Central rather
+than local artifacts. For the native iOS example, remove any local Swift package
+override in Xcode and resolve the remote `mentra-bluetooth-sdk-ios` package at
+the published version.
+
 ## Permissions
 
 Android apps should request the platform permissions required by the features they use:
