@@ -434,7 +434,7 @@ export const SETTINGS: Record<string, Setting> = {
   button_mode: {key: "button_mode", defaultValue: () => "photo", writable: true, saveOnServer: true, persist: true},
   button_photo_size: {
     key: "button_photo_size",
-    defaultValue: () => "large",
+    defaultValue: () => "max",
     writable: true,
     saveOnServer: true,
     persist: true,
