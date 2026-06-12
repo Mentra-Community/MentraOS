@@ -10,8 +10,6 @@ export interface BluetoothSdkPluginProps {
 
 export interface BluetoothSdkAnalyticsPluginProps {
   enabled?: boolean
-  postHogApiKey?: string
-  postHogHost?: string
 }
 
 const withBluetoothSdk: ConfigPlugin<BluetoothSdkPluginProps> = (config, props) => {

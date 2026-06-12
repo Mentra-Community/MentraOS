@@ -884,10 +884,6 @@ export type BluetoothSdkAnalyticsOptions = {
    * them for the current native SDK runtime.
    */
   enabled?: boolean
-  /** Optional PostHog project API key override. This is PostHog's public write token, not a private API secret. */
-  postHogApiKey?: string
-  /** Optional PostHog ingestion host override. Defaults to Mentra's US PostHog Cloud host. */
-  postHogHost?: string
 }
 
 export interface BluetoothSdkPublicModule {

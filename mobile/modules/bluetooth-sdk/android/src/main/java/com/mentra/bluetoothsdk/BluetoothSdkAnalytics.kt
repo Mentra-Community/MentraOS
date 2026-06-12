@@ -11,16 +11,15 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 
-data class BluetoothSdkAnalyticsConfig @JvmOverloads constructor(
-    val enabled: Boolean = true,
-    val postHogApiKey: String? = BluetoothSdkAnalytics.DEFAULT_POSTHOG_API_KEY,
-    val postHogHost: String = BluetoothSdkAnalytics.DEFAULT_POSTHOG_HOST,
-    val surface: String = "android",
+class BluetoothSdkAnalyticsConfig private constructor(
+    val enabled: Boolean,
+    internal val surface: String,
 ) {
-    internal val isReady: Boolean
-        get() = enabled && !postHogApiKey.isNullOrBlank()
+    @JvmOverloads
+    constructor(enabled: Boolean = true) : this(enabled, "android")
 
-    internal fun withSurface(surface: String): BluetoothSdkAnalyticsConfig = copy(surface = surface)
+    internal fun withSurface(surface: String): BluetoothSdkAnalyticsConfig =
+        BluetoothSdkAnalyticsConfig(enabled, surface)
 
     companion object {
         @JvmStatic
@@ -28,23 +27,21 @@ data class BluetoothSdkAnalyticsConfig @JvmOverloads constructor(
 
         internal fun fromMap(
             values: Map<String, Any?>,
-            surface: String,
-            baseConfig: BluetoothSdkAnalyticsConfig = BluetoothSdkAnalyticsConfig(surface = surface),
+            baseConfig: BluetoothSdkAnalyticsConfig = BluetoothSdkAnalyticsConfig(),
         ): BluetoothSdkAnalyticsConfig =
             BluetoothSdkAnalyticsConfig(
                 enabled = (values["enabled"] as? Boolean) ?: baseConfig.enabled,
-                postHogApiKey =
-                    (values["postHogApiKey"] as? String)
-                        ?.takeIf { it.isNotBlank() }
-                        ?: baseConfig.postHogApiKey
-                        ?: BluetoothSdkAnalytics.DEFAULT_POSTHOG_API_KEY,
-                postHogHost =
-                    (values["postHogHost"] as? String)
-                        ?.takeIf { it.isNotBlank() }
-                        ?: baseConfig.postHogHost,
-                surface = surface,
+                surface = baseConfig.surface,
             )
     }
+}
+
+private data class BluetoothSdkAnalyticsRuntimeConfig(
+    val enabled: Boolean = true,
+    val surface: String = "android",
+) {
+    val isReady: Boolean
+        get() = enabled
 }
 
 internal class BluetoothSdkAnalytics(
@@ -58,19 +55,25 @@ internal class BluetoothSdkAnalytics(
     // config/startedCaptured/lastConnected are touched from the store-listener
     // thread, the Expo async-function queue, and the creating thread, hence
     // @Synchronized on every method that reads or writes them.
-    private var config = initialConfig.resolvedForApp(appContext)
+    private var config = initialConfig.toRuntimeConfig().resolvedForApp(appContext)
     private var startedCaptured = false
     private var lastConnected = false
 
     @Synchronized
     fun configure(nextConfig: BluetoothSdkAnalyticsConfig) {
-        config = nextConfig.resolvedForApp(appContext)
+        config = nextConfig.withSurface(config.surface).toRuntimeConfig().resolvedForApp(appContext)
         captureStarted()
     }
 
     @Synchronized
     fun configure(values: Map<String, Any?>, surface: String) {
-        configure(BluetoothSdkAnalyticsConfig.fromMap(values, surface, config))
+        config =
+            BluetoothSdkAnalyticsConfig
+                .fromMap(values, BluetoothSdkAnalyticsConfig(enabled = config.enabled))
+                .withSurface(surface)
+                .toRuntimeConfig()
+                .resolvedForApp(appContext)
+        captureStarted()
     }
 
     @Synchronized
@@ -116,7 +119,7 @@ internal class BluetoothSdkAnalytics(
         eventProperties: Map<String, Any>,
     ) {
         val activeConfig = config
-        val apiKey = activeConfig.postHogApiKey?.takeIf { activeConfig.isReady } ?: return
+        if (!activeConfig.isReady) return
 
         try {
             // Payload construction stays on the executor: distinctId() reads
@@ -126,13 +129,13 @@ internal class BluetoothSdkAnalytics(
                     val payload =
                         JSONObject(
                             mapOf(
-                                "api_key" to apiKey,
+                                "api_key" to DEFAULT_POSTHOG_API_KEY,
                                 "event" to eventName,
                                 "distinct_id" to distinctId(),
                                 "properties" to baseProperties(activeConfig) + eventProperties,
                             )
                         )
-                    val connection = URL(captureUrl(activeConfig.postHogHost)).openConnection() as HttpURLConnection
+                    val connection = URL(captureUrl()).openConnection() as HttpURLConnection
                     connection.requestMethod = "POST"
                     connection.connectTimeout = 4_000
                     connection.readTimeout = 4_000
@@ -152,7 +155,7 @@ internal class BluetoothSdkAnalytics(
         }
     }
 
-    private fun baseProperties(activeConfig: BluetoothSdkAnalyticsConfig): Map<String, Any> =
+    private fun baseProperties(activeConfig: BluetoothSdkAnalyticsRuntimeConfig): Map<String, Any> =
         buildMap {
             put("\$process_person_profile", false)
             put("event_source", "mentra_bluetooth_sdk")
@@ -172,23 +175,24 @@ internal class BluetoothSdkAnalytics(
         return generated
     }
 
-    private fun captureUrl(host: String): String {
-        val normalized = host.trim().trimEnd('/')
+    private fun captureUrl(): String {
+        val normalized = DEFAULT_POSTHOG_HOST.trim().trimEnd('/')
         return "$normalized/i/v0/e/"
     }
 
     companion object {
-        const val DEFAULT_POSTHOG_API_KEY = "phc_FCweXVAxVgU7wZK4Fk3okOx4RmyNqVHJf62YpZSfJt5"
-        const val DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com"
         internal const val META_ANALYTICS_DISABLED = "com.mentra.bluetoothsdk.analytics.disabled"
-        internal const val META_POSTHOG_API_KEY = "com.mentra.bluetoothsdk.analytics.posthog_api_key"
-        internal const val META_POSTHOG_HOST = "com.mentra.bluetoothsdk.analytics.posthog_host"
         private const val PREFS_NAME = "mentra_bluetooth_sdk_analytics"
         private const val PREFS_DISTINCT_ID = "distinct_id"
+        private const val DEFAULT_POSTHOG_API_KEY = "phc_FCweXVAxVgU7wZK4Fk3okOx4RmyNqVHJf62YpZSfJt5"
+        private const val DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com"
     }
 }
 
-private fun BluetoothSdkAnalyticsConfig.resolvedForApp(context: Context): BluetoothSdkAnalyticsConfig {
+private fun BluetoothSdkAnalyticsConfig.toRuntimeConfig(): BluetoothSdkAnalyticsRuntimeConfig =
+    BluetoothSdkAnalyticsRuntimeConfig(enabled = enabled, surface = surface)
+
+private fun BluetoothSdkAnalyticsRuntimeConfig.resolvedForApp(context: Context): BluetoothSdkAnalyticsRuntimeConfig {
     val metadata =
         try {
             context.packageManager
@@ -199,23 +203,9 @@ private fun BluetoothSdkAnalyticsConfig.resolvedForApp(context: Context): Blueto
         }
 
     val disabledByApp = metadata?.getBoolean(BluetoothSdkAnalytics.META_ANALYTICS_DISABLED, false) == true
-    val metadataApiKey = metadata?.getString(BluetoothSdkAnalytics.META_POSTHOG_API_KEY)?.takeIf { it.isNotBlank() }
-    val metadataHost = metadata?.getString(BluetoothSdkAnalytics.META_POSTHOG_HOST)?.takeIf { it.isNotBlank() }
 
     return copy(
         enabled = enabled && !disabledByApp,
-        postHogApiKey =
-            when (val configuredApiKey = postHogApiKey?.takeIf { it.isNotBlank() }) {
-                null -> metadataApiKey ?: BluetoothSdkAnalytics.DEFAULT_POSTHOG_API_KEY
-                BluetoothSdkAnalytics.DEFAULT_POSTHOG_API_KEY -> metadataApiKey ?: configuredApiKey
-                else -> configuredApiKey
-            },
-        postHogHost =
-            when (val configuredHost = postHogHost.takeIf { it.isNotBlank() }) {
-                null -> metadataHost ?: BluetoothSdkAnalytics.DEFAULT_POSTHOG_HOST
-                BluetoothSdkAnalytics.DEFAULT_POSTHOG_HOST -> metadataHost ?: configuredHost
-                else -> configuredHost
-            },
     )
 }
 

@@ -2,70 +2,50 @@ import Foundation
 
 public struct BluetoothSdkAnalyticsConfiguration {
     public static let disabled = BluetoothSdkAnalyticsConfiguration(enabled: false)
-    public static let defaultPostHogApiKey = "phc_FCweXVAxVgU7wZK4Fk3okOx4RmyNqVHJf62YpZSfJt5"
-    public static let defaultPostHogHost = "https://us.i.posthog.com"
 
     public let enabled: Bool
-    public let postHogApiKey: String?
-    public let postHogHost: String
     let surface: String
 
-    public init(
-        enabled: Bool = true,
-        postHogApiKey: String? = BluetoothSdkAnalyticsConfiguration.defaultPostHogApiKey,
-        postHogHost: String = BluetoothSdkAnalyticsConfiguration.defaultPostHogHost
-    ) {
+    public init(enabled: Bool = true) {
         self.enabled = enabled
-        self.postHogApiKey = postHogApiKey
-        self.postHogHost = postHogHost
         surface = "ios"
     }
 
     init(dictionary: [String: Any], surface: String) {
         enabled = dictionary["enabled"] as? Bool ?? true
-        postHogApiKey = (dictionary["postHogApiKey"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-            ?? BluetoothSdkAnalyticsConfiguration.defaultPostHogApiKey
-        postHogHost = (dictionary["postHogHost"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-            ?? BluetoothSdkAnalyticsConfiguration.defaultPostHogHost
         self.surface = surface
     }
 
     func applying(dictionary: [String: Any], surface: String) -> BluetoothSdkAnalyticsConfiguration {
         BluetoothSdkAnalyticsConfiguration(
             enabled: dictionary["enabled"] as? Bool ?? enabled,
-            postHogApiKey: (dictionary["postHogApiKey"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? postHogApiKey,
-            postHogHost: (dictionary["postHogHost"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? postHogHost,
             surface: surface
         )
     }
 
     var isReady: Bool {
-        enabled && !(postHogApiKey?.isEmpty ?? true)
+        enabled
     }
 
     func withSurface(_ surface: String) -> BluetoothSdkAnalyticsConfiguration {
         BluetoothSdkAnalyticsConfiguration(
             enabled: enabled,
-            postHogApiKey: postHogApiKey,
-            postHogHost: postHogHost,
             surface: surface
         )
     }
 
     private init(
         enabled: Bool,
-        postHogApiKey: String?,
-        postHogHost: String,
         surface: String
     ) {
         self.enabled = enabled
-        self.postHogApiKey = postHogApiKey
-        self.postHogHost = postHogHost
         self.surface = surface
     }
 }
 
 final class BluetoothSdkAnalytics {
+    private static let defaultPostHogApiKey = "phc_FCweXVAxVgU7wZK4Fk3okOx4RmyNqVHJf62YpZSfJt5"
+    private static let defaultPostHogHost = "https://us.i.posthog.com"
     private let queue = DispatchQueue(label: "com.mentra.bluetoothsdk.analytics")
     private var configuration: BluetoothSdkAnalyticsConfiguration
     private var startedCaptured = false
@@ -117,10 +97,10 @@ final class BluetoothSdkAnalytics {
 
     private func capture(event: String, properties: [String: Any]) {
         let activeConfiguration = configuration
-        guard activeConfiguration.isReady, let apiKey = activeConfiguration.postHogApiKey else { return }
+        guard activeConfiguration.isReady else { return }
 
         let payload: [String: Any] = [
-            "api_key": apiKey,
+            "api_key": Self.defaultPostHogApiKey,
             "event": event,
             "distinct_id": distinctId(),
             "properties": baseProperties(configuration: activeConfiguration).merging(properties) { _, new in new },
@@ -128,7 +108,7 @@ final class BluetoothSdkAnalytics {
 
         queue.async {
             guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
-            guard let captureURL = self.captureURL(host: activeConfiguration.postHogHost) else { return }
+            guard let captureURL = self.captureURL() else { return }
             var request = URLRequest(url: captureURL)
             request.httpMethod = "POST"
             request.timeoutInterval = 4
@@ -164,8 +144,8 @@ final class BluetoothSdkAnalytics {
         return generated
     }
 
-    private func captureURL(host: String) -> URL? {
-        let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    private func captureURL() -> URL? {
+        let normalized = Self.defaultPostHogHost.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         return URL(string: "\(normalized)/i/v0/e/")
     }
 }
@@ -179,37 +159,10 @@ private extension GlassesStatus {
 private extension BluetoothSdkAnalyticsConfiguration {
     func resolvedForApp() -> BluetoothSdkAnalyticsConfiguration {
         let disabledByApp = Bundle.main.object(forInfoDictionaryKey: "MentraBluetoothSdkAnalyticsDisabled") as? Bool == true
-        let infoApiKey = (Bundle.main.object(forInfoDictionaryKey: "MentraBluetoothSdkPostHogApiKey") as? String)
-            .flatMap { $0.isEmpty ? nil : $0 }
-        let infoHost = (Bundle.main.object(forInfoDictionaryKey: "MentraBluetoothSdkPostHogHost") as? String)
-            .flatMap { $0.isEmpty ? nil : $0 }
 
         return BluetoothSdkAnalyticsConfiguration(
             enabled: enabled && !disabledByApp,
-            postHogApiKey: resolvedPostHogApiKey(infoApiKey: infoApiKey),
-            postHogHost: resolvedPostHogHost(infoHost: infoHost),
             surface: surface
         )
-    }
-
-    private func resolvedPostHogApiKey(infoApiKey: String?) -> String? {
-        let configuredApiKey = postHogApiKey.flatMap { $0.isEmpty ? nil : $0 }
-        if configuredApiKey == nil {
-            return infoApiKey ?? BluetoothSdkAnalyticsConfiguration.defaultPostHogApiKey
-        }
-        if configuredApiKey == BluetoothSdkAnalyticsConfiguration.defaultPostHogApiKey {
-            return infoApiKey ?? configuredApiKey
-        }
-        return configuredApiKey
-    }
-
-    private func resolvedPostHogHost(infoHost: String?) -> String {
-        guard let configuredHost = postHogHost.isEmpty ? nil : postHogHost else {
-            return infoHost ?? BluetoothSdkAnalyticsConfiguration.defaultPostHogHost
-        }
-        if configuredHost == BluetoothSdkAnalyticsConfiguration.defaultPostHogHost {
-            return infoHost ?? configuredHost
-        }
-        return configuredHost
     }
 }

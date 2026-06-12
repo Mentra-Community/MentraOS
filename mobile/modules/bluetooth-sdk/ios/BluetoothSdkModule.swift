@@ -105,8 +105,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         Function("configureAnalytics") { (options: [String: Any]) in
             self.readOnMainActor {
-                // Merge so a partial follow-up call (e.g. only postHogHost) cannot drop
-                // an earlier {enabled: false} before the SDK is lazily created.
+                // Merge so a partial follow-up call cannot drop an earlier
+                // {enabled: false} before the SDK is lazily created.
                 self.pendingAnalyticsOptions =
                     (self.pendingAnalyticsOptions ?? [:]).merging(options) { _, new in new }
                 self.sdk?.configureAnalytics(options, surface: "react_native")
@@ -468,9 +468,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("startVideoRecording") {
             (requestId: String, save: Bool, sound: Bool, settings: [String: Any]?) in
-            // Optional per-recording {width,height,fps}. Absent fields stay 0, which
-            // the glasses treat as "use the saved button-video default". JS numbers
-            // arrive as Double across the bridge, so coerce to Int.
+            /// Optional per-recording {width,height,fps}. Absent fields stay 0, which
+            /// the glasses treat as "use the saved button-video default". JS numbers
+            /// arrive as Double across the bridge, so coerce to Int.
             func dim(_ key: String) -> Int {
                 (settings?[key] as? NSNumber)?.intValue ?? 0
             }

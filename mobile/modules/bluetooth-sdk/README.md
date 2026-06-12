@@ -196,19 +196,9 @@ Native iOS apps can pass `.disabled` in `MentraBluetoothSDKConfiguration` or set
 `MentraBluetoothSdkAnalyticsDisabled` to `true` in `Info.plist`.
 
 Mentra's PostHog project API key is embedded in the SDK as a public analytics
-write token, not a private PostHog personal API key. Advanced integrations can
-override the ingestion destination with `postHogApiKey` and `postHogHost`:
-
-```ts
-await BluetoothSdk.configureAnalytics({
-  postHogApiKey: 'phc_public_project_write_key',
-  postHogHost: 'https://us.i.posthog.com',
-})
-```
-
-Runtime/native `postHogApiKey` and `postHogHost` values take precedence over
-the Expo config plugin or native app metadata; app metadata only replaces the
-SDK defaults when no runtime override is provided.
+write token, not a private PostHog personal API key. Apps do not configure the
+analytics destination; these SDK usage events are always sent to Mentra's
+PostHog project unless analytics are disabled.
 
 Captured properties are limited to non-sensitive SDK/app metadata:
 `event_source`, `sdk_platform`, `sdk_surface`, `sdk_version`, the app package or

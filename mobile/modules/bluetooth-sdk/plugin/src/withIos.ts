@@ -9,8 +9,8 @@ import {type BluetoothSdkPluginProps} from "./index"
 const BLUETOOTH_SDK_EXPO_ADAPTER_ENV = "MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER"
 const BLUETOOTH_SDK_EXPO_ADAPTER_LINE = `ENV['${BLUETOOTH_SDK_EXPO_ADAPTER_ENV}'] ||= '1'`
 const INFO_ANALYTICS_DISABLED = "MentraBluetoothSdkAnalyticsDisabled"
-const INFO_POSTHOG_API_KEY = "MentraBluetoothSdkPostHogApiKey"
-const INFO_POSTHOG_HOST = "MentraBluetoothSdkPostHogHost"
+const STALE_INFO_POSTHOG_API_KEY = "MentraBluetoothSdkPostHogApiKey"
+const STALE_INFO_POSTHOG_HOST = "MentraBluetoothSdkPostHogHost"
 
 const ensureBluetoothSdkExpoAdapterPodEnv = (podfile: string): string => {
   if (podfile.includes(BLUETOOTH_SDK_EXPO_ADAPTER_ENV)) {
@@ -67,8 +67,6 @@ function resolveAnalyticsProps(props: BluetoothSdkPluginProps | undefined) {
 
   return {
     disabled,
-    postHogApiKey: typeof analytics === "object" ? analytics.postHogApiKey : undefined,
-    postHogHost: typeof analytics === "object" ? analytics.postHogHost : undefined,
   }
 }
 
@@ -77,17 +75,11 @@ function withAnalyticsInfoPlist(config: any, props: BluetoothSdkPluginProps | un
     const analytics = resolveAnalyticsProps(props)
 
     delete config.modResults[INFO_ANALYTICS_DISABLED]
-    delete config.modResults[INFO_POSTHOG_API_KEY]
-    delete config.modResults[INFO_POSTHOG_HOST]
+    delete config.modResults[STALE_INFO_POSTHOG_API_KEY]
+    delete config.modResults[STALE_INFO_POSTHOG_HOST]
 
     if (analytics.disabled !== undefined) {
       config.modResults[INFO_ANALYTICS_DISABLED] = analytics.disabled
-    }
-    if (analytics.postHogApiKey) {
-      config.modResults[INFO_POSTHOG_API_KEY] = analytics.postHogApiKey
-    }
-    if (analytics.postHogHost) {
-      config.modResults[INFO_POSTHOG_HOST] = analytics.postHogHost
     }
 
     return config

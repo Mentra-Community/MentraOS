@@ -196,8 +196,7 @@ class BluetoothSdkModule : Module() {
     private fun initialAnalyticsConfig(): BluetoothSdkAnalyticsConfig =
             BluetoothSdkAnalyticsConfig.fromMap(
                     pendingAnalyticsOptions ?: emptyMap(),
-                    surface = "react_native",
-                    baseConfig = BluetoothSdkAnalyticsConfig(surface = "react_native"),
+                    baseConfig = BluetoothSdkAnalyticsConfig().withSurface("react_native"),
             )
 
     // Lazy so a pre-startup configureAnalytics call can still suppress the startup
@@ -339,8 +338,8 @@ class BluetoothSdkModule : Module() {
 
         Function("configureAnalytics") { options: Map<String, Any?> ->
             synchronized(sdkLock) {
-                // Merge so a partial follow-up call (e.g. only postHogHost) cannot drop
-                // an earlier {enabled: false} before the SDK is lazily created.
+                // Merge so a partial follow-up call cannot drop an earlier
+                // {enabled: false} before the SDK is lazily created.
                 pendingAnalyticsOptions = (pendingAnalyticsOptions ?: emptyMap()) + options
                 sdk?.configureAnalytics(options.toMap(), surface = "react_native")
             }

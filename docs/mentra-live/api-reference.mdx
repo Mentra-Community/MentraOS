@@ -159,10 +159,8 @@ iOS apps can also set `MentraBluetoothSdkAnalyticsDisabled` to `true` in
   </Tab>
 </Tabs>
 
-Advanced integrations can override the destination with `postHogApiKey` and
-`postHogHost`. Use `https://us.i.posthog.com` for US Cloud,
-`https://eu.i.posthog.com` for EU Cloud, or the ingestion host for a self-hosted
-PostHog instance.
+Apps do not configure the analytics destination; these SDK usage events are
+always sent to Mentra's PostHog project unless analytics are disabled.
 
 Captured properties are intentionally narrow:
 
