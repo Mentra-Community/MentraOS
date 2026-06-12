@@ -22,6 +22,7 @@ import type {
   PhotoOptions,
   StreamOptions,
   ManagedStream,
+  StreamStatusResult,
 } from "@mentra/cloud-runtime/protocol";
 
 // The camera wire types are canonical in the protocol package (the cloud server
@@ -30,6 +31,7 @@ export type {
   PhotoOptions,
   StreamOptions,
   ManagedStream,
+  StreamStatusResult,
 } from "@mentra/cloud-runtime/protocol";
 
 const PHOTO_PATH = "/api/camera/photo";
@@ -128,6 +130,16 @@ export class Camera {
    */
   async startStream(opts: StreamOptions): Promise<ManagedStream> {
     return await this.http.post<ManagedStream>(STREAM_PATH, opts);
+  }
+
+  /**
+   * The provider's view of a managed stream's ingest: is the device's push
+   * arriving? Clients poll this to surface what the far end of the pipe sees.
+   */
+  async streamStatus(streamId: string): Promise<StreamStatusResult> {
+    return await this.http.get<StreamStatusResult>(
+      `${STREAM_PATH}/${encodeURIComponent(streamId)}`,
+    );
   }
 
   /**

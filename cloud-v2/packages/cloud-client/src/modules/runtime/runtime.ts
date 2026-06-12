@@ -28,7 +28,7 @@ import type { Connection } from "./connection";
 import { HandshakeRejectedError } from "./connection";
 import type { RuntimeEmitter, RuntimeEvents } from "./emitter";
 import type { Subscriptions } from "./subscriptions";
-import type { Camera, PhotoOptions, StreamOptions, ManagedStream } from "./camera";
+import type { Camera, PhotoOptions, StreamOptions, ManagedStream, StreamStatusResult } from "./camera";
 import type { UdpAudio } from "./audio-udp";
 import type { RuntimeSnapshot } from "./status";
 
@@ -37,7 +37,7 @@ const UDP_LIVENESS_TIMEOUT_MS = 3_000;
 
 // Re-export the camera option/result types so a host importing the runtime gets
 // them from one place alongside the module that produces them.
-export type { PhotoOptions, StreamOptions, ManagedStream } from "./camera";
+export type { PhotoOptions, StreamOptions, ManagedStream, StreamStatusResult } from "./camera";
 export type { RuntimeAudioTransport } from "./audio-udp";
 export type { RuntimeStatus, RuntimeSnapshot } from "./status";
 
@@ -74,6 +74,7 @@ export interface RuntimeModule {
   startManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; uploadUrl: string; readUrl: string }>;
   awaitManagedPhotoReady(requestId: string): Promise<{ requestId: string; readUrl: string }>;
   startManagedStream(opts: StreamOptions): Promise<ManagedStream>;
+  getManagedStreamStatus(streamId: string): Promise<StreamStatusResult>;
   stopManagedStream(streamId: string): Promise<void>;
 
   onConnected(handler: () => void): () => void;
@@ -417,6 +418,10 @@ export class Runtime implements RuntimeModule {
 
   startManagedStream(opts: StreamOptions): Promise<ManagedStream> {
     return this.camera.startStream(opts);
+  }
+
+  getManagedStreamStatus(streamId: string): Promise<StreamStatusResult> {
+    return this.camera.streamStatus(streamId);
   }
 
   stopManagedStream(streamId: string): Promise<void> {

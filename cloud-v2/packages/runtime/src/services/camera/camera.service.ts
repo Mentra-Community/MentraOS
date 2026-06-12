@@ -28,7 +28,12 @@ import { getStorageProvider } from "../storage/storage.service";
 import { getStreamProvider } from "../stream/stream.service";
 import { forwardToUserSessions } from "../../net/ws";
 import { PROTOCOL_MAJOR } from "../../protocol/envelope";
-import type { PhotoOptions, StreamOptions, ManagedStream } from "../../protocol/camera";
+import type {
+  PhotoOptions,
+  StreamOptions,
+  ManagedStream,
+  StreamStatusResult,
+} from "../../protocol/camera";
 
 const logger = createLogger("audio").child({ service: "camera.service" });
 
@@ -153,6 +158,15 @@ export async function startStream(
   const stream = await getStreamProvider().provision(mentraUserId, opts);
   logger.info({ mentraUserId, streamId: stream.streamId }, "managed stream provisioned");
   return stream;
+}
+
+/** The provider's view of a managed stream's ingest (is the push arriving?). */
+export async function streamStatus(
+  mentraUserId: string,
+  streamId: string,
+): Promise<StreamStatusResult> {
+  void mentraUserId;
+  return await getStreamProvider().status(streamId);
 }
 
 /** Stop a managed stream. */

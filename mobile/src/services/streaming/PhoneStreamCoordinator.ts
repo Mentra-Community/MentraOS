@@ -4,7 +4,7 @@
  * Architecture:
  *   miniapp → SDK → LocalMiniappRuntime → coordinator
  *           coordinator → CoreModule (BLE → glasses publisher)
- *           coordinator ↔ v2StreamApi (managed only, Cloudflare provisioning)
+ *           coordinator ↔ cloudStreamApi (managed only, cloud-v2 runtime provisioning)
  *           coordinator ↔ StreamLifecycleController (keep-alive heartbeat)
  *           coordinator → status listeners → routed back to miniapp(s)
  *
@@ -39,7 +39,7 @@ import {
   type CloudflareStatus,
   type ProvisionResult,
   type RestreamDestinationInput,
-} from "./v2StreamApi"
+} from "./cloudStreamApi"
 
 /**
  * Default cadence + thresholds. Exposed via {@link CoordinatorTimings} so tests

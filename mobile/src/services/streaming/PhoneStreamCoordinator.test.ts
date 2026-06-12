@@ -35,7 +35,7 @@ const getManagedStreamStatus = mock(async (_id: string) => ({
 }))
 const teardownManagedStream = mock(async (_id: string) => {})
 
-mock.module("./v2StreamApi", () => ({
+mock.module("./cloudStreamApi", () => ({
   provisionManagedStream,
   getManagedStreamStatus,
   teardownManagedStream,

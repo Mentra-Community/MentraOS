@@ -1978,6 +1978,8 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Stream start failed",
+        stage: (err as {stage?: string}).stage,
+        transport: (err as {transport?: string}).transport,
       })
     }
   }
@@ -1998,8 +2000,10 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Stream stop failed",
+        stage: (err as {stage?: string}).stage,
+        transport: (err as {transport?: string}).transport,
       })
     }
   }
@@ -2031,6 +2035,8 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Managed stream start failed",
+        stage: (err as {stage?: string}).stage,
+        transport: (err as {transport?: string}).transport,
       })
     }
   }

@@ -5,6 +5,7 @@
  *
  *   POST   /api/camera/photo       -> { requestId, uploadUrl, readUrl }
  *   POST   /api/camera/stream      -> { streamId, ingest, playback }
+ *   GET    /api/camera/stream/:id  -> { streamId, isConnected, state, ... }
  *   DELETE /api/camera/stream/:id  -> { streamId, status: "stopped" }
  *
  * Plus the storage plumbing:
@@ -15,8 +16,6 @@
  *                                     provider's object-created event reaches
  *                                     here and marks the photo complete.
  *
- * camera/spec.md also lists GET /api/camera/stream/:id (status); it has no
- * client consumer yet, so it lands when something needs it.
  */
 
 import { Hono, type Context } from "hono";
@@ -96,6 +95,14 @@ cameraApi.post("/stream", async (c) => {
   }
 
   const result = await camera.startStream(auth.mentraUserId, parsed.data);
+  return c.json(result, 200);
+});
+
+cameraApi.get("/stream/:id", async (c) => {
+  const auth = await authUser(c);
+  if ("error" in auth) return auth.error;
+  const streamId = c.req.param("id");
+  const result = await camera.streamStatus(auth.mentraUserId, streamId);
   return c.json(result, 200);
 });
 

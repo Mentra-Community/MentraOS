@@ -13,12 +13,13 @@
  * Spec: docs/issues/002-cloud-runtime/camera/spec.md ("Managed stream").
  */
 
-import type { ManagedStream, StreamOptions } from "../../protocol/camera";
+import type { ManagedStream, StreamOptions, StreamStatusResult } from "../../protocol/camera";
 import { createCloudflareStreamProvider } from "./providers/cloudflare-stream.provider";
 
 export interface StreamProvider {
   readonly name: string;
   provision(mentraUserId: string, opts: StreamOptions): Promise<ManagedStream>;
+  status(streamId: string): Promise<StreamStatusResult>;
   stop(streamId: string): Promise<void>;
 }
 

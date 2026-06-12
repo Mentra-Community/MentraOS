@@ -291,6 +291,20 @@ export const cloudClient = {
     return client.runtime.awaitManagedPhotoReady(requestId)
   },
 
+  /** Managed stream (cloud-v2): provision ingest+playback on the runtime. */
+  startManagedStream(opts: Record<string, unknown> = {}) {
+    if (!client) throw new Error("cloud client not connected")
+    return client.runtime.startManagedStream(opts)
+  },
+  getManagedStreamStatus(streamId: string) {
+    if (!client) throw new Error("cloud client not connected")
+    return client.runtime.getManagedStreamStatus(streamId)
+  },
+  stopManagedStream(streamId: string) {
+    if (!client) throw new Error("cloud client not connected")
+    return client.runtime.stopManagedStream(streamId)
+  },
+
   /**
    * Construct (once) and connect the CloudClient, returning the runtime adapter
    * the island runtime wires in. Idempotent: repeated calls return the same
