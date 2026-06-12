@@ -142,13 +142,15 @@ public class SerialPortBridge {
      * updates
      *
      * @param data The file data to send
+     * @return true if the write succeeded
      */
-    public void sendFile(byte[] data) {
+    public boolean sendFile(byte[] data) {
         if (mbStart && mOS != null && !mbOtaUpdating) {
             try {
                 // Don't log file data content, just write it
                 mOS.write(data);
                 mOS.flush();
+                return true;
             } catch (IOException e) {
                 Log.e(TAG, "Error writing file to serial port: " + e.getMessage());
             }
@@ -164,6 +166,7 @@ public class SerialPortBridge {
                                 + mOS);
             }
         }
+        return false;
     }
 
     /**
