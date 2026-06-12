@@ -22,11 +22,14 @@ const REGION = process.env.REGION ?? process.env.DEPLOYMENT_REGION ?? "local";
 const LOG_LEVEL = process.env.LOG_LEVEL ?? (NODE_ENV === "production" ? "info" : "debug");
 const LOG_STDOUT_JSON = process.env.LOG_STDOUT_JSON === "true";
 
-type PrettyFactory = typeof import("pino-pretty").default;
+// pino-pretty types use a CJS export-assignment (`export =`), so the module
+// type IS the factory; the runtime `.default` comes from Bun's ESM interop of
+// that same assignment and needs a cast to line the two views up.
+type PrettyFactory = typeof import("pino-pretty");
 
 const PinoPretty: PrettyFactory | null = LOG_STDOUT_JSON
   ? null
-  : (await import("pino-pretty")).default;
+  : ((await import("pino-pretty")) as unknown as { default: PrettyFactory }).default;
 
 function podHostname(): string {
   if (NODE_ENV === "production") {
@@ -69,7 +72,8 @@ export function createLogger(packageName: string): Logger {
   // worker_threads, which doesn't resolve pino-pretty's entry point cleanly
   // under Bun. Passing the pretty stream directly to pino() works on both
   // Bun and Node.
-  const prettyStream = PinoPretty({
+  // Non-null: PinoPretty is only null when LOG_STDOUT_JSON, returned above.
+  const prettyStream = PinoPretty!({
     colorize: true,
     translateTime: "HH:MM:ss.l",
     ignore: "pod,env,region",
