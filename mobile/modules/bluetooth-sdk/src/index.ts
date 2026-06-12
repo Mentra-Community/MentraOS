@@ -1,5 +1,10 @@
 import PrivateBluetoothSdkModule from "./_private/BluetoothSdkModule"
-import type {BluetoothSdkEventListener, BluetoothSdkEventName, BluetoothSdkPublicModule} from "./BluetoothSdk.types"
+import type {
+  BluetoothSdkAnalyticsOptions,
+  BluetoothSdkEventListener,
+  BluetoothSdkEventName,
+  BluetoothSdkPublicModule,
+} from "./BluetoothSdk.types"
 
 const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "log",
@@ -52,7 +57,8 @@ const addListener: BluetoothSdkPublicModule["addListener"] = (eventName, listene
 
 export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   addListener,
-  configureAnalytics: PrivateBluetoothSdkModule.configureAnalytics.bind(PrivateBluetoothSdkModule),
+  configureAnalytics: (options: BluetoothSdkAnalyticsOptions) =>
+    Promise.resolve(PrivateBluetoothSdkModule.configureAnalytics(options)),
   getDefaultDevice: PrivateBluetoothSdkModule.getDefaultDevice.bind(PrivateBluetoothSdkModule),
   setDefaultDevice: PrivateBluetoothSdkModule.setDefaultDevice.bind(PrivateBluetoothSdkModule),
   clearDefaultDevice: PrivateBluetoothSdkModule.clearDefaultDevice.bind(PrivateBluetoothSdkModule),

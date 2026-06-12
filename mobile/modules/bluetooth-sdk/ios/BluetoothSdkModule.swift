@@ -4,6 +4,7 @@ import Foundation
 public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
     private var sdk: MentraBluetoothSDK?
     private var pendingAnalyticsOptions: [String: Any]?
+    private var destroyed = false
 
     public func definition() -> ModuleDefinition {
         Name("BluetoothSdk")
@@ -76,6 +77,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         OnDestroy {
             Task { @MainActor [weak self] in
+                self?.destroyed = true
                 self?.sdk?.invalidate()
                 self?.sdk = nil
             }
@@ -101,8 +103,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
-        AsyncFunction("configureAnalytics") { (options: [String: Any]) in
-            await MainActor.run {
+        Function("configureAnalytics") { (options: [String: Any]) in
+            self.readOnMainActor {
                 // Merge so a partial follow-up call (e.g. only postHogHost) cannot drop
                 // an earlier {enabled: false} before the SDK is lazily created.
                 self.pendingAnalyticsOptions =
@@ -638,6 +640,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
     private func bluetoothSdk() -> MentraBluetoothSDK {
         if let sdk {
             return sdk
+        }
+        if destroyed {
+            fatalError("Bluetooth SDK module has been destroyed.")
         }
 
         let analyticsConfiguration =

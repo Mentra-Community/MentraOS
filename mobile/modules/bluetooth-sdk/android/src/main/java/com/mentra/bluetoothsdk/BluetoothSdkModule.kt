@@ -337,7 +337,7 @@ class BluetoothSdkModule : Module() {
 
         Function("getDefaultDevice") { bluetoothSdk().getDefaultDevice()?.toMap() }
 
-        AsyncFunction("configureAnalytics") { options: Map<String, Any?> ->
+        Function("configureAnalytics") { options: Map<String, Any?> ->
             synchronized(sdkLock) {
                 // Merge so a partial follow-up call (e.g. only postHogHost) cannot drop
                 // an earlier {enabled: false} before the SDK is lazily created.
