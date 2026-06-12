@@ -81,12 +81,24 @@ public class MediaCaptureService {
     // Track current video recording
     private boolean isRecordingVideo = false;
     private String currentVideoId = null;
-    private String currentVideoPath = null;
+    // volatile: read in the stop prologue (BLE worker / main looper) to derive the upload-target
+    // captureId key, while written on the start/callback threads — needs cross-thread visibility.
+    private volatile String currentVideoPath = null;
     private long recordingStartTime = 0;
     private boolean currentVideoLedEnabled =
             false; // Track if LED was enabled for current recording
     private boolean currentVideoSoundEnabled =
             false; // Track if sound was enabled for current recording
+
+    // Stop-time upload decision, bound to the recording's captureId (its capture-dir name, which is
+    // unique per recording). Registered when the recording is stopped and consumed exactly once by
+    // that recording's onRecordingStopped. Keying by captureId — instead of shared mutable fields —
+    // means: the FIRST stop for a recording wins (putIfAbsent), so a user stop that races or follows
+    // an auto-stop can't turn a "no upload" auto-stop into an upload; a new recording (different
+    // captureId) can't overwrite a prior recording's still-pending target; and every onRecordingStopped
+    // exit path removes its own entry, so a target can't leak into a later recording.
+    private final ConcurrentHashMap<String, UploadTarget> uploadTargetsByCaptureId =
+            new ConcurrentHashMap<>();
 
     // Max recording time check
     private final Handler recordingTimeHandler = new Handler(Looper.getMainLooper());
@@ -108,6 +120,24 @@ public class MediaCaptureService {
     }
 
     private StopReason mCurrentStopReason = null;
+
+    /** Stop-time upload target bound to a specific recording. Empty/null webhook = keep on device. */
+    private static final class UploadTarget {
+        final String webhookUrl;
+        final String authToken;
+
+        UploadTarget(String webhookUrl, String authToken) {
+            this.webhookUrl = webhookUrl;
+            this.authToken = authToken;
+        }
+    }
+
+    // Guards the stop prologue (mCurrentStopReason + pending-upload target) so the
+    // check-and-set is atomic across threads. The user stop arrives on the BLE worker
+    // thread while auto-stops (max-duration/battery/error) fire on the main looper; without
+    // this lock a late user stop could inject a webhook into an auto-stop that already
+    // committed to "no upload".
+    private final Object mStopLock = new Object();
 
     // Default BLE params (used if size unspecified)
     public static final int bleImageTargetWidth = 480;
@@ -512,7 +542,13 @@ public class MediaCaptureService {
             captureDirFile.mkdirs();
             String videoFilePath = new File(captureDirFile, "base.mp4").getAbsolutePath();
             startVideoRecording(
-                    videoFilePath, requestId, settings, enableFlash, true, maxRecordingTimeMinutes);
+                    videoFilePath,
+                    requestId,
+                    settings,
+                    enableFlash,
+                    true,
+                    maxRecordingTimeMinutes,
+                    false);
         }
     }
 
@@ -540,6 +576,24 @@ public class MediaCaptureService {
             VideoSettings settings,
             boolean enableFlash,
             boolean enableSound) {
+        handleStartVideoCommand(requestId, save, settings, enableFlash, enableSound, 0);
+    }
+
+    /**
+     * Handle start video recording command from phone with settings and a max recording time.
+     *
+     * @param requestId Unique request ID for tracking
+     * @param save Whether to keep the video on device after upload
+     * @param settings Video settings (resolution, fps) or null for defaults
+     * @param maxRecordingTimeMinutes Maximum recording time in minutes (0 = no limit)
+     */
+    public void handleStartVideoCommand(
+            String requestId,
+            boolean save,
+            VideoSettings settings,
+            boolean enableFlash,
+            boolean enableSound,
+            int maxRecordingTimeMinutes) {
         Log.d(
                 TAG,
                 "handleStartVideoCommand called with requestId: "
@@ -551,7 +605,9 @@ public class MediaCaptureService {
                         + ", enableFlash: "
                         + enableFlash
                         + ", enableSound: "
-                        + enableSound);
+                        + enableSound
+                        + ", maxRecordingTimeMinutes: "
+                        + maxRecordingTimeMinutes);
 
         // Check if already recording
         if (isRecordingVideo) {
@@ -573,7 +629,14 @@ public class MediaCaptureService {
         String videoFilePath = new File(captureDirFile, "base.mp4").getAbsolutePath();
 
         // Start video recording with the provided requestId and settings (or null for defaults)
-        startVideoRecording(videoFilePath, requestId, settings, enableFlash, enableSound);
+        startVideoRecording(
+                videoFilePath,
+                requestId,
+                settings,
+                enableFlash,
+                enableSound,
+                maxRecordingTimeMinutes,
+                save);
     }
 
     /**
@@ -581,7 +644,7 @@ public class MediaCaptureService {
      *
      * @param requestId Request ID of the video to stop (must match current recording)
      */
-    public void handleStopVideoCommand(String requestId) {
+    public void handleStopVideoCommand(String requestId, String webhookUrl, String authToken) {
         Log.d(TAG, "handleStopVideoCommand called with requestId: " + requestId);
 
         if (!isRecordingVideo) {
@@ -603,7 +666,7 @@ public class MediaCaptureService {
             return;
         }
 
-        stopVideoRecording();
+        stopVideoRecording(webhookUrl, authToken);
     }
 
     /** Start video recording locally with auto-generated IDs */
@@ -623,7 +686,7 @@ public class MediaCaptureService {
 
     /** Start video recording with specific parameters */
     private void startVideoRecording(String videoFilePath, String requestId, boolean enableFlash) {
-        startVideoRecording(videoFilePath, requestId, null, enableFlash, true, 0);
+        startVideoRecording(videoFilePath, requestId, null, enableFlash, true, 0, false);
     }
 
     /** Start video recording with specific parameters and settings */
@@ -632,8 +695,9 @@ public class MediaCaptureService {
             String requestId,
             VideoSettings settings,
             boolean enableFlash,
-            boolean enableSound) {
-        startVideoRecording(videoFilePath, requestId, settings, enableFlash, enableSound, 0);
+            boolean enableSound,
+            boolean save) {
+        startVideoRecording(videoFilePath, requestId, settings, enableFlash, enableSound, 0, save);
     }
 
     /** Start video recording with specific parameters, settings, and max time */
@@ -643,7 +707,8 @@ public class MediaCaptureService {
             VideoSettings settings,
             boolean enableFlash,
             boolean enableSound,
-            int maxRecordingTimeMinutes) {
+            int maxRecordingTimeMinutes,
+            boolean save) {
         // Check if any streaming is active - videos cannot interrupt streams
         if (RtmpStreamingService.isStreaming()
                 || SrtStreamingService.isStreaming()
@@ -816,6 +881,14 @@ public class MediaCaptureService {
                                             ? captureIdFromCallback
                                             : captureIdAtStart;
 
+                            // Consume this recording's upload decision exactly once, up front, so it
+                            // is dropped on every exit path below (null file path, cleanup, integrity
+                            // failure) and can never leak into a later recording.
+                            final UploadTarget uploadTarget =
+                                    captureId != null
+                                            ? uploadTargetsByCaptureId.remove(captureId)
+                                            : null;
+
                             // Block sync before clearing session state — no gap between active and
                             // pending.
                             // Add to pending BEFORE removing from in-flight so a concurrent
@@ -873,6 +946,17 @@ public class MediaCaptureService {
                                                         () -> {
                                                             videoCaptureIdsPendingIntegrityCheck
                                                                     .remove(captureId);
+                                                            // Upload target was captured up front
+                                                            // and bound to this recording's
+                                                            // captureId; null = keep on device.
+                                                            final String uploadWebhookUrl =
+                                                                    uploadTarget != null
+                                                                            ? uploadTarget.webhookUrl
+                                                                            : null;
+                                                            final String uploadAuthToken =
+                                                                    uploadTarget != null
+                                                                            ? uploadTarget.authToken
+                                                                            : null;
                                                             if (ok) {
                                                                 if (mMediaCaptureListener != null) {
                                                                     mMediaCaptureListener
@@ -882,7 +966,11 @@ public class MediaCaptureService {
                                                                 }
                                                                 sendGalleryStatusUpdate();
                                                                 uploadVideo(
-                                                                        filePath, pendingRequestId);
+                                                                        filePath,
+                                                                        pendingRequestId,
+                                                                        uploadWebhookUrl,
+                                                                        uploadAuthToken,
+                                                                        save);
                                                             } else {
                                                                 final boolean cleaningUp =
                                                                         isCleaningUp.get();
@@ -975,6 +1063,15 @@ public class MediaCaptureService {
                                 clearVideoCaptureSyncBlocks(currentVideoPath);
                             }
 
+                            // onRecordingError is the mutually-exclusive alternative to
+                            // onRecordingStopped (exactly one fires per stop), so consume this
+                            // recording's upload decision here too. Otherwise a USER_REQUESTED stop
+                            // that already registered a webhook target would leak it (auth token
+                            // included) and the planned upload would silently never run.
+                            if (captureIdAtStart != null) {
+                                uploadTargetsByCaptureId.remove(captureIdAtStart);
+                            }
+
                             isRecordingVideo = false;
 
                             // Turn off RGB white LED on error (error path may not go through
@@ -1040,19 +1137,45 @@ public class MediaCaptureService {
      * @param reason Why recording is stopping
      */
     private void stopVideoRecording(StopReason reason) {
-        // Prevent recursive calls
-        if (mCurrentStopReason != null) {
-            Log.w(
-                    TAG,
-                    "⚠️ stopVideoRecording already in progress (reason: "
-                            + mCurrentStopReason
-                            + "), ignoring recursive call with reason: "
-                            + reason);
-            return;
-        }
+        stopVideoRecording(reason, null, null);
+    }
 
-        mCurrentStopReason = reason;
+    /**
+     * Stop video recording with a reason and an optional upload target.
+     *
+     * <p>The reason guard + {@code mCurrentStopReason} write are serialized under {@link #mStopLock}.
+     * The upload target is registered only once the stop is actually dispatched to the recorder
+     * (below the "not recording" guard), keyed by the recording's captureId via {@code putIfAbsent}
+     * (first-stop-wins): only a {@code USER_REQUESTED} stop carries a webhook, and a stop already in
+     * progress — or a user stop racing/following an auto-stop that already committed to "no upload" —
+     * can't flip the outcome. The entry is consumed in {@code onRecordingStopped} and dropped on
+     * every other terminal path ({@code onRecordingError}, the catch below, {@code cleanup}).
+     *
+     * @param reason Why recording is stopping
+     * @param webhookUrl Upload target (USER_REQUESTED only); null/empty keeps the video on device
+     * @param authToken Bearer token for the webhook upload
+     */
+    private void stopVideoRecording(StopReason reason, String webhookUrl, String authToken) {
+        synchronized (mStopLock) {
+            // Prevent recursive/concurrent stops
+            if (mCurrentStopReason != null) {
+                Log.w(
+                        TAG,
+                        "⚠️ stopVideoRecording already in progress (reason: "
+                                + mCurrentStopReason
+                                + "), ignoring call with reason: "
+                                + reason);
+                return;
+            }
+
+            mCurrentStopReason = reason;
+        }
         Log.d(TAG, "🛑 Stopping video recording - Reason: " + reason);
+
+        // captureId of the active recording: the key under which the upload decision is registered
+        // (below, just before dispatch) and later consumed/removed. Read from the (volatile)
+        // current path so it is published across the worker/callback/main threads.
+        final String captureId = captureIdFromVideoAbsPath(currentVideoPath);
 
         try {
             // Stop battery monitoring first
@@ -1060,6 +1183,8 @@ public class MediaCaptureService {
 
             if (!isRecordingVideo || currentVideoId == null) {
                 Log.w(TAG, "⚠️ Not currently recording, nothing to stop");
+                // No dispatch → no camera callback → nothing was registered for this stop, so
+                // there is nothing to leak (registration happens below, only on dispatch).
                 return;
             }
 
@@ -1093,6 +1218,22 @@ public class MediaCaptureService {
 
             stopVideoRecordingLed(); // Stop white LED when video recording stops
 
+            // Bind the upload decision to this recording's captureId, first-stop-wins, only now that
+            // the stop is actually being dispatched to the recorder — so an early-return above can
+            // never orphan it. Only a USER_REQUESTED stop may upload; any auto-stop
+            // (battery/max-duration/error) registers a "no upload" decision. putIfAbsent means a
+            // later or racing stop (e.g. a user stop landing after an auto-stop already committed to
+            // "no upload", once the stop-reason guard has reset) cannot flip the outcome. The entry
+            // is consumed once in onRecordingStopped and dropped on every terminal path
+            // (onRecordingError, the catch below, cleanup) so it can never leak.
+            if (captureId != null) {
+                UploadTarget target =
+                        reason == StopReason.USER_REQUESTED
+                                ? new UploadTarget(webhookUrl, authToken)
+                                : new UploadTarget(null, null);
+                uploadTargetsByCaptureId.putIfAbsent(captureId, target);
+            }
+
             // Stop the recording via CameraNeoService
             CameraNeoService.stopVideoRecording(mContext, currentVideoId);
 
@@ -1106,10 +1247,14 @@ public class MediaCaptureService {
                         MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
             }
 
-            // Reset state in case of error
+            // Reset state in case of error. No camera callback will fire after a failed dispatch,
+            // so drop this recording's upload target here to mirror onRecordingStopped/onRecordingError.
             isRecordingVideo = false;
             currentVideoId = null;
             currentVideoPath = null;
+            if (captureId != null) {
+                uploadTargetsByCaptureId.remove(captureId);
+            }
 
             // Ensure LED is turned off even if stop fails (if it was enabled)
             if (currentVideoLedEnabled && hardwareManager.supportsRecordingLed()) {
@@ -1117,7 +1262,9 @@ public class MediaCaptureService {
                 Log.d(TAG, "Recording LED turned OFF (stop error recovery)");
             }
         } finally {
-            mCurrentStopReason = null; // Reset for next recording
+            synchronized (mStopLock) {
+                mCurrentStopReason = null; // Reset for next recording
+            }
         }
     }
 
@@ -1126,7 +1273,17 @@ public class MediaCaptureService {
      * Note: Called from Bluetooth worker thread via command handlers - no thread assertion.
      */
     public void stopVideoRecording() {
-        stopVideoRecording(StopReason.USER_REQUESTED);
+        // No-webhook variant (button / power / toggle): no upload target.
+        stopVideoRecording(StopReason.USER_REQUESTED, null, null);
+    }
+
+    /**
+     * Stop the active recording and upload the result to {@code webhookUrl} via multipart, mirroring
+     * the photo snapshot flow. The webhook URL + auth token are supplied at STOP time so the token
+     * is fresh when the upload runs. An empty/null webhook keeps the video on device (no upload).
+     */
+    public void stopVideoRecording(String webhookUrl, String authToken) {
+        stopVideoRecording(StopReason.USER_REQUESTED, webhookUrl, authToken);
     }
 
     /** Check if currently recording video */
@@ -2710,15 +2867,206 @@ public class MediaCaptureService {
     }
 
     /** Upload a video file to AugmentOS Cloud Currently a stub - videos are kept on device */
-    public void uploadVideo(String videoFilePath, String requestId) {
-        Log.d(TAG, "Video upload not implemented yet. Video saved locally: " + videoFilePath);
-        // TODO: Implement WiFi upload when needed
-        // For now, videos remain on device
+    public void uploadVideo(
+            String videoFilePath,
+            String requestId,
+            String webhookUrl,
+            String authToken,
+            boolean save) {
+        // No webhook configured → nothing to upload; keep the video on device (legacy behavior).
+        // Whitespace-safe: a blank/whitespace-only webhook would otherwise attempt a doomed upload
+        // to an empty URL instead of falling back to local-save.
+        if (webhookUrl == null || webhookUrl.trim().isEmpty()) {
+            Log.d(
+                    TAG,
+                    "No webhook URL for video "
+                            + requestId
+                            + " - keeping video on device: "
+                            + videoFilePath);
+            if (mMediaCaptureListener != null) {
+                // Notify that video is "uploaded" (actually just saved locally)
+                mMediaCaptureListener.onVideoUploaded(requestId, videoFilePath);
+            }
+            return;
+        }
+
+        performDirectVideoUpload(videoFilePath, requestId, webhookUrl.trim(), authToken, save);
+    }
+
+    /**
+     * Upload a recorded video to a webhook URL via multipart/form-data, mirroring the photo snapshot
+     * upload in {@link #performDirectUpload}. Runs on a background thread.
+     *
+     * <p>Unlike photos there is no BLE fallback — video files are far too large for BLE — so a
+     * failed upload is terminal. Timeouts are much larger than the photo path: write/read are
+     * per-stall (idle) timeouts and {@code callTimeout} bounds the whole upload end-to-end.
+     *
+     * <p>The receiving server gets a multipart body with: {@code video} (the .mp4 file),
+     * {@code requestId}, {@code type=video_upload}, {@code success=true}, plus an optional
+     * {@code Authorization: Bearer <authToken>} header.
+     */
+    private void performDirectVideoUpload(
+            String videoFilePath,
+            String requestId,
+            String webhookUrl,
+            String authToken,
+            boolean save) {
+        Log.d(TAG, "📤 Starting direct video upload operation");
+        Log.d(TAG, "🎥 Upload file: " + videoFilePath);
+        Log.d(TAG, "🆔 Request ID: " + requestId);
 
         if (mMediaCaptureListener != null) {
-            // Notify that video is "uploaded" (actually just saved locally)
-            mMediaCaptureListener.onVideoUploaded(requestId, videoFilePath);
+            mMediaCaptureListener.onVideoUploading(requestId);
         }
+
+        new Thread(
+                        () -> {
+                            File videoFile = new File(videoFilePath);
+                            try {
+                                if (!videoFile.exists()) {
+                                    Log.e(TAG, "❌ Video file does not exist: " + videoFilePath);
+                                    sendMediaErrorResponse(
+                                            requestId,
+                                            "Video file not found",
+                                            MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+                                    if (mMediaCaptureListener != null) {
+                                        mMediaCaptureListener.onMediaError(
+                                                requestId,
+                                                "Video file not found",
+                                                MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+                                    }
+                                    return;
+                                }
+
+                                Log.d(TAG, "📊 Video file size: " + videoFile.length() + " bytes");
+                                Log.d(TAG, "🌐 Sending video to: " + webhookUrl);
+
+                                // Video files are large; use generous timeouts. write/read are
+                                // per-stall (idle) timeouts that abort a truly stalled socket.
+                                // The whole-call deadline is derived from the file size against a
+                                // conservative throughput floor so a healthy-but-slow link isn't
+                                // aborted mid-transfer on long recordings — it only guards against
+                                // a connection that never stalls yet never finishes. A flat cap
+                                // (e.g. 300s) would routinely fail multi-minute uploads even at
+                                // healthy speeds, and video has no BLE fallback so that is terminal.
+                                long minThroughputBytesPerSec = 64L * 1024L; // ~0.5 Mbps floor
+                                long callTimeoutSeconds =
+                                        60L + (videoFile.length() / minThroughputBytesPerSec);
+                                OkHttpClient client =
+                                        new OkHttpClient.Builder()
+                                                .connectTimeout(
+                                                        10, java.util.concurrent.TimeUnit.SECONDS)
+                                                .writeTimeout(
+                                                        120, java.util.concurrent.TimeUnit.SECONDS)
+                                                .readTimeout(
+                                                        30, java.util.concurrent.TimeUnit.SECONDS)
+                                                .callTimeout(
+                                                        callTimeoutSeconds,
+                                                        java.util.concurrent.TimeUnit.SECONDS)
+                                                .build();
+
+                                RequestBody fileBody =
+                                        RequestBody.create(
+                                                okhttp3.MediaType.parse("video/mp4"), videoFile);
+                                RequestBody requestBody =
+                                        new MultipartBody.Builder()
+                                                .setType(MultipartBody.FORM)
+                                                .addFormDataPart(
+                                                        "video", videoFile.getName(), fileBody)
+                                                .addFormDataPart("requestId", requestId)
+                                                .addFormDataPart("type", "video_upload")
+                                                .addFormDataPart("success", "true")
+                                                .build();
+
+                                Request.Builder requestBuilder =
+                                        new Request.Builder().url(webhookUrl).post(requestBody);
+
+                                boolean hasAuthToken = authToken != null && !authToken.isEmpty();
+                                if (hasAuthToken) {
+                                    requestBuilder.header("Authorization", "Bearer " + authToken);
+                                    Log.d(
+                                            TAG,
+                                            "🔐 Adding Authorization header to video webhook request");
+                                } else {
+                                    Log.d(
+                                            TAG,
+                                            "⚠️ No auth token available for video webhook request");
+                                }
+
+                                Request request = requestBuilder.build();
+                                Log.d(TAG, "🚀 Executing video HTTP request...");
+
+                                long uploadStartTime = System.currentTimeMillis();
+                                Response response = client.newCall(request).execute();
+                                long uploadTime = System.currentTimeMillis() - uploadStartTime;
+                                Log.d(TAG, "⏱️ Video upload completed in: " + uploadTime + "ms");
+                                Log.d(TAG, "📈 Response code: " + response.code());
+
+                                if (response.isSuccessful()) {
+                                    String responseBody =
+                                            response.body() != null ? response.body().string() : "";
+                                    Log.d(TAG, "✅ Video uploaded successfully to webhook");
+                                    Log.d(TAG, "📄 Response body: " + responseBody);
+
+                                    sendMediaSuccessResponse(
+                                            requestId,
+                                            webhookUrl,
+                                            MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+
+                                    if (!save) {
+                                        try {
+                                            if (videoFile.delete()) {
+                                                Log.d(
+                                                        TAG,
+                                                        "🗑️ Deleted video file after successful upload");
+                                            } else {
+                                                Log.w(TAG, "⚠️ Failed to delete video file");
+                                            }
+                                        } catch (Exception e) {
+                                            Log.e(
+                                                    TAG,
+                                                    "❌ Error deleting video file after upload",
+                                                    e);
+                                        }
+                                    } else {
+                                        Log.d(TAG, "💾 Keeping video file as requested");
+                                    }
+
+                                    if (mMediaCaptureListener != null) {
+                                        mMediaCaptureListener.onVideoUploaded(requestId, webhookUrl);
+                                    }
+                                } else {
+                                    String errorMessage =
+                                            "Video upload failed with status: " + response.code();
+                                    Log.e(TAG, "❌ " + errorMessage + " to webhook: " + webhookUrl);
+                                    sendMediaErrorResponse(
+                                            requestId,
+                                            errorMessage,
+                                            MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+                                    if (mMediaCaptureListener != null) {
+                                        mMediaCaptureListener.onMediaError(
+                                                requestId,
+                                                errorMessage,
+                                                MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+                                    }
+                                }
+                                response.close();
+                            } catch (Exception e) {
+                                Log.e(TAG, "❌ Error uploading video to webhook", e);
+                                sendMediaErrorResponse(
+                                        requestId,
+                                        "Video upload error: " + e.getMessage(),
+                                        MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+                                if (mMediaCaptureListener != null) {
+                                    mMediaCaptureListener.onMediaError(
+                                            requestId,
+                                            "Video upload error: " + e.getMessage(),
+                                            MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+                                }
+                            }
+                        },
+                        "VideoWebhookUpload-" + requestId)
+                .start();
     }
 
     /** Upload media to AugmentOS Cloud */
@@ -3987,6 +4335,9 @@ public class MediaCaptureService {
             }
             videoCaptureIdsInFlight.clear();
             videoCaptureIdsPendingIntegrityCheck.clear();
+            // Defensive: drop any pending upload targets so no auth token survives teardown and the
+            // map can't grow without bound if a terminal path ever failed to consume its entry.
+            uploadTargetsByCaptureId.clear();
 
             Log.d(TAG, "✅ MediaCaptureService cleanup complete");
 

@@ -2354,6 +2354,15 @@ public class MentraLive extends SGCManager {
                 emitVideoRecordingStatus(json);
                 break;
 
+            case "media_success":
+            case "media_error":
+                try {
+                    Bridge.sendMediaUploadEvent(type, jsonObjectToMap(json));
+                } catch (JSONException e) {
+                    Log.e(TAG, "Error converting media upload event to Map", e);
+                }
+                break;
+
             case "voice_activity_detection_status":
                 handleVoiceActivityDetectionStatus(
                         json.optBoolean(
@@ -4370,7 +4379,7 @@ public class MentraLive extends SGCManager {
             json.put("type", "take_photo");
             json.put("requestId", requestId);
             json.put("appId", appId);
-            if (webhookUrl != null && !webhookUrl.isEmpty()) {
+            if (webhookUrl != null && !webhookUrl.trim().isEmpty()) {
                 json.put("webhookUrl", webhookUrl);
             }
             if (hasAuthToken) {
@@ -6997,7 +7006,7 @@ public class MentraLive extends SGCManager {
 
     @Override
     public void startVideoRecording(String requestId, boolean save, boolean flash, boolean sound) {
-        startVideoRecording(requestId, save, flash, sound, 0, 0, 0); // Use defaults
+        startVideoRecording(requestId, save, flash, sound, 0, 0, 0, 0); // Use defaults
     }
 
     /**
@@ -7011,9 +7020,10 @@ public class MentraLive extends SGCManager {
      * @param fps Video frame rate (0 for default)
      */
     @Override
-    public void startVideoRecording(String requestId, boolean save, boolean flash, boolean sound, int width, int height, int fps) {
+    public void startVideoRecording(String requestId, boolean save, boolean flash, boolean sound, int width, int height, int fps, int maxRecordingTimeMinutes) {
         Bridge.log("LIVE: Starting video recording: requestId=" + requestId + ", save=" + save +
-                   ", flash=" + flash + ", sound=" + sound + ", resolution=" + width + "x" + height + "@" + fps + "fps");
+                   ", flash=" + flash + ", sound=" + sound + ", resolution=" + width + "x" + height + "@" + fps + "fps" +
+                   ", maxRecordingTimeMinutes=" + maxRecordingTimeMinutes);
 
         if (!isConnected) {
             Log.w(TAG, "Cannot start video recording - not connected");
@@ -7027,6 +7037,11 @@ public class MentraLive extends SGCManager {
             json.put("save", save);
             json.put("flash", flash);
             json.put("sound", sound);
+
+            // Auto-stop timer; only sent when set (> 0). 0 = record until stopped.
+            if (maxRecordingTimeMinutes > 0) {
+                json.put("maxRecordingTimeMinutes", maxRecordingTimeMinutes);
+            }
 
             // Add video settings when any field is overridden. Each field is sent
             // only when > 0; the glasses merge the missing fields onto their saved
@@ -7048,7 +7063,13 @@ public class MentraLive extends SGCManager {
 
     @Override
     public void stopVideoRecording(String requestId) {
-        Bridge.log("LIVE: Stopping video recording: requestId=" + requestId);
+        stopVideoRecording(requestId, null, null);
+    }
+
+    @Override
+    public void stopVideoRecording(String requestId, String webhookUrl, String authToken) {
+        Bridge.log("LIVE: Stopping video recording: requestId=" + requestId +
+                   ", webhook=" + (webhookUrl == null || webhookUrl.isEmpty() ? "none" : "set"));
 
         if (!isConnected) {
             Log.w(TAG, "Cannot stop video recording - not connected");
@@ -7059,6 +7080,14 @@ public class MentraLive extends SGCManager {
             JSONObject json = new JSONObject();
             json.put("type", "stop_video_recording");
             json.put("requestId", requestId);
+            // Webhook upload target, supplied at stop so the token is fresh.
+            // Only sent when present; empty webhook = keep video on device.
+            if (webhookUrl != null && !webhookUrl.isEmpty()) {
+                json.put("webhookUrl", webhookUrl);
+            }
+            if (authToken != null && !authToken.isEmpty()) {
+                json.put("authToken", authToken);
+            }
             sendJson(json, true); // Wake up glasses for this command
         } catch (JSONException e) {
             Log.e(TAG, "Failed to create stop video recording command", e);

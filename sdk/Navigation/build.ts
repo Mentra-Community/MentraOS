@@ -17,14 +17,20 @@ const distDir = "./dist"
 
 await rm(distDir, {recursive: true, force: true})
 
-// Single GCP key feeds every Google API the miniapp talks to:
-// Maps JavaScript API (ui/lib/googleMaps.ts) and Places API (New)
-// (background/lib/places.ts). Lacks the `EXPO_PUBLIC_` prefix on
-// purpose — this miniapp manages its own env contract; the mobile-side
-// host has its own separate key (`EXPO_PUBLIC_GOOGLE_NAV_API_KEY` in
-// mobile/.env) that we deliberately don't share with.
-const navKey = process.env.GOOGLE_NAV_API_KEY ?? ""
-if (!navKey) console.warn("WARN: GOOGLE_NAV_API_KEY is not set — maps and search will fail.")
+// The GCP key now feeds ONLY the Maps JavaScript API (ui/lib/googleMaps.ts),
+// which loads Google's script directly in the WebView and therefore can't be
+// proxied — it stays in the UI bundle (public by necessity; lock it down
+// GCP-side: restrict to Maps JS API + referrer + quota cap). Places (New) no
+// longer reads this key at all; the background talks to the secret-proxy
+// Worker instead, which holds the key server-side. So this key is injected
+// into the UI bundle ONLY, never the background bundle.
+const navKey = process.env.PUBLIC_MAP_NAV_VIEWER ?? ""
+if (!navKey) console.warn("WARN: PUBLIC_MAP_NAV_VIEWER is not set — maps will fail to load.")
+
+// Base URL of the secret-proxy Worker (sdk/Navigation/worker). The background's
+// Places client (background/lib/places.ts) calls this instead of Google.
+const proxyBaseUrl = process.env.PROXY_BASE_URL ?? ""
+if (!proxyBaseUrl) console.warn("WARN: PROXY_BASE_URL is not set — place search will fail.")
 
 const nodeEnv = process.env.NODE_ENV === "production" ? "production" : "development"
 // Only announce when we're in production — that's the unusual case
@@ -32,8 +38,18 @@ const nodeEnv = process.env.NODE_ENV === "production" ? "production" : "developm
 // spam the terminal three lines per file change.
 if (nodeEnv === "production") console.log("Building with NODE_ENV=production")
 
-const sharedDefine: Record<string, string> = {
-  "process.env.GOOGLE_NAV_API_KEY": JSON.stringify(navKey),
+// Background: Places via proxy only — the GCP key is deliberately NOT injected
+// here, so it can never appear in the shipped background bundle.
+const backgroundDefine: Record<string, string> = {
+  "process.env.PROXY_BASE_URL": JSON.stringify(proxyBaseUrl),
+  "process.env.NODE_ENV": JSON.stringify(nodeEnv),
+}
+
+// UI: needs the Maps JS key (can't be proxied). PROXY_BASE_URL is harmless here
+// and kept for parity in case the UI ever calls the proxy directly.
+const uiDefine: Record<string, string> = {
+  "process.env.PUBLIC_MAP_NAV_VIEWER": JSON.stringify(navKey),
+  "process.env.PROXY_BASE_URL": JSON.stringify(proxyBaseUrl),
   "process.env.NODE_ENV": JSON.stringify(nodeEnv),
 }
 
@@ -44,7 +60,7 @@ const backgroundResult = await Bun.build({
   target: "browser",
   format: "iife",
   minify: false,
-  define: sharedDefine,
+  define: backgroundDefine,
 })
 if (!backgroundResult.success) {
   console.error("Background build failed:")
@@ -60,7 +76,7 @@ const uiResult = await Bun.build({
   target: "browser",
   plugins: [tailwind],
   minify: true,
-  define: sharedDefine,
+  define: uiDefine,
 })
 if (!uiResult.success) {
   console.error("UI build failed:")

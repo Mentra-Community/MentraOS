@@ -6,5 +6,5 @@
 // inside the app binary.
 
 export const BUNDLED_MINIAPPS: number[] = [
-
+  require("@assets/miniapps/com.mentra.navigation-1.1.1.zip"),
 ]

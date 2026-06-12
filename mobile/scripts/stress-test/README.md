@@ -85,7 +85,7 @@ Three native/JS additions feed the test:
 2. **`MemoryWarningMonitor.tsx`** listens for RN `AppState` "memoryWarning"
    events (which iOS emits via `applicationDidReceiveMemoryWarning`) and
    records them.
-3. **`CoreModule.getMemoryMB()`** is a new Expo Function exposed from
+3. **`BluetoothSdk.getMemoryMB()`** is a new Expo Function exposed from
    `mobile/modules/bluetooth-sdk/ios/BluetoothSdkModule.swift` that wraps
    the existing `MemoryMonitor.currentMemoryMB()` (reads RSS via
    `task_info`). The stress-test screen polls it once a second.
