@@ -185,23 +185,38 @@ public class CameraSettings {
    * @param builder Capture request builder for still capture
    */
   public void configureCaptureBuilder(CaptureRequest.Builder builder) {
+    configureCaptureBuilder(builder, null, null);
+  }
+
+  /**
+   * Configure capture builder with optional per-request MFNR/ZSL overrides.
+   *
+   * @param requestMfnr {@code null} = use global settings; {@code false} = force MFNR off
+   * @param requestZsl {@code null} = use global settings; {@code false} = skip ZSL for single-frame capture
+   */
+  public void configureCaptureBuilder(
+      CaptureRequest.Builder builder, Boolean requestMfnr, Boolean requestZsl) {
     if (builder == null) {
       Log.w(TAG, "Capture builder is null, cannot configure");
       return;
     }
 
-    // Check if ZSL is enabled in settings
-    boolean zslEnabled = mAsgSettings.isZslEnabled();
-    boolean mfnrEnabled = mAsgSettings.isMfnrEnabled();
+    boolean zslEnabled = requestZsl != null ? requestZsl : mAsgSettings.isZslEnabled();
+    boolean mfnrEnabled = requestMfnr != null ? requestMfnr : mAsgSettings.isMfnrEnabled();
 
     if (!zslEnabled && !mfnrEnabled) {
-      Log.d(TAG, "ZSL and MFNR disabled by settings - skipping vendor key configuration");
+      if (mKeyAisRequestMode != null && requestMfnr != null && !requestMfnr) {
+        int[] mfnrOff = new int[]{0};
+        builder.set(mKeyAisRequestMode, mfnrOff);
+        Log.d(TAG, "Capture: MFNR/AIS mode set to OFF (0) per request");
+      } else {
+        Log.d(TAG, "ZSL and MFNR disabled - skipping vendor key configuration");
+      }
       return;
     }
 
     Log.d(TAG, "🔍 DIAGNOSTIC: Configuring capture builder with ZSL/MFNR");
 
-    // Enable ZSL for capture
     if (zslEnabled && isZslSupported()) {
       builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, true);
       Log.d(TAG, "🔍 Set CONTROL_ENABLE_ZSL = true in capture builder");
@@ -215,13 +230,16 @@ public class CameraSettings {
       Log.d(TAG, "ZSL enabled in settings but vendor keys not available");
     }
 
-    // Enable MFNR for capture (mode 255 = full MFNR)
     if (mfnrEnabled && isMfnrSupported()) {
       if (mKeyAisRequestMode != null) {
         int[] mfnrMode = new int[]{255};
         builder.set(mKeyAisRequestMode, mfnrMode);
         Log.d(TAG, "Capture: MFNR/AIS mode set to ON (255) - Full multi-frame noise reduction");
       }
+    } else if (!mfnrEnabled && mKeyAisRequestMode != null) {
+      int[] mfnrOff = new int[]{0};
+      builder.set(mKeyAisRequestMode, mfnrOff);
+      Log.d(TAG, "Capture: MFNR/AIS mode set to OFF (0) per request");
     } else if (mfnrEnabled) {
       Log.d(TAG, "MFNR enabled in settings but vendor keys not available");
     }
