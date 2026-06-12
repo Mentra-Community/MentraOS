@@ -8,7 +8,7 @@ import {MiniappHeader} from "@mentra/miniapp/ui"
 import {useTester} from "../../hooks/useTester"
 import {Shell} from "../Shell"
 import {Button} from "../../components/button"
-import {ErrorRow, Row} from "./_TesterRow"
+import {ErrorRow, Row, StatusRow} from "./_TesterRow"
 
 interface PhotoResult {
   photoUrl?: string
@@ -18,7 +18,7 @@ interface PhotoResult {
 
 export default function CameraPage() {
   const navigate = useNavigate()
-  const {latestByKind, log, fire, lastError} = useTester("camera")
+  const {latestByKind, log, invoke, lastError, status} = useTester("camera")
 
   const latestResult = latestByKind("result")
   const result = latestResult
@@ -35,13 +35,13 @@ export default function CameraPage() {
           is a short-TTL (~24h) Cloudflare R2 signed URL.
         </p>
         <div className="mt-1 flex flex-col gap-2">
-          <Button onClick={() => fire("takePhoto", [{size: "small"}])}>
+          <Button onClick={() => { void invoke("takePhoto", [{size: "small"}]).catch(() => {}) }}>
             takePhoto(small)
           </Button>
-          <Button onClick={() => fire("takePhoto", [{size: "medium"}])}>
+          <Button onClick={() => { void invoke("takePhoto", [{size: "medium"}]).catch(() => {}) }}>
             takePhoto(medium)
           </Button>
-          <Button onClick={() => fire("takePhoto", [{size: "large"}])}>
+          <Button onClick={() => { void invoke("takePhoto", [{size: "large"}]).catch(() => {}) }}>
             takePhoto(large)
           </Button>
         </div>
@@ -56,6 +56,7 @@ export default function CameraPage() {
             <img src={result.photoUrl} className="w-full" />
           </div>
         )}
+        <StatusRow status={status} />
         <ErrorRow event={lastError} />
         <p className="mt-3 text-[12px] text-muted-foreground">
           {log.length} event(s) seen

@@ -20,7 +20,7 @@ import {Shell} from "../Shell"
 import {Button} from "../../components/button"
 import {Input} from "../../components/input"
 import {Label} from "../../components/label"
-import {ErrorRow} from "./_TesterRow"
+import {ErrorRow, StatusRow} from "./_TesterRow"
 
 interface ManagedStartResult {
   streamId: string
@@ -44,7 +44,7 @@ type StatusEvent = {
 
 export default function StreamingPage() {
   const navigate = useNavigate()
-  const {latestByKind, log, fire, lastError} = useTester("stream")
+  const {latestByKind, log, invoke, lastError, status} = useTester("stream")
   const [unmanagedUrl, setUnmanagedUrl] = useState("rtmp://")
 
   const lastResultEvent = latestByKind("result")
@@ -94,11 +94,11 @@ export default function StreamingPage() {
           placeholder="rtmp://your.server/app/key"
         />
         <div className="mt-2 flex flex-col gap-2">
-          <Button onClick={() => fire("startUnmanaged", [{streamUrl: unmanagedUrl}])}>
+          <Button onClick={() => { void invoke("startUnmanaged", [{streamUrl: unmanagedUrl}]).catch(() => {}) }}>
             startUnmanaged(streamUrl)
           </Button>
-          <Button onClick={() => fire("startManaged", [{}])}>startManaged()</Button>
-          <Button variant="destructive" onClick={() => fire("stop", [])}>
+          <Button onClick={() => { void invoke("startManaged", [{}]).catch(() => {}) }}>startManaged()</Button>
+          <Button variant="destructive" onClick={() => { void invoke("stop", []).catch(() => {}) }}>
             stop()
           </Button>
         </div>
@@ -157,6 +157,7 @@ export default function StreamingPage() {
           )}
         </div>
 
+        <StatusRow status={status} />
         <ErrorRow event={lastError} />
         <p className="mt-3 text-[12px] text-muted-foreground">
           {log.length} event(s) seen

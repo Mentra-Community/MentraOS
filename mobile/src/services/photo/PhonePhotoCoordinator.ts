@@ -39,10 +39,18 @@ export interface PhotoTaken {
   requestId: string
 }
 
+/** Pipeline stage a photo request failed at — surfaced to the miniapp so a dev
+ *  sees exactly where it broke, not just a flattened message. */
+export type PhotoStage = "presign" | "command" | "capture" | "upload" | "push"
+/** Transport in play at the point of failure. */
+export type PhotoTransport = "cloud-rest" | "ble" | "wifi" | "ws"
+
 export class PhotoError extends Error {
   constructor(
     public readonly code: string,
     message: string,
+    public readonly stage?: PhotoStage,
+    public readonly transport?: PhotoTransport,
   ) {
     super(message)
     this.name = "PhotoError"
@@ -55,6 +63,10 @@ interface ActiveRequest {
   resolve: (r: PhotoResult) => void
   reject: (err: Error) => void
 }
+
+/** How long to wait for the glasses to acknowledge a capture before failing
+ *  fast with CAPTURE_TIMEOUT, instead of hanging on the cloud push timeout. */
+const CAPTURE_TIMEOUT_MS = 15_000
 
 function toNativeCompression(compress: PhotoOpts["compress"]): "none" | "medium" | "heavy" {
   if (compress === "high") return "heavy"
@@ -81,7 +93,7 @@ export class PhonePhotoCoordinator {
     // long-poll. Slower but correct.
     const glasses = getRuntimeHooks().glassesStatus?.get()
     if (!glasses?.connected) {
-      throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected")
+      throw new PhotoError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
     }
 
     // 1) Presign via the cloud-v2 managed-photo service. Local miniapps use
@@ -97,7 +109,7 @@ export class PhonePhotoCoordinator {
       uploadUrl = r.uploadUrl
       readUrl = r.readUrl
     } catch (err) {
-      throw this.toPhotoError(err, "PHOTO_REQUEST_FAILED")
+      throw this.toPhotoError(err, "PHOTO_REQUEST_FAILED", "presign", "cloud-rest")
     }
 
     // 2) Build the outcome Promise FIRST so both resolve+reject handles
@@ -106,21 +118,42 @@ export class PhonePhotoCoordinator {
     //    etc.) racing with the Promise constructor could fire
     //    handlePhotoError() against a no-op rejectFn and silently drop
     //    the error.
+    // When the managed-photo upload URL is loopback (the local storage provider
+    // reached over `adb reverse`), the glasses cannot reach it over WiFi —
+    // localhost on the glasses is the glasses. Force BLE transfer so the phone
+    // (which CAN reach the reversed runtime) relays the bytes; a public r2/s3
+    // presigned URL stays on "auto".
+    const isLoopbackUpload = /^https?:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2)\b/.test(uploadUrl)
+
     const abort = new AbortController()
     const outcome = new Promise<PhotoResult>((resolve, reject) => {
       this.activeRequests.set(requestId, {packageName, abort, resolve, reject})
     })
 
+    // Capture watchdog: if the glasses never acknowledge the command (no camera
+    // sound, no capture, no upload — e.g. the command was dropped, or WiFi
+    // upload to an unreachable host stalled), fail FAST and specifically rather
+    // than waiting on the cloud push to time out. A dev should see
+    // "CAPTURE_TIMEOUT stage:capture via:ble" within seconds, not a silent hang.
+    const captureWatchdog = setTimeout(() => {
+      const e = this.activeRequests.get(requestId)
+      if (!e) return
+      e.abort.abort()
+      e.reject(
+        new PhotoError(
+          "CAPTURE_TIMEOUT",
+          "Glasses never acknowledged the capture (no photo_response). The take_photo command may not have reached the device, or the upload target was unreachable.",
+          "capture",
+          isLoopbackUpload ? "ble" : "wifi",
+        ),
+      )
+    }, CAPTURE_TIMEOUT_MS)
+    void outcome.finally(() => clearTimeout(captureWatchdog))
+
     // 3) Drive glasses over BLE. requestPhoto now resolves at terminal
     //    photo_response success, so run it beside the cloud poll instead of
     //    awaiting it before polling. iOS auto-injects transferMethod: "auto"
     //    (WiFi direct with BLE fallback) — see MentraLive.swift.
-    // When the managed-photo upload URL is loopback (the local storage provider
-    // reached over `adb reverse`), the glasses cannot reach it over WiFi —
-    // localhost on the glasses is the glasses. Force BLE transfer so the phone
-    // (which CAN reach the reversed runtime) relays the bytes. A normal
-    // presigned r2/s3 URL is publicly reachable, so leave transfer on "auto".
-    const isLoopbackUpload = /^https?:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2)\b/.test(uploadUrl)
     try {
       void BluetoothSdk.requestPhoto({
         requestId,
@@ -137,11 +170,11 @@ export class PhonePhotoCoordinator {
         const e = this.activeRequests.get(requestId)
         if (!e) return
         e.abort.abort()
-        e.reject(this.toPhotoError(err, "BLE_SEND_FAILED"))
+        e.reject(this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble"))
       })
     } catch (err) {
       this.activeRequests.delete(requestId)
-      throw this.toPhotoError(err, "BLE_SEND_FAILED")
+      throw this.toPhotoError(err, "BLE_SEND_FAILED", "command", "ble")
     }
 
     // 4) Await the runtime's photo.ready push (replaces the legacy long-poll).
@@ -156,7 +189,7 @@ export class PhonePhotoCoordinator {
       })
       .catch((err) => {
         const e = this.activeRequests.get(requestId)
-        if (e) e.reject(this.toPhotoError(err, "POLL_FAILED"))
+        if (e) e.reject(this.toPhotoError(err, "POLL_FAILED", "push", "ws"))
       })
 
     try {
@@ -187,15 +220,20 @@ export class PhonePhotoCoordinator {
     if (!entry) return
     // Abort the in-flight long-poll first so we don't double-resolve.
     entry.abort.abort()
-    entry.reject(new PhotoError(errorCode || "GLASSES_ERROR", errorMessage || "Glasses error"))
+    entry.reject(new PhotoError(errorCode || "GLASSES_ERROR", errorMessage || "Glasses error", "capture", "ble"))
     // cloud-v2 pending photo requests TTL out on their own; nothing to free.
   }
 
-  private toPhotoError(err: unknown, fallbackCode: string): PhotoError {
+  private toPhotoError(
+    err: unknown,
+    fallbackCode: string,
+    stage?: PhotoStage,
+    transport?: PhotoTransport,
+  ): PhotoError {
     if (err instanceof PhotoError) return err
     const code = (err as {code?: string})?.code
     const message = err instanceof Error ? err.message : String(err)
-    return new PhotoError(code || fallbackCode, message)
+    return new PhotoError(code || fallbackCode, message, stage, transport)
   }
 }
 
