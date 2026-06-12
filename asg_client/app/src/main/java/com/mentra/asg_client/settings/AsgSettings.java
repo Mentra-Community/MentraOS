@@ -412,7 +412,9 @@ public class AsgSettings {
         prefs.edit().putBoolean(KEY_BUTTON_PHOTO_SOUND, enabled).commit();
     }
 
+    /** Clears scan/button-photo tuning prefs and restores global MFNR/ZSL defaults. */
     public void clearButtonPhotoCaptureTuning() {
+        Log.d(TAG, "Clearing button photo capture tuning and restoring MFNR/ZSL defaults");
         prefs.edit()
                 .remove(KEY_BUTTON_PHOTO_NOISE_REDUCTION)
                 .remove(KEY_BUTTON_PHOTO_EDGE_ENHANCEMENT)
@@ -422,6 +424,8 @@ public class AsgSettings {
                 .remove(KEY_BUTTON_PHOTO_ISO_CAP)
                 .remove(KEY_BUTTON_PHOTO_COMPRESS)
                 .remove(KEY_BUTTON_PHOTO_SOUND)
+                .putBoolean(KEY_MFNR_ENABLED, true)
+                .putBoolean(KEY_ZSL_ENABLED, true)
                 .commit();
     }
 
