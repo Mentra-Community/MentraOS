@@ -139,6 +139,12 @@ audioApi.put("/subscriptions", async (c) => {
       version: result.version,
       reason: result.reason,
       count: subscriptions.length,
+      writerSessionId: sessionId,
+      holderSessionId: result.currentSessionId,
+      writerLive: hasLiveAudioSession(verified.mentraUserId, sessionId),
+      holderLive: result.currentSessionId
+        ? hasLiveAudioSession(verified.mentraUserId, result.currentSessionId)
+        : undefined,
     },
     "subscriptions write",
   );

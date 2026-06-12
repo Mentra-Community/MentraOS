@@ -73,18 +73,7 @@ export class Subscriptions {
     // what we believe we sent (and would re-send on reconnect).
     this.current = [...subs];
     this.version += 1;
-
-    // The full-replace PUT is idempotent: replaying it lands the same state, so
-    // the HTTP helper is allowed to retry it on a transient network failure.
-    await this.http.put<void>(
-      SUBSCRIPTIONS_PATH,
-      {
-        subscriptions: this.current,
-        sessionId,
-        version: this.version,
-      },
-      { idempotent: true },
-    );
+    await this.send(sessionId);
   }
 
   /**
@@ -97,14 +86,51 @@ export class Subscriptions {
    * write land against the reconnected session.
    */
   async resend(sessionId: string): Promise<void> {
-    await this.http.put<void>(
-      SUBSCRIPTIONS_PATH,
-      {
-        subscriptions: this.current,
-        sessionId,
-        version: this.version,
-      },
-      { idempotent: true },
-    );
+    await this.send(sessionId);
+  }
+
+  /**
+   * Ship the current set, retrying REJECTED writes (not just transport
+   * failures). A "stale-session" rejection means a half-open ghost session
+   * still holds the cloud's subscription record — typically the app's previous
+   * process after a force-stop/crash, whose socket died without a close frame.
+   * The cloud refuses to hand the record to us while the ghost still looks
+   * alive, but its liveness window lapses within ~45s and the cloud then
+   * accepts a takeover write — so a patient retry self-heals where a
+   * fire-and-forget write would leave transcription silently dead until the
+   * next reconnect. "stale-version" adopts the cloud's authoritative version
+   * and retries once above it.
+   */
+  private async send(sessionId: string): Promise<void> {
+    const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 45_000];
+    for (let attempt = 0; ; attempt++) {
+      // The full-replace PUT is idempotent: replaying it lands the same state,
+      // so the HTTP helper may retry it on transient network failure too.
+      const res = await this.http.put<{
+        applied: boolean;
+        version: number;
+        reason: string | null;
+      }>(
+        SUBSCRIPTIONS_PATH,
+        {
+          subscriptions: this.current,
+          sessionId,
+          version: this.version,
+        },
+        { idempotent: true },
+      );
+      if (res?.applied !== false) return;
+
+      if (res.reason === "stale-version") {
+        // The cloud holds a newer version for this session (e.g. a replayed
+        // older write). Adopt its counter and go strictly above it.
+        this.version = Math.max(this.version, res.version) + 1;
+        continue;
+      }
+
+      const delay = RETRY_DELAYS_MS[attempt];
+      if (res.reason !== "stale-session" || delay === undefined) return;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
   }
 }

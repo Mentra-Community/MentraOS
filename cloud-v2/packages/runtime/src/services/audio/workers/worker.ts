@@ -735,7 +735,12 @@ async function processBatch(
   origin: "live" | "replay",
 ): Promise<void> {
   for (const [streamKey, entries] of result) {
-    const mentraUserId = streamKey.replace(/^audio:/, "")
+    // Stream keys are `{user:X}:audio` (hash-tagged so a user's keys share a
+    // cluster shard — see audioStreamKey). The old `audio:X` parse silently
+    // produced a mangled user id, so decoder/provider lookups missed and every
+    // frame was dropped on the floor (providers saw "No audio received").
+    const keyMatch = /^\{user:(.+)\}:audio$/.exec(streamKey)
+    const mentraUserId = keyMatch ? keyMatch[1]! : streamKey.replace(/^audio:/, "")
     const decoder = decoders.get(mentraUserId)
     const codec = userCodecs.get(mentraUserId) ?? "lc3"
 
@@ -780,6 +785,15 @@ async function processBatch(
             }
           }
         }
+      }
+
+      // One log per ~5s of audio (every 128th entry) so the feed path is
+      // observable without flooding: payload size, codec, decode result, and
+      // how many providers the PCM actually reached.
+      if (seq % 128 === 0) {
+        console.log(
+          `[audio-worker] feed user=${mentraUserId.slice(-6)} seq=${seq} payload=${payloadLen}B codec=${codec} hasDecoder=${decoders.has(mentraUserId)} pcm=${pcmBytesLen}B providers=${userProviders.get(mentraUserId)?.size ?? 0}`,
+        )
       }
 
       const out: TranscriptStubMessage = {

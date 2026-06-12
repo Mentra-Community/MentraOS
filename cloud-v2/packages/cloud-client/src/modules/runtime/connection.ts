@@ -346,6 +346,22 @@ export class Connection {
   private async connectOnce(): Promise<ConnectionAck> {
     this.setState("connecting");
 
+    // Close any previous socket FIRST. Replacing `this.socket` without closing
+    // leaves the old TCP connection alive: its callbacks are ignored (the
+    // `socket !== this.socket` guards below) but the SERVER still sees a live
+    // session — a ghost that holds the user's subscription record and rejects
+    // the real session's writes as stale-session. One client must never hold
+    // two server sessions.
+    const previous = this.socket;
+    if (previous) {
+      this.socket = null;
+      try {
+        previous.close();
+      } catch {
+        /* best-effort */
+      }
+    }
+
     const token = await this.deps.getToken();
     const url = this.appendTokenParam(this.deps.url, token);
     const socket = this.deps.ws(url);
@@ -356,6 +372,17 @@ export class Connection {
     const acked = new Promise<ConnectionAck>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingAck = null;
+        // Close the half-done socket too: a handshake that times out client-
+        // side may still COMPLETE server-side moments later, leaving a ghost
+        // session nobody owns.
+        try {
+          socket.close();
+        } catch {
+          /* best-effort */
+        }
+        if (this.socket === socket) {
+          this.socket = null;
+        }
         reject(new Error("Handshake timed out waiting for connection.ack"));
       }, HANDSHAKE_TIMEOUT_MS);
       this.pendingAck = { resolve, reject, timer };

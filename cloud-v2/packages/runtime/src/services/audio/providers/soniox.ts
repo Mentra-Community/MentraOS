@@ -241,6 +241,12 @@ export async function createSonioxProvider(
 
   const handleResult = (result: RealtimeResult) => {
     const allTokens = result.tokens ?? [];
+    if (allTokens.length > 0) {
+      // Temporary diagnostics: token traffic + translation tagging visibility.
+      console.log(
+        `[soniox] result scope=${opts.scope} tokens=${allTokens.length} statuses=${[...new Set(allTokens.map((t) => (t as { translation_status?: string }).translation_status ?? "none"))].join(",")} sample="${allTokens.slice(0, 6).map((t) => t.text).join("")}"`,
+      );
+    }
 
     // For translation subs, drop the original-language tokens — caller
     // only cares about target-language text. For transcription subs,
