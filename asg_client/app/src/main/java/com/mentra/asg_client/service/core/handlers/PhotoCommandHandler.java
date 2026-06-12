@@ -2,10 +2,13 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
 import android.util.Log;
+import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
+import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
+import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import java.util.Set;
 import org.json.JSONObject;
@@ -75,11 +78,16 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             String transferMethod = data.optString("transferMethod", "direct");
             String bleImgId = data.optString("bleImgId", "");
             boolean save = data.optBoolean("save", false);
-            String size = data.optString("size", "medium");
-            String compress =
-                    data.optString("compress", "none"); // Default to none (no compression)
+            String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            PhotoCaptureSettings captureSettings = PhotoCaptureSettings.fromTakePhotoJson(data);
+            AsgSettings asgSettings = serviceManager.getAsgSettings();
+            if (asgSettings != null) {
+                captureSettings =
+                        PhotoCaptureSettings.mergeWithStoredDefaults(captureSettings, asgSettings);
+            }
+            String compress = resolvePhotoCompress(data, asgSettings);
             boolean flash = data.optBoolean("flash", true);
-            boolean sound = data.optBoolean("sound", true);
+            boolean sound = resolvePhotoSound(data, asgSettings);
             Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
             Integer requestedIso = PhotoIso.parse(data);
             Integer iso = exposureTimeNs != null ? requestedIso : null;
@@ -100,6 +108,20 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 Log.i(TAG, "Mentra Live using manual ISO for take_photo request "
                         + requestId + ": ISO " + iso);
             }
+
+            logResolvedTakePhotoParams(
+                    requestId,
+                    size,
+                    compress,
+                    flash,
+                    sound,
+                    save,
+                    transferMethod,
+                    bleImgId,
+                    webhookUrl,
+                    exposureTimeNs,
+                    iso,
+                    captureSettings);
 
             MediaCaptureService captureService = serviceManager.getMediaCaptureService();
             if (captureService == null) {
@@ -208,7 +230,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                             sound,
                             compress,
                             exposureTimeNs,
-                            iso);
+                            iso,
+                            captureSettings);
             logCommandResult("take_photo", success, success ? null : "Photo capture failed");
             if (success) {
                 Log.i(TAG, "PHOTO PIPELINE [ASG 3/3] Capture accepted requestId=" + requestId);
@@ -260,7 +283,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             boolean sound,
             String compress,
             Long exposureTimeNs,
-            Integer iso) {
+            Integer iso,
+            PhotoCaptureSettings captureSettings) {
         Log.d(TAG, "Processing photo capture with transfer method: " + transferMethod);
         switch (transferMethod) {
             case "ble":
@@ -273,7 +297,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         flash,
                         sound,
                         exposureTimeNs,
-                        iso);
+                        iso,
+                        captureSettings);
             case "auto":
                 if (bleImgId.isEmpty()) {
                     Log.e(TAG, "Auto mode requires bleImgId for fallback");
@@ -291,7 +316,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         sound,
                         compress,
                         exposureTimeNs,
-                        iso);
+                        iso,
+                        captureSettings);
             default:
                 return captureService.takePhotoAndUpload(
                         photoFilePath,
@@ -304,7 +330,71 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                         sound,
                         compress,
                         exposureTimeNs,
-                        iso);
+                        iso,
+                        captureSettings);
         }
+    }
+
+    private static void logResolvedTakePhotoParams(
+            String requestId,
+            String size,
+            String compress,
+            boolean flash,
+            boolean sound,
+            boolean save,
+            String transferMethod,
+            String bleImgId,
+            String webhookUrl,
+            Long exposureTimeNs,
+            Integer iso,
+            PhotoCaptureSettings captureSettings) {
+        Log.i(
+                TAG,
+                "📸 take_photo resolved params"
+                        + " requestId="
+                        + requestId
+                        + " size="
+                        + size
+                        + " compress="
+                        + compress
+                        + " flash="
+                        + flash
+                        + " sound="
+                        + sound
+                        + " save="
+                        + save
+                        + " transferMethod="
+                        + transferMethod
+                        + " bleImgId="
+                        + bleImgId
+                        + " webhookUrl="
+                        + webhookUrl
+                        + " exposureTimeNs="
+                        + exposureTimeNs
+                        + " iso="
+                        + iso
+                        + " captureTuning={"
+                        + (captureSettings != null ? captureSettings.describeForLog() : "null")
+                        + "}");
+    }
+
+    private static String resolvePhotoCompress(JSONObject data, AsgSettings stored) {
+        if (data != null && data.has("compress") && !data.isNull("compress")) {
+            return data.optString("compress", "none");
+        }
+        if (stored != null && stored.getButtonPhotoCompress() != null) {
+            return stored.getButtonPhotoCompress();
+        }
+        return "none";
+    }
+
+    private static boolean resolvePhotoSound(JSONObject data, AsgSettings stored) {
+        if (data != null && data.has("sound") && !data.isNull("sound")) {
+            return data.optBoolean("sound", true);
+        }
+        if (stored != null && stored.getButtonPhotoSound() != null) {
+            return stored.getButtonPhotoSound();
+        }
+        return true;
     }
 }
