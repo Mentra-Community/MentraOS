@@ -35,6 +35,7 @@ import androidx.core.app.ActivityCompat;
 import com.mentra.bluetoothsdk.BluetoothSdkDefaults;
 import com.mentra.bluetoothsdk.Bridge;
 import com.mentra.bluetoothsdk.DeviceManager;
+import com.mentra.bluetoothsdk.PhotoRequest;
 import com.mentra.bluetoothsdk.debug.BleTraceLogger;
 import com.mentra.bluetoothsdk.sgcs.SGCManager;
 import com.mentra.bluetoothsdk.utils.DeviceTypes;
@@ -4360,9 +4361,20 @@ public class MentraLive extends SGCManager {
         }
     }
 
-    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean save, boolean sound, Long exposureTimeNs, Integer iso) {
+    public void requestPhoto(PhotoRequest request) {
+        String requestId = request.getRequestId();
+        String appId = request.getAppId();
+        String size = request.getSize().getValue();
+        String webhookUrl = request.getWebhookUrl();
+        String authToken = request.getAuthToken();
+        String compress = request.getCompress().getValue();
+        boolean flash = request.getFlash();
+        boolean save = request.getSave();
+        boolean sound = request.getSound();
+        Double exposureTimeNs = request.getExposureTimeNs();
+        Integer iso = request.getIso();
         boolean hasAuthToken = authToken != null && !authToken.isEmpty();
-        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", save=" + save + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs + ", iso=" + iso);
+        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", save=" + save + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs + ", iso=" + iso + ", aeDivisor=" + request.getAeExposureDivisor() + ", isoCap=" + request.getIsoCap());
         Bridge.log("LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry — requestId=" + requestId + ", appId=" + appId);
 
         try {
@@ -4388,13 +4400,14 @@ public class MentraLive extends SGCManager {
             json.put("save", save);
             json.put("sound", sound);
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
-                Bridge.log("LIVE: Using manual exposure time for photo request " + requestId + ": " + exposureTimeNs + " ns");
-                json.put("exposureTimeNs", exposureTimeNs);
+                Bridge.log("LIVE: Using manual exposure time for photo request " + requestId + ": " + exposureTimeNs.longValue() + " ns");
+                json.put("exposureTimeNs", exposureTimeNs.longValue());
             }
             if (iso != null && iso > 0) {
                 Bridge.log("LIVE: Using manual ISO for photo request " + requestId + ": ISO " + iso);
                 json.put("iso", iso);
             }
+            PhotoRequest.appendScanFields(json, request);
 
             // Always generate BLE ID for potential fallback
             String bleImgId = "I" + String.format("%09d", System.currentTimeMillis() % 1000000000);
@@ -5017,11 +5030,34 @@ public class MentraLive extends SGCManager {
     // }
 
     public void sendButtonPhotoSettings(String size) {
-        sendButtonPhotoSettings(null, size);
+        sendButtonPhotoSettings(
+                null, size, null, null, null, null, null, null, null, null, null, null, false);
     }
 
     public void sendButtonPhotoSettings(String requestId, String size) {
-        // Send photo size settings to glasses
+        sendButtonPhotoSettings(
+                requestId, size, null, null, null, null, null, null, null, null, null, null, false);
+    }
+
+    public void sendButtonPhotoSettings(String requestId, String size, Boolean mfnr, Boolean zsl) {
+        sendButtonPhotoSettings(
+                requestId, size, mfnr, zsl, null, null, null, null, null, null, null, null, false);
+    }
+
+    public void sendButtonPhotoSettings(
+            String requestId,
+            String size,
+            Boolean mfnr,
+            Boolean zsl,
+            Boolean noiseReduction,
+            Boolean edgeEnhancement,
+            Integer ispDigitalGain,
+            String ispAnalogGain,
+            Integer aeExposureDivisor,
+            Integer isoCap,
+            String compress,
+            Boolean sound,
+            boolean resetCaptureTuning) {
         JSONObject command = new JSONObject();
         try {
             command.put("type", "button_photo_setting");
@@ -5029,6 +5065,52 @@ public class MentraLive extends SGCManager {
                 command.put("request_id", requestId);
             }
             command.put("size", size);
+            if (mfnr != null) {
+                command.put("mfnr", mfnr);
+            }
+            if (zsl != null) {
+                command.put("zsl", zsl);
+            }
+            if (noiseReduction != null) {
+                command.put("noiseReduction", noiseReduction);
+            }
+            if (edgeEnhancement != null) {
+                command.put("edgeEnhancement", edgeEnhancement);
+            }
+            if (ispDigitalGain != null) {
+                command.put("ispDigitalGain", ispDigitalGain);
+            }
+            if (ispAnalogGain != null && !ispAnalogGain.isEmpty()) {
+                command.put("ispAnalogGain", ispAnalogGain);
+            }
+            if (aeExposureDivisor != null && aeExposureDivisor > 1) {
+                command.put("aeExposureDivisor", aeExposureDivisor);
+            }
+            if (isoCap != null && isoCap > 0) {
+                command.put("isoCap", isoCap);
+            }
+            if (compress != null && !compress.isEmpty()) {
+                command.put("compress", compress);
+            }
+            if (sound != null) {
+                command.put("sound", sound);
+            }
+            if (resetCaptureTuning) {
+                command.put("resetCaptureTuning", true);
+            }
+            Bridge.log(
+                    "LIVE: Sending button photo setting size="
+                            + size
+                            + (mfnr != null ? ", mfnr=" + mfnr : "")
+                            + (zsl != null ? ", zsl=" + zsl : "")
+                            + (noiseReduction != null ? ", noiseReduction=" + noiseReduction : "")
+                            + (edgeEnhancement != null ? ", edgeEnhancement=" + edgeEnhancement : "")
+                            + (ispDigitalGain != null ? ", ispDigitalGain=" + ispDigitalGain : "")
+                            + (ispAnalogGain != null ? ", ispAnalogGain=" + ispAnalogGain : "")
+                            + (aeExposureDivisor != null ? ", aeExposureDivisor=" + aeExposureDivisor : "")
+                            + (isoCap != null ? ", isoCap=" + isoCap : "")
+                            + (compress != null ? ", compress=" + compress : "")
+                            + (sound != null ? ", sound=" + sound : ""));
             sendJson(command, true);
         } catch (Exception e) {
             Log.e(TAG, "Error sending button photo settings", e);
