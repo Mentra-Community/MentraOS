@@ -322,6 +322,11 @@ tick()
       return
     }
     if (req.method === "GET" && url === "/logs") return json(res, 200, { logs: logs.slice(-80) })
+    if (req.method === "POST" && url === "/autoreconnect") {
+      const b = (await body(req)) || {}
+      mgr._autoReconnect = b.enable !== false
+      return json(res, 200, { ok: true, autoReconnect: mgr._autoReconnect })
+    }
     if (req.method === "POST" && url === "/connect") {
       const b = await body(req)
       log(`connect request: ${b.serial}`)

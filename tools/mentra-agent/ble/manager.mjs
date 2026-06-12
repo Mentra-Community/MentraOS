@@ -802,9 +802,12 @@ export class G2Manager extends EventEmitter {
     }
     if (enable) {
       // The mic only streams when a display page exists (G2.kt re-creates the
-      // page before enabling). Ensure one, then enable after a short settle.
+      // page before enabling), and a page shutdown KILLS a running stream in a
+      // way a plain re-enable won't revive — always cycle disable -> settle ->
+      // enable (mirrors G2.kt restartMic), which is idempotent when healthy.
       if (!this.pageCreated) await this.displayText("Listening…")
-      await sleep(300)
+      await this._evenHub(g2.audioControlMessage(false, this.send.nextMagic()))
+      await sleep(400)
       await this._evenHub(g2.audioControlMessage(true, this.send.nextMagic()))
     } else {
       await this._evenHub(g2.audioControlMessage(false, this.send.nextMagic()))
