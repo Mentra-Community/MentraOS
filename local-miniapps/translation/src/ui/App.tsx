@@ -141,7 +141,7 @@ function getCloudPresentation(cloudStatus?: {status: string; audioTransport: str
     return {
       label: "Cloud translation",
       detail: "WebSocket audio",
-      accentColor: "#A7CDE3",
+      accentColor: "#A9D4FB",
       accentForeground: "#1F2937",
       dark: false,
     }
@@ -150,7 +150,7 @@ function getCloudPresentation(cloudStatus?: {status: string; audioTransport: str
     return {
       label: "Cloud translation",
       detail: "UDP audio",
-      accentColor: "#6DAEA6",
+      accentColor: "#2089F3",
       accentForeground: "#FFFFFF",
       dark: false,
     }

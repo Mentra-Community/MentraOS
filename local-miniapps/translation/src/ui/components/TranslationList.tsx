@@ -14,7 +14,7 @@ interface TranslationListProps {
   accentColor?: string
 }
 
-export function TranslationList({translations, accentColor = "#6DAEA6"}: TranslationListProps) {
+export function TranslationList({translations, accentColor = "#2089F3"}: TranslationListProps) {
   const [autoScroll, setAutoScroll] = useState(true)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 

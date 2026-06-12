@@ -16,7 +16,7 @@ interface SettingsProps {
 export function Settings({
   settings,
   displayPreview,
-  accentColor = "#6DAEA6",
+  accentColor = "#2089F3",
   accentForeground = "#FFFFFF",
   onUpdateDisplayLines,
   onUpdateDisplayWidth,

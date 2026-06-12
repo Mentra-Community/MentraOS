@@ -14,7 +14,7 @@ interface TargetLanguageSelectorProps {
 
 export function TargetLanguageSelector({
   currentTargetLanguage,
-  accentColor = "#6DAEA6",
+  accentColor = "#2089F3",
   accentForeground = "#FFFFFF",
   onSave,
   onCancel,

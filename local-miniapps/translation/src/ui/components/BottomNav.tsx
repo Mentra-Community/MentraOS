@@ -10,7 +10,7 @@ interface BottomNavProps {
 export function BottomNav({
   activeTab = "translation",
   onTabChange,
-  accentColor = "#6DAEA6",
+  accentColor = "#2089F3",
 }: BottomNavProps) {
   const activeIconColor = readableIconColor(accentColor)
   const inactiveIconColor = "#3F3F46"
