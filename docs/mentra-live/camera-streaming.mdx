@@ -189,7 +189,7 @@ print("video uploaded: \(stopped.status)")
   </Tab>
 </Tabs>
 
-`startVideoRecording(...)` resolves from `recording_started`. `stopVideoRecording(...)` without a webhook resolves from `recording_stopped`; when you pass a webhook URL, it waits for `recording_stopped` plus video `media_success`, and rejects on video `media_error`. Raw `video_recording_status`, `media_success`, and `media_error` events remain available for listeners that need the glasses event stream directly. The video upload webhook should accept multipart form data with a `video` or `file` field and `requestId`. Pass the webhook URL and auth token at stop time so upload credentials can be fresh when the recording ends.
+`startVideoRecording(...)` resolves from `recording_started`. `stopVideoRecording(...)` without a webhook resolves from `recording_stopped`; when you pass a webhook URL, it waits for `recording_stopped` plus video `media_success`, and rejects on video `media_error`. Raw `video_recording_status`, `media_success`, and `media_error` events remain available for listeners that need the glasses event stream directly. The video upload webhook should accept multipart form data with a `video` field and `requestId`. Pass the webhook URL and auth token at stop time so upload credentials can be fresh when the recording ends.
 
 ## Gallery Mode
 
