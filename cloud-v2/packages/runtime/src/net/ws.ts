@@ -112,6 +112,8 @@ export interface WsData {
    * itself never travels over UDP. A fresh connection means a fresh key.
    */
   encryptionKeyB64: string;
+  /** Epoch ms of the last inbound WS frame — passive liveness for takeover checks. */
+  lastInboundAt: number;
 }
 
 export interface SessionEntry {
@@ -190,6 +192,39 @@ export function dropUserSessionsForLostOwnership(mentraUserId: string): void {
       );
     }
   }
+}
+
+/**
+ * A session is considered live for takeover purposes only while inbound
+ * traffic has been seen recently. Clients ping every 15s (they own the
+ * heartbeat — see the control.ping handler); a socket silent for several
+ * multiples of that is half-open: its process died without a close frame
+ * (force-stop, crash, network drop) and the close event may take minutes to
+ * fire. We never CLOSE on silence (v1 nginx scars) — staleness only stops a
+ * ghost from blocking another session's subscription takeover.
+ */
+const SESSION_LIVENESS_WINDOW_MS = 45_000;
+
+/**
+ * True iff the given audio session currently has an open, recently-active
+ * WebSocket on this pod. Sessions for a user live only on the owning pod, so
+ * when this pod owns the user, a `false` here means the session is dead
+ * cluster-wide — used by the REST subscription endpoint to take over a dead
+ * session's Redis record.
+ */
+export function hasLiveAudioSession(
+  mentraUserId: string,
+  audioSessionId: string,
+): boolean {
+  for (const entry of sessionByTag.values()) {
+    if (
+      entry.data.mentraUserId === mentraUserId &&
+      entry.data.audioSessionId === audioSessionId
+    ) {
+      return Date.now() - entry.data.lastInboundAt <= SESSION_LIVENESS_WINDOW_MS;
+    }
+  }
+  return false;
 }
 
 /**
@@ -314,6 +349,7 @@ export async function tryWsUpgrade(
     // sessionTag so any ingress pod can decrypt UDP frames. Sent to the client
     // at ack.
     encryptionKeyB64,
+    lastInboundAt: Date.now(),
   };
 
   const upgraded = server.upgrade(req, { data });
@@ -373,7 +409,10 @@ export const wsHandlers: WebSocketHandler<WsData> = {
           "sessionTag refresh failed",
         );
       });
-      refreshSubscriptions(ws.data.mentraUserId).catch((err) => {
+      // Session-scoped: only re-arms the TTL while the record belongs to THIS
+      // session, so a dead session's record expires instead of being kept
+      // alive by whichever socket reconnects next.
+      refreshSubscriptions(ws.data.mentraUserId, ws.data.audioSessionId).catch((err) => {
         logger.warn(
           { err, mentraUserId: ws.data.mentraUserId },
           "subscription key refresh failed",
@@ -391,6 +430,7 @@ export const wsHandlers: WebSocketHandler<WsData> = {
   },
 
   message(ws, msg) {
+    ws.data.lastInboundAt = Date.now();
     // String frames are v2 protocol control messages; binary frames are the
     // WS-fallback audio path (same 6-byte header + payload as UDP).
     if (typeof msg === "string") {

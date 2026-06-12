@@ -52,6 +52,12 @@ export interface WriteResult {
   version: number;
   /** Present when `applied` is false: why the write was rejected. */
   reason?: "stale-session" | "stale-version";
+  /**
+   * Present when rejected with "stale-session": the sessionId currently
+   * holding the key. The caller can check whether that session is actually
+   * alive and take over a dead session's record (see audio.api.ts).
+   */
+  currentSessionId?: string;
 }
 
 function subscriptionsKey(mentraUserId: string): string {
@@ -124,9 +130,9 @@ export async function writeSubscriptions(
     record.sessionId,
     String(record.version),
     String(SUBSCRIPTIONS_TTL_SEC),
-  )) as [number, string, number];
+  )) as [number, string, number, string?];
 
-  const [appliedFlag, reason, effectiveVersion] = result;
+  const [appliedFlag, reason, effectiveVersion, currentSessionId] = result;
   if (appliedFlag === 1) {
     return { applied: true, version: effectiveVersion };
   }
@@ -134,12 +140,48 @@ export async function writeSubscriptions(
     applied: false,
     version: effectiveVersion,
     reason: reason === "stale-session" ? "stale-session" : "stale-version",
+    ...(currentSessionId ? { currentSessionId } : {}),
   };
 }
 
-/** Refresh the key's TTL while the owner holds the session. */
-export async function refreshSubscriptions(mentraUserId: string): Promise<void> {
-  await getRedis().expire(subscriptionsKey(mentraUserId), SUBSCRIPTIONS_TTL_SEC);
+/**
+ * Unconditional snapshot write that REPLACES whatever record exists. Reserved
+ * for taking over a DEAD session's record: the caller must have verified that
+ * the record's sessionId no longer corresponds to a live socket (and that this
+ * pod owns the user) before forcing. Establishes a fresh version baseline.
+ */
+export async function takeoverSubscriptions(
+  mentraUserId: string,
+  record: SubscriptionRecord,
+): Promise<void> {
+  await getRedis().set(
+    subscriptionsKey(mentraUserId),
+    JSON.stringify(record),
+    "EX",
+    SUBSCRIPTIONS_TTL_SEC,
+  );
+}
+
+/**
+ * Refresh the key's TTL — but only when the record still belongs to the
+ * refreshing session. An unconditional refresh would let ANY open socket for
+ * the user keep a DEAD session's record alive forever (each reconnect's
+ * refresh loop re-arms the TTL), permanently wedging seeding and REST writes
+ * behind a session that no longer exists. Session-scoped refresh restores the
+ * TTL's role as the dead-record backstop: a record whose session is gone
+ * expires within {@link SUBSCRIPTIONS_TTL_SEC}.
+ */
+export async function refreshSubscriptions(
+  mentraUserId: string,
+  sessionId: string,
+): Promise<void> {
+  await getRedis().eval(
+    REFRESH_IF_SESSION_SCRIPT,
+    1,
+    subscriptionsKey(mentraUserId),
+    sessionId,
+    String(SUBSCRIPTIONS_TTL_SEC),
+  );
 }
 
 /** Delete the key on clean disconnect so the next session starts fresh. */
@@ -192,7 +234,7 @@ local ttl = ARGV[4]
 if existing then
   local decoded = cjson.decode(existing)
   if decoded.sessionId ~= newSession then
-    return {0, "stale-session", decoded.version}
+    return {0, "stale-session", decoded.version, decoded.sessionId}
   end
   if newVersion <= decoded.version then
     return {0, "stale-version", decoded.version}
@@ -223,6 +265,21 @@ for _, id in ipairs(sessions) do
   end
 end
 return 0
+`;
+
+// Conditional TTL refresh. ARGV: [1] the refreshing session's id, [2] TTL
+// seconds. Only re-arms the TTL when the record still belongs to that session.
+const REFRESH_IF_SESSION_SCRIPT = `
+local existing = redis.call("GET", KEYS[1])
+if not existing then
+  return 0
+end
+local decoded = cjson.decode(existing)
+if decoded.sessionId ~= ARGV[1] then
+  return 0
+end
+redis.call("EXPIRE", KEYS[1], ARGV[2])
+return 1
 `;
 
 const SEED_SCRIPT = `

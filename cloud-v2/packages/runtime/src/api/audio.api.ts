@@ -30,8 +30,12 @@ import {
   verifyAccessTokenSignature,
 } from "@mentra/cloud-shared";
 import { audioSubscriptionSchema } from "../protocol/audio";
-import { writeSubscriptions } from "../services/session/subscriptions-store";
+import {
+  takeoverSubscriptions,
+  writeSubscriptions,
+} from "../services/session/subscriptions-store";
 import { publishSubscriptionsChanged } from "../services/session/control-stream";
+import { hasLiveAudioSession } from "../net/ws";
 
 const logger = createLogger("audio").child({ service: "audio.api" });
 
@@ -84,11 +88,42 @@ audioApi.put("/subscriptions", async (c) => {
   }
   const { subscriptions, sessionId, version } = parsed.data;
 
-  const result = await writeSubscriptions(verified.mentraUserId, {
+  let result = await writeSubscriptions(verified.mentraUserId, {
     subscriptions,
     sessionId,
     version,
   });
+
+  // Dead-session takeover. A "stale-session" rejection is correct when the
+  // recorded session is a live socket (multi-device, or a reconnect race where
+  // the old socket is still draining). But when the recorded session is GONE —
+  // e.g. it died without clean teardown — deferring to it wedges the live
+  // session's subscriptions behind a ghost. Sessions for a user run only on
+  // the owning pod, so when the WRITER's session has a live socket here (this
+  // pod owns the user) and the recorded session does not, the recorded session
+  // is dead cluster-wide and the live session takes the key over.
+  if (
+    !result.applied &&
+    result.reason === "stale-session" &&
+    result.currentSessionId &&
+    hasLiveAudioSession(verified.mentraUserId, sessionId) &&
+    !hasLiveAudioSession(verified.mentraUserId, result.currentSessionId)
+  ) {
+    logger.warn(
+      {
+        mentraUserId: verified.mentraUserId,
+        deadSessionId: result.currentSessionId,
+        takeoverSessionId: sessionId,
+      },
+      "subscriptions takeover: recorded session has no live socket",
+    );
+    await takeoverSubscriptions(verified.mentraUserId, {
+      subscriptions,
+      sessionId,
+      version,
+    });
+    result = { applied: true, version };
+  }
 
   // Only nudge the worker when the write actually changed the source of truth.
   // A rejected (stale) write leaves the live set in place, so there is nothing
