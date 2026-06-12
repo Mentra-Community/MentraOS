@@ -53,11 +53,11 @@ describe("CameraModule", () => {
     const {session, requestCalls} = mockSession(result)
     const camera = new CameraModule(session)
 
-    await expect(camera.takePhoto({size: "full", compress: "none"})).resolves.toEqual(result)
+    await expect(camera.takePhoto({size: "max", compress: "none"})).resolves.toEqual(result)
     expect(requestCalls).toEqual([
       {
         type: MiniappRequestType.PHOTO,
-        size: "full",
+        size: "max",
         compress: "none",
         sound: true,
         saveToGallery: false,
