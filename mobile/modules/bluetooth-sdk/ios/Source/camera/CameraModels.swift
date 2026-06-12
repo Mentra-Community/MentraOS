@@ -229,9 +229,12 @@ public struct VideoRecordingRequest {
     public let width: Int
     public let height: Int
     public let fps: Int
+    // Optional auto-stop timer in minutes; 0 = record until stopped/interrupted.
+    public let maxRecordingTimeMinutes: Int
 
     public init(
-        requestId: String, save: Bool, sound: Bool, width: Int = 0, height: Int = 0, fps: Int = 0
+        requestId: String, save: Bool, sound: Bool, width: Int = 0, height: Int = 0, fps: Int = 0,
+        maxRecordingTimeMinutes: Int = 0
     ) {
         self.requestId = requestId
         self.save = save
@@ -239,6 +242,7 @@ public struct VideoRecordingRequest {
         self.width = width
         self.height = height
         self.fps = fps
+        self.maxRecordingTimeMinutes = maxRecordingTimeMinutes
     }
 }
 
@@ -277,6 +281,50 @@ public struct VideoRecordingStatusEvent: CustomStringConvertible {
 
     public var description: String {
         "VideoRecordingStatusEvent(requestId: \(requestId), status: \(status), success: \(success))"
+    }
+}
+
+public struct MediaUploadEvent: CustomStringConvertible {
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        self.values = values
+    }
+
+    public var type: String {
+        stringValue(values, "type") ?? ""
+    }
+
+    public var requestId: String {
+        stringValue(values, "requestId") ?? ""
+    }
+
+    public var mediaUrl: String? {
+        stringValue(values, "mediaUrl")
+    }
+
+    public var errorMessage: String? {
+        stringValue(values, "errorMessage")
+    }
+
+    public var mediaType: Int? {
+        intValue(values["mediaType"])
+    }
+
+    public var timestamp: Int {
+        intValue(values["timestamp"]) ?? Int(Date().timeIntervalSince1970 * 1000)
+    }
+
+    public var isSuccess: Bool {
+        type == "media_success"
+    }
+
+    public var isVideo: Bool {
+        mediaType == 2
+    }
+
+    public var description: String {
+        "MediaUploadEvent(requestId: \(requestId), type: \(type), mediaType: \(mediaType ?? -1))"
     }
 }
 

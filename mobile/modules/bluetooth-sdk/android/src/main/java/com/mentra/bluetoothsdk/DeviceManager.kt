@@ -1505,17 +1505,22 @@ class DeviceManager {
             width: Int = 0,
             height: Int = 0,
             fps: Int = 0,
+            maxRecordingTimeMinutes: Int = 0,
     ) {
         Bridge.log(
                 "MAN: onStartVideoRecording: requestId=$requestId, save=$save, flash=true, sound=$sound, " +
-                        "resolution=${width}x${height}@${fps}fps"
+                        "resolution=${width}x${height}@${fps}fps, maxRecordingTimeMinutes=$maxRecordingTimeMinutes"
         )
-        sgc?.startVideoRecording(requestId, save, true, sound, width, height, fps)
+        sgc?.startVideoRecording(
+                requestId, save, true, sound, width, height, fps, maxRecordingTimeMinutes)
     }
 
-    fun stopVideoRecording(requestId: String) {
-        Bridge.log("MAN: onStopVideoRecording: requestId=$requestId")
-        sgc?.stopVideoRecording(requestId)
+    fun stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?) {
+        Bridge.log(
+                "MAN: onStopVideoRecording: requestId=$requestId, webhook=" +
+                        if (webhookUrl.isNullOrEmpty()) "none" else "set"
+        )
+        sgc?.stopVideoRecording(requestId, webhookUrl, authToken)
     }
 
     fun setMicState() {

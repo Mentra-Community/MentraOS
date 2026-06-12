@@ -383,7 +383,7 @@ function withAndroidManifestModifications(config: any) {
       // cryptic Google SDK error. Fail loudly in CI/EAS so the broken
       // build never ships; warn (don't fail) in local-dev so new
       // contributors who aren't touching nav can still build.
-      const navApiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY ?? ""
+      const navApiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY_ANDROID ?? ""
       if (!navApiKey) {
         const isCiOrEas =
           process.env.CI === "true" ||
@@ -391,7 +391,7 @@ function withAndroidManifestModifications(config: any) {
           process.env.EAS_BUILD === "true" ||
           process.env.NODE_ENV === "production"
         const msg =
-          "EXPO_PUBLIC_GOOGLE_NAV_API_KEY is not set. Navigation will fail at runtime — " +
+          "EXPO_PUBLIC_GOOGLE_NAV_API_KEY_ANDROID is not set. Navigation will fail at runtime — " +
           "set it in mobile/.env (see mobile/.env.example) before building."
         if (isCiOrEas) {
           throw new Error(msg)

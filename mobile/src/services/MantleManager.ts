@@ -323,10 +323,10 @@ class MantleManager {
 
     offlineSpeechModelService.startBackgroundDownloads()
 
-    // give the core some time to boot before sending all the initial settings:
+    // Give the native Bluetooth SDK some time to boot before sending initial settings.
     BgTimer.setTimeout(() => {
-      BluetoothSdk.updateBluetoothSettings(useSettingsStore.getState().getCoreSettings()) // send settings to core
-      console.log("MANTLE: Settings sent to core")
+      BluetoothSdk.updateBluetoothSettings(useSettingsStore.getState().getBluetoothSettings())
+      console.log("MANTLE: Bluetooth settings sent to native SDK")
       // settings are now in native; safe to attempt auto-connect
       attemptReconnectToDefaultWearable()
     }, 1000)
@@ -519,20 +519,20 @@ class MantleManager {
       {equalityFn: shallow},
     )
 
-    // Subscribe to settings owned by core and forward changes.
+    // Subscribe to settings forwarded to the Bluetooth SDK.
     useSettingsStore.subscribe(
-      (state) => state.getCoreSettings(),
+      (state) => state.getBluetoothSettings(),
       (state: Record<string, any>, previousState: Record<string, any>) => {
-        const coreSettingsObj: Record<string, any> = {}
+        const bluetoothSettingsObj: Record<string, any> = {}
 
         for (const key in state) {
           const k = key as keyof Record<string, any>
           if (state[k] !== previousState[k]) {
-            coreSettingsObj[k] = state[k] as any
+            bluetoothSettingsObj[k] = state[k] as any
           }
         }
-        // console.log("MANTLE: core settings changed", coreSettingsObj)
-        BluetoothSdk.updateBluetoothSettings(coreSettingsObj)
+        // console.log("MANTLE: Bluetooth settings changed", bluetoothSettingsObj)
+        BluetoothSdk.updateBluetoothSettings(bluetoothSettingsObj)
       },
       {equalityFn: shallow},
     )
@@ -552,10 +552,10 @@ class MantleManager {
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
 
-    // Forward core status changes to the zustand core store.
+    // Forward Bluetooth SDK status changes to the zustand core store.
     this.subs.push(
       BluetoothSdk.onBluetoothStatus((changed: Partial<BluetoothStatus>) => {
-        // console.log("MANTLE: Core status changed", changed)
+        // console.log("MANTLE: Bluetooth status changed", changed)
         useCoreStore.getState().setCoreInfo(changed)
       }),
     )
@@ -571,7 +571,7 @@ class MantleManager {
       }),
     )
 
-    // Subscribe to individual core events
+    // Subscribe to individual Bluetooth SDK events.
     {
       this.subs.push(
         BluetoothSdk.addListener("log", (event) => {
@@ -772,10 +772,10 @@ class MantleManager {
         }),
       )
 
-      // Allow core to persist hardware-originated setting changes.
+      // Allow native hardware-originated setting changes to persist.
       this.subs.push(
         BluetoothSdk.addListener("save_setting", async (event) => {
-          console.log("MANTLE: Received save_setting event from core:", event)
+          console.log("MANTLE: Received save_setting event from Bluetooth SDK:", event)
           await useSettingsStore.getState().setSetting(event.key, event.value)
         }),
       )
@@ -925,10 +925,10 @@ class MantleManager {
         }),
       )
 
-      // allow the core to change settings so it can persist state:
+      // Allow native hardware-originated setting changes to persist.
       this.subs.push(
         BluetoothSdk.addListener("save_setting", async (event) => {
-          console.log("MANTLE: Received save_setting event from Core:", event)
+          console.log("MANTLE: Received save_setting event from Bluetooth SDK:", event)
           await useSettingsStore.getState().setSetting(event.key, event.value)
         }),
       )
@@ -1184,9 +1184,9 @@ class MantleManager {
     }
 
     // one time get all:
-    const coreStatus = await BluetoothSdk.getBluetoothStatus()
-    // console.log("MANTLE: core status:", coreStatus)
-    useCoreStore.getState().setCoreInfo(coreStatus)
+    const bluetoothStatus = await BluetoothSdk.getBluetoothStatus()
+    // console.log("MANTLE: Bluetooth status:", bluetoothStatus)
+    useCoreStore.getState().setCoreInfo(bluetoothStatus)
 
     const glassesStatus = await BluetoothSdk.getGlassesStatus()
     // console.log("MANTLE: glasses status:", glassesStatus)

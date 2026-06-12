@@ -148,7 +148,11 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     sound: boolean,
     settings?: VideoRecordingSettings,
   ): Promise<VideoRecordingStartedStatusEvent>
-  stopVideoRecording(requestId: string): Promise<VideoRecordingStoppedStatusEvent>
+  stopVideoRecording(
+    requestId: string,
+    webhookUrl?: string,
+    authToken?: string,
+  ): Promise<VideoRecordingStoppedStatusEvent>
 
   // Stream Commands
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>

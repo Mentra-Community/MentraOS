@@ -213,6 +213,7 @@ android {
   defaultConfig {
     versionCode 1
     versionName project.version
+    buildConfigField "String", "SDK_VERSION", "\"${project.version}\""
   }
   publishing {
     singleVariant("release") {

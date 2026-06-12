@@ -2171,6 +2171,9 @@ class MentraLive: NSObject, SGCManager {
         case "video_recording_status":
             emitVideoRecordingStatus(json)
 
+        case "media_success", "media_error":
+            Bridge.sendMediaUploadEvent(type: type, values: json)
+
         case "photo_status":
             emitPhotoStatus(json)
 
@@ -5269,7 +5272,8 @@ extension MentraLive {
 
     func startVideoRecording(requestId: String, save: Bool, flash: Bool, sound: Bool) {
         startVideoRecording(
-            requestId: requestId, save: save, flash: flash, sound: sound, width: 0, height: 0, fps: 0
+            requestId: requestId, save: save, flash: flash, sound: sound, width: 0, height: 0, fps: 0,
+            maxRecordingTimeMinutes: 0
         )
     }
 
@@ -5280,10 +5284,11 @@ extension MentraLive {
     }
 
     func startVideoRecording(
-        requestId: String, save: Bool, flash: Bool, sound: Bool, width: Int, height: Int, fps: Int
+        requestId: String, save: Bool, flash: Bool, sound: Bool, width: Int, height: Int, fps: Int,
+        maxRecordingTimeMinutes: Int
     ) {
         Bridge.log(
-            "Starting video recording on glasses: requestId=\(requestId), save=\(save), flash=\(flash), sound=\(sound), resolution=\(width)x\(height)@\(fps)fps"
+            "Starting video recording on glasses: requestId=\(requestId), save=\(save), flash=\(flash), sound=\(sound), resolution=\(width)x\(height)@\(fps)fps, maxRecordingTimeMinutes=\(maxRecordingTimeMinutes)"
         )
 
         guard connectionState == ConnTypes.CONNECTED else {
@@ -5298,6 +5303,11 @@ extension MentraLive {
             "flash": flash,
             "sound": sound,
         ]
+
+        // Auto-stop timer; only sent when set (> 0). 0 = record until stopped.
+        if maxRecordingTimeMinutes > 0 {
+            json["maxRecordingTimeMinutes"] = maxRecordingTimeMinutes
+        }
 
         // Add video settings when any field is overridden. Each field is sent
         // only when > 0; the glasses merge the missing fields onto their saved
@@ -5314,17 +5324,31 @@ extension MentraLive {
     }
 
     func stopVideoRecording(requestId: String) {
-        Bridge.log("Stopping video recording on glasses: requestId=\(requestId)")
+        stopVideoRecording(requestId: requestId, webhookUrl: nil, authToken: nil)
+    }
+
+    func stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?) {
+        Bridge.log(
+            "Stopping video recording on glasses: requestId=\(requestId), webhook=\((webhookUrl?.isEmpty ?? true) ? "none" : "set")"
+        )
 
         guard connectionState == ConnTypes.CONNECTED else {
             Bridge.log("Cannot stop video recording - not connected")
             return
         }
 
-        let json: [String: Any] = [
+        var json: [String: Any] = [
             "type": "stop_video_recording",
             "requestId": requestId,
         ]
+        // Webhook upload target, supplied at stop so the token is fresh.
+        // Only sent when present; empty webhook = keep video on device.
+        if let webhookUrl, !webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            json["webhookUrl"] = webhookUrl
+        }
+        if let authToken, !authToken.isEmpty {
+            json["authToken"] = authToken
+        }
         sendJson(json)
     }
 }

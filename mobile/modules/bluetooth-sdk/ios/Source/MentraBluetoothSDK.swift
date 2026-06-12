@@ -81,10 +81,14 @@ private final class PendingHotspotStatusRequest {
 private final class PendingVideoRecordingRequest {
     let expectedStatus: String
     let pending: PendingResponse<VideoRecordingStatusEvent>
+    let waitForUpload: Bool
+    var stoppedEvent: VideoRecordingStatusEvent?
+    var uploadSucceeded = false
 
-    init(expectedStatus: String, pending: PendingResponse<VideoRecordingStatusEvent>) {
+    init(expectedStatus: String, pending: PendingResponse<VideoRecordingStatusEvent>, waitForUpload: Bool = false) {
         self.expectedStatus = expectedStatus
         self.pending = pending
+        self.waitForUpload = waitForUpload
     }
 }
 
@@ -147,13 +151,18 @@ public final class MentraBluetoothSDK {
 
     private let configuration: MentraBluetoothSDKConfiguration
     private var discoveredDeviceNames = Set<String>()
+    private var bluetoothAvailabilityListenerId: UUID?
+    private var shouldRestoreGlassesOnBluetoothRestore = false
+    private var shouldRestoreControllerOnBluetoothRestore = false
     private var bridgeEventSinkId: String?
     private var storeListenerId: String?
     private let defaultDeviceKeys: Set<String> = ["default_wearable", "device_name", "device_address"]
+    private let videoUploadStopTimeoutMs = 10 * 60 * 1000
     private var suppressDefaultDeviceEvents = false
     private var defaultDeviceApplyGeneration = 0
     private var activeScanSessions: [UUID: ActiveScanSession] = [:]
     private var activeStreamKeepAlive: ActiveStreamKeepAlive?
+    private let analytics: BluetoothSdkAnalytics
     private var pendingPhotoRequests: [String: PendingResponse<PhotoResponseEvent>] = [:]
     private var pendingVideoRecordingRequests: [String: PendingVideoRecordingRequest] = [:]
     private var pendingRgbLedRequests: [String: PendingResponse<RgbLedControlResponseEvent>] = [:]
@@ -170,7 +179,12 @@ public final class MentraBluetoothSDK {
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
         self.configuration = configuration
-        _ = BluetoothAvailability.shared
+        analytics = BluetoothSdkAnalytics(configuration: configuration.analytics)
+        bluetoothAvailabilityListenerId = BluetoothAvailability.shared.addStateListener { [weak self] state in
+            Task { @MainActor [weak self] in
+                self?.handleBluetoothAvailability(state)
+            }
+        }
         bridgeEventSinkId = Bridge.addEventSink { [weak self] eventName, data in
             Task { @MainActor [weak self] in
                 self?.dispatchBridgeEvent(eventName, data)
@@ -181,6 +195,8 @@ public final class MentraBluetoothSDK {
                 self?.dispatchStoreUpdate(category, changes)
             }
         }
+        analytics.initializeGlassesStatus(glassesStatus)
+        analytics.captureStarted()
     }
 
     public var state: MentraBluetoothState {
@@ -209,6 +225,15 @@ public final class MentraBluetoothSDK {
 
     public var defaultDevice: Device? {
         currentDefaultDevice()
+    }
+
+    private func requireGlassesConnected(operation: String) throws {
+        guard glassesStatus.connected else {
+            throw BluetoothError(
+                code: "glasses_not_connected",
+                message: "Cannot \(operation) because glasses are not connected."
+            )
+        }
     }
 
     public func getDefaultDevice() -> Device? {
@@ -296,6 +321,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func connect(to device: Device, options: ConnectOptions = ConnectOptions()) throws {
+        clearBluetoothRestoreIntent()
         if device.model != .simulated {
             try BluetoothAvailability.shared.requirePoweredOn(operation: "connect to glasses")
         }
@@ -315,6 +341,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func connectDefault(options: ConnectOptions = ConnectOptions()) throws {
+        clearBluetoothRestoreIntent()
         guard let device = currentDefaultDevice() else {
             throw BluetoothError(
                 code: "default_device_missing",
@@ -331,18 +358,22 @@ public final class MentraBluetoothSDK {
     }
 
     public func cancelConnectionAttempt() {
+        clearBluetoothRestoreIntent()
         DeviceManager.shared.disconnect()
     }
 
     func connectSimulated() {
+        clearBluetoothRestoreIntent()
         DeviceManager.shared.connectSimulated()
     }
 
     public func disconnect() {
+        clearBluetoothRestoreIntent()
         DeviceManager.shared.disconnect()
     }
 
     public func forget() {
+        clearBluetoothRestoreIntent()
         DeviceManager.shared.forget()
     }
 
@@ -806,6 +837,7 @@ public final class MentraBluetoothSDK {
         guard !request.requestId.isEmpty else {
             throw BluetoothError(code: "missing_request_id", message: "requestId is required to start video recording.")
         }
+        try requireGlassesConnected(operation: "start video recording")
         let pending = PendingResponse<VideoRecordingStatusEvent>(
             operation: "start video recording \(request.requestId)"
         )
@@ -825,7 +857,8 @@ public final class MentraBluetoothSDK {
             request.sound,
             request.width,
             request.height,
-            request.fps
+            request.fps,
+            request.maxRecordingTimeMinutes
         )
         do {
             let event = try await pending.wait()
@@ -837,10 +870,13 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    public func stopVideoRecording(requestId: String) async throws -> VideoRecordingStatusEvent {
+    public func stopVideoRecording(
+        requestId: String, webhookUrl: String? = nil, authToken: String? = nil
+    ) async throws -> VideoRecordingStatusEvent {
         guard !requestId.isEmpty else {
             throw BluetoothError(code: "missing_request_id", message: "requestId is required to stop video recording.")
         }
+        try requireGlassesConnected(operation: "stop video recording")
         let pending = PendingResponse<VideoRecordingStatusEvent>(operation: "stop video recording \(requestId)")
         guard pendingVideoRecordingRequests[requestId] == nil else {
             throw BluetoothError(
@@ -848,13 +884,16 @@ public final class MentraBluetoothSDK {
                 message: "A video recording command is already waiting for requestId \(requestId)."
             )
         }
+        let waitForUpload = !(webhookUrl?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         pendingVideoRecordingRequests[requestId] = PendingVideoRecordingRequest(
             expectedStatus: "recording_stopped",
-            pending: pending
+            pending: pending,
+            waitForUpload: waitForUpload
         )
-        DeviceManager.shared.stopVideoRecording(requestId)
+        DeviceManager.shared.stopVideoRecording(requestId, webhookUrl, authToken)
         do {
-            let event = try await pending.wait()
+            let timeoutMs = waitForUpload ? videoUploadStopTimeoutMs : 15_000
+            let event = try await pending.wait(timeoutMs: timeoutMs)
             pendingVideoRecordingRequests.removeValue(forKey: requestId)
             return event
         } catch {
@@ -971,6 +1010,10 @@ public final class MentraBluetoothSDK {
 
     public func invalidate() {
         stopStreamKeepAliveMonitor()
+        if let bluetoothAvailabilityListenerId {
+            BluetoothAvailability.shared.removeStateListener(bluetoothAvailabilityListenerId)
+            self.bluetoothAvailabilityListenerId = nil
+        }
         if let bridgeEventSinkId {
             Bridge.removeEventSink(bridgeEventSinkId)
             self.bridgeEventSinkId = nil
@@ -980,6 +1023,83 @@ public final class MentraBluetoothSDK {
             self.storeListenerId = nil
         }
         delegate = nil
+    }
+
+    private func handleBluetoothAvailability(_ state: CBManagerState) {
+        switch state {
+        case .poweredOff, .resetting, .unauthorized, .unsupported:
+            handleBluetoothUnavailable()
+        case .poweredOn:
+            handleBluetoothRestored()
+        case .unknown:
+            break
+        @unknown default:
+            handleBluetoothUnavailable()
+        }
+    }
+
+    private func handleBluetoothUnavailable() {
+        cancelActiveScanSessions(reason: .cancelled)
+        clearBluetoothDiscoveryState()
+        disconnectActiveConnections()
+    }
+
+    private func disconnectActiveConnections() {
+        if glassesStatus.controllerConnected {
+            DeviceManager.shared.disconnectController()
+            shouldRestoreControllerOnBluetoothRestore = true
+        }
+        if glassesStatus.deviceModel == DeviceTypes.SIMULATED
+            || DeviceManager.shared.sgc?.type.contains(DeviceTypes.SIMULATED) == true
+        {
+            return
+        }
+        if glassesStatus.connected || glassesStatus.connectionState != .disconnected {
+            DeviceManager.shared.disconnect()
+            shouldRestoreGlassesOnBluetoothRestore = true
+        }
+    }
+
+    /// Reconnect only what `handleBluetoothUnavailable` tore down, never a
+    /// connection the user closed themselves (explicit connect/disconnect
+    /// calls clear the restore intent).
+    private func handleBluetoothRestored() {
+        let restoreGlasses = shouldRestoreGlassesOnBluetoothRestore
+        let restoreController = shouldRestoreControllerOnBluetoothRestore
+        clearBluetoothRestoreIntent()
+
+        if restoreGlasses, !glassesStatus.connected, glassesStatus.connectionState == .disconnected {
+            DeviceManager.shared.connectDefault() // also restores the controller
+        } else if restoreController, !glassesStatus.controllerConnected {
+            DeviceManager.shared.connectDefaultController()
+        }
+    }
+
+    private func clearBluetoothRestoreIntent() {
+        shouldRestoreGlassesOnBluetoothRestore = false
+        shouldRestoreControllerOnBluetoothRestore = false
+    }
+
+    private func clearBluetoothDiscoveryState() {
+        discoveredDeviceNames.removeAll()
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "searching", false)
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "searchingController", false)
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "searchResults", [] as [[String: Any]])
+    }
+
+    private func cancelActiveScanSessions(reason: ScanStopReason) {
+        let ids = Array(activeScanSessions.keys)
+        guard !ids.isEmpty else {
+            if bluetoothStatus.searching || bluetoothStatus.searchingController {
+                stopScan(reason: reason)
+            }
+            return
+        }
+        for (index, id) in ids.enumerated() {
+            // Stop the underlying scan once (first session); the rest only
+            // complete their callbacks.
+            finishScanSession(id, reason: reason, shouldStopScan: index == 0)
+        }
     }
 
     private func startStreamKeepAliveMonitor(streamId: String, intervalSeconds requestedIntervalSeconds: Int) {
@@ -1162,13 +1282,40 @@ public final class MentraBluetoothSDK {
         guard let request = pendingVideoRecordingRequests[event.requestId] else { return }
         if event.success {
             if event.status == request.expectedStatus {
-                request.pending.resolve(event)
+                if request.waitForUpload {
+                    request.stoppedEvent = event
+                    if request.uploadSucceeded {
+                        request.pending.resolve(event)
+                    }
+                } else {
+                    request.pending.resolve(event)
+                }
             }
         } else {
             request.pending.reject(
                 BluetoothError(
                     code: event.status.isEmpty ? "video_recording_failed" : event.status,
                     message: event.details ?? "Video recording command failed."
+                )
+            )
+        }
+    }
+
+    private func handleMediaUploadForRequests(_ event: MediaUploadEvent) {
+        guard event.isVideo, let request = pendingVideoRecordingRequests[event.requestId], request.waitForUpload else {
+            return
+        }
+        if event.isSuccess {
+            if let stoppedEvent = request.stoppedEvent {
+                request.pending.resolve(stoppedEvent)
+            } else {
+                request.uploadSucceeded = true
+            }
+        } else {
+            request.pending.reject(
+                BluetoothError(
+                    code: "video_upload_failed",
+                    message: event.errorMessage ?? "Video upload failed."
                 )
             )
         }
@@ -1273,6 +1420,7 @@ public final class MentraBluetoothSDK {
     private func dispatchStoreUpdate(_ category: String, _ changes: [String: Any]) {
         switch ObservableStore.normalizeCategory(category) {
         case "glasses":
+            analytics.observeGlassesStatus(glassesStatus)
             let nextState = state
             delegate?.mentraBluetoothSDK(self, didUpdate: nextState)
             delegate?.mentraBluetoothSDK(self, didUpdateGlasses: nextState.glasses)
@@ -1424,6 +1572,10 @@ public final class MentraBluetoothSDK {
             let event = VideoRecordingStatusEvent(values: data)
             handleVideoRecordingStatusForRequests(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .videoRecordingStatus(event))
+        case "media_success", "media_error":
+            let event = MediaUploadEvent(values: data)
+            handleMediaUploadForRequests(event)
+            delegate?.mentraBluetoothSDK(self, didReceive: .mediaUpload(event))
         case "rgb_led_control_response":
             let event = RgbLedControlResponseEvent(values: data)
             handleRgbLedResponseForRequests(event)

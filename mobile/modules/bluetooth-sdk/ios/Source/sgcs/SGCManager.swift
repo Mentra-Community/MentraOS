@@ -31,9 +31,16 @@ protocol SGCManager {
     /// Defaulted in an extension to delegate to the basic recording path; devices
     /// that support custom settings (e.g. Mentra Live) override this.
     func startVideoRecording(
-        requestId: String, save: Bool, flash: Bool, sound: Bool, width: Int, height: Int, fps: Int
+        requestId: String, save: Bool, flash: Bool, sound: Bool, width: Int, height: Int, fps: Int,
+        maxRecordingTimeMinutes: Int
     )
     func stopVideoRecording(requestId: String)
+    /// Stop recording and upload the result to `webhookUrl` (multipart) using
+    /// `authToken`. Supplied at stop time so the token is fresh when the upload
+    /// runs. Defaulted in an extension to ignore the upload target and just stop;
+    /// devices that support webhook upload (e.g. Mentra Live) override this. An
+    /// empty/nil `webhookUrl` means "keep the video on device".
+    func stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?)
 
     // MARK: - Button Settings
 
@@ -145,9 +152,13 @@ extension SGCManager {
 
     func startVideoRecording(
         requestId: String, save: Bool, flash: Bool, sound: Bool, width _: Int, height _: Int,
-        fps _: Int
+        fps _: Int, maxRecordingTimeMinutes _: Int
     ) {
         startVideoRecording(requestId: requestId, save: save, flash: flash, sound: sound)
+    }
+
+    func stopVideoRecording(requestId: String, webhookUrl _: String?, authToken _: String?) {
+        stopVideoRecording(requestId: requestId)
     }
 
     // MARK: - Dashboard (default: combined wire format; Nex implements single-field)

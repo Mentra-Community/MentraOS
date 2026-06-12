@@ -1,5 +1,6 @@
 node_modules/
 dist/
+build/
 *.zip
 .env
 .env.local

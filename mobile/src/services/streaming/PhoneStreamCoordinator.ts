@@ -3,7 +3,7 @@
  *
  * Architecture:
  *   miniapp → SDK → LocalMiniappRuntime → coordinator
- *           coordinator → CoreModule (BLE → glasses publisher)
+ *           coordinator → BluetoothSdk (BLE → glasses publisher)
  *           coordinator ↔ cloudStreamApi (managed only, cloud-v2 runtime provisioning)
  *           coordinator ↔ StreamLifecycleController (keep-alive heartbeat)
  *           coordinator → status listeners → routed back to miniapp(s)
@@ -28,7 +28,7 @@
  * the legacy path.
  */
 
-import CoreModule from "@mentra/bluetooth-sdk-internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import type {KeepAliveAckEvent, StreamResolvedConfig, StreamStatusEvent} from "@mentra/bluetooth-sdk-internal"
 import {getRuntimeHooks} from "@mentra/island"
 
@@ -270,7 +270,7 @@ export class PhoneStreamCoordinator {
       this.current = entry
 
       try {
-        const event = await CoreModule.startExternallyManagedStream({
+        const event = await BluetoothSdk.startExternallyManagedStream({
           type: "start_stream",
           streamUrl: opts.streamUrl,
           streamId,
@@ -359,7 +359,7 @@ export class PhoneStreamCoordinator {
       this.current = entry
 
       try {
-        const event = await CoreModule.startExternallyManagedStream({
+        const event = await BluetoothSdk.startExternallyManagedStream({
           type: "start_stream",
           streamUrl: ingestUrl,
           streamId,
@@ -491,7 +491,7 @@ export class PhoneStreamCoordinator {
       },
       {
         sendKeepAlive: async (ackId) => {
-          await CoreModule.sendExternallyManagedStreamKeepAlive({
+          await BluetoothSdk.sendExternallyManagedStreamKeepAlive({
             type: "keep_stream_alive",
             streamId,
             ackId,
@@ -665,7 +665,7 @@ export class PhoneStreamCoordinator {
   /**
    * Run teardown of the currently-active stream. Caller must hold the
    * transition lock (see {@link runExclusive}). Keeps `this.current`
-   * populated until CoreModule.stopStream resolves so a concurrent caller
+   * populated until BluetoothSdk.stopStream resolves so a concurrent caller
    * waiting on the lock can't claim the slot mid-stop and have its
    * startStream BLE write collide with our in-flight stopStream.
    */
@@ -698,10 +698,10 @@ export class PhoneStreamCoordinator {
 
     try {
       if (sendBleStop) {
-        await CoreModule.stopStream()
+        await BluetoothSdk.stopStream()
       }
     } catch (err) {
-      console.warn("[STREAM] CoreModule.stopStream failed:", err)
+      console.warn("[STREAM] BluetoothSdk.stopStream failed:", err)
     } finally {
       // Release the slot AFTER the BLE stop finished, so the next start can
       // safely write its own start_stream without colliding with ours.

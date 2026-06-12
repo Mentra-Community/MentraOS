@@ -120,6 +120,10 @@ class BluetoothSdkModule : Module() {
                     sendEvent("video_recording_status", event.values)
                 }
 
+                override fun onMediaUpload(event: MediaUploadEvent) {
+                    sendEvent(event.type, event.values)
+                }
+
                 override fun onRgbLedControlResponse(event: RgbLedControlResponseEvent) {
                     sendEvent("rgb_led_control_response", event.values)
                 }
@@ -213,6 +217,8 @@ class BluetoothSdkModule : Module() {
             "photo_response",
             "photo_status",
             "video_recording_status",
+            "media_success",
+            "media_error",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",
@@ -256,7 +262,14 @@ class BluetoothSdkModule : Module() {
                             ?: appContext.currentActivity
                                     ?: throw IllegalStateException("No context available")
             BleTraceLogger.logLifecycle(context, "BluetoothSdkModule", "module_create")
-            sdk = MentraBluetoothSdk.create(context, sdkListener)
+            sdk =
+                    MentraBluetoothSdk.create(
+                            context,
+                            MentraBluetoothSdkConfig(
+                                    analytics = BluetoothSdkAnalyticsConfig().withSurface("react_native")
+                            ),
+                            sdkListener,
+                    )
             deviceManager = DeviceManager.getInstance()
         }
 
@@ -505,12 +518,18 @@ class BluetoothSdkModule : Module() {
                             dim("width"),
                             dim("height"),
                             dim("fps"),
+                            dim("maxRecordingTimeMinutes"),
                     )
             ).values
         }
 
-        AsyncFunction("stopVideoRecording") { requestId: String ->
-            requireSdk().stopVideoRecording(requestId).values
+        // webhookUrl/authToken are supplied at stop (not start) so the token is
+        // fresh when the upload runs. Empty/null webhook = keep on device.
+        AsyncFunction("stopVideoRecording") {
+                requestId: String,
+                webhookUrl: String?,
+                authToken: String? ->
+            requireSdk().stopVideoRecording(requestId, webhookUrl, authToken).values
         }
 
         // MARK: - Stream Commands

@@ -23,6 +23,7 @@ class MentraBluetoothSdk private constructor(
     private val deviceManager: DeviceManager
     private val listeners =
         Collections.synchronizedSet(mutableSetOf<MentraBluetoothSdkListener>())
+    private val analytics = BluetoothSdkAnalytics(appContext, config.analytics)
     private val discoveredDeviceNames = mutableSetOf<String>()
     private val bridgeEventSinkId: String
     private val storeListenerId: String
@@ -50,7 +51,13 @@ class MentraBluetoothSdk private constructor(
         Bridge.initialize(appContext)
         deviceManager = DeviceManager.getInstance()
         bridgeEventSinkId = Bridge.addEventSink { eventName, data -> dispatchBridgeEvent(eventName, data) }
+        // Baseline the analytics connection state before subscribing to the store:
+        // store updates invoke listeners synchronously on the updating thread, so a
+        // connected status observed before the baseline would be reported as a fresh
+        // bluetooth_sdk_glasses_connected transition.
+        analytics.initializeGlassesStatus(getRawGlassesStatus())
         storeListenerId = DeviceStore.store.addListener { category, changes -> dispatchStoreUpdate(category, changes) }
+        analytics.captureStarted()
     }
 
     companion object {
@@ -58,6 +65,7 @@ class MentraBluetoothSdk private constructor(
         private val SCAN_STATE_KEYS = setOf("searching", "searchingController", "searchResults")
         private const val DEFAULT_SCAN_TIMEOUT_MS = 15_000L
         private const val DEFAULT_REQUEST_TIMEOUT_MS = 15_000L
+        private const val VIDEO_UPLOAD_STOP_TIMEOUT_MS = 10 * 60 * 1000L
         private const val STREAM_START_TIMEOUT_MS = 30_000L
         private const val STREAM_STOP_TIMEOUT_MS = 15_000L
         private const val DEFAULT_STREAM_KEEP_ALIVE_INTERVAL_SECONDS = 5
@@ -97,6 +105,9 @@ class MentraBluetoothSdk private constructor(
     private data class PendingVideoRecordingRequest(
         val expectedStatus: String,
         val pending: PendingResponse<VideoRecordingStatusEvent>,
+        val waitForUpload: Boolean = false,
+        var stoppedEvent: VideoRecordingStatusEvent? = null,
+        var uploadSucceeded: Boolean = false,
     )
 
     private data class PendingWifiScan(
@@ -183,6 +194,15 @@ class MentraBluetoothSdk private constructor(
         BluetoothStatus.fromMap(DeviceStore.store.getCategory(ObservableStore.BLUETOOTH_CATEGORY))
 
     fun getDefaultDevice(): Device? = currentDefaultDevice()
+
+    private fun requireGlassesConnected(operation: String) {
+        if (!getRawGlassesStatus().connected) {
+            throw BluetoothException(
+                "glasses_not_connected",
+                "Cannot $operation because glasses are not connected.",
+            )
+        }
+    }
 
     fun setDefaultDevice(device: Device?) {
         if (device == null) {
@@ -771,6 +791,7 @@ class MentraBluetoothSdk private constructor(
 
     fun startVideoRecording(request: VideoRecordingRequest): VideoRecordingStatusEvent {
         require(request.requestId.isNotBlank()) { "requestId is required to start video recording." }
+        requireGlassesConnected("start video recording")
         val pending = PendingResponse<VideoRecordingStatusEvent>("start video recording")
         val pendingRequest = PendingVideoRecordingRequest("recording_started", pending)
         if (pendingVideoRecordingRequests.putIfAbsent(request.requestId, pendingRequest) != null) {
@@ -787,6 +808,7 @@ class MentraBluetoothSdk private constructor(
                     request.width,
                     request.height,
                     request.fps,
+                    request.maxRecordingTimeMinutes,
             )
             return pending.await()
         } finally {
@@ -794,10 +816,22 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    fun stopVideoRecording(requestId: String): VideoRecordingStatusEvent {
+    @JvmOverloads
+    fun stopVideoRecording(
+            requestId: String,
+            webhookUrl: String? = null,
+            authToken: String? = null,
+    ): VideoRecordingStatusEvent {
         require(requestId.isNotBlank()) { "requestId is required to stop video recording." }
+        requireGlassesConnected("stop video recording")
         val pending = PendingResponse<VideoRecordingStatusEvent>("stop video recording")
-        val pendingRequest = PendingVideoRecordingRequest("recording_stopped", pending)
+        val waitForUpload = !webhookUrl.isNullOrBlank()
+        val pendingRequest =
+            PendingVideoRecordingRequest(
+                expectedStatus = "recording_stopped",
+                pending = pending,
+                waitForUpload = waitForUpload,
+            )
         if (pendingVideoRecordingRequests.putIfAbsent(requestId, pendingRequest) != null) {
             throw BluetoothException(
                 "request_in_flight",
@@ -805,8 +839,10 @@ class MentraBluetoothSdk private constructor(
             )
         }
         try {
-            deviceManager.stopVideoRecording(requestId)
-            return pending.await()
+            deviceManager.stopVideoRecording(requestId, webhookUrl, authToken)
+            val timeoutMs =
+                if (waitForUpload) VIDEO_UPLOAD_STOP_TIMEOUT_MS else DEFAULT_REQUEST_TIMEOUT_MS
+            return pending.await(timeoutMs)
         } finally {
             pendingVideoRecordingRequests.remove(requestId, pendingRequest)
         }
@@ -917,12 +953,14 @@ class MentraBluetoothSdk private constructor(
         stopStreamKeepAliveMonitor()
         Bridge.removeEventSink(bridgeEventSinkId)
         DeviceStore.store.removeListener(storeListenerId)
+        analytics.shutdown()
         listeners.clear()
     }
 
     private fun dispatchStoreUpdate(category: String, changes: Map<String, Any>) {
         when (ObservableStore.normalizeCategory(category)) {
             "glasses" -> {
+                analytics.observeGlassesStatus(getRawGlassesStatus())
                 val state = getState()
                 dispatchToListeners {
                     it.onStateChanged(state)
@@ -1111,6 +1149,11 @@ class MentraBluetoothSdk private constructor(
                 val event = VideoRecordingStatusEvent(data)
                 handleVideoRecordingStatusForRequests(event)
                 dispatchToListeners { it.onVideoRecordingStatus(event) }
+            }
+            "media_success", "media_error" -> {
+                val event = MediaUploadEvent(data)
+                handleMediaUploadForRequests(event)
+                dispatchToListeners { it.onMediaUpload(event) }
             }
             "rgb_led_control_response" -> {
                 val event = RgbLedControlResponseEvent(data)
@@ -1349,13 +1392,41 @@ class MentraBluetoothSdk private constructor(
         val request = pendingVideoRecordingRequests[event.requestId] ?: return
         if (event.success) {
             if (event.status == request.expectedStatus) {
-                request.pending.resolve(event)
+                if (request.waitForUpload) {
+                    request.stoppedEvent = event
+                    if (request.uploadSucceeded) {
+                        request.pending.resolve(event)
+                    }
+                } else {
+                    request.pending.resolve(event)
+                }
             }
         } else {
             request.pending.reject(
                 BluetoothException(
                     event.status.ifBlank { "video_recording_failed" },
                     event.details ?: "Video recording command failed.",
+                )
+            )
+        }
+    }
+
+    private fun handleMediaUploadForRequests(event: MediaUploadEvent) {
+        if (!event.isVideo) return
+        val request = pendingVideoRecordingRequests[event.requestId] ?: return
+        if (!request.waitForUpload) return
+        if (event.isSuccess) {
+            val stoppedEvent = request.stoppedEvent
+            if (stoppedEvent != null) {
+                request.pending.resolve(stoppedEvent)
+            } else {
+                request.uploadSucceeded = true
+            }
+        } else {
+            request.pending.reject(
+                BluetoothException(
+                    "video_upload_failed",
+                    event.errorMessage ?: "Video upload failed.",
                 )
             )
         }
