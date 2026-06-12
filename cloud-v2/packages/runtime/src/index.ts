@@ -27,6 +27,7 @@ import {
   dropUserSessionsForLostOwnership,
   forwardToUserSessions,
   getOwnedUserIds,
+  getPodId,
   HTTP_FALLTHROUGH,
   tryWsUpgrade,
   wsHandlers,
@@ -106,7 +107,9 @@ export async function startRuntime(opts: StartRuntimeOptions = {}): Promise<Runt
   await connectRedis(redisUrl);
   await startUdpIngress(udpPort);
 
-  const podId = process.env.POD_ID ?? process.env.HOSTNAME ?? os.hostname();
+  // Single-sourced from ws.ts so the refresh loop, worker pool, and
+  // upgrade-time ownership claims can never disagree on pod identity.
+  const podId = getPodId();
 
   const workerCount =
     opts.workerCount ??

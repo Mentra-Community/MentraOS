@@ -415,8 +415,17 @@ export async function tryWsUpgrade(
  */
 const refreshIntervals = new Map<number, ReturnType<typeof setInterval>>();
 
-function getPodId(): string {
-  return process.env.POD_ID ?? process.env.HOSTNAME ?? os.hostname();
+/**
+ * Pod identity, computed ONCE per process. `os.hostname()` is NOT stable on
+ * macOS (it flips between `<name>.local` and `Mac.localdomain` on network
+ * changes); recomputing it per call made upgrade-time ownership claims use a
+ * different pod id than the startup-captured refresh loop, so claims were
+ * never renewed and every session dropped on TTL expiry in a ~2s churn loop.
+ */
+const POD_ID = process.env.POD_ID ?? process.env.HOSTNAME ?? os.hostname();
+
+export function getPodId(): string {
+  return POD_ID;
 }
 
 /** Bun WebSocket handlers — wire into `Bun.serve({ websocket: wsHandlers })`. */
