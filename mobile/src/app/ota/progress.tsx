@@ -340,7 +340,8 @@ export default function OtaProgressScreen() {
     hasReceivedAckRef.current = false
     armAckAndStuckWatchdogsOnly()
     try {
-      const otaVersionUrl = getAsgOtaVersionUrl(useGlassesStore.getState().otaVersionUrl)
+      const glassesState = useGlassesStore.getState()
+      const otaVersionUrl = getAsgOtaVersionUrl(glassesState.otaVersionUrl, glassesState.buildNumber)
       console.log(`[OTA_PROGRESS] sending ota_start with manifest URL: ${otaVersionUrl}`)
       await BluetoothSdk.sendOtaStart(otaVersionUrl)
     } catch (err) {

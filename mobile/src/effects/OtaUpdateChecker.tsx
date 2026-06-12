@@ -58,12 +58,22 @@ interface VersionJson {
 export const OTA_VERSION_URL_PROD = "https://ota.mentraglass.com/prod_live_version.json"
 export const OTA_VERSION_URL_STAGING = "https://staging.ota.mentraglass.com/staging_live_version.json"
 
-export function getAsgOtaVersionUrl(glassesUrl?: string | null): string {
+function isLegacyAsgOtaStartBuild(glassesBuildNumber?: string | null): boolean {
+  const buildNumber = Number.parseInt(glassesBuildNumber ?? "", 10)
+  // Pre-wall-clock ASG builds ignore ota_start.ota_version_url, so compare against the URL they will actually use.
+  return Number.isFinite(buildNumber) && buildNumber < 100000
+}
+
+export function getAsgOtaVersionUrl(glassesUrl?: string | null, glassesBuildNumber?: string | null): string {
+  const deviceUrl = glassesUrl?.trim()
+  if (isLegacyAsgOtaStartBuild(glassesBuildNumber)) {
+    return deviceUrl || OTA_VERSION_URL_PROD
+  }
+
   const envUrl = process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL?.trim()
   if (envUrl) {
     return envUrl
   }
-  const deviceUrl = glassesUrl?.trim()
   return deviceUrl || OTA_VERSION_URL_PROD
 }
 
@@ -666,7 +676,7 @@ export function OtaUpdateChecker() {
         console.warn("OTA: clock fix attempt failed; continuing OTA check", error)
       })
 
-      const otaVersionUrl = getAsgOtaVersionUrl(useGlassesStore.getState().otaVersionUrl)
+      const otaVersionUrl = getAsgOtaVersionUrl(useGlassesStore.getState().otaVersionUrl, buildNumber)
       checkForOtaUpdate(otaVersionUrl, buildNumber, latestMtkFirmwareVersion, latestBesFirmwareVersion)
         .then(({updateAvailable, latestVersionInfo, updates}) => {
           console.log(

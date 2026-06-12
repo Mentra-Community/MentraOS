@@ -178,7 +178,7 @@ export default function OtaCheckForUpdatesScreen() {
           console.warn("OTA: Failed to refresh version_info before OTA compare:", error)
         })
 
-        const otaVersionUrl = getAsgOtaVersionUrl(useGlassesStore.getState().otaVersionUrl)
+        const otaVersionUrl = getAsgOtaVersionUrl(useGlassesStore.getState().otaVersionUrl, currentBuildNumber)
         const result = await checkForOtaUpdate(
           otaVersionUrl,
           currentBuildNumber,

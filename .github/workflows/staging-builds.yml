@@ -809,11 +809,22 @@ jobs:
           done
 
           echo "Checking optional custom domain $ASG_STAGING_OTA_CUSTOM_DOMAIN_URL"
-          if ! curl --fail --silent --show-error --location "$ASG_STAGING_OTA_CUSTOM_DOMAIN_URL" -o /tmp/staging_custom_domain_live_version.json \
-            || ! jq -e --argjson versionCode "$VERSION_CODE" \
-              '.apps["com.mentra.asg_client"].versionCode == $versionCode' \
-              /tmp/staging_custom_domain_live_version.json >/dev/null; then
-            echo "Custom staging OTA domain is not serving this manifest yet; Pages.dev URL is healthy." >&2
+          custom_domain_ready=false
+          for attempt in {1..12}; do
+            if curl --fail --silent --show-error --location "$ASG_STAGING_OTA_CUSTOM_DOMAIN_URL" -o /tmp/staging_custom_domain_live_version.json \
+              && jq -e --argjson versionCode "$VERSION_CODE" \
+                '.apps["com.mentra.asg_client"].versionCode == $versionCode' \
+                /tmp/staging_custom_domain_live_version.json >/dev/null; then
+              custom_domain_ready=true
+              break
+            fi
+            if [ "$attempt" -eq 12 ]; then
+              break
+            fi
+            sleep 10
+          done
+          if [ "$custom_domain_ready" != "true" ]; then
+            echo "Custom staging OTA domain is not serving this manifest yet after retries; Pages.dev URL is healthy." >&2
           fi
 
       - name: Cleanup old staging builds
@@ -829,10 +840,31 @@ jobs:
                 repo: context.repo.repo,
                 tag: 'staging-builds'
               });
+              const keepAssetNames = new Set([
+                'mobile-latest.apk',
+                'mobile-latest.ipa',
+                'asg-latest.apk',
+                'staging_live_version.json'
+              ]);
+
+              const manifestAsset = release.data.assets.find((asset) => asset.name === 'staging_live_version.json');
+              if (manifestAsset) {
+                try {
+                  const response = await fetch(manifestAsset.browser_download_url);
+                  const manifest = await response.json();
+                  const apkUrl = manifest.apps?.['com.mentra.asg_client']?.apkUrl;
+                  const liveApkAssetName = apkUrl ? decodeURIComponent(new URL(apkUrl).pathname.split('/').pop() || '') : '';
+                  if (liveApkAssetName) {
+                    keepAssetNames.add(liveApkAssetName);
+                    console.log(`Keeping live ASG OTA APK asset: ${liveApkAssetName}`);
+                  }
+                } catch (error) {
+                  console.log('Could not determine live ASG OTA APK asset:', error.message);
+                }
+              }
 
               for (const asset of release.data.assets) {
-                // Keep -latest files and the stable OTA manifest forever.
-                if (asset.name.endsWith('-latest.apk') || asset.name.endsWith('-latest.ipa') || asset.name === 'staging_live_version.json') continue;
+                if (keepAssetNames.has(asset.name)) continue;
 
                 const createdAt = new Date(asset.created_at);
                 if (createdAt < sevenDaysAgo) {
