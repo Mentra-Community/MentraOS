@@ -46,11 +46,27 @@ export default function StreamingPage() {
   const navigate = useNavigate()
   const {latestByKind, log, invoke, lastError, status} = useTester("stream")
   const [unmanagedUrl, setUnmanagedUrl] = useState("rtmp://")
+  // The start result comes back as the RPC's resolved value — capture it in
+  // state so the playback card + live player render. (The event channel only
+  // carries controller-driven fires, not tester:invoke results.)
+  const [startResult, setStartResult] = useState<StartResult | null>(null)
+
+  const start = (method: "startUnmanaged" | "startManaged", args: unknown[]) => {
+    void invoke(method, args)
+      .then((r) => setStartResult(r as StartResult))
+      .catch(() => {}) // StatusRow renders the structured failure
+  }
+  const stop = () => {
+    void invoke("stop", [])
+      .then(() => setStartResult(null))
+      .catch(() => {})
+  }
 
   const lastResultEvent = latestByKind("result")
-  const result: StartResult | undefined = lastResultEvent
+  const eventResult: StartResult | undefined = lastResultEvent
     ? ((lastResultEvent.payload as {result?: unknown}).result as StartResult | undefined)
     : undefined
+  const result: StartResult | undefined = startResult ?? eventResult
 
   // Status events, newest first, capped for sanity.
   const statusEvents = useMemo(
@@ -71,11 +87,23 @@ export default function StreamingPage() {
 
   // Cloudflare hosted-player iframe. The streamId we get back is phone-minted
   // (`phone-m-...`), so use the Cloudflare liveInputId surfaced explicitly on
-  // the start result.
+  // the start result. LIVE inputs embed via the account's customer subdomain
+  // (derive it from the WHEP playback URL, which carries that host) —
+  // iframe.videodelivery.net only resolves VOD uids reliably. autoplay+muted
+  // so the WebView starts playback without a user gesture.
   const iframeSrc = useMemo(() => {
     if (!managed?.liveInputId) return null
-    return `https://iframe.videodelivery.net/${encodeURIComponent(managed.liveInputId)}`
-  }, [managed?.liveInputId])
+    const uid = encodeURIComponent(managed.liveInputId)
+    if (managed.webrtcUrl) {
+      try {
+        const host = new URL(managed.webrtcUrl).origin
+        return `${host}/${uid}/iframe?autoplay=true&muted=true`
+      } catch {
+        /* fall through to the shared host */
+      }
+    }
+    return `https://iframe.videodelivery.net/${uid}?autoplay=true&muted=true`
+  }, [managed?.liveInputId, managed?.webrtcUrl])
 
   return (
     <Shell>
@@ -94,11 +122,11 @@ export default function StreamingPage() {
           placeholder="rtmp://your.server/app/key"
         />
         <div className="mt-2 flex flex-col gap-2">
-          <Button onClick={() => { void invoke("startUnmanaged", [{streamUrl: unmanagedUrl}]).catch(() => {}) }}>
+          <Button onClick={() => start("startUnmanaged", [{streamUrl: unmanagedUrl}])}>
             startUnmanaged(streamUrl)
           </Button>
-          <Button onClick={() => { void invoke("startManaged", [{}]).catch(() => {}) }}>startManaged()</Button>
-          <Button variant="destructive" onClick={() => { void invoke("stop", []).catch(() => {}) }}>
+          <Button onClick={() => start("startManaged", [{}])}>startManaged()</Button>
+          <Button variant="destructive" onClick={stop}>
             stop()
           </Button>
         </div>
