@@ -336,11 +336,11 @@ class BluetoothSdkModule : Module() {
         // MARK: - Display Commands
 
         AsyncFunction("displayEvent") { params: Map<String, Any> ->
-            requireSdk().displayEvent(DisplayEventRequest(params))
+            sdk?.displayEvent(DisplayEventRequest(params))
         }
 
         AsyncFunction("displayText") { text: String, x: Int?, y: Int?, size: Int? ->
-            requireSdk().displayText(
+            sdk?.displayText(
                     text = text,
                     x = x ?: 0,
                     y = y ?: 0,
@@ -348,34 +348,34 @@ class BluetoothSdkModule : Module() {
             )
         }
 
-        AsyncFunction("clearDisplay") { requireSdk().clearDisplay() }
+        AsyncFunction("clearDisplay") { sdk?.clearDisplay() }
 
         // MARK: - Connection Commands
 
-        AsyncFunction("connectDefault") { requireSdk().connectDefault() }
+        AsyncFunction("connectDefault") { sdk?.connectDefault() }
 
         AsyncFunction("connectDefaultWithOptions") { options: Map<String, Any> ->
-            requireSdk().connectDefault(options.toMentraConnectOptions())
+            sdk?.connectDefault(options.toMentraConnectOptions())
         }
 
         AsyncFunction("setDefaultDevice") { device: Map<String, Any>? ->
-            requireSdk().setDefaultDevice(device.toMentraDevice())
+            sdk?.setDefaultDevice(device.toMentraDevice())
         }
 
-        AsyncFunction("clearDefaultDevice") { requireSdk().clearDefaultDevice() }
+        AsyncFunction("clearDefaultDevice") { sdk?.clearDefaultDevice() }
 
         AsyncFunction("connectWithOptions") { device: Map<String, Any>, options: Map<String, Any> ->
-            requireSdk().connect(
+            sdk?.connect(
                     device.toMentraDevice() ?: throw IllegalArgumentException("connect requires a Device with model and name."),
                     options.toMentraConnectOptions(),
             )
         }
 
-        AsyncFunction("connectSimulated") { requireSdk().connectSimulated() }
+        AsyncFunction("connectSimulated") { sdk?.connectSimulated() }
 
-        AsyncFunction("disconnect") { requireSdk().disconnect() }
+        AsyncFunction("disconnect") { sdk?.disconnect() }
 
-        AsyncFunction("forget") { requireSdk().forget() }
+        AsyncFunction("forget") { sdk?.forget() }
 
         AsyncFunction("connectDefaultController") { deviceManager?.connectDefaultController() }
 
@@ -384,14 +384,14 @@ class BluetoothSdkModule : Module() {
         AsyncFunction("forgetController") { deviceManager?.forgetController() }
 
         AsyncFunction("startScan") { model: String ->
-            requireSdk().startScan(DeviceModel.fromDeviceType(model))
+            sdk?.startScan(DeviceModel.fromDeviceType(model))
         }
 
-        AsyncFunction("stopScan") { requireSdk().stopScan() }
+        AsyncFunction("stopScan") { sdk?.stopScan() }
 
-        AsyncFunction("cancelConnectionAttempt") { requireSdk().cancelConnectionAttempt() }
+        AsyncFunction("cancelConnectionAttempt") { sdk?.cancelConnectionAttempt() }
 
-        AsyncFunction("showDashboard") { requireSdk().showDashboard() }
+        AsyncFunction("showDashboard") { sdk?.showDashboard() }
 
         AsyncFunction("ping") { deviceManager?.ping() }
 
@@ -410,7 +410,7 @@ class BluetoothSdkModule : Module() {
         // MARK: - Incident Reporting
 
         AsyncFunction("sendIncidentId") { incidentId: String, apiBaseUrl: String? ->
-            requireSdk().sendIncidentId(incidentId, apiBaseUrl)
+            sdk?.sendIncidentId(incidentId, apiBaseUrl)
         }
 
         // MARK: - WiFi Commands
@@ -428,7 +428,7 @@ class BluetoothSdkModule : Module() {
         }
 
         AsyncFunction("setSystemTime") { timestampMs: Double ->
-            requireSdk().setSystemTime(timestampMs.toLong())
+            sdk?.setSystemTime(timestampMs.toLong())
         }
 
         // MARK: - Gallery Commands
@@ -438,7 +438,7 @@ class BluetoothSdkModule : Module() {
         }
 
         AsyncFunction("setVoiceActivityDetectionEnabled") { enabled: Boolean ->
-            requireSdk().setVoiceActivityDetectionEnabled(enabled)
+            sdk?.setVoiceActivityDetectionEnabled(enabled)
         }
 
         AsyncFunction("setButtonPhotoSettings") { size: String ->
@@ -495,9 +495,9 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - Power Control Commands
 
-        AsyncFunction("sendShutdown") { requireSdk().sendShutdown() }
+        AsyncFunction("sendShutdown") { sdk?.sendShutdown() }
 
-        AsyncFunction("sendReboot") { requireSdk().sendReboot() }
+        AsyncFunction("sendReboot") { sdk?.sendReboot() }
 
         // MARK: - Video Recording Commands
 
@@ -541,7 +541,7 @@ class BluetoothSdkModule : Module() {
         AsyncFunction("stopStream") { requireSdk().stopStream().values }
 
         AsyncFunction("sendExternallyManagedStreamKeepAlive") { params: Map<String, Any> ->
-            requireSdk().sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest.fromMap(params))
+            sdk?.sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest.fromMap(params))
         }
 
         // MARK: - Microphone Commands
@@ -551,7 +551,7 @@ class BluetoothSdkModule : Module() {
                 useGlassesMic: Boolean?,
                 sendTranscript: Boolean?,
                 sendLc3Data: Boolean? ->
-            requireSdk().setMicState(
+            sdk?.setMicState(
                     enabled = enabled,
                     useGlassesMic = useGlassesMic ?: true,
                     sendTranscript = sendTranscript ?: false,
@@ -569,7 +569,7 @@ class BluetoothSdkModule : Module() {
         // MARK: - Audio Playback Monitoring
 
         AsyncFunction("setOwnAppAudioPlaying") { playing: Boolean ->
-            requireSdk().setOwnAppAudioPlaying(playing)
+            sdk?.setOwnAppAudioPlaying(playing)
         }
 
         // *Blocking on Dispatchers.IO, not the shared AsyncFunctionQueue: these wait on
