@@ -9,6 +9,7 @@ import java.net.URL
 import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 data class BluetoothSdkAnalyticsConfig @JvmOverloads constructor(
     val enabled: Boolean = true,
@@ -54,38 +55,47 @@ internal class BluetoothSdkAnalytics(
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "MentraBluetoothSdkAnalytics").apply { isDaemon = true }
     }
+    // config/startedCaptured/lastConnected are touched from the store-listener
+    // thread, the Expo async-function queue, and the creating thread, hence
+    // @Synchronized on every method that reads or writes them.
     private var config = initialConfig.resolvedForApp(appContext)
     private var startedCaptured = false
     private var lastConnected = false
 
+    @Synchronized
     fun configure(nextConfig: BluetoothSdkAnalyticsConfig) {
         config = nextConfig.resolvedForApp(appContext)
         captureStarted()
     }
 
+    @Synchronized
     fun configure(values: Map<String, Any?>, surface: String) {
         configure(BluetoothSdkAnalyticsConfig.fromMap(values, surface, config))
     }
 
+    @Synchronized
     fun initializeGlassesStatus(status: GlassesStatus) {
-        lastConnected = config.isReady && status.analyticsConnected
+        lastConnected = status.analyticsConnected
     }
 
+    @Synchronized
     fun captureStarted() {
         if (startedCaptured || !config.isReady) return
         startedCaptured = true
         capture("bluetooth_sdk_started", mapOf("event_kind" to "sdk_started"))
     }
 
+    @Synchronized
     fun observeGlassesStatus(status: GlassesStatus) {
+        // Track the real connection state even while analytics is disabled so that
+        // enabling it later cannot fabricate a connection event from stale or
+        // pre-existing connected flags; only genuine not-connected -> connected
+        // transitions observed while enabled are captured.
         val isConnected = status.analyticsConnected
-        if (!config.isReady) {
-            if (!isConnected) {
-                lastConnected = false
-            }
-            return
-        }
-        if (isConnected && !lastConnected) {
+        val wasConnected = lastConnected
+        lastConnected = isConnected
+        if (!config.isReady) return
+        if (isConnected && !wasConnected) {
             capture(
                 "bluetooth_sdk_glasses_connected",
                 buildMap {
@@ -95,7 +105,6 @@ internal class BluetoothSdkAnalytics(
                 },
             )
         }
-        lastConnected = isConnected
     }
 
     fun shutdown() {
@@ -108,32 +117,38 @@ internal class BluetoothSdkAnalytics(
     ) {
         val activeConfig = config
         val apiKey = activeConfig.postHogApiKey?.takeIf { activeConfig.isReady } ?: return
-        val payload =
-            JSONObject(
-                mapOf(
-                    "api_key" to apiKey,
-                    "event" to eventName,
-                    "distinct_id" to distinctId(),
-                    "properties" to baseProperties(activeConfig) + eventProperties,
-                )
-            )
 
-        executor.execute {
-            try {
-                val connection = URL(captureUrl(activeConfig.postHogHost)).openConnection() as HttpURLConnection
-                connection.requestMethod = "POST"
-                connection.connectTimeout = 4_000
-                connection.readTimeout = 4_000
-                connection.doOutput = true
-                connection.setRequestProperty("Content-Type", "application/json")
-                connection.outputStream.use { output ->
-                    output.write(payload.toString().toByteArray(Charsets.UTF_8))
+        try {
+            // Payload construction stays on the executor: distinctId() reads
+            // SharedPreferences, which must not run on the caller (often main) thread.
+            executor.execute {
+                try {
+                    val payload =
+                        JSONObject(
+                            mapOf(
+                                "api_key" to apiKey,
+                                "event" to eventName,
+                                "distinct_id" to distinctId(),
+                                "properties" to baseProperties(activeConfig) + eventProperties,
+                            )
+                        )
+                    val connection = URL(captureUrl(activeConfig.postHogHost)).openConnection() as HttpURLConnection
+                    connection.requestMethod = "POST"
+                    connection.connectTimeout = 4_000
+                    connection.readTimeout = 4_000
+                    connection.doOutput = true
+                    connection.setRequestProperty("Content-Type", "application/json")
+                    connection.outputStream.use { output ->
+                        output.write(payload.toString().toByteArray(Charsets.UTF_8))
+                    }
+                    connection.inputStream.close()
+                    connection.disconnect()
+                } catch (_: Exception) {
+                    // Analytics must never affect Bluetooth SDK behavior.
                 }
-                connection.inputStream.close()
-                connection.disconnect()
-            } catch (_: Exception) {
-                // Analytics must never affect Bluetooth SDK behavior.
             }
+        } catch (_: RejectedExecutionException) {
+            // The executor was shut down (SDK closed); dropping the event is fine.
         }
     }
 

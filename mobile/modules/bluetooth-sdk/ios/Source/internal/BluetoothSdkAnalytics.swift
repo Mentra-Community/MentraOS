@@ -85,7 +85,7 @@ final class BluetoothSdkAnalytics {
     }
 
     func initializeGlassesStatus(_ status: GlassesStatus) {
-        lastConnected = configuration.isReady && status.analyticsConnected
+        lastConnected = status.analyticsConnected
     }
 
     func captureStarted() {
@@ -95,14 +95,15 @@ final class BluetoothSdkAnalytics {
     }
 
     func observeGlassesStatus(_ status: GlassesStatus) {
+        // Track the real connection state even while analytics is disabled so that
+        // enabling it later cannot fabricate a connection event from stale or
+        // pre-existing connected flags; only genuine not-connected -> connected
+        // transitions observed while enabled are captured.
         let isConnected = status.analyticsConnected
-        guard configuration.isReady else {
-            if !isConnected {
-                lastConnected = false
-            }
-            return
-        }
-        if isConnected && !lastConnected {
+        let wasConnected = lastConnected
+        lastConnected = isConnected
+        guard configuration.isReady else { return }
+        if isConnected, !wasConnected {
             var properties: [String: Any] = [
                 "event_kind": "glasses_connected",
                 "fully_booted": status.fullyBooted,
@@ -112,7 +113,6 @@ final class BluetoothSdkAnalytics {
             }
             capture(event: "bluetooth_sdk_glasses_connected", properties: properties)
         }
-        lastConnected = isConnected
     }
 
     private func capture(event: String, properties: [String: Any]) {

@@ -9,15 +9,21 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class BluetoothSdkModule : Module() {
-    private var sdk: MentraBluetoothSdk? = null
+    private val sdkLock = Any()
+    @Volatile private var sdk: MentraBluetoothSdk? = null
     private var deviceManager: DeviceManager? = null
+    // Guarded by sdkLock.
     private var pendingAnalyticsOptions: Map<String, Any?>? = null
+    private var destroyed = false
+    // Listener callbacks must never create the SDK: they can run (posted to the main
+    // thread) after OnDestroy, and resurrecting the SDK there would leak a zombie
+    // instance. The store fallback reads the same data the SDK would return.
     private val sdkListener =
             object : MentraBluetoothSdkListener {
                 override fun onGlassesChanged(glasses: GlassesRuntimeState) {
                     sendEvent(
                             "glasses_status",
-                            bluetoothSdk().getRawGlassesStatus()?.toMap()
+                            sdk?.getRawGlassesStatus()?.toMap()
                                     ?: GlassesStatus.fromMap(DeviceStore.store.getCategory("glasses")).toMap()
                     )
                 }
@@ -25,7 +31,7 @@ class BluetoothSdkModule : Module() {
                 override fun onSdkStateChanged(sdkState: PhoneSdkRuntimeState) {
                     sendEvent(
                             "bluetooth_status",
-                            bluetoothSdk().getRawBluetoothStatus()?.toMap()
+                            sdk?.getRawBluetoothStatus()?.toMap()
                                     ?: BluetoothStatus.fromMap(
                                                     DeviceStore.store.getCategory(ObservableStore.BLUETOOTH_CATEGORY)
                                             )
@@ -47,7 +53,7 @@ class BluetoothSdkModule : Module() {
 
                 override fun onScanStopped(reason: ScanStopReason) {
                     if (reason == ScanStopReason.COMPLETED) {
-                        val status = bluetoothSdk().getRawBluetoothStatus()
+                        val status = sdk?.getRawBluetoothStatus()
                         val deviceModel =
                                 status?.pendingWearable?.takeIf { it.isNotBlank() }
                                         ?: status?.defaultWearable
@@ -194,18 +200,31 @@ class BluetoothSdkModule : Module() {
                     baseConfig = BluetoothSdkAnalyticsConfig(surface = "react_native"),
             )
 
+    // Lazy so a pre-startup configureAnalytics call can still suppress the startup
+    // event. Reached from the JS thread (sync Functions), the Expo async-function
+    // queue, and coroutine dispatchers, so creation uses double-checked locking to
+    // guarantee a single instance (a duplicate would register duplicate event sinks
+    // and double-count analytics).
     private fun bluetoothSdk(): MentraBluetoothSdk {
         sdk?.let { return it }
-        val context = moduleContext()
-        val instance =
-                MentraBluetoothSdk.create(
-                        context,
-                        MentraBluetoothSdkConfig(analytics = initialAnalyticsConfig()),
-                        sdkListener,
+        synchronized(sdkLock) {
+            sdk?.let { return it }
+            if (destroyed) {
+                throw BluetoothException(
+                        "sdk_not_initialized",
+                        "Bluetooth SDK module has been destroyed.",
                 )
-        sdk = instance
-        deviceManager = DeviceManager.getInstance()
-        return instance
+            }
+            val instance =
+                    MentraBluetoothSdk.create(
+                            moduleContext(),
+                            MentraBluetoothSdkConfig(analytics = initialAnalyticsConfig()),
+                            sdkListener,
+                    )
+            sdk = instance
+            deviceManager = DeviceManager.getInstance()
+            return instance
+        }
     }
 
     private fun requireSdk(): MentraBluetoothSdk = bluetoothSdk()
@@ -279,7 +298,13 @@ class BluetoothSdkModule : Module() {
         )
 
         OnCreate {
-            BleTraceLogger.logLifecycle(moduleContext(), "BluetoothSdkModule", "module_create")
+            val context = moduleContext()
+            // The SDK itself is created lazily (so analytics can be configured before
+            // startup), but the Bridge context must be available immediately:
+            // DeviceManager's constructor and DeviceStore listeners call
+            // Bridge.getContext(), which throws if nothing initialized it.
+            Bridge.initialize(context.applicationContext)
+            BleTraceLogger.logLifecycle(context, "BluetoothSdkModule", "module_create")
             deviceManager = DeviceManager.getInstance()
         }
 
@@ -289,8 +314,11 @@ class BluetoothSdkModule : Module() {
                     "BluetoothSdkModule",
                     "module_destroy"
             )
-            sdk?.close()
-            sdk = null
+            synchronized(sdkLock) {
+                destroyed = true
+                sdk?.close()
+                sdk = null
+            }
             deviceManager = null
         }
 
@@ -310,9 +338,12 @@ class BluetoothSdkModule : Module() {
         Function("getDefaultDevice") { bluetoothSdk().getDefaultDevice()?.toMap() }
 
         AsyncFunction("configureAnalytics") { options: Map<String, Any?> ->
-            val nextOptions = options.toMap()
-            pendingAnalyticsOptions = nextOptions
-            sdk?.configureAnalytics(nextOptions, surface = "react_native")
+            synchronized(sdkLock) {
+                // Merge so a partial follow-up call (e.g. only postHogHost) cannot drop
+                // an earlier {enabled: false} before the SDK is lazily created.
+                pendingAnalyticsOptions = (pendingAnalyticsOptions ?: emptyMap()) + options
+                sdk?.configureAnalytics(options.toMap(), surface = "react_native")
+            }
         }
 
         Function("set") { category: String, key: String, value: Any? ->

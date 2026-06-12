@@ -103,7 +103,10 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("configureAnalytics") { (options: [String: Any]) in
             await MainActor.run {
-                self.pendingAnalyticsOptions = options
+                // Merge so a partial follow-up call (e.g. only postHogHost) cannot drop
+                // an earlier {enabled: false} before the SDK is lazily created.
+                self.pendingAnalyticsOptions =
+                    (self.pendingAnalyticsOptions ?? [:]).merging(options) { _, new in new }
                 self.sdk?.configureAnalytics(options, surface: "react_native")
             }
         }
