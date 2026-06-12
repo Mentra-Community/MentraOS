@@ -131,6 +131,49 @@ const sessionByTag = new Map<number, SessionEntry>();
  */
 const sessionsPerUser = new Map<string, number>();
 
+/**
+ * Debounced ownership releases. Releasing the Redis ownership claim the
+ * instant the last socket closes loses a race with the user's own reconnect:
+ * the replacement socket claims (or observes "already-ours") during upgrade,
+ * BEFORE `open` increments the session count — then the old socket's close
+ * sees count 0 and deletes the key out from under it. The ownership refresh
+ * loop then finds the key missing, closes the new session with "ownership
+ * lost", and the client reconnects into the same trap: an infinite churn
+ * loop. Deferring the release a few seconds and cancelling it when a new
+ * session opens makes plain reconnects race-free; a user who truly left still
+ * releases after the grace period.
+ */
+const OWNERSHIP_RELEASE_GRACE_MS = 10_000;
+const pendingOwnershipReleases = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleOwnershipRelease(mentraUserId: string): void {
+  const existing = pendingOwnershipReleases.get(mentraUserId);
+  if (existing) clearTimeout(existing);
+  pendingOwnershipReleases.set(
+    mentraUserId,
+    setTimeout(() => {
+      pendingOwnershipReleases.delete(mentraUserId);
+      // Re-check: a session may have opened after the grace timer was set
+      // but without passing through cancel (defensive; open() cancels).
+      if (sessionsPerUser.has(mentraUserId)) return;
+      releaseOwnership(mentraUserId, getPodId()).catch((err) => {
+        logger.warn(
+          { err, mentraUserId },
+          "ownership release failed (will TTL out)",
+        );
+      });
+    }, OWNERSHIP_RELEASE_GRACE_MS),
+  );
+}
+
+function cancelPendingOwnershipRelease(mentraUserId: string): void {
+  const pending = pendingOwnershipReleases.get(mentraUserId);
+  if (pending) {
+    clearTimeout(pending);
+    pendingOwnershipReleases.delete(mentraUserId);
+  }
+}
+
 // === Public API ===
 
 /** Look up a session by its u32 tag. Used by udp-ingress to route packets. */
@@ -380,6 +423,8 @@ function getPodId(): string {
 export const wsHandlers: WebSocketHandler<WsData> = {
   open(ws) {
     sessionByTag.set(ws.data.sessionTag, { ws, data: ws.data });
+    // A reconnect within the grace window keeps the existing ownership claim.
+    cancelPendingOwnershipRelease(ws.data.mentraUserId);
     const wasFirst = !sessionsPerUser.has(ws.data.mentraUserId);
     sessionsPerUser.set(
       ws.data.mentraUserId,
@@ -551,12 +596,9 @@ export const wsHandlers: WebSocketHandler<WsData> = {
       if (remaining <= 0) {
         sessionsPerUser.delete(ws.data.mentraUserId);
         releaseUser(ws.data.mentraUserId);
-        releaseOwnership(ws.data.mentraUserId, getPodId()).catch((err) => {
-          logger.warn(
-            { err, mentraUserId: ws.data.mentraUserId },
-            "ownership release failed (will TTL out)",
-          );
-        });
+        // Deferred: an immediate release races the user's own reconnect and
+        // produces an "ownership lost" churn loop — see pendingOwnershipReleases.
+        scheduleOwnershipRelease(ws.data.mentraUserId);
         // Drop the subscription key on a clean last-session close so the next
         // session for this user starts from its own seed, not stale subs — but
         // only when the key still belongs to THIS closing session: on a fast
