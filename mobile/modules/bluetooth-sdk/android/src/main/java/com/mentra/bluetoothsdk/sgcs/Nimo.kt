@@ -128,6 +128,7 @@ internal object NimoProtocol {
 
     // app ids
     const val APP_ID_DASHBOARD = 0x00
+    const val APP_ID_ASR_NOTE = 0x04
     const val APP_ID_PROMPTER = 0x06
     const val APP_ID_AI_TALK = 0x07
 
@@ -884,10 +885,10 @@ class Nimo : SGCManager() {
         applyNexAudioPlaybackSetting()
     }
 
-    // The text surface every sendTextWall renders into. Prompter is the closest thing the
-    // firmware has to a plain text page; flip to APP_ID_AI_TALK here if hardware testing
-    // shows the Prompter chrome (timer widget) is intrusive.
-    private val textAppId = NimoProtocol.APP_ID_PROMPTER
+    // The text surface every sendTextWall renders into. The ASR note view (appId 0x04,
+    // note text resId 0x00) is a plain text page that renders pushed text directly;
+    // Prompter (0x06) was tried first but did not display pushed text on hardware.
+    private val textAppId = NimoProtocol.APP_ID_ASR_NOTE
     private val textLayoutId = 0
     private val textResId = 0
 
