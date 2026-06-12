@@ -1,4 +1,4 @@
-import {ControllerTypes, DeviceTypes} from "@/../../cloud/packages/types/src"
+import {ControllerTypes, DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
 import {Platform} from "react-native"
 import {useRoute} from "@react-navigation/native"
 
@@ -38,9 +38,14 @@ export default function PairingSuccessScreen() {
   const buildLiveStack = useCallback(async (): Promise<string[]> => {
     const order = ["/pairing/btclassic", "/wifi/scan", "/ota/check-for-updates", "/onboarding/live", "/onboarding/os"]
     let newStack: string[] = []
+    const features = getModelCapabilities(deviceModel as DeviceTypes)
 
-    if (deviceModel === DeviceTypes.LIVE) {
-      let bluetoothClassicConnected = await waitForGlassesState("bluetoothClassicConnected", (value) => value === true, 1000)
+    if (features.hasOta) {
+      let bluetoothClassicConnected = await waitForGlassesState(
+        "bluetoothClassicConnected",
+        (value) => value === true,
+        1000,
+      )
       console.log("PAIR_SUCCESS: bluetoothClassicConnected", bluetoothClassicConnected)
       if (Platform.OS === "android") {
         bluetoothClassicConnected = true

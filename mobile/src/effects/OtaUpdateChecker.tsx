@@ -364,12 +364,12 @@ export async function checkForOtaUpdate(
 //   const glassesWifiConnected = useGlassesStore(state => state.wifi.state === "connected")
 
 //   useEffect(() => {
-//     // Only check for glasses that support WiFi self OTA updates
+//     // Only check for glasses supported by the ASG OTA flow
 //     if (!glassesModel) {
 //       return
 //     }
 //     const features: Capabilities = getModelCapabilities(defaultWearable)
-//     if (!features || !features.hasWifi) {
+//     if (!features || !features.hasOta) {
 //       return
 //     }
 //     if (!otaVersionUrl || !currentBuildNumber) {
@@ -607,7 +607,7 @@ export function OtaUpdateChecker() {
       return
     }
 
-    // OTA check (only for WiFi-capable glasses)
+    // OTA check (only for glasses supported by the ASG OTA flow)
     if (hasCheckedOta.current) {
       // console.log("OTA: check skipped - already checked this session")
       return
@@ -618,8 +618,8 @@ export function OtaUpdateChecker() {
     }
 
     const features: Capabilities = getModelCapabilities(defaultWearable)
-    if (!features?.hasWifi) {
-      // console.log("OTA: check skipped - device doesn't have WiFi capability")
+    if (!features?.hasOta) {
+      // console.log("OTA: check skipped - device doesn't support ASG OTA")
       return
     }
 

@@ -60,4 +60,7 @@ export const evenRealitiesG1: Capabilities = {
 
   // WiFi capabilities - G1 does not support WiFi
   hasWifi: false,
+
+  // OTA capabilities - G1 firmware updates are not driven by the ASG OTA flow
+  hasOta: false,
 };
