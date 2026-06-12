@@ -213,13 +213,28 @@ export class EventManager {
   _forwardEvent(stream: string, data: unknown): void {
     this.emitter.emit(stream, data)
 
-    // Wildcard fan-out: a handler subscribed to "transcription:auto" should
-    // receive any "transcription:<lang>" event. The detected language is in
-    // data.transcribeLanguage. Same for translation.
+    // Wildcard fan-out: handlers register under wildcard patterns
+    // ("transcription:auto", "translation:*:<target>", …) but the host
+    // delivers events under the CONCRETE stream key
+    // ("transcription:en-US", "translation:en:es"). Re-emit on every
+    // pattern the concrete key satisfies — the same pattern set
+    // LocalMiniappRuntime.forwardEvent matches on the host side —
+    // otherwise a wildcard subscriber never fires.
     if (stream.startsWith("transcription:") && stream !== "transcription:auto") {
       this.emitter.emit("transcription:auto", data)
-    } else if (stream.startsWith("translation:") && stream !== "translation:auto") {
-      this.emitter.emit("translation:auto", data)
+    } else if (stream.startsWith("translation:")) {
+      const parts = stream.split(":")
+      const patterns = new Set<string>(["translation:auto"])
+      if (parts.length === 3) {
+        const [, source, target] = parts
+        patterns.add("translation:*:*")
+        patterns.add(`translation:*:${target}`)
+        patterns.add(`translation:${source}:*`)
+      }
+      patterns.delete(stream) // exact key already emitted above
+      for (const pattern of patterns) {
+        this.emitter.emit(pattern, data)
+      }
     }
   }
 
