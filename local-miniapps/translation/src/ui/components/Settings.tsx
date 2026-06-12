@@ -272,7 +272,7 @@ export function Settings({
               {(
                 [
                   {mode: "translation", label: "Translation only"},
-                  {mode: "both", label: "Original + translation"},
+                  {mode: "both", label: "Translation + transcription"},
                 ] as const
               ).map(({mode, label}) => (
                 <button

@@ -444,11 +444,12 @@ export class TranslationController {
       timestamp: entry.timestamp,
     })
 
-    // Glasses display: translation only, or original + translation combined
-    // (the original line leads so a bilingual listener can follow the speaker).
+    // Glasses display: translation only, or translation + transcription
+    // combined — the translation leads (it's what the wearer reads), with the
+    // source-language transcription under it.
     const displayText =
       this.settings.glassesDisplayMode === "both" && rich.originalText
-        ? `${rich.originalText}\n${data.text}`
+        ? `${data.text}\n${rich.originalText}`
         : data.text
     this.processAndDisplay(displayText, data.isFinal, speakerId)
   }
