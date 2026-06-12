@@ -2065,7 +2065,11 @@ public final class MentraBluetoothSDK {
     public func clearDisplay() async throws {
         CoreManager.shared.sgc?.clearDisplay()
     }
-
+/// Sends a 3-line teleprompter window to the glasses overlay (no-cloud direct path).
+    public func sendTeleprompterUpdate(lines: [String], highlightIndex: Int) async throws {
+        CoreManager.shared.sgc?.sendTeleprompterUpdate(lines: lines, highlightIndex: highlightIndex)
+    }
+    
     public func showDashboard() {
         CoreManager.shared.showDashboard()
     }
