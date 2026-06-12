@@ -49,6 +49,14 @@ protocol SGCManager {
     func setDashboardHeightOnly(_ height: Int)
     func setDashboardDepthOnly(_ depth: Int)
 
+    // MARK: - Teleprompter (default no-op; only INMO Go2 implements)
+
+    /// Sends a 3-line teleprompter window to the glasses overlay.
+    /// `lines` should contain the visible window of script lines (1-3 entries),
+    /// and `highlightIndex` is the index within `lines` to render as the
+    /// bright/current line.
+    func sendTeleprompterUpdate(lines: [String], highlightIndex: Int)
+
     // MARK: - Dashboard Menu
 
     func setDashboardMenu(_ items: [[String: Any]])
@@ -126,6 +134,10 @@ extension SGCManager {
     // MARK: - Dashboard Menu (default no-op — only G2 supports this)
 
     func setDashboardMenu(_: [[String: Any]]) {}
+
+    // MARK: - Teleprompter (default no-op — only INMO Go2 implements)
+
+    func sendTeleprompterUpdate(lines: [String], highlightIndex: Int) {}
 
     // MARK: - Default GlassesStore-backed property implementations
 
