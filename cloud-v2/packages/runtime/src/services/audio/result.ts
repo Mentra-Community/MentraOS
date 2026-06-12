@@ -57,6 +57,8 @@ export function transcriptToStreamMessage(t: TranscriptMessage): StreamMessage {
       subscription: sub,
       text: t.text,
       isFinal: t.isFinal,
+      originalText: t.originalText,
+      utteranceId: t.utteranceId,
       speakerId: t.speakerId,
       startMs: t.startMs ?? 0,
       endMs: t.endMs ?? 0,

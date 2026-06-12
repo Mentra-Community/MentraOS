@@ -101,6 +101,7 @@ export const translationDataSchema = z.object({
   text: z.string(), // translated
   originalText: z.string().optional(), // source-language text
   isFinal: z.boolean(),
+  utteranceId: z.string().optional(),
   speakerId: z.string().optional(),
   startMs: z.number(),
   endMs: z.number(),

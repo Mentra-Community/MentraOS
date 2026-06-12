@@ -120,8 +120,13 @@ export interface TranscriptMessage {
   speakerId?: string
   /** Language of the emitted text. */
   language?: string
-  /** For translation: the source-audio language (may be `"auto"`). */
+  /**
+   * For translation: the source-audio language — the provider's DETECTED
+   * language when it reports one, else the subscription's (may be `"auto"`).
+   */
   sourceLanguage?: string
+  /** For translation: source-language text of the same window, if available. */
+  originalText?: string
   /** Audio timeline window in milliseconds. */
   startMs?: number
   endMs?: number
@@ -403,7 +408,10 @@ async function createProvider(mentraUserId: string, sub: AudioSubscription): Pro
       // For transcription: text is in the source/auto language.
       // For translation: text is in the target language.
       language: event.language ?? providerLanguage,
-      sourceLanguage,
+      // Detected source language wins over the subscription's static value
+      // (often "auto"), so clients can show what was actually spoken.
+      sourceLanguage: event.sourceLanguage ?? sourceLanguage,
+      originalText: event.originalText,
       startMs: event.startMs,
       endMs: event.endMs,
       source: PROVIDER_KIND,

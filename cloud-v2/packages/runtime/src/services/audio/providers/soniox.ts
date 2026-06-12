@@ -179,6 +179,16 @@ export async function createSonioxProvider(
   // dedupe guard so we don't re-emit an unchanged interim.
   let lastSentInterim = "";
 
+  // Translation subs only: parallel accumulator for the ORIGINAL-language
+  // tokens of the same utterance (same rolling-window semantics as above), so
+  // results can carry `originalText` for combined original+translated captions.
+  // Also tracks the detected SOURCE language — translation-status tokens carry
+  // the TARGET language, so the source must come from the original tokens.
+  let originalStablePrefix = "";
+  let originalPrevFinalLen = 0;
+  let lastOriginalText = "";
+  let currentSourceLanguage: string | undefined = undefined;
+
   // Utterance correlation: interim + final events for one speech segment share
   // a `utteranceId`, so the client (local-captions' `updateByUtteranceId`)
   // keeps a single card and updates it in place, committing on the final.
@@ -203,6 +213,10 @@ export async function createSonioxProvider(
     stablePrefix = "";
     prevFinalLen = 0;
     lastSentInterim = "";
+    originalStablePrefix = "";
+    originalPrevFinalLen = 0;
+    lastOriginalText = "";
+    currentSourceLanguage = undefined;
   };
 
   /**
@@ -219,6 +233,9 @@ export async function createSonioxProvider(
       stablePrefix = "";
       prevFinalLen = 0;
       lastSentInterim = "";
+      originalStablePrefix = "";
+      originalPrevFinalLen = 0;
+      lastOriginalText = "";
       currentUtteranceId = null;
       return;
     }
@@ -228,6 +245,8 @@ export async function createSonioxProvider(
       utteranceId: currentUtteranceId ?? undefined,
       speakerId: currentSpeakerId,
       language: currentLanguage,
+      originalText: lastOriginalText || undefined,
+      sourceLanguage: currentSourceLanguage,
       startMs,
       endMs,
     });
@@ -236,6 +255,9 @@ export async function createSonioxProvider(
     stablePrefix = "";
     prevFinalLen = 0;
     lastSentInterim = "";
+    originalStablePrefix = "";
+    originalPrevFinalLen = 0;
+    lastOriginalText = "";
     currentUtteranceId = null;
   };
 
@@ -248,10 +270,11 @@ export async function createSonioxProvider(
       );
     }
 
-    // For translation subs, drop the original-language tokens — caller
-    // only cares about target-language text. For transcription subs,
-    // keep everything (translation_status will be 'none' since we didn't
-    // request translation).
+    // For translation subs, split the window: translation-status tokens are
+    // the emitted `text` (target language); original-status tokens feed the
+    // parallel `originalText` accumulator and the detected SOURCE language.
+    // For transcription subs, keep everything (translation_status will be
+    // 'none' since we didn't request translation).
     const tokens = isTranslation
       ? allTokens.filter(
           (t) =>
@@ -259,6 +282,13 @@ export async function createSonioxProvider(
             "translation",
         )
       : allTokens;
+    const originalTokens = isTranslation
+      ? allTokens.filter(
+          (t) =>
+            (t as { translation_status?: string }).translation_status ===
+            "original",
+        )
+      : [];
 
     let interimText = "";
     let language: string | undefined;
@@ -309,6 +339,30 @@ export async function createSonioxProvider(
       }
     }
 
+    // Original-language tokens (translation subs only): same rolling-window
+    // accumulation as the main stream, into the parallel buffers. The first
+    // original token may arrive before any translation token; the utterance is
+    // opened lazily by either stream above, and `originalText` simply rides
+    // along on whichever emit happens next.
+    if (originalTokens.length > 0) {
+      let originalInterim = "";
+      let originalFinal = "";
+      for (const t of originalTokens) {
+        if (!currentUtteranceId) {
+          startNewUtterance(t.speaker, undefined);
+        }
+        if (t.language) currentSourceLanguage = t.language;
+        if (t.is_final) originalFinal += t.text;
+        else originalInterim += t.text;
+      }
+      if (originalFinal.length > originalPrevFinalLen) {
+        originalStablePrefix += originalFinal.slice(originalPrevFinalLen);
+      }
+      originalPrevFinalLen = originalFinal.length;
+      const originalComposite = originalStablePrefix + originalInterim;
+      if (originalComposite.length > 0) lastOriginalText = originalComposite;
+    }
+
     // Accumulate finalized text. On window growth, append the delta. On
     // shrink (compaction), keep stablePrefix; reset tracker to new length.
     if (currentFinalText.length > prevFinalLen) {
@@ -330,6 +384,8 @@ export async function createSonioxProvider(
         utteranceId: currentUtteranceId ?? undefined,
         speakerId: currentSpeakerId,
         language,
+        originalText: lastOriginalText || undefined,
+        sourceLanguage: currentSourceLanguage,
         startMs,
         endMs,
       });

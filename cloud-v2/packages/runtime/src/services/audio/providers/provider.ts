@@ -35,6 +35,18 @@ export interface TranscriptEvent {
   endMs?: number;
   /** ISO language code if the provider reports it (e.g. `"en"`). */
   language?: string;
+  /**
+   * For translation: the source-language text of the same window, when the
+   * provider supplies original tokens alongside the translated ones. Lets a
+   * client render combined original + translated captions from one stream.
+   */
+  originalText?: string;
+  /**
+   * For translation: the DETECTED source-audio language (e.g. `"en"`), taken
+   * from the original-language tokens. `language` carries the language of
+   * `text` (the target language), so the detected source needs its own field.
+   */
+  sourceLanguage?: string;
   /** Provider-specific token-level data, for clients that want it. */
   tokens?: Array<{
     text: string;
