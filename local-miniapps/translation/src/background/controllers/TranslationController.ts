@@ -64,6 +64,8 @@ const DEFAULT_SETTINGS: TranslationSettings = {
   displayLines: 3,
   displayWidth: 1, // 0=Narrow, 1=Medium, 2=Wide
   wordBreaking: false,
+  showOriginalText: true,
+  glassesDisplayMode: "translation",
 }
 
 const STORAGE_KEYS = {
@@ -71,6 +73,8 @@ const STORAGE_KEYS = {
   displayLines: "displayLines",
   displayWidth: "displayWidth",
   wordBreaking: "wordBreaking",
+  showOriginalText: "showOriginalText",
+  glassesDisplayMode: "glassesDisplayMode",
 } as const
 
 // ── Profile selection (verbatim from DisplayManager) ───────────────────────
@@ -241,6 +245,16 @@ export class TranslationController {
       }),
     )
     this.unsubs.push(
+      this.ui.on("translation:set-show-original-text", ({enabled}) => {
+        void this.setShowOriginalText(enabled)
+      }),
+    )
+    this.unsubs.push(
+      this.ui.on("translation:set-glasses-display-mode", ({mode}) => {
+        void this.setGlassesDisplayMode(mode)
+      }),
+    )
+    this.unsubs.push(
       this.ui.on("translation:clear", () => {
         this.clearTranscripts()
       }),
@@ -263,11 +277,13 @@ export class TranslationController {
 
   private async loadSettings(): Promise<void> {
     try {
-      const [targetLanguage, linesRaw, widthRaw, wbRaw] = await Promise.all([
+      const [targetLanguage, linesRaw, widthRaw, wbRaw, showOrigRaw, glassesModeRaw] = await Promise.all([
         this.session.storage.get(STORAGE_KEYS.targetLanguage),
         this.session.storage.get(STORAGE_KEYS.displayLines),
         this.session.storage.get(STORAGE_KEYS.displayWidth),
         this.session.storage.get(STORAGE_KEYS.wordBreaking),
+        this.session.storage.get(STORAGE_KEYS.showOriginalText),
+        this.session.storage.get(STORAGE_KEYS.glassesDisplayMode),
       ])
 
       this.settings.targetLanguage = targetLanguage || DEFAULT_SETTINGS.targetLanguage
@@ -286,6 +302,12 @@ export class TranslationController {
       })()
 
       this.settings.wordBreaking = wbRaw == null ? DEFAULT_SETTINGS.wordBreaking : wbRaw === "true"
+      this.settings.showOriginalText =
+        showOrigRaw == null ? DEFAULT_SETTINGS.showOriginalText : showOrigRaw === "true"
+      this.settings.glassesDisplayMode =
+        glassesModeRaw === "both" || glassesModeRaw === "translation"
+          ? glassesModeRaw
+          : DEFAULT_SETTINGS.glassesDisplayMode
     } catch (err) {
       console.log("LocalTranslation: failed to load settings, using defaults", err)
       this.settings = {...DEFAULT_SETTINGS}
@@ -319,6 +341,19 @@ export class TranslationController {
     this.settings.wordBreaking = enabled
     await this.persist(STORAGE_KEYS.wordBreaking, enabled.toString())
     this.applySettingsToDisplay()
+    this.broadcastSettings()
+  }
+
+  private async setShowOriginalText(enabled: boolean): Promise<void> {
+    this.settings.showOriginalText = enabled
+    await this.persist(STORAGE_KEYS.showOriginalText, enabled.toString())
+    this.broadcastSettings()
+  }
+
+  private async setGlassesDisplayMode(mode: TranslationSettings["glassesDisplayMode"]): Promise<void> {
+    if (mode !== "translation" && mode !== "both") return
+    this.settings.glassesDisplayMode = mode
+    await this.persist(STORAGE_KEYS.glassesDisplayMode, mode)
     this.broadcastSettings()
   }
 
@@ -409,7 +444,13 @@ export class TranslationController {
       timestamp: entry.timestamp,
     })
 
-    this.processAndDisplay(data.text, data.isFinal, speakerId)
+    // Glasses display: translation only, or original + translation combined
+    // (the original line leads so a bilingual listener can follow the speaker).
+    const displayText =
+      this.settings.glassesDisplayMode === "both" && rich.originalText
+        ? `${rich.originalText}\n${data.text}`
+        : data.text
+    this.processAndDisplay(displayText, data.isFinal, speakerId)
   }
 
   private createEntry(

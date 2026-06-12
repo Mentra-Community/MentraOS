@@ -12,12 +12,19 @@
  * can stay byte-identical.
  */
 
+/** What the glasses display shows for each result. */
+export type GlassesDisplayMode = "translation" | "both"
+
 /** Translation settings — persisted in storage, mirrored to the UI. */
 export interface TranslationSettings {
   targetLanguage: string
   displayLines: number
   displayWidth: number
   wordBreaking: boolean
+  /** Phone UI: show the source-language (original) text in each card. */
+  showOriginalText: boolean
+  /** Glasses: render translation only, or original + translation combined. */
+  glassesDisplayMode: GlassesDisplayMode
 }
 
 /** A single translation entry shown in the UI's translation list. */

@@ -69,6 +69,18 @@ export function useSettings() {
     return true
   }
 
+  const updateShowOriginalText = async (enabled: boolean): Promise<boolean> => {
+    setSettings((prev) => (prev ? {...prev, showOriginalText: enabled} : prev))
+    mentra.send("translation:set-show-original-text", {enabled})
+    return true
+  }
+
+  const updateGlassesDisplayMode = async (mode: "translation" | "both"): Promise<boolean> => {
+    setSettings((prev) => (prev ? {...prev, glassesDisplayMode: mode} : prev))
+    mentra.send("translation:set-glasses-display-mode", {mode})
+    return true
+  }
+
   return {
     settings,
     loading,
@@ -77,5 +89,7 @@ export function useSettings() {
     updateDisplayLines,
     updateDisplayWidth,
     updateWordBreaking,
+    updateShowOriginalText,
+    updateGlassesDisplayMode,
   }
 }

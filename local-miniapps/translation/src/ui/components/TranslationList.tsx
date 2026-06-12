@@ -12,9 +12,14 @@ interface TranslationListProps {
   onToggleRecording: () => void
   onClearTranslations: () => void
   accentColor?: string
+  showOriginalText?: boolean
 }
 
-export function TranslationList({translations, accentColor = "#2089F3"}: TranslationListProps) {
+export function TranslationList({
+  translations,
+  accentColor = "#2089F3",
+  showOriginalText = true,
+}: TranslationListProps) {
   const [autoScroll, setAutoScroll] = useState(true)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
@@ -54,6 +59,7 @@ export function TranslationList({translations, accentColor = "#2089F3"}: Transla
               translation={translation}
               isFirst={index === 0}
               isLast={index === translations.length - 1}
+              showOriginalText={showOriginalText}
             />
           ))
         )}

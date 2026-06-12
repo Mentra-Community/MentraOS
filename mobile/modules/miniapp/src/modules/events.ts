@@ -51,6 +51,12 @@ export interface TranslationData {
   isFinal: boolean
   sourceLanguage: string
   targetLanguage: string
+  /** Source-language text of the same utterance, when the provider supplies it. */
+  originalText?: string
+  /** Stable id correlating interim + final results of one utterance. */
+  utteranceId?: string
+  /** Speaker id when the provider reports diarization. */
+  speakerId?: string
 }
 
 export interface ButtonPressData {

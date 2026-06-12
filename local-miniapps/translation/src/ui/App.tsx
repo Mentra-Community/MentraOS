@@ -22,7 +22,15 @@ export function App() {
   const [activeTab, setActiveTab] = useState<"translation" | "settings">("translation")
   const [showTargetLanguageSelector, setShowTargetLanguageSelector] = useState(false)
   const {insets} = useSafeArea()
-  const {settings, updateTargetLanguage, updateDisplayLines, updateDisplayWidth, updateWordBreaking} = useSettings()
+  const {
+    settings,
+    updateTargetLanguage,
+    updateDisplayLines,
+    updateDisplayWidth,
+    updateWordBreaking,
+    updateShowOriginalText,
+    updateGlassesDisplayMode,
+  } = useSettings()
   const {
     translations,
     connected,
@@ -83,6 +91,8 @@ export function App() {
               onUpdateDisplayLines={updateDisplayLines}
               onUpdateDisplayWidth={updateDisplayWidth}
               onUpdateWordBreaking={updateWordBreaking}
+              onUpdateShowOriginalText={updateShowOriginalText}
+              onUpdateGlassesDisplayMode={updateGlassesDisplayMode}
             />
           ) : (
             <TranslationList
@@ -91,6 +101,7 @@ export function App() {
               onToggleRecording={toggleRecording}
               onClearTranslations={clearTranslations}
               accentColor={presentation.accentColor}
+              showOriginalText={settings?.showOriginalText ?? true}
             />
           )}
         </div>

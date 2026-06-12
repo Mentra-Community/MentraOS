@@ -13,6 +13,7 @@ interface TranslationItemProps {
   translation: TranslationEntry
   isFirst: boolean
   isLast: boolean
+  showOriginalText?: boolean
 }
 
 const SPEAKER_COLORS = [
@@ -23,7 +24,7 @@ const SPEAKER_COLORS = [
   {bg: "#EC4899", text: "#EC4899"},
 ]
 
-export function TranslationItem({translation, isFirst, isLast}: TranslationItemProps) {
+export function TranslationItem({translation, isFirst, isLast, showOriginalText = true}: TranslationItemProps) {
   const speakerNumber = parseInt(translation.speaker.replace(/\D/g, ""), 10) || 1
   const speakerIndex = (speakerNumber - 1) % SPEAKER_COLORS.length
   const colors = SPEAKER_COLORS[speakerIndex]
@@ -50,7 +51,9 @@ export function TranslationItem({translation, isFirst, isLast}: TranslationItemP
         </span>
 
         <span className="text-gray-500 text-xs font-medium font-['Red_Hat_Display'] leading-4">
-          {sourceLanguage ? `${getLanguageName(sourceLanguage)} -> ` : ""}
+          {sourceLanguage && sourceLanguage !== "auto"
+            ? `${getFlagEmoji(sourceLanguage)} ${getLanguageName(sourceLanguage)} -> `
+            : ""}
           {getFlagEmoji(translation.targetLanguage)} {getLanguageName(translation.targetLanguage)}
         </span>
 
@@ -59,7 +62,7 @@ export function TranslationItem({translation, isFirst, isLast}: TranslationItemP
         </span>
       </div>
 
-      {translation.originalText && (
+      {showOriginalText && translation.originalText && (
         <p className="self-stretch text-gray-500 text-sm font-normal font-['Red_Hat_Display'] leading-5">
           {translation.originalText}
         </p>

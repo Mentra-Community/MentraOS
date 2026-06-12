@@ -43,6 +43,8 @@ export interface Channels {
   "translation:set-display-lines": {lines: number}
   "translation:set-display-width": {width: number}
   "translation:set-word-breaking": {enabled: boolean}
+  "translation:set-show-original-text": {enabled: boolean}
+  "translation:set-glasses-display-mode": {mode: import("./types").GlassesDisplayMode}
   "translation:clear": Record<string, never>
   /** Explicit hydration request after the WebView has registered listeners. */
   "translation:request-snapshot": Record<string, never>

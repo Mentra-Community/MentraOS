@@ -2253,6 +2253,7 @@ class LocalMiniappRuntime {
         text: d.text,
         originalText: d.originalText,
         isFinal: d.isFinal,
+        utteranceId: d.utteranceId,
         startTime: d.startMs,
         endTime: d.endMs,
         speakerId: d.speakerId,
