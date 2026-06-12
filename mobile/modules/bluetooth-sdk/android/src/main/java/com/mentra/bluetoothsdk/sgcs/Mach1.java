@@ -18,6 +18,7 @@ import androidx.lifecycle.Observer;
 import com.mentra.bluetoothsdk.sgcs.SGCManager;
 import com.mentra.bluetoothsdk.DeviceManager;
 import com.mentra.bluetoothsdk.Bridge;
+import com.mentra.bluetoothsdk.PhotoRequest;
 import com.mentra.bluetoothsdk.utils.DeviceTypes;
 import com.mentra.bluetoothsdk.utils.ConnTypes;
 import com.mentra.bluetoothsdk.utils.BitmapJavaUtils;
@@ -132,7 +133,7 @@ public class Mach1 extends SGCManager {
     }
 
     @Override
-    public void requestPhoto(@NonNull String requestId, @NonNull String appId, @NonNull String size, @Nullable String webhookUrl, @Nullable String authToken, @Nullable String compress, boolean flash, boolean save, boolean sound, @Nullable Long exposureTimeNs, @Nullable Integer iso) {
+    public void requestPhoto(@NonNull PhotoRequest request) {
 
     }
 
