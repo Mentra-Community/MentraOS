@@ -187,7 +187,7 @@ private extension BluetoothSdkAnalyticsConfiguration {
         return BluetoothSdkAnalyticsConfiguration(
             enabled: enabled && !disabledByApp,
             postHogApiKey: resolvedPostHogApiKey(infoApiKey: infoApiKey),
-            postHogHost: infoHost ?? postHogHost,
+            postHogHost: resolvedPostHogHost(infoHost: infoHost),
             surface: surface
         )
     }
@@ -201,5 +201,15 @@ private extension BluetoothSdkAnalyticsConfiguration {
             return infoApiKey ?? configuredApiKey
         }
         return configuredApiKey
+    }
+
+    private func resolvedPostHogHost(infoHost: String?) -> String {
+        guard let configuredHost = postHogHost.isEmpty ? nil : postHogHost else {
+            return infoHost ?? BluetoothSdkAnalyticsConfiguration.defaultPostHogHost
+        }
+        if configuredHost == BluetoothSdkAnalyticsConfiguration.defaultPostHogHost {
+            return infoHost ?? configuredHost
+        }
+        return configuredHost
     }
 }

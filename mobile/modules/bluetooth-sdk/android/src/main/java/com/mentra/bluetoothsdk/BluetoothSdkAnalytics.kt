@@ -210,7 +210,12 @@ private fun BluetoothSdkAnalyticsConfig.resolvedForApp(context: Context): Blueto
                 BluetoothSdkAnalytics.DEFAULT_POSTHOG_API_KEY -> metadataApiKey ?: configuredApiKey
                 else -> configuredApiKey
             },
-        postHogHost = metadataHost ?: postHogHost,
+        postHogHost =
+            when (val configuredHost = postHogHost.takeIf { it.isNotBlank() }) {
+                null -> metadataHost ?: BluetoothSdkAnalytics.DEFAULT_POSTHOG_HOST
+                BluetoothSdkAnalytics.DEFAULT_POSTHOG_HOST -> metadataHost ?: configuredHost
+                else -> configuredHost
+            },
     )
 }
 

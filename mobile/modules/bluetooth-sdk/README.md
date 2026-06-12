@@ -206,6 +206,10 @@ await BluetoothSdk.configureAnalytics({
 })
 ```
 
+Runtime/native `postHogApiKey` and `postHogHost` values take precedence over
+the Expo config plugin or native app metadata; app metadata only replaces the
+SDK defaults when no runtime override is provided.
+
 Captured properties are limited to non-sensitive SDK/app metadata:
 `event_source`, `sdk_platform`, `sdk_surface`, `sdk_version`, the app package or
 bundle identifier, OS platform/version, `event_kind`, and for connection events
