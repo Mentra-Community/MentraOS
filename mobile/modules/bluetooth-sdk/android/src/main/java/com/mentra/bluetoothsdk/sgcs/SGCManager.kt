@@ -3,6 +3,7 @@ package com.mentra.bluetoothsdk.sgcs
 import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceStore
+import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.utils.ConnTypes
 
 abstract class SGCManager {
@@ -15,19 +16,7 @@ abstract class SGCManager {
     abstract fun sortMicRanking(list: MutableList<String>): MutableList<String>
 
     // Camera & Media
-    abstract fun requestPhoto(
-            requestId: String,
-            appId: String,
-            size: String,
-            webhookUrl: String?,
-            authToken: String?,
-            compress: String?,
-            flash: Boolean,
-            save: Boolean,
-            sound: Boolean,
-            exposureTimeNs: Long?,
-            iso: Int?,
-    )
+    abstract fun requestPhoto(request: PhotoRequest)
     abstract fun startStream(message: MutableMap<String, Any>)
     abstract fun stopStream()
     abstract fun sendStreamKeepAlive(message: MutableMap<String, Any>)
