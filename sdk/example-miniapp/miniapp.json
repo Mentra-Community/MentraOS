@@ -18,6 +18,10 @@
       "description": "Used for live transcription"
     },
     {
+      "type": "CAMERA",
+      "description": "takePhoto / streaming on the SDK Tester camera page"
+    },
+    {
       "type": "LOCATION",
       "description": "Exercised by the SDK Tester page"
     },
@@ -33,13 +37,18 @@
   "hardwareRequirements": [
     {
       "type": "DISPLAY",
-      "level": "REQUIRED",
-      "description": "Shows live transcription"
+      "level": "OPTIONAL",
+      "description": "Shows live transcription on display glasses; tester pages work without one"
     },
     {
       "type": "MICROPHONE",
       "level": "REQUIRED",
       "description": "Captures speech for transcription"
+    },
+    {
+      "type": "CAMERA",
+      "level": "OPTIONAL",
+      "description": "takePhoto / streaming tester pages on camera glasses"
     }
   ],
   "port": 3140

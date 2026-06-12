@@ -113,6 +113,21 @@ export default function MiniappDeveloperUrlScreen() {
       }
     }
 
+    // Re-register the dev slot for THIS entry before foregrounding. There is a
+    // single dev slot (com.dev): without this, setForeground launches whatever
+    // app was last registered into the slot — tapping "Mentra Example" in the
+    // recent list would silently relaunch a different, previously-registered
+    // dev app under the Mentra Example name.
+    registerDevApp({
+      packageName: entry.packageName,
+      name: entry.name,
+      iconUrl: entry.iconUrl ?? `${entry.url}/icon.png`,
+      devUrl: entry.url,
+      devPort: deriveDevPort(entry.url),
+      permissions: launchResult.manifest.permissions as DevAppRecord["permissions"],
+      hardwareRequirements: launchResult.manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+    })
+
     await useAppStatusStore.getState().refresh()
     // Compositor begins its fade-in + mounts LocalMiniappView (which runs its
     // own install/spawn phase machine inside the overlay). Foreground the single
