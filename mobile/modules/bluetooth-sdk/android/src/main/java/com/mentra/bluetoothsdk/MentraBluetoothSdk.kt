@@ -451,14 +451,42 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun setButtonPhotoSettings(size: ButtonPhotoSize): SettingsAckEvent =
-        performSettingsCommand(
-            setting = "button_photo",
-            updateStore = { _ -> DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", size.value) },
-            send = { requestId -> deviceManager.sendButtonPhotoSettings(requestId, size.value) },
-        )
+        setButtonPhotoSettings(ButtonPhotoSettings(size = size))
 
     fun setButtonPhotoSettings(settings: ButtonPhotoSettings): SettingsAckEvent =
-        setButtonPhotoSettings(size = settings.size)
+        performSettingsCommand(
+            setting = "button_photo",
+            updateStore = { _ ->
+                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", settings.size.value)
+                settings.mfnr?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_mfnr", it) }
+                settings.zsl?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl", it) }
+                settings.noiseReduction?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_noise_reduction", it)
+                }
+                settings.edgeEnhancement?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_edge_enhancement", it)
+                }
+                settings.ispDigitalGain?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_isp_digital_gain", it)
+                }
+                settings.ispAnalogGain?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_isp_analog_gain", it)
+                }
+                settings.aeExposureDivisor?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_ae_exposure_divisor", it)
+                }
+                settings.isoCap?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_iso_cap", it)
+                }
+                settings.compress?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_compress", it)
+                }
+                settings.sound?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_sound", it)
+                }
+            },
+            send = { requestId -> deviceManager.sendButtonPhotoSettings(requestId, settings) },
+        )
 
     fun setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int): SettingsAckEvent =
         performSettingsCommand(
@@ -657,19 +685,7 @@ class MentraBluetoothSdk private constructor(
         val pending = PendingResponse<PhotoResponseEvent>("photo request ${request.requestId}")
         pendingPhotoRequests[request.requestId] = pending
         try {
-            deviceManager.requestPhoto(
-                request.requestId,
-                request.appId,
-                request.size.value,
-                request.webhookUrl,
-                request.authToken,
-                request.compress.value,
-                request.flash,
-                request.save,
-                request.sound,
-                request.exposureTimeNs,
-                request.iso,
-            )
+            deviceManager.requestPhoto(request)
             return pending.await()
         } finally {
             pendingPhotoRequests.remove(request.requestId, pending)
