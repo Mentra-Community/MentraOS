@@ -149,9 +149,7 @@ export default function OtaVersionUrl() {
       <View style={themed($textContainer)}>
         <Text style={themed($label)}>Custom OTA Manifest URL</Text>
         <Text style={themed($subtitle)}>
-          Override the manifest used for glasses OTA checks and installs. Leave blank to use the default
-          (glasses-reported or production manifest). Staging testers: use the Staging preset. Legacy glasses firmware
-          ignores the override.
+          Override the default glasses OTA manifest URL. Leave blank to use default.
           {otaVersionUrl && `\nCurrently using: ${otaVersionUrl}`}
         </Text>
         <TextInput
