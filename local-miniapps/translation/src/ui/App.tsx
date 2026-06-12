@@ -54,7 +54,7 @@ export function App() {
     <div
       className="w-screen h-screen flex overflow-hidden font-sans"
       style={{
-        backgroundColor: presentation.accentColor,
+        background: presentation.accentSurface ?? presentation.accentColor,
         paddingTop: insets.top,
         paddingBottom: insets.bottom,
         paddingLeft: insets.left,
@@ -65,6 +65,9 @@ export function App() {
           connected={connected}
           accentColor={presentation.accentColor}
           accentForeground={presentation.accentForeground}
+          // Transparent over a gradient surface so the root's single ramp runs
+          // continuously through the header instead of restarting inside it.
+          surfaceBackground={presentation.accentSurface ? "transparent" : undefined}
           error={error}
           settings={settings}
           onToggleTargetLanguageSelector={() => setShowTargetLanguageSelector(true)}
@@ -131,11 +134,21 @@ export function App() {
 
 export default App
 
+/**
+ * The app icon's vertical gradient (sky `#18C3FF` down to royal `#2072F1`).
+ * Painted on the chrome surfaces (root + header) in the healthy states so the
+ * app visually matches its icon; `accentColor` stays the flat mid-blue for
+ * small fills (pills, toggles, nav) where a gradient would be noise.
+ */
+const ICON_GRADIENT = "linear-gradient(180deg, #18C3FF 0%, #2089F3 55%, #2072F1 100%)"
+
 function getCloudPresentation(cloudStatus?: {status: string; audioTransport: string}): {
   label: string
   detail: string
   accentColor: string
   accentForeground: string
+  /** Chrome-surface background; falls back to `accentColor` when unset. */
+  accentSurface?: string
   dark: boolean
 } {
   const status = cloudStatus ?? {status: "disconnected", audioTransport: "none"}
@@ -154,6 +167,7 @@ function getCloudPresentation(cloudStatus?: {status: string; audioTransport: str
       detail: "WebSocket audio",
       accentColor: "#A9D4FB",
       accentForeground: "#1F2937",
+      accentSurface: "linear-gradient(180deg, #9FE0FE 0%, #A9D4FB 55%, #A4C4F9 100%)",
       dark: false,
     }
   }
@@ -163,6 +177,7 @@ function getCloudPresentation(cloudStatus?: {status: string; audioTransport: str
       detail: "UDP audio",
       accentColor: "#2089F3",
       accentForeground: "#FFFFFF",
+      accentSurface: ICON_GRADIENT,
       dark: false,
     }
   }

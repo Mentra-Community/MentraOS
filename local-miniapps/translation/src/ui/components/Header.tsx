@@ -7,6 +7,12 @@ interface HeaderProps {
   connected: boolean
   accentColor: string
   accentForeground: string
+  /**
+   * Background for the header strip. Lets the host paint the chrome with a
+   * gradient (matching the app icon) while `accentColor` stays a flat fill
+   * for small elements like the target pill. Defaults to `accentColor`.
+   */
+  surfaceBackground?: string
   error: string | null
   settings: TranslationSettings | null
   onToggleTargetLanguageSelector: () => void
@@ -18,6 +24,7 @@ export function Header({
   connected,
   accentColor,
   accentForeground,
+  surfaceBackground,
   error,
   settings,
   onToggleTargetLanguageSelector,
@@ -29,7 +36,7 @@ export function Header({
       {/* Top header bar */}
       <div
         className="w-full h-[46px] px-6 backdrop-blur-lg flex justify-center items-center"
-        style={{backgroundColor: accentColor}}>
+        style={{background: surfaceBackground ?? accentColor}}>
         {/* Title with icon */}
         <div className="flex justify-start items-center gap-2">
           <Languages className="w-6 h-6" color={accentForeground} />
