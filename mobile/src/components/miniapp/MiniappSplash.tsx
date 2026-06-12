@@ -31,14 +31,7 @@ const FADE_IN_DURATION_MS = 50
 const FADE_OUT_DURATION_MS = 200
 const MIN_VISIBLE_MS = 700
 
-export default function MiniappSplash({
-  iconUrl,
-  bgColor,
-  isLoaded = false,
-  name,
-  error,
-  label,
-}: MiniappSplashProps) {
+export default function MiniappSplash({iconUrl, bgColor, isLoaded = false, name, error, label}: MiniappSplashProps) {
   const {theme} = useAppTheme()
   const size = 128
   const borderRadius = theme.spacing.s3

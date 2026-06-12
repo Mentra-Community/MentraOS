@@ -143,10 +143,7 @@ export class StreamLifecycleController {
     if (this.disposed || !this.active) return
 
     if (this.shouldSendKeepAlive && !this.shouldSendKeepAlive()) {
-      this.logger.warn(
-        {streamId: this.streamId},
-        "Skipping keep-alive send because transport is unavailable",
-      )
+      this.logger.warn({streamId: this.streamId}, "Skipping keep-alive send because transport is unavailable")
       return
     }
 
@@ -179,10 +176,7 @@ export class StreamLifecycleController {
     this.missedAcks += 1
     const ageMs = this.now() - sentAt
 
-    this.logger.warn(
-      {streamId: this.streamId, ackId, missedAcks: this.missedAcks, ageMs},
-      "Keep-alive ACK timeout",
-    )
+    this.logger.warn({streamId: this.streamId, ackId, missedAcks: this.missedAcks, ageMs}, "Keep-alive ACK timeout")
 
     this.callbacks.onKeepAliveMissed?.(ackId, ageMs, this.missedAcks)
 

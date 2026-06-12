@@ -296,9 +296,9 @@ describe("startup bundle", () => {
   test("__mentraSubscribe + event envelope fan-out", () => {
     const sandbox = evalBundle()
     const received: unknown[] = []
-    const unsub = (
-      sandbox.__mentraSubscribe as (i: string, cb: (p: unknown) => void) => () => void
-    )("button", (p) => received.push(p))
+    const unsub = (sandbox.__mentraSubscribe as (i: string, cb: (p: unknown) => void) => () => void)("button", (p) =>
+      received.push(p),
+    )
     ;(sandbox.__deliver as (j: string) => void)(
       JSON.stringify({kind: "event", iface: "button", payload: {which: "main"}}),
     )
@@ -343,26 +343,20 @@ describe("startup bundle", () => {
     const sandbox = evalBundle()
     const received: string[] = []
     ;(sandbox as Record<string, unknown>).__mentraDeliverBridgeRaw = (raw: string) => received.push(raw)
-    ;(sandbox.__deliver as (j: string) => void)(
-      JSON.stringify({kind: "bridge", raw: '{"type":"DISPLAY","text":"hi"}'}),
-    )
+    ;(sandbox.__deliver as (j: string) => void)(JSON.stringify({kind: "bridge", raw: '{"type":"DISPLAY","text":"hi"}'}))
     expect(received).toEqual(['{"type":"DISPLAY","text":"hi"}'])
   })
 
   test("kind=bridge silently drops when __mentraDeliverBridgeRaw is not installed", () => {
     const sandbox = evalBundle()
-    expect(() =>
-      (sandbox.__deliver as (j: string) => void)(JSON.stringify({kind: "bridge", raw: "x"})),
-    ).not.toThrow()
+    expect(() => (sandbox.__deliver as (j: string) => void)(JSON.stringify({kind: "bridge", raw: "x"}))).not.toThrow()
   })
 })
 
 describe("startup bundle — WebSocket", () => {
   test("installs a real WebSocket constructor (not the placeholder)", () => {
     const sandbox = evalBundle()
-    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
-      url: string,
-    ) => unknown
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (url: string) => unknown
     expect(typeof WS).toBe("function")
     expect((WS as unknown as {CONNECTING: number}).CONNECTING).toBe(0)
     expect((WS as unknown as {OPEN: number}).OPEN).toBe(1)
@@ -372,9 +366,7 @@ describe("startup bundle — WebSocket", () => {
   test("constructor calls __dispatch('ws', 'open', ...) with a synthesized sid", () => {
     const stubs = freshStubs()
     const sandbox = evalBundle(stubs)
-    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
-      url: string,
-    ) => unknown
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (url: string) => unknown
     new WS("wss://example.com/socket")
     const openCall = stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")
     expect(openCall).toBeDefined()
@@ -386,9 +378,7 @@ describe("startup bundle — WebSocket", () => {
   test("send(text) calls __dispatch('ws', 'send', [{kind: 'text', ...}])", () => {
     const stubs = freshStubs()
     const sandbox = evalBundle(stubs)
-    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
-      url: string,
-    ) => Record<string, unknown>
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (url: string) => Record<string, unknown>
     const ws = new WS("wss://example.com/socket") as Record<string, unknown> & {
       send: (data: string) => void
     }
@@ -403,9 +393,7 @@ describe("startup bundle — WebSocket", () => {
   test("send(ArrayBuffer) base64-encodes the binary payload", () => {
     const stubs = freshStubs()
     const sandbox = evalBundle(stubs)
-    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
-      url: string,
-    ) => Record<string, unknown>
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (url: string) => Record<string, unknown>
     const ws = new WS("wss://example.com/socket") as {send: (data: ArrayBuffer) => void}
     const bytes = new Uint8Array([0xff, 0x00, 0x42])
     ws.send(bytes.buffer)
@@ -428,9 +416,7 @@ describe("startup bundle — WebSocket", () => {
     ws.onopen = (ev) => opens.push(ev)
     const openCall = stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")
     const sid = JSON.parse(openCall!.argsJson)[0].sid as string
-    ;(sandbox.__deliver as (j: string) => void)(
-      JSON.stringify({kind: "ws-event", sid, wsType: "open", payload: {}}),
-    )
+    ;(sandbox.__deliver as (j: string) => void)(JSON.stringify({kind: "ws-event", sid, wsType: "open", payload: {}}))
     expect(opens).toHaveLength(1)
     expect((opens[0] as {type: string}).type).toBe("open")
     expect((ws as {readyState: number}).readyState).toBe(1)
@@ -445,9 +431,7 @@ describe("startup bundle — WebSocket", () => {
     const ws = new WS("wss://example.com/socket")
     const got: unknown[] = []
     ws.onmessage = (ev) => got.push(ev)
-    const sid = JSON.parse(
-      stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")!.argsJson,
-    )[0].sid
+    const sid = JSON.parse(stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")!.argsJson)[0].sid
     ;(sandbox.__deliver as (j: string) => void)(
       JSON.stringify({kind: "ws-event", sid, wsType: "message", payload: {kind: "text", data: "hi"}}),
     )
@@ -463,9 +447,7 @@ describe("startup bundle — WebSocket", () => {
     const ws = new WS("wss://example.com/socket")
     const got: unknown[] = []
     ws.onmessage = (ev) => got.push(ev)
-    const sid = JSON.parse(
-      stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")!.argsJson,
-    )[0].sid
+    const sid = JSON.parse(stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")!.argsJson)[0].sid
     ;(sandbox.__deliver as (j: string) => void)(
       JSON.stringify({kind: "ws-event", sid, wsType: "message", payload: {kind: "binary", data: "/wBC"}}),
     )
@@ -477,18 +459,17 @@ describe("startup bundle — WebSocket", () => {
   test("ws-event 'close' transitions to CLOSED + fires onclose", () => {
     const stubs = freshStubs()
     const sandbox = evalBundle(stubs)
-    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
-      url: string,
-    ) => Record<string, unknown> & {
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (url: string) => Record<
+      string,
+      unknown
+    > & {
       onclose: ((ev: unknown) => void) | null
       readyState: number
     }
     const ws = new WS("wss://example.com/socket")
     const closes: unknown[] = []
     ws.onclose = (ev) => closes.push(ev)
-    const sid = JSON.parse(
-      stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")!.argsJson,
-    )[0].sid
+    const sid = JSON.parse(stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")!.argsJson)[0].sid
     ;(sandbox.__deliver as (j: string) => void)(
       JSON.stringify({kind: "ws-event", sid, wsType: "close", payload: {code: 1000, reason: "bye"}}),
     )
@@ -524,9 +505,10 @@ describe("startup bundle — WebSocket", () => {
   test("addEventListener('message', ...) receives events alongside the onmessage prop", () => {
     const stubs = freshStubs()
     const sandbox = evalBundle(stubs)
-    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
-      url: string,
-    ) => Record<string, unknown> & {
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (url: string) => Record<
+      string,
+      unknown
+    > & {
       addEventListener: (t: string, cb: (ev: unknown) => void) => void
       onmessage: ((ev: unknown) => void) | null
     }
@@ -535,9 +517,7 @@ describe("startup bundle — WebSocket", () => {
     const lstGot: unknown[] = []
     ws.onmessage = (ev) => propGot.push(ev)
     ws.addEventListener("message", (ev) => lstGot.push(ev))
-    const sid = JSON.parse(
-      stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")!.argsJson,
-    )[0].sid
+    const sid = JSON.parse(stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")!.argsJson)[0].sid
     ;(sandbox.__deliver as (j: string) => void)(
       JSON.stringify({kind: "ws-event", sid, wsType: "message", payload: {kind: "text", data: "yo"}}),
     )

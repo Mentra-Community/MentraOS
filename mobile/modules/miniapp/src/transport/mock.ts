@@ -185,11 +185,11 @@ function syntheticDataFor(requestId: string, requestType: string, requestPayload
         requestPayload.preset === "narrow"
           ? 82
           : requestPayload.preset === "wide"
-          ? 118
-          : requestPayload.preset === "standard"
-          ? 102
-          : undefined
-      const fov = typeof requestPayload.fov === "number" ? requestPayload.fov : presetFov ?? 102
+            ? 118
+            : requestPayload.preset === "standard"
+              ? 102
+              : undefined
+      const fov = typeof requestPayload.fov === "number" ? requestPayload.fov : (presetFov ?? 102)
       const roi = requestPayload.roiPosition
       const roiPosition = roi === "bottom" ? "bottom" : roi === "top" ? "top" : "center"
       return {

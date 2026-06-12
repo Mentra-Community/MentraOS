@@ -12,4 +12,4 @@ export {
   type ColumnConfig,
   type ComposeOptions,
   type ComposeResult,
-} from "./ColumnComposer";
+} from "./ColumnComposer"

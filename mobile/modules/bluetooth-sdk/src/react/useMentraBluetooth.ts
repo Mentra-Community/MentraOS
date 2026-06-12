@@ -22,11 +22,7 @@ import type {
   WifiStatus,
 } from "../BluetoothSdk.types"
 
-import {
-  useGlassesConnection,
-  type DefaultDeviceStorage,
-  type GlassesConnectionHookResult,
-} from "./useGlassesConnection"
+import {useGlassesConnection, type DefaultDeviceStorage, type GlassesConnectionHookResult} from "./useGlassesConnection"
 
 export type BatteryState = {
   charging: boolean
@@ -47,15 +43,7 @@ export type ConnectedGlassesInfo = {
 export type FirmwareInfo = {
   appVersion?: string
   buildNumber?: string
-  source:
-    | "app"
-    | "bes"
-    | "device"
-    | "firmware"
-    | "left"
-    | "mtk"
-    | "right"
-    | "unknown"
+  source: "app" | "bes" | "device" | "firmware" | "left" | "mtk" | "right" | "unknown"
   version: string | null
 }
 

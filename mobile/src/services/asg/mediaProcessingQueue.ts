@@ -230,9 +230,8 @@ class MediaProcessingQueue {
         mediaKind: item.type,
       })
     } catch (validationError: any) {
-      const reason =
-        validationError?.message?.includes(INVALID_DOWNLOADED_MEDIA) ?
-          validationError.message
+      const reason = validationError?.message?.includes(INVALID_DOWNLOADED_MEDIA)
+        ? validationError.message
         : `${INVALID_DOWNLOADED_MEDIA}: ${item.id}`
       console.error(`${TAG} Validation failed for ${item.id}: ${reason}`)
       const store = useGallerySyncStore.getState()

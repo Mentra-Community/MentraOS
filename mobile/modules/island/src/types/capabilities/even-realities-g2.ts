@@ -5,7 +5,7 @@
  * G2 uses the EvenHub protocol with protobuf-based commands.
  */
 
-import type { Capabilities } from "../hardware";
+import type {Capabilities} from "../hardware"
 
 /**
  * Even Realities G2 capability profile
@@ -24,8 +24,8 @@ export const evenRealitiesG2: Capabilities = {
     isColor: false,
     color: "green",
     canDisplayBitmap: true,
-    resolution: { width: 640, height: 200 },
-    fieldOfView: { horizontal: 25 },
+    resolution: {width: 640, height: 200},
+    fieldOfView: {horizontal: 25},
     maxTextLines: 5,
     adjustBrightness: true,
   },
@@ -49,11 +49,13 @@ export const evenRealitiesG2: Capabilities = {
   hasButton: true,
   button: {
     count: 1,
-    buttons: [{
-      type: "swipe1d",
-      events: ["TAP", "DOUBLE_TAP", "TRIPLE_TAP", "PRESS_HOLD", "SWIPE_UP", "SWIPE_DOWN"],
-      isCapacitive: true,
-    }],
+    buttons: [
+      {
+        type: "swipe1d",
+        events: ["TAP", "DOUBLE_TAP", "TRIPLE_TAP", "PRESS_HOLD", "SWIPE_UP", "SWIPE_DOWN"],
+        isCapacitive: true,
+      },
+    ],
   },
 
   // Light capabilities - G2 does not have lights
@@ -67,4 +69,4 @@ export const evenRealitiesG2: Capabilities = {
 
   // WiFi capabilities - G2 does not support WiFi
   hasWifi: false,
-};
+}

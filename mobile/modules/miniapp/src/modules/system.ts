@@ -4,8 +4,8 @@
  * These bridge to native phone capabilities via LocalMiniappRuntime.
  */
 
-import { MiniappRequestType } from "../protocol"
-import { MiniappSession } from "../session"
+import {MiniappRequestType} from "../protocol"
+import {MiniappSession} from "../session"
 
 export interface ShareOptions {
   text?: string
@@ -46,7 +46,7 @@ export class SystemModule {
       type: MiniappRequestType.SHARE,
       ...options,
     })
-    return result ?? { success: false }
+    return result ?? {success: false}
   }
 
   /** Open a URL in the system browser. Blocks dangerous schemes (javascript:, file:). */
@@ -71,6 +71,6 @@ export class SystemModule {
       type: MiniappRequestType.DOWNLOAD,
       ...options,
     })
-    return result ?? { success: false }
+    return result ?? {success: false}
   }
 }

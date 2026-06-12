@@ -94,7 +94,12 @@ export function roadNameFromInstruction(instruction?: string | null): string | n
 const ROAD_SUFFIXES =
   /\b(st|street|ave|avenue|blvd|boulevard|rd|road|dr|drive|ln|lane|way|ct|court|pl|place|ter|terrace|hwy|highway)\b\.?/g
 function normalizeRoad(road: string): string {
-  return road.toLowerCase().replace(ROAD_SUFFIXES, "").replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim()
+  return road
+    .toLowerCase()
+    .replace(ROAD_SUFFIXES, "")
+    .replace(/[^a-z0-9 ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
 }
 export function sameRoad(a: string, b: string): boolean {
   return normalizeRoad(a) === normalizeRoad(b)
@@ -278,13 +283,7 @@ export function extractPivotsFromComputedSteps(
       const prev = collapsed[collapsed.length - 1]
       const here = annotated[i]
       const next = annotated[i + 1]
-      if (
-        prev?.name &&
-        next?.name &&
-        here.name &&
-        !sameRoad(prev.name, here.name) &&
-        sameRoad(prev.name, next.name)
-      ) {
+      if (prev?.name && next?.name && here.name && !sameRoad(prev.name, here.name) && sameRoad(prev.name, next.name)) {
         // `here` is a sandwiched micro-jog — drop it. `next` will be
         // collapsed against `prev` on the same-road check below.
         continue
@@ -326,8 +325,7 @@ export function extractPivotsFromComputedSteps(
     // right before the actual right turn off Hayes onto Gough).
     // Geometry doesn't lie. Falls back to the maneuver string when
     // the polyline is too short to measure a bend.
-    const geomDir: "left" | "right" | null =
-      signedBend == null ? null : signedBend > 0 ? "right" : "left"
+    const geomDir: "left" | "right" | null = signedBend == null ? null : signedBend > 0 ? "right" : "left"
     const direction = geomDir ?? turnDirection(next.maneuver)
 
     out.push({

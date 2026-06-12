@@ -62,10 +62,9 @@ export interface RpcCallable<TChannels extends object, C extends keyof TChannels
  *   const suggestions = await autocomplete({query: "..."})
  *   autocomplete.abort()   // cancel the latest in-flight call
  */
-export function useRpc<
-  TChannels extends object,
-  C extends keyof TChannels & string,
->(channel: C): RpcCallable<TChannels, C> {
+export function useRpc<TChannels extends object, C extends keyof TChannels & string>(
+  channel: C,
+): RpcCallable<TChannels, C> {
   // Latest in-flight controller. Replaced on each call.
   const currentRef = useRef<AbortController | null>(null)
   // Mount controller — aborts every in-flight call on unmount.
@@ -90,9 +89,7 @@ export function useRpc<
       const signals: AbortSignal[] = [ctrl.signal, mountRef.current!.signal]
       if (options?.signal) signals.push(options.signal)
       const signal = mergeSignals(signals)
-      return getMentraRequest()(channel, payload, {signal, timeout: options?.timeout}) as Promise<
-        RpcRes<TChannels[C]>
-      >
+      return getMentraRequest()(channel, payload, {signal, timeout: options?.timeout}) as Promise<RpcRes<TChannels[C]>>
     },
     [channel],
   ) as RpcCallable<TChannels, C>

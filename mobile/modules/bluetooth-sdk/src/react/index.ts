@@ -1,7 +1,4 @@
-export {
-  useBluetoothEvent,
-  type UseBluetoothEventOptions,
-} from "./useBluetoothEvent"
+export {useBluetoothEvent, type UseBluetoothEventOptions} from "./useBluetoothEvent"
 export {
   useBluetoothScan,
   type BluetoothScanDedupe,

@@ -63,6 +63,7 @@ export default function SelectGlassesModelScreen() {
           {deviceModel: DeviceTypes.MACH1, key: "mentra_mach1"},
           {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
           {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
+          {deviceModel: DeviceTypes.NIMO, key: "nimo"},
           //{deviceModel: "Brilliant Labs Frame", key: "frame"},
         ]
       : [
@@ -74,6 +75,7 @@ export default function SelectGlassesModelScreen() {
           {deviceModel: DeviceTypes.MACH1, key: "mentra_mach1"},
           {deviceModel: DeviceTypes.Z100, key: "vuzix-z100"},
           {deviceModel: DeviceTypes.NEX, key: "mentra_nex"},
+          {deviceModel: DeviceTypes.NIMO, key: "nimo"},
           // {deviceModel: "Brilliant Labs Frame", key: "frame"},
         ]
 

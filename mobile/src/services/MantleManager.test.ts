@@ -303,7 +303,6 @@ describe("MantleManager", () => {
         core_token: "new-token",
       }),
     )
-
     ;(coreModuleMock.updateBluetoothSettings as jest.Mock).mockClear()
     await useSettingsStore.getState().setSetting(SETTINGS.voice_activity_detection_enabled.key, false, false)
     expect(coreModuleMock.updateBluetoothSettings).toHaveBeenCalledWith(

@@ -25,12 +25,12 @@
 // ----- @mentra/miniapp/background ---------------------------------------
 import type {MiniappSession} from "./background/index"
 
+// ----- @mentra/miniapp/ui -----------------------------------------------
+import type {MentraUiGlobal, MentraTyped} from "./ui/index"
+
 // ✅ MiniappSession is reachable from the background entry.
 const _bg: MiniappSession | undefined = undefined
 void _bg
-
-// ----- @mentra/miniapp/ui -----------------------------------------------
-import type {MentraUiGlobal, MentraTyped} from "./ui/index"
 
 // ✅ MentraUiGlobal is reachable from the ui entry.
 const _ui: MentraUiGlobal | undefined = undefined

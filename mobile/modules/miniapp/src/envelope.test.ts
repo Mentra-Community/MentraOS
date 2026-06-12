@@ -1,12 +1,7 @@
 /// <reference types="bun-types" />
 import {describe, expect, test} from "bun:test"
 
-import {
-  makeRequestId,
-  MiniappEnvelope,
-  parseEnvelope,
-  serializeEnvelope,
-} from "./envelope"
+import {makeRequestId, MiniappEnvelope, parseEnvelope, serializeEnvelope} from "./envelope"
 
 describe("envelope roundtrip", () => {
   test("serialize + parse returns the same shape", () => {
@@ -51,9 +46,7 @@ describe("envelope parsing error tolerance", () => {
   })
 
   test("returns null when requestId is present but not a string", () => {
-    expect(
-      parseEnvelope(JSON.stringify({payload: {}, requestId: 123})),
-    ).toBeNull()
+    expect(parseEnvelope(JSON.stringify({payload: {}, requestId: 123}))).toBeNull()
   })
 
   test("accepts optional requestId", () => {

@@ -562,16 +562,20 @@ class LocalMiniappRuntime {
     // Release phone-owned camera streams. If a miniapp closes/crashes without
     // sending STREAM_STOP, the host coordinator must drop its subscriber/owner
     // so glasses publishing and managed Cloudflare inputs do not leak.
-    void getRuntimeHooks().streaming?.stop(packageName).catch((error) => {
-      console.warn(`${LOG_TAG}: failed to stop stream for ${packageName} on unregister`, error)
-    })
+    void getRuntimeHooks()
+      .streaming?.stop(packageName)
+      .catch((error) => {
+        console.warn(`${LOG_TAG}: failed to stop stream for ${packageName} on unregister`, error)
+      })
 
     // Stop any phone-owned video recordings for this app. A miniapp that
     // closes/crashes mid-recording loses its recordingId, so without this the
     // glasses keep recording until the max-recording timeout or thermal shutdown.
-    void getRuntimeHooks().videoRecording?.stopForApp?.(packageName).catch((error) => {
-      console.warn(`${LOG_TAG}: failed to stop video recording for ${packageName} on unregister`, error)
-    })
+    void getRuntimeHooks()
+      .videoRecording?.stopForApp?.(packageName)
+      .catch((error) => {
+        console.warn(`${LOG_TAG}: failed to stop video recording for ${packageName} on unregister`, error)
+      })
 
     // Detach the per-app nav event forwarder but leave the native nav session
     // running. The user may have just closed the mini-app UI and will reopen
@@ -1165,15 +1169,11 @@ class LocalMiniappRuntime {
       // for a specific voice and we shouldn't lie about which one it got.
       const voiceExplicit = payload.voice_id !== undefined || payload.voice !== undefined
       const offlineSupportsVoice =
-        !voiceExplicit ||
-        voice === "default" ||
-        ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
+        !voiceExplicit || voice === "default" || ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
       let offlineGenerated: TtsSynthesisResult | undefined
       if (offlineSupportsVoice && (await ttsModelManager.isModelAvailable())) {
         try {
-          const languageCode = ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
-            ? voice
-            : undefined
+          const languageCode = ttsModelManager.getAvailableLanguages().some((l) => l.code === voice) ? voice : undefined
           offlineGenerated = await ttsModelManager.synthesizeToFile(text, {languageCode, speed})
         } catch (offlineErr) {
           console.warn(`${LOG_TAG}: offline TTS synthesize failed, falling back to cloud:`, offlineErr)
@@ -1412,7 +1412,6 @@ class LocalMiniappRuntime {
     console.log(`[LOCATION] aggregate tier → ${next}`)
     getRuntimeHooks().locationTier?.setLocationTier(next)
   }
-
 
   // ---------------------------------------------------------------------------
   // Storage helpers
@@ -2002,9 +2001,7 @@ class LocalMiniappRuntime {
     }
     try {
       const result = await streaming.startManaged(packageName, {
-        restreamDestinations: payload.restreamDestinations as
-          | Array<string | {url: string; name?: string}>
-          | undefined,
+        restreamDestinations: payload.restreamDestinations as Array<string | {url: string; name?: string}> | undefined,
         video: payload.video,
         audio: payload.audio,
         sound: payload.sound as boolean | undefined,
@@ -2235,10 +2232,7 @@ class LocalMiniappRuntime {
       // Suppress the raw background-GPS forward for that miniapp so the two
       // streams don't interleave and cause the position to jump back to the
       // real-phone location during simulation.
-      if (
-        normalizedStream === MiniappStreamType.LOCATION_UPDATE &&
-        this.navigationHandlers.isTripActive(packageName)
-      ) {
+      if (normalizedStream === MiniappStreamType.LOCATION_UPDATE && this.navigationHandlers.isTripActive(packageName)) {
         continue
       }
       this.sendToMiniapp(packageName, {

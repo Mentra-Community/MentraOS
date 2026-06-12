@@ -150,14 +150,32 @@ export default function SpeechSettingsScreen() {
   // Merge auto-download status with the manually-driven per-screen state.
   // Manual tap state wins when set (user is in control); otherwise surface the
   // background service's progress on the matching row.
-  const sttAuto = autoStatus?.kind === "stt" && (autoStatus.stage === "downloading" || autoStatus.stage === "extracting")
-  const ttsAuto = autoStatus?.kind === "tts" && (autoStatus.stage === "downloading" || autoStatus.stage === "extracting")
+  const sttAuto =
+    autoStatus?.kind === "stt" && (autoStatus.stage === "downloading" || autoStatus.stage === "extracting")
+  const ttsAuto =
+    autoStatus?.kind === "tts" && (autoStatus.stage === "downloading" || autoStatus.stage === "extracting")
   const sttRowDownloading = sttDownloading ?? (sttAuto ? autoStatus!.languageCode : undefined)
-  const sttRowDownloadPercent = sttDownloading ? sttDownloadPercent : sttAuto && autoStatus!.stage === "downloading" ? autoStatus!.percent : 0
-  const sttRowExtractPercent = sttDownloading ? sttExtractPercent : sttAuto && autoStatus!.stage === "extracting" ? autoStatus!.percent : 0
+  const sttRowDownloadPercent = sttDownloading
+    ? sttDownloadPercent
+    : sttAuto && autoStatus!.stage === "downloading"
+      ? autoStatus!.percent
+      : 0
+  const sttRowExtractPercent = sttDownloading
+    ? sttExtractPercent
+    : sttAuto && autoStatus!.stage === "extracting"
+      ? autoStatus!.percent
+      : 0
   const ttsRowDownloading = ttsDownloading ?? (ttsAuto ? autoStatus!.languageCode : undefined)
-  const ttsRowDownloadPercent = ttsDownloading ? ttsDownloadPercent : ttsAuto && autoStatus!.stage === "downloading" ? autoStatus!.percent : 0
-  const ttsRowExtractPercent = ttsDownloading ? ttsExtractPercent : ttsAuto && autoStatus!.stage === "extracting" ? autoStatus!.percent : 0
+  const ttsRowDownloadPercent = ttsDownloading
+    ? ttsDownloadPercent
+    : ttsAuto && autoStatus!.stage === "downloading"
+      ? autoStatus!.percent
+      : 0
+  const ttsRowExtractPercent = ttsDownloading
+    ? ttsExtractPercent
+    : ttsAuto && autoStatus!.stage === "extracting"
+      ? autoStatus!.percent
+      : 0
 
   const handleCancelDownload = async () => {
     try {

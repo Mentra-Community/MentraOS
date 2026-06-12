@@ -27,9 +27,8 @@ export function installDevReloadListenerIfDevMode(): void {
 
   // Avoid double-install if the SDK is hot-reloaded mid-session.
   const flagKey = "__mentraDevReloadInstalled"
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   if ((window as any)[flagKey]) return
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(window as any)[flagKey] = true
 
   const handler = (ev: MessageEvent): void => {
@@ -44,7 +43,7 @@ export function installDevReloadListenerIfDevMode(): void {
     const env = parsed as {payload?: {type?: string}}
     const type = env?.payload?.type
     if (type !== RELOAD_MESSAGE_TYPE) return
-    // eslint-disable-next-line no-console
+
     console.log("[mentra-miniapp] dev reload signal received — reloading")
     try {
       location.reload()

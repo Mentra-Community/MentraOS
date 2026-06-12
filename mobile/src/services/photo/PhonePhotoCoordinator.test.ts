@@ -21,11 +21,10 @@ const pollUntilReady = mock(
   ): Promise<
     | {kind: "ready"; result: {photoUrl: string; mimeType: string; size: number}}
     | {kind: "error"; code: string; message: string}
-  > =>
-    ({
-      kind: "ready" as const,
-      result: {photoUrl: "https://r2.test/signed", mimeType: "image/jpeg", size: 4321},
-    }),
+  > => ({
+    kind: "ready" as const,
+    result: {photoUrl: "https://r2.test/signed", mimeType: "image/jpeg", size: 4321},
+  }),
 )
 const freePhoto = mock(async (_requestId: string) => undefined)
 
@@ -128,9 +127,7 @@ describe("PhonePhotoCoordinator", () => {
       expect(arg.requestId).toBe("rq-test-1")
       expect(arg.appId).toBe("com.a")
       expect(arg.size).toBe("medium")
-      expect(arg.webhookUrl).toBe(
-        "https://cloud.test/api/v2/client/photo/upload/rq-test-1",
-      )
+      expect(arg.webhookUrl).toBe("https://cloud.test/api/v2/client/photo/upload/rq-test-1")
       expect(arg.authToken).toBe("fake.upload.token")
       expect(arg.save).toBe(false)
     })
@@ -204,7 +201,10 @@ describe("PhonePhotoCoordinator", () => {
 
     test("BluetoothSdk.requestPhoto rejection surfaces as PhotoError(BLE_SEND_FAILED), releases the slot, and tries to free cloud-side", async () => {
       pollUntilReady.mockImplementationOnce(
-        () => new Promise(() => {/* native rejection wins */}),
+        () =>
+          new Promise(() => {
+            /* native rejection wins */
+          }),
       )
       requestPhotoNative.mockRejectedValueOnce(new Error("BLE down"))
       const coord = new PhonePhotoCoordinator()
@@ -237,7 +237,10 @@ describe("PhonePhotoCoordinator", () => {
       // Make the poll hang so we can race it against handlePhotoError.
       let resolvePoll: (v: never) => void = () => {}
       pollUntilReady.mockImplementationOnce(
-        () => new Promise<never>((_resolve, _reject) => { /* never resolves */ }),
+        () =>
+          new Promise<never>((_resolve, _reject) => {
+            /* never resolves */
+          }),
       )
       const coord = new PhonePhotoCoordinator()
       const p = coord.takePhoto("com.a", {})
@@ -268,7 +271,10 @@ describe("PhonePhotoCoordinator", () => {
       // the typed error to the caller.
       const coord = new PhonePhotoCoordinator()
       pollUntilReady.mockImplementationOnce(
-        () => new Promise(() => {/* never settles */}),
+        () =>
+          new Promise(() => {
+            /* never settles */
+          }),
       )
       requestPhotoNative.mockImplementationOnce(async () => {
         // The BLE send resolves; on the next microtask, glasses report an error.
@@ -308,10 +314,7 @@ describe("PhonePhotoCoordinator", () => {
         })
 
       const coord = new PhonePhotoCoordinator()
-      const [a, b] = await Promise.all([
-        coord.takePhoto("com.a", {}),
-        coord.takePhoto("com.b", {}),
-      ])
+      const [a, b] = await Promise.all([coord.takePhoto("com.a", {}), coord.takePhoto("com.b", {})])
       expect(a.requestId).toBe("rq-A")
       expect(b.requestId).toBe("rq-B")
       expect(a.photoUrl).toBe("https://r2/A")

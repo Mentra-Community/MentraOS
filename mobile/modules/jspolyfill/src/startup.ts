@@ -34,7 +34,6 @@ declare const __hostError: (payloadJson: string) => void
 declare const __hostUnhandledRejection: (payloadJson: string) => void
 declare const __nativeSetTimeout: (token: number, delayMs: number) => void
 declare const __nativeClearTimer: (token: number) => void
-
 ;(function installMentraJSRuntime(): void {
   const g = globalThis as Record<string, unknown> & {
     console?: Console
@@ -192,7 +191,7 @@ declare const __nativeClearTimer: (token: number) => void
       }
     }
 
-    const installSetTimeout = (g.setTimeout == null) || (g as Record<string, unknown>).__mentraOwnsSetTimeout
+    const installSetTimeout = g.setTimeout == null || (g as Record<string, unknown>).__mentraOwnsSetTimeout
     if (installSetTimeout) {
       g.setTimeout = ((fn: (...args: unknown[]) => void, delayMs?: number, ...rest: unknown[]) => {
         const token = nextToken++
@@ -298,7 +297,11 @@ declare const __nativeClearTimer: (token: number) => void
       addEventListener(type: string, cb: Listener): void {
         if (type !== "abort" || typeof cb !== "function") return
         if (this.aborted) {
-          try { cb() } catch { /* swallow */ }
+          try {
+            cb()
+          } catch {
+            /* swallow */
+          }
           return
         }
         this.listeners.add(cb)
@@ -313,7 +316,11 @@ declare const __nativeClearTimer: (token: number) => void
         this.aborted = true
         this.reason = reason
         for (const cb of this.listeners) {
-          try { cb() } catch { /* swallow */ }
+          try {
+            cb()
+          } catch {
+            /* swallow */
+          }
         }
         this.listeners.clear()
       }
@@ -326,21 +333,22 @@ declare const __nativeClearTimer: (token: number) => void
     }
     // `AbortSignal.any([signals])` — composes a single signal that aborts
     // when any input does. Used by useRpc's mergeSignals fallback.
-    ;(MentraAbortSignal as unknown as {any: (signals: MentraAbortSignal[]) => MentraAbortSignal}).any =
-      (signals: MentraAbortSignal[]): MentraAbortSignal => {
-        const out = new MentraAbortSignal()
-        const onAbort = (s: MentraAbortSignal): void => {
-          if (!out.aborted) out.__fire(s.reason)
-        }
-        for (const s of signals) {
-          if (s.aborted) {
-            onAbort(s)
-            break
-          }
-          s.addEventListener("abort", () => onAbort(s))
-        }
-        return out
+    ;(MentraAbortSignal as unknown as {any: (signals: MentraAbortSignal[]) => MentraAbortSignal}).any = (
+      signals: MentraAbortSignal[],
+    ): MentraAbortSignal => {
+      const out = new MentraAbortSignal()
+      const onAbort = (s: MentraAbortSignal): void => {
+        if (!out.aborted) out.__fire(s.reason)
       }
+      for (const s of signals) {
+        if (s.aborted) {
+          onAbort(s)
+          break
+        }
+        s.addEventListener("abort", () => onAbort(s))
+      }
+      return out
+    }
     ;(g as Record<string, unknown>).AbortController = MentraAbortController
     ;(g as Record<string, unknown>).AbortSignal = MentraAbortSignal
   }
@@ -461,7 +469,6 @@ declare const __nativeClearTimer: (token: number) => void
       }
     }
   }
-
   ;(g as Record<string, unknown>).__mentraSendRequest = (
     iface: string,
     method: string,
@@ -667,10 +674,7 @@ declare const __nativeClearTimer: (token: number) => void
             code = ((b1 & 0x0f) << 12) | ((bytes[i++]! & 0x3f) << 6) | (bytes[i++]! & 0x3f)
           } else {
             code =
-              ((b1 & 0x07) << 18) |
-              ((bytes[i++]! & 0x3f) << 12) |
-              ((bytes[i++]! & 0x3f) << 6) |
-              (bytes[i++]! & 0x3f)
+              ((b1 & 0x07) << 18) | ((bytes[i++]! & 0x3f) << 12) | ((bytes[i++]! & 0x3f) << 6) | (bytes[i++]! & 0x3f)
           }
           if (code > 0xffff) {
             code -= 0x10000
@@ -760,9 +764,7 @@ declare const __nativeClearTimer: (token: number) => void
         method: string,
         args: unknown[],
       ) => Promise<unknown>
-      const result = (await sendRequest("fetch", "request", [
-        {url, method, headers, body: bodyString},
-      ])) as {
+      const result = (await sendRequest("fetch", "request", [{url, method, headers, body: bodyString}])) as {
         status: number
         statusText?: string
         headers?: Record<string, string>
@@ -795,9 +797,7 @@ declare const __nativeClearTimer: (token: number) => void
             // is thrown that names the response in its message so the
             // miniapp author can tell which call failed.
             const err = new Error(
-              `Failed to parse JSON response from ${url}: ${
-                e instanceof Error ? e.message : String(e)
-              }`,
+              `Failed to parse JSON response from ${url}: ${e instanceof Error ? e.message : String(e)}`,
             )
             ;(err as Error & {name: string}).name = "SyntaxError"
             throw err
@@ -877,11 +877,7 @@ declare const __nativeClearTimer: (token: number) => void
         this.sid = `ws-${Date.now()}-${Math.floor(Math.random() * 1e9)}`
         sockets.set(this.sid, this)
         try {
-          __dispatch(
-            "ws",
-            "open",
-            JSON.stringify([{sid: this.sid, url: this.url, protocols: protoList}]),
-          )
+          __dispatch("ws", "open", JSON.stringify([{sid: this.sid, url: this.url, protocols: protoList}]))
         } catch (e) {
           // Native bridge unavailable — synthesize an immediate failure.
           this.readyState = 3
@@ -931,11 +927,7 @@ declare const __nativeClearTimer: (token: number) => void
         if (this.readyState === 2 || this.readyState === 3) return
         this.readyState = 2
         try {
-          __dispatch(
-            "ws",
-            "close",
-            JSON.stringify([{sid: this.sid, code: code ?? 1000, reason: reason ?? ""}]),
-          )
+          __dispatch("ws", "close", JSON.stringify([{sid: this.sid, code: code ?? 1000, reason: reason ?? ""}]))
         } catch (e) {
           // Treat native failure as immediate close.
           this.readyState = 3

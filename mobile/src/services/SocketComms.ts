@@ -482,6 +482,10 @@ class SocketComms {
       return
     }
 
+    const layoutType = msg.layout?.layoutType ?? "?"
+    const preview = String(msg.layout?.text ?? msg.layout?.topText ?? "").slice(0, 60)
+    console.log(`SOCKET: display_event received: view=${msg.view} layout=${layoutType} text="${preview}"`)
+
     let processedEvent
     try {
       processedEvent = displayProcessor.processDisplayEvent(msg)
@@ -603,9 +607,7 @@ class SocketComms {
     // saved button-video settings. Only forward fields that are present.
     const s = msg.settings ?? {}
     const settings =
-      s.width != null || s.height != null || s.fps != null
-        ? {width: s.width, height: s.height, fps: s.fps}
-        : undefined
+      s.width != null || s.height != null || s.fps != null ? {width: s.width, height: s.height, fps: s.fps} : undefined
     BluetoothSdk.startVideoRecording(videoRequestId, save, sound, settings).catch((error) => {
       console.warn("SOCKET: startVideoRecording failed:", error)
     })

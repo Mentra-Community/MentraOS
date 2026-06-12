@@ -188,9 +188,7 @@ describe("UIModuleImpl", () => {
 
   test("UI_MESSAGE to unsubscribed channel is silently dropped", () => {
     mock.deliver({type: "UI_OPEN"})
-    expect(() =>
-      mock.deliver({type: "UI_MESSAGE", channel: "unknown", payload: {}, seq: 1}),
-    ).not.toThrow()
+    expect(() => mock.deliver({type: "UI_MESSAGE", channel: "unknown", payload: {}, seq: 1})).not.toThrow()
   })
 
   test("unsubscribe removes the handler", () => {
@@ -231,9 +229,9 @@ describe("UIModuleImpl", () => {
     mock.deliver({type: "UI_MESSAGE", channel: "rpc:add", payload: {a: 2, b: 3}, seq: 1, requestId: "r1"})
     // Reply is dispatched async (handler may be Promise). Yield once.
     await new Promise((r) => setTimeout(r, 0))
-    const reply = mock.oneShotCalls.find(
-      (c) => (c as {requestId?: string}).requestId === "r1",
-    ) as {type: string; channel: string; payload: unknown; requestId: string} | undefined
+    const reply = mock.oneShotCalls.find((c) => (c as {requestId?: string}).requestId === "r1") as
+      | {type: string; channel: string; payload: unknown; requestId: string}
+      | undefined
     expect(reply).toBeDefined()
     expect(reply!.type).toBe("UI_SEND")
     expect(reply!.channel).toBe("rpc:add")
@@ -254,9 +252,12 @@ describe("UIModuleImpl", () => {
 
   test("handle() — handler throwing sends an error reply", async () => {
     mock.deliver({type: "UI_OPEN"})
-    ui.handle("rpc:fail" as never, (() => {
-      throw new Error("nope")
-    }) as never)
+    ui.handle(
+      "rpc:fail" as never,
+      (() => {
+        throw new Error("nope")
+      }) as never,
+    )
     mock.deliver({type: "UI_MESSAGE", channel: "rpc:fail", payload: null, seq: 1, requestId: "r-fail"})
     await new Promise((r) => setTimeout(r, 0))
     const reply = mock.oneShotCalls.find((c) => (c as {requestId?: string}).requestId === "r-fail") as
@@ -268,9 +269,12 @@ describe("UIModuleImpl", () => {
 
   test("handle() — error.cause.code is forwarded to the wire payload", async () => {
     mock.deliver({type: "UI_OPEN"})
-    ui.handle("rpc:coded" as never, (() => {
-      throw Object.assign(new Error("bad input"), {cause: {code: "BAD_INPUT"}})
-    }) as never)
+    ui.handle(
+      "rpc:coded" as never,
+      (() => {
+        throw Object.assign(new Error("bad input"), {cause: {code: "BAD_INPUT"}})
+      }) as never,
+    )
     mock.deliver({type: "UI_MESSAGE", channel: "rpc:coded", payload: null, seq: 1, requestId: "r-coded"})
     await new Promise((r) => setTimeout(r, 0))
     const reply = mock.oneShotCalls.find((c) => (c as {requestId?: string}).requestId === "r-coded") as
@@ -281,9 +285,7 @@ describe("UIModuleImpl", () => {
 
   test("handle() — registering twice on the same channel throws", () => {
     ui.handle("rpc:dup" as never, (() => 1) as never)
-    expect(() => ui.handle("rpc:dup" as never, (() => 2) as never)).toThrow(
-      /already registered/,
-    )
+    expect(() => ui.handle("rpc:dup" as never, (() => 2) as never)).toThrow(/already registered/)
   })
 
   test("handle() — unhandle() removes the handler and allows re-register", () => {
@@ -314,12 +316,15 @@ describe("UIModuleImpl", () => {
     let resolve!: (v: number) => void
     const pending = new Promise<number>((r) => (resolve = r))
     let observedAbort = false
-    ui.handle("rpc:wait" as never, ((async (_: unknown, ctx?: RpcHandlerContext) => {
-      ctx?.signal.addEventListener("abort", () => {
-        observedAbort = true
-      })
-      return await pending
-    }) as never) as never)
+    ui.handle(
+      "rpc:wait" as never,
+      (async (_: unknown, ctx?: RpcHandlerContext) => {
+        ctx?.signal.addEventListener("abort", () => {
+          observedAbort = true
+        })
+        return await pending
+      }) as never as never,
+    )
     mock.deliver({type: "UI_MESSAGE", channel: "rpc:wait", payload: null, seq: 1, requestId: "r-w"})
     mock.deliver({type: "UI_CANCEL", requestId: "r-w"})
     resolve(42) // handler completes after cancel

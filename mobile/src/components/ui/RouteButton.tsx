@@ -88,7 +88,10 @@ export function RouteButton({
       : theme.colors.secondary_foreground
 
   return (
-    <GlassView androidShadowSize="sm" className="bg-primary-foreground px-4 rounded-2xl" style={[disabled && {opacity: 0.5}, style]}>
+    <GlassView
+      androidShadowSize="sm"
+      className="bg-primary-foreground px-4 rounded-2xl"
+      style={[disabled && {opacity: 0.5}, style]}>
       <TouchableOpacity onPress={onPress} onLongPress={onLongPress} disabled={disabled || !onPress} hitSlop={4}>
         <View className="items-center py-2 flex-row">
           <View

@@ -10,17 +10,15 @@ import LoadingOverlay from "@/components/ui/LoadingOverlay"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import restComms from "@/services/RestComms"
-import {webviewBridge as miniComms} from "@mentra/island"
+import {webviewBridge as miniComms, useAppStatusStore, buildMiniappGlobalsScript} from "@mentra/island"
 import {WebSocketStatus} from "@/services/ws-types"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
-import {useAppStatusStore} from "@mentra/island"
 
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {useConnectionStore} from "@/stores/connection"
 import {captureScreenshot} from "@/effects/CapsuleMenu"
 import AppIcon from "@/components/home/AppIcon"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
-import {buildMiniappGlobalsScript} from "@mentra/island"
 import {useRegisterCapsule} from "@/stores/capsule"
 
 export default function AppWebView() {

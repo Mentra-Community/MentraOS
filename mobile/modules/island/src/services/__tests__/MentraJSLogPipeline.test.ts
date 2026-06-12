@@ -2,11 +2,7 @@
 
 import {beforeEach, describe, expect, test} from "bun:test"
 
-import {
-  MentraJSLogRingBuffer,
-  MentraJSLogThrottle,
-  redactSecrets,
-} from "../MentraJSLogPipeline"
+import {MentraJSLogRingBuffer, MentraJSLogThrottle, redactSecrets} from "../MentraJSLogPipeline"
 
 describe("redactSecrets", () => {
   test("redacts strings containing 'token'", () => {
@@ -53,11 +49,7 @@ describe("redactSecrets", () => {
   })
 
   test("arrays are walked element-by-element", () => {
-    expect(redactSecrets(["hello", "Bearer x", {token: "y"}])).toEqual([
-      "hello",
-      "[REDACTED]",
-      {token: "[REDACTED]"},
-    ])
+    expect(redactSecrets(["hello", "Bearer x", {token: "y"}])).toEqual(["hello", "[REDACTED]", {token: "[REDACTED]"}])
   })
 
   test("primitives other than strings pass through", () => {

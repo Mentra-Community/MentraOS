@@ -65,13 +65,7 @@ function BackChevron({onBack}: {onBack: () => void}): ReactNode {
         borderRadius: 8,
       }}>
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path
-          d="M15 18l-6-6 6-6"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+        <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     </button>
   )
@@ -112,9 +106,7 @@ export function MiniappHeader({
             title
           )}
         </div>
-        {right ? (
-          <div style={{display: "flex", alignItems: "center", gap: 8, flexShrink: 0}}>{right}</div>
-        ) : null}
+        {right ? <div style={{display: "flex", alignItems: "center", gap: 8, flexShrink: 0}}>{right}</div> : null}
       </header>
       {bottomSpacer ? <div style={{height: 8, flexShrink: 0}} /> : null}
     </>

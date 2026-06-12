@@ -2,8 +2,6 @@
 // dependency on `@types/node`. The `dev` gate reads `process.env.NODE_ENV`,
 // which is universally inlined by bundlers (esbuild / vite / metro) at
 // build time, so the runtime never actually evaluates the property access.
-declare const process: {env: {NODE_ENV?: string}}
-
 /**
  * @fileoverview NavigationModule — turn-by-turn navigation for miniapps.
  *
@@ -41,6 +39,8 @@ import {MiniappRequestType, MiniappStreamType} from "../protocol"
 import {MiniappSession} from "../session"
 import type {LocationData, UnsubscribeFn} from "./events"
 import {PivotEngine} from "./pivots/engine"
+
+declare const process: {env: {NODE_ENV?: string}}
 
 export type LatLng = {lat: number; lng: number}
 
@@ -1004,7 +1004,8 @@ export class NavigationModule {
   private async _issueComputeRouteForTrip(route?: NavRoute): Promise<ComputeRouteResult | null> {
     if (!this._tripStops || this._tripStops.length === 0) return null
     const origin: LatLng | null =
-      this._lastUserPosition ?? (route?.points && route.points[0] ? {lat: route.points[0].lat, lng: route.points[0].lng} : null)
+      this._lastUserPosition ??
+      (route?.points && route.points[0] ? {lat: route.points[0].lat, lng: route.points[0].lng} : null)
     if (!origin) return null
     return this.computeRoute({
       origin,

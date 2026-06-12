@@ -136,7 +136,10 @@ interface ManagedEntry {
 type Entry = UnmanagedEntry | ManagedEntry
 
 export class StreamConflictError extends Error {
-  constructor(public readonly code: string, message: string) {
+  constructor(
+    public readonly code: string,
+    message: string,
+  ) {
     super(message)
     this.name = "StreamConflictError"
   }
@@ -197,10 +200,7 @@ export class PhoneStreamCoordinator {
     return this.current !== null && this.current.streamId === streamId
   }
 
-  async startUnmanaged(
-    packageName: string,
-    opts: StartUnmanagedOptions,
-  ): Promise<StreamPublisherStartResult> {
+  async startUnmanaged(packageName: string, opts: StartUnmanagedOptions): Promise<StreamPublisherStartResult> {
     // Pre-check the obvious-bad input before queueing — the lock is for
     // serializing state transitions, not for validating arguments.
     if (!opts.streamUrl || typeof opts.streamUrl !== "string") {
@@ -246,10 +246,7 @@ export class PhoneStreamCoordinator {
     })
   }
 
-  async startManaged(
-    packageName: string,
-    opts: StartManagedOptions,
-  ): Promise<ManagedStartResult> {
+  async startManaged(packageName: string, opts: StartManagedOptions): Promise<ManagedStartResult> {
     // Two-phase: the entry-claim runs under the transition lock; the wait for
     // HLS readiness happens AFTER the lock releases so a long warm-up doesn't
     // block subsequent start/stop transitions on this coordinator.
@@ -278,9 +275,7 @@ export class PhoneStreamCoordinator {
           )
         }
         existing.subscribers.add(packageName)
-        const immediate: ManagedStartResult | null = existing.hlsReady
-          ? managedStartResult(existing)
-          : null
+        const immediate: ManagedStartResult | null = existing.hlsReady ? managedStartResult(existing) : null
         return {kind: "join", entry: existing, immediate}
       }
 
@@ -533,10 +528,7 @@ export class PhoneStreamCoordinator {
 
   private fanout(update: StreamStatusUpdate): void {
     if (!this.current || !this.statusSubscriber) return
-    const targets =
-      this.current.kind === "managed"
-        ? Array.from(this.current.subscribers)
-        : [this.current.packageName]
+    const targets = this.current.kind === "managed" ? Array.from(this.current.subscribers) : [this.current.packageName]
     for (const pkg of targets) {
       try {
         this.statusSubscriber(pkg, update)

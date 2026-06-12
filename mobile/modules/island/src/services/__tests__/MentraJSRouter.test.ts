@@ -140,9 +140,7 @@ describe("MentraJSRouter", () => {
       method: "send",
       args: ['{"type":"DISPLAY","text":"hi"}'],
     })
-    expect(runtimeMock.handleRawCalls).toEqual([
-      {packageName: "com.foo", raw: '{"type":"DISPLAY","text":"hi"}'},
-    ])
+    expect(runtimeMock.handleRawCalls).toEqual([{packageName: "com.foo", raw: '{"type":"DISPLAY","text":"hi"}'}])
   })
 
   test("__bridge.send (argsJson string form) routes raw envelope into handleRawMessage", () => {

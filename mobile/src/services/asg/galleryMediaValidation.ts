@@ -133,7 +133,9 @@ export async function validateDownloadedMediaFile(options: ValidateDownloadedMed
   }
 
   if (expectedSize > 0 && stat.size !== expectedSize) {
-    throw new Error(`${INVALID_DOWNLOADED_MEDIA}: size mismatch for ${name}: expected ${expectedSize}, got ${stat.size}`)
+    throw new Error(
+      `${INVALID_DOWNLOADED_MEDIA}: size mismatch for ${name}: expected ${expectedSize}, got ${stat.size}`,
+    )
   }
 
   const kind = detectMediaKind(name, mediaKind)

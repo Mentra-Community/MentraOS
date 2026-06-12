@@ -167,11 +167,7 @@ const startStopApp = async (app: ClientApp, status: boolean): Promise<void> => {
  * to emit twice (local-only, then merged) without duplicating the
  * dedupe/carry-over/compat/hidden/postProcess pipeline.
  */
-function projectApps(
-  previousState: AppStatusState,
-  localApps: ClientApp[],
-  extraApps: ClientApp[],
-): ClientApp[] {
+function projectApps(previousState: AppStatusState, localApps: ClientApp[], extraApps: ClientApp[]): ClientApp[] {
   // Dedupe by packageName, keep first occurrence (extra/cloud wins).
   const byPackage = new Map<string, ClientApp>()
   for (const app of [...extraApps, ...localApps]) {
@@ -291,9 +287,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 
     const shouldLoad = !app.offline && !app.local
     set((s) => ({
-      apps: s.apps.map((a) =>
-        a.packageName === packageName ? {...a, running: true, loading: shouldLoad} : a,
-      ),
+      apps: s.apps.map((a) => (a.packageName === packageName ? {...a, running: true, loading: shouldLoad} : a)),
     }))
 
     saveLastOpenTime(packageName)
@@ -505,4 +499,3 @@ export const useLocalMiniApps = () => {
   const apps = useApps()
   return useMemo(() => apps.filter((app) => app.local), [apps])
 }
-

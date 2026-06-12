@@ -1,5 +1,5 @@
-import type { DisplayProfile, ScriptType } from "../profiles/types"
-import { detectScript, isUniformWidthScript } from "./script-detection"
+import type {DisplayProfile, ScriptType} from "../profiles/types"
+import {detectScript, isUniformWidthScript} from "./script-detection"
 
 /**
  * Character measurement result with detailed breakdown.
@@ -53,7 +53,7 @@ export class TextMeasurer {
    * Pre-compute rendered widths for all known glyphs.
    */
   private buildCharCache(): void {
-    const { glyphWidths, renderFormula } = this.profile.fontMetrics
+    const {glyphWidths, renderFormula} = this.profile.fontMetrics
 
     for (const [char, glyphWidth] of glyphWidths.entries()) {
       const renderedWidth = renderFormula(glyphWidth)
@@ -156,8 +156,8 @@ export class TextMeasurer {
    * Calculate character width (called when not in cache).
    */
   private calculateCharWidth(char: string): number {
-    const { fontMetrics } = this.profile
-    const { uniformScripts, fallback, renderFormula, glyphWidths } = fontMetrics
+    const {fontMetrics} = this.profile
+    const {uniformScripts, fallback, renderFormula, glyphWidths} = fontMetrics
 
     // 1. Check explicit glyph map (pixel-perfect for Latin)
     const glyphWidth = glyphWidths.get(char)

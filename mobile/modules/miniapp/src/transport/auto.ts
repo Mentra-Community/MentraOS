@@ -106,7 +106,7 @@ class LocalSocketWithMockFallback implements Transport {
       const mock = new MockTransport()
       await mock.open()
       this.active = mock
-      // eslint-disable-next-line no-console
+
       console.log(
         timedOut
           ? "[mentra-miniapp] No phone WebSocket reachable; using MockTransport so the page can render."

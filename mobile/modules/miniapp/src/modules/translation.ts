@@ -39,10 +39,7 @@ export class TranslationModule {
    */
   on(handler: TranslationHandler): UnsubscribeFn {
     return this.track(
-      this.session._subscribe(
-        `${MiniappStreamType.TRANSLATION}:*:*`,
-        handler as (data: unknown) => void,
-      ),
+      this.session._subscribe(`${MiniappStreamType.TRANSLATION}:*:*`, handler as (data: unknown) => void),
     )
   }
 
@@ -57,10 +54,7 @@ export class TranslationModule {
     const unsubs: UnsubscribeFn[] = []
     for (const t of targets) {
       unsubs.push(
-        this.session._subscribe(
-          `${MiniappStreamType.TRANSLATION}:*:${t}`,
-          handler as (data: unknown) => void,
-        ),
+        this.session._subscribe(`${MiniappStreamType.TRANSLATION}:*:${t}`, handler as (data: unknown) => void),
       )
     }
     const composite = () => {
@@ -80,20 +74,13 @@ export class TranslationModule {
    * array for `target` to fan a single handler across multiple targets
    * from the same source.
    */
-  fromTo(
-    source: string,
-    target: string | string[],
-    handler: TranslationHandler,
-  ): UnsubscribeFn {
+  fromTo(source: string, target: string | string[], handler: TranslationHandler): UnsubscribeFn {
     const targets = Array.isArray(target) ? target : [target]
     if (targets.length === 0) return () => {}
     const unsubs: UnsubscribeFn[] = []
     for (const t of targets) {
       unsubs.push(
-        this.session._subscribe(
-          `${MiniappStreamType.TRANSLATION}:${source}:${t}`,
-          handler as (data: unknown) => void,
-        ),
+        this.session._subscribe(`${MiniappStreamType.TRANSLATION}:${source}:${t}`, handler as (data: unknown) => void),
       )
     }
     const composite = () => {
@@ -112,11 +99,7 @@ export class TranslationModule {
    * @deprecated Renamed to `fromTo(source, target, handler)` for cloud
    * SDK v3 parity. This alias will be removed in a future release.
    */
-  forLanguagePair(
-    fromLang: string,
-    toLang: string,
-    handler: TranslationHandler,
-  ): UnsubscribeFn {
+  forLanguagePair(fromLang: string, toLang: string, handler: TranslationHandler): UnsubscribeFn {
     return this.fromTo(fromLang, toLang, handler)
   }
 

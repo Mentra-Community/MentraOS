@@ -4,35 +4,35 @@ import {TouchableOpacity, View} from "react-native"
 import {Icon, Text, type IconTypes} from "@/components/ignite"
 import {translate} from "@/i18n"
 import {WebSocketStatus} from "@/services/WebSocketManager"
-import {useRefresh} from "@mentra/island"
+import {useRefresh, BgTimer} from "@mentra/island"
 import {useConnectionStore} from "@/stores/connection"
-import {BgTimer} from "@mentra/island"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {useNavigationStore} from "@/stores/navigation"
 
 type DisplayStatus = "connected" | "warning" | "disconnected"
 
-const STATUS_CONFIG: Record<DisplayStatus, {icon: IconTypes; label: () => string; bgClass: string; iconColor: string}> = {
-  connected: {
-    icon: "wifi",
-    label: () => translate("connection:connected"),
-    bgClass: "bg-primary",
-    iconColor: "#fff",
-  },
-  warning: {
-    icon: "wifi",
-    label: () => translate("connection:connecting"),
-    bgClass: "bg-chart-3",
-    iconColor: "#fff",
-  },
-  disconnected: {
-    icon: "wifi-off",
-    label: () => translate("connection:disconnected"),
-    bgClass: "bg-destructive",
-    iconColor: "#fff",
-  },
-}
+const STATUS_CONFIG: Record<DisplayStatus, {icon: IconTypes; label: () => string; bgClass: string; iconColor: string}> =
+  {
+    connected: {
+      icon: "wifi",
+      label: () => translate("connection:connected"),
+      bgClass: "bg-primary",
+      iconColor: "#fff",
+    },
+    warning: {
+      icon: "wifi",
+      label: () => translate("connection:connecting"),
+      bgClass: "bg-chart-3",
+      iconColor: "#fff",
+    },
+    disconnected: {
+      icon: "wifi-off",
+      label: () => translate("connection:disconnected"),
+      bgClass: "bg-destructive",
+      iconColor: "#fff",
+    },
+  }
 
 export default function WebsocketStatus() {
   const connectionStatus = useConnectionStore((state) => state.status)

@@ -5,10 +5,9 @@ import {AppState, Platform} from "react-native"
 
 import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
-import {useAppStatusStore} from "@mentra/island"
+import {useAppStatusStore, BgTimer} from "@mentra/island"
 import mentraAuth from "@/utils/auth/authClient"
-import {BgTimer} from "@mentra/island"
-import { useNavigationStore } from "@/stores/navigation"
+import {useNavigationStore} from "@/stores/navigation"
 
 /** Returns immediately if the app is already active, otherwise waits for it. */
 const waitForActive = (): Promise<void> => {
@@ -445,7 +444,6 @@ const DeeplinkContext = createContext<DeeplinkContextType>({} as DeeplinkContext
 export const useDeeplink = () => useContext(DeeplinkContext)
 
 export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
-
   const {setSplashEnabled} = useSplashLoader()
   const nav = useNavigationStore.getState()
   const config = {

@@ -1,5 +1,15 @@
 import {useEffect, useMemo, useRef, useCallback, useState} from "react"
-import {Animated, Image, ImageSourcePropType, ImageStyle, Platform, StyleProp, TextStyle, View, ViewStyle} from "react-native"
+import {
+  Animated,
+  Image,
+  ImageSourcePropType,
+  ImageStyle,
+  Platform,
+  StyleProp,
+  TextStyle,
+  View,
+  ViewStyle,
+} from "react-native"
 
 import {iconRegistry} from "@/components/ignite/Icon"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -314,11 +324,9 @@ function _SwitchAccessibilityLabel(props: SwitchInputProps & {role: "on" | "off"
         />
       )}
 
-      {accessibilityMode === "icon" &&
-        shouldLabelBeVisible &&
-        getSwitchAccessibilityIcon(role) != null && (
-          <Image style={[$switchAccessibilityIcon, {tintColor: color}]} source={getSwitchAccessibilityIcon(role)!} />
-        )}
+      {accessibilityMode === "icon" && shouldLabelBeVisible && getSwitchAccessibilityIcon(role) != null && (
+        <Image style={[$switchAccessibilityIcon, {tintColor: color}]} source={getSwitchAccessibilityIcon(role)!} />
+      )}
     </View>
   )
 }

@@ -71,11 +71,7 @@ export class ScrollView {
   private wrapResult: WrapResult | null = null
   private scrollOffset: number = 0
 
-  constructor(
-    measurer: TextMeasurer,
-    wrapper: TextWrapper,
-    viewportSize?: number
-  ) {
+  constructor(measurer: TextMeasurer, wrapper: TextWrapper, viewportSize?: number) {
     this.measurer = measurer
     this.wrapper = wrapper
     this.profile = measurer.getProfile()
@@ -108,11 +104,7 @@ export class ScrollView {
    * @param options - Optional wrap options
    * @param autoScroll - If true, scroll to show new content (default: true)
    */
-  appendContent(
-    text: string,
-    options?: Omit<WrapOptions, "maxLines">,
-    autoScroll: boolean = true
-  ): void {
+  appendContent(text: string, options?: Omit<WrapOptions, "maxLines">, autoScroll: boolean = true): void {
     const wasAtBottom = this.isAtBottom()
 
     // Wrap the new text
@@ -135,10 +127,7 @@ export class ScrollView {
    * Get the current viewport (visible lines).
    */
   getViewport(): ScrollViewport {
-    const visibleLines = this.allLines.slice(
-      this.scrollOffset,
-      this.scrollOffset + this.viewportSize
-    )
+    const visibleLines = this.allLines.slice(this.scrollOffset, this.scrollOffset + this.viewportSize)
 
     // Pad to viewport size if needed
     while (visibleLines.length < this.viewportSize) {

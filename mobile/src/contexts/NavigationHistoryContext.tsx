@@ -3,7 +3,6 @@ import {useCallback} from "react"
 import {Platform} from "react-native"
 import {CommonActions} from "@react-navigation/native"
 
-
 import {useNavigationStore} from "@/stores/navigation"
 
 // screens that call this function will prevent the back button from being pressed:

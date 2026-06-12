@@ -84,7 +84,11 @@ describe("PhoneStreamCoordinator", () => {
       expect(result.status).toBe("streaming")
       expect(result.resolvedConfig).toEqual({audio: {sampleRate: 16_000}})
       expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
-      const arg = startExternallyManagedStream.mock.calls[0]![0] as {sound: boolean; streamUrl: string; streamId: string}
+      const arg = startExternallyManagedStream.mock.calls[0]![0] as {
+        sound: boolean
+        streamUrl: string
+        streamId: string
+      }
       expect(arg.streamUrl).toBe("rtmp://my.server/key")
       expect(arg.streamId).toBe(streamId)
       expect(arg.sound).toBe(false)
@@ -99,9 +103,7 @@ describe("PhoneStreamCoordinator", () => {
         keepAliveIntervalMs: 10_000,
       })
       await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
-      await expect(
-        coord.startUnmanaged("com.b", {streamUrl: "rtmp://y"}),
-      ).rejects.toBeInstanceOf(StreamConflictError)
+      await expect(coord.startUnmanaged("com.b", {streamUrl: "rtmp://y"})).rejects.toBeInstanceOf(StreamConflictError)
     })
 
     test("stop tears down the stream and reverses owns()", async () => {
@@ -138,9 +140,7 @@ describe("PhoneStreamCoordinator", () => {
         cloudflareStatusPollMs: 1000,
         keepAliveIntervalMs: 10_000,
       })
-      await expect(coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})).rejects.toThrow(
-        "BLE down",
-      )
+      await expect(coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})).rejects.toThrow("BLE down")
       // Should be able to start another stream after the failure.
       await coord.startUnmanaged("com.a", {streamUrl: "rtmp://y"})
       expect(startExternallyManagedStream).toHaveBeenCalledTimes(2)
@@ -320,10 +320,7 @@ describe("PhoneStreamCoordinator", () => {
         cloudflareStatusPollMs: 1000,
         keepAliveIntervalMs: 10_000,
       })
-      const [a, b] = await Promise.all([
-        coord.startManaged("com.a", {}),
-        coord.startManaged("com.b", {}),
-      ])
+      const [a, b] = await Promise.all([coord.startManaged("com.a", {}), coord.startManaged("com.b", {})])
       expect(a.streamId).toBe(b.streamId)
       expect(provisionManagedStream).toHaveBeenCalledTimes(1)
       expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)

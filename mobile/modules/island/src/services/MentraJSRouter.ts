@@ -84,11 +84,10 @@ export type RouterLogger = {
 }
 
 const defaultLogger: RouterLogger = {
-  // eslint-disable-next-line no-console
   log: (m, p) => console.log(`[MentraJSRouter] ${m}`, p ?? ""),
-  // eslint-disable-next-line no-console
+
   warn: (m, p) => console.warn(`[MentraJSRouter] ${m}`, p ?? ""),
-  // eslint-disable-next-line no-console
+
   error: (m, p) => console.error(`[MentraJSRouter] ${m}`, p ?? ""),
 }
 

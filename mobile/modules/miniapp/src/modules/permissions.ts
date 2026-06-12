@@ -21,9 +21,8 @@
  */
 
 import {MiniappErrorCode} from "../protocol"
-import type {MiniappRequestError} from "../session"
+import type {MiniappRequestError, PermissionRecord, PermissionType} from "../session"
 import {MiniappSession} from "../session"
-import type {PermissionRecord, PermissionType} from "../session"
 import type {UnsubscribeFn} from "./events"
 
 export interface PermissionErrorEvent {

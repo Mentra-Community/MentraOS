@@ -162,7 +162,10 @@ export class PhoneVideoCoordinator {
           this.activeRecordings.delete(rec.recordingId)
           continue
         }
-        console.warn(`[PhoneVideoCoordinator] failed to stop ${rec.recordingId} for ${packageName} on cleanup`, videoError)
+        console.warn(
+          `[PhoneVideoCoordinator] failed to stop ${rec.recordingId} for ${packageName} on cleanup`,
+          videoError,
+        )
       }
     }
   }

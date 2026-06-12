@@ -55,9 +55,7 @@ export class PhoneNotificationsModule extends TrackedSubs {
   }
 
   on(handler: (data: PhoneNotificationData) => void): UnsubscribeFn {
-    return this.track(
-      this.session._subscribe(MiniappStreamType.PHONE_NOTIFICATION, handler as (data: unknown) => void),
-    )
+    return this.track(this.session._subscribe(MiniappStreamType.PHONE_NOTIFICATION, handler as (data: unknown) => void))
   }
 
   /**
@@ -71,10 +69,7 @@ export class PhoneNotificationsModule extends TrackedSubs {
    */
   onDismissed(handler: (data: NotificationDismissedData) => void): UnsubscribeFn {
     return this.track(
-      this.session._subscribe(
-        MiniappStreamType.PHONE_NOTIFICATION_DISMISSED,
-        handler as (data: unknown) => void,
-      ),
+      this.session._subscribe(MiniappStreamType.PHONE_NOTIFICATION_DISMISSED, handler as (data: unknown) => void),
     )
   }
 
@@ -90,9 +85,7 @@ export class PhoneCalendarModule extends TrackedSubs {
   }
 
   on(handler: (data: CalendarEventData) => void): UnsubscribeFn {
-    return this.track(
-      this.session._subscribe(MiniappStreamType.CALENDAR_EVENT, handler as (data: unknown) => void),
-    )
+    return this.track(this.session._subscribe(MiniappStreamType.CALENDAR_EVENT, handler as (data: unknown) => void))
   }
 
   /** True iff `CALENDAR` is declared in the miniapp's manifest. */

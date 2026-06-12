@@ -203,9 +203,7 @@ function rpcErrorFromUnknown(e: unknown): {message: string; code?: string} {
   return {message: String(e)}
 }
 
-export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
-  implements UIModule<TChannels>
-{
+export class UIModuleImpl<TChannels extends object = Record<string, unknown>> implements UIModule<TChannels> {
   /** True between UI_OPEN and the matching UI_CLOSE. */
   private bound = false
   /** Monotonic outbound seq number. Reset on bind. */
@@ -217,10 +215,8 @@ export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
   private readonly channelHandlers: Map<string, Set<UIChannelHandler>> = new Map()
 
   /** channel → single registered RPC handler. */
-  private readonly rpcHandlers: Map<
-    string,
-    (payload: unknown, ctx: RpcHandlerContext) => Promise<unknown> | unknown
-  > = new Map()
+  private readonly rpcHandlers: Map<string, (payload: unknown, ctx: RpcHandlerContext) => Promise<unknown> | unknown> =
+    new Map()
 
   /** requestId → AbortController for in-flight RPC handler invocations. */
   private readonly inflightRpc: Map<string, AbortController> = new Map()
@@ -257,7 +253,6 @@ export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
         try {
           cb()
         } catch (e) {
-          // eslint-disable-next-line no-console
           console.warn("session.ui.onOpen late-fire threw:", e)
         }
       }
@@ -286,10 +281,7 @@ export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
     this.session.sendOneShot(envelope)
   }
 
-  on = <C extends keyof TChannels & string>(
-    channel: C,
-    cb: UIChannelHandler<TChannels[C]>,
-  ): UIUnsubscribe => {
+  on = <C extends keyof TChannels & string>(channel: C, cb: UIChannelHandler<TChannels[C]>): UIUnsubscribe => {
     let set = this.channelHandlers.get(channel as string)
     if (!set) {
       set = new Set()
@@ -327,7 +319,6 @@ export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
       try {
         h()
       } catch (e) {
-        // eslint-disable-next-line no-console
         console.warn("session.ui.onOpen handler threw", e)
       }
     }
@@ -366,8 +357,7 @@ export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
         try {
           h()
         } catch (e) {
-          // eslint-disable-next-line no-console
-        console.warn("session.ui.onClose handler threw", e)
+          console.warn("session.ui.onClose handler threw", e)
         }
       }
       return
@@ -385,7 +375,6 @@ export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
         try {
           h(env.payload)
         } catch (e) {
-          // eslint-disable-next-line no-console
           console.warn(`session.ui.on(${env.channel}) threw`, e)
         }
       }
@@ -421,9 +410,7 @@ export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
     const ctx: RpcHandlerContext = {signal: ctrl.signal}
 
     const finish = (
-      envelope:
-        | {ok: true; result: unknown}
-        | {ok: false; error: {message: string; code?: string}},
+      envelope: {ok: true; result: unknown} | {ok: false; error: {message: string; code?: string}},
     ): void => {
       this.inflightRpc.delete(requestId)
       // If the controller already aborted (UI cancelled), drop the
@@ -453,9 +440,7 @@ export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
   private sendRpcReply(
     channel: string,
     requestId: string,
-    payload:
-      | {ok: true; result: unknown}
-      | {ok: false; error: {message: string; code?: string}},
+    payload: {ok: true; result: unknown} | {ok: false; error: {message: string; code?: string}},
   ): void {
     if (!this.bound) return
     const seq = this.nextSeq++

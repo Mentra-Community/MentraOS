@@ -663,8 +663,8 @@ export default function NexDeveloperSettings() {
             <View style={themed($settingsGroup)}>
               <Text style={themed($sectionTitle)}>🈶 Chinese Captions</Text>
               <Text style={themed($description)}>
-                Allow non-ASCII (Chinese/CJK) characters in display text. When off, text is sanitized to ASCII
-                before being sent to the glasses.
+                Allow non-ASCII (Chinese/CJK) characters in display text. When off, text is sanitized to ASCII before
+                being sent to the glasses.
               </Text>
 
               <ToggleSetting

@@ -2,7 +2,7 @@ import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useCapsuleStore} from "@/stores/capsule"
 
-import {Dimensions, PixelRatio, Platform, Share, View} from "react-native"
+import {Dimensions, PixelRatio, Platform, Share, View, Image as RNImage} from "react-native"
 import {Pressable} from "react-native-gesture-handler"
 import {forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState} from "react"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
@@ -11,7 +11,6 @@ import {usePathname} from "expo-router"
 import {ClientApp, useAppStatusStore} from "@mentra/island"
 import * as ImageManipulator from "expo-image-manipulator"
 import {captureRef} from "react-native-view-shot"
-import {Image as RNImage} from "react-native"
 import {BottomSheetBackdrop, BottomSheetModal} from "@gorhom/bottom-sheet"
 import AppIcon from "@/components/home/AppIcon"
 import {SETTINGS, useSetting} from "@/stores/settings"
@@ -83,7 +82,7 @@ function CapsuleButton({onRightPress, onLeftPress}: CapsuleButtonProps) {
           <Icon name={"minus"} size={16} color={theme.colors.foreground} className="z-0 absolute top-[1px] left-[1px]" />
         </View> */}
         {/* <View className="border-1 border-red-500"> */}
-          <Icon name="minimize" size={13} color={theme.colors.foreground} className="mr-0.5" />
+        <Icon name="minimize" size={13} color={theme.colors.foreground} className="mr-0.5" />
         {/* </View> */}
       </Pressable>
       <View className="h-4 w-px bg-primary-foreground absolute left-1/2 -translate-x-1/2" />

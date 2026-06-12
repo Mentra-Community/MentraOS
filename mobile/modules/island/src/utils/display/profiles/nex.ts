@@ -1,4 +1,4 @@
-import { DisplayProfile } from "./types";
+import {DisplayProfile} from "./types"
 
 /**
  * Mentra Nex glyph widths
@@ -112,7 +112,7 @@ const NEX_GLYPH_WIDTHS: Record<string, number> = {
   "|": 5,
   "}": 7,
   "~": 11,
-};
+}
 
 /**
  * Mentra Nex Smart Glasses Display Profile
@@ -155,8 +155,8 @@ export const NEX_PROFILE: DisplayProfile = {
     noStartChars: [".", ",", "!", "?", ":", ";", ")", "]", "}", "。", "，", "！", "？", "：", "；", "）", "】", "」"],
     noEndChars: ["(", "[", "{", "（", "【", "「"],
   },
-};
+}
 
-export const NEX_HYPHEN_WIDTH_PX = 8;
+export const NEX_HYPHEN_WIDTH_PX = 8
 
-export const NEX_SPACE_WIDTH_PX = 4;
+export const NEX_SPACE_WIDTH_PX = 4

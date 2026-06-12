@@ -69,13 +69,7 @@ export interface ClearView {
   layoutType: "clear_view"
 }
 
-export type Layout =
-  | TextWall
-  | DoubleTextWall
-  | ReferenceCard
-  | DashboardCard
-  | BitmapView
-  | ClearView
+export type Layout = TextWall | DoubleTextWall | ReferenceCard | DashboardCard | BitmapView | ClearView
 
 export interface DisplayOptions {
   view?: ViewType

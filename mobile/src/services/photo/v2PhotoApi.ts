@@ -11,9 +11,7 @@ export interface PhotoResult {
   size: number
 }
 
-export type PollOutcome =
-  | {kind: "ready"; result: PhotoResult}
-  | {kind: "error"; code: string; message: string}
+export type PollOutcome = {kind: "ready"; result: PhotoResult} | {kind: "error"; code: string; message: string}
 
 class PhotoConfigError extends Error {
   code = "PHOTO_CONFIG_MISSING"
@@ -36,11 +34,9 @@ function baseUrl(): string {
 function authHeader(): Record<string, string> {
   const token = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken)
   if (!token) {
-    throw new PhotoConfigError(
-      "Photo capture needs the host's core_token; user is not authenticated.",
-    )
+    throw new PhotoConfigError("Photo capture needs the host's core_token; user is not authenticated.")
   }
-  return {authorization: `Bearer ${token}`, "content-type": "application/json"}
+  return {"authorization": `Bearer ${token}`, "content-type": "application/json"}
 }
 
 export async function requestPhoto(): Promise<{
@@ -64,10 +60,7 @@ export async function requestPhoto(): Promise<{
  * Long-poll the photo slot. Server hangs up to 30s waiting for /upload to
  * arrive. Optional AbortSignal lets the coordinator cancel client-side.
  */
-export async function pollUntilReady(
-  requestId: string,
-  signal?: AbortSignal,
-): Promise<PollOutcome> {
+export async function pollUntilReady(requestId: string, signal?: AbortSignal): Promise<PollOutcome> {
   let res: Response
   try {
     res = await fetch(`${baseUrl()}/api/v2/client/photo/${encodeURIComponent(requestId)}`, {

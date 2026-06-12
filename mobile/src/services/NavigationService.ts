@@ -178,11 +178,7 @@ class NavigationService {
   }
 
   private noListeners(): boolean {
-    return (
-      this.listeners.size === 0 &&
-      this.locationListeners.size === 0 &&
-      this.routeListeners.size === 0
-    )
+    return this.listeners.size === 0 && this.locationListeners.size === 0 && this.routeListeners.size === 0
   }
 
   public async start(
@@ -649,4 +645,3 @@ async function reverseGeocodeRoadViaGeocodingApi(coord: {lat: number; lng: numbe
     return {ok: false, error: err instanceof Error ? err.message : "reverseGeocode failed"}
   }
 }
-

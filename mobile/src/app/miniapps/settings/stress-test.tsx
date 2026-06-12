@@ -33,7 +33,6 @@ export default function StressTest() {
         const mb = BluetoothSdk.getMemoryMB()
         setResidentMB(mb)
         if (active) {
-          // eslint-disable-next-line no-console
           console.log(
             `STRESS: sample ${JSON.stringify({
               at: Date.now(),
@@ -187,7 +186,7 @@ export default function StressTest() {
             <RouteButton
               label="Kill all JSContexts"
               onPress={() => {
-                (BluetoothSdk as any).jscKillAll()
+                ;(BluetoothSdk as any).jscKillAll()
                 console.log("STRESS: jsc-killed-all")
               }}
             />

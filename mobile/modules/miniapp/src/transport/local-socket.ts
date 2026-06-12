@@ -47,9 +47,7 @@ export class LocalSocketTransport implements Transport {
         settle(() => resolve())
       }
       ws.onerror = (ev) => {
-        settle(() =>
-          reject(new Error(`LocalSocketTransport: failed to connect to ${this.url}: ${String(ev)}`)),
-        )
+        settle(() => reject(new Error(`LocalSocketTransport: failed to connect to ${this.url}: ${String(ev)}`)))
       }
       ws.onmessage = (ev: MessageEvent) => {
         const data = ev.data

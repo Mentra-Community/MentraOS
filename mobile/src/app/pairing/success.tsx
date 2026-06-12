@@ -40,7 +40,11 @@ export default function PairingSuccessScreen() {
     let newStack: string[] = []
 
     if (deviceModel === DeviceTypes.LIVE) {
-      let bluetoothClassicConnected = await waitForGlassesState("bluetoothClassicConnected", (value) => value === true, 1000)
+      let bluetoothClassicConnected = await waitForGlassesState(
+        "bluetoothClassicConnected",
+        (value) => value === true,
+        1000,
+      )
       console.log("PAIR_SUCCESS: bluetoothClassicConnected", bluetoothClassicConnected)
       if (Platform.OS === "android") {
         bluetoothClassicConnected = true

@@ -226,10 +226,7 @@ const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
 
 const DEFAULT_SCAN_TIMEOUT_MS = 15_000
 
-function bindNativeMethod<T extends (...args: never[]) => unknown>(
-  module: Record<string, unknown>,
-  name: string,
-): T {
+function bindNativeMethod<T extends (...args: never[]) => unknown>(module: Record<string, unknown>, name: string): T {
   const method = module[name]
   if (typeof method !== "function") {
     console.warn(`[BluetoothSdk] Native method "${name}" is unavailable — rebuild the app (bun android / bun ios)`)
@@ -268,11 +265,7 @@ function normalizeCameraFov(request: CameraFovRequest): CameraFovSetting {
   const roiPosition = request.roiPosition ?? "center"
 
   return {
-    fov: clampInteger(
-      Number.isFinite(request.fov) ? request.fov : CAMERA_FOV_DEFAULT,
-      CAMERA_FOV_MIN,
-      CAMERA_FOV_MAX,
-    ),
+    fov: clampInteger(Number.isFinite(request.fov) ? request.fov : CAMERA_FOV_DEFAULT, CAMERA_FOV_MIN, CAMERA_FOV_MAX),
     roiPosition: clampInteger(CAMERA_ROI_POSITION_VALUES[roiPosition] ?? 0, CAMERA_ROI_MIN, CAMERA_ROI_MAX) as
       | 0
       | 1
@@ -452,9 +445,10 @@ NativeBluetoothSdkModule.setVoiceActivityDetectionEnabled = function (enabled: b
   return this.updateBluetoothSettings({voice_activity_detection_enabled: enabled})
 }
 
-const nativeSetCameraFov = bindNativeMethod<
-  (fov: CameraFovSetting) => MaybePromise<CameraFovResult>
->(NativeBluetoothSdkModule as unknown as Record<string, unknown>, "setCameraFov")
+const nativeSetCameraFov = bindNativeMethod<(fov: CameraFovSetting) => MaybePromise<CameraFovResult>>(
+  NativeBluetoothSdkModule as unknown as Record<string, unknown>,
+  "setCameraFov",
+)
 NativeBluetoothSdkModule.setCameraFov = function (request: CameraFovRequest) {
   const setting = normalizeCameraFov(request)
   return Promise.resolve(nativeSetCameraFov(setting))

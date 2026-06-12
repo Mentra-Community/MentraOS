@@ -35,9 +35,7 @@ async function resolveCachedPath(url: string): Promise<string | null> {
 export function useCachedRemoteImageSource(source: string | number | undefined | null): ImageSourcePropType {
   const url = typeof source === "string" ? source : null
   const isRemote = url !== null && (url.startsWith("http://") || url.startsWith("https://"))
-  const [resolved, setResolved] = useState<string | null>(() =>
-    isRemote ? resolvedCache.get(url!) ?? null : null,
-  )
+  const [resolved, setResolved] = useState<string | null>(() => (isRemote ? (resolvedCache.get(url!) ?? null) : null))
 
   useEffect(() => {
     if (!isRemote) {

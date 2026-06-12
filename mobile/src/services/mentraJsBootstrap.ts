@@ -47,9 +47,11 @@ export function bootstrapMentraJS() {
   const crashController = new MentraJSCrashController()
   const uiRouter = new MentraUIRouter({
     mentraJsDispatchToJs: (packageName: string, envelope: Record<string, unknown>) =>
-      (CrustModule as unknown as {
-        mentraJsDispatchToJs: (p: string, e: Record<string, unknown>) => Promise<void>
-      }).mentraJsDispatchToJs(packageName, envelope),
+      (
+        CrustModule as unknown as {
+          mentraJsDispatchToJs: (p: string, e: Record<string, unknown>) => Promise<void>
+        }
+      ).mentraJsDispatchToJs(packageName, envelope),
   })
   const router = new MentraJSRouter(localMiniappRuntime, crust)
   router.crashController = crashController
@@ -163,8 +165,7 @@ export function bootstrapMentraJS() {
           .filter((t): t is string => typeof t === "string")
         installedManifest = {
           permissions: manifest.permissions as InstalledMiniappManifest["permissions"],
-          hardwareRequirements:
-            manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
+          hardwareRequirements: manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
         }
         const bgUrl = `${devUrl.replace(/\/$/, "")}/dist/${entry.background.replace(/^\.?\/+/, "")}`
         const res = await fetch(bgUrl)

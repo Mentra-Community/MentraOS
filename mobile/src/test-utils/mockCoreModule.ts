@@ -91,7 +91,9 @@ export const coreModuleMock = {
   ping: jest.fn(() => Promise.resolve()),
   sendIncidentId: jest.fn(() => Promise.resolve()),
   requestWifiScan: jest.fn(() => Promise.resolve([])),
-  sendWifiCredentials: jest.fn((ssid: string) => Promise.resolve({type: "wifi_status_change", state: "connected", ssid})),
+  sendWifiCredentials: jest.fn((ssid: string) =>
+    Promise.resolve({type: "wifi_status_change", state: "connected", ssid}),
+  ),
   forgetWifiNetwork: jest.fn(() => Promise.resolve({type: "wifi_status_change", state: "disconnected"})),
   setHotspotState: jest.fn((enabled: boolean) =>
     Promise.resolve(

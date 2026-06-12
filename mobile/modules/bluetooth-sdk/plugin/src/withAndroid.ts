@@ -1,12 +1,7 @@
 import {execSync} from "child_process"
 import path from "path"
 
-import {
-  type ConfigPlugin,
-  withGradleProperties,
-  withProjectBuildGradle,
-  withSettingsGradle,
-} from "expo/config-plugins"
+import {type ConfigPlugin, withGradleProperties, withProjectBuildGradle, withSettingsGradle} from "expo/config-plugins"
 
 function getBluetoothSdkRoot(): string {
   return path.dirname(require.resolve("../../package.json"))

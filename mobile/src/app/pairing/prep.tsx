@@ -406,6 +406,30 @@ export default function PairingPrepScreen() {
     )
   }
 
+  const NimoPairingGuide = () => {
+    return (
+      <View className="flex-1 flex-col justify-start mt-6">
+        <View style={{justifyContent: "flex-start", flexDirection: "column"}}>
+          <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
+          <Text
+            className="text-lg text-secondary-foreground"
+            text="1. Make sure your Nimo glasses are fully charged and turned on."
+          />
+          <Text
+            className="text-lg text-secondary-foreground"
+            text="2. Disconnect your glasses from the Nimo app, or uninstall the Nimo app."
+          />
+          {Platform.OS === "ios" && (
+            <Text
+              className="text-lg text-secondary-foreground"
+              text="3. If prompted, allow the Bluetooth pairing request."
+            />
+          )}
+        </View>
+      </View>
+    )
+  }
+
   const renderGuide = () => {
     switch (deviceModel) {
       case DeviceTypes.SIMULATED:
@@ -422,6 +446,8 @@ export default function PairingPrepScreen() {
         return <VuzixZ100PairingGuide />
       case DeviceTypes.NEX:
         return <MentraDisplayGlassesPairingGuide />
+      case DeviceTypes.NIMO:
+        return <NimoPairingGuide />
     }
 
     throw new Error(`Unknown model name: ${deviceModel}`)
