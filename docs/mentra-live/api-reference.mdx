@@ -107,16 +107,6 @@ Disable analytics before native SDK startup through the Expo config plugin:
 }
 ```
 
-Disable analytics for the current native SDK runtime. In React Native, call
-this before any other SDK API to prevent the startup event for that runtime;
-after the SDK has started, it disables subsequent events only.
-
-```ts
-import BluetoothSdk from '@mentra/bluetooth-sdk';
-
-await BluetoothSdk.configureAnalytics({enabled: false});
-```
-
   </Tab>
   <Tab title="Android">
 
@@ -128,8 +118,6 @@ val sdk = MentraBluetoothSdk.create(
     ),
     listener = listener,
 )
-
-sdk.configureAnalytics(BluetoothSdkAnalyticsConfig.disabled())
 ```
 
 Android apps can also set application metadata before SDK startup:
@@ -149,8 +137,6 @@ let sdk = MentraBluetoothSDK(
         analytics: .disabled
     )
 )
-
-sdk.configureAnalytics(.disabled)
 ```
 
 iOS apps can also set `MentraBluetoothSdkAnalyticsDisabled` to `true` in

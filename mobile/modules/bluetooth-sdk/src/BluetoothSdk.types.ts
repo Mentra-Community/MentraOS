@@ -878,21 +878,11 @@ export type BluetoothSdkSubscription = {
 
 export type BluetoothSdkEvent = BluetoothSdkEventMap[BluetoothSdkEventName]
 
-export type BluetoothSdkAnalyticsOptions = {
-  /**
-   * Mentra SDK usage analytics are enabled by default. Set to false to disable
-   * them for the current native SDK runtime.
-   */
-  enabled?: boolean
-}
-
 export interface BluetoothSdkPublicModule {
   addListener<EventName extends BluetoothSdkEventName>(
     eventName: EventName,
     listener: BluetoothSdkEventListener<EventName>,
   ): BluetoothSdkSubscription
-
-  configureAnalytics(options: BluetoothSdkAnalyticsOptions): Promise<void>
 
   getDefaultDevice(): Promise<Device | null>
   setDefaultDevice(device: Device | null): Promise<void>

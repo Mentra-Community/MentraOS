@@ -24,15 +24,6 @@ class BluetoothSdkAnalyticsConfig private constructor(
     companion object {
         @JvmStatic
         fun disabled(): BluetoothSdkAnalyticsConfig = BluetoothSdkAnalyticsConfig(enabled = false)
-
-        internal fun fromMap(
-            values: Map<String, Any?>,
-            baseConfig: BluetoothSdkAnalyticsConfig = BluetoothSdkAnalyticsConfig(),
-        ): BluetoothSdkAnalyticsConfig =
-            BluetoothSdkAnalyticsConfig(
-                enabled = (values["enabled"] as? Boolean) ?: baseConfig.enabled,
-                surface = baseConfig.surface,
-            )
     }
 }
 
@@ -52,29 +43,11 @@ internal class BluetoothSdkAnalytics(
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "MentraBluetoothSdkAnalytics").apply { isDaemon = true }
     }
-    // config/startedCaptured/lastConnected are touched from the store-listener
-    // thread, the Expo async-function queue, and the creating thread, hence
-    // @Synchronized on every method that reads or writes them.
-    private var config = initialConfig.toRuntimeConfig().resolvedForApp(appContext)
+    // startedCaptured/lastConnected are touched from store listeners and SDK
+    // entry points, hence @Synchronized on methods that read or write them.
+    private val config = initialConfig.toRuntimeConfig().resolvedForApp(appContext)
     private var startedCaptured = false
     private var lastConnected = false
-
-    @Synchronized
-    fun configure(nextConfig: BluetoothSdkAnalyticsConfig) {
-        config = nextConfig.withSurface(config.surface).toRuntimeConfig().resolvedForApp(appContext)
-        captureStarted()
-    }
-
-    @Synchronized
-    fun configure(values: Map<String, Any?>, surface: String) {
-        config =
-            BluetoothSdkAnalyticsConfig
-                .fromMap(values, BluetoothSdkAnalyticsConfig(enabled = config.enabled))
-                .withSurface(surface)
-                .toRuntimeConfig()
-                .resolvedForApp(appContext)
-        captureStarted()
-    }
 
     @Synchronized
     fun initializeGlassesStatus(status: GlassesStatus) {
@@ -90,10 +63,6 @@ internal class BluetoothSdkAnalytics(
 
     @Synchronized
     fun observeGlassesStatus(status: GlassesStatus) {
-        // Track the real connection state even while analytics is disabled so that
-        // enabling it later cannot fabricate a connection event from stale or
-        // pre-existing connected flags; only genuine not-connected -> connected
-        // transitions observed while enabled are captured.
         val isConnected = status.analyticsConnected
         val wasConnected = lastConnected
         lastConnected = isConnected

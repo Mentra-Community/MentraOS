@@ -11,18 +11,6 @@ public struct BluetoothSdkAnalyticsConfiguration {
         surface = "ios"
     }
 
-    init(dictionary: [String: Any], surface: String) {
-        enabled = dictionary["enabled"] as? Bool ?? true
-        self.surface = surface
-    }
-
-    func applying(dictionary: [String: Any], surface: String) -> BluetoothSdkAnalyticsConfiguration {
-        BluetoothSdkAnalyticsConfiguration(
-            enabled: dictionary["enabled"] as? Bool ?? enabled,
-            surface: surface
-        )
-    }
-
     var isReady: Bool {
         enabled
     }
@@ -48,26 +36,12 @@ final class BluetoothSdkAnalytics {
     private static let defaultPostHogHost = "https://us.i.posthog.com"
     private let stateQueue = DispatchQueue(label: "com.mentra.bluetoothsdk.analytics.state")
     private let transportQueue = DispatchQueue(label: "com.mentra.bluetoothsdk.analytics.transport")
-    private var configuration: BluetoothSdkAnalyticsConfiguration
+    private let configuration: BluetoothSdkAnalyticsConfiguration
     private var startedCaptured = false
     private var lastConnected = false
 
     init(configuration: BluetoothSdkAnalyticsConfiguration) {
         self.configuration = configuration.resolvedForApp()
-    }
-
-    func configure(_ nextConfiguration: BluetoothSdkAnalyticsConfiguration) {
-        stateQueue.sync {
-            configuration = nextConfiguration.resolvedForApp()
-            captureStartedLocked()
-        }
-    }
-
-    func configure(dictionary: [String: Any], surface: String) {
-        stateQueue.sync {
-            configuration = configuration.applying(dictionary: dictionary, surface: surface).resolvedForApp()
-            captureStartedLocked()
-        }
     }
 
     func initializeGlassesStatus(_ status: GlassesStatus) {
@@ -94,10 +68,6 @@ final class BluetoothSdkAnalytics {
 
     func observeGlassesStatus(_ status: GlassesStatus) {
         stateQueue.sync {
-            // Track the real connection state even while analytics is disabled so that
-            // enabling it later cannot fabricate a connection event from stale or
-            // pre-existing connected flags; only genuine not-connected -> connected
-            // transitions observed while enabled are captured.
             let isConnected = status.analyticsConnected
             let wasConnected = lastConnected
             lastConnected = isConnected

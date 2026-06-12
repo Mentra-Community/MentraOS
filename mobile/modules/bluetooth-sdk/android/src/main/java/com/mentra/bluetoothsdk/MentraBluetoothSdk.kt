@@ -171,16 +171,6 @@ class MentraBluetoothSdk private constructor(
         listeners.remove(listener)
     }
 
-    fun configureAnalytics(config: BluetoothSdkAnalyticsConfig) {
-        analytics.configure(config)
-        analytics.observeGlassesStatus(getRawGlassesStatus())
-    }
-
-    internal fun configureAnalytics(values: Map<String, Any?>, surface: String) {
-        analytics.configure(values, surface)
-        analytics.observeGlassesStatus(getRawGlassesStatus())
-    }
-
     fun getState(): MentraBluetoothState =
         MentraBluetoothState.from(getRawGlassesStatus(), getRawBluetoothStatus())
 

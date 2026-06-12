@@ -3,8 +3,6 @@ import Foundation
 
 public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
     private var sdk: MentraBluetoothSDK?
-    private var pendingAnalyticsOptions: [String: Any]?
-    private var destroyed = false
 
     public func definition() -> ModuleDefinition {
         Name("BluetoothSdk")
@@ -73,11 +71,13 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         OnCreate {
             JSCExperiment.maybeAutoBenchmark()
+            Task { @MainActor [weak self] in
+                _ = self?.bluetoothSdk()
+            }
         }
 
         OnDestroy {
             Task { @MainActor [weak self] in
-                self?.destroyed = true
                 self?.sdk?.invalidate()
                 self?.sdk = nil
             }
@@ -100,16 +100,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         Function("getDefaultDevice") { () -> [String: Any]? in
             self.readOnMainActor {
                 self.bluetoothSdk().getDefaultDevice()?.dictionary
-            }
-        }
-
-        Function("configureAnalytics") { (options: [String: Any]) in
-            self.readOnMainActor {
-                // Merge so a partial follow-up call cannot drop an earlier
-                // {enabled: false} before the SDK is lazily created.
-                self.pendingAnalyticsOptions =
-                    (self.pendingAnalyticsOptions ?? [:]).merging(options) { _, new in new }
-                self.sdk?.configureAnalytics(options, surface: "react_native")
             }
         }
 
@@ -641,17 +631,10 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         if let sdk {
             return sdk
         }
-        if destroyed {
-            fatalError("Bluetooth SDK module has been destroyed.")
-        }
 
-        let analyticsConfiguration =
-            pendingAnalyticsOptions.map {
-                BluetoothSdkAnalyticsConfiguration().applying(dictionary: $0, surface: "react_native")
-            } ?? BluetoothSdkAnalyticsConfiguration().withSurface("react_native")
         let sdk = MentraBluetoothSDK(
             configuration: MentraBluetoothSDKConfiguration(
-                analytics: analyticsConfiguration
+                analytics: BluetoothSdkAnalyticsConfiguration().withSurface("react_native")
             )
         )
         sdk.delegate = self

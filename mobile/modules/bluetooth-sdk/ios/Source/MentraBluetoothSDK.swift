@@ -240,16 +240,6 @@ public final class MentraBluetoothSDK {
         currentDefaultDevice()
     }
 
-    public func configureAnalytics(_ configuration: BluetoothSdkAnalyticsConfiguration) {
-        analytics.configure(configuration)
-        analytics.observeGlassesStatus(glassesStatus)
-    }
-
-    func configureAnalytics(_ options: [String: Any], surface: String) {
-        analytics.configure(dictionary: options, surface: surface)
-        analytics.observeGlassesStatus(glassesStatus)
-    }
-
     public func setDefaultDevice(_ device: Device?) {
         guard let device else {
             clearDefaultDevice()
