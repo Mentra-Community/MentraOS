@@ -151,6 +151,9 @@ public final class MentraBluetoothSDK {
 
     private let configuration: MentraBluetoothSDKConfiguration
     private var discoveredDeviceNames = Set<String>()
+    private var bluetoothAvailabilityListenerId: UUID?
+    private var shouldRestoreGlassesOnBluetoothRestore = false
+    private var shouldRestoreControllerOnBluetoothRestore = false
     private var bridgeEventSinkId: String?
     private var storeListenerId: String?
     private let defaultDeviceKeys: Set<String> = ["default_wearable", "device_name", "device_address"]
@@ -175,7 +178,11 @@ public final class MentraBluetoothSDK {
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
         self.configuration = configuration
-        _ = BluetoothAvailability.shared
+        bluetoothAvailabilityListenerId = BluetoothAvailability.shared.addStateListener { [weak self] state in
+            Task { @MainActor [weak self] in
+                self?.handleBluetoothAvailability(state)
+            }
+        }
         bridgeEventSinkId = Bridge.addEventSink { [weak self] eventName, data in
             Task { @MainActor [weak self] in
                 self?.dispatchBridgeEvent(eventName, data)
@@ -310,6 +317,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func connect(to device: Device, options: ConnectOptions = ConnectOptions()) throws {
+        clearBluetoothRestoreIntent()
         if device.model != .simulated {
             try BluetoothAvailability.shared.requirePoweredOn(operation: "connect to glasses")
         }
@@ -329,6 +337,7 @@ public final class MentraBluetoothSDK {
     }
 
     public func connectDefault(options: ConnectOptions = ConnectOptions()) throws {
+        clearBluetoothRestoreIntent()
         guard let device = currentDefaultDevice() else {
             throw BluetoothError(
                 code: "default_device_missing",
@@ -345,18 +354,22 @@ public final class MentraBluetoothSDK {
     }
 
     public func cancelConnectionAttempt() {
+        clearBluetoothRestoreIntent()
         DeviceManager.shared.disconnect()
     }
 
     func connectSimulated() {
+        clearBluetoothRestoreIntent()
         DeviceManager.shared.connectSimulated()
     }
 
     public func disconnect() {
+        clearBluetoothRestoreIntent()
         DeviceManager.shared.disconnect()
     }
 
     public func forget() {
+        clearBluetoothRestoreIntent()
         DeviceManager.shared.forget()
     }
 
@@ -993,6 +1006,10 @@ public final class MentraBluetoothSDK {
 
     public func invalidate() {
         stopStreamKeepAliveMonitor()
+        if let bluetoothAvailabilityListenerId {
+            BluetoothAvailability.shared.removeStateListener(bluetoothAvailabilityListenerId)
+            self.bluetoothAvailabilityListenerId = nil
+        }
         if let bridgeEventSinkId {
             Bridge.removeEventSink(bridgeEventSinkId)
             self.bridgeEventSinkId = nil
@@ -1002,6 +1019,83 @@ public final class MentraBluetoothSDK {
             self.storeListenerId = nil
         }
         delegate = nil
+    }
+
+    private func handleBluetoothAvailability(_ state: CBManagerState) {
+        switch state {
+        case .poweredOff, .resetting, .unauthorized, .unsupported:
+            handleBluetoothUnavailable()
+        case .poweredOn:
+            handleBluetoothRestored()
+        case .unknown:
+            break
+        @unknown default:
+            handleBluetoothUnavailable()
+        }
+    }
+
+    private func handleBluetoothUnavailable() {
+        cancelActiveScanSessions(reason: .cancelled)
+        clearBluetoothDiscoveryState()
+        disconnectActiveConnections()
+    }
+
+    private func disconnectActiveConnections() {
+        if glassesStatus.controllerConnected {
+            DeviceManager.shared.disconnectController()
+            shouldRestoreControllerOnBluetoothRestore = true
+        }
+        if glassesStatus.deviceModel == DeviceTypes.SIMULATED
+            || DeviceManager.shared.sgc?.type.contains(DeviceTypes.SIMULATED) == true
+        {
+            return
+        }
+        if glassesStatus.connected || glassesStatus.connectionState != .disconnected {
+            DeviceManager.shared.disconnect()
+            shouldRestoreGlassesOnBluetoothRestore = true
+        }
+    }
+
+    /// Reconnect only what `handleBluetoothUnavailable` tore down, never a
+    /// connection the user closed themselves (explicit connect/disconnect
+    /// calls clear the restore intent).
+    private func handleBluetoothRestored() {
+        let restoreGlasses = shouldRestoreGlassesOnBluetoothRestore
+        let restoreController = shouldRestoreControllerOnBluetoothRestore
+        clearBluetoothRestoreIntent()
+
+        if restoreGlasses, !glassesStatus.connected, glassesStatus.connectionState == .disconnected {
+            DeviceManager.shared.connectDefault() // also restores the controller
+        } else if restoreController, !glassesStatus.controllerConnected {
+            DeviceManager.shared.connectDefaultController()
+        }
+    }
+
+    private func clearBluetoothRestoreIntent() {
+        shouldRestoreGlassesOnBluetoothRestore = false
+        shouldRestoreControllerOnBluetoothRestore = false
+    }
+
+    private func clearBluetoothDiscoveryState() {
+        discoveredDeviceNames.removeAll()
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "searching", false)
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "searchingController", false)
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "searchResults", [] as [[String: Any]])
+    }
+
+    private func cancelActiveScanSessions(reason: ScanStopReason) {
+        let ids = Array(activeScanSessions.keys)
+        guard !ids.isEmpty else {
+            if bluetoothStatus.searching || bluetoothStatus.searchingController {
+                stopScan(reason: reason)
+            }
+            return
+        }
+        for (index, id) in ids.enumerated() {
+            // Stop the underlying scan once (first session); the rest only
+            // complete their callbacks.
+            finishScanSession(id, reason: reason, shouldStopScan: index == 0)
+        }
     }
 
     private func startStreamKeepAliveMonitor(streamId: String, intervalSeconds requestedIntervalSeconds: Int) {
