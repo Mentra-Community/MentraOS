@@ -23,6 +23,10 @@ import android.util.Log;
 import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.utils.DebugNotificationManager;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.UUID;
 
@@ -118,7 +122,14 @@ public class InmoGo2BluetoothManager extends BaseBluetoothManager {
             notificationManager.showDebugNotification("BLE Error", "Bluetooth not enabled");
             return;
         }
-
+// Ensure the adapter is discoverable so iOS BLE scan can find us
+        try {
+            java.lang.reflect.Method method = bluetoothAdapter.getClass().getMethod("setScanMode", int.class);
+            method.invoke(bluetoothAdapter, BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE);
+            Log.d(TAG, "Scan mode set via reflection");
+        } catch (Exception e) {
+            Log.w(TAG, "Could not set scan mode via reflection: " + e.getMessage());
+        }
         // Set up GATT server first
         setupGattServer();
 
@@ -241,6 +252,7 @@ public class InmoGo2BluetoothManager extends BaseBluetoothManager {
         return false;
     }
 
+
     // -----------------------------------------------------------------------
     // GATT Server setup
     // -----------------------------------------------------------------------
@@ -286,6 +298,40 @@ public class InmoGo2BluetoothManager extends BaseBluetoothManager {
     }
 
     // -----------------------------------------------------------------------
+    // Handshake: phone_ready → glasses_ready
+    // -----------------------------------------------------------------------
+
+    /**
+     * Inspect every incoming message from the phone.
+     * When we receive {"type":"phone_ready"} we immediately respond with
+     * {"type":"glasses_ready"} so the iOS readiness-check loop can complete
+     * and the connection moves to CONNECTED state.
+     */
+    private void handlePhoneMessage(byte[] data) {
+        if (data == null || data.length == 0) return;
+        try {
+            String json = new String(data, StandardCharsets.UTF_8);
+            if (!json.startsWith("{")) return; // Not JSON — ignore
+            JSONObject msg = new JSONObject(json);
+            String type = msg.optString("type", "");
+
+            if ("phone_ready".equals(type)) {
+                Log.i(TAG, "📱 phone_ready received — sending glasses_ready");
+                JSONObject response = new JSONObject();
+                response.put("type", "glasses_ready");
+                response.put("timestamp", System.currentTimeMillis());
+                byte[] responseBytes = response.toString().getBytes(StandardCharsets.UTF_8);
+                // Small delay to allow the GATT write response to be sent first
+                mainHandler.postDelayed(() -> sendData(responseBytes), 50);
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "handlePhoneMessage: JSON parse error", e);
+        } catch (Exception e) {
+            Log.e(TAG, "handlePhoneMessage: unexpected error", e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // GATT server callbacks
     // -----------------------------------------------------------------------
 
@@ -319,13 +365,19 @@ public class InmoGo2BluetoothManager extends BaseBluetoothManager {
 
         @Override
         public void onCharacteristicWriteRequest(BluetoothDevice device,
-                int requestId, BluetoothGattCharacteristic characteristic,
-                boolean preparedWrite, boolean responseNeeded,
-                int offset, byte[] value) {
+                                                 int requestId, BluetoothGattCharacteristic characteristic,
+                                                 boolean preparedWrite, boolean responseNeeded,
+                                                 int offset, byte[] value) {
             if (RX_CHAR_UUID.equals(characteristic.getUuid())) {
                 Log.d(TAG, "Received " + (value != null ? value.length : 0)
                         + " bytes from phone");
+
+                // Forward to all registered data listeners (rest of the service pipeline)
                 notifyDataReceived(value);
+
+                // Intercept phone_ready and respond with glasses_ready
+                handlePhoneMessage(value);
+
                 if (responseNeeded) {
                     gattServer.sendResponse(device, requestId,
                             BluetoothGatt.GATT_SUCCESS, 0, null);
@@ -340,9 +392,9 @@ public class InmoGo2BluetoothManager extends BaseBluetoothManager {
 
         @Override
         public void onDescriptorWriteRequest(BluetoothDevice device,
-                int requestId, BluetoothGattDescriptor descriptor,
-                boolean preparedWrite, boolean responseNeeded,
-                int offset, byte[] value) {
+                                             int requestId, BluetoothGattDescriptor descriptor,
+                                             boolean preparedWrite, boolean responseNeeded,
+                                             int offset, byte[] value) {
             if (CCCD_UUID.equals(descriptor.getUuid())) {
                 boolean notificationsEnabled =
                         Arrays.equals(value, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);

@@ -32,11 +32,12 @@ import com.mentra.asg_client.service.core.handlers.I2SAudioCommandHandler;
 import com.mentra.asg_client.service.core.handlers.UserEmailCommandHandler;
 import com.mentra.asg_client.service.core.handlers.UploadIncidentLogsCommandHandler;
 import com.mentra.asg_client.reporting.core.ReportManager;
-
+import com.mentra.asg_client.service.core.handlers.DisplayCommandHandler;
 import org.json.JSONObject;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.Set;
 
 /**
  * CommandProcessor - Orchestrates command processing following SOLID principles.
@@ -328,7 +329,7 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new WifiCommandHandler(serviceManager, communicationManager, stateManager));
             Log.d(TAG, "✅ Registered WifiCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new BatteryCommandHandler(stateManager));
+            commandHandlerRegistry.registerHandler(new BatteryCommandHandler(stateManager, communicationManager, context));
             Log.d(TAG, "✅ Registered BatteryCommandHandler");
 
             commandHandlerRegistry.registerHandler(new VersionCommandHandler(serviceManager));
@@ -372,6 +373,16 @@ public class CommandProcessor {
             Log.d(TAG, "✅ Registered I2SAudioCommandHandler");
 
             Log.i(TAG, "✅ Successfully registered " + commandHandlerRegistry.getHandlerCount() + " command handlers");
+
+            commandHandlerRegistry.registerHandler(new DisplayCommandHandler(context));
+            Log.d(TAG, "✅ Registered DisplayCommandHandler");
+
+            // No-op handler for commands that don't need processing on Android side
+            commandHandlerRegistry.registerHandler(new com.mentra.asg_client.service.core.handlers.NoOpCommandHandler(
+                    Set.of("set_touch_event_reporting", "button_camera_led",
+                            "camera_fov_setting", "set_mic_enabled")
+            ));
+            Log.d(TAG, "✅ Registered NoOpCommandHandler");
 
         } catch (Exception e) {
             Log.e(TAG, "💥 Error during command handler initialization", e);
