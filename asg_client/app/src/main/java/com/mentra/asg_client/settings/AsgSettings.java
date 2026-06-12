@@ -4,6 +4,8 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Log;
 
+import com.mentra.asg_client.camera.policy.PhotoSizeTier;
+
 import java.util.Arrays;
 
 /**
@@ -22,6 +24,14 @@ public class AsgSettings {
     private static final String KEY_SAVE_IN_GALLERY_MODE = "save_in_gallery_mode";
     private static final String KEY_ZSL_ENABLED = "zsl_enabled";
     private static final String KEY_MFNR_ENABLED = "mfnr_enabled";
+    private static final String KEY_BUTTON_PHOTO_NOISE_REDUCTION = "button_photo_noise_reduction";
+    private static final String KEY_BUTTON_PHOTO_EDGE_ENHANCEMENT = "button_photo_edge_enhancement";
+    private static final String KEY_BUTTON_PHOTO_ISP_DIGITAL_GAIN = "button_photo_isp_digital_gain";
+    private static final String KEY_BUTTON_PHOTO_ISP_ANALOG_GAIN = "button_photo_isp_analog_gain";
+    private static final String KEY_BUTTON_PHOTO_AE_EXPOSURE_DIVISOR = "button_photo_ae_exposure_divisor";
+    private static final String KEY_BUTTON_PHOTO_ISO_CAP = "button_photo_iso_cap";
+    private static final String KEY_BUTTON_PHOTO_COMPRESS = "button_photo_compress";
+    private static final String KEY_BUTTON_PHOTO_SOUND = "button_photo_sound";
     private static final String KEY_HDR_BURST_ENABLED = "hdr_burst_enabled";
     private static final String KEY_MCU_FIRMWARE_VERSION = "mcu_firmware_version";
     private static final String KEY_CAMERA_FOV = "camera_fov";
@@ -115,21 +125,22 @@ public class AsgSettings {
 
     /**
      * Get the photo size setting for button-initiated photos
-     * @return Photo size ("small", "medium", "large", or "max")
+     * @return Photo size ("low", "medium", "high", or "max")
      */
     public String getButtonPhotoSize() {
-        String size = prefs.getString(KEY_BUTTON_PHOTO_SIZE, "large");
+        String size = prefs.getString(KEY_BUTTON_PHOTO_SIZE, "max");
+        size = PhotoSizeTier.normalize(size);
         Log.d(TAG, "Retrieved button photo size: " + size);
         return size;
     }
     
     /**
      * Set the photo size setting for button-initiated photos
-     * @param size Photo size ("small", "medium", "large", or "max")
+     * @param size Photo size ("low", "medium", "high", or "max")
      */
     public void setButtonPhotoSize(String size) {
-        // Validate size
-        if (!Arrays.asList("small", "medium", "large", "max").contains(size)) {
+        size = PhotoSizeTier.normalize(size);
+        if (!Arrays.asList("low", "medium", "high", "max").contains(size)) {
             Log.w(TAG, "Invalid photo size: " + size + ", using medium");
             size = "medium";
         }
@@ -261,6 +272,157 @@ public class AsgSettings {
         Log.d(TAG, "Setting MFNR enabled to: " + enabled);
         // Using commit() for immediate persistence
         prefs.edit().putBoolean(KEY_MFNR_ENABLED, enabled).commit();
+    }
+
+    /** Stored phone preset for noise reduction; {@code null} if unset. */
+    public Boolean getButtonPhotoNoiseReduction() {
+        if (!prefs.contains(KEY_BUTTON_PHOTO_NOISE_REDUCTION)) {
+            return null;
+        }
+        return prefs.getBoolean(KEY_BUTTON_PHOTO_NOISE_REDUCTION, true);
+    }
+
+    public void setButtonPhotoNoiseReduction(Boolean enabled) {
+        if (enabled == null) {
+            prefs.edit().remove(KEY_BUTTON_PHOTO_NOISE_REDUCTION).commit();
+            return;
+        }
+        Log.d(TAG, "Setting button photo noise reduction to: " + enabled);
+        prefs.edit().putBoolean(KEY_BUTTON_PHOTO_NOISE_REDUCTION, enabled).commit();
+    }
+
+    /** Stored phone preset for edge enhancement; {@code null} if unset. */
+    public Boolean getButtonPhotoEdgeEnhancement() {
+        if (!prefs.contains(KEY_BUTTON_PHOTO_EDGE_ENHANCEMENT)) {
+            return null;
+        }
+        return prefs.getBoolean(KEY_BUTTON_PHOTO_EDGE_ENHANCEMENT, true);
+    }
+
+    public void setButtonPhotoEdgeEnhancement(Boolean enabled) {
+        if (enabled == null) {
+            prefs.edit().remove(KEY_BUTTON_PHOTO_EDGE_ENHANCEMENT).commit();
+            return;
+        }
+        Log.d(TAG, "Setting button photo edge enhancement to: " + enabled);
+        prefs.edit().putBoolean(KEY_BUTTON_PHOTO_EDGE_ENHANCEMENT, enabled).commit();
+    }
+
+    /** Stored phone preset for ISP digital gain; {@code null} if unset. */
+    public Integer getButtonPhotoIspDigitalGain() {
+        if (!prefs.contains(KEY_BUTTON_PHOTO_ISP_DIGITAL_GAIN)) {
+            return null;
+        }
+        return prefs.getInt(KEY_BUTTON_PHOTO_ISP_DIGITAL_GAIN, 0);
+    }
+
+    public void setButtonPhotoIspDigitalGain(Integer gain) {
+        if (gain == null) {
+            prefs.edit().remove(KEY_BUTTON_PHOTO_ISP_DIGITAL_GAIN).commit();
+            return;
+        }
+        Log.d(TAG, "Setting button photo ISP digital gain to: " + gain);
+        prefs.edit().putInt(KEY_BUTTON_PHOTO_ISP_DIGITAL_GAIN, gain).commit();
+    }
+
+    /** Stored phone preset for ISP analog gain; {@code null} if unset. */
+    public String getButtonPhotoIspAnalogGain() {
+        if (!prefs.contains(KEY_BUTTON_PHOTO_ISP_ANALOG_GAIN)) {
+            return null;
+        }
+        return prefs.getString(KEY_BUTTON_PHOTO_ISP_ANALOG_GAIN, "");
+    }
+
+    public void setButtonPhotoIspAnalogGain(String gain) {
+        if (gain == null || gain.isEmpty()) {
+            prefs.edit().remove(KEY_BUTTON_PHOTO_ISP_ANALOG_GAIN).commit();
+            return;
+        }
+        Log.d(TAG, "Setting button photo ISP analog gain to: " + gain);
+        prefs.edit().putString(KEY_BUTTON_PHOTO_ISP_ANALOG_GAIN, gain).commit();
+    }
+
+    /** Stored phone preset for AE exposure divisor; {@code null} if unset. */
+    public Integer getButtonPhotoAeExposureDivisor() {
+        if (!prefs.contains(KEY_BUTTON_PHOTO_AE_EXPOSURE_DIVISOR)) {
+            return null;
+        }
+        int divisor = prefs.getInt(KEY_BUTTON_PHOTO_AE_EXPOSURE_DIVISOR, 0);
+        return divisor > 1 ? divisor : null;
+    }
+
+    public void setButtonPhotoAeExposureDivisor(Integer divisor) {
+        if (divisor == null || divisor <= 1) {
+            prefs.edit().remove(KEY_BUTTON_PHOTO_AE_EXPOSURE_DIVISOR).commit();
+            return;
+        }
+        Log.d(TAG, "Setting button photo AE exposure divisor to: " + divisor);
+        prefs.edit().putInt(KEY_BUTTON_PHOTO_AE_EXPOSURE_DIVISOR, divisor).commit();
+    }
+
+    /** Stored phone preset for ISO cap; {@code null} if unset. */
+    public Integer getButtonPhotoIsoCap() {
+        if (!prefs.contains(KEY_BUTTON_PHOTO_ISO_CAP)) {
+            return null;
+        }
+        int cap = prefs.getInt(KEY_BUTTON_PHOTO_ISO_CAP, 0);
+        return cap > 0 ? cap : null;
+    }
+
+    public void setButtonPhotoIsoCap(Integer cap) {
+        if (cap == null || cap <= 0) {
+            prefs.edit().remove(KEY_BUTTON_PHOTO_ISO_CAP).commit();
+            return;
+        }
+        Log.d(TAG, "Setting button photo ISO cap to: " + cap);
+        prefs.edit().putInt(KEY_BUTTON_PHOTO_ISO_CAP, cap).commit();
+    }
+
+    /** Stored phone preset for transfer compression; {@code null} if unset. */
+    public String getButtonPhotoCompress() {
+        if (!prefs.contains(KEY_BUTTON_PHOTO_COMPRESS)) {
+            return null;
+        }
+        return prefs.getString(KEY_BUTTON_PHOTO_COMPRESS, "none");
+    }
+
+    public void setButtonPhotoCompress(String compress) {
+        if (compress == null || compress.isEmpty()) {
+            prefs.edit().remove(KEY_BUTTON_PHOTO_COMPRESS).commit();
+            return;
+        }
+        Log.d(TAG, "Setting button photo compress to: " + compress);
+        prefs.edit().putString(KEY_BUTTON_PHOTO_COMPRESS, compress).commit();
+    }
+
+    /** Stored phone preset for shutter sound; {@code null} if unset. */
+    public Boolean getButtonPhotoSound() {
+        if (!prefs.contains(KEY_BUTTON_PHOTO_SOUND)) {
+            return null;
+        }
+        return prefs.getBoolean(KEY_BUTTON_PHOTO_SOUND, true);
+    }
+
+    public void setButtonPhotoSound(Boolean enabled) {
+        if (enabled == null) {
+            prefs.edit().remove(KEY_BUTTON_PHOTO_SOUND).commit();
+            return;
+        }
+        Log.d(TAG, "Setting button photo sound to: " + enabled);
+        prefs.edit().putBoolean(KEY_BUTTON_PHOTO_SOUND, enabled).commit();
+    }
+
+    public void clearButtonPhotoCaptureTuning() {
+        prefs.edit()
+                .remove(KEY_BUTTON_PHOTO_NOISE_REDUCTION)
+                .remove(KEY_BUTTON_PHOTO_EDGE_ENHANCEMENT)
+                .remove(KEY_BUTTON_PHOTO_ISP_DIGITAL_GAIN)
+                .remove(KEY_BUTTON_PHOTO_ISP_ANALOG_GAIN)
+                .remove(KEY_BUTTON_PHOTO_AE_EXPOSURE_DIVISOR)
+                .remove(KEY_BUTTON_PHOTO_ISO_CAP)
+                .remove(KEY_BUTTON_PHOTO_COMPRESS)
+                .remove(KEY_BUTTON_PHOTO_SOUND)
+                .commit();
     }
 
     /**
