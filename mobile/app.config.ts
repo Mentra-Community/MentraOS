@@ -114,6 +114,11 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         "CHANGE_WIFI_STATE",
         "CHANGE_NETWORK_STATE",
       ],
+      // The Google Navigation SDK manifest merges in ACCESS_BACKGROUND_LOCATION,
+      // but navigation runs in a location foreground service and works with
+      // while-in-use permission only. Blocking it avoids the Play Store
+      // background-location declaration/video review.
+      blockedPermissions: ["android.permission.ACCESS_BACKGROUND_LOCATION"],
       intentFilters: [
         {
           action: "VIEW",
