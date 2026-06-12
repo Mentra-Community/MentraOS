@@ -1396,8 +1396,26 @@ class DeviceManager {
     }
 
     fun sendButtonPhotoSettings(requestId: String, size: String) {
+        sendButtonPhotoSettings(requestId, ButtonPhotoSettings(ButtonPhotoSize.fromValue(size)))
+    }
+
+    fun sendButtonPhotoSettings(requestId: String, settings: ButtonPhotoSettings) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
-        live.sendButtonPhotoSettings(requestId, size)
+        live.sendButtonPhotoSettings(
+            requestId,
+            settings.size.value,
+            settings.mfnr,
+            settings.zsl,
+            settings.noiseReduction,
+            settings.edgeEnhancement,
+            settings.ispDigitalGain,
+            settings.ispAnalogGain,
+            settings.aeExposureDivisor,
+            settings.isoCap,
+            settings.compress,
+            settings.sound,
+            settings.resetCaptureTuning == true,
+        )
     }
 
     fun sendButtonVideoRecordingSettings(requestId: String, width: Int, height: Int, fps: Int) {
@@ -1533,38 +1551,31 @@ class DeviceManager {
         updateMicState()
     }
 
-    fun requestPhoto(
-            requestId: String,
-            appId: String,
-            size: String,
-            webhookUrl: String,
-            authToken: String?,
-            compress: String,
-            flash: Boolean,
-            save: Boolean,
-            sound: Boolean,
-            exposureTimeNs: Double? = null,
-            iso: Int? = null,
-    ) {
+    fun requestPhoto(request: PhotoRequest) {
         val exposureNs: Long? =
-                exposureTimeNs?.takeIf { it.isFinite() && it > 0 }?.let { v ->
+                request.exposureTimeNs?.takeIf { it.isFinite() && it > 0 }?.let { v ->
                     when {
                         v > Long.MAX_VALUE.toDouble() -> Long.MAX_VALUE
                         else -> v.toLong()
                     }
                 }
-        val manualIso = if (exposureNs != null) iso?.takeIf { it > 0 } else null
+        val manualIso = if (exposureNs != null) request.iso?.takeIf { it > 0 } else null
+        val routed =
+                request.copy(
+                    exposureTimeNs = exposureNs?.toDouble(),
+                    iso = manualIso,
+                )
         Bridge.log(
-                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=$requestId appId=$appId size=$size compress=$compress flash=$flash save=$save sound=$sound exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
+                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=${routed.requestId} appId=${routed.appId} size=${routed.size.value} compress=${routed.compress.value} flash=${routed.flash} save=${routed.save} sound=${routed.sound} exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} aeDivisor=${routed.aeExposureDivisor} isoCap=${routed.isoCap} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
         val activeSgc = sgc
         if (activeSgc == null) {
             Bridge.log(
-                    "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=$requestId"
+                    "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=${routed.requestId}"
             )
             return
         }
-        activeSgc.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, save, sound, exposureNs, manualIso)
+        activeSgc.requestPhoto(routed)
     }
 
     fun rgbLedControl(
