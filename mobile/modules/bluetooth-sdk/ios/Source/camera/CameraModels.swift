@@ -88,6 +88,27 @@ public struct ButtonPhotoSettings {
         self.sound = sound
         self.resetCaptureTuning = resetCaptureTuning
     }
+
+    static func from(params: [String: Any]) -> ButtonPhotoSettings {
+        let sizeRaw = params["size"] as? String ?? "medium"
+        let aeExposureDivisor =
+            optionalIntValue(params, "aeExposureDivisor").flatMap { $0 > 1 ? $0 : nil }
+        let isoCap = optionalIntValue(params, "isoCap").flatMap { $0 > 0 ? $0 : nil }
+        return ButtonPhotoSettings(
+            size: ButtonPhotoSize(normalizedRawValue: sizeRaw) ?? .medium,
+            mfnr: optionalBoolValue(params, "mfnr"),
+            zsl: optionalBoolValue(params, "zsl"),
+            noiseReduction: optionalBoolValue(params, "noiseReduction"),
+            edgeEnhancement: optionalBoolValue(params, "edgeEnhancement"),
+            ispDigitalGain: optionalIntValue(params, "ispDigitalGain"),
+            ispAnalogGain: optionalStringValue(params, "ispAnalogGain"),
+            aeExposureDivisor: aeExposureDivisor,
+            isoCap: isoCap,
+            compress: optionalStringValue(params, "compress"),
+            sound: optionalBoolValue(params, "sound"),
+            resetCaptureTuning: optionalBoolValue(params, "resetCaptureTuning")
+        )
+    }
 }
 
 public struct ButtonVideoRecordingSettings {

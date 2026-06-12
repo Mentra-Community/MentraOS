@@ -331,34 +331,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("setButtonPhotoCaptureSettings") { (params: [String: Any]) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            let size = ButtonPhotoSize(rawValue: params["size"] as? String ?? "medium") ?? .medium
-            let mfnr = params["mfnr"] as? Bool
-            let zsl = params["zsl"] as? Bool
-            let noiseReduction = params["noiseReduction"] as? Bool
-            let edgeEnhancement = params["edgeEnhancement"] as? Bool
-            let ispDigitalGain = params["ispDigitalGain"] as? Int
-            let ispAnalogGain = params["ispAnalogGain"] as? String
-            let aeExposureDivisor = params["aeExposureDivisor"] as? Int
-            let isoCap = params["isoCap"] as? Int
-            let compress = params["compress"] as? String
-            let sound = params["sound"] as? Bool
-            let resetCaptureTuning = params["resetCaptureTuning"] as? Bool
-            return try await sdk.setButtonPhotoSettings(
-                ButtonPhotoSettings(
-                    size: size,
-                    mfnr: mfnr,
-                    zsl: zsl,
-                    noiseReduction: noiseReduction,
-                    edgeEnhancement: edgeEnhancement,
-                    ispDigitalGain: ispDigitalGain,
-                    ispAnalogGain: ispAnalogGain,
-                    aeExposureDivisor: aeExposureDivisor,
-                    isoCap: isoCap,
-                    compress: compress,
-                    sound: sound,
-                    resetCaptureTuning: resetCaptureTuning
-                )
-            ).values
+            return try await sdk.setButtonPhotoSettings(ButtonPhotoSettings.from(params: params)).values
         }
 
         AsyncFunction("setButtonVideoRecordingSettings") { (width: Int, height: Int, fps: Int) in
