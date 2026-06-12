@@ -51,8 +51,12 @@ class MentraBluetoothSdk private constructor(
         Bridge.initialize(appContext)
         deviceManager = DeviceManager.getInstance()
         bridgeEventSinkId = Bridge.addEventSink { eventName, data -> dispatchBridgeEvent(eventName, data) }
-        storeListenerId = DeviceStore.store.addListener { category, changes -> dispatchStoreUpdate(category, changes) }
+        // Baseline the analytics connection state before subscribing to the store:
+        // store updates invoke listeners synchronously on the updating thread, so a
+        // connected status observed before the baseline would be reported as a fresh
+        // bluetooth_sdk_glasses_connected transition.
         analytics.initializeGlassesStatus(getRawGlassesStatus())
+        storeListenerId = DeviceStore.store.addListener { category, changes -> dispatchStoreUpdate(category, changes) }
         analytics.captureStarted()
     }
 
