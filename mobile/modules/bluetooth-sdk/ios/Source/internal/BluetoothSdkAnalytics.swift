@@ -46,7 +46,8 @@ public struct BluetoothSdkAnalyticsConfiguration {
 final class BluetoothSdkAnalytics {
     private static let defaultPostHogApiKey = "phc_FCweXVAxVgU7wZK4Fk3okOx4RmyNqVHJf62YpZSfJt5"
     private static let defaultPostHogHost = "https://us.i.posthog.com"
-    private let queue = DispatchQueue(label: "com.mentra.bluetoothsdk.analytics")
+    private let stateQueue = DispatchQueue(label: "com.mentra.bluetoothsdk.analytics.state")
+    private let transportQueue = DispatchQueue(label: "com.mentra.bluetoothsdk.analytics.transport")
     private var configuration: BluetoothSdkAnalyticsConfiguration
     private var startedCaptured = false
     private var lastConnected = false
@@ -56,57 +57,78 @@ final class BluetoothSdkAnalytics {
     }
 
     func configure(_ nextConfiguration: BluetoothSdkAnalyticsConfiguration) {
-        configuration = nextConfiguration.resolvedForApp()
-        captureStarted()
-    }
-
-    func configure(dictionary: [String: Any], surface: String) {
-        configure(configuration.applying(dictionary: dictionary, surface: surface))
-    }
-
-    func initializeGlassesStatus(_ status: GlassesStatus) {
-        lastConnected = status.analyticsConnected
-    }
-
-    func captureStarted() {
-        guard !startedCaptured, configuration.isReady else { return }
-        startedCaptured = true
-        capture(event: "bluetooth_sdk_started", properties: ["event_kind": "sdk_started"])
-    }
-
-    func observeGlassesStatus(_ status: GlassesStatus) {
-        // Track the real connection state even while analytics is disabled so that
-        // enabling it later cannot fabricate a connection event from stale or
-        // pre-existing connected flags; only genuine not-connected -> connected
-        // transitions observed while enabled are captured.
-        let isConnected = status.analyticsConnected
-        let wasConnected = lastConnected
-        lastConnected = isConnected
-        guard configuration.isReady else { return }
-        if isConnected, !wasConnected {
-            var properties: [String: Any] = [
-                "event_kind": "glasses_connected",
-                "fully_booted": status.fullyBooted,
-            ]
-            if !status.deviceModel.isEmpty {
-                properties["glasses_model"] = status.deviceModel
-            }
-            capture(event: "bluetooth_sdk_glasses_connected", properties: properties)
+        stateQueue.sync {
+            configuration = nextConfiguration.resolvedForApp()
+            captureStartedLocked()
         }
     }
 
-    private func capture(event: String, properties: [String: Any]) {
-        let activeConfiguration = configuration
+    func configure(dictionary: [String: Any], surface: String) {
+        stateQueue.sync {
+            configuration = configuration.applying(dictionary: dictionary, surface: surface).resolvedForApp()
+            captureStartedLocked()
+        }
+    }
+
+    func initializeGlassesStatus(_ status: GlassesStatus) {
+        stateQueue.sync {
+            lastConnected = status.analyticsConnected
+        }
+    }
+
+    func captureStarted() {
+        stateQueue.sync {
+            captureStartedLocked()
+        }
+    }
+
+    private func captureStartedLocked() {
+        guard !startedCaptured, configuration.isReady else { return }
+        startedCaptured = true
+        capture(
+            event: "bluetooth_sdk_started",
+            properties: ["event_kind": "sdk_started"],
+            configuration: configuration
+        )
+    }
+
+    func observeGlassesStatus(_ status: GlassesStatus) {
+        stateQueue.sync {
+            // Track the real connection state even while analytics is disabled so that
+            // enabling it later cannot fabricate a connection event from stale or
+            // pre-existing connected flags; only genuine not-connected -> connected
+            // transitions observed while enabled are captured.
+            let isConnected = status.analyticsConnected
+            let wasConnected = lastConnected
+            lastConnected = isConnected
+            guard configuration.isReady else { return }
+            if isConnected, !wasConnected {
+                var properties: [String: Any] = [
+                    "event_kind": "glasses_connected",
+                    "fully_booted": status.fullyBooted,
+                ]
+                if !status.deviceModel.isEmpty {
+                    properties["glasses_model"] = status.deviceModel
+                }
+                capture(event: "bluetooth_sdk_glasses_connected", properties: properties, configuration: configuration)
+            }
+        }
+    }
+
+    private func capture(
+        event: String,
+        properties: [String: Any],
+        configuration activeConfiguration: BluetoothSdkAnalyticsConfiguration
+    ) {
         guard activeConfiguration.isReady else { return }
 
-        let payload: [String: Any] = [
-            "api_key": Self.defaultPostHogApiKey,
-            "event": event,
-            "distinct_id": distinctId(),
-            "properties": baseProperties(configuration: activeConfiguration).merging(properties) { _, new in new },
-        ]
-
-        queue.async {
+        transportQueue.async {
+            let payload: [String: Any] = [
+                "api_key": Self.defaultPostHogApiKey,
+                "event": event,
+                "distinct_id": self.distinctId(),
+                "properties": self.baseProperties(configuration: activeConfiguration).merging(properties) { _, new in new },
+            ]
             guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
             guard let captureURL = self.captureURL() else { return }
             var request = URLRequest(url: captureURL)
