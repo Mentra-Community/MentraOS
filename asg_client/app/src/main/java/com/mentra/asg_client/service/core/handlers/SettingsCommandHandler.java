@@ -5,6 +5,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import com.dev.api.DevApi;
+import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.service.core.CameraRestartCooldown;
@@ -196,16 +197,142 @@ public class SettingsCommandHandler implements ICommandHandler {
     public boolean handleButtonPhotoSetting(JSONObject data) {
         try {
             String requestId = getRequestId(data);
-            String size = data.optString("size", "medium");
+            String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
+            boolean hasMfnr = data.has("mfnr") && !data.isNull("mfnr");
+            boolean hasZsl = data.has("zsl") && !data.isNull("zsl");
+            boolean hasNoiseReduction = data.has("noiseReduction") && !data.isNull("noiseReduction");
+            boolean hasEdgeEnhancement = data.has("edgeEnhancement") && !data.isNull("edgeEnhancement");
+            boolean hasIspDigitalGain = data.has("ispDigitalGain") && !data.isNull("ispDigitalGain");
+            boolean hasIspAnalogGain = data.has("ispAnalogGain") && !data.isNull("ispAnalogGain");
+            boolean hasAeExposureDivisor =
+                    data.has("aeExposureDivisor") && !data.isNull("aeExposureDivisor");
+            boolean hasIsoCap = data.has("isoCap") && !data.isNull("isoCap");
+            boolean hasCompress = data.has("compress") && !data.isNull("compress");
+            boolean hasSound = data.has("sound") && !data.isNull("sound");
+            Boolean mfnr = hasMfnr ? data.optBoolean("mfnr", true) : null;
+            Boolean zsl = hasZsl ? data.optBoolean("zsl", true) : null;
+            Boolean noiseReduction =
+                    hasNoiseReduction ? data.optBoolean("noiseReduction", true) : null;
+            Boolean edgeEnhancement =
+                    hasEdgeEnhancement ? data.optBoolean("edgeEnhancement", true) : null;
+            Integer ispDigitalGain =
+                    hasIspDigitalGain ? data.optInt("ispDigitalGain", 0) : null;
+            String ispAnalogGain =
+                    hasIspAnalogGain ? data.optString("ispAnalogGain", null) : null;
+            Integer aeExposureDivisor =
+                    hasAeExposureDivisor ? data.optInt("aeExposureDivisor", 0) : null;
+            Integer isoCap = hasIsoCap ? data.optInt("isoCap", 0) : null;
+            String compress = hasCompress ? data.optString("compress", "none") : null;
+            Boolean sound = hasSound ? data.optBoolean("sound", true) : null;
 
-            Log.d(TAG, "📱 Received button photo setting: " + size);
+            Log.d(
+                    TAG,
+                    "📱 Received button photo setting: size="
+                            + size
+                            + (hasMfnr ? ", mfnr=" + mfnr : "")
+                            + (hasZsl ? ", zsl=" + zsl : "")
+                            + (hasNoiseReduction ? ", noiseReduction=" + noiseReduction : "")
+                            + (hasEdgeEnhancement ? ", edgeEnhancement=" + edgeEnhancement : "")
+                            + (hasIspDigitalGain ? ", ispDigitalGain=" + ispDigitalGain : "")
+                            + (hasIspAnalogGain ? ", ispAnalogGain=" + ispAnalogGain : "")
+                            + (hasAeExposureDivisor ? ", aeExposureDivisor=" + aeExposureDivisor : "")
+                            + (hasIsoCap ? ", isoCap=" + isoCap : "")
+                            + (hasCompress ? ", compress=" + compress : "")
+                            + (hasSound ? ", sound=" + sound : ""));
+            if (noiseReduction != null && !noiseReduction) {
+                Log.w(
+                        TAG,
+                        "noiseReduction=false stored via button_photo_setting; HAL may report"
+                                + " not_implemented at capture");
+            }
+            if (ispDigitalGain != null) {
+                Log.w(
+                        TAG,
+                        "ispDigitalGain="
+                                + ispDigitalGain
+                                + " stored via button_photo_setting; HAL may report not_implemented"
+                                + " at capture");
+            }
+            if (ispAnalogGain != null && !ispAnalogGain.isEmpty()) {
+                Log.w(
+                        TAG,
+                        "ispAnalogGain="
+                                + ispAnalogGain
+                                + " stored via button_photo_setting; HAL may report not_implemented"
+                                + " at capture");
+            }
+
+            boolean resetCaptureTuning = data.optBoolean("resetCaptureTuning", false);
 
             AsgSettings asgSettings = serviceManager.getAsgSettings();
             if (asgSettings != null) {
+                if (resetCaptureTuning) {
+                    asgSettings.clearButtonPhotoCaptureTuning();
+                }
                 asgSettings.setButtonPhotoSize(size);
-                Log.d(TAG, "✅ Button photo size saved: " + size);
+                if (mfnr != null) {
+                    asgSettings.setMfnrEnabled(mfnr);
+                }
+                if (zsl != null) {
+                    asgSettings.setZslEnabled(zsl);
+                }
+                if (hasNoiseReduction) {
+                    asgSettings.setButtonPhotoNoiseReduction(noiseReduction);
+                }
+                if (hasEdgeEnhancement) {
+                    asgSettings.setButtonPhotoEdgeEnhancement(edgeEnhancement);
+                }
+                if (hasIspDigitalGain) {
+                    asgSettings.setButtonPhotoIspDigitalGain(ispDigitalGain);
+                }
+                if (hasIspAnalogGain) {
+                    asgSettings.setButtonPhotoIspAnalogGain(ispAnalogGain);
+                }
+                if (hasAeExposureDivisor) {
+                    asgSettings.setButtonPhotoAeExposureDivisor(aeExposureDivisor);
+                }
+                if (hasIsoCap) {
+                    asgSettings.setButtonPhotoIsoCap(isoCap);
+                }
+                if (hasCompress) {
+                    asgSettings.setButtonPhotoCompress(compress);
+                }
+                if (hasSound) {
+                    asgSettings.setButtonPhotoSound(sound);
+                }
+                Log.d(TAG, "✅ Button photo settings saved: size=" + size);
                 JSONObject values = new JSONObject();
                 values.put("size", size);
+                if (mfnr != null) {
+                    values.put("mfnr", mfnr);
+                }
+                if (zsl != null) {
+                    values.put("zsl", zsl);
+                }
+                if (noiseReduction != null) {
+                    values.put("noiseReduction", noiseReduction);
+                }
+                if (edgeEnhancement != null) {
+                    values.put("edgeEnhancement", edgeEnhancement);
+                }
+                if (ispDigitalGain != null) {
+                    values.put("ispDigitalGain", ispDigitalGain);
+                }
+                if (ispAnalogGain != null) {
+                    values.put("ispAnalogGain", ispAnalogGain);
+                }
+                if (aeExposureDivisor != null && aeExposureDivisor > 1) {
+                    values.put("aeExposureDivisor", aeExposureDivisor);
+                }
+                if (isoCap != null && isoCap > 0) {
+                    values.put("isoCap", isoCap);
+                }
+                if (compress != null) {
+                    values.put("compress", compress);
+                }
+                if (sound != null) {
+                    values.put("sound", sound);
+                }
                 sendSettingsAck(requestId, "button_photo", STATUS_APPLIED, values);
                 return true;
             } else {
