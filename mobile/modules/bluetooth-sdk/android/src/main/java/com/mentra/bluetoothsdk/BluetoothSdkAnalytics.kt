@@ -137,7 +137,7 @@ internal class BluetoothSdkAnalytics(
             put("event_source", "mentra_bluetooth_sdk")
             put("sdk_platform", "android")
             put("sdk_surface", activeConfig.surface)
-            put("sdk_version", BuildConfig.VERSION_NAME)
+            put("sdk_version", BuildConfig.SDK_VERSION)
             put("app_package", appContext.packageName)
             put("os_platform", "android")
             put("os_version", Build.VERSION.SDK_INT)
