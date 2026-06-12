@@ -186,6 +186,9 @@ mgr.on("status", (s) => sgcBroadcast({ event: "battery", level: s?.battery ?? -1
 mgr.on("gesture", (g) => sgcBroadcast({ event: "gesture", gesture: g.gesture }))
 mgr.on("imu", (v) => sgcBroadcast({ event: "imu", ...v }))
 mgr.on("state", (s) => sgcBroadcast({ event: "status", connected: s.connected, device: s.device, match: s.match }))
+// Liveness ping: lets the app detect a dead/hung socket (laptop sleep) via a
+// read timeout instead of trusting TCP to error out.
+setInterval(() => sgcBroadcast({ event: "ping" }), 3000)
 
 async function sgcHandle(sock, msg) {
   const reply = (obj) => sgcSend(sock, { id: msg.id, ...obj })

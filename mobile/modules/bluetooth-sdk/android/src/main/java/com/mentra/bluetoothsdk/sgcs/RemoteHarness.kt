@@ -98,6 +98,10 @@ class RemoteHarness : SGCManager() {
                 val s = Socket()
                 s.tcpNoDelay = true
                 s.connect(InetSocketAddress(host, port), 4000)
+                // The daemon pings every 3s; if nothing arrives for 10s the
+                // socket is dead/hung (e.g. the laptop slept) — time the read
+                // out so we mark disconnected instead of showing stale state.
+                s.soTimeout = 10000
                 socket = s
                 writer = OutputStreamWriter(s.getOutputStream(), Charsets.UTF_8)
                 val reader = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.UTF_8))
