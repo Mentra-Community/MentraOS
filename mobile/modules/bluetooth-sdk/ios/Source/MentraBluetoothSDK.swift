@@ -162,6 +162,7 @@ public final class MentraBluetoothSDK {
     private var defaultDeviceApplyGeneration = 0
     private var activeScanSessions: [UUID: ActiveScanSession] = [:]
     private var activeStreamKeepAlive: ActiveStreamKeepAlive?
+    private let analytics: BluetoothSdkAnalytics
     private var pendingPhotoRequests: [String: PendingResponse<PhotoResponseEvent>] = [:]
     private var pendingVideoRecordingRequests: [String: PendingVideoRecordingRequest] = [:]
     private var pendingRgbLedRequests: [String: PendingResponse<RgbLedControlResponseEvent>] = [:]
@@ -178,6 +179,7 @@ public final class MentraBluetoothSDK {
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
         self.configuration = configuration
+        analytics = BluetoothSdkAnalytics(configuration: configuration.analytics)
         bluetoothAvailabilityListenerId = BluetoothAvailability.shared.addStateListener { [weak self] state in
             Task { @MainActor [weak self] in
                 self?.handleBluetoothAvailability(state)
@@ -193,6 +195,8 @@ public final class MentraBluetoothSDK {
                 self?.dispatchStoreUpdate(category, changes)
             }
         }
+        analytics.initializeGlassesStatus(glassesStatus)
+        analytics.captureStarted()
     }
 
     public var state: MentraBluetoothState {
@@ -1416,6 +1420,7 @@ public final class MentraBluetoothSDK {
     private func dispatchStoreUpdate(_ category: String, _ changes: [String: Any]) {
         switch ObservableStore.normalizeCategory(category) {
         case "glasses":
+            analytics.observeGlassesStatus(glassesStatus)
             let nextState = state
             delegate?.mentraBluetoothSDK(self, didUpdate: nextState)
             delegate?.mentraBluetoothSDK(self, didUpdateGlasses: nextState.glasses)

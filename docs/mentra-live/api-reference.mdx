@@ -70,6 +70,105 @@ sdk.invalidate()
 
 Keep one SDK instance per active app session. The SDK owns Bluetooth connection state, native event delivery, and cleanup. Your app owns user identity, UI state, and whether a default device record is persisted across app restarts.
 
+## Mentra SDK Usage Analytics
+
+The SDK reports anonymous usage events to Mentra's PostHog project by default
+so Mentra can understand SDK adoption and successful glasses connections:
+
+| Event | Fires When |
+| --- | --- |
+| `bluetooth_sdk_started` | Once per app runtime after the native SDK starts. |
+| `bluetooth_sdk_glasses_connected` | When SDK status transitions from not connected to connected. Failed scans and failed connection attempts are not counted. |
+
+Analytics delivery is fire-and-forget: events are submitted asynchronously, do
+not block Bluetooth SDK behavior, and are not retried if delivery fails.
+
+Mentra's PostHog project API key is embedded in the SDK as a public analytics
+write token, not a private PostHog personal API key. Apps do not need to
+configure PostHog to send these Mentra SDK usage events.
+
+<Tabs>
+  <Tab title="React Native">
+
+Disable analytics before native SDK startup through the Expo config plugin:
+
+```json
+{
+  "expo": {
+    "plugins": [
+      [
+        "@mentra/bluetooth-sdk",
+        {
+          "analytics": false
+        }
+      ]
+    ]
+  }
+}
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+val sdk = MentraBluetoothSdk.create(
+    context = applicationContext,
+    config = MentraBluetoothSdkConfig(
+        analytics = BluetoothSdkAnalyticsConfig.disabled()
+    ),
+    listener = listener,
+)
+```
+
+Android apps can also set application metadata before SDK startup:
+
+```xml
+<meta-data
+    android:name="com.mentra.bluetoothsdk.analytics.disabled"
+    android:value="true" />
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+let sdk = MentraBluetoothSDK(
+    configuration: MentraBluetoothSDKConfiguration(
+        analytics: .disabled
+    )
+)
+```
+
+iOS apps can also set `MentraBluetoothSdkAnalyticsDisabled` to `true` in
+`Info.plist` before SDK startup.
+
+  </Tab>
+</Tabs>
+
+Apps do not configure the analytics destination; these SDK usage events are
+always sent to Mentra's PostHog project unless analytics are disabled.
+
+Captured properties are intentionally narrow:
+
+| Property | Meaning |
+| --- | --- |
+| `event_source` | Always `mentra_bluetooth_sdk`. |
+| `sdk_platform` | Native platform that sends the event: `android` or `ios`. |
+| `sdk_surface` | Public SDK surface: `react_native`, `android`, or `ios`. |
+| `sdk_version` | Bluetooth SDK version. |
+| `app_package` / `app_bundle_identifier` | Consuming app identifier. |
+| `os_platform`, `os_version` | Phone OS metadata. |
+| `event_kind` | `sdk_started` or `glasses_connected`. |
+| `fully_booted` | Connection event only; whether the connected status already reports fully booted. |
+| `glasses_model` | Connection event only; included only when the SDK has a non-empty model value. |
+
+The SDK does not upload BLE MAC addresses, CoreBluetooth identifiers, serial
+numbers, Bluetooth device names, user ids, tokens, Wi-Fi credentials,
+microphone data, photos, or transcripts. It stores a locally generated
+anonymous SDK install id and sends it as PostHog `distinct_id`; events include
+`$process_person_profile: false` so PostHog does not create person profiles for
+these SDK usage pings.
+
 ## Connection
 
 <Tabs>
