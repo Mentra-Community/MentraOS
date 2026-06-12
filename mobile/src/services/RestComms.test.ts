@@ -6,10 +6,10 @@ import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {WebSocketStatus} from "@/services/ws-types"
 
 jest.mock("@mentra/bluetooth-sdk-internal", () => {
-  const {coreModuleMock} = require("@/test-utils/mockCoreModule")
+  const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
   return {
     __esModule: true,
-    default: coreModuleMock,
+    default: bluetoothSdkMock,
   }
 })
 

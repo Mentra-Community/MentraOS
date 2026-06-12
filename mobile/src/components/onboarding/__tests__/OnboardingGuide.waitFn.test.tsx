@@ -1,7 +1,7 @@
 import {render, act} from "@testing-library/react-native"
 
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
-import {getCoreModuleListenerCount, resetCoreModuleMock} from "@/test-utils/mockCoreModule"
+import {getBluetoothSdkListenerCount, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 // --- Heavy / native deps that OnboardingGuide pulls in ---
@@ -111,7 +111,7 @@ const buildSteps = (): OnboardingStep[] => [
 
 describe("OnboardingGuide waitFn lifecycle", () => {
   beforeEach(() => {
-    resetCoreModuleMock()
+    resetBluetoothSdkMock()
     jest.useFakeTimers()
   })
 
@@ -143,6 +143,6 @@ describe("OnboardingGuide waitFn lifecycle", () => {
     // BUG: each re-render registers a new button_press listener without removing
     // the previous one, so the count grows unbounded. There should be at most
     // one active listener for the current step.
-    expect(getCoreModuleListenerCount("button_press")).toBeLessThanOrEqual(1)
+    expect(getBluetoothSdkListenerCount("button_press")).toBeLessThanOrEqual(1)
   })
 })

@@ -1452,6 +1452,7 @@ struct ViewState {
         DeviceStore.shared.apply("glasses", "deviceModel", "")
         DeviceStore.shared.apply("glasses", "fullyBooted", false)
         DeviceStore.shared.apply("glasses", "connected", false)
+        DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
         DeviceStore.shared.apply("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.voiceActivityDetectionEnabled)
         // disconnect the controller as well:
         searchingController = false
