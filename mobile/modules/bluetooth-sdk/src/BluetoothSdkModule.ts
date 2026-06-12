@@ -32,7 +32,9 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   displayEvent(params: Record<string, any>): Promise<void>
   displayText(params: Record<string, any>): Promise<void>
   clearDisplay(): Promise<void>
-
+  /** Sends a 3-line teleprompter window to the glasses overlay (no-cloud direct path). */
+  sendTeleprompterUpdate(lines: string[], highlightIndex: number): Promise<void>
+  
   // Connection Commands
   requestStatus(): Promise<void>
   connectDefault(options?: ConnectOptions): Promise<void>
