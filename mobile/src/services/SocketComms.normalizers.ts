@@ -1,12 +1,24 @@
 import {type PhotoCompression, type PhotoSize, type RgbLedAction, type RgbLedColor} from "@mentra/bluetooth-sdk"
 
-const PHOTO_SIZES = new Set<PhotoSize>(["small", "medium", "large", "full"])
+const PHOTO_SIZES = new Set<PhotoSize>(["low", "medium", "high", "max"])
 const PHOTO_COMPRESSIONS = new Set<PhotoCompression>(["none", "medium", "heavy"])
 const RGB_LED_ACTIONS = new Set<RgbLedAction>(["on", "off"])
 const RGB_LED_COLORS = new Set<RgbLedColor>(["red", "green", "blue", "orange", "white"])
 
 export function normalizePhotoSize(value: unknown): PhotoSize {
-  return typeof value === "string" && PHOTO_SIZES.has(value as PhotoSize) ? (value as PhotoSize) : "medium"
+  if (typeof value !== "string") {
+    return "medium"
+  }
+  switch (value) {
+    case "small":
+      return "low"
+    case "large":
+      return "high"
+    case "full":
+      return "max"
+    default:
+      return PHOTO_SIZES.has(value as PhotoSize) ? (value as PhotoSize) : "medium"
+  }
 }
 
 export function normalizePhotoCompression(value: unknown): PhotoCompression {
