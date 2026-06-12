@@ -1871,6 +1871,8 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Photo request failed",
+        stage: (err as {stage?: string}).stage,
+        transport: (err as {transport?: string}).transport,
       })
     }
   }

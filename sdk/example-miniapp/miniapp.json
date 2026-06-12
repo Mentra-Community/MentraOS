@@ -13,13 +13,34 @@
     "ui": "ui/index.html"
   },
   "permissions": [
-    {"type": "MICROPHONE", "description": "Used for live transcription"},
-    {"type": "LOCATION", "description": "Exercised by the SDK Tester page"},
-    {"type": "READ_NOTIFICATIONS", "description": "Exercised by the SDK Tester page"},
-    {"type": "CALENDAR", "description": "Exercised by the SDK Tester page"}
+    {
+      "type": "MICROPHONE",
+      "description": "Used for live transcription"
+    },
+    {
+      "type": "LOCATION",
+      "description": "Exercised by the SDK Tester page"
+    },
+    {
+      "type": "READ_NOTIFICATIONS",
+      "description": "Exercised by the SDK Tester page"
+    },
+    {
+      "type": "CALENDAR",
+      "description": "Exercised by the SDK Tester page"
+    }
   ],
   "hardwareRequirements": [
-    {"type": "DISPLAY", "level": "REQUIRED", "description": "Shows live transcription"},
-    {"type": "MICROPHONE", "level": "REQUIRED", "description": "Captures speech for transcription"}
-  ]
+    {
+      "type": "DISPLAY",
+      "level": "REQUIRED",
+      "description": "Shows live transcription"
+    },
+    {
+      "type": "MICROPHONE",
+      "level": "REQUIRED",
+      "description": "Captures speech for transcription"
+    }
+  ],
+  "port": 3140
 }
