@@ -95,7 +95,7 @@ public struct ButtonPhotoSettings {
             optionalIntValue(params, "aeExposureDivisor").flatMap { $0 > 1 ? $0 : nil }
         let isoCap = optionalIntValue(params, "isoCap").flatMap { $0 > 0 ? $0 : nil }
         return ButtonPhotoSettings(
-            size: ButtonPhotoSize(normalizedRawValue: sizeRaw) ?? .medium,
+            size: ButtonPhotoSize(normalizedRawValue: sizeRaw),
             mfnr: optionalBoolValue(params, "mfnr"),
             zsl: optionalBoolValue(params, "zsl"),
             noiseReduction: optionalBoolValue(params, "noiseReduction"),
