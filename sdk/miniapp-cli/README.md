@@ -80,16 +80,18 @@ Flow:
 
 ```bash
 mentra-miniapp pack
+mentra-miniapp pack --no-build    # zip dist/ as-is, skip the build
 ```
 
 Produces a distributable ZIP. Use this when you want the artifact only — `release` calls `pack` internally.
 
 Steps:
 
-1. Verifies `dist/` exists. (Build first.)
-2. Validates `miniapp.json`.
-3. Copies `miniapp.json` and `icon.png` into `dist/`.
-4. Runs the system `zip -r` command to produce `<packageName>-<version>.zip` in the current directory.
+1. Runs `<pm> run build` with `NODE_ENV=production` (same as `release`), so the zip always contains a production bundle — never a stale dev build left behind by `dev`. Pass `--no-build` to skip this and zip whatever is already in `dist/`.
+2. Verifies `dist/` exists.
+3. Validates `miniapp.json`.
+4. Copies `miniapp.json` and `icon.png` into `dist/`.
+5. Runs the system `zip -r` command to produce `<packageName>-<version>.zip` in the current directory.
 
 The resulting ZIP is the artifact you'd upload to the miniapp store.
 
