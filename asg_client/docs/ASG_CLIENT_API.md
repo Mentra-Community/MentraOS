@@ -886,7 +886,7 @@ Idle response:
 
 #### `ota_retry_version_check`
 
-Asks ASG to retry its background OTA version check, for example after the phone fixes a clock/TLS issue.
+Asks ASG to retry the last phone-started OTA after the phone completes recovery work (for example syncing the glasses clock). The retry re-uses the manifest URL from the last `ota_start`. ASG ignores the command — replying only with its current `ota_status` — unless a phone-started OTA previously failed with `clock_skew` or `ssl_error`.
 
 ```json
 {"type": "ota_retry_version_check"}

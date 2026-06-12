@@ -42,6 +42,13 @@ on:
 permissions:
   contents: write
 
+# Serialize runs: two staging pushes in quick succession must not deploy OTA
+# manifests to Cloudflare Pages out of order (the older manifest could land
+# last and stay live) or race the delete/re-upload of rolling release assets.
+concurrency:
+  group: staging-builds
+  cancel-in-progress: false
+
 env:
   ASG_STAGING_OTA_VERSION_URL: https://mentra-live-ota-staging.pages.dev/staging_live_version.json
   ASG_STAGING_OTA_CUSTOM_DOMAIN_URL: https://staging.ota.mentraglass.com/staging_live_version.json
@@ -773,7 +780,10 @@ jobs:
           ' asg-pages-site/staging_live_version.json >/dev/null
 
       - name: Upload ASG OTA manifest to staging-builds release
-        if: needs.build-asg.result == 'success'
+        # Same ref guard as the Pages deploy: a workflow_dispatch run from a
+        # non-staging branch must not overwrite the release-asset manifest the
+        # cleanup keep-APK logic trusts while Pages keeps serving the old one.
+        if: needs.build-asg.result == 'success' && github.ref_name == 'staging'
         uses: actions/github-script@v7
         with:
           script: |
@@ -872,7 +882,7 @@ jobs:
             exit 1
           fi
 
-          npx --yes wrangler@latest pages deploy asg-pages-site \
+          npx --yes wrangler@4.86.0 pages deploy asg-pages-site \
             --project-name mentra-live-ota-staging \
             --branch staging \
             --commit-hash "$GITHUB_SHA" \
@@ -933,10 +943,18 @@ jobs:
                 'staging_live_version.json'
               ]);
 
+              // Fail closed: only delete dated ASG APKs once we know which one
+              // the live manifest references. If the manifest can't be read we
+              // might otherwise delete the APK that staging glasses still
+              // download via the deployed Pages manifest.
+              let liveApkResolved = false;
               const manifestAsset = release.data.assets.find((asset) => asset.name === 'staging_live_version.json');
               if (manifestAsset) {
                 try {
                   const response = await fetch(manifestAsset.browser_download_url);
+                  if (!response.ok) {
+                    throw new Error(`manifest fetch returned HTTP ${response.status}`);
+                  }
                   const manifest = await response.json();
                   const apkUrl = manifest.apps?.['com.mentra.asg_client']?.apkUrl;
                   const liveApkAssetName = apkUrl ? decodeURIComponent(new URL(apkUrl).pathname.split('/').pop() || '') : '';
@@ -944,13 +962,21 @@ jobs:
                     keepAssetNames.add(liveApkAssetName);
                     console.log(`Keeping live ASG OTA APK asset: ${liveApkAssetName}`);
                   }
+                  liveApkResolved = true;
                 } catch (error) {
                   console.log('Could not determine live ASG OTA APK asset:', error.message);
                 }
+              } else {
+                // No manifest published yet, so no APK can be referenced by it.
+                liveApkResolved = true;
               }
 
               for (const asset of release.data.assets) {
                 if (keepAssetNames.has(asset.name)) continue;
+                if (!liveApkResolved && asset.name.startsWith('asg-') && asset.name.endsWith('.apk')) {
+                  console.log(`Keeping ${asset.name}: live manifest unreadable, not deleting ASG APKs`);
+                  continue;
+                }
 
                 const createdAt = new Date(asset.created_at);
                 if (createdAt < sevenDaysAgo) {

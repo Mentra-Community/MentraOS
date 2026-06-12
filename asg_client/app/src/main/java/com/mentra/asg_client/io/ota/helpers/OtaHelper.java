@@ -1551,7 +1551,7 @@ public class OtaHelper {
                 return true;
             }
             Log.e(TAG, "Download succeeded but verification failed");
-            lastApkFailureErrorCode = FirmwareDownloadException.CODE_VERIFY_FAILED;
+            lastApkFailureErrorCode = FirmwareDownloadException.CODE_APK_VERIFY_FAILED;
             updatePhoneInitiatedRetryPending(lastApkFailureErrorCode);
             EventBus.getDefault().post(new DownloadProgressEvent(
                 DownloadProgressEvent.DownloadStatus.FAILED, lastApkFailureErrorCode));

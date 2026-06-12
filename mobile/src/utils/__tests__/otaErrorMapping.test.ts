@@ -61,6 +61,12 @@ describe("getOtaErrorMessage", () => {
     )
   })
 
+  it("maps apk_verify_failed to verify message", () => {
+    expect(getOtaErrorMessage("apk_verify_failed")).toBe(
+      "Update verification failed — please try again or contact support",
+    )
+  })
+
   it("maps install_failed to install message", () => {
     expect(getOtaErrorMessage("install_failed")).toBe("Install failed — please try again")
   })

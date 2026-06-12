@@ -56,7 +56,6 @@ interface VersionJson {
 
 // OTA version URL constant
 export const OTA_VERSION_URL_PROD = "https://ota.mentraglass.com/prod_live_version.json"
-export const OTA_VERSION_URL_STAGING = "https://staging.ota.mentraglass.com/staging_live_version.json"
 
 function isLegacyAsgOtaStartBuild(glassesBuildNumber?: string | null): boolean {
   const buildNumber = Number.parseInt(glassesBuildNumber ?? "", 10)
