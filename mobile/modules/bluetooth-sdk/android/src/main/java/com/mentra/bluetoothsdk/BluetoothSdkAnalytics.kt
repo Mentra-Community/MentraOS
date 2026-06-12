@@ -25,17 +25,22 @@ data class BluetoothSdkAnalyticsConfig @JvmOverloads constructor(
         @JvmStatic
         fun disabled(): BluetoothSdkAnalyticsConfig = BluetoothSdkAnalyticsConfig(enabled = false)
 
-        internal fun fromMap(values: Map<String, Any?>, surface: String): BluetoothSdkAnalyticsConfig =
+        internal fun fromMap(
+            values: Map<String, Any?>,
+            surface: String,
+            baseConfig: BluetoothSdkAnalyticsConfig = BluetoothSdkAnalyticsConfig(surface = surface),
+        ): BluetoothSdkAnalyticsConfig =
             BluetoothSdkAnalyticsConfig(
-                enabled = (values["enabled"] as? Boolean) ?: true,
+                enabled = (values["enabled"] as? Boolean) ?: baseConfig.enabled,
                 postHogApiKey =
                     (values["postHogApiKey"] as? String)
                         ?.takeIf { it.isNotBlank() }
+                        ?: baseConfig.postHogApiKey
                         ?: BluetoothSdkAnalytics.DEFAULT_POSTHOG_API_KEY,
                 postHogHost =
                     (values["postHogHost"] as? String)
                         ?.takeIf { it.isNotBlank() }
-                        ?: BluetoothSdkAnalytics.DEFAULT_POSTHOG_HOST,
+                        ?: baseConfig.postHogHost,
                 surface = surface,
             )
     }
@@ -58,6 +63,14 @@ internal class BluetoothSdkAnalytics(
         captureStarted()
     }
 
+    fun configure(values: Map<String, Any?>, surface: String) {
+        configure(BluetoothSdkAnalyticsConfig.fromMap(values, surface, config))
+    }
+
+    fun initializeGlassesStatus(status: GlassesStatus) {
+        lastConnected = status.analyticsConnected
+    }
+
     fun captureStarted() {
         if (startedCaptured || !config.isReady) return
         startedCaptured = true
@@ -65,7 +78,7 @@ internal class BluetoothSdkAnalytics(
     }
 
     fun observeGlassesStatus(status: GlassesStatus) {
-        val isConnected = status.connectionState.isConnected || status.connected || status.fullyBooted
+        val isConnected = status.analyticsConnected
         if (isConnected && !lastConnected) {
             capture(
                 "bluetooth_sdk_glasses_connected",
@@ -112,7 +125,7 @@ internal class BluetoothSdkAnalytics(
                 }
                 connection.inputStream.close()
                 connection.disconnect()
-            } catch (_: Throwable) {
+            } catch (_: Exception) {
                 // Analytics must never affect Bluetooth SDK behavior.
             }
         }
@@ -160,7 +173,7 @@ private fun BluetoothSdkAnalyticsConfig.resolvedForApp(context: Context): Blueto
             context.packageManager
                 .getApplicationInfo(context.packageName, PackageManager.GET_META_DATA)
                 .metaData
-        } catch (_: Throwable) {
+        } catch (_: Exception) {
             null
         }
 
@@ -179,3 +192,6 @@ private fun BluetoothSdkAnalyticsConfig.resolvedForApp(context: Context): Blueto
         postHogHost = metadataHost ?: postHogHost,
     )
 }
+
+private val GlassesStatus.analyticsConnected: Boolean
+    get() = connectionState.isConnected || connected || fullyBooted

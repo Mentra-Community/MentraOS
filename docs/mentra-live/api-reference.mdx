@@ -80,6 +80,9 @@ so Mentra can understand SDK adoption and successful glasses connections:
 | `bluetooth_sdk_started` | Once per app runtime after the native SDK starts. |
 | `bluetooth_sdk_glasses_connected` | When SDK status transitions from not connected to connected. Failed scans and failed connection attempts are not counted. |
 
+Analytics delivery is fire-and-forget: events are submitted asynchronously, do
+not block Bluetooth SDK behavior, and are not retried if delivery fails.
+
 Mentra's PostHog project API key is embedded in the SDK as a public analytics
 write token, not a private PostHog personal API key. Apps do not need to
 configure PostHog to send these Mentra SDK usage events.

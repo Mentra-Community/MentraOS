@@ -23,7 +23,7 @@ class MentraBluetoothSdk private constructor(
     private val deviceManager: DeviceManager
     private val listeners =
         Collections.synchronizedSet(mutableSetOf<MentraBluetoothSdkListener>())
-    private val analytics = BluetoothSdkAnalytics(appContext, config.analytics.withSurface("android"))
+    private val analytics = BluetoothSdkAnalytics(appContext, config.analytics)
     private val discoveredDeviceNames = mutableSetOf<String>()
     private val bridgeEventSinkId: String
     private val storeListenerId: String
@@ -52,6 +52,7 @@ class MentraBluetoothSdk private constructor(
         deviceManager = DeviceManager.getInstance()
         bridgeEventSinkId = Bridge.addEventSink { eventName, data -> dispatchBridgeEvent(eventName, data) }
         storeListenerId = DeviceStore.store.addListener { category, changes -> dispatchStoreUpdate(category, changes) }
+        analytics.initializeGlassesStatus(getRawGlassesStatus())
         analytics.captureStarted()
     }
 
@@ -172,6 +173,11 @@ class MentraBluetoothSdk private constructor(
 
     fun configureAnalytics(config: BluetoothSdkAnalyticsConfig) {
         analytics.configure(config)
+        analytics.observeGlassesStatus(getRawGlassesStatus())
+    }
+
+    internal fun configureAnalytics(values: Map<String, Any?>, surface: String) {
+        analytics.configure(values, surface)
         analytics.observeGlassesStatus(getRawGlassesStatus())
     }
 

@@ -76,6 +76,10 @@ function withAnalyticsInfoPlist(config: any, props: BluetoothSdkPluginProps | un
   return withInfoPlist(config, (config) => {
     const analytics = resolveAnalyticsProps(props)
 
+    delete config.modResults[INFO_ANALYTICS_DISABLED]
+    delete config.modResults[INFO_POSTHOG_API_KEY]
+    delete config.modResults[INFO_POSTHOG_HOST]
+
     if (analytics.disabled !== undefined) {
       config.modResults[INFO_ANALYTICS_DISABLED] = analytics.disabled
     }

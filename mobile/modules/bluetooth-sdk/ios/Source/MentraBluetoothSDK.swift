@@ -176,7 +176,7 @@ public final class MentraBluetoothSDK {
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
         self.configuration = configuration
-        analytics = BluetoothSdkAnalytics(configuration: configuration.analytics.withSurface("ios"))
+        analytics = BluetoothSdkAnalytics(configuration: configuration.analytics)
         _ = BluetoothAvailability.shared
         bridgeEventSinkId = Bridge.addEventSink { [weak self] eventName, data in
             Task { @MainActor [weak self] in
@@ -188,6 +188,7 @@ public final class MentraBluetoothSDK {
                 self?.dispatchStoreUpdate(category, changes)
             }
         }
+        analytics.initializeGlassesStatus(glassesStatus)
         analytics.captureStarted()
     }
 
@@ -234,6 +235,11 @@ public final class MentraBluetoothSDK {
 
     public func configureAnalytics(_ configuration: BluetoothSdkAnalyticsConfiguration) {
         analytics.configure(configuration)
+        analytics.observeGlassesStatus(glassesStatus)
+    }
+
+    func configureAnalytics(_ options: [String: Any], surface: String) {
+        analytics.configure(dictionary: options, surface: surface)
         analytics.observeGlassesStatus(glassesStatus)
     }
 

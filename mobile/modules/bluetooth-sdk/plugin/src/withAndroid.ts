@@ -15,6 +15,7 @@ import {type BluetoothSdkPluginProps} from "./index"
 const META_ANALYTICS_DISABLED = "com.mentra.bluetoothsdk.analytics.disabled"
 const META_POSTHOG_API_KEY = "com.mentra.bluetoothsdk.analytics.posthog_api_key"
 const META_POSTHOG_HOST = "com.mentra.bluetoothsdk.analytics.posthog_host"
+const ANALYTICS_META_NAMES = [META_ANALYTICS_DISABLED, META_POSTHOG_API_KEY, META_POSTHOG_HOST]
 
 function getBluetoothSdkRoot(): string {
   return path.dirname(require.resolve("../../package.json"))
@@ -183,10 +184,18 @@ function upsertMetaData(application: any, name: string, value: string) {
   }
 }
 
+function removeMetaData(application: any, name: string) {
+  application["meta-data"] = (application["meta-data"] ?? []).filter((item: any) => item.$?.["android:name"] !== name)
+}
+
 function withAnalyticsManifestMetadata(config: any, props: BluetoothSdkPluginProps | undefined) {
   return withAndroidManifest(config, (config) => {
     const analytics = resolveAnalyticsProps(props)
     const application = AndroidConfig.Manifest.getMainApplicationOrThrow(config.modResults)
+
+    for (const name of ANALYTICS_META_NAMES) {
+      removeMetaData(application, name)
+    }
 
     if (analytics.disabled !== undefined) {
       upsertMetaData(application, META_ANALYTICS_DISABLED, analytics.disabled ? "true" : "false")

@@ -30,6 +30,15 @@ public struct BluetoothSdkAnalyticsConfiguration {
         self.surface = surface
     }
 
+    func applying(dictionary: [String: Any], surface: String) -> BluetoothSdkAnalyticsConfiguration {
+        BluetoothSdkAnalyticsConfiguration(
+            enabled: dictionary["enabled"] as? Bool ?? enabled,
+            postHogApiKey: (dictionary["postHogApiKey"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? postHogApiKey,
+            postHogHost: (dictionary["postHogHost"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? postHogHost,
+            surface: surface
+        )
+    }
+
     var isReady: Bool {
         enabled && !(postHogApiKey?.isEmpty ?? true)
     }
@@ -71,6 +80,14 @@ final class BluetoothSdkAnalytics {
         captureStarted()
     }
 
+    func configure(dictionary: [String: Any], surface: String) {
+        configure(configuration.applying(dictionary: dictionary, surface: surface))
+    }
+
+    func initializeGlassesStatus(_ status: GlassesStatus) {
+        lastConnected = status.analyticsConnected
+    }
+
     func captureStarted() {
         guard !startedCaptured, configuration.isReady else { return }
         startedCaptured = true
@@ -78,7 +95,7 @@ final class BluetoothSdkAnalytics {
     }
 
     func observeGlassesStatus(_ status: GlassesStatus) {
-        let isConnected = status.connectionState.isConnected || status.connected || status.fullyBooted
+        let isConnected = status.analyticsConnected
         if isConnected && !lastConnected {
             var properties: [String: Any] = [
                 "event_kind": "glasses_connected",
@@ -144,6 +161,12 @@ final class BluetoothSdkAnalytics {
     private func captureURL(host: String) -> URL? {
         let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         return URL(string: "\(normalized)/i/v0/e/")
+    }
+}
+
+private extension GlassesStatus {
+    var analyticsConnected: Bool {
+        connectionState.isConnected || connected || fullyBooted
     }
 }
 

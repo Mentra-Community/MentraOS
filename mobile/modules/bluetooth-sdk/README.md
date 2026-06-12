@@ -158,6 +158,9 @@ so Mentra can understand SDK adoption and successful glasses connections:
 - `bluetooth_sdk_started`: sent once per app runtime after the native SDK starts.
 - `bluetooth_sdk_glasses_connected`: sent when SDK status transitions from not connected to connected.
 
+Analytics delivery is fire-and-forget: events are submitted asynchronously, do
+not block Bluetooth SDK behavior, and are not retried if delivery fails.
+
 React Native / Expo apps can disable these events before SDK startup through
 the config plugin:
 

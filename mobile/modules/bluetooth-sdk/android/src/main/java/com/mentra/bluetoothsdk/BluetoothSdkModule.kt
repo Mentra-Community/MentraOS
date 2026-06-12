@@ -262,7 +262,14 @@ class BluetoothSdkModule : Module() {
                             ?: appContext.currentActivity
                                     ?: throw IllegalStateException("No context available")
             BleTraceLogger.logLifecycle(context, "BluetoothSdkModule", "module_create")
-            sdk = MentraBluetoothSdk.create(context, sdkListener)
+            sdk =
+                    MentraBluetoothSdk.create(
+                            context,
+                            MentraBluetoothSdkConfig(
+                                    analytics = BluetoothSdkAnalyticsConfig(surface = "react_native")
+                            ),
+                            sdkListener
+                    )
             deviceManager = DeviceManager.getInstance()
         }
 
@@ -293,7 +300,7 @@ class BluetoothSdkModule : Module() {
         Function("getDefaultDevice") { sdk?.getDefaultDevice()?.toMap() }
 
         AsyncFunction("configureAnalytics") { options: Map<String, Any?> ->
-            sdk?.configureAnalytics(BluetoothSdkAnalyticsConfig.fromMap(options, surface = "react_native"))
+            sdk?.configureAnalytics(options, surface = "react_native")
         }
 
         Function("set") { category: String, key: String, value: Any? ->

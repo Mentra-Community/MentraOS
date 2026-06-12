@@ -105,9 +105,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("configureAnalytics") { (options: [String: Any]) in
             await MainActor.run {
-                self.bluetoothSdk().configureAnalytics(
-                    BluetoothSdkAnalyticsConfiguration(dictionary: options, surface: "react_native")
-                )
+                self.bluetoothSdk().configureAnalytics(options, surface: "react_native")
             }
         }
 
@@ -640,7 +638,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return sdk
         }
 
-        let sdk = MentraBluetoothSDK()
+        let sdk = MentraBluetoothSDK(
+            configuration: MentraBluetoothSDKConfiguration(
+                analytics: BluetoothSdkAnalyticsConfiguration().withSurface("react_native")
+            )
+        )
         sdk.delegate = self
         self.sdk = sdk
         return sdk
