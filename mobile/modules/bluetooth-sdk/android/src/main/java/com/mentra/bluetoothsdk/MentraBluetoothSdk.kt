@@ -868,7 +868,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     /** Start the OTA flow after your app has presented the available update to the user. */
-    fun startOtaUpdate(): OtaStartAckEvent {
+    fun startOtaUpdate(otaVersionUrl: String? = null): OtaStartAckEvent {
         val pending = PendingResponse<OtaStartAckEvent>("OTA start command")
         synchronized(oneShotLock) {
             if (pendingOtaStart != null) {
@@ -880,7 +880,7 @@ class MentraBluetoothSdk private constructor(
             pendingOtaStart = pending
         }
         try {
-            deviceManager.sendOtaStart()
+            deviceManager.sendOtaStart(otaVersionUrl)
             return pending.await()
         } finally {
             synchronized(oneShotLock) {
@@ -897,7 +897,8 @@ class MentraBluetoothSdk private constructor(
             deviceManager.retryOtaVersionCheck()
         }
 
-    internal fun sendOtaStart(): OtaStartAckEvent = startOtaUpdate()
+    internal fun sendOtaStart(otaVersionUrl: String? = null): OtaStartAckEvent =
+        startOtaUpdate(otaVersionUrl)
 
     internal fun sendOtaQueryStatus(): OtaQueryResult = checkForOtaUpdate()
 

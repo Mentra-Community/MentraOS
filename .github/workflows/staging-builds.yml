@@ -1,7 +1,7 @@
 name: Staging Builds
 
 # Builds the mobile app (Android + iOS) and ASG client from the staging branch
-# and publishes to TWO places:
+# and publishes to THREE places:
 #
 #   1. The versioned release tag (`v2.10` etc.) with `_Beta_N` numbering.
 #      This is what `bun run release:android` / `release:ios` produce.
@@ -9,7 +9,15 @@ name: Staging Builds
 #
 #   2. The rolling-latest tag (`staging-builds`) with stable filenames:
 #        - mobile-latest.apk / mobile-latest.ipa / asg-latest.apk
+#        - staging_live_version.json
 #        - Dated copies kept for 7 days.
+#
+#   3. The dedicated Cloudflare Pages staging OTA site:
+#        - https://mentra-live-ota-staging.pages.dev/staging_live_version.json
+#        - https://staging.ota.mentraglass.com/staging_live_version.json
+#          once the custom domain is attached.
+#      This intentionally does not deploy to the production ota.mentraglass.com
+#      project or include prod_live_version.json.
 #
 # Mobile also uploads to TestFlight (iOS) and Play Store internal track
 # (Android), as the release scripts already do, IF the runner has the creds
@@ -33,6 +41,10 @@ on:
 
 permissions:
   contents: write
+
+env:
+  ASG_STAGING_OTA_VERSION_URL: https://mentra-live-ota-staging.pages.dev/staging_live_version.json
+  ASG_STAGING_OTA_CUSTOM_DOMAIN_URL: https://staging.ota.mentraglass.com/staging_live_version.json
 
 # All jobs check out `ref: ${{ github.sha }}` so each run builds the exact
 # commit that triggered it. If we used `ref: staging` instead, concurrent
@@ -139,6 +151,7 @@ jobs:
         env:
           SENTRY_ALLOW_FAILURE: "false"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          EXPO_PUBLIC_ASG_OTA_VERSION_URL: ${{ env.ASG_STAGING_OTA_VERSION_URL }}
           # gh CLI inside release-android.mjs uploads the APK to a GH release.
           # GH_TOKEN is auto-provided per-run by Actions; gh picks it up.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -362,6 +375,7 @@ jobs:
         env:
           SENTRY_ALLOW_FAILURE: "false"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          EXPO_PUBLIC_ASG_OTA_VERSION_URL: ${{ env.ASG_STAGING_OTA_VERSION_URL }}
           # gh CLI inside release-ios.mjs uploads the IPA to a GH release.
           # GH_TOKEN is auto-provided per-run by Actions; gh picks it up.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -430,6 +444,12 @@ jobs:
     name: Build ASG Client
     runs-on: self-hosted
 
+    outputs:
+      version_code: ${{ steps.asg-build-info.outputs.version_code }}
+      version_name: ${{ steps.asg-build-info.outputs.version_name }}
+      apk_sha256: ${{ steps.asg-apk-info.outputs.sha256 }}
+      apk_size: ${{ steps.asg-apk-info.outputs.size }}
+
     steps:
       - name: Get cache week number
         id: cache-week
@@ -443,6 +463,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+
+      - name: Compute ASG build info
+        id: asg-build-info
+        run: |
+          EPOCH_OFFSET_SECONDS=1735689600
+          BASELINE=100000
+          NOW_SECONDS=$(date -u +%s)
+          VERSION_CODE=$((BASELINE + NOW_SECONDS - EPOCH_OFFSET_SECONDS))
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          VERSION_NAME="staging.$(date -u +%Y%m%d.%H%M%S).${SHORT_SHA}"
+
+          echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+          echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Java
         uses: actions/setup-java@v3
@@ -485,7 +518,7 @@ jobs:
       - name: Build Release APK
         id: gradle-build
         working-directory: ./asg_client
-        run: ./gradlew assembleRelease --build-cache --parallel
+        run: ./gradlew -PASG_VERSION_CODE="${{ steps.asg-build-info.outputs.version_code }}" -PASG_VERSION_NAME="${{ steps.asg-build-info.outputs.version_name }}" assembleRelease --build-cache --parallel
         continue-on-error: true
 
       - name: Retry build with clean cache (if first attempt failed)
@@ -495,7 +528,19 @@ jobs:
           echo "First build failed, cleaning Gradle cache and retrying..."
           ./gradlew --stop || true
           rm -rf ~/.gradle/caches ~/.gradle/wrapper || true
-          ./gradlew assembleRelease --build-cache --parallel
+          ./gradlew -PASG_VERSION_CODE="${{ steps.asg-build-info.outputs.version_code }}" -PASG_VERSION_NAME="${{ steps.asg-build-info.outputs.version_name }}" assembleRelease --build-cache --parallel
+
+      - name: Collect ASG APK info
+        id: asg-apk-info
+        run: |
+          APK="asg_client/app/build/outputs/apk/release/app-release.apk"
+          if command -v shasum >/dev/null 2>&1; then
+            SHA256=$(shasum -a 256 "$APK" | awk '{print $1}')
+          else
+            SHA256=$(sha256sum "$APK" | awk '{print $1}')
+          fi
+          echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
+          echo "size=$(wc -c < "$APK" | tr -d ' ')" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -552,6 +597,88 @@ jobs:
           echo "date=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
           echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
+      - name: Generate ASG staging OTA manifest
+        if: needs.build-asg.result == 'success'
+        env:
+          BUILD_DATE: ${{ steps.build-info.outputs.date }}
+          BUILD_SHORT_SHA: ${{ steps.build-info.outputs.sha }}
+          VERSION_CODE: ${{ needs.build-asg.outputs.version_code }}
+          VERSION_NAME: ${{ needs.build-asg.outputs.version_name }}
+          APK_SHA256: ${{ needs.build-asg.outputs.apk_sha256 }}
+          APK_SIZE: ${{ needs.build-asg.outputs.apk_size }}
+        run: |
+          mkdir -p asg-manifest
+          APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/staging-builds/asg-staging-${BUILD_DATE}-${BUILD_SHORT_SHA}.apk"
+          FIRMWARE_MANIFEST="asg_client/ota_manifests/firmware_live.json"
+
+          jq -e '
+            (.mtk_patches | type == "array" and length > 0)
+            and (.bes_firmware | type == "object")
+          ' "$FIRMWARE_MANIFEST" >/dev/null
+
+          jq \
+            --arg apkUrl "$APK_URL" \
+            --arg versionName "$VERSION_NAME" \
+            --arg sha256 "$APK_SHA256" \
+            --argjson versionCode "$VERSION_CODE" \
+            --argjson apkSize "$APK_SIZE" \
+            '{
+              apps: {
+                "com.mentra.asg_client": {
+                  versionCode: $versionCode,
+                  versionName: $versionName,
+                  apkUrl: $apkUrl,
+                  apkSize: $apkSize,
+                  sha256: $sha256
+                }
+              },
+              mtk_patches: .mtk_patches,
+              bes_firmware: .bes_firmware
+            }' "$FIRMWARE_MANIFEST" > asg-manifest/staging_live_version.json
+
+      - name: Build ASG OTA staging Pages site
+        if: needs.build-asg.result == 'success'
+        run: |
+          mkdir -p asg-pages-site
+          cp asg-manifest/staging_live_version.json asg-pages-site/staging_live_version.json
+
+          cat > asg-pages-site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="UTF-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+              <title>MentraOS ASG Staging OTA</title>
+            </head>
+            <body>
+              <h1>MentraOS ASG Staging OTA</h1>
+              <p><a href="./staging_live_version.json">View staging OTA manifest</a></p>
+            </body>
+          </html>
+          HTML
+
+          printf '%s\n' \
+            '/*' \
+            '  Access-Control-Allow-Origin: *' \
+            '  X-Content-Type-Options: nosniff' \
+            '  X-Robots-Tag: noindex' \
+            '' \
+            '/staging_live_version.json' \
+            '  Content-Type: application/json' \
+            '  Cache-Control: public, max-age=0, must-revalidate' \
+            > asg-pages-site/_headers
+
+          if [ -e asg-pages-site/prod_live_version.json ]; then
+            echo "Staging OTA payload must not contain prod_live_version.json." >&2
+            exit 1
+          fi
+
+          jq -e '
+            (.apps["com.mentra.asg_client"].versionCode | type == "number")
+            and (.mtk_patches | type == "array" and length > 0)
+            and (.bes_firmware | type == "object")
+          ' asg-pages-site/staging_live_version.json >/dev/null
+
       - name: Upload artifacts to staging-builds release
         uses: actions/github-script@v7
         with:
@@ -560,7 +687,7 @@ jobs:
             const date = '${{ steps.build-info.outputs.date }}';
             const sha = '${{ steps.build-info.outputs.sha }}';
 
-            const releaseBody = `Automated builds from the \`staging\` branch.\n\n**Latest builds:** ${date} (${sha})\n\n## Download Links\n\n- [Mobile App Android (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.apk)\n- [Mobile App iOS (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.ipa)\n- [ASG Client (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/asg-latest.apk)\n\nVersioned builds with \`_Beta_N\` numbering are also published under the per-version release tag (e.g. \`v2.10\`).\n\n---\n\n*Builds older than 7 days in this rolling-latest channel are automatically cleaned up.*`;
+            const releaseBody = `Automated builds from the \`staging\` branch.\n\n**Latest builds:** ${date} (${sha})\n\n## Download Links\n\n- [Mobile App Android (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.apk)\n- [Mobile App iOS (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.ipa)\n- [ASG Client (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/asg-latest.apk)\n- [ASG OTA manifest (release asset)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/staging_live_version.json)\n- [ASG OTA manifest (Cloudflare Pages staging)](https://mentra-live-ota-staging.pages.dev/staging_live_version.json)\n\nVersioned builds with \`_Beta_N\` numbering are also published under the per-version release tag (e.g. \`v2.10\`).\n\n---\n\n*Builds older than 7 days in this rolling-latest channel are automatically cleaned up.*`;
 
             let release;
             try {
@@ -590,7 +717,8 @@ jobs:
             const uploads = [
               { path: './mobile-apk/app-release.apk', latestName: 'mobile-latest.apk', datedName: `mobile-staging-${date}-${sha}.apk` },
               { path: './mobile-ipa/app-release.ipa', latestName: 'mobile-latest.ipa', datedName: `mobile-staging-${date}-${sha}.ipa` },
-              { path: './asg-apk/app-release.apk', latestName: 'asg-latest.apk', datedName: `asg-staging-${date}-${sha}.apk` }
+              { path: './asg-apk/app-release.apk', latestName: 'asg-latest.apk', datedName: `asg-staging-${date}-${sha}.apk` },
+              { path: './asg-manifest/staging_live_version.json', latestName: 'staging_live_version.json', datedName: `staging_live_version-${date}-${sha}.json` }
             ];
 
             for (const upload of uploads) {
@@ -645,6 +773,49 @@ jobs:
 
             console.log('Successfully uploaded all artifacts');
 
+      - name: Publish ASG OTA staging site to Cloudflare Pages
+        if: needs.build-asg.result == 'success' && github.ref_name == 'staging'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BUILD_SHORT_SHA: ${{ steps.build-info.outputs.sha }}
+          VERSION_CODE: ${{ needs.build-asg.outputs.version_code }}
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Cloudflare credentials are required to publish the staging OTA manifest." >&2
+            exit 1
+          fi
+
+          npx --yes wrangler@latest pages deploy asg-pages-site \
+            --project-name mentra-live-ota-staging \
+            --branch staging \
+            --commit-hash "$GITHUB_SHA" \
+            --commit-dirty=true \
+            --commit-message "Publish staging OTA manifest ${BUILD_SHORT_SHA}"
+
+          echo "Verifying $ASG_STAGING_OTA_VERSION_URL"
+          for attempt in {1..12}; do
+            if curl --fail --silent --show-error --location "$ASG_STAGING_OTA_VERSION_URL" -o /tmp/staging_live_version.json \
+              && jq -e --argjson versionCode "$VERSION_CODE" \
+                '.apps["com.mentra.asg_client"].versionCode == $versionCode' \
+                /tmp/staging_live_version.json >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 12 ]; then
+              echo "Staging OTA manifest was not reachable at $ASG_STAGING_OTA_VERSION_URL after deploy." >&2
+              exit 1
+            fi
+            sleep 10
+          done
+
+          echo "Checking optional custom domain $ASG_STAGING_OTA_CUSTOM_DOMAIN_URL"
+          if ! curl --fail --silent --show-error --location "$ASG_STAGING_OTA_CUSTOM_DOMAIN_URL" -o /tmp/staging_custom_domain_live_version.json \
+            || ! jq -e --argjson versionCode "$VERSION_CODE" \
+              '.apps["com.mentra.asg_client"].versionCode == $versionCode' \
+              /tmp/staging_custom_domain_live_version.json >/dev/null; then
+            echo "Custom staging OTA domain is not serving this manifest yet; Pages.dev URL is healthy." >&2
+          fi
+
       - name: Cleanup old staging builds
         if: ${{ github.event.inputs.skip_cleanup != 'true' }}
         uses: actions/github-script@v7
@@ -660,8 +831,8 @@ jobs:
               });
 
               for (const asset of release.data.assets) {
-                // Keep -latest files forever.
-                if (asset.name.endsWith('-latest.apk') || asset.name.endsWith('-latest.ipa')) continue;
+                // Keep -latest files and the stable OTA manifest forever.
+                if (asset.name.endsWith('-latest.apk') || asset.name.endsWith('-latest.ipa') || asset.name === 'staging_live_version.json') continue;
 
                 const createdAt = new Date(asset.created_at);
                 if (createdAt < sevenDaysAgo) {
