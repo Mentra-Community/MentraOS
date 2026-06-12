@@ -17,7 +17,7 @@ function printUsage(): void {
   console.log('Commands:');
   console.log('  dev                              Start dev server with hot reload and QR code');
   console.log('  release                          Build, pack, and serve a QR to install on a phone');
-  console.log('  pack                             Production-build and package miniapp into a ZIP (--no-build to skip build)');
+  console.log('  pack                             Production-build and package miniapp into build/<pkg>-<version>.zip (--no-build to skip build)');
   console.log('  manifest                         Edit miniapp.json interactively');
   console.log('  permission list                  List declared permissions');
   console.log('  permission add [TYPE]            Add a permission (interactive without TYPE)');

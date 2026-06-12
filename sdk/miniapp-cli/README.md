@@ -57,9 +57,9 @@ The all-in-one verb: build a release, pack it, and serve it behind a QR so you c
 Flow:
 
 1. Validates `miniapp.json`.
-2. **Build cache.** Looks for `.mentra/<packageName>-<version>.zip`. If it exists and every project source file (excluding `node_modules`, `dist`, `.mentra`, `.git`) is older than the zip, reuses it. Otherwise rebuilds.
+2. **Build cache.** Looks for `build/<packageName>-<version>.zip`. If it exists and every project source file (excluding `node_modules`, `dist`, `build`, `.git`) is older than the zip, reuses it. Otherwise rebuilds.
 3. **Build.** Detects your package manager (`bun.lock` → `bun`, `pnpm-lock.yaml` → `pnpm`, `yarn.lock` → `yarn`, else `npm`) and runs `<pm> run build`. Your `package.json` must define a `build` script that produces `dist/`.
-4. **Pack.** Calls the same logic as `mentra-miniapp pack` — validates the manifest, copies `miniapp.json` + `icon.png` into `dist/`, zips to `.mentra/<packageName>-<version>.zip`. Prints size + duration.
+4. **Pack.** Calls the same logic as `mentra-miniapp pack` — validates the manifest, copies `miniapp.json` + `icon.png` into `dist/`, zips to `build/<packageName>-<version>.zip`. Prints size + duration.
 5. **Serve.** Picks a free port between 6789 and 6798. Hosts the bundle, manifest, and icon over HTTP on `0.0.0.0`:
    - `GET /miniapp.json`
    - `GET /icon.png`
@@ -91,7 +91,9 @@ Steps:
 2. Verifies `dist/` exists.
 3. Validates `miniapp.json`.
 4. Copies `miniapp.json` and `icon.png` into `dist/`.
-5. Runs the system `zip -r` command to produce `<packageName>-<version>.zip` in the current directory.
+5. Runs the system `zip -r` command to produce `build/<packageName>-<version>.zip` and prints the absolute path.
+
+`build/` is self-ignoring — the CLI writes a `.gitignore` containing `*` into it on creation, so packed zips stay out of version control in any repo without touching the project's own `.gitignore`.
 
 The resulting ZIP is the artifact you'd upload to the miniapp store.
 
