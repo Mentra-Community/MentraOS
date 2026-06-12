@@ -1,5 +1,10 @@
 import PrivateBluetoothSdkModule from "./_private/BluetoothSdkModule"
-import type {BluetoothSdkEventListener, BluetoothSdkEventName, BluetoothSdkPublicModule} from "./BluetoothSdk.types"
+import type {
+  BluetoothSdkEventListener,
+  BluetoothSdkEventName,
+  BluetoothSdkPublicModule,
+  ButtonPhotoSettings,
+} from "./BluetoothSdk.types"
 
 const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "log",
@@ -75,7 +80,14 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setGalleryModeEnabled: PrivateBluetoothSdkModule.setGalleryModeEnabled.bind(PrivateBluetoothSdkModule),
   setVoiceActivityDetectionEnabled:
     PrivateBluetoothSdkModule.setVoiceActivityDetectionEnabled.bind(PrivateBluetoothSdkModule),
-  setButtonPhotoSettings: PrivateBluetoothSdkModule.setButtonPhotoSettings.bind(PrivateBluetoothSdkModule),
+  setButtonPhotoSettings: ((
+    sizeOrSettings: import("./BluetoothSdk.types").ButtonPhotoSize | ButtonPhotoSettings,
+  ) => {
+    if (typeof sizeOrSettings === "string") {
+      return PrivateBluetoothSdkModule.setButtonPhotoSettings(sizeOrSettings)
+    }
+    return PrivateBluetoothSdkModule.setButtonPhotoCaptureSettings(sizeOrSettings)
+  }) as BluetoothSdkPublicModule["setButtonPhotoSettings"],
   setButtonVideoRecordingSettings:
     PrivateBluetoothSdkModule.setButtonVideoRecordingSettings.bind(PrivateBluetoothSdkModule),
   setButtonCameraLed: PrivateBluetoothSdkModule.setButtonCameraLed.bind(PrivateBluetoothSdkModule),
@@ -138,6 +150,7 @@ export type {
   BluetoothSdkPublicModule as BluetoothSdkModule,
   BluetoothSdkSubscription,
   ButtonPhotoSize,
+  ButtonPhotoSettings,
   ButtonPressEvent,
   CameraFovPreset,
   CameraFovRequest,
