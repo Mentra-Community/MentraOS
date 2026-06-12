@@ -597,6 +597,99 @@ jobs:
           echo "date=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
           echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
+      - name: Upload build artifacts to staging-builds release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const date = '${{ steps.build-info.outputs.date }}';
+            const sha = '${{ steps.build-info.outputs.sha }}';
+
+            const releaseBody = `Automated builds from the \`staging\` branch.\n\n**Latest builds:** ${date} (${sha})\n\n## Download Links\n\n- [Mobile App Android (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.apk)\n- [Mobile App iOS (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/mobile-latest.ipa)\n- [ASG Client (latest)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/asg-latest.apk)\n- [ASG OTA manifest (release asset)](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/staging-builds/staging_live_version.json)\n- [ASG OTA manifest (Cloudflare Pages staging)](https://mentra-live-ota-staging.pages.dev/staging_live_version.json)\n\nVersioned builds with \`_Beta_N\` numbering are also published under the per-version release tag (e.g. \`v2.10\`).\n\n---\n\n*Builds older than 7 days in this rolling-latest channel are automatically cleaned up.*`;
+
+            let release;
+            try {
+              release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: 'staging-builds'
+              });
+            } catch (error) {
+              if (error.status === 404) {
+                release = await github.rest.repos.createRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: 'staging-builds',
+                  name: 'Staging Builds',
+                  body: releaseBody,
+                  prerelease: true,
+                  draft: false
+                });
+              } else {
+                throw error;
+              }
+            }
+
+            const releaseId = release.data.id;
+
+            const uploads = [
+              { path: './mobile-apk/app-release.apk', latestName: 'mobile-latest.apk', datedName: `mobile-staging-${date}-${sha}.apk` },
+              { path: './mobile-ipa/app-release.ipa', latestName: 'mobile-latest.ipa', datedName: `mobile-staging-${date}-${sha}.ipa` },
+              { path: './asg-apk/app-release.apk', latestName: 'asg-latest.apk', datedName: `asg-staging-${date}-${sha}.apk` }
+            ];
+
+            for (const upload of uploads) {
+              // Skip artifacts that weren't downloaded (because the build
+              // job for that platform failed). Partial publish is fine —
+              // it's better to ship the platforms that did build than to
+              // skip the whole upload step.
+              if (!fs.existsSync(upload.path)) {
+                console.log(`Skipping ${upload.latestName}: ${upload.path} not present (upstream job didn't produce it)`);
+                continue;
+              }
+              const data = fs.readFileSync(upload.path);
+
+              // Delete existing -latest asset if present.
+              for (const asset of release.data.assets) {
+                if (asset.name === upload.latestName) {
+                  console.log(`Deleting existing ${upload.latestName}`);
+                  await github.rest.repos.deleteReleaseAsset({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    asset_id: asset.id
+                  });
+                  break;
+                }
+              }
+
+              console.log(`Uploading ${upload.latestName} (${data.length} bytes)...`);
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: releaseId,
+                name: upload.latestName,
+                data
+              });
+
+              console.log(`Uploading ${upload.datedName} (${data.length} bytes)...`);
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: releaseId,
+                name: upload.datedName,
+                data
+              });
+            }
+
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId,
+              body: releaseBody
+            });
+
+            console.log('Successfully uploaded build artifacts');
+
       - name: Generate ASG staging OTA manifest
         if: needs.build-asg.result == 'success'
         env:
@@ -679,7 +772,8 @@ jobs:
             and (.bes_firmware | type == "object")
           ' asg-pages-site/staging_live_version.json >/dev/null
 
-      - name: Upload artifacts to staging-builds release
+      - name: Upload ASG OTA manifest to staging-builds release
+        if: needs.build-asg.result == 'success'
         uses: actions/github-script@v7
         with:
           script: |
@@ -715,20 +809,12 @@ jobs:
             const releaseId = release.data.id;
 
             const uploads = [
-              { path: './mobile-apk/app-release.apk', latestName: 'mobile-latest.apk', datedName: `mobile-staging-${date}-${sha}.apk` },
-              { path: './mobile-ipa/app-release.ipa', latestName: 'mobile-latest.ipa', datedName: `mobile-staging-${date}-${sha}.ipa` },
-              { path: './asg-apk/app-release.apk', latestName: 'asg-latest.apk', datedName: `asg-staging-${date}-${sha}.apk` },
               { path: './asg-manifest/staging_live_version.json', latestName: 'staging_live_version.json', datedName: `staging_live_version-${date}-${sha}.json` }
             ];
 
             for (const upload of uploads) {
-              // Skip artifacts that weren't downloaded (because the build
-              // job for that platform failed). Partial publish is fine —
-              // it's better to ship the platforms that did build than to
-              // skip the whole upload step.
               if (!fs.existsSync(upload.path)) {
-                console.log(`Skipping ${upload.latestName}: ${upload.path} not present (upstream job didn't produce it)`);
-                continue;
+                throw new Error(`Missing ASG OTA manifest: ${upload.path}`);
               }
               const data = fs.readFileSync(upload.path);
 
@@ -771,7 +857,7 @@ jobs:
               body: releaseBody
             });
 
-            console.log('Successfully uploaded all artifacts');
+            console.log('Successfully uploaded ASG OTA manifest');
 
       - name: Publish ASG OTA staging site to Cloudflare Pages
         if: needs.build-asg.result == 'success' && github.ref_name == 'staging'
