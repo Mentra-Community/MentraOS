@@ -21,10 +21,12 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {getRuntimeHooks} from "@mentra/island"
 
+import {normalizePhotoSize} from "@/services/SocketComms.normalizers"
+
 import {freePhoto, pollUntilReady, requestPhoto, type PhotoResult} from "./v2PhotoApi"
 
 export interface PhotoOpts {
-  size?: "small" | "medium" | "large" | "full"
+  size?: "low" | "medium" | "high" | "max"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean
@@ -115,7 +117,7 @@ export class PhonePhotoCoordinator {
       void BluetoothSdk.requestPhoto({
         requestId,
         appId: packageName,
-        size: opts.size ?? "medium",
+        size: normalizePhotoSize(opts.size ?? "medium"),
         webhookUrl: uploadUrl,
         authToken: uploadToken,
         compress: toNativeCompression(opts.compress),
