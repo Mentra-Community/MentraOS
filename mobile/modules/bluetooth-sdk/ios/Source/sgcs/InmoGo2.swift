@@ -228,12 +228,26 @@ class InmoGo2: NSObject, SGCManager {
     func exit() {}
     func showDashboard() {}
     func displayBitmap(base64ImageData _: String) async -> Bool { return true }
-    func sendDoubleTextWall(_: String, _: String) {}
+    func sendDoubleTextWall(_ top: String, _ bottom: String) { sendJson(["type": "double_text_wall", "topText": top, "bottomText": bottom]) }
     func setHeadUpAngle(_: Int) {}
     func getBatteryStatus() {}
     func setBrightness(_: Int, autoMode _: Bool) {}
-    func clearDisplay() {}
-    func sendTextWall(_: String) {}
+    func clearDisplay() { sendJson(["type": "clear_display"]) }
+    func sendTextWall(_ text: String) { sendJson(["type": "text_wall", "text": text]) }
+
+    /// Sends a 3-line teleprompter window to the glasses overlay.
+    /// `lines` should contain the visible window of script lines (1-3 entries),
+    /// and `highlightIndex` is the index within `lines` to render as the
+    /// bright/current line (defaults to the middle line on the Android side
+    /// if omitted).
+    func sendTeleprompterUpdate(lines: [String], highlightIndex: Int) {
+        sendJson([
+            "type": "teleprompter_update",
+            "lines": lines,
+            "highlightIndex": highlightIndex,
+        ], requireAck: false)
+    }
+
     func connectController() {}
     func disconnectController() {}
     func dbg1() {}
@@ -679,6 +693,7 @@ class InmoGo2: NSObject, SGCManager {
         fullyBooted = true
         connected   = true
         updateConnectionState(ConnTypes.CONNECTED)
+        CoreManager.shared.handleDeviceReady()
     }
 
     // -----------------------------------------------------------------------

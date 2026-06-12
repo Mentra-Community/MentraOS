@@ -492,7 +492,12 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
             let sdk = await MainActor.run { self.bluetoothSdk() }
             try? await sdk.clearDisplay()
         }
-
+        
+        AsyncFunction("sendTeleprompterUpdate") { (lines: [String], highlightIndex: Int) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            try? await sdk.sendTeleprompterUpdate(lines: lines, highlightIndex: highlightIndex)
+        }
+        
         // MARK: - STT Model Management
 
         AsyncFunction("setSttModelDetails") { (path: String, languageCode: String) in

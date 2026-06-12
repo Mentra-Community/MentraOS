@@ -41,9 +41,18 @@ export const inmoGo2: Capabilities = {
   },
 
   // Display — monocular waveguide AR overlay; no bitmap rendering from phone side
-  hasDisplay: false,
-  display: null,
-
+  hasDisplay: true,
+display: {
+  count: 1,
+  isColor: false,
+  color: "green",
+  canDisplayBitmap: true,   // Android WindowManager can render bitmaps
+  maxTextLines: 10,
+  adjustBrightness: false,  // Not yet implemented in ASG client
+  resolution: { width: 640, height: 480 }, // Go2 waveguide effective resolution
+  fieldOfView: { horizontal: 20, vertical: 15 }, // approx INMO Go2 FOV
+},
+  
   // Microphone — single built-in mic; LC3 audio not supported (no BES chip)
   hasMicrophone: true,
   microphone: {
