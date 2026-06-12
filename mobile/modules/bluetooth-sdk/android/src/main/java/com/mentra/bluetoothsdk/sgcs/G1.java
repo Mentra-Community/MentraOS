@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk.sgcs;
 
+import com.mentra.bluetoothsdk.PhotoRequest;
 
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
@@ -1530,7 +1531,7 @@ public class G1 extends SGCManager {
     }
 
     @Override
-    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean save, boolean sound, Long exposureTimeNs, Integer iso) {
+    public void requestPhoto(PhotoRequest request) {
 
     }
 
