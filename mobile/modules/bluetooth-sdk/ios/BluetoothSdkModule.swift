@@ -329,6 +329,38 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.setButtonPhotoSettings(size: ButtonPhotoSize(rawValue: size) ?? .medium).values
         }
 
+        AsyncFunction("setButtonPhotoCaptureSettings") { (params: [String: Any]) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            let size = ButtonPhotoSize(rawValue: params["size"] as? String ?? "medium") ?? .medium
+            let mfnr = params["mfnr"] as? Bool
+            let zsl = params["zsl"] as? Bool
+            let noiseReduction = params["noiseReduction"] as? Bool
+            let edgeEnhancement = params["edgeEnhancement"] as? Bool
+            let ispDigitalGain = params["ispDigitalGain"] as? Int
+            let ispAnalogGain = params["ispAnalogGain"] as? String
+            let aeExposureDivisor = params["aeExposureDivisor"] as? Int
+            let isoCap = params["isoCap"] as? Int
+            let compress = params["compress"] as? String
+            let sound = params["sound"] as? Bool
+            let resetCaptureTuning = params["resetCaptureTuning"] as? Bool
+            return try await sdk.setButtonPhotoSettings(
+                ButtonPhotoSettings(
+                    size: size,
+                    mfnr: mfnr,
+                    zsl: zsl,
+                    noiseReduction: noiseReduction,
+                    edgeEnhancement: edgeEnhancement,
+                    ispDigitalGain: ispDigitalGain,
+                    ispAnalogGain: ispAnalogGain,
+                    aeExposureDivisor: aeExposureDivisor,
+                    isoCap: isoCap,
+                    compress: compress,
+                    sound: sound,
+                    resetCaptureTuning: resetCaptureTuning
+                )
+            ).values
+        }
+
         AsyncFunction("setButtonVideoRecordingSettings") { (width: Int, height: Int, fps: Int) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.setButtonVideoRecordingSettings(width: width, height: height, fps: fps).values
@@ -359,59 +391,13 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("requestPhoto") { (params: [String: Any]) in
-            let requestId = params["requestId"] as? String ?? ""
-            let appId = params["appId"] as? String ?? ""
+            let req = PhotoRequest.from(params: params)
             Bridge.log(
-                "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=\(requestId) appId=\(appId)"
+                "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=\(req.requestId) appId=\(req.appId) size=\(req.size.rawValue) compress=\(req.compress?.rawValue ?? "none") aeDivisor=\(req.aeExposureDivisor.map { String($0) } ?? "nil")"
             )
-            let size = params["size"] as? String ?? "medium"
-            let webhookUrl = params["webhookUrl"] as? String ?? ""
-            let authToken = params["authToken"] as? String ?? ""
-            let compress = params["compress"] as? String ?? "none"
-            let flash = params["flash"] as? Bool ?? true
-            let save = params["save"] as? Bool ?? params["saveToGallery"] as? Bool ?? false
-            let sound = params["sound"] as? Bool ?? true
-            let exposureTimeNs: Double?
-            switch params["exposureTimeNs"] {
-            case let value as Double:
-                exposureTimeNs = value
-            case let value as Int:
-                exposureTimeNs = Double(value)
-            case let value as NSNumber:
-                exposureTimeNs = value.doubleValue
-            default:
-                exposureTimeNs = nil
-            }
-            let iso: Int?
-            switch params["iso"] {
-            case let value as Int:
-                iso = value > 0 ? value : nil
-            case let value as Double:
-                // Guard against Int(Double) trapping on out-of-range values.
-                iso = (value.isFinite && value > 0 && value < Double(Int.max)) ? Int(value) : nil
-            case let value as NSNumber:
-                let intValue = value.intValue
-                iso = intValue > 0 ? intValue : nil
-            default:
-                iso = nil
-            }
 
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.requestPhoto(
-                PhotoRequest(
-                    requestId: requestId,
-                    appId: appId,
-                    size: PhotoSize(rawValue: size) ?? .medium,
-                    webhookUrl: webhookUrl,
-                    authToken: authToken,
-                    compress: PhotoCompression(rawValue: compress),
-                    flash: flash,
-                    save: save,
-                    sound: sound,
-                    exposureTimeNs: exposureTimeNs,
-                    iso: iso
-                )
-            ).values
+            return try await sdk.requestPhoto(req).values
         }
 
         // MARK: - OTA Commands
