@@ -4,10 +4,10 @@ import {displayProcessor as MockDisplayProcessor} from "@mentra/island"
 import {useDisplayStore} from "@/stores/display"
 
 jest.mock("@mentra/bluetooth-sdk-internal", () => {
-  const {coreModuleMock} = require("@/test-utils/mockCoreModule")
+  const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
   return {
     __esModule: true,
-    default: coreModuleMock,
+    default: bluetoothSdkMock,
   }
 })
 

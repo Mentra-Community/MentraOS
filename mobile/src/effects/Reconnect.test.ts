@@ -4,7 +4,7 @@ import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {useCoreStore} from "@/stores/core"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
-import {resetCoreModuleMock} from "@/test-utils/mockCoreModule"
+import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@/utils/PermissionsUtils", () => ({
   checkConnectivityRequirementsUI: jest.fn(() => Promise.resolve(true)),
@@ -12,13 +12,13 @@ jest.mock("@/utils/PermissionsUtils", () => ({
 
 describe("attemptReconnectToDefaultWearable", () => {
   beforeEach(() => {
-    resetCoreModuleMock()
+    resetBluetoothSdkMock()
     useCoreStore.getState().reset()
     useGlassesStore.getState().reset()
     useSettingsStore.getState().resetAllSettingsLocally()
   })
 
-  it("syncs Manager core settings before reconnecting default glasses", async () => {
+  it("syncs Manager Bluetooth settings before reconnecting default glasses", async () => {
     useSettingsStore.setState((state) => ({
       settings: {
         ...state.settings,

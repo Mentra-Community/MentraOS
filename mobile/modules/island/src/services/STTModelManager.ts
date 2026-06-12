@@ -1,4 +1,4 @@
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {Platform} from "react-native"
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
@@ -111,7 +111,7 @@ class STTModelManager {
 
   async getCurrentLanguageFromPreferences(): Promise<string> {
     try {
-      const path = await CoreModule.getSttModelPath()
+      const path = await BluetoothSdk.getSttModelPath()
       const code = path && path.length > 0 ? this.getLanguageFromPath(path) : ""
       if (code && this.languages[code]) {
         this.currentLanguage = code
@@ -174,7 +174,7 @@ class STTModelManager {
         }
       }
 
-      return await CoreModule.validateSttModel(modelPath)
+      return await BluetoothSdk.validateSttModel(modelPath)
     } catch (error) {
       console.error("Error checking STT model availability:", error)
       return false
@@ -260,12 +260,12 @@ class STTModelManager {
 
       onExtractionProgress?.({percentage: 0})
 
-      const subscription = CoreModule.addListener("extraction_progress", (event) => {
+      const subscription = BluetoothSdk.addListener("extraction_progress", (event) => {
         onExtractionProgress?.({percentage: event.percentage})
       })
 
       try {
-        const extractionResult = await CoreModule.extractTarBz2(tempPath, finalPath)
+        const extractionResult = await BluetoothSdk.extractTarBz2(tempPath, finalPath)
         if (!extractionResult) {
           throw new Error("Native extraction returned failure status")
         }
@@ -331,7 +331,7 @@ class STTModelManager {
   }
 
   private async setNativeModelPath(path: string, languageCode: string): Promise<void> {
-    CoreModule.setSttModelDetails(path, languageCode)
+    BluetoothSdk.setSttModelDetails(path, languageCode)
   }
 
   async getStorageInfo(): Promise<{free: number; total: number}> {

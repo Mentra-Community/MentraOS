@@ -1,4 +1,4 @@
-import CoreModule, {BluetoothSdk} from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
 /**
@@ -180,7 +180,7 @@ class TTSModelManager {
 
   async getCurrentLanguageFromPreferences(): Promise<string> {
     try {
-      const path = await CoreModule.getTtsModelPath()
+      const path = await BluetoothSdk.getTtsModelPath()
       if (!path || path.length === 0) {
         return ""
       }
@@ -189,7 +189,7 @@ class TTSModelManager {
       }
       // The native side persists the BCP-47 tag (e.g. "fr-FR") that was passed
       // to setTtsModelDetails. Map it back to our registry key.
-      const bcp47 = await CoreModule.getTtsModelLanguage()
+      const bcp47 = await BluetoothSdk.getTtsModelLanguage()
       const primary = bcp47.split("-")[0].toLowerCase()
       const code = this.languages[primary] ? primary : ""
       if (code) {
@@ -249,7 +249,7 @@ class TTSModelManager {
         }
       }
 
-      return await CoreModule.validateTtsModel(modelPath)
+      return await BluetoothSdk.validateTtsModel(modelPath)
     } catch (error) {
       console.error("Error checking TTS model availability:", error)
       return false

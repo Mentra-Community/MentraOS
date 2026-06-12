@@ -82,7 +82,7 @@ export const SETTINGS: Record<string, Setting> = {
   },
   // Mentra Nex feature flags (off by default; toggled from Nex Developer Settings).
   // When on, the Nex display skips ASCII-only text sanitization so CJK/Chinese
-  // captions render on glasses. Synced to core via CORE_SETTINGS_KEYS.
+  // captions render on glasses. Synced to the Bluetooth SDK via BLUETOOTH_SETTING_KEYS.
   nex_chinese_captions: {
     key: "nex_chinese_captions",
     defaultValue: () => false,
@@ -610,10 +610,10 @@ export const SETTINGS: Record<string, Setting> = {
 
 export const OFFLINE_APPLETS: string[] = ["com.mentra.livecaptions", "com.mentra.camera"]
 
-// These settings are automatically synced to core.
+// These settings are automatically synced to the Bluetooth SDK.
 // Keep this list hardware-facing; app/UI/cloud-only preferences should stay in JS/Crust.
-const CORE_SETTINGS_KEYS: string[] = [
-  // core settings:
+const BLUETOOTH_SETTING_KEYS: string[] = [
+  // Bluetooth settings:
   SETTINGS.sensing_enabled.key,
   SETTINGS.power_saving_mode.key,
   SETTINGS.voice_activity_detection_enabled.key,
@@ -679,7 +679,7 @@ interface SettingsState {
   // Utility methods
   getRestUrl: () => string
   getWsUrl: () => string
-  getCoreSettings: () => Record<string, any>
+  getBluetoothSettings: () => Record<string, any>
   resetAllSettingsLocally: () => void
 }
 
@@ -893,15 +893,15 @@ export const useSettingsStore = create<SettingsState>()(
       const secure = url.protocol === "https:"
       return `${secure ? "wss" : "ws"}://${url.hostname}:${url.port || (secure ? 443 : 80)}/glasses-ws`
     },
-    getCoreSettings: () => {
+    getBluetoothSettings: () => {
       const state = get()
-      const coreSettings: Record<string, any> = {}
+      const bluetoothSettings: Record<string, any> = {}
       Object.values(SETTINGS).forEach((setting) => {
-        if (CORE_SETTINGS_KEYS.includes(setting.key)) {
-          coreSettings[setting.key] = state.getSetting(setting.key)
+        if (BLUETOOTH_SETTING_KEYS.includes(setting.key)) {
+          bluetoothSettings[setting.key] = state.getSetting(setting.key)
         }
       })
-      return coreSettings
+      return bluetoothSettings
     },
     resetAllSettingsLocally: () => {
       set((_state) => ({
