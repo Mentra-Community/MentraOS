@@ -21,10 +21,13 @@ import {Button} from "../../components/button"
 import {Input} from "../../components/input"
 import {Label} from "../../components/label"
 import {ErrorRow, StatusRow} from "./_TesterRow"
+import {WhepPlayer} from "./_WhepPlayer"
 
 interface ManagedStartResult {
   streamId: string
   liveInputId: string
+  /** "hls" (SRT ingest: HLS player, ~10-20s) or "webrtc" (WHIP ingest: WHEP player, <1s). */
+  mode?: "hls" | "webrtc"
   hlsUrl: string
   dashUrl: string
   webrtcUrl?: string
@@ -125,7 +128,12 @@ export default function StreamingPage() {
           <Button onClick={() => start("startUnmanaged", [{streamUrl: unmanagedUrl}])}>
             startUnmanaged(streamUrl)
           </Button>
-          <Button onClick={() => start("startManaged", [{}])}>startManaged()</Button>
+          <Button onClick={() => start("startManaged", [{}])}>
+            startManaged() — SRT → HLS (~15s delay, recorded)
+          </Button>
+          <Button onClick={() => start("startManaged", [{ingest: "whip"}])}>
+            startManaged(whip) — WebRTC (&lt;1s, live monitor)
+          </Button>
           <Button variant="destructive" onClick={stop}>
             stop()
           </Button>
@@ -150,16 +158,22 @@ export default function StreamingPage() {
           </div>
         )}
 
-        {iframeSrc && (
-          <div className="mt-3 overflow-hidden rounded-xl border border-border bg-black">
-            <iframe
-              src={iframeSrc}
-              allow="autoplay; encrypted-media; picture-in-picture"
-              allowFullScreen
-              className="aspect-video w-full"
-              title="Cloudflare WHEP viewer"
-            />
+        {managed?.mode === "webrtc" && managed.webrtcUrl ? (
+          <div className="mt-3">
+            <WhepPlayer url={managed.webrtcUrl} />
           </div>
+        ) : (
+          iframeSrc && (
+            <div className="mt-3 overflow-hidden rounded-xl border border-border bg-black">
+              <iframe
+                src={iframeSrc}
+                allow="autoplay; encrypted-media; picture-in-picture"
+                allowFullScreen
+                className="aspect-video w-full"
+                title="Cloudflare live player (LL-HLS)"
+              />
+            </div>
+          )
         )}
 
         <div className="mt-4 rounded-xl border border-border">

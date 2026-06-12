@@ -85,6 +85,15 @@ export interface StartManagedOptions {
   video?: unknown
   audio?: unknown
   sound?: boolean
+  /**
+   * Ingest protocol preference — a real latency/durability trade on Cloudflare:
+   *   - "srt" (default): SRT ingest -> LL-HLS playback (~10-20s glass-to-screen),
+   *     with shareable HLS/DASH URLs and automatic recording.
+   *   - "whip": WebRTC ingest -> WHEP playback (<1s glass-to-screen), but NO
+   *     HLS/DASH playback and NO recording (Cloudflare limitation; the returned
+   *     hlsUrl will serve 204 forever).
+   */
+  ingest?: "srt" | "whip"
 }
 
 export interface StreamPublisherStartResult {
@@ -95,6 +104,10 @@ export interface StreamPublisherStartResult {
 
 export interface ManagedStartResult extends StreamPublisherStartResult {
   liveInputId: string
+  /** Playback mode this stream supports: "hls" (SRT/RTMP ingest — use hlsUrl/
+   *  dashUrl, recording on) or "webrtc" (WHIP ingest — use webrtcUrl/WHEP,
+   *  sub-second, no HLS, no recording). */
+  mode: "hls" | "webrtc"
   hlsUrl: string
   dashUrl: string
   webrtcUrl?: string
@@ -121,6 +134,9 @@ interface ManagedEntry {
   streamId: string
   liveInputId: string
   ingestUrl: string
+  /** Playback mode the chosen ingest supports: SRT/RTMP feed HLS; WHIP feeds
+   *  only WHEP. Readiness is gated differently per mode. */
+  mode: "hls" | "webrtc"
   hlsUrl: string
   dashUrl: string
   webrtcUrl?: string
@@ -132,6 +148,8 @@ interface ManagedEntry {
   cloudflareTimer?: ReturnType<typeof setInterval>
   hlsTimer?: ReturnType<typeof setInterval>
   hlsAttempts: number
+  /** webrtc mode: CF status polls seen while waiting for first "connected". */
+  connectAttempts: number
 }
 
 type Entry = UnmanagedEntry | ManagedEntry
@@ -318,13 +336,16 @@ export class PhoneStreamCoordinator {
       // and joins instead of double-provisioning.
       const provision = await provisionManagedStream(opts.restreamDestinations)
       const streamId = this.mintId("m")
-      const ingestUrl = pickIngestUrl(provision)
+      const ingestUrl = pickIngestUrl(provision, opts.ingest)
+      const mode: ManagedEntry["mode"] =
+        ingestUrl === provision.webrtcPublishUrl ? "webrtc" : "hls"
 
       const entry: ManagedEntry = {
         kind: "managed",
         streamId,
         liveInputId: provision.liveInputId,
         ingestUrl,
+        mode,
         hlsUrl: provision.hlsUrl,
         dashUrl: provision.dashUrl,
         webrtcUrl: provision.webrtcUrl,
@@ -333,6 +354,7 @@ export class PhoneStreamCoordinator {
         hlsReadyResolvers: [],
         hlsReadyRejecters: [],
         hlsAttempts: 0,
+        connectAttempts: 0,
       }
       this.current = entry
 
@@ -357,7 +379,12 @@ export class PhoneStreamCoordinator {
 
       this.startLifecycle(streamId)
       this.startCloudflareStatusPoll(entry)
-      this.startHlsReadinessPoll(entry)
+      // hls mode: readiness = a real HLS manifest exists. webrtc mode: HLS
+      // never materializes (Cloudflare WHIP limitation) — readiness resolves
+      // off the status poll's first "connected" instead.
+      if (entry.mode === "hls") {
+        this.startHlsReadinessPoll(entry)
+      }
       return {kind: "fresh", entry}
     })
 
@@ -365,8 +392,8 @@ export class PhoneStreamCoordinator {
       return decision.immediate
     }
 
-    // Wait for HLS readiness OUTSIDE the lock — readiness can take ~10s and
-    // we don't want to block other transitions for that long.
+    // Wait for playback readiness OUTSIDE the lock — readiness can take ~10s
+    // and we don't want to block other transitions for that long.
     return new Promise<ManagedStartResult>((resolve, reject) => {
       decision.entry.hlsReadyResolvers.push(resolve)
       decision.entry.hlsReadyRejecters.push(reject)
@@ -490,6 +517,16 @@ export class PhoneStreamCoordinator {
   }
 
   private startCloudflareStatusPoll(entry: ManagedEntry): void {
+    // webrtc mode: how many polls to wait for the first "connected" before
+    // declaring the publisher never reached Cloudflare. Mirrors the HLS
+    // readiness budget (~60s at the default 5s cadence).
+    const maxConnectAttempts = Math.max(
+      1,
+      Math.ceil(
+        (this.timings.hlsReadinessMaxAttempts * this.timings.hlsReadinessPollMs) /
+          this.timings.cloudflareStatusPollMs,
+      ),
+    )
     const poll = async () => {
       if (this.current !== entry) return
       try {
@@ -500,6 +537,45 @@ export class PhoneStreamCoordinator {
           status: status.isConnected ? "connected" : "disconnected",
           data: status as unknown as Record<string, unknown>,
         })
+        // webrtc mode readiness: first "connected" means WHEP playback is
+        // available (WebRTC playback follows the ingest directly; there is no
+        // manifest to probe).
+        if (entry.mode === "webrtc" && !entry.hlsReady) {
+          if (status.isConnected) {
+            entry.hlsReady = true
+            const result = managedStartResult(entry)
+            for (const r of entry.hlsReadyResolvers) r(result)
+            entry.hlsReadyResolvers = []
+            entry.hlsReadyRejecters = []
+            this.fanout({
+              streamId: entry.streamId,
+              source: "coordinator",
+              status: "webrtc_ready",
+              data: result as unknown as Record<string, unknown>,
+            })
+          } else {
+            entry.connectAttempts += 1
+            if (entry.connectAttempts >= maxConnectAttempts) {
+              const err = new Error(
+                `WebRTC ingest never reached Cloudflare after ${entry.connectAttempts} status polls`,
+              )
+              for (const reject of entry.hlsReadyRejecters) reject(err)
+              entry.hlsReadyResolvers = []
+              entry.hlsReadyRejecters = []
+              this.fanout({
+                streamId: entry.streamId,
+                source: "coordinator",
+                status: "error",
+                data: {reason: "webrtc_not_connected"},
+              })
+              const targetStreamId = entry.streamId
+              void this.runExclusive(async () => {
+                if (this.current?.streamId !== targetStreamId) return
+                await this.teardownLocked("webrtc_not_connected")
+              })
+            }
+          }
+        }
       } catch (err) {
         console.warn("[STREAM] cloudflare status poll failed:", err)
       }
@@ -636,16 +712,24 @@ export class PhoneStreamCoordinator {
   }
 }
 
-function pickIngestUrl(p: ProvisionResult): string {
+function pickIngestUrl(p: ProvisionResult, preference?: "srt" | "whip"): string {
   // Glasses' StreamCommandHandler detects protocol from URL prefix.
-  // Priority: SRT > RTMP > WHIP. SRT first: Cloudflare's WebRTC (WHIP) ingest
-  // does NOT feed HLS/DASH playback or recording — a WHIP-ingested managed
-  // stream reports "connected" while its hlsUrl serves 204 forever, which
-  // breaks the managed contract (subscribers share HLS playback). SRT also
-  // survives office firewalls that kill RTMPS:443 mid-handshake. Throw if
-  // none resolved so the caller's Promise rejects with a clear message
-  // rather than the glasses' "unknown protocol" error.
-  const url = p.srtUrl || p.rtmpUrl || p.webrtcPublishUrl
+  //
+  // Default priority: SRT > RTMP > WHIP. SRT first: Cloudflare's WebRTC (WHIP)
+  // ingest does NOT feed HLS/DASH playback or recording — a WHIP-ingested
+  // managed stream reports "connected" while its hlsUrl serves 204 forever,
+  // which breaks the managed contract (subscribers share HLS playback). SRT
+  // also survives office firewalls that kill RTMPS:443 mid-handshake.
+  //
+  // "whip" preference flips the trade: sub-second WHEP playback for
+  // live-monitor use cases, accepting no HLS and no recording.
+  //
+  // Throw if none resolved so the caller's Promise rejects with a clear
+  // message rather than the glasses' "unknown protocol" error.
+  const url =
+    preference === "whip"
+      ? p.webrtcPublishUrl || p.srtUrl || p.rtmpUrl
+      : p.srtUrl || p.rtmpUrl || p.webrtcPublishUrl
   if (!url) {
     throw new Error("Cloudflare provision returned no usable ingest URL")
   }
@@ -666,6 +750,7 @@ function managedStartResult(entry: ManagedEntry): ManagedStartResult {
     ...publisher,
     streamId: entry.streamId,
     liveInputId: entry.liveInputId,
+    mode: entry.mode,
     hlsUrl: entry.hlsUrl,
     dashUrl: entry.dashUrl,
     webrtcUrl: entry.webrtcUrl,

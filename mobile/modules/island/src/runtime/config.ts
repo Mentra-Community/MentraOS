@@ -305,6 +305,8 @@ export interface StreamingAdapter {
       video?: unknown
       audio?: unknown
       sound?: boolean
+      /** "srt" (default; HLS playback + recording) or "whip" (sub-second WHEP, no HLS/recording). */
+      ingest?: "srt" | "whip"
     },
   ) => Promise<ManagedStreamStartResult>
   stop: (packageName: string, streamId?: string) => Promise<void>
@@ -329,6 +331,8 @@ export interface StreamPublisherStartResult {
 
 export interface ManagedStreamStartResult extends StreamPublisherStartResult {
   liveInputId: string
+  /** "hls" (SRT/RTMP ingest) or "webrtc" (WHIP ingest -> WHEP playback). */
+  mode: "hls" | "webrtc"
   hlsUrl: string
   dashUrl: string
   webrtcUrl?: string

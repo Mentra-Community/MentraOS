@@ -2029,6 +2029,7 @@ class LocalMiniappRuntime {
         video: payload.video,
         audio: payload.audio,
         sound: payload.sound as boolean | undefined,
+        ingest: payload.ingest as "srt" | "whip" | undefined,
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
