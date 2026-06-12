@@ -5,7 +5,7 @@ import { validateManifest } from './manifest.js';
 export interface PackOptions {
   /** Where to write the resulting zip. Defaults to cwd. */
   outDir?: string;
-  /** Quiet stdout. The `install` command swallows pack output and prints
+  /** Quiet stdout. The `release` command swallows pack output and prints
    * its own progress; standalone `pack` calls leave it on. */
   silent?: boolean;
 }
