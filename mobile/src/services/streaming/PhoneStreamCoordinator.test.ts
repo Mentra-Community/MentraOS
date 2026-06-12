@@ -41,6 +41,12 @@ mock.module("./cloudStreamApi", () => ({
   teardownManagedStream,
 }))
 
+// The coordinator's glasses-connected precheck reads island runtime hooks;
+// mocking the module also keeps bun from parsing react-native's flow types.
+mock.module("@mentra/island", () => ({
+  getRuntimeHooks: () => ({glassesStatus: {get: () => ({connected: true})}}),
+}))
+
 // Patch global fetch so the HLS readiness HEAD probe is deterministic.
 let hlsHeadResponder: () => Response = () => new Response(null, {status: 200})
 const realFetch = globalThis.fetch
@@ -174,7 +180,9 @@ describe("PhoneStreamCoordinator", () => {
         streamUrl: string
         video: unknown
       }
-      expect(arg.streamUrl).toBe("https://ingest.test/abc/whip")
+      // SRT preferred over WHIP/RTMP: Cloudflare's WebRTC ingest doesn't feed
+      // HLS playback or recording, and SRT survives RTMPS-hostile firewalls.
+      expect(arg.streamUrl).toBe("srt://ingest.test/abc")
       expect(arg.sound).toBe(false)
       expect(arg.video).toEqual({fps: 30})
       expect(arg.audio).toEqual({bitrate: 64_000})
@@ -275,7 +283,7 @@ describe("PhoneStreamCoordinator", () => {
       expect(streaming.map((u) => u.pkg).sort()).toEqual(["com.a", "com.b"])
     })
 
-    test("glasses error status triggers teardown", async () => {
+    test("glasses transient error does NOT tear down (publisher auto-recovers)", async () => {
       const coord = new PhoneStreamCoordinator({
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
@@ -288,7 +296,30 @@ describe("PhoneStreamCoordinator", () => {
         kind: "error",
         status: "error",
         streamId,
-        errorDetails: "publisher exploded",
+        errorDetails: "publisher hiccuped",
+      } as never)
+      await new Promise((r) => setTimeout(r, 5))
+      // The glasses publisher retries after errors (error -> reconnecting ->
+      // reconnected); tearing down here would delete the live input out from
+      // under a publisher that comes right back.
+      expect(coord.owns(streamId)).toBe(true)
+      await coord.stop("com.a")
+    })
+
+    test("glasses reconnect_failed (gave up) triggers teardown", async () => {
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+        keepAliveIntervalMs: 10_000,
+      })
+      const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+      coord.handleGlassesStatus({
+        type: "stream_status",
+        kind: "reconnect",
+        status: "reconnect_failed",
+        streamId,
+        maxAttempts: 10,
       } as never)
       // Teardown is async; let it settle.
       await new Promise((r) => setTimeout(r, 5))

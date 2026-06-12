@@ -1290,6 +1290,14 @@ class MentraBluetoothSdk private constructor(
             return streamId to pending
         }
         if (pendingStreamStarts.size == 1) {
+            // A streamId-less STOPPED is the glasses' stop-ack for a PREVIOUS
+            // stream (their stop ack carries no streamId), not a verdict on the
+            // pending start — a start_stream that replaces a running publisher
+            // emits exactly this sequence (stopped -> initializing -> streaming).
+            // Attributing it here would reject a start that is about to succeed.
+            if (event.state == StreamState.STOPPED) {
+                return null
+            }
             val entry = pendingStreamStarts.entries.first()
             return entry.key to entry.value
         }
