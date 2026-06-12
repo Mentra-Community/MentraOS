@@ -49,6 +49,13 @@ concurrency:
   group: staging-builds
   cancel-in-progress: false
 
+# These URLs are used to publish and verify the staging OTA manifest below.
+# Deliberately NOT baked into the mobile builds (e.g. via
+# EXPO_PUBLIC_ASG_OTA_VERSION_URL): the TestFlight / Play internal binaries
+# built here are the exact binaries later promoted to public beta and the
+# app stores, so a compiled-in staging manifest URL would ship to customers
+# and point their glasses OTA at staging builds. Staging testers opt in via
+# the developer-settings "Custom OTA Manifest URL" Staging preset instead.
 env:
   ASG_STAGING_OTA_VERSION_URL: https://mentra-live-ota-staging.pages.dev/staging_live_version.json
   ASG_STAGING_OTA_CUSTOM_DOMAIN_URL: https://staging.ota.mentraglass.com/staging_live_version.json
@@ -158,7 +165,6 @@ jobs:
         env:
           SENTRY_ALLOW_FAILURE: "false"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          EXPO_PUBLIC_ASG_OTA_VERSION_URL: ${{ env.ASG_STAGING_OTA_VERSION_URL }}
           # gh CLI inside release-android.mjs uploads the APK to a GH release.
           # GH_TOKEN is auto-provided per-run by Actions; gh picks it up.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -382,7 +388,6 @@ jobs:
         env:
           SENTRY_ALLOW_FAILURE: "false"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          EXPO_PUBLIC_ASG_OTA_VERSION_URL: ${{ env.ASG_STAGING_OTA_VERSION_URL }}
           # gh CLI inside release-ios.mjs uploads the IPA to a GH release.
           # GH_TOKEN is auto-provided per-run by Actions; gh picks it up.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
