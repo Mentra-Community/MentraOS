@@ -4,7 +4,7 @@
  * Flow:
  *   1. Detect package manager, run `<pm> run build` so the user's bundler
  *      produces dist/.
- *   2. Validate manifest + pack dist/ → .mentra/<pkg>-<v>.zip (uses pack()).
+ *   2. Validate manifest + pack dist/ → build/<pkg>-<v>.zip (uses pack()).
  *   3. Spin up a tiny HTTP server on the LAN that serves the zip and
  *      manifest at fixed paths.
  *   4. Print a QR with `miniapp://release?url=<lan-base>&...`.
@@ -69,7 +69,7 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   const name = (manifest.name as string) ?? packageName
 
   // ---- 2. Build (or skip via cache) -----------------------------------
-  const cacheDir = resolve(cwd, '.mentra')
+  const cacheDir = resolve(cwd, 'build')
   const cachedZipName = `${packageName}-${version}.zip`
   const cachedZipPath = join(cacheDir, cachedZipName)
 
@@ -79,9 +79,9 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   } else {
     await buildProduction(cwd)
 
-    // Pack into .mentra/<pkg>-<v>.zip
+    // Pack into build/<pkg>-<v>.zip
     const packStart = Date.now()
-    const zipPath = await pack({outDir: '.mentra', silent: true})
+    const zipPath = await pack({outDir: 'build', silent: true})
     const sizeKb = Math.round(statSync(zipPath).size / 1024)
     console.log(`✓ Packed ${packageName}@${version} (${sizeKb} KB) in ${((Date.now() - packStart) / 1000).toFixed(1)}s`)
   }
@@ -203,12 +203,12 @@ async function pickPort(start: number, limit: number): Promise<number> {
 
 /**
  * Cache is fresh if the zip exists and is newer than every source file in
- * the project (excluding node_modules / dist / .mentra / .git).
+ * the project (excluding node_modules / dist / build / .git).
  */
 function isCacheFresh(zipPath: string, cwd: string): boolean {
   if (!existsSync(zipPath)) return false
   const zipMtime = statSync(zipPath).mtimeMs
-  return walkAllNewerThan(cwd, zipMtime, ['node_modules', 'dist', '.mentra', '.git']) === false
+  return walkAllNewerThan(cwd, zipMtime, ['node_modules', 'dist', 'build', '.git']) === false
 }
 
 /**
