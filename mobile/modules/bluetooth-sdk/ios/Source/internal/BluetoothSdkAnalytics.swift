@@ -85,7 +85,7 @@ final class BluetoothSdkAnalytics {
     }
 
     func initializeGlassesStatus(_ status: GlassesStatus) {
-        lastConnected = status.analyticsConnected
+        lastConnected = configuration.isReady && status.analyticsConnected
     }
 
     func captureStarted() {
@@ -96,6 +96,12 @@ final class BluetoothSdkAnalytics {
 
     func observeGlassesStatus(_ status: GlassesStatus) {
         let isConnected = status.analyticsConnected
+        guard configuration.isReady else {
+            if !isConnected {
+                lastConnected = false
+            }
+            return
+        }
         if isConnected && !lastConnected {
             var properties: [String: Any] = [
                 "event_kind": "glasses_connected",

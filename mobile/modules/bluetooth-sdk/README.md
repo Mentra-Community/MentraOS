@@ -179,7 +179,9 @@ the config plugin:
 }
 ```
 
-Analytics can also be disabled for the current native SDK runtime:
+Analytics can also be disabled for the current native SDK runtime. In React
+Native, call this before any other SDK API to prevent the startup event for that
+runtime; after the SDK has started, it disables subsequent events only.
 
 ```ts
 import BluetoothSdk from '@mentra/bluetooth-sdk'

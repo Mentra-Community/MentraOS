@@ -3,6 +3,7 @@ import Foundation
 
 public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
     private var sdk: MentraBluetoothSDK?
+    private var pendingAnalyticsOptions: [String: Any]?
 
     public func definition() -> ModuleDefinition {
         Name("BluetoothSdk")
@@ -71,9 +72,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         OnCreate {
             JSCExperiment.maybeAutoBenchmark()
-            Task { @MainActor [weak self] in
-                _ = self?.bluetoothSdk()
-            }
         }
 
         OnDestroy {
@@ -105,7 +103,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("configureAnalytics") { (options: [String: Any]) in
             await MainActor.run {
-                self.bluetoothSdk().configureAnalytics(options, surface: "react_native")
+                self.pendingAnalyticsOptions = options
+                self.sdk?.configureAnalytics(options, surface: "react_native")
             }
         }
 
@@ -638,9 +637,13 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return sdk
         }
 
+        let analyticsConfiguration =
+            pendingAnalyticsOptions.map {
+                BluetoothSdkAnalyticsConfiguration().applying(dictionary: $0, surface: "react_native")
+            } ?? BluetoothSdkAnalyticsConfiguration().withSurface("react_native")
         let sdk = MentraBluetoothSDK(
             configuration: MentraBluetoothSDKConfiguration(
-                analytics: BluetoothSdkAnalyticsConfiguration().withSurface("react_native")
+                analytics: analyticsConfiguration
             )
         )
         sdk.delegate = self

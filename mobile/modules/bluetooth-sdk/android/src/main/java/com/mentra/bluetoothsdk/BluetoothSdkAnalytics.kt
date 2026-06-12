@@ -68,7 +68,7 @@ internal class BluetoothSdkAnalytics(
     }
 
     fun initializeGlassesStatus(status: GlassesStatus) {
-        lastConnected = status.analyticsConnected
+        lastConnected = config.isReady && status.analyticsConnected
     }
 
     fun captureStarted() {
@@ -79,6 +79,12 @@ internal class BluetoothSdkAnalytics(
 
     fun observeGlassesStatus(status: GlassesStatus) {
         val isConnected = status.analyticsConnected
+        if (!config.isReady) {
+            if (!isConnected) {
+                lastConnected = false
+            }
+            return
+        }
         if (isConnected && !lastConnected) {
             capture(
                 "bluetooth_sdk_glasses_connected",

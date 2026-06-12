@@ -11,12 +11,13 @@ import kotlinx.coroutines.withContext
 class BluetoothSdkModule : Module() {
     private var sdk: MentraBluetoothSdk? = null
     private var deviceManager: DeviceManager? = null
+    private var pendingAnalyticsOptions: Map<String, Any?>? = null
     private val sdkListener =
             object : MentraBluetoothSdkListener {
                 override fun onGlassesChanged(glasses: GlassesRuntimeState) {
                     sendEvent(
                             "glasses_status",
-                            sdk?.getRawGlassesStatus()?.toMap()
+                            bluetoothSdk().getRawGlassesStatus()?.toMap()
                                     ?: GlassesStatus.fromMap(DeviceStore.store.getCategory("glasses")).toMap()
                     )
                 }
@@ -24,7 +25,7 @@ class BluetoothSdkModule : Module() {
                 override fun onSdkStateChanged(sdkState: PhoneSdkRuntimeState) {
                     sendEvent(
                             "bluetooth_status",
-                            sdk?.getRawBluetoothStatus()?.toMap()
+                            bluetoothSdk().getRawBluetoothStatus()?.toMap()
                                     ?: BluetoothStatus.fromMap(
                                                     DeviceStore.store.getCategory(ObservableStore.BLUETOOTH_CATEGORY)
                                             )
@@ -46,7 +47,7 @@ class BluetoothSdkModule : Module() {
 
                 override fun onScanStopped(reason: ScanStopReason) {
                     if (reason == ScanStopReason.COMPLETED) {
-                        val status = sdk?.getRawBluetoothStatus()
+                        val status = bluetoothSdk().getRawBluetoothStatus()
                         val deviceModel =
                                 status?.pendingWearable?.takeIf { it.isNotBlank() }
                                         ?: status?.defaultWearable
@@ -181,12 +182,33 @@ class BluetoothSdkModule : Module() {
                 }
         }
 
-    private fun requireSdk(): MentraBluetoothSdk =
-            sdk
-                    ?: throw BluetoothException(
-                            "sdk_not_initialized",
-                            "Bluetooth SDK is not initialized.",
-                    )
+    private fun moduleContext() =
+            appContext.reactContext
+                    ?: appContext.currentActivity
+                    ?: throw IllegalStateException("No context available")
+
+    private fun initialAnalyticsConfig(): BluetoothSdkAnalyticsConfig =
+            BluetoothSdkAnalyticsConfig.fromMap(
+                    pendingAnalyticsOptions ?: emptyMap(),
+                    surface = "react_native",
+                    baseConfig = BluetoothSdkAnalyticsConfig(surface = "react_native"),
+            )
+
+    private fun bluetoothSdk(): MentraBluetoothSdk {
+        sdk?.let { return it }
+        val context = moduleContext()
+        val instance =
+                MentraBluetoothSdk.create(
+                        context,
+                        MentraBluetoothSdkConfig(analytics = initialAnalyticsConfig()),
+                        sdkListener,
+                )
+        sdk = instance
+        deviceManager = DeviceManager.getInstance()
+        return instance
+    }
+
+    private fun requireSdk(): MentraBluetoothSdk = bluetoothSdk()
 
     override fun definition() = ModuleDefinition {
         Name("BluetoothSdk")
@@ -257,19 +279,7 @@ class BluetoothSdkModule : Module() {
         )
 
         OnCreate {
-            val context =
-                    appContext.reactContext
-                            ?: appContext.currentActivity
-                                    ?: throw IllegalStateException("No context available")
-            BleTraceLogger.logLifecycle(context, "BluetoothSdkModule", "module_create")
-            sdk =
-                    MentraBluetoothSdk.create(
-                            context,
-                            MentraBluetoothSdkConfig(
-                                    analytics = BluetoothSdkAnalyticsConfig(surface = "react_native")
-                            ),
-                            sdkListener
-                    )
+            BleTraceLogger.logLifecycle(moduleContext(), "BluetoothSdkModule", "module_create")
             deviceManager = DeviceManager.getInstance()
         }
 
@@ -287,20 +297,22 @@ class BluetoothSdkModule : Module() {
         // MARK: - Observable Store Functions
 
         Function("getGlassesStatus") {
-            sdk?.getRawGlassesStatus()?.toMap()
+            bluetoothSdk().getRawGlassesStatus()?.toMap()
                     ?: GlassesStatus.fromMap(DeviceStore.store.getCategory("glasses")).toMap()
         }
 
         Function("getBluetoothStatus") {
-            sdk?.getRawBluetoothStatus()?.toMap()
+            bluetoothSdk().getRawBluetoothStatus()?.toMap()
                     ?: BluetoothStatus.fromMap(DeviceStore.store.getCategory(ObservableStore.BLUETOOTH_CATEGORY))
                             .toMap()
         }
 
-        Function("getDefaultDevice") { sdk?.getDefaultDevice()?.toMap() }
+        Function("getDefaultDevice") { bluetoothSdk().getDefaultDevice()?.toMap() }
 
         AsyncFunction("configureAnalytics") { options: Map<String, Any?> ->
-            sdk?.configureAnalytics(options, surface = "react_native")
+            val nextOptions = options.toMap()
+            pendingAnalyticsOptions = nextOptions
+            sdk?.configureAnalytics(nextOptions, surface = "react_native")
         }
 
         Function("set") { category: String, key: String, value: Any? ->
@@ -340,11 +352,11 @@ class BluetoothSdkModule : Module() {
         // MARK: - Display Commands
 
         AsyncFunction("displayEvent") { params: Map<String, Any> ->
-            sdk?.displayEvent(DisplayEventRequest(params))
+            bluetoothSdk().displayEvent(DisplayEventRequest(params))
         }
 
         AsyncFunction("displayText") { text: String, x: Int?, y: Int?, size: Int? ->
-            sdk?.displayText(
+            bluetoothSdk().displayText(
                     text = text,
                     x = x ?: 0,
                     y = y ?: 0,
@@ -352,34 +364,34 @@ class BluetoothSdkModule : Module() {
             )
         }
 
-        AsyncFunction("clearDisplay") { sdk?.clearDisplay() }
+        AsyncFunction("clearDisplay") { bluetoothSdk().clearDisplay() }
 
         // MARK: - Connection Commands
 
-        AsyncFunction("connectDefault") { sdk?.connectDefault() }
+        AsyncFunction("connectDefault") { bluetoothSdk().connectDefault() }
 
         AsyncFunction("connectDefaultWithOptions") { options: Map<String, Any> ->
-            sdk?.connectDefault(options.toMentraConnectOptions())
+            bluetoothSdk().connectDefault(options.toMentraConnectOptions())
         }
 
         AsyncFunction("setDefaultDevice") { device: Map<String, Any>? ->
-            sdk?.setDefaultDevice(device.toMentraDevice())
+            bluetoothSdk().setDefaultDevice(device.toMentraDevice())
         }
 
-        AsyncFunction("clearDefaultDevice") { sdk?.clearDefaultDevice() }
+        AsyncFunction("clearDefaultDevice") { bluetoothSdk().clearDefaultDevice() }
 
         AsyncFunction("connectWithOptions") { device: Map<String, Any>, options: Map<String, Any> ->
-            sdk?.connect(
+            bluetoothSdk().connect(
                     device.toMentraDevice() ?: throw IllegalArgumentException("connect requires a Device with model and name."),
                     options.toMentraConnectOptions(),
             )
         }
 
-        AsyncFunction("connectSimulated") { sdk?.connectSimulated() }
+        AsyncFunction("connectSimulated") { bluetoothSdk().connectSimulated() }
 
-        AsyncFunction("disconnect") { sdk?.disconnect() }
+        AsyncFunction("disconnect") { bluetoothSdk().disconnect() }
 
-        AsyncFunction("forget") { sdk?.forget() }
+        AsyncFunction("forget") { bluetoothSdk().forget() }
 
         AsyncFunction("connectDefaultController") { deviceManager?.connectDefaultController() }
 
@@ -388,14 +400,14 @@ class BluetoothSdkModule : Module() {
         AsyncFunction("forgetController") { deviceManager?.forgetController() }
 
         AsyncFunction("startScan") { model: String ->
-            sdk?.startScan(DeviceModel.fromDeviceType(model))
+            bluetoothSdk().startScan(DeviceModel.fromDeviceType(model))
         }
 
-        AsyncFunction("stopScan") { sdk?.stopScan() }
+        AsyncFunction("stopScan") { bluetoothSdk().stopScan() }
 
-        AsyncFunction("cancelConnectionAttempt") { sdk?.cancelConnectionAttempt() }
+        AsyncFunction("cancelConnectionAttempt") { bluetoothSdk().cancelConnectionAttempt() }
 
-        AsyncFunction("showDashboard") { sdk?.showDashboard() }
+        AsyncFunction("showDashboard") { bluetoothSdk().showDashboard() }
 
         AsyncFunction("ping") { deviceManager?.ping() }
 
@@ -414,7 +426,7 @@ class BluetoothSdkModule : Module() {
         // MARK: - Incident Reporting
 
         AsyncFunction("sendIncidentId") { incidentId: String, apiBaseUrl: String? ->
-            sdk?.sendIncidentId(incidentId, apiBaseUrl)
+            bluetoothSdk().sendIncidentId(incidentId, apiBaseUrl)
         }
 
         // MARK: - WiFi Commands
@@ -432,7 +444,7 @@ class BluetoothSdkModule : Module() {
         }
 
         AsyncFunction("setSystemTime") { timestampMs: Double ->
-            sdk?.setSystemTime(timestampMs.toLong())
+            bluetoothSdk().setSystemTime(timestampMs.toLong())
         }
 
         // MARK: - Gallery Commands
@@ -442,7 +454,7 @@ class BluetoothSdkModule : Module() {
         }
 
         AsyncFunction("setVoiceActivityDetectionEnabled") { enabled: Boolean ->
-            sdk?.setVoiceActivityDetectionEnabled(enabled)
+            bluetoothSdk().setVoiceActivityDetectionEnabled(enabled)
         }
 
         AsyncFunction("setButtonPhotoSettings") { size: String ->
@@ -499,9 +511,9 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - Power Control Commands
 
-        AsyncFunction("sendShutdown") { sdk?.sendShutdown() }
+        AsyncFunction("sendShutdown") { bluetoothSdk().sendShutdown() }
 
-        AsyncFunction("sendReboot") { sdk?.sendReboot() }
+        AsyncFunction("sendReboot") { bluetoothSdk().sendReboot() }
 
         // MARK: - Video Recording Commands
 
@@ -545,7 +557,7 @@ class BluetoothSdkModule : Module() {
         AsyncFunction("stopStream") { requireSdk().stopStream().values }
 
         AsyncFunction("sendExternallyManagedStreamKeepAlive") { params: Map<String, Any> ->
-            sdk?.sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest.fromMap(params))
+            bluetoothSdk().sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest.fromMap(params))
         }
 
         // MARK: - Microphone Commands
@@ -555,7 +567,7 @@ class BluetoothSdkModule : Module() {
                 useGlassesMic: Boolean?,
                 sendTranscript: Boolean?,
                 sendLc3Data: Boolean? ->
-            sdk?.setMicState(
+            bluetoothSdk().setMicState(
                     enabled = enabled,
                     useGlassesMic = useGlassesMic ?: true,
                     sendTranscript = sendTranscript ?: false,
@@ -573,7 +585,7 @@ class BluetoothSdkModule : Module() {
         // MARK: - Audio Playback Monitoring
 
         AsyncFunction("setOwnAppAudioPlaying") { playing: Boolean ->
-            sdk?.setOwnAppAudioPlaying(playing)
+            bluetoothSdk().setOwnAppAudioPlaying(playing)
         }
 
         // *Blocking on Dispatchers.IO, not the shared AsyncFunctionQueue: these wait on

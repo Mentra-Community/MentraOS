@@ -107,7 +107,9 @@ Disable analytics before native SDK startup through the Expo config plugin:
 }
 ```
 
-Disable analytics for the current native SDK runtime:
+Disable analytics for the current native SDK runtime. In React Native, call
+this before any other SDK API to prevent the startup event for that runtime;
+after the SDK has started, it disables subsequent events only.
 
 ```ts
 import BluetoothSdk from '@mentra/bluetooth-sdk';
