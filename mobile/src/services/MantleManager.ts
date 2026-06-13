@@ -294,9 +294,13 @@ class MantleManager {
     const res = await restComms.loadUserSettings() // get settings from server
     if (res.is_ok()) {
       let loadedSettings = res.value
-      // exclude default_wearable and pending_wearable from the settings when pulling from the server:
+      // Device-identity keys are per-phone pairing state: never restore them from the
+      // server or stale values clobber the locally paired device and reconnect-on-launch
+      // targets the wrong BLE address.
       delete loadedSettings["default_wearable"]
       delete loadedSettings["pending_wearable"]
+      delete loadedSettings["device_name"]
+      delete loadedSettings["device_address"]
       delete loadedSettings["default_controller"]
       delete loadedSettings["pending_controller"]
       delete loadedSettings["controller_device_name"]
