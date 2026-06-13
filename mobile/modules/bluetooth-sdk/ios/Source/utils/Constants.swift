@@ -7,6 +7,9 @@ struct DeviceTypes {
     static let Z100 = "Vuzix Z100"
     static let NEX = "Mentra Display"
     static let FRAME = "Brilliant Frame"
+    // Dev-only: real glasses driven over BLE by the mentra-agent harness daemon
+    // on the Mac, so the iOS Simulator (no Bluetooth radio) can use them.
+    static let REMOTE_HARNESS = "Remote Glasses (Harness)"
 
     static let ALL = [
         SIMULATED,
@@ -17,6 +20,7 @@ struct DeviceTypes {
         Z100,
         NEX,
         FRAME,
+        REMOTE_HARNESS,
     ]
 
     /// Private init to prevent instantiation

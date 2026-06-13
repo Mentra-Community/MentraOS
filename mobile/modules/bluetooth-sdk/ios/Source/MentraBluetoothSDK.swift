@@ -338,6 +338,10 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.connectSimulated()
     }
 
+    func connectRemoteHarness() {
+        DeviceManager.shared.connectRemoteHarness()
+    }
+
     public func disconnect() {
         DeviceManager.shared.disconnect()
     }

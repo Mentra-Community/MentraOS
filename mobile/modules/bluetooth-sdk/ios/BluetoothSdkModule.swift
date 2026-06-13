@@ -173,6 +173,12 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
+        AsyncFunction("connectRemoteHarness") {
+            await MainActor.run {
+                self.bluetoothSdk().connectRemoteHarness()
+            }
+        }
+
         AsyncFunction("disconnect") {
             await MainActor.run {
                 self.bluetoothSdk().disconnect()

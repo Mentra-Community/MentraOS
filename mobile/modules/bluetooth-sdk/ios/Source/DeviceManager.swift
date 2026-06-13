@@ -612,7 +612,9 @@ struct ViewState {
             Bridge.log("MAN: SGC already initialized")
             return
         }
-        if wearable.contains(DeviceTypes.SIMULATED) {
+        if wearable.contains(DeviceTypes.REMOTE_HARNESS) {
+            sgc = RemoteHarness()
+        } else if wearable.contains(DeviceTypes.SIMULATED) {
             sgc = Simulated()
         } else if wearable.contains(DeviceTypes.G1) {
             sgc = G1()
@@ -1433,6 +1435,13 @@ struct ViewState {
     func connectSimulated() {
         defaultWearable = DeviceTypes.SIMULATED
         deviceName = DeviceTypes.SIMULATED
+        initSGC(defaultWearable)
+        handleDeviceReady()
+    }
+
+    func connectRemoteHarness() {
+        defaultWearable = DeviceTypes.REMOTE_HARNESS
+        deviceName = DeviceTypes.REMOTE_HARNESS
         initSGC(defaultWearable)
         handleDeviceReady()
     }
