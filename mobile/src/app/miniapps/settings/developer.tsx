@@ -289,7 +289,8 @@ export default function DeveloperSettingsScreen() {
 
           <StoreUrl />
 
-          <OtaVersionUrl />
+          {/* Super mode only: a wrong OTA manifest can brick glasses */}
+          {superMode && <OtaVersionUrl />}
 
           {superMode && <RouteButton label="Super Settings" onPress={() => push("/miniapps/settings/super")} />}
 
