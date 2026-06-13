@@ -668,6 +668,11 @@ class LocalMiniappRuntime {
       return
     }
 
+    // ANY inbound message proves the context is alive — a busy background
+    // script streaming DISPLAY/storage traffic shouldn't be killed by the
+    // liveness watchdog just because its PONG replies queue behind real work.
+    this.handlePong(packageName)
+
     // Console-tap forwarding. The miniapp's console.log/warn/etc is wrapped
     // (via injected shim from miniappGlobals.ts) to post a `dev_log`
     // envelope. We fan out to two destinations:
@@ -790,8 +795,8 @@ class LocalMiniappRuntime {
         this.sendToMiniapp(packageName, {type: MiniappResponseType.PONG}, requestId)
         break
       case MiniappResponseType.PONG:
-        // Miniapp's auto-reply to our PING — mark the app as alive
-        this.handlePong(packageName)
+        // Liveness already touched above for every inbound message; the
+        // PONG carries no other action.
         break
 
       case MiniappRequestType.SHARE:
