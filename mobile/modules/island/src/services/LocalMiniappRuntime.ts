@@ -103,7 +103,14 @@ function locationRateRank(rate: string | null | undefined): number {
 
 const LOG_TAG = "LOCAL_MINIAPP"
 const PING_INTERVAL_MS = 5_000
-const PING_TIMEOUT_THRESHOLD = 3 // unregister after 3 missed pongs (~15s)
+// Unregister after this many missed pongs. Generous on purpose: a busy
+// context (heavy interim translation traffic) or OS scheduling while idle can
+// delay pongs well past one interval, and killing a healthy-but-busy script
+// drops its subscriptions (releasing the mic). With the liveness-timeout
+// respawn path wired (MentraJSRouter.start), a genuinely dead context still
+// comes back automatically — this threshold only bounds how long that takes.
+const PING_TIMEOUT_THRESHOLD = 6 // ~30s
+
 const RGB_LED_ACTIONS = new Set<RgbLedAction>(["on", "off"])
 const RGB_LED_COLORS = new Set<RgbLedColor>(["red", "green", "blue", "orange", "white"])
 const CAMERA_FOV_MIN = 62
@@ -249,6 +256,16 @@ class LocalMiniappRuntime {
 
   /** Ping interval handle. */
   private pingIntervalId: number | null = null
+
+  /**
+   * Notified when a miniapp is unregistered for missing liveness pings.
+   * MentraJSRouter wires this into its crash-respawn machinery so a
+   * silently-stalled background script is restarted (with crash-loop
+   * protection) instead of staying dead — a dead background drops its
+   * subscriptions, which releases the mic while the webview still looks
+   * alive.
+   */
+  public onLivenessTimeout: ((packageName: string) => void) | null = null
 
   /** Pending cloud requests: requestId → packageName that originated the request. */
   private pendingCloudRequests: Map<string, {packageName: string; envelopeRequestId?: string}> = new Map()
@@ -2589,6 +2606,9 @@ class LocalMiniappRuntime {
 
     for (const pkg of toRemove) {
       this.unregisterApp(pkg)
+      // Hand the package to the router's respawn machinery — a missed-pings
+      // death is treated like a crash so the background script comes back.
+      this.onLivenessTimeout?.(pkg)
     }
   }
 

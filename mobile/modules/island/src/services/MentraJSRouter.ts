@@ -160,6 +160,14 @@ export class MentraJSRouter {
         this.logger.error(`outbound handler threw`, {error: String(e), raw})
       }
     })
+    // A background script unregistered for missing liveness pings is dead
+    // weight: its subscriptions are gone (so the mic releases) while the
+    // webview keeps rendering stale state. Route it through the same
+    // respawn machinery as a crash so it comes back automatically, with
+    // the crash controller's backoff + crash-loop protection.
+    this.runtime.onLivenessTimeout = (packageName) => {
+      this.handleCrash(packageName, "liveness: missed pings")
+    }
   }
 
   /**
