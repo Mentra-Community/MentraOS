@@ -3332,6 +3332,16 @@ public class MentraLive extends SGCManager {
                         int ready = bodyObj.optInt("ready", 0);
                         if (ready == 0) {
                             Bridge.log("LIVE: K900 SOC not ready (ready=0)");
+                            if (glassesReady) {
+                                // The MTK SOC rebooted underneath an intact BLE link (e.g. after an
+                                // MTK firmware OTA apply) — the BES chip keeps the GATT connection
+                                // alive, so no disconnect edge ever resets the handshake flags. Left
+                                // stale, they block phone_ready from being re-sent and fullyBooted
+                                // never recovers. Reset and poll until the SOC is ready again.
+                                Bridge.log("LIVE: 🔄 SOC not ready after handshake completed - glasses rebooted, restarting readiness handshake");
+                                glassesReadyReceived = false;
+                                startReadinessCheckLoop();
+                            }
                             DeviceStore.INSTANCE.apply("glasses", "fullyBooted", false);
                             Bridge.sendTypedMessage("glasses_not_ready", new HashMap<String, Object>() {});
                             if (batteryPercentage > 0 && batteryPercentage <= 20) {
@@ -3345,7 +3355,9 @@ public class MentraLive extends SGCManager {
                             Bridge.log("LIVE: K900 SOC ready");
                             // Only send phone_ready if we haven't already established connection
                             // This prevents re-initialization on every heartbeat after initial connection
-                            // The glassesReady flag is reset on disconnect/reconnect, so this won't prevent proper reconnection
+                            // The glassesReady flag is reset on disconnect/reconnect and on a
+                            // ready=0 heartbeat (SOC reboot under an intact BLE link), so this
+                            // won't prevent proper reconnection
                             if (!glassesReady) {
                                 Bridge.log("LIVE: 📱 Sending phone_ready to glasses - waiting for glasses_ready response");
                                 JSONObject readyMsg = new JSONObject();
