@@ -11,7 +11,7 @@ import {reverseGeocode} from "@/ui/lib/reverseGeocode"
 import {bearingDeg, haversineMeters, signedAngleDiff} from "@/ui/lib/geometry"
 import {DrawerOffsetProvider} from "@/ui/components/Drawer/DrawerOffsetContext"
 import {FloatingDevPanel} from "@/ui/components/FloatingDevPanel/FloatingDevPanel"
-import {isDev} from "@/ui/lib/env"
+import {appVersion, isDev} from "@/ui/lib/env"
 import {toggleDevOverride, useDevOverride} from "@/ui/lib/devOverride"
 import {SimulationControls} from "@/ui/pages/NavigationPage/components/Controls/Controls"
 import {ArrivalDrawer} from "@/ui/pages/NavigationPage/components/ArrivalDrawer/ArrivalDrawer"
@@ -203,11 +203,15 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const {push} = useRouter()
   const [destination, setDestination] = useState<PlaceDetails | null>(null)
   const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([])
+  // Local refetch trigger — bumped when the preview drawer's star toggles
+  // a save, so `savedPlaces` reflects the change without round-tripping
+  // through App's savedPlacesVersion.
+  const [localSavedVersion, setLocalSavedVersion] = useState(0)
 
   // Hydrate saved places so the map can drop home / work / starred
   // markers behind whatever destination is selected. Refetched on
   // savedPlacesVersion change (AddPlacePage onSave bumps it after a
-  // successful `storage:add-saved`).
+  // successful `storage:add-saved`) or on a local star toggle.
   useEffect(() => {
     let cancelled = false
     mentra
@@ -223,7 +227,22 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     return () => {
       cancelled = true
     }
-  }, [savedPlacesVersion])
+  }, [savedPlacesVersion, localSavedVersion])
+
+  // Star toggle from the preview drawer: persist via storage RPC, then
+  // refetch. Returns the new saved-state so the drawer can update its
+  // icon optimistically.
+  const handleToggleSaved = async (place: PlaceDetails, shouldSave: boolean) => {
+    try {
+      if (shouldSave) {
+        await mentra.request("storage:add-saved", {...place})
+      } else {
+        await mentra.request("storage:remove-saved", {placeId: place.placeId})
+      }
+    } finally {
+      setLocalSavedVersion((v) => v + 1)
+    }
+  }
 
   const [simulatorMode, setSimulatorMode] = useState(false)
   const [searchFrozen, setSearchFrozen] = useState(false)
@@ -773,6 +792,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           // reason as long-press) and on a live trip (avoid swapping
           // destinations mid-walk).
           onPlaceTap={isSearching || running ? undefined : handleMapPoiTap}
+          onOpenSettings={() => push({name: "settings"})}
         />
 
         {/* Top floating stack — search bar, then orientation card while running. */}
@@ -897,6 +917,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   speedMultiplier={speedMultiplier}
                   routeDistanceMeters={previewRouteSummary?.distanceMeters ?? null}
                   routeDurationSeconds={previewRouteSummary?.durationSeconds ?? null}
+                  saved={!!devDestination && savedPlaces.some((p) => p.placeId === devDestination.placeId)}
+                  onToggleSaved={handleToggleSaved}
                   onStart={handleStart}
                   onClose={() => setDestination(null)}
                 />
@@ -921,7 +943,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         />
 
         {devEnabled && !isSearching ? (
-          <FloatingDevPanel title="Navigation Dev" storageKey="NavigationPage:dev">
+          <FloatingDevPanel title="Navigation Dev" version={appVersion} storageKey="NavigationPage:dev">
             <div className="flex gap-1 p-1 mb-3 rounded-xl bg-[#0000000A]">
               {(
                 [

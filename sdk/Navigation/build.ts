@@ -17,6 +17,12 @@ const distDir = "./dist"
 
 await rm(distDir, {recursive: true, force: true})
 
+// App version, read from miniapp.json so there's a single source of truth.
+// Inlined into the UI bundle (and harmless in the background bundle) so the
+// dev panel can show which build is running.
+const miniapp = (await import("./miniapp.json")) as {version?: string}
+const appVersion = miniapp.version ?? "0.0.0"
+
 // The GCP key now feeds ONLY the Maps JavaScript API (ui/lib/googleMaps.ts),
 // which loads Google's script directly in the WebView and therefore can't be
 // proxied — it stays in the UI bundle (public by necessity; lock it down
@@ -43,6 +49,7 @@ if (nodeEnv === "production") console.log("Building with NODE_ENV=production")
 const backgroundDefine: Record<string, string> = {
   "process.env.PROXY_BASE_URL": JSON.stringify(proxyBaseUrl),
   "process.env.NODE_ENV": JSON.stringify(nodeEnv),
+  "process.env.APP_VERSION": JSON.stringify(appVersion),
 }
 
 // UI: needs the Maps JS key (can't be proxied). PROXY_BASE_URL is harmless here
@@ -51,6 +58,7 @@ const uiDefine: Record<string, string> = {
   "process.env.PUBLIC_MAP_NAV_VIEWER": JSON.stringify(navKey),
   "process.env.PROXY_BASE_URL": JSON.stringify(proxyBaseUrl),
   "process.env.NODE_ENV": JSON.stringify(nodeEnv),
+  "process.env.APP_VERSION": JSON.stringify(appVersion),
 }
 
 // Background: IIFE, no DOM. The JSContext loads this once.
