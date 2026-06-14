@@ -103,6 +103,7 @@ function locationRateRank(rate: string | null | undefined): number {
 
 const LOG_TAG = "LOCAL_MINIAPP"
 const PING_INTERVAL_MS = 5_000
+const FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS = 2_500
 // Unregister after this many missed pongs. Generous on purpose: a busy
 // context (heavy interim translation traffic) or OS scheduling while idle can
 // delay pongs well past one interval, and killing a healthy-but-busy script
@@ -256,6 +257,7 @@ class LocalMiniappRuntime {
 
   /** Ping interval handle. */
   private pingIntervalId: number | null = null
+  private foregroundProbeTimers: Map<string, number> = new Map()
 
   /**
    * Notified when a miniapp is unregistered for missing liveness pings.
@@ -493,6 +495,7 @@ class LocalMiniappRuntime {
     installedManifest?: InstalledMiniappManifest,
   ): void {
     console.log(`${LOG_TAG}: registerApp(${packageName})`)
+    this.clearForegroundProbe(packageName)
     // If the app is already registered (e.g. QR scanned again for same package),
     // tear down its old subscriptions first so streamSubscribers doesn't keep
     // dangling references. The WebView will re-subscribe after its CONNECT.
@@ -570,6 +573,7 @@ class LocalMiniappRuntime {
 
   public unregisterApp(packageName: string): void {
     console.log(`${LOG_TAG}: unregisterApp(${packageName})`)
+    this.clearForegroundProbe(packageName)
     const app = this.connectedApps.get(packageName)
     if (!app) return
 
@@ -2201,6 +2205,9 @@ class LocalMiniappRuntime {
     if (cloud) {
       this.ensureCloudResultsWired(cloud)
       const subs = this.buildCloudAudioSubscriptions(cloudStreams)
+      console.log(
+        `${LOG_TAG}: updateCloudSubscriptions streams=[${Array.from(cloudStreams).join(", ")}] cloudSubs=${subs.length}`,
+      )
       cloud.setSubscriptions(subs).catch((err) => {
         // Best-effort: the cloud may not be connected yet. Logging is enough.
         console.warn(`${LOG_TAG}: cloud setSubscriptions failed: ${(err as Error)?.message ?? err}`)
@@ -2293,7 +2300,10 @@ class LocalMiniappRuntime {
     if (this.cloudStatusWired) return
     this.cloudStatusWired = true
 
-    getRuntimeHooks().cloud?.onStatusChanged(() => {
+    getRuntimeHooks().cloud?.onStatusChanged((status) => {
+      if (status.status === "connected") {
+        this.updateCloudSubscriptions()
+      }
       this.broadcastCloudStatus()
     })
 
@@ -2571,6 +2581,41 @@ class LocalMiniappRuntime {
     })
   }
 
+  /**
+   * Fast foreground liveness check used when a local miniapp UI is opened or
+   * resumed. The normal watchdog intentionally waits ~30s to avoid killing a
+   * healthy-but-busy background script. When the user is actively looking at a
+   * WebView, a stale JSContext reads as "cloud offline" / no captions, so probe
+   * immediately and reuse the crash-respawn path if no message comes back.
+   */
+  public probeForegroundLiveness(
+    packageName: string,
+    reason = "foreground-open",
+    timeoutMs = FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS,
+  ): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app) return
+
+    this.clearForegroundProbe(packageName)
+    const probeStartedAt = Date.now()
+
+    this.sendToMiniapp(packageName, {
+      type: MiniappRequestType.PING,
+    })
+
+    const timerId = BgTimer.setTimeout(() => {
+      this.foregroundProbeTimers.delete(packageName)
+      const current = this.connectedApps.get(packageName)
+      if (!current) return
+      if (current.lastPongAt >= probeStartedAt) return
+
+      console.warn(`${LOG_TAG}: ${packageName} failed foreground liveness probe (${reason}), respawning`)
+      this.unregisterApp(packageName)
+      this.onLivenessTimeout?.(packageName)
+    }, timeoutMs)
+    this.foregroundProbeTimers.set(packageName, timerId)
+  }
+
   // ===========================================================================
   // Ping / pong liveness
   // ===========================================================================
@@ -2625,7 +2670,15 @@ class LocalMiniappRuntime {
     const app = this.connectedApps.get(packageName)
     if (app) {
       app.lastPongAt = Date.now()
+      this.clearForegroundProbe(packageName)
     }
+  }
+
+  private clearForegroundProbe(packageName: string): void {
+    const timerId = this.foregroundProbeTimers.get(packageName)
+    if (timerId == null) return
+    BgTimer.clearTimeout(timerId)
+    this.foregroundProbeTimers.delete(packageName)
   }
 
   // ===========================================================================
@@ -2646,6 +2699,10 @@ class LocalMiniappRuntime {
     this.pendingCloudRequests.clear()
     this.streamSubscribers.clear()
     this.connectedApps.clear()
+    for (const timerId of this.foregroundProbeTimers.values()) {
+      BgTimer.clearTimeout(timerId)
+    }
+    this.foregroundProbeTimers.clear()
 
     LocalMiniappRuntime.instance = null
   }

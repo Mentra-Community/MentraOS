@@ -144,6 +144,20 @@ describe("MentraUIRouter — lifecycle", () => {
     expect(crust.dispatchCalls).toHaveLength(0)
   })
 
+  test("notifyReopen fires UI_OPEN while a WebView is still bound", () => {
+    bindCapture(router, "com.foo")
+    crust.dispatchCalls.length = 0
+    router.notifyReopen("com.foo")
+    expect(crust.dispatchCalls).toHaveLength(1)
+    const env = JSON.parse(crust.dispatchCalls[0]!.envelope.raw as string)
+    expect(env.payload.data).toEqual({type: "UI_OPEN"})
+  })
+
+  test("notifyReopen for an unknown package is a no-op", () => {
+    expect(() => router.notifyReopen("nobody")).not.toThrow()
+    expect(crust.dispatchCalls).toHaveLength(0)
+  })
+
   test("bindWebView replaces an existing binding (defensive)", () => {
     bindCapture(router, "com.foo")
     bindCapture(router, "com.foo")

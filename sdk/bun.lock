@@ -21,6 +21,39 @@
         "bun-plugin-tailwind": "^0.1.2",
       },
     },
+    "../local-miniapps/merge": {
+      "name": "local-merge",
+      "dependencies": {
+        "@mentra/miniapp": "workspace:*",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+        "tailwindcss": "^4.0.8",
+      },
+      "devDependencies": {
+        "@mentra/miniapp-cli": "workspace:*",
+        "@types/react": "^19.1.6",
+        "@types/react-dom": "^19.1.6",
+        "bun-plugin-tailwind": "^0.1.2",
+      },
+    },
+    "../local-miniapps/translation": {
+      "name": "local-translation",
+      "dependencies": {
+        "@mentra/miniapp": "workspace:*",
+        "clsx": "^2.1.1",
+        "lucide-react": "^0.511.0",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+        "tailwind-merge": "^3.0.2",
+        "tailwindcss": "^4.0.8",
+      },
+      "devDependencies": {
+        "@mentra/miniapp-cli": "workspace:*",
+        "@types/react": "^19.1.6",
+        "@types/react-dom": "^19.1.6",
+        "bun-plugin-tailwind": "^0.1.2",
+      },
+    },
     "../mobile/modules/miniapp": {
       "name": "@mentra/miniapp",
       "version": "0.3.0",
@@ -289,6 +322,10 @@
     "liquid-glass-react": ["liquid-glass-react@1.1.1", "", { "peerDependencies": { "react": ">=19", "react-dom": ">=19" } }, "sha512-pKzaktaMAEztd93wpWcz2Z5Z9qdLJUNJdMX+n00Ca4XsnrLTQ5xJzm/+GQXZUeuFXe/PQ8ziVMZO6531PyaFJw=="],
 
     "local-captions": ["local-captions@workspace:../local-miniapps/captions"],
+
+    "local-merge": ["local-merge@workspace:../local-miniapps/merge"],
+
+    "local-translation": ["local-translation@workspace:../local-miniapps/translation"],
 
     "lucide-react": ["lucide-react@0.511.0", "", { "peerDependencies": { "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-VK5a2ydJ7xm8GvBeKLS9mu1pVK6ucef9780JVUjw6bAjJL/QXnd4Y0p7SPeOUMC27YhzNCZvm5d/QX0Tp3rc0w=="],
 

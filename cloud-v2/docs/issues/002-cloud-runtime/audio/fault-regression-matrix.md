@@ -57,6 +57,7 @@ coverage needed so the same class of bug does not return.
 | AUD-F26 | Redis transient or stream replay after failover | Audio that reached Redis is replayed in order; captions may delay but not gap | Words missing after pod/worker failover | Runtime integration with Redis pause/worker restart and marker audio |
 | AUD-F27 | Phone app foreground/background during active captions | Foreground reconnect does not clear live subscriptions; background does not wedge mic/fallback | Returning to app leaves captions frozen | Phone E2E: background app during online and offline states |
 | AUD-F28 | Local SDK session status unavailable to miniapp | Miniapp can show whether transcripts are cloud or offline/fallback | Miniapp cannot tell users it is offline; misleading UX | `session.cloud.status` + `session.cloud.onStatusChanged`; SDK unit test; Local Captions indicator |
+| AUD-F29 | Foreground WebView reuses a stale local-miniapp background JSContext | Opening/resuming the WebView probes background liveness and respawns quickly if the context is wedged | Local Captions WebView opens, shows cloud offline/no transcripts for ~30s, then watchdog respawns it; logs show missed pings or `QuickJSJni: Cannot get jni env because the vm is not cached` | Mobile host unit for foreground probe; phone E2E: open Captions after stale context, verify recovery within probe timeout and marker transcript |
 
 ## Manual phone E2E script
 
@@ -121,3 +122,11 @@ Use distinct spoken markers so screenshots prove ordering:
   binary audio fallback. The runtime/cloud side accepts WS binary audio, but the
   cloud-client mobile path currently sends only UDP. See
   [`004-cloud-client/udp-liveness-fallback`](../../004-cloud-client/udp-liveness-fallback/).
+- 2026-06-14 Pixel 8 run reproduced AUD-F29: after closing Local Merge and
+  opening Local Captions, the WebView connected but captions appeared offline for
+  about 30 seconds. Logs showed repeated `QuickJSJni: Cannot get jni env because
+  the vm is not cached`, then `com.mentra.local-captions missed 6 pings`,
+  followed by crash-recovery respawn, `SUBSCRIBE transcription:auto`, PCM
+  restart, and healthy `Cloud captions / UDP audio`. The mitigation is the
+  foreground liveness probe documented in
+  [`006-dev-toolkit/local-sdk/mobile-local-runtime-liveness.md`](../../006-dev-toolkit/local-sdk/mobile-local-runtime-liveness.md).

@@ -45,6 +45,14 @@ function audioGapConfig(): { checkIntervalMs: number; thresholdMs: number } {
   };
 }
 
+function endpointDebounceMs(): number {
+  return Number(process.env.SONIOX_ENDPOINT_DEBOUNCE_MS ?? 500);
+}
+
+const MIN_ENDPOINT_OVERLAP_CHARS = 3;
+const MIN_REGRESSION_DROP_CHARS = 12;
+const MIN_REGRESSION_PREFIX_CHARS = 12;
+
 /**
  * Self-heal backoff for an unexpected Soniox session drop.
  *
@@ -109,6 +117,7 @@ export async function createSonioxProvider(
 ): Promise<TranscriptionProvider> {
   const client = opts.client ?? getClient();
   const gapConfig = audioGapConfig();
+  const endpointDebounce = endpointDebounceMs();
 
   // Build session config. For language="auto" we enable detection; for a
   // specific code we pass it as hint with detection still on. (Letting
@@ -196,6 +205,20 @@ export async function createSonioxProvider(
   let currentSpeakerId: string | undefined = undefined;
   let currentLanguage: string | undefined = undefined;
 
+  // Soniox endpoint is a soft signal. It can fire while the SDK still carries
+  // the same rolling-window text into the next result, which previously caused
+  // a duplicate new utterance/card. Hold the candidate final briefly, and if
+  // following results overlap, keep extending the original utterance instead.
+  let pendingFinalText = "";
+  let pendingFinalUtteranceId: string | null = null;
+  let pendingFinalSpeakerId: string | undefined = undefined;
+  let pendingFinalLanguage: string | undefined = undefined;
+  let pendingFinalOriginalText = "";
+  let pendingFinalSourceLanguage: string | undefined = undefined;
+  let pendingFinalStartMs: number | undefined = undefined;
+  let pendingFinalEndMs: number | undefined = undefined;
+  let pendingFinalTimer: ReturnType<typeof setTimeout> | null = null;
+
   // Monotonic id minting: a provider-instance nonce prevents collisions when the
   // cloud process/provider restarts with the same scope and sequence number.
   // `opts.scope` (user + sub identity) keeps ids readable per subscription.
@@ -219,6 +242,142 @@ export async function createSonioxProvider(
     currentSourceLanguage = undefined;
   };
 
+  const resetActiveUtterance = (): void => {
+    stablePrefix = "";
+    prevFinalLen = 0;
+    lastSentInterim = "";
+    originalStablePrefix = "";
+    originalPrevFinalLen = 0;
+    lastOriginalText = "";
+    currentSourceLanguage = undefined;
+    currentUtteranceId = null;
+    currentSpeakerId = undefined;
+    currentLanguage = undefined;
+  };
+
+  const emitFinalEvent = (event: {
+    text: string;
+    utteranceId?: string;
+    speakerId?: string;
+    language?: string;
+    originalText?: string;
+    sourceLanguage?: string;
+    startMs?: number;
+    endMs?: number;
+  }): void => {
+    opts.onTranscript({
+      text: event.text,
+      isFinal: true,
+      utteranceId: event.utteranceId,
+      speakerId: event.speakerId,
+      language: event.language,
+      originalText: event.originalText || undefined,
+      sourceLanguage: event.sourceLanguage,
+      startMs: event.startMs,
+      endMs: event.endMs,
+    });
+  };
+
+  const clearPendingFinal = (): void => {
+    if (pendingFinalTimer) {
+      clearTimeout(pendingFinalTimer);
+      pendingFinalTimer = null;
+    }
+    pendingFinalText = "";
+    pendingFinalUtteranceId = null;
+    pendingFinalSpeakerId = undefined;
+    pendingFinalLanguage = undefined;
+    pendingFinalOriginalText = "";
+    pendingFinalSourceLanguage = undefined;
+    pendingFinalStartMs = undefined;
+    pendingFinalEndMs = undefined;
+  };
+
+  const tryMergeOverlap = (a: string, b: string): string | null => {
+    const left = a.trim();
+    const right = b.trim();
+    if (!left || !right) return null;
+    if (left === right || left.startsWith(right)) return left;
+    if (right.startsWith(left)) return left + right.slice(left.length);
+
+    const maxOverlap = Math.min(left.length, right.length);
+    for (let len = maxOverlap; len >= MIN_ENDPOINT_OVERLAP_CHARS; len -= 1) {
+      if (left.endsWith(right.slice(0, len))) {
+        return left + right.slice(len);
+      }
+    }
+    return null;
+  };
+
+  const isLikelyWindowRegression = (next: string, previous: string): boolean => {
+    const normalizedNext = next.trim();
+    const normalizedPrevious = previous.trim();
+    if (!normalizedNext || !normalizedPrevious) return false;
+    const drop = normalizedPrevious.length - normalizedNext.length;
+    if (drop < MIN_REGRESSION_DROP_CHARS) return false;
+
+    let sharedPrefix = 0;
+    const maxPrefix = Math.min(
+      normalizedNext.length,
+      normalizedPrevious.length,
+    );
+    while (
+      sharedPrefix < maxPrefix &&
+      normalizedNext[sharedPrefix] === normalizedPrevious[sharedPrefix]
+    ) {
+      sharedPrefix += 1;
+    }
+
+    return (
+      sharedPrefix >=
+      Math.min(MIN_REGRESSION_PREFIX_CHARS, normalizedNext.length)
+    );
+  };
+
+  const commitPendingFinal = (): void => {
+    if (!pendingFinalText) {
+      clearPendingFinal();
+      return;
+    }
+
+    const committedText = pendingFinalText;
+    const committedUtteranceId = pendingFinalUtteranceId;
+    emitFinalEvent({
+      text: committedText,
+      utteranceId: committedUtteranceId ?? undefined,
+      speakerId: pendingFinalSpeakerId,
+      language: pendingFinalLanguage,
+      originalText: pendingFinalOriginalText,
+      sourceLanguage: pendingFinalSourceLanguage,
+      startMs: pendingFinalStartMs,
+      endMs: pendingFinalEndMs,
+    });
+    if (
+      committedUtteranceId &&
+      currentUtteranceId === committedUtteranceId &&
+      lastSentInterim.trim() === committedText
+    ) {
+      resetActiveUtterance();
+    }
+    clearPendingFinal();
+  };
+
+  const schedulePendingFinalCommit = (): void => {
+    if (pendingFinalTimer) clearTimeout(pendingFinalTimer);
+    pendingFinalTimer = setTimeout(() => {
+      commitPendingFinal();
+    }, endpointDebounce);
+  };
+
+  const setPendingFinalFromActive = (text: string): void => {
+    pendingFinalText = text;
+    pendingFinalUtteranceId = currentUtteranceId;
+    pendingFinalSpeakerId = currentSpeakerId;
+    pendingFinalLanguage = currentLanguage;
+    pendingFinalOriginalText = lastOriginalText;
+    pendingFinalSourceLanguage = currentSourceLanguage;
+  };
+
   /**
    * Commit the current utterance as a single FINAL and reset for the next one.
    * Called only at a real utterance boundary: the Soniox `endpoint` event and
@@ -227,21 +386,15 @@ export async function createSonioxProvider(
    * finals.
    */
   const emitFinal = (startMs?: number, endMs?: number): void => {
-    if (!lastSentInterim) {
+    const text = lastSentInterim.trim();
+    if (!text) {
       // Nothing to commit; still close the utterance so the next token batch
       // starts fresh.
-      stablePrefix = "";
-      prevFinalLen = 0;
-      lastSentInterim = "";
-      originalStablePrefix = "";
-      originalPrevFinalLen = 0;
-      lastOriginalText = "";
-      currentUtteranceId = null;
+      resetActiveUtterance();
       return;
     }
-    opts.onTranscript({
-      text: lastSentInterim,
-      isFinal: true,
+    emitFinalEvent({
+      text,
       utteranceId: currentUtteranceId ?? undefined,
       speakerId: currentSpeakerId,
       language: currentLanguage,
@@ -252,23 +405,11 @@ export async function createSonioxProvider(
     });
     // Reset for the next utterance. A fresh id is minted lazily when the next
     // token arrives (see handleResult).
-    stablePrefix = "";
-    prevFinalLen = 0;
-    lastSentInterim = "";
-    originalStablePrefix = "";
-    originalPrevFinalLen = 0;
-    lastOriginalText = "";
-    currentUtteranceId = null;
+    resetActiveUtterance();
   };
 
   const handleResult = (result: RealtimeResult) => {
     const allTokens = result.tokens ?? [];
-    if (allTokens.length > 0) {
-      // Temporary diagnostics: token traffic + translation tagging visibility.
-      console.log(
-        `[soniox] result scope=${opts.scope} tokens=${allTokens.length} statuses=${[...new Set(allTokens.map((t) => (t as { translation_status?: string }).translation_status ?? "none"))].join(",")} sample="${allTokens.slice(0, 6).map((t) => t.text).join("")}"`,
-      );
-    }
 
     // For translation subs, split the window: translation-status tokens are
     // the emitted `text` (target language); original-status tokens feed the
@@ -370,13 +511,58 @@ export async function createSonioxProvider(
     }
     prevFinalLen = currentFinalText.length;
 
-    const compositeText = stablePrefix + interimText;
+    const compositeText = (stablePrefix + interimText).trim();
     if (compositeText.length === 0) return;
+
+    if (pendingFinalText && pendingFinalTimer) {
+      const pendingBefore = pendingFinalText;
+      const merged = tryMergeOverlap(pendingFinalText, compositeText);
+      if (merged !== null) {
+        currentUtteranceId = pendingFinalUtteranceId ?? currentUtteranceId;
+        if (currentSpeakerId) pendingFinalSpeakerId = currentSpeakerId;
+        else currentSpeakerId = pendingFinalSpeakerId;
+        if (currentLanguage) pendingFinalLanguage = currentLanguage;
+        else currentLanguage = pendingFinalLanguage;
+        if (lastOriginalText) {
+          pendingFinalOriginalText =
+            tryMergeOverlap(pendingFinalOriginalText, lastOriginalText) ??
+            lastOriginalText;
+        }
+        if (currentSourceLanguage) {
+          pendingFinalSourceLanguage = currentSourceLanguage;
+        }
+
+        pendingFinalText = merged;
+        lastSentInterim = merged;
+
+        if (merged !== pendingBefore) {
+          opts.onTranscript({
+            text: merged,
+            isFinal: false,
+            utteranceId: currentUtteranceId ?? undefined,
+            speakerId: currentSpeakerId,
+            language,
+            originalText: pendingFinalOriginalText || undefined,
+            sourceLanguage: pendingFinalSourceLanguage,
+            startMs,
+            endMs,
+          });
+          schedulePendingFinalCommit();
+        }
+        return;
+      }
+
+      commitPendingFinal();
+    }
 
     // Emit an INTERIM only. We deliberately do NOT emit a final on every round
     // that has finalized tokens (v1 lesson: that piles up one card per partial
     // on the client). The single final is emitted at the utterance boundary by
     // `emitFinal`, driven by the Soniox `endpoint` event (and on `close()`).
+    if (isLikelyWindowRegression(compositeText, lastSentInterim)) {
+      return;
+    }
+
     if (compositeText !== lastSentInterim) {
       opts.onTranscript({
         text: compositeText,
@@ -395,13 +581,40 @@ export async function createSonioxProvider(
 
   const handleEndpoint = () => {
     // Endpoint fires when Soniox detects an utterance boundary (the `<end>`
-    // token). Commit the current utterance as a single FINAL and reset.
-    emitFinal();
+    // token). It is a soft signal, so defer the FINAL briefly; if Soniox's
+    // next rolling window overlaps, we merge it back into this utterance.
+    const candidate = lastSentInterim.trim();
+    if (candidate) {
+      if (pendingFinalText && pendingFinalTimer) {
+        const merged = tryMergeOverlap(pendingFinalText, candidate);
+        if (merged !== null) {
+          pendingFinalText = merged;
+          if (currentSpeakerId) pendingFinalSpeakerId = currentSpeakerId;
+          if (currentLanguage) pendingFinalLanguage = currentLanguage;
+          if (lastOriginalText) {
+            pendingFinalOriginalText =
+              tryMergeOverlap(pendingFinalOriginalText, lastOriginalText) ??
+              lastOriginalText;
+          }
+          if (currentSourceLanguage) {
+            pendingFinalSourceLanguage = currentSourceLanguage;
+          }
+        } else {
+          commitPendingFinal();
+          setPendingFinalFromActive(candidate);
+        }
+      } else {
+        setPendingFinalFromActive(candidate);
+      }
+      schedulePendingFinalCommit();
+    }
+    resetActiveUtterance();
   };
 
   const handleFinalized = () => {
     // The SDK fires this after session.pause() or session.finalize(). For our
     // audio-gap pause, it is the trusted "speech segment ended" signal.
+    commitPendingFinal();
     emitFinal();
   };
 
@@ -436,6 +649,8 @@ export async function createSonioxProvider(
 
   const handleFinished = () => {
     console.log(`[soniox] finished scope=${opts.scope}`);
+    commitPendingFinal();
+    emitFinal();
   };
 
   /**
@@ -597,10 +812,7 @@ export async function createSonioxProvider(
         try {
           session.resume();
           pausedForGap = false;
-          stablePrefix = "";
-          prevFinalLen = 0;
-          lastSentInterim = "";
-          currentUtteranceId = null;
+          resetActiveUtterance();
           console.log(`[soniox] resumed scope=${opts.scope} after audio gap`);
         } catch (err) {
           console.warn(`[soniox] resume failed scope=${opts.scope}:`, err);
@@ -623,6 +835,7 @@ export async function createSonioxProvider(
       // Flush any in-flight utterance as a final so a card that was mid-update
       // gets committed instead of being left dangling on detach.
       try {
+        commitPendingFinal();
         emitFinal();
       } catch {
         /* best-effort */

@@ -45,6 +45,9 @@ proposes an order of operations for the v2 build-out.
 - `README.md` — this doc.
 - [`spike.md`](./spike.md) — research, concepts primer, prior art
   with file paths, options for mobile routing, open questions.
+- [`mobile-local-runtime-liveness.md`](./mobile-local-runtime-liveness.md) —
+  Pixel 8 E2E fault note for stale local-miniapp background JSContexts and the
+  foreground liveness probe mitigation.
 - `spec.md` — **not yet written.** Comes after team discussion of
   the open questions in the spike.
 - `design.md` — **not yet written.** Comes after spec lock.

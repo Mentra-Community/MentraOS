@@ -19,6 +19,7 @@ import { describe, test, expect } from "bun:test";
 process.env.SONIOX_RECONNECT_BASE_MS = "1";
 process.env.SONIOX_RECONNECT_MAX_MS = "4";
 process.env.SONIOX_RECONNECT_MAX_ATTEMPTS = "5";
+process.env.SONIOX_ENDPOINT_DEBOUNCE_MS = "1";
 
 import { createSonioxProvider } from "./soniox";
 import type { TranscriptEvent } from "./provider";
@@ -216,6 +217,7 @@ describe("SonioxProvider utterance lifecycle", () => {
 
     // Now the real utterance boundary fires: exactly ONE final, same id.
     session.endpoint();
+    await wait(5);
 
     const finals = events.filter((e) => e.isFinal);
     expect(finals.length).toBe(1);
@@ -239,6 +241,7 @@ describe("SonioxProvider utterance lifecycle", () => {
       { text: "second utterance", confidence: 0.9, is_final: false, speaker: "1" },
     ]);
     session.endpoint();
+    await wait(5);
 
     const finals = events.filter((e) => e.isFinal);
     expect(finals.length).toBe(2);
@@ -246,6 +249,69 @@ describe("SonioxProvider utterance lifecycle", () => {
     expect(finals[1]!.text).toBe("second utterance");
     // Distinct utterances → distinct ids.
     expect(finals[0]!.utteranceId).not.toBe(finals[1]!.utteranceId);
+
+    await provider.close();
+  });
+
+  test("merges a repeated rolling window after endpoint instead of emitting a duplicate utterance", async () => {
+    const { session, events, provider } = await makeProvider();
+
+    session.result([
+      { text: "Can you hear me?", confidence: 0.9, is_final: false, speaker: "1" },
+    ]);
+    const utteranceId = events.at(-1)!.utteranceId;
+
+    // Soniox can fire an endpoint, then keep the previous words in the next
+    // rolling window. This is the exact shape that produced a duplicate local
+    // captions card in E2E testing.
+    session.endpoint();
+    session.result([
+      { text: " Can", confidence: 0.9, is_final: false, speaker: "1" },
+    ]);
+    session.result([
+      {
+        text: " Can you hear me? What did you do?",
+        confidence: 0.9,
+        is_final: false,
+        speaker: "1",
+      },
+    ]);
+    session.endpoint();
+    await wait(5);
+
+    const finals = events.filter((e) => e.isFinal);
+    expect(finals.length).toBe(1);
+    expect(finals[0]!.utteranceId).toBe(utteranceId);
+    expect(finals[0]!.text).toBe("Can you hear me? What did you do?");
+
+    const ids = new Set(events.map((e) => e.utteranceId));
+    expect(ids.size).toBe(1);
+
+    await provider.close();
+  });
+
+  test("keeps fuller interim when Soniox later emits a shorter finalized window", async () => {
+    const { session, events, provider } = await makeProvider();
+
+    const fullText =
+      "Two app fan out test, local captions and local merge should both receive this final transcript.";
+    const regressedText =
+      "Two app fan out test, local cap both receive this final transcript.";
+
+    session.result([
+      { text: fullText, confidence: 0.9, is_final: false, speaker: "1" },
+    ]);
+    session.result([
+      { text: regressedText, confidence: 0.9, is_final: true, speaker: "1" },
+    ]);
+    session.endpoint();
+    await wait(5);
+
+    expect(events.some((e) => e.text === regressedText)).toBe(false);
+    expect(events.at(-1)).toMatchObject({
+      text: fullText,
+      isFinal: true,
+    });
 
     await provider.close();
   });

@@ -126,6 +126,7 @@ export default function MiniappDeveloperScannerScreen() {
           iconUrl: iconUrl ?? `${devUrl.replace(/\/$/, "")}/icon.png`,
           devUrl,
           devPort: Number.isFinite(portNum) ? portNum : undefined,
+          type: manifest.type as DevAppRecord["type"],
           permissions: manifest.permissions as DevAppRecord["permissions"],
           hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
         })

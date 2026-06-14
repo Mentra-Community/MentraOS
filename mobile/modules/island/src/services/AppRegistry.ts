@@ -22,7 +22,7 @@ import {unzip} from "react-native-zip-archive"
 import semver from "semver"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
-import type {AppletPermission, AppPermissionType, ClientApp} from "../types/applet"
+import type {AppletPermission, AppPermissionType, AppletType, ClientApp} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
 import {getRuntimeHooks} from "../runtime/config"
 import {storage} from "../utils/storage/storage"
@@ -67,6 +67,10 @@ export function normalizeManifestPermissions(
     }
   }
   return out
+}
+
+function normalizeManifestType(raw: unknown): AppletType {
+  return raw === "background" || raw === "system_dashboard" || raw === "standard" ? raw : "standard"
 }
 
 /**
@@ -707,10 +711,12 @@ class AppRegistry {
         const manifest = this.getMiniappManifest(lmaInfo.packageName, versionString) as {
           permissions?: Array<string | {type: string; required?: boolean; description?: string}>
           hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+          type?: string
         } | null
 
         const permissions = normalizeManifestPermissions(manifest?.permissions)
         const hardwareRequirements = buildHardwareRequirements(manifest?.hardwareRequirements, lmaInfo.packageName)
+        const appType = normalizeManifestType(manifest?.type)
 
         // Dev miniapps live in the same lmas/ tree as installed ones, but
         // their version directory name starts with "dev-".
@@ -734,7 +740,7 @@ class AppRegistry {
           name: versionInfo.name,
           webviewUrl: "",
           logoUrl: versionInfo.logoUrl,
-          type: "standard",
+          type: appType,
           permissions,
           hardwareRequirements,
           ...(isMiniappDev ? {isMiniappDev: true} : {}),
@@ -787,7 +793,7 @@ class AppRegistry {
         name: rec.name,
         webviewUrl: "",
         logoUrl: rec.iconUrl,
-        type: "standard",
+        type: normalizeManifestType(rec.type),
         permissions,
         hardwareRequirements,
         isMiniappDev: true,
@@ -869,6 +875,7 @@ export interface DevAppRecord {
   iconUrl: string
   devUrl: string
   devPort?: number
+  type?: AppletType
   permissions?: Array<string | {type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
   /**

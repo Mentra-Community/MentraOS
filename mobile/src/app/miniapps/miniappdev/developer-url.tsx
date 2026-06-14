@@ -124,6 +124,7 @@ export default function MiniappDeveloperUrlScreen() {
       iconUrl: entry.iconUrl ?? `${entry.url}/icon.png`,
       devUrl: entry.url,
       devPort: deriveDevPort(entry.url),
+      type: launchResult.manifest.type as DevAppRecord["type"],
       permissions: launchResult.manifest.permissions as DevAppRecord["permissions"],
       hardwareRequirements: launchResult.manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
     })
@@ -189,6 +190,7 @@ export default function MiniappDeveloperUrlScreen() {
         // path carries this as `&dev=<port>`; derive the same here so manual-URL
         // launches aren't rejected with "no dev port configured".
         devPort: deriveDevPort(entry.url),
+        type: manifest.type as DevAppRecord["type"],
         permissions: manifest.permissions as DevAppRecord["permissions"],
         hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
       })
