@@ -66,7 +66,8 @@ export function configureIsland(hooks: IslandHostHooks): void {
 interface AppStatusState {
   apps: ClientApp[]
   refresh: () => Promise<void>
-  start: (app: ClientApp, opts?: StartOptions) => Promise<void>
+  /** Resolves true if the app actually started; false if a host gate aborted it or its JS context failed to spawn. */
+  start: (app: ClientApp, opts?: StartOptions) => Promise<boolean>
   stop: (packageName: string) => Promise<void>
   setForeground: (packageName: string) => Promise<void>
   clearForeground: () => void
@@ -261,19 +262,19 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     const app = state.apps.find((a) => a.packageName === packageName)
     if (!app) {
       console.error(`ISLAND: app not found for package name: ${packageName}`)
-      return
+      return false
     }
 
     // Skip if any app is currently loading.
     if (state.apps.some((a) => a.loading)) {
       console.log(`ISLAND: skipping start ${packageName} — another app is loading`)
-      return
+      return false
     }
 
     // Host gate (incompatible alerts, offline-mode rejection, etc.).
     if (hostHooks.beforeStart) {
       const proceed = await hostHooks.beforeStart(app, opts)
-      if (!proceed) return
+      if (!proceed) return false
     }
 
     // Foreground-only-one rule: stop other running standard apps.
@@ -304,9 +305,18 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       try {
         await miniappLauncher.ensureRunning(packageName)
       } catch (e) {
+        // Spawn / bundle-resolve failed — revert the optimistic running flag so
+        // the home list and miniapps.list() don't show a "running" app with no
+        // JS context, and report failure to the caller (session.miniapps.start).
         console.warn(`ISLAND: launcher.ensureRunning failed for ${packageName}`, e)
+        set((s) => ({
+          apps: s.apps.map((a) => (a.packageName === packageName ? {...a, running: false, loading: false} : a)),
+        }))
+        return false
       }
     }
+
+    return true
   },
 
   stop: async (packageName: string) => {

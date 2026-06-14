@@ -84,11 +84,10 @@ export type RouterLogger = {
 }
 
 const defaultLogger: RouterLogger = {
-  // eslint-disable-next-line no-console
   log: (m, p) => console.log(`[MentraJSRouter] ${m}`, p ?? ""),
-  // eslint-disable-next-line no-console
+
   warn: (m, p) => console.warn(`[MentraJSRouter] ${m}`, p ?? ""),
-  // eslint-disable-next-line no-console
+
   error: (m, p) => console.error(`[MentraJSRouter] ${m}`, p ?? ""),
 }
 
@@ -302,6 +301,10 @@ export class MentraJSRouter {
           this.logger.error(`crash respawn failed for ${packageName}`)
           return
         }
+        // Fresh native context → invalidate the old CONNECT handshake so
+        // waitForConnect() blocks until this respawned context connects (the
+        // crash path bypasses register/unregister, which normally clear it).
+        this.runtime.resetHandshake(packageName)
         if (cached.permissions.length > 0) {
           await this.crust.mentraJsSetManifest(packageName, cached.permissions)
         }

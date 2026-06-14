@@ -66,6 +66,15 @@ export interface LaunchResult {
 class MiniappLauncher {
   private deps: LauncherDeps | null = null
 
+  /**
+   * In-flight launches keyed by packageName. Both apps.ts start() and the
+   * WebView mount call ensureRunning() before the first spawnAndRegister
+   * resolves — without this, neither sees the package in registeredPackages()
+   * yet and both spawn the same context (a clobber/double-spawn). Concurrent
+   * callers share the same promise.
+   */
+  private readonly inFlight = new Map<string, Promise<LaunchResult>>()
+
   /** Wire the router in. Called once from host bootstrap. */
   configure(deps: LauncherDeps): void {
     this.deps = deps
@@ -193,23 +202,48 @@ class MiniappLauncher {
       return {uiUri: existing?.uiUri ?? null, uiBaseDir: existing?.uiBaseDir ?? null}
     }
 
+    // Coalesce concurrent launches of the same package onto one promise.
+    const pending = this.inFlight.get(packageName)
+    if (pending) return pending
+
+    const launch = this.spawn(packageName, hints)
+    this.inFlight.set(packageName, launch)
+    try {
+      return await launch
+    } finally {
+      this.inFlight.delete(packageName)
+    }
+  }
+
+  /** Resolve the bundle and spawn the context. Serialized via {@link inFlight}. */
+  private async spawn(packageName: string, hints?: LaunchHints): Promise<LaunchResult> {
+    const router = this.requireRouter()
     const resolved = await this.resolveBundle(packageName, hints)
     if (!resolved) {
       throw new Error(`MiniappLauncher: cannot resolve bundle for ${packageName}`)
     }
 
-    const ok = await router.spawnAndRegister(packageName, resolved.bgSource, {
-      permissions: resolved.declaredPermissions,
-      installedManifest: resolved.installedManifest,
-    })
-    if (!ok) {
-      throw new Error(`MiniappLauncher: spawn failed for ${packageName}`)
-    }
+    // Re-check after the async resolve: a different path may have spawned it
+    // while we were fetching/reading the bundle.
+    if (!router.registeredPackages().includes(packageName)) {
+      const ok = await router.spawnAndRegister(packageName, resolved.bgSource, {
+        permissions: resolved.declaredPermissions,
+        installedManifest: resolved.installedManifest,
+      })
+      if (!ok) {
+        throw new Error(`MiniappLauncher: spawn failed for ${packageName}`)
+      }
 
-    // Dev: wire the hot-reload + log-forwarding sidecar. No-op in prod
-    // (devServerBridge silently drops when no sidecar is up).
-    if (resolved.devUrl && resolved.devPort != null) {
-      devServerBridge.connect(packageName, resolved.devUrl, resolved.devPort)
+      // Dev: wire the hot-reload + log-forwarding sidecar. No-op in prod
+      // (devServerBridge silently drops when no sidecar is up).
+      if (resolved.devUrl && resolved.devPort != null) {
+        devServerBridge.connect(packageName, resolved.devUrl, resolved.devPort)
+      } else if (resolved.devUrl) {
+        // Dev miniapp with no resolvable port — it still launches, but hot
+        // reload + log forwarding won't connect. Surface it instead of failing
+        // silently (the old inline path hard-failed with "no dev port").
+        console.warn(`MiniappLauncher: ${packageName} has no dev port — hot reload + log forwarding disabled`)
+      }
     }
 
     return {uiUri: resolved.uiUri, uiBaseDir: resolved.uiBaseDir}

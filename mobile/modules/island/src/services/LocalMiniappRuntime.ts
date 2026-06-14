@@ -550,6 +550,18 @@ class LocalMiniappRuntime {
   }
 
   /**
+   * Invalidate the CONNECT handshake for a package whose native context is
+   * being replaced WITHOUT going through register/unregister — i.e. a crash
+   * respawn. Without this, {@link waitForConnect} would treat the dead/
+   * not-yet-initialized context as connected and deliver to it. Pending waiters
+   * are failed so a wake mid-respawn retries rather than hanging.
+   */
+  public resetHandshake(packageName: string): void {
+    this.handshookApps.delete(packageName)
+    this.flushConnectWaiters(packageName, new Error(`${packageName} respawning`))
+  }
+
+  /**
    * Attach (or update) the installedManifest for an already-registered app.
    * Used when the manifest is fetched asynchronously (dev miniapps) after the
    * miniapp has already CONNECTed — preserves existing subscriptions.
@@ -2443,7 +2455,10 @@ class LocalMiniappRuntime {
   private static readonly ACTION_PAYLOAD_CAP = 256 * 1024
 
   /** Outstanding action invocations, keyed by host-generated callId. */
-  private actionCalls = new Map<string, {callerPackageName: string; callerRequestId?: string; timer: number}>()
+  private actionCalls = new Map<
+    string,
+    {callerPackageName: string; targetPackageName: string; callerRequestId?: string; timer: number}
+  >()
   private actionCallSeq = 0
 
   /** Emit an interop audit event (best-effort — never let telemetry break a call). */
@@ -2537,14 +2552,53 @@ class LocalMiniappRuntime {
       })
       return
     }
+    // Pre-flight the hardware gate so the caller gets a precise reason rather
+    // than a generic rejection (start()'s own gate would otherwise alert + abort).
+    if (app.compatibility && app.compatibility.isCompatible === false) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.APP_NOT_COMPATIBLE,
+        message: `${target} is not compatible with the connected glasses`,
+      })
+      this.auditInterop({
+        caller: packageName,
+        op: "start",
+        target,
+        ok: false,
+        errorCode: MiniappErrorCode.APP_NOT_COMPATIBLE,
+      })
+      return
+    }
     try {
-      await interop.startApp(target)
-      this.sendResult(packageName, requestId, true)
-      this.auditInterop({caller: packageName, op: "start", target, ok: true})
+      // startApp resolves to false when the host gate (beforeStart) rejected the
+      // launch or the background context failed to spawn — don't report success.
+      const started = await interop.startApp(target)
+      if (started) {
+        this.sendResult(packageName, requestId, true)
+        this.auditInterop({caller: packageName, op: "start", target, ok: true})
+      } else {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: `start of ${target} was rejected by the host (gated or failed to spawn)`,
+        })
+        this.auditInterop({
+          caller: packageName,
+          op: "start",
+          target,
+          ok: false,
+          errorCode: MiniappErrorCode.INTERNAL,
+        })
+      }
     } catch (e) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: (e as Error)?.message ?? "start failed",
+      })
+      this.auditInterop({
+        caller: packageName,
+        op: "start",
+        target,
+        ok: false,
+        errorCode: MiniappErrorCode.INTERNAL,
       })
     }
   }
@@ -2636,7 +2690,7 @@ class LocalMiniappRuntime {
     }
     // Declared-action gate — only once the host populates app.actions (Phase 2);
     // until then app.actions is undefined and we fall through to NO_ACTION_HANDLER.
-    if (app.actions && !app.actions.some((a) => a.id === actionId)) {
+    if (!(app.actions ?? []).some((a) => a.id === actionId)) {
       this.sendResult(callerPackageName, requestId, false, undefined, {
         code: MiniappErrorCode.ACTION_NOT_FOUND,
         message: `${target} does not declare action "${actionId}"`,
@@ -2664,7 +2718,7 @@ class LocalMiniappRuntime {
         message: `action "${actionId}" timed out after ${timeoutMs}ms`,
       })
     }, timeoutMs)
-    this.actionCalls.set(callId, {callerPackageName, callerRequestId: requestId, timer})
+    this.actionCalls.set(callId, {callerPackageName, targetPackageName: target, callerRequestId: requestId, timer})
     this.sendToMiniapp(target, {
       type: MiniappResponseType.ACTION_CALL,
       callId,
@@ -2681,6 +2735,10 @@ class LocalMiniappRuntime {
     if (!callId) return
     const pending = this.actionCalls.get(callId)
     if (!pending) return
+    // Only the invoked target may resolve this call. callIds are guessable
+    // (timestamp + seq), so a different connected miniapp must not be able to
+    // spoof a result/error for someone else's invoke.
+    if (pending.targetPackageName !== targetPackageName) return
     this.actionCalls.delete(callId)
     BgTimer.clearTimeout(pending.timer)
 

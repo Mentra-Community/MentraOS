@@ -102,6 +102,15 @@ describe("MiniappLauncher", () => {
     expect(mockRouter.spawnCalls.length).toBe(1)
   })
 
+  test("coalesces concurrent launches of the same package onto one spawn", async () => {
+    // Both apps.ts start() and the WebView mount can call this before the first
+    // spawn resolves — they must share one spawn, not race into a double-spawn.
+    const [a, b] = await Promise.all([miniappLauncher.ensureRunning("com.x"), miniappLauncher.ensureRunning("com.x")])
+    expect(mockRouter.spawnCalls.length).toBe(1)
+    expect(a.uiUri).toBe("file:///bundle/ui.html")
+    expect(b.uiUri).toBe("file:///bundle/ui.html")
+  })
+
   test("ensureConnected spawns then waits for the CONNECT handshake", async () => {
     await miniappLauncher.ensureConnected("com.x", 5000)
     expect(mockRouter.spawnCalls.length).toBe(1)

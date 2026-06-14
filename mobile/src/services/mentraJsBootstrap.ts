@@ -79,7 +79,8 @@ export function bootstrapMentraJS() {
       listApps: () => useAppStatusStore.getState().apps,
       startApp: async (pkg: string) => {
         const app = useAppStatusStore.getState().apps.find((a) => a.packageName === pkg)
-        if (app) await useAppStatusStore.getState().start(app)
+        if (!app) return false
+        return useAppStatusStore.getState().start(app)
       },
       stopApp: (pkg: string) => useAppStatusStore.getState().stop(pkg),
       // Headless wake: spawn the background context + wait for CONNECT. No

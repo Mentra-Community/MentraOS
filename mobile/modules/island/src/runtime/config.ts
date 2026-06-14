@@ -346,8 +346,12 @@ export interface InteropAdapter {
   isSystemApp: (packageName: string) => boolean
   /** Snapshot of all installed miniapps (the host's app-store state). */
   listApps: () => ClientApp[]
-  /** Start (and foreground) another miniapp — user-tap semantics. */
-  startApp: (packageName: string) => Promise<void>
+  /**
+   * Start (and foreground) another miniapp — user-tap semantics. Resolves true
+   * if it actually started; false if a host gate aborted it (incompatible
+   * hardware, captions STT gate, …) or its JS context failed to spawn.
+   */
+  startApp: (packageName: string) => Promise<boolean>
   /** Stop another miniapp. */
   stopApp: (packageName: string) => Promise<void>
   /**

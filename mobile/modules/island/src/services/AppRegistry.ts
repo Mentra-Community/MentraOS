@@ -752,7 +752,10 @@ class AppRegistry {
           type: "standard",
           permissions,
           hardwareRequirements,
-          ...(actions.length ? {actions} : {}),
+          // Always project actions (even []) so the invoke gate can enforce
+          // declared-action membership unconditionally — an app with no declared
+          // actions must reject every invoke, not bypass the check.
+          actions,
           ...(isMiniappDev ? {isMiniappDev: true} : {}),
           ...(devUrl ? {devUrl} : {}),
           onStart: () => saveLocalAppRunningState(lmaInfo.packageName, true),
