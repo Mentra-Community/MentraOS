@@ -21,4 +21,19 @@ import {TesterController} from "./controllers/TesterController"
 registerMiniapp((session) => {
   new GlassesController(session).start()
   new TesterController(session).start()
+
+  // Declared actions (see miniapp.json -> actions). A system miniapp such as
+  // Mentra AI can invoke these with:
+  //   session.actions.invoke("com.mentra.example", "show_text", {text: "hi"})
+  // `handle` is open to all miniapps; only the *caller* side (invoke) is
+  // SYSTEM-gated. `ctx.callerPackageName` is host-stamped (trustworthy).
+  session.actions.handle("echo", (params, ctx) => ({
+    echoed: params.message,
+    caller: ctx.callerPackageName,
+  }))
+  session.actions.handle("show_text", (params) => {
+    const text = typeof params.text === "string" ? params.text : ""
+    session.display.showTextWall(text)
+    return {shown: text}
+  })
 })

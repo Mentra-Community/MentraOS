@@ -26,6 +26,7 @@ import {getModelCapabilities} from "../types/hardware"
 import {HardwareCompatibility} from "../utils/hardware/hardware"
 import {storage} from "../utils/storage/storage"
 import appRegistry from "../services/AppRegistry"
+import {miniappLauncher} from "../services/MiniappLauncher"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 
@@ -167,11 +168,7 @@ const startStopApp = async (app: ClientApp, status: boolean): Promise<void> => {
  * to emit twice (local-only, then merged) without duplicating the
  * dedupe/carry-over/compat/hidden/postProcess pipeline.
  */
-function projectApps(
-  previousState: AppStatusState,
-  localApps: ClientApp[],
-  extraApps: ClientApp[],
-): ClientApp[] {
+function projectApps(previousState: AppStatusState, localApps: ClientApp[], extraApps: ClientApp[]): ClientApp[] {
   // Dedupe by packageName, keep first occurrence (extra/cloud wins).
   const byPackage = new Map<string, ClientApp>()
   for (const app of [...extraApps, ...localApps]) {
@@ -291,13 +288,25 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 
     const shouldLoad = !app.offline && !app.local
     set((s) => ({
-      apps: s.apps.map((a) =>
-        a.packageName === packageName ? {...a, running: true, loading: shouldLoad} : a,
-      ),
+      apps: s.apps.map((a) => (a.packageName === packageName ? {...a, running: true, loading: shouldLoad} : a)),
     }))
 
     saveLastOpenTime(packageName)
     await startStopApp(app, true)
+
+    // Spawn the background JS context for local miniapps. This used to be a
+    // side effect of LocalMiniappView mounting on foreground; pulling it here
+    // lets start() actually run the app even when nothing foregrounds it (e.g.
+    // a system app launching another miniapp via session.miniapps). Idempotent
+    // with the view's own ensureRunning; a no-op for native offline built-ins
+    // and cloud apps (no JS bundle).
+    if (app.local) {
+      try {
+        await miniappLauncher.ensureRunning(packageName)
+      } catch (e) {
+        console.warn(`ISLAND: launcher.ensureRunning failed for ${packageName}`, e)
+      }
+    }
   },
 
   stop: async (packageName: string) => {
@@ -326,6 +335,18 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       BluetoothSdk.clearDisplay()
     }
     await startStopApp(app, false)
+
+    // Tear down the background JS context for local miniapps. Previously the
+    // host's beforeStop hook (MiniappCatalog) called router.unregister; that
+    // now flows through the launcher so lifecycle lives in one place. No-op for
+    // native offline built-ins / cloud apps (no JS context).
+    if (app.local) {
+      try {
+        await miniappLauncher.stop(packageName)
+      } catch (e) {
+        console.warn(`ISLAND: launcher.stop failed for ${packageName}`, e)
+      }
+    }
   },
 
   setForeground: async (packageName: string) => {
@@ -505,4 +526,3 @@ export const useLocalMiniApps = () => {
   const apps = useApps()
   return useMemo(() => apps.filter((app) => app.local), [apps])
 }
-

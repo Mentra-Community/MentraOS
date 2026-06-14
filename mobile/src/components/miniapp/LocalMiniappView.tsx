@@ -1,4 +1,3 @@
-import {File} from "expo-file-system"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {ActivityIndicator, Image, Platform, View} from "react-native"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
@@ -8,17 +7,14 @@ import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {useStressTestStore} from "@/stores/stressTest"
-import {storage} from "@/utils/storage/storage"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
 import {
-  appRegistry,
   BgTimer,
   buildMentraUiShim,
   buildMiniappGlobalsScript,
-  decideDevLaunchRoute,
   DEV_APP_PACKAGE_NAME,
   devServerBridge,
-  type InstalledMiniappManifest,
+  miniappLauncher,
   useAppStatusStore,
 } from "@mentra/island"
 import {useNavigationStore} from "@/stores/navigation"
@@ -222,131 +218,30 @@ function LocalMiniappView({
     }
 
     const launch = async () => {
-      // Entry sources, resolved differently for dev (HTTP, straight off the
-      // running dev server) vs released (file:// from the installed snapshot).
-      //   bgSource : the background JS *text* to feed spawnAndRegister.
-      //   uiEntry  : the WebView source uri (http:// for dev, file:// for release).
-      let bgSource: string | null = null
-      let uiEntry: string | null = null
-      let declaredPermissions: string[] = []
-      let installedManifest: InstalledMiniappManifest | undefined
-
-      // launching the dev miniapp:
-      if (devUrl) {
-        // Dev miniapps load directly off the local dev server over HTTP — the
-        // normal web-dev-server model. No zip download / file:// snapshot, so
-        // a plain WebView.reload() (and a JSContext respawn) picks up freshly
-        // built code. The bundle.zip / install path stays for store installs.
-        // setLabel("loading")
-        const portNum = resolveDevPort(devPort, packageName)
-        if (portNum === null) {
-          failUnlessCancelled("no dev port configured")
-          return
-        }
-        const base = devUrl.replace(/\/$/, "")
-
-        // Reachability + manifest in one round trip. Callers pre-flight this
-        // before navigating here, so an "offline" result means the server
-        // dropped between pre-flight and mount — surface it as an error.
-        const route = await decideDevLaunchRoute(packageName, devUrl)
-        if (cancelled) return
-        if (route.decision === "offline" || !route.manifest) {
-          failUnlessCancelled("dev server unreachable")
-          return
-        }
-        const manifest = route.manifest
-        const entry = manifest.entry as {background?: string; ui?: string} | undefined
-        if (!entry?.background) {
-          failUnlessCancelled("miniapp.json missing entry.background")
-          return
-        }
-        // entry.* are bundle-root paths (dist/ stripped); the dev server
-        // serves files relative to cwd, so prepend dist/.
-        const bgUrl = `${base}/dist/${entry.background.replace(/^\.?\/+/, "")}`
-        uiEntry = entry.ui ? `${base}/dist/${entry.ui.replace(/^\.?\/+/, "")}` : null
-
-        const perms = manifest.permissions as Array<{type?: string} | string> | undefined
-        declaredPermissions = (perms ?? [])
-          .map((p) => (typeof p === "string" ? p : p?.type))
-          .filter((t): t is string => typeof t === "string")
-        installedManifest = {
-          permissions: manifest.permissions as InstalledMiniappManifest["permissions"],
-          hardwareRequirements: manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
-        }
-
-        try {
-          const res = await fetch(bgUrl)
-          if (!res.ok) {
-            failUnlessCancelled(`background fetch failed: ${res.status}`)
-            return
-          }
-          bgSource = await res.text()
-        } catch (e) {
-          failUnlessCancelled(`background fetch failed: ${(e as Error).message}`)
-          return
-        }
-        if (cancelled) return
-        devServerBridge.connect(packageName, devUrl, portNum)
-      } else if (version) {
-        console.log("LocalMiniappView: launching released miniapp", packageName, version)
-        // Released local miniapp — resolve from the installed file:// snapshot.
-        const entryPaths = appRegistry.getMiniappEntryPaths(packageName, version)
-        if (!entryPaths?.background) {
-          failUnlessCancelled(`${version} missing entry.background`)
-          return
-        }
-        const manifest = appRegistry.getMiniappManifest(packageName, version) as {
-          permissions?: Array<{type: string; required?: boolean; description?: string}>
-          hardwareRequirements?: Array<{type: string; level: string; description?: string}>
-        } | null
-        declaredPermissions = (manifest?.permissions ?? [])
-          .map((p) => p.type)
-          .filter((t): t is string => typeof t === "string")
-        installedManifest = manifest
-          ? {
-              permissions: manifest.permissions,
-              hardwareRequirements: manifest.hardwareRequirements,
-            }
-          : undefined
-        bgSource = new File(entryPaths.background).textSync()
-        uiEntry = entryPaths.ui
-      } else {
-        failUnlessCancelled("no devUrl or version — cannot launch")
-        return
-      }
-
-      if (cancelled || bgSource === null) return
-
-      const mj = getMentraJS()
-      if (!mj) {
-        failUnlessCancelled("MentraJS runtime not bootstrapped")
-        return
-      }
-
-      // Spawn the JSContext if it isn't already alive. Re-foregrounding a
-      // running miniapp just rebuilds the WebView half.
-      if (!mj.router.registeredPackages().includes(packageName)) {
-        const ok = await mj.router.spawnAndRegister(packageName, bgSource, {
-          permissions: declaredPermissions,
-          installedManifest,
+      // Background spawn now lives in the runtime's MiniappLauncher (resolve the
+      // bundle → read the manifest → spawn the JSContext, handling dev HTTP vs
+      // released file:// snapshot). This component is render-only: it asks the
+      // launcher to ensure the background context is running (idempotent — a
+      // re-foreground of a live miniapp just rebuilds this WebView half) and
+      // mounts the resolved UI entry it hands back.
+      const result = await miniappLauncher
+        .ensureRunning(packageName, {devUrl, version, devPort})
+        .catch((e: unknown) => {
+          failUnlessCancelled(`launch failed: ${(e as Error).message}`)
+          return null
         })
-        if (!ok) {
-          failUnlessCancelled("spawn failed — see logs")
-          return
-        }
-      }
 
       // If the user backgrounded the app while we were spawning, leave the
       // JSContext alive — background miniapps keep running across UI close.
       // The only cleanup this component owes is unbinding the WebView
       // (handled by the effect's return).
-      if (cancelled) return
+      if (cancelled || !result) return
 
       setLabel(undefined)
 
-      if (uiEntry) {
-        setUiUri(uiEntry)
-        setUiBaseDir(uiEntry.replace(/\/[^/]+$/, "/"))
+      if (result.uiUri) {
+        setUiUri(result.uiUri)
+        setUiBaseDir(result.uiBaseDir)
       }
     }
 
@@ -663,16 +558,6 @@ function LocalMiniappView({
 }
 
 export default LocalMiniappView
-
-function resolveDevPort(searchParam: string | undefined, packageName: string): number | null {
-  if (searchParam) {
-    const n = parseInt(searchParam, 10)
-    if (Number.isFinite(n)) return n
-  }
-  const stored = storage.load<number>(`${packageName}_dev_port`)
-  if (stored.is_ok()) return stored.value
-  return null
-}
 
 /**
  * True iff `raw` is the WebView shim's `{type:"ready"}` envelope, posted by

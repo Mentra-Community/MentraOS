@@ -469,10 +469,10 @@ class AppRegistry {
     this.notify()
   }
 
-  public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string, version: string, name: string}, Error> {
+  public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string; version: string; name: string}, Error> {
     return Res.try_async(async () => {
       const trimmed = baseUrl.replace(/\/$/, "")
-  
+
       const manifestRes = await fetch(`${trimmed}/miniapp.json`)
       if (!manifestRes.ok) {
         throw new Error(`Failed to fetch miniapp.json: ${manifestRes.status}`)
@@ -483,10 +483,10 @@ class AppRegistry {
       const name = (manifest.name as string | undefined) ?? packageName ?? "Mini app"
       if (!packageName) throw new Error("miniapp.json missing packageName")
       if (!version) throw new Error("miniapp.json missing version")
-  
+
       const installRes = await appRegistry.installFromUrl(`${trimmed}/bundle.zip`)
       if (installRes.is_error()) throw installRes.error
-  
+
       return {packageName, version, name}
     })
   }
@@ -706,10 +706,26 @@ class AppRegistry {
         const manifest = this.getMiniappManifest(lmaInfo.packageName, versionString) as {
           permissions?: Array<string | {type: string; required?: boolean; description?: string}>
           hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+          actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
         } | null
 
         const permissions = normalizeManifestPermissions(manifest?.permissions)
         const hardwareRequirements = buildHardwareRequirements(manifest?.hardwareRequirements, lmaInfo.packageName)
+
+        // Declared actions (for session.miniapps.list + invoke gating). Defensive
+        // map — the CLI validates at author time, but an installed bundle could
+        // still be malformed, so keep only well-formed {id, description}.
+        const actions = Array.isArray(manifest?.actions)
+          ? manifest!.actions
+              .filter((a) => !!a && typeof a.id === "string" && typeof a.description === "string")
+              .map((a) => ({
+                id: a.id as string,
+                description: a.description as string,
+                ...(a.parameters && typeof a.parameters === "object"
+                  ? {parameters: a.parameters as Record<string, unknown>}
+                  : {}),
+              }))
+          : []
 
         // Dev miniapps live in the same lmas/ tree as installed ones, but
         // their version directory name starts with "dev-".
@@ -736,6 +752,7 @@ class AppRegistry {
           type: "standard",
           permissions,
           hardwareRequirements,
+          ...(actions.length ? {actions} : {}),
           ...(isMiniappDev ? {isMiniappDev: true} : {}),
           ...(devUrl ? {devUrl} : {}),
           onStart: () => saveLocalAppRunningState(lmaInfo.packageName, true),
@@ -805,7 +822,7 @@ class AppRegistry {
     return this.offlineApps.map((a) => {
       const running = getLocalAppRunningState(a.packageName)
       const screenshot = getLocalAppScreenshot(a.packageName)
-      
+
       return {...a, running, screenshot}
     })
   }

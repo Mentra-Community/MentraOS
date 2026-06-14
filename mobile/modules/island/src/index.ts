@@ -17,6 +17,14 @@ export {default as displayProcessor} from "./services/DisplayProcessor"
 export {default as localDisplayManager, type DisplayPayload} from "./services/LocalDisplayManager"
 export {default as localMiniappRuntime, type InstalledMiniappManifest} from "./services/LocalMiniappRuntime"
 export {
+  miniappLauncher,
+  configureLauncher,
+  type LauncherDeps,
+  type LaunchHints,
+  type LaunchResult,
+  type ResolvedBundle,
+} from "./services/MiniappLauncher"
+export {
   MentraJSRouter,
   type MentraJSCrustBinding,
   type OutboundMessagePayload as MentraJSOutboundMessage,
@@ -46,10 +54,7 @@ export {
   type DownloadProgress as SttDownloadProgress,
   type ExtractionProgress as SttExtractionProgress,
 } from "./services/STTModelManager"
-export {
-  default as ttsModelManager,
-  TTSModelManager,
-} from "./services/TTSModelManager"
+export {default as ttsModelManager, TTSModelManager} from "./services/TTSModelManager"
 export {
   default as offlineSpeechModelService,
   type DownloadStatus as OfflineModelDownloadStatus,
@@ -70,6 +75,8 @@ export {
   type GlassesSnapshot,
   type StreamingAdapter,
   type PhotoAdapter,
+  type InteropAdapter,
+  type InteropAuditEvent,
 } from "./runtime/config"
 
 // Stores

@@ -79,6 +79,13 @@
                 ]
               },
               {
+                "group": "Miniapp Interop",
+                "icon": "arrows-left-right",
+                "pages": [
+                  "app-devs/core-concepts/miniapp-interop"
+                ]
+              },
+              {
                 "group": "Device",
                 "icon": "glasses",
                 "pages": [
