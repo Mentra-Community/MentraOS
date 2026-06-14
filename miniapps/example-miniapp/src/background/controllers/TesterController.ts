@@ -25,11 +25,16 @@ type Send = <C extends keyof Channels & string>(channel: C, payload: Channels[C]
 
 export class TesterController {
   private subscriptions: Map<string, () => void> = new Map()
-  private unhandle: (() => void) | null = null
+  private unsubs: Array<() => void> = []
+  private subscribed = false
 
   constructor(private readonly session: MiniappSession) {}
 
+  /** Idempotent — safe to call multiple times. */
   start(): void {
+    if (this.subscribed) return
+    this.subscribed = true
+
     const ui = this.session.ui as unknown as {
       send: Send
       on: <C extends keyof Channels & string>(
@@ -42,36 +47,45 @@ export class TesterController {
       ) => () => void
     }
 
-    ui.on("tester:start", ({iface}) => {
-      if (this.subscriptions.has(iface)) return
-      const unsub = this.openSubscription(iface, ui.send)
-      if (unsub) this.subscriptions.set(iface, unsub)
-    })
+    // Track every UI listener (including the broadcast tester:start/stop
+    // ones) in `unsubs` so stop() detaches them and a restart can't stack
+    // duplicate handlers or leak the previous tester:invoke handle.
+    this.unsubs.push(
+      ui.on("tester:start", ({iface}) => {
+        if (this.subscriptions.has(iface)) return
+        const unsub = this.openSubscription(iface, ui.send)
+        if (unsub) this.subscriptions.set(iface, unsub)
+      }),
+    )
 
-    ui.on("tester:stop", ({iface}) => {
-      const unsub = this.subscriptions.get(iface)
-      if (!unsub) return
-      try {
-        unsub()
-      } catch {
-        /* ignore */
-      }
-      this.subscriptions.delete(iface)
-    })
+    this.unsubs.push(
+      ui.on("tester:stop", ({iface}) => {
+        const unsub = this.subscriptions.get(iface)
+        if (!unsub) return
+        try {
+          unsub()
+        } catch {
+          /* ignore */
+        }
+        this.subscriptions.delete(iface)
+      }),
+    )
 
     // The single imperative-dispatch handler. Used by every fire-style
     // tester page. Replaces the old `tester:fire` + `tester:event{kind:result}`
     // muxed-into-stream pattern.
-    this.unhandle = ui.handle("tester:invoke", async (payload) => {
-      const {iface, method, args} = payload as {iface: string; method: string; args?: unknown[]}
-      const module = (this.session as unknown as Record<string, unknown>)[iface] as
-        | Record<string, unknown>
-        | undefined
-      if (!module) throw new Error(`unknown iface "${iface}"`)
-      const fn = module[method] as ((...a: unknown[]) => unknown) | undefined
-      if (typeof fn !== "function") throw new Error(`unknown method "${iface}.${method}"`)
-      return await Promise.resolve(fn.apply(module, args ?? []))
-    })
+    this.unsubs.push(
+      ui.handle("tester:invoke", async (payload) => {
+        const {iface, method, args} = payload as {iface: string; method: string; args?: unknown[]}
+        const module = (this.session as unknown as Record<string, unknown>)[iface] as
+          | Record<string, unknown>
+          | undefined
+        if (!module) throw new Error(`unknown iface "${iface}"`)
+        const fn = module[method] as ((...a: unknown[]) => unknown) | undefined
+        if (typeof fn !== "function") throw new Error(`unknown method "${iface}.${method}"`)
+        return await Promise.resolve(fn.apply(module, args ?? []))
+      }),
+    )
   }
 
   stop(): void {
@@ -83,14 +97,15 @@ export class TesterController {
       }
     }
     this.subscriptions.clear()
-    if (this.unhandle) {
+    for (const u of this.unsubs) {
       try {
-        this.unhandle()
+        u()
       } catch {
         /* ignore */
       }
-      this.unhandle = null
     }
+    this.unsubs = []
+    this.subscribed = false
   }
 
   /**
