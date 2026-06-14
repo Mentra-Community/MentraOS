@@ -1,7 +1,7 @@
 // Tester page — fire-and-forget actions go through the
 // `tester:invoke` channel; background dispatches to session.display.*.
 
-import {useState} from "react"
+import {useRef, useState} from "react"
 import {useNavigate} from "react-router-dom"
 import {MiniappHeader} from "@mentra/miniapp/ui"
 
@@ -128,6 +128,10 @@ export default function DisplayPage() {
     CE: 0,
     full: 0,
   })
+  // Synchronous mirror of `counts` so rapid presses (faster than a React
+  // re-render) read the up-to-date value instead of a stale render closure,
+  // which would otherwise reuse the same count and show a duplicate label.
+  const countsRef = useRef(counts)
 
   const pressCorner = (code: CornerCode, x: number, y: number) => {
     const next = incrementCount(code)
@@ -137,8 +141,9 @@ export default function DisplayPage() {
   }
 
   const incrementCount = (code: CornerCode) => {
-    const next = counts[code] + 1
-    setCounts((c) => ({...c, [code]: next}))
+    const next = countsRef.current[code] + 1
+    countsRef.current = {...countsRef.current, [code]: next}
+    setCounts(countsRef.current)
     return next
   }
 
@@ -197,7 +202,9 @@ export default function DisplayPage() {
           <Button
             variant="destructive"
             onClick={() => {
-              setCounts({TL: 0, TR: 0, BR: 0, BL: 0, CE: 0, full: 0})
+              const zero = {TL: 0, TR: 0, BR: 0, BL: 0, CE: 0, full: 0}
+              countsRef.current = zero
+              setCounts(zero)
               invoke("clear", []).catch(() => {})
             }}>
             clearDisplay()
