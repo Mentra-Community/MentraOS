@@ -786,6 +786,10 @@ class G1: NSObject, SGCManager {
         //    }
     }
 
+    func sendText(_ text: String) async {
+        await sendTextWall(text)
+    }
+
     func sendTextWall(_ text: String) async {
         let chunks = textHelper.createTextWallChunks(text)
         queueChunks(chunks, sleepAfterMs: 10)

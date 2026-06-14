@@ -1926,7 +1926,7 @@ class G2: NSObject, SGCManager {
     // MARK: - SGCManager: Display Control
 
     func sendTextWall(_ text: String) async {
-        await sendText(
+        await sendTextAt(
             text,
             x: G2.defaultTextContainer.x,
             y: G2.defaultTextContainer.y,
@@ -1939,7 +1939,13 @@ class G2: NSObject, SGCManager {
         )
     }
 
-    func sendText(
+    // Protocol witness for SGCManager.sendText — G2 renders a simple string as a
+    // default-positioned text wall. The positioned variant is `sendTextAt`.
+    func sendText(_ text: String) async {
+        await sendTextWall(text)
+    }
+
+    func sendTextAt(
         _ text: String, x: Int32? = nil, y: Int32? = nil, width: Int32? = nil, height: Int32? = nil,
         borderWidth: Int32? = nil, borderColor: Int32? = nil, borderRadius: Int32? = nil,
         paddingLength: Int32? = nil
@@ -2023,7 +2029,7 @@ class G2: NSObject, SGCManager {
             imageContainers[i].bmpData = Data()
         }
         // shutdown the page and then recreate the containers without the content:
-        rebuildPage()
+        Task { await rebuildPage() }
     }
 
     /// Send BMP data to an image container via fragmented updateImageRawData
