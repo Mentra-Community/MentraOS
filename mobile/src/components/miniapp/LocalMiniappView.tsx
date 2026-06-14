@@ -213,53 +213,40 @@ function LocalMiniappView({
     // restarts the ready handshake and reload-retry loop from scratch.
     resetLoadState()
 
-    // Guard the long async launch against unmount / prop changes: a stale run
-    // must not point the WebView at another launch's UI, clobber its splash
-    // state, or connect the dev bridge for a package we no longer show.
-    let cancelled = false
-    const failUnlessCancelled = (msg: string) => {
-      if (!cancelled) fail(msg)
+    const ac = new AbortController()
+    const {signal} = ac
+    // RN's AbortSignal doesn't reliably ship throwIfAborted(), so roll our own.
+    const checkpoint = () => {
+      if (signal.aborted) throw Object.assign(new Error("launch superseded"), {name: "AbortError"})
     }
 
-    const launch = async () => {
-      // Entry sources, resolved differently for dev (HTTP, straight off the
-      // running dev server) vs released (file:// from the installed snapshot).
-      //   bgSource : the background JS *text* to feed spawnAndRegister.
-      //   uiEntry  : the WebView source uri (http:// for dev, file:// for release).
-      let bgSource: string | null = null
+    const launch = async (): Promise<void> => {
+      let bgSource: string
       let uiEntry: string | null = null
       let declaredPermissions: string[] = []
       let installedManifest: InstalledMiniappManifest | undefined
 
-      // launching the dev miniapp:
       if (devUrl) {
         // Dev miniapps load directly off the local dev server over HTTP — the
         // normal web-dev-server model. No zip download / file:// snapshot, so
         // a plain WebView.reload() (and a JSContext respawn) picks up freshly
         // built code. The bundle.zip / install path stays for store installs.
-        // setLabel("loading")
         const portNum = resolveDevPort(devPort, packageName)
-        if (portNum === null) {
-          failUnlessCancelled("no dev port configured")
-          return
-        }
+        if (portNum === null) throw new Error("no dev port configured")
         const base = devUrl.replace(/\/$/, "")
 
         // Reachability + manifest in one round trip. Callers pre-flight this
         // before navigating here, so an "offline" result means the server
         // dropped between pre-flight and mount — surface it as an error.
         const route = await decideDevLaunchRoute(packageName, devUrl)
-        if (cancelled) return
+        checkpoint()
         if (route.decision === "offline" || !route.manifest) {
-          failUnlessCancelled("dev server unreachable")
-          return
+          throw new Error("dev server unreachable")
         }
         const manifest = route.manifest
         const entry = manifest.entry as {background?: string; ui?: string} | undefined
-        if (!entry?.background) {
-          failUnlessCancelled("miniapp.json missing entry.background")
-          return
-        }
+        if (!entry?.background) throw new Error("miniapp.json missing entry.background")
+
         // entry.* are bundle-root paths (dist/ stripped); the dev server
         // serves files relative to cwd, so prepend dist/.
         const bgUrl = `${base}/dist/${entry.background.replace(/^\.?\/+/, "")}`
@@ -274,27 +261,26 @@ function LocalMiniappView({
           hardwareRequirements: manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
         }
 
+        let res: Response
         try {
-          const res = await fetch(bgUrl)
-          if (!res.ok) {
-            failUnlessCancelled(`background fetch failed: ${res.status}`)
-            return
-          }
-          bgSource = await res.text()
+          // signal actually cancels the request on abort instead of letting
+          // it complete into the void.
+          res = await fetch(bgUrl, {signal})
         } catch (e) {
-          failUnlessCancelled(`background fetch failed: ${(e as Error).message}`)
-          return
+          if ((e as Error).name === "AbortError") throw e
+          throw new Error(`background fetch failed: ${(e as Error).message}`)
         }
-        if (cancelled) return
+        if (!res.ok) throw new Error(`background fetch failed: ${res.status}`)
+        bgSource = await res.text()
+        checkpoint()
+
         devServerBridge.connect(packageName, devUrl, portNum)
       } else if (version) {
         console.log("LocalMiniappView: launching released miniapp", packageName, version)
         // Released local miniapp — resolve from the installed file:// snapshot.
+        // (Fully synchronous branch — no checkpoints needed.)
         const entryPaths = appRegistry.getMiniappEntryPaths(packageName, version)
-        if (!entryPaths?.background) {
-          failUnlessCancelled(`${version} missing entry.background`)
-          return
-        }
+        if (!entryPaths?.background) throw new Error(`${version} missing entry.background`)
         const manifest = appRegistry.getMiniappManifest(packageName, version) as {
           permissions?: Array<{type: string; required?: boolean; description?: string}>
           hardwareRequirements?: Array<{type: string; level: string; description?: string}>
@@ -303,25 +289,16 @@ function LocalMiniappView({
           .map((p) => p.type)
           .filter((t): t is string => typeof t === "string")
         installedManifest = manifest
-          ? {
-              permissions: manifest.permissions,
-              hardwareRequirements: manifest.hardwareRequirements,
-            }
+          ? {permissions: manifest.permissions, hardwareRequirements: manifest.hardwareRequirements}
           : undefined
         bgSource = new File(entryPaths.background).textSync()
         uiEntry = entryPaths.ui
       } else {
-        failUnlessCancelled("no devUrl or version — cannot launch")
-        return
+        throw new Error("no devUrl or version — cannot launch")
       }
-
-      if (cancelled || bgSource === null) return
 
       const mj = getMentraJS()
-      if (!mj) {
-        failUnlessCancelled("MentraJS runtime not bootstrapped")
-        return
-      }
+      if (!mj) throw new Error("MentraJS runtime not bootstrapped")
 
       // Spawn the JSContext if it isn't already alive. Re-foregrounding a
       // running miniapp just rebuilds the WebView half.
@@ -330,35 +307,34 @@ function LocalMiniappView({
           permissions: declaredPermissions,
           installedManifest,
         })
-        if (!ok) {
-          failUnlessCancelled("spawn failed — see logs")
-          return
-        }
+        if (!ok) throw new Error("spawn failed — see logs")
       }
 
-      // If the user backgrounded the app while we were spawning, leave the
-      // JSContext alive — background miniapps keep running across UI close.
-      // The only cleanup this component owes is unbinding the WebView
+      // Deliberately AFTER the spawn, not before: if we were superseded while
+      // spawning, leave the JSContext alive (background miniapps keep running
+      // across UI close) but don't touch UI state for a view we no longer
+      // show. The only cleanup this component owes is unbinding the WebView
       // (handled by the effect's return).
-      if (cancelled) return
+      checkpoint()
 
       setLabel(undefined)
-
       if (uiEntry) {
         setUiUri(uiEntry)
         setUiBaseDir(uiEntry.replace(/\/[^/]+$/, "/"))
       }
     }
 
-    launch()
+    launch().catch((e: Error) => {
+      if (e.name === "AbortError") return // stale run — ignore entirely
+      fail(e.message)
+    })
 
     return () => {
-      cancelled = true
+      ac.abort()
       clearReadyTimer()
-      const mj = getMentraJS()
-      mj?.uiRouter.unbindWebView(packageName)
+      getMentraJS()?.uiRouter.unbindWebView(packageName)
     }
-  }, [packageName, version, devUrl, devPort, resetLoadState, clearReadyTimer])
+  }, [packageName, version, devUrl, devPort, resetLoadState, clearReadyTimer, fail])
 
   // ----- WebView bindings ----------------------------------------------------
 

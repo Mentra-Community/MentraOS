@@ -534,7 +534,8 @@ const en = {
     glassesWifiSettings: "Wi-Fi Networks",
     glassesWifiDescription: "Configure WiFi settings for your smart glasses.",
     wifiUnavailable: "Connect a pair of glasses that support WiFi to access WiFi settings.",
-    developerSettings: "Developer settings",
+    debugSettings: "Debug settings",
+    miniappDeveloperSettings: "Miniapp Developer Settings",
     disconnectGlasses: "Disconnect Glasses",
     forgetGlasses: "Unpair glasses",
     forgetGlassesConfirm:
@@ -590,7 +591,7 @@ const en = {
     androidBlur: "Blur effects",
     androidInnerShadow: "Inner shadow",
   },
-  devSettings: {
+  debugSettings: {
     debugConsole: "Debug Console",
     debugConsoleSubtitle: "Enable the debug console.",
     miniappScanTitle: "Scan Mini App QR",
@@ -628,6 +629,11 @@ const en = {
     miniappDevLoadUrlSubtitle: "Enter a dev server URL to load a mini app",
     miniappDevScanLabel: "Scan Mini App QR Code",
     miniappDevScanSubtitle: "Scan a QR code from your dev server",
+  },
+  miniappDevSettings: {
+    title: "Miniapp Dev",
+    miniappDevMode: "Miniapp Dev Mode",
+    miniappDevModeSubtitle: "Enable miniapp dev mode",
   },
   transcription: {
     downloadModelToEnableLocalTranscription: "Download a model to enable local transcription",
@@ -833,7 +839,7 @@ const en = {
     screenshotFeedbackMessage:
       "Our in-app feedback captures device logs, glasses state, and more. This is more useful for fixing issues than sending a screenshot through TestFlight. Please use the in-app feedback instead!",
     warning: "Warning",
-    developerSettingsWarning: "These settings may break the app. Use at your own risk.",
+    debugSettingsWarning: "These settings may break the app. Use at your own risk.",
     optOutOfBeta: "Opt Out of Beta",
   },
   errors: {
@@ -1042,10 +1048,10 @@ const en = {
     miniAppLoader: "Miniapp loader",
     loadMiniApp: "Load miniapp",
   },
-  dev: {
-    developerMode: "Developer mode",
-    developerModeEnabled: "Developer mode enabled!",
-    developerModeMoreTaps: "{{number}} more taps to enable developer mode",
+  debug: {
+    debugMode: "Debug mode",
+    debugModeEnabled: "Debug mode enabled!",
+    debugModeMoreTaps: "{{number}} more taps to enable debug mode",
     superMode: "Super mode",
     superModeActivated: "Super mode activated! 🚀",
     superModeDeactivated: "Super mode deactivated",

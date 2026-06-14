@@ -18,6 +18,7 @@ import {
 } from "@mentra/island"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
+import { DEV_APP_NAME } from "@mentra/island/src/services/AppRegistry"
 
 export default function MiniappDeveloperScannerScreen() {
   const {theme} = useAppTheme()
@@ -78,8 +79,8 @@ export default function MiniappDeveloperScannerScreen() {
         devUrl = data
       } else {
         showAlert(
-          translate("devSettings:miniappScanInvalidQrTitle"),
-          translate("devSettings:miniappScanInvalidQrBody"),
+          translate("debugSettings:miniappScanInvalidQrTitle"),
+          translate("debugSettings:miniappScanInvalidQrBody"),
           [{text: "OK", onPress: () => setScanned(false)}],
         )
         return
@@ -87,8 +88,8 @@ export default function MiniappDeveloperScannerScreen() {
 
       if (!devUrl) {
         showAlert(
-          translate("devSettings:miniappScanInvalidQrTitle"),
-          translate("devSettings:miniappScanInvalidQrNoUrl"),
+          translate("debugSettings:miniappScanInvalidQrTitle"),
+          translate("debugSettings:miniappScanInvalidQrNoUrl"),
           [{text: "OK", onPress: () => setScanned(false)}],
         )
         return
@@ -121,8 +122,9 @@ export default function MiniappDeveloperScannerScreen() {
       if (manifest) {
         const portNum = devPort ? parseInt(devPort, 10) : NaN
         registerDevApp({
-          packageName,
-          name: name ?? packageName,
+          packageName: DEV_APP_PACKAGE_NAME,
+          name: DEV_APP_NAME,
+          // name: name ?? packageName,
           iconUrl: iconUrl ?? `${devUrl.replace(/\/$/, "")}/icon.png`,
           devUrl,
           devPort: Number.isFinite(portNum) ? portNum : undefined,
@@ -176,12 +178,12 @@ export default function MiniappDeveloperScannerScreen() {
     return (
       <Screen preset="fixed">
         <Header
-          title={translate("devSettings:miniappScanTitle")}
+          title={translate("debugSettings:miniappScanTitle")}
           leftIcon="chevron-left"
           onLeftPress={() => goBack()}
         />
         <View className="flex-1 items-center justify-center">
-          <Text className="text-[14px]" tx="devSettings:miniappScanCheckingPermission" />
+          <Text className="text-[14px]" tx="debugSettings:miniappScanCheckingPermission" />
         </View>
       </Screen>
     )
@@ -191,26 +193,26 @@ export default function MiniappDeveloperScannerScreen() {
     return (
       <Screen preset="fixed">
         <Header
-          title={translate("devSettings:miniappScanTitle")}
+          title={translate("debugSettings:miniappScanTitle")}
           leftIcon="chevron-left"
           onLeftPress={() => goBack()}
         />
         <View className="flex-1 justify-center px-6">
           <View className="rounded-xl bg-white dark:bg-zinc-900 p-6 items-center gap-3">
-            <Text className="text-lg font-semibold text-center" tx="devSettings:miniappScanPermissionTitle" />
+            <Text className="text-lg font-semibold text-center" tx="debugSettings:miniappScanPermissionTitle" />
             <Text
               className="text-[13px] text-muted-foreground text-center mb-2 leading-[18px]"
-              tx="devSettings:miniappScanPermissionBody"
+              tx="debugSettings:miniappScanPermissionBody"
             />
             <Button
-              tx={permission.canAskAgain ? "devSettings:miniappScanGrantAccess" : "devSettings:miniappScanOpenSettings"}
+              tx={permission.canAskAgain ? "debugSettings:miniappScanGrantAccess" : "debugSettings:miniappScanOpenSettings"}
               onPress={async () => {
                 if (permission.canAskAgain) {
                   await requestPermission()
                 } else {
                   showAlert(
-                    translate("devSettings:miniappScanPermissionDeniedTitle"),
-                    translate("devSettings:miniappScanPermissionDeniedBody"),
+                    translate("debugSettings:miniappScanPermissionDeniedTitle"),
+                    translate("debugSettings:miniappScanPermissionDeniedBody"),
                     [{text: "OK"}],
                   )
                 }
@@ -226,11 +228,11 @@ export default function MiniappDeveloperScannerScreen() {
 
   return (
     <Screen preset="fixed">
-      <Header title={translate("devSettings:miniappScanTitle")} leftIcon="chevron-left" onLeftPress={() => goBack()} />
+      <Header title={translate("debugSettings:miniappScanTitle")} leftIcon="chevron-left" onLeftPress={() => goBack()} />
 
       <View className="px-4 pt-2 pb-4 gap-2">
-        <Text className="text-base font-semibold" tx="devSettings:miniappScanHeadline" />
-        <Text className="text-[13px] leading-[18px] text-muted-foreground" tx="devSettings:miniappScanBody" />
+        <Text className="text-base font-semibold" tx="debugSettings:miniappScanHeadline" />
+        <Text className="text-[13px] leading-[18px] text-muted-foreground" tx="debugSettings:miniappScanBody" />
       </View>
 
       <View className="flex-1 mx-4 mt-4 mb-12 rounded-xl max-h-[420px] overflow-hidden bg-white">
@@ -248,7 +250,7 @@ export default function MiniappDeveloperScannerScreen() {
 
         {!scanned && (
           <View className="absolute left-0 right-0 bottom-6 items-center" pointerEvents="none">
-            <Text className="text-[13px] px-3 py-1.5 rounded-full overflow-hidden" tx="devSettings:miniappScanHint" />
+            <Text className="text-[13px] px-3 py-1.5 rounded-full overflow-hidden" tx="debugSettings:miniappScanHint" />
           </View>
         )}
 
@@ -261,7 +263,7 @@ export default function MiniappDeveloperScannerScreen() {
           <View className="absolute inset-0 items-center justify-center bg-black/50">
             <View className="flex-row items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-5 py-4">
               <ActivityIndicator color={theme.colors.tint} />
-              <Text className="text-[15px] font-medium" tx="devSettings:miniappScanLoading" />
+              <Text className="text-[15px] font-medium" tx="debugSettings:miniappScanLoading" />
             </View>
           </View>
         )}
