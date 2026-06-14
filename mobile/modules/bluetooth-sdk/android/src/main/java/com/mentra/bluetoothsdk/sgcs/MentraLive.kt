@@ -2890,7 +2890,7 @@ class MentraLive : SGCManager() {
             "video_recording_status" -> emitVideoRecordingStatus(json)
             "media_success", "media_error" -> {
                 try {
-                    Bridge.sendMediaUploadEvent(jsonObjectToMap(json))
+                    Bridge.sendMediaUploadEvent(type, jsonObjectToMap(json))
                 } catch (e: JSONException) {
                     Log.e(TAG, "Error converting media upload event to Map", e)
                 }
@@ -8138,7 +8138,7 @@ class MentraLive : SGCManager() {
             flash: Boolean,
             sound: Boolean
     ) {
-        startVideoRecording(requestId, save, flash, sound, 0, 0, 0) // Use defaults
+        startVideoRecording(requestId, save, flash, sound, 0, 0, 0, 0) // Use defaults
     }
 
     /**
@@ -8150,6 +8150,7 @@ class MentraLive : SGCManager() {
      * @param width Video width (0 for default)
      * @param height Video height (0 for default)
      * @param fps Video frame rate (0 for default)
+     * @param maxRecordingTimeMinutes Auto-stop timer in minutes (0 = record until stopped)
      */
     override fun startVideoRecording(
             requestId: String,
@@ -8158,7 +8159,8 @@ class MentraLive : SGCManager() {
             sound: Boolean,
             width: Int,
             height: Int,
-            fps: Int
+            fps: Int,
+            maxRecordingTimeMinutes: Int
     ) {
         Bridge.log(
                 "LIVE: Starting video recording: requestId=" +
@@ -8175,7 +8177,9 @@ class MentraLive : SGCManager() {
                         height +
                         "@" +
                         fps +
-                        "fps"
+                        "fps" +
+                        ", maxRecordingTimeMinutes=" +
+                        maxRecordingTimeMinutes
         )
 
         if (!isConnected) {
@@ -8190,6 +8194,11 @@ class MentraLive : SGCManager() {
             json.put("save", save)
             json.put("flash", flash)
             json.put("sound", sound)
+
+            // Auto-stop timer; only sent when set (> 0). 0 = record until stopped.
+            if (maxRecordingTimeMinutes > 0) {
+                json.put("maxRecordingTimeMinutes", maxRecordingTimeMinutes)
+            }
 
             // Add video settings when any field is overridden. Each field is sent
             // only when > 0; the glasses merge the missing fields onto their saved
@@ -8210,7 +8219,16 @@ class MentraLive : SGCManager() {
     }
 
     override fun stopVideoRecording(requestId: String) {
-        Bridge.log("LIVE: Stopping video recording: requestId=" + requestId)
+        stopVideoRecording(requestId, null, null)
+    }
+
+    override fun stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?) {
+        Bridge.log(
+                "LIVE: Stopping video recording: requestId=" +
+                        requestId +
+                        ", webhook=" +
+                        (if (webhookUrl.isNullOrEmpty()) "none" else "set")
+        )
 
         if (!isConnected) {
             Log.w(TAG, "Cannot stop video recording - not connected")
@@ -8221,6 +8239,14 @@ class MentraLive : SGCManager() {
             val json = JSONObject()
             json.put("type", "stop_video_recording")
             json.put("requestId", requestId)
+            // Webhook upload target, supplied at stop so the token is fresh.
+            // Only sent when present; empty webhook = keep video on device.
+            if (!webhookUrl.isNullOrEmpty()) {
+                json.put("webhookUrl", webhookUrl)
+            }
+            if (!authToken.isNullOrEmpty()) {
+                json.put("authToken", authToken)
+            }
             sendJson(json, true) // Wake up glasses for this command
         } catch (e: JSONException) {
             Log.e(TAG, "Failed to create stop video recording command", e)
