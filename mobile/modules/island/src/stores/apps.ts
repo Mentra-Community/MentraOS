@@ -312,6 +312,10 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
         set((s) => ({
           apps: s.apps.map((a) => (a.packageName === packageName ? {...a, running: false, loading: false} : a)),
         }))
+        // onStart already persisted running:true to disk (saveLocalAppRunningState)
+        // before the spawn; run onStop to undo it so a refresh/reboot doesn't
+        // resurrect a "running" app with no JS context.
+        await startStopApp(app, false)
         return false
       }
     }

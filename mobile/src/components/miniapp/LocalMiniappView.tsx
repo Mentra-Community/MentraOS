@@ -234,10 +234,11 @@ function LocalMiniappView({
       checkpoint()
 
       setLabel(undefined)
-      if (result.uiUri) {
-        setUiUri(result.uiUri)
-        setUiBaseDir(result.uiBaseDir)
-      }
+      // Set unconditionally: when the launcher resolves no UI entry (e.g. the
+      // dev server dropped, or a re-foreground couldn't re-resolve), clearing
+      // prevents the WebView from continuing to show a stale / previous URL.
+      setUiUri(result.uiUri)
+      setUiBaseDir(result.uiBaseDir)
     }
 
     launch().catch((e: Error) => {
