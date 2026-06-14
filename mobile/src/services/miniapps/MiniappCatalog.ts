@@ -19,6 +19,7 @@ import {
 
 import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
 import {DevToolsIcon} from "@/components/miniapps/DevIcons"
+import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {showAlert} from "@/contexts/ModalContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
@@ -338,6 +339,12 @@ class MiniappCatalog {
     // const appOpenTransition = "zoom"
     const appOpenTransition = "fade"
     if (app.offlineRoute) {
+      // Registry-hosted offline apps (settings, store, mirror, …) render in
+      // the Compositor overlay like local miniapps instead of pushing a route.
+      if (isOfflineHosted(app.packageName)) {
+        useAppStatusStore.getState().setForeground(app.packageName)
+        return
+      }
       nav.push(app.offlineRoute, {transition: appOpenTransition})
       return
     }
@@ -512,7 +519,7 @@ class MiniappCatalog {
       },
     ]
 
-    if (useSettingsStore.getState().getSetting(SETTINGS.dev_mode.key)) {
+    if (useSettingsStore.getState().getSetting(SETTINGS.miniapp_dev_mode.key) || useSettingsStore.getState().getSetting(SETTINGS.debug_mode.key)) {
       apps.push({
         packageName: lmaInstallerPackageName,
         name: translate("miniApps:lmaInstaller"),

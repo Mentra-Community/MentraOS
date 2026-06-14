@@ -209,51 +209,48 @@ function LocalMiniappView({
     // restarts the ready handshake and reload-retry loop from scratch.
     resetLoadState()
 
-    // Guard the long async launch against unmount / prop changes: a stale run
-    // must not point the WebView at another launch's UI, clobber its splash
-    // state, or connect the dev bridge for a package we no longer show.
-    let cancelled = false
-    const failUnlessCancelled = (msg: string) => {
-      if (!cancelled) fail(msg)
+    const ac = new AbortController()
+    const {signal} = ac
+    // RN's AbortSignal doesn't reliably ship throwIfAborted(), so roll our own.
+    const checkpoint = () => {
+      if (signal.aborted) throw Object.assign(new Error("launch superseded"), {name: "AbortError"})
     }
 
-    const launch = async () => {
+    const launch = async (): Promise<void> => {
       // Background spawn now lives in the runtime's MiniappLauncher (resolve the
       // bundle → read the manifest → spawn the JSContext, handling dev HTTP vs
       // released file:// snapshot). This component is render-only: it asks the
       // launcher to ensure the background context is running (idempotent — a
       // re-foreground of a live miniapp just rebuilds this WebView half) and
-      // mounts the resolved UI entry it hands back.
-      const result = await miniappLauncher
-        .ensureRunning(packageName, {devUrl, version, devPort})
-        .catch((e: unknown) => {
-          failUnlessCancelled(`launch failed: ${(e as Error).message}`)
-          return null
-        })
+      // mounts the resolved UI entry it hands back. Errors throw and are caught
+      // by launch().catch below.
+      const result = await miniappLauncher.ensureRunning(packageName, {devUrl, version, devPort})
 
-      // If the user backgrounded the app while we were spawning, leave the
-      // JSContext alive — background miniapps keep running across UI close.
-      // The only cleanup this component owes is unbinding the WebView
+      // Deliberately AFTER the spawn, not before: if we were superseded while
+      // spawning, leave the JSContext alive (background miniapps keep running
+      // across UI close) but don't touch UI state for a view we no longer
+      // show. The only cleanup this component owes is unbinding the WebView
       // (handled by the effect's return).
-      if (cancelled || !result) return
+      checkpoint()
 
       setLabel(undefined)
-
       if (result.uiUri) {
         setUiUri(result.uiUri)
         setUiBaseDir(result.uiBaseDir)
       }
     }
 
-    launch()
+    launch().catch((e: Error) => {
+      if (e.name === "AbortError") return // stale run — ignore entirely
+      fail(e.message)
+    })
 
     return () => {
-      cancelled = true
+      ac.abort()
       clearReadyTimer()
-      const mj = getMentraJS()
-      mj?.uiRouter.unbindWebView(packageName)
+      getMentraJS()?.uiRouter.unbindWebView(packageName)
     }
-  }, [packageName, version, devUrl, devPort, resetLoadState, clearReadyTimer])
+  }, [packageName, version, devUrl, devPort, resetLoadState, clearReadyTimer, fail])
 
   // ----- WebView bindings ----------------------------------------------------
 
