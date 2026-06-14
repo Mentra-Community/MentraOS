@@ -29,6 +29,7 @@ import com.mentra.asg_client.io.bes.BesOtaRegistry;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
 import com.mentra.asg_client.io.ota.events.InstallationProgressEvent;
 import com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent;
+import com.mentra.asg_client.reporting.domains.GeneralReporting;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -553,8 +554,7 @@ public class OtaHelper {
                 if (mtkPatch != null) steps.add("mtk");
             }
             if (rootJson.has("bes_firmware")) {
-                String besVer = "";
-                try { besVer = new AsgSettings(context).getBesFirmwareVersion(); } catch (Exception ignored) {}
+                String besVer = getBesVersionForOtaCheck(context);
                 if (checkBesUpdate(rootJson.getJSONObject("bes_firmware"), besVer)) steps.add("bes");
             }
         } catch (Exception e) {
@@ -944,13 +944,7 @@ public class OtaHelper {
                     }
                 }
                 if (rootJson.has("bes_firmware")) {
-                    String currentBesVersion = "";
-                    try {
-                        AsgSettings asgSettings = new AsgSettings(context);
-                        currentBesVersion = asgSettings.getBesFirmwareVersion();
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error getting BES firmware version from AsgSettings", e);
-                    }
+                    String currentBesVersion = getBesVersionForOtaCheck(context);
                     boolean besNeeded = checkBesUpdate(rootJson.getJSONObject("bes_firmware"), currentBesVersion);
                     if (besNeeded) {
                         Log.i(TAG, "📦 Phase 0: Pre-downloading BES firmware before APK install");
@@ -1077,13 +1071,7 @@ public class OtaHelper {
                 if (rootJson.has("bes_firmware")) {
                     // Get BES version from AsgSettings (cached from hs_syvr response)
                     // AsgSettings uses SharedPreferences, so we can create a new instance to read the cached version
-                    String currentBesVersion = "";
-                    try {
-                        AsgSettings asgSettings = new AsgSettings(context);
-                        currentBesVersion = asgSettings.getBesFirmwareVersion();
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error getting BES firmware version from AsgSettings", e);
-                    }
+                    String currentBesVersion = getBesVersionForOtaCheck(context);
                     besUpdateAvailable = checkBesUpdate(rootJson.getJSONObject("bes_firmware"), currentBesVersion);
                 }
 
@@ -2087,6 +2075,40 @@ public class OtaHelper {
     }
 
     /**
+     * Read the BES firmware version for an OTA decision, failing safe on a stale cache.
+     *
+     * <p>{@link AsgSettings#getBesFirmwareVersion()} returns "" when the cached value predates this
+     * boot and hasn't been refreshed from the chip. That case is genuinely dangerous — the chip may
+     * have been reflashed/downgraded while powered off — so we leave a log + telemetry breadcrumb
+     * before the OTA check treats the version as unknown (and therefore offers the update).
+     *
+     * @return the trusted current BES version, or "" if unknown/unrefreshed (update-needed).
+     */
+    private String getBesVersionForOtaCheck(Context context) {
+        try {
+            AsgSettings asgSettings = new AsgSettings(context);
+            String version = asgSettings.getBesFirmwareVersion();
+            if (version.isEmpty()) {
+                String raw = asgSettings.getCachedBesFirmwareVersionRaw();
+                if (!raw.isEmpty()) {
+                    String msg =
+                            "OTA check running with UNREFRESHED BES version - last cached '"
+                                    + raw
+                                    + "' is from a previous boot and the syvr handshake has not"
+                                    + " confirmed it this boot; treating as unknown (will offer BES"
+                                    + " update)";
+                    Log.w(TAG, "⚠️ " + msg);
+                    GeneralReporting.reportWarning(context, msg, "ota", "bes_version_unrefreshed");
+                }
+            }
+            return version;
+        } catch (Exception e) {
+            Log.e(TAG, "Error getting BES firmware version from AsgSettings", e);
+            return "";
+        }
+    }
+
+    /**
      * Compare two version strings.
      * Supports formats like "17.26.1.14" (BES) or "20241130" (MTK date format).
      * @param version1 First version string
@@ -2147,13 +2169,7 @@ public class OtaHelper {
 
             String manifestVersion = firmwareInfo.optString("version", "");
             if (!manifestVersion.isEmpty()) {
-                String currentBesVersion = "";
-                try {
-                    AsgSettings asgSettings = new AsgSettings(context);
-                    currentBesVersion = asgSettings.getBesFirmwareVersion();
-                } catch (Exception e) {
-                    Log.e(TAG, "Error getting BES firmware version from AsgSettings", e);
-                }
+                String currentBesVersion = getBesVersionForOtaCheck(context);
                 if (!checkBesUpdate(firmwareInfo, currentBesVersion)) {
                     Log.i(TAG, "BES firmware is not newer - skipping update");
                     return false;

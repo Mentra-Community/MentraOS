@@ -2,6 +2,7 @@ package com.mentra.asg_client.settings;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.SystemClock;
 import android.util.Log;
 
 import java.util.Arrays;
@@ -24,6 +25,20 @@ public class AsgSettings {
     private static final String KEY_MFNR_ENABLED = "mfnr_enabled";
     private static final String KEY_HDR_BURST_ENABLED = "hdr_burst_enabled";
     private static final String KEY_MCU_FIRMWARE_VERSION = "mcu_firmware_version";
+    /**
+     * Boot stamp (approx. wall-clock time of last device boot) recorded alongside the BES firmware
+     * version. Lets us tell whether the cached version was refreshed from the chip during the
+     * current boot, or carried over from a previous boot (when the chip may have been
+     * reflashed/downgraded while powered off — see the stale-cache OTA bug).
+     */
+    private static final String KEY_BES_FW_BOOT_STAMP = "bes_fw_boot_stamp";
+    /**
+     * Tolerance when comparing the stored boot stamp to the current one. Generous enough to absorb
+     * NTP/clock corrections within a single boot, while a reboot shifts the stamp by the entire
+     * previous uptime (far more than this), so reboots are reliably detected. Biased toward
+     * treating ambiguous cases as stale (fail-safe: re-request + offer update).
+     */
+    private static final long BES_FW_BOOT_STAMP_TOLERANCE_MS = 10_000L;
     private static final String KEY_CAMERA_FOV = "camera_fov";
     private static final String KEY_CAMERA_ROI_POSITION = "camera_roi_position";
 
@@ -287,8 +302,55 @@ public class AsgSettings {
      */
     public String getMcuFirmwareVersion() {
         String version = prefs.getString(KEY_MCU_FIRMWARE_VERSION, "");
+        // A value cached before this boot has not been confirmed against the live chip and may be
+        // stale (e.g. the BES was downgraded while powered off). Report it as unknown so OTA checks
+        // — both here and on the phone — fail safe toward "update needed" instead of trusting it.
+        if (!version.isEmpty() && !isBesVersionFromThisBoot()) {
+            Log.w(
+                    TAG,
+                    "⏳ BES firmware version '"
+                            + version
+                            + "' was cached before this boot and has not been refreshed from the"
+                            + " chip (sh_syvr/sr_syvr) — reporting as unknown until refreshed");
+            return "";
+        }
         Log.d(TAG, "Retrieved MCU firmware version: " + version);
         return version;
+    }
+
+    /** Approximate wall-clock time of the last boot; stable within a boot, jumps across reboots. */
+    private static long currentBootStamp() {
+        return System.currentTimeMillis() - SystemClock.elapsedRealtime();
+    }
+
+    /**
+     * @return true if the cached BES firmware version was written during the current boot (and is
+     *     therefore trustworthy), false if it predates this boot or was never set.
+     */
+    private boolean isBesVersionFromThisBoot() {
+        long storedStamp = prefs.getLong(KEY_BES_FW_BOOT_STAMP, Long.MIN_VALUE);
+        if (storedStamp == Long.MIN_VALUE) {
+            return false;
+        }
+        return Math.abs(storedStamp - currentBootStamp()) <= BES_FW_BOOT_STAMP_TOLERANCE_MS;
+    }
+
+    /**
+     * @return true if a BES firmware version has been refreshed from the chip during the current
+     *     boot. Callers (e.g. the syvr request retry loop) use this to know when the handshake has
+     *     succeeded and the cache can be trusted.
+     */
+    public boolean hasFreshBesFirmwareVersion() {
+        return !prefs.getString(KEY_MCU_FIRMWARE_VERSION, "").isEmpty() && isBesVersionFromThisBoot();
+    }
+
+    /**
+     * @return the last cached BES firmware version regardless of boot age (may be stale). For
+     *     logging/telemetry only — never feed this into an OTA decision; use {@link
+     *     #getBesFirmwareVersion()} which fails safe on stale values.
+     */
+    public String getCachedBesFirmwareVersionRaw() {
+        return prefs.getString(KEY_MCU_FIRMWARE_VERSION, "");
     }
 
     /**
@@ -311,8 +373,13 @@ public class AsgSettings {
             return;
         }
         Log.i(TAG, "📋 Setting MCU firmware version to: " + version);
-        // Using commit() for immediate persistence
-        prefs.edit().putString(KEY_MCU_FIRMWARE_VERSION, version).commit();
+        // Stamp with the current boot so reads this boot are trusted; reads after the next reboot
+        // (until the chip is re-queried) fall back to "unknown". Using commit() for immediate
+        // persistence.
+        prefs.edit()
+                .putString(KEY_MCU_FIRMWARE_VERSION, version)
+                .putLong(KEY_BES_FW_BOOT_STAMP, currentBootStamp())
+                .commit();
     }
 
     /**

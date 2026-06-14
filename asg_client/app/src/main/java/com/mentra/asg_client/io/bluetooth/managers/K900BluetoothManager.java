@@ -12,6 +12,7 @@ import com.mentra.asg_client.io.bluetooth.utils.DebugNotificationManager;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.reporting.domains.BluetoothReporting;
 import com.mentra.asg_client.service.core.AsgClientService;
+import com.mentra.asg_client.settings.AsgSettings;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -56,6 +57,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private static final int PACING_DELAY_MS =
             75; // Delay between successful packets - BES2700 needs time to drain BLE TX
     private int consecutiveFailures = 0;
+
+    // BES system-version (syvr) handshake retry: the chip occasionally drops the first request
+    // after a SOC boot, leaving the cached version stale. Re-request until the chip answers (the
+    // cache becomes fresh for this boot) or we exhaust the attempts.
+    private static final int BES_SYVR_MAX_ATTEMPTS = 5;
+    private static final long BES_SYVR_RETRY_DELAY_MS = 2000L;
+    private final android.os.Handler besVersionHandler =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+    private int besSyvrAttempts = 0;
 
     // Inner class to track file transfer state
     private static class FileTransferSession {
@@ -383,29 +393,92 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * connects, making it available for OTA patch matching.
      */
     public void requestBesSystemVersion() {
-        Log.i(TAG, "🔧 Requesting BES system version (cs_syvr) via UART");
+        // (Re)start the handshake from attempt 0 and clear any retries still pending from a prior
+        // serial-ready event so we don't run two retry chains at once.
+        besVersionHandler.removeCallbacksAndMessages(null);
+        besSyvrAttempts = 0;
+        attemptBesSystemVersionRequest();
+    }
 
+    /**
+     * Send the BES system-version request and, if the chip hasn't answered yet, schedule a retry.
+     * Stops as soon as the version cache is refreshed for this boot, or after {@link
+     * #BES_SYVR_MAX_ATTEMPTS} attempts.
+     */
+    private void attemptBesSystemVersionRequest() {
+        if (besVersionRefreshedThisBoot()) {
+            Log.i(
+                    TAG,
+                    "✅ BES system version already refreshed this boot — stopping syvr retries");
+            return;
+        }
+
+        besSyvrAttempts++;
+        Log.i(
+                TAG,
+                "🔧 Requesting BES system version (attempt "
+                        + besSyvrAttempts
+                        + "/"
+                        + BES_SYVR_MAX_ATTEMPTS
+                        + ") via UART");
+
+        // Send both command variants: some BES builds answer cs_syvr (handled here as sr_syvr),
+        // others answer the sh_syvr variant (handled via McuEventParser -> BesVersionEvent). Sending
+        // both hedges against a firmware that only honors one of them.
+        sendSyvrCommand("cs_syvr");
+        sendSyvrCommand("sh_syvr");
+
+        if (besSyvrAttempts < BES_SYVR_MAX_ATTEMPTS) {
+            besVersionHandler.postDelayed(
+                    this::attemptBesSystemVersionRequest, BES_SYVR_RETRY_DELAY_MS);
+        } else {
+            besVersionHandler.postDelayed(
+                    () -> {
+                        if (!besVersionRefreshedThisBoot()) {
+                            Log.e(
+                                    TAG,
+                                    "❌ BES system version not refreshed after "
+                                            + BES_SYVR_MAX_ATTEMPTS
+                                            + " attempts — cache will read as unknown so OTA fails"
+                                            + " safe toward offering the BES update");
+                        }
+                    },
+                    BES_SYVR_RETRY_DELAY_MS);
+        }
+    }
+
+    /** Build and send one {@code C}/{@code V}/{@code B} syvr request over UART. */
+    private void sendSyvrCommand(String command) {
         try {
-            // Build K900 command format: {"C":"cs_syvr","V":1,"B":""}
             org.json.JSONObject k900Command = new org.json.JSONObject();
-            k900Command.put("C", "cs_syvr");
+            k900Command.put("C", command);
             k900Command.put("V", 1);
             k900Command.put("B", "");
 
             String commandStr = k900Command.toString();
-            Log.d(TAG, "📤 Sending cs_syvr request: " + commandStr);
+            Log.d(TAG, "📤 Sending " + command + " request: " + commandStr);
 
             // Send via sendMessage() which handles protocol formatting and isSerialOpen check
             boolean sent =
                     sendMessage(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
             if (sent) {
-                Log.i(TAG, "✅ BES system version request (cs_syvr) sent successfully via UART");
+                Log.i(TAG, "✅ BES system version request (" + command + ") sent via UART");
             } else {
-                Log.e(TAG, "❌ Failed to send BES system version request via UART");
+                Log.e(TAG, "❌ Failed to send BES system version request (" + command + ")");
             }
         } catch (org.json.JSONException e) {
-            Log.e(TAG, "💥 Failed to build cs_syvr request", e);
+            Log.e(TAG, "💥 Failed to build " + command + " request", e);
+        }
+    }
+
+    /** True once a syvr response has refreshed the cached BES version during the current boot. */
+    private boolean besVersionRefreshedThisBoot() {
+        try {
+            return new AsgSettings(context).hasFreshBesFirmwareVersion();
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to read BES version freshness", e);
+            return false;
         }
     }
 
@@ -475,11 +548,14 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         Log.i(TAG, "📋 Caching BES firmware version: " + version);
 
         try {
-            android.content.SharedPreferences prefs =
-                    context.getSharedPreferences(
-                            "asg_settings", android.content.Context.MODE_PRIVATE);
-            prefs.edit().putString("mcu_firmware_version", version).commit();
+            // Route through AsgSettings so the value is stamped with the current boot; a bare
+            // SharedPreferences write would leave the stamp stale and the value would read as
+            // unknown. setBesFirmwareVersion uses commit() for immediate persistence.
+            new AsgSettings(context).setBesFirmwareVersion(version);
             Log.i(TAG, "✅ BES firmware version cached successfully: " + version);
+
+            // The chip answered — stop any pending syvr retries.
+            besVersionHandler.removeCallbacksAndMessages(null);
 
             // Re-send version chunks so phone/OTA get fresh BES (onCreate may have run before UART
             // was up).
