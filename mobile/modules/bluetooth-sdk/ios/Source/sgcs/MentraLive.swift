@@ -2443,6 +2443,10 @@ class MentraLive: NSObject, SGCManager {
                 }
 
                 Bridge.sendVersionInfo(fields)
+
+                // version_info* is unsolicited ASG-boot/connect traffic — use it to recover the
+                // handshake if the SOC came up under an intact link without re-handshaking.
+                recoverReadinessHandshakeIfStalled(type)
             } else {
                 Bridge.log("Unhandled message type: \(type)")
             }
@@ -4263,6 +4267,33 @@ class MentraLive: NSObject, SGCManager {
         readinessCheckDispatchTimer?.cancel()
         readinessCheckDispatchTimer = nil
         Bridge.log("LIVE: 🔄 Stopped glasses SOC readiness check loop")
+    }
+
+    /// Recover the phone_ready/glasses_ready handshake when glasses-originated app traffic arrives
+    /// while the BLE link is up but the handshake never completed (or silently fell apart).
+    ///
+    /// The trigger is the ASG client's version_info, which it emits unsolicited both on its own
+    /// boot (AsgClientService.onCreate) and on every BT connect. Receiving it while we are linked
+    /// but not fully booted — and with no readiness loop already driving the handshake — means the
+    /// glasses SOC came up under us (e.g. an Android GATT auto-reconnect that restored the link
+    /// without re-discovering characteristics, the normal startReadinessCheckLoop trigger) without
+    /// the phone re-running the handshake, leaving the connecting card stuck even though data flows.
+    ///
+    /// Restarting the readiness loop re-sends phone_ready; the ASG's stateless phone_ready handler
+    /// always answers glasses_ready, which re-establishes fullyBooted via handleGlassesReady().
+    ///
+    /// NOTE: the pure MTK-SOC-reboot-under-intact-BES-link case leaves fullyBooted stale-true here
+    /// (no disconnect edge, BES holds ready=1), so this guard does not cover it — that needs the
+    /// ASG-side change to re-announce glasses_ready on boot. This covers the silent-reconnect case
+    /// where fullyBooted was already cleared.
+    private func recoverReadinessHandshakeIfStalled(_ reason: String) {
+        guard !isKilled, connectedPeripheral != nil, !fullyBooted,
+              readinessCheckDispatchTimer == nil
+        else {
+            return
+        }
+        Bridge.log("LIVE: 🔄 Glasses traffic (\(reason)) while link up but handshake incomplete and idle - restarting readiness handshake")
+        startReadinessCheckLoop()
     }
 
     private func startConnectionTimeout() {

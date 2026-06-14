@@ -2854,6 +2854,10 @@ public class MentraLive extends SGCManager {
                     Log.e(TAG, "Failed to parse build number as integer: " + buildNumberLegacy);
                 }
 
+                // version_info is unsolicited ASG-boot/connect traffic — use it to recover the
+                // handshake if the SOC came up under an intact link without re-handshaking.
+                recoverReadinessHandshakeIfStalled("version_info");
+
                 break;
 
             case "ota_download_progress":
@@ -3045,6 +3049,10 @@ public class MentraLive extends SGCManager {
 
                     Bridge.log("LIVE: Processed version_info fields and sent to RN");
                     Bridge.sendVersionInfo(fields);
+
+                    // version_info* is unsolicited ASG-boot/connect traffic — use it to recover the
+                    // handshake if the SOC came up under an intact link without re-handshaking.
+                    recoverReadinessHandshakeIfStalled(type);
                 } else {
                     Log.d(TAG, "📦 Unknown message type: " + type);
                 }
@@ -3332,16 +3340,6 @@ public class MentraLive extends SGCManager {
                         int ready = bodyObj.optInt("ready", 0);
                         if (ready == 0) {
                             Bridge.log("LIVE: K900 SOC not ready (ready=0)");
-                            if (glassesReady) {
-                                // The MTK SOC rebooted underneath an intact BLE link (e.g. after an
-                                // MTK firmware OTA apply) — the BES chip keeps the GATT connection
-                                // alive, so no disconnect edge ever resets the handshake flags. Left
-                                // stale, they block phone_ready from being re-sent and fullyBooted
-                                // never recovers. Reset and poll until the SOC is ready again.
-                                Bridge.log("LIVE: 🔄 SOC not ready after handshake completed - glasses rebooted, restarting readiness handshake");
-                                glassesReadyReceived = false;
-                                startReadinessCheckLoop();
-                            }
                             DeviceStore.INSTANCE.apply("glasses", "fullyBooted", false);
                             Bridge.sendTypedMessage("glasses_not_ready", new HashMap<String, Object>() {});
                             if (batteryPercentage > 0 && batteryPercentage <= 20) {
@@ -3355,9 +3353,7 @@ public class MentraLive extends SGCManager {
                             Bridge.log("LIVE: K900 SOC ready");
                             // Only send phone_ready if we haven't already established connection
                             // This prevents re-initialization on every heartbeat after initial connection
-                            // The glassesReady flag is reset on disconnect/reconnect and on a
-                            // ready=0 heartbeat (SOC reboot under an intact BLE link), so this
-                            // won't prevent proper reconnection
+                            // The glassesReady flag is reset on disconnect/reconnect, so this won't prevent proper reconnection
                             if (!glassesReady) {
                                 Bridge.log("LIVE: 📱 Sending phone_ready to glasses - waiting for glasses_ready response");
                                 JSONObject readyMsg = new JSONObject();
@@ -4569,6 +4565,38 @@ public class MentraLive extends SGCManager {
 
         // Start the loop
         handler.post(readinessCheckRunnable);
+    }
+
+    /**
+     * Recover the phone_ready/glasses_ready handshake when glasses-originated app traffic arrives
+     * while the BLE link is up but the handshake never completed (or silently fell apart).
+     *
+     * The trigger is the ASG client's version_info, which it emits unsolicited both on its own
+     * boot (AsgClientService.onCreate) and on every BT connect. Receiving it while we are linked
+     * but not yet fully booted — and with no readiness loop already driving the handshake — means
+     * the glasses SOC came up under us without the phone re-running the handshake.
+     *
+     * The motivating case: the MTK SOC reboots (e.g. after an MTK firmware OTA apply) while the BES
+     * chip holds the BLE/GATT link open, so the phone never sees a disconnect edge and never
+     * restarts the readiness loop. The same gap exists for an Android GATT auto-reconnect that
+     * restores the link without re-running service discovery (the normal startReadinessCheckLoop
+     * trigger at writeNextDescriptor). In both cases fullyBooted stays false and the home-screen
+     * card is stuck on the connecting spinner even though data flows.
+     *
+     * Restarting the readiness loop re-sends phone_ready; the ASG's stateless phone_ready handler
+     * always answers glasses_ready, which re-establishes fullyBooted via the existing handler.
+     */
+    private void recoverReadinessHandshakeIfStalled(String reason) {
+        if (isKilled || !isConnected || glassesReady) {
+            return;
+        }
+        // A non-null runnable means a readiness loop is already driving the handshake (normal
+        // connect) — don't disturb it. We only step in when nobody is re-sending phone_ready.
+        if (readinessCheckRunnable != null) {
+            return;
+        }
+        Bridge.log("LIVE: 🔄 Glasses traffic (" + reason + ") while link up but handshake incomplete and idle - restarting readiness handshake");
+        startReadinessCheckLoop();
     }
 
     /**
