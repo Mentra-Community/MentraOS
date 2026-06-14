@@ -154,6 +154,23 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  // Developer override for the ASG OTA manifest URL. null/empty = no override;
+  // the normal selection applies (legacy-glasses gate, EXPO_PUBLIC_ASG_OTA_VERSION_URL,
+  // glasses-reported URL, then production). See getAsgOtaVersionUrl.
+  ota_version_url: {
+    key: "ota_version_url",
+    defaultValue: () => null,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  saved_ota_version_urls: {
+    key: "saved_ota_version_urls",
+    defaultValue: () => [],
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   reconnect_on_app_foreground: {
     key: "reconnect_on_app_foreground",
     defaultValue: () => true,

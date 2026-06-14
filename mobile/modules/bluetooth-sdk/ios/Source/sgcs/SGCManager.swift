@@ -111,7 +111,7 @@ protocol SGCManager {
     func sendWifiCredentials(_ ssid: String, _ password: String)
     func forgetWifiNetwork(_ ssid: String)
     func sendHotspotState(_ enabled: Bool)
-    func sendOtaStart()
+    func sendOtaStart(otaVersionUrl: String?)
     func sendOtaQueryStatus()
     func sendSetSystemTime(_ timestampMs: Int64)
     func sendOtaRetryVersionCheck()

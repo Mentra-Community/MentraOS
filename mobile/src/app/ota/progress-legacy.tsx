@@ -8,7 +8,7 @@ import {Screen, Header, Button, Text, Icon} from "@/components/ignite"
 import {LoadingCoverVideo} from "@/components/ota/LoadingCoverVideo"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {checkBesUpdate, findMatchingMtkPatch, fetchVersionInfo, OTA_VERSION_URL_PROD} from "@/effects/OtaUpdateChecker"
+import {checkBesUpdate, findMatchingMtkPatch, fetchVersionInfo, getAsgOtaVersionUrl} from "@/effects/OtaUpdateChecker"
 import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {logEvent} from "@/utils/analytics"
@@ -378,7 +378,8 @@ export default function OtaProgressScreen() {
       if (updateSequenceRef.current.length === 0) return
 
       // Fetch the latest version.json to check against
-      const versionJson = await fetchVersionInfo(OTA_VERSION_URL_PROD)
+      const otaVersionUrl = getAsgOtaVersionUrl(useGlassesStore.getState().otaVersionUrl, buildNumber)
+      const versionJson = await fetchVersionInfo(otaVersionUrl)
       if (!versionJson) {
         console.log("OTA REVALIDATE: Could not fetch version.json")
         return
@@ -447,7 +448,7 @@ export default function OtaProgressScreen() {
     }
 
     revalidateUpdateSequence()
-  }, [besFirmwareVersion, mtkFirmwareVersion])
+  }, [besFirmwareVersion, buildNumber, mtkFirmwareVersion])
 
   // Fallback: detect APK install success via build number increase for older glasses firmware
   // that does not send the explicit ota_status apk/step_complete signal on reconnect.
@@ -584,7 +585,7 @@ export default function OtaProgressScreen() {
         "OTA_TRACK: send_ota_start",
         JSON.stringify({attempt: retryCount + 1, maxRetries: MAX_RETRIES, sequence: [...updateSequenceRef.current]}),
       )
-      await BluetoothSdk.sendOtaStart()
+      await BluetoothSdk.sendOtaStart(getAsgOtaVersionUrl(useGlassesStore.getState().otaVersionUrl, buildNumber))
       setOtaStartTime(Date.now())
 
       // Start global session timeout once (covers whole multi-step OTA)
@@ -680,7 +681,7 @@ export default function OtaProgressScreen() {
         setProgressState("failed")
       }
     }
-  }, [retryCount, progressState])
+  }, [buildNumber, retryCount, progressState])
 
   // When waitingForReconnectRef is true, watch for glasses to be ready then trigger ota_start.
   // After APK: requires BLE reconnect AND fresh buildNumber (version_info arrived), then waits

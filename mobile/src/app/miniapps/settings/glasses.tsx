@@ -174,10 +174,8 @@ function DeviceSettings() {
 
       {/* Device info is rendered within the Advanced Settings section below */}
 
-      {/* OTA Progress Section - Only show for Mentra Live glasses in super mode */}
-      {superMode && glassesConnected && defaultWearable.includes(DeviceTypes.LIVE) && (
-        <OtaProgressSection otaProgress={otaProgress} />
-      )}
+      {/* OTA Progress Section - Only show for OTA-capable glasses in super mode */}
+      {superMode && glassesConnected && features?.hasOta && <OtaProgressSection otaProgress={otaProgress} />}
 
       <Group title={translate("deviceSettings:general")}>
         {glassesConnected && defaultWearable !== DeviceTypes.SIMULATED && (

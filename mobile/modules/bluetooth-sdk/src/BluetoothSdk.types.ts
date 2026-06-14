@@ -923,7 +923,7 @@ export interface BluetoothSdkPublicModule {
   /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
   checkForOtaUpdate(): Promise<OtaQueryResult>
   /** Start the OTA flow after your app has presented the available update to the user. */
-  startOtaUpdate(): Promise<OtaStartAckEvent>
+  startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
   /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
   retryOtaVersionCheck(): Promise<OtaQueryResult>
 
