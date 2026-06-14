@@ -70,6 +70,105 @@ sdk.invalidate()
 
 Keep one SDK instance per active app session. The SDK owns Bluetooth connection state, native event delivery, and cleanup. Your app owns user identity, UI state, and whether a default device record is persisted across app restarts.
 
+## Mentra SDK Usage Analytics
+
+The SDK reports anonymous usage events to Mentra's PostHog project by default
+so Mentra can understand SDK adoption and successful glasses connections:
+
+| Event | Fires When |
+| --- | --- |
+| `bluetooth_sdk_started` | Once per app runtime after the native SDK starts. |
+| `bluetooth_sdk_glasses_connected` | When SDK status transitions from not connected to connected. Failed scans and failed connection attempts are not counted. |
+
+Analytics delivery is fire-and-forget: events are submitted asynchronously, do
+not block Bluetooth SDK behavior, and are not retried if delivery fails.
+
+Mentra's PostHog project API key is embedded in the SDK as a public analytics
+write token, not a private PostHog personal API key. Apps do not need to
+configure PostHog to send these Mentra SDK usage events.
+
+<Tabs>
+  <Tab title="React Native">
+
+Disable analytics before native SDK startup through the Expo config plugin:
+
+```json
+{
+  "expo": {
+    "plugins": [
+      [
+        "@mentra/bluetooth-sdk",
+        {
+          "analytics": false
+        }
+      ]
+    ]
+  }
+}
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+val sdk = MentraBluetoothSdk.create(
+    context = applicationContext,
+    config = MentraBluetoothSdkConfig(
+        analytics = BluetoothSdkAnalyticsConfig.disabled()
+    ),
+    listener = listener,
+)
+```
+
+Android apps can also set application metadata before SDK startup:
+
+```xml
+<meta-data
+    android:name="com.mentra.bluetoothsdk.analytics.disabled"
+    android:value="true" />
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+let sdk = MentraBluetoothSDK(
+    configuration: MentraBluetoothSDKConfiguration(
+        analytics: .disabled
+    )
+)
+```
+
+iOS apps can also set `MentraBluetoothSdkAnalyticsDisabled` to `true` in
+`Info.plist` before SDK startup.
+
+  </Tab>
+</Tabs>
+
+Apps do not configure the analytics destination; these SDK usage events are
+always sent to Mentra's PostHog project unless analytics are disabled.
+
+Captured properties are intentionally narrow:
+
+| Property | Meaning |
+| --- | --- |
+| `event_source` | Always `mentra_bluetooth_sdk`. |
+| `sdk_platform` | Native platform that sends the event: `android` or `ios`. |
+| `sdk_surface` | Public SDK surface: `react_native`, `android`, or `ios`. |
+| `sdk_version` | Bluetooth SDK version. |
+| `app_package` / `app_bundle_identifier` | Consuming app identifier. |
+| `os_platform`, `os_version` | Phone OS metadata. |
+| `event_kind` | `sdk_started` or `glasses_connected`. |
+| `fully_booted` | Connection event only; whether the connected status already reports fully booted. |
+| `glasses_model` | Connection event only; included only when the SDK has a non-empty model value. |
+
+The SDK does not upload BLE MAC addresses, CoreBluetooth identifiers, serial
+numbers, Bluetooth device names, user ids, tokens, Wi-Fi credentials,
+microphone data, photos, or transcripts. It stores a locally generated
+anonymous SDK install id and sends it as PostHog `distinct_id`; events include
+`$process_person_profile: false` so PostHog does not create person profiles for
+these SDK usage pings.
+
 ## Connection
 
 <Tabs>
@@ -476,9 +575,9 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `ota_start_ack` | `OtaStartAckEvent` | Mentra Live acknowledges `startOtaUpdate()`. Also returned by `startOtaUpdate()`. |
 | `ota_status` | `OtaStatusEvent` | OTA step, phase, status, progress, or error changes. |
 
-For request/response commands, prefer the returned value from the method, such as the `PhotoSuccessResponseEvent` returned by React Native `requestPhoto(...)` or the operation-specific video result returned by React Native `startVideoRecording(...)` / `stopVideoRecording(...)`. `requestPhoto(...)` waits for the terminal `photo_response`: it resolves after the photo is captured and delivered to the webhook, and rejects if the glasses reject the request, the phone-side fallback upload fails, or the terminal response times out. `stopVideoRecording(...)` keeps the same end-to-end shape for video webhook stops: it waits for recording stop plus upload success, and rejects on upload failure. Capture/upload/Bluetooth fallback progress follows through `photo_status`, `media_success`, and `media_error`. Use event listeners for ongoing hardware streams and status updates: for example, `useBluetoothEvent('mic_pcm', ...)` receives a `MicPcmEvent`. `MicPcmEvent` includes `sampleRate`, `bitsPerSample`, `channels`, `encoding`, and `voiceActivityDetectionEnabled`; `MicLc3Event` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, `packetizedFromGlasses`, and `voiceActivityDetectionEnabled`. `speaking_status` is separate from microphone audio frames so apps can use continuous audio while still reacting to speech activity.
+For request/response commands, prefer the returned value from the method, such as the `PhotoSuccessResponseEvent` returned by React Native `requestPhoto(...)` or the operation-specific video result returned by React Native `startVideoRecording(...)` / `stopVideoRecording(...)`. `requestPhoto(...)` waits for the terminal `photo_response`: it resolves after the photo is captured and delivered to the webhook, and rejects if the glasses reject the request, the phone-side fallback upload fails, or the terminal response times out. `stopVideoRecording(...)` keeps the same end-to-end shape for video webhook stops: it waits for recording stop plus upload success, and rejects on upload failure. Photo capture/upload/Bluetooth fallback progress follows through `photo_status`; raw video upload completion arrives through `media_success` and `media_error` for listeners that need the glasses event stream directly. Use event listeners for ongoing hardware streams and status updates: for example, `useBluetoothEvent('mic_pcm', ...)` receives a `MicPcmEvent`. `MicPcmEvent` includes `sampleRate`, `bitsPerSample`, `channels`, `encoding`, and `voiceActivityDetectionEnabled`; `MicLc3Event` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, `packetizedFromGlasses`, and `voiceActivityDetectionEnabled`. `speaking_status` is separate from microphone audio frames so apps can use continuous audio while still reacting to speech activity.
 
-Public React Native event payload fields usually use camelCase. OTA events intentionally mirror the glasses firmware field names, such as `overall_percent` and `version_name`. For example, touch events expose `deviceModel` and `gestureName`, successful photo responses expose `uploadUrl` and may include webhook-returned `photoUrl`, `statusUrl`, `contentType`, and `fileSizeBytes`, hotspot errors expose `errorMessage`, Wi-Fi scan events expose `scanComplete`, and gallery status exposes `hasContent`, `cameraBusy`, and optional `cameraBusyReason`.
+Public React Native event payload fields usually use camelCase. OTA events intentionally mirror the glasses firmware field names, such as `overall_percent` and `version_name`. For example, touch events expose `deviceModel` and `gestureName`, successful photo responses expose `uploadUrl` and may include webhook-returned `photoUrl`, `statusUrl`, `contentType`, and `fileSizeBytes`, successful media upload events expose `requestId`, `mediaUrl`, and `mediaType`, hotspot errors expose `errorMessage`, Wi-Fi scan events expose `scanComplete`, and gallery status exposes `hasContent`, `cameraBusy`, and optional `cameraBusyReason`.
 
 ### Photo Status Metadata
 

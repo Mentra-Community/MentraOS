@@ -13,7 +13,8 @@
     "ui": "ui/index.html"
   },
   "permissions": [
-    {"type": "LOCATION", "description": "Used for live position, compass heading, and turn-by-turn directions"}
+    {"type": "LOCATION", "description": "Used for live position, compass heading, and turn-by-turn directions"},
+    {"type": "BACKGROUND_LOCATION", "description": "Used for live position, compass heading, and turn-by-turn directions"}
   ],
   "hardwareRequirements": [
     {"type": "DISPLAY", "level": "REQUIRED", "description": "Shows next maneuver and distance on glasses"}

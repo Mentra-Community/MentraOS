@@ -150,6 +150,55 @@ uses a CoreBluetooth identifier when available, and the SDK falls back to
 platform reports RSSI, so picker UI should handle `undefined` and avoid
 reordering rows just because RSSI metadata arrives later.
 
+## Mentra SDK Usage Analytics
+
+The SDK sends two anonymous usage events to Mentra's PostHog project by default
+so Mentra can understand SDK adoption and successful glasses connections:
+
+- `bluetooth_sdk_started`: sent once per app runtime after the native SDK starts.
+- `bluetooth_sdk_glasses_connected`: sent when SDK status transitions from not connected to connected.
+
+Analytics delivery is fire-and-forget: events are submitted asynchronously, do
+not block Bluetooth SDK behavior, and are not retried if delivery fails.
+
+React Native / Expo apps can disable these events before SDK startup through
+the config plugin:
+
+```json
+{
+  "expo": {
+    "plugins": [
+      [
+        "@mentra/bluetooth-sdk",
+        {
+          "analytics": false
+        }
+      ]
+    ]
+  }
+}
+```
+
+Native Android apps can pass `BluetoothSdkAnalyticsConfig.disabled()` in
+`MentraBluetoothSdkConfig` or add
+`com.mentra.bluetoothsdk.analytics.disabled=true` as application metadata.
+Native iOS apps can pass `.disabled` in `MentraBluetoothSDKConfiguration` or set
+`MentraBluetoothSdkAnalyticsDisabled` to `true` in `Info.plist`.
+
+Mentra's PostHog project API key is embedded in the SDK as a public analytics
+write token, not a private PostHog personal API key. Apps do not configure the
+analytics destination; these SDK usage events are always sent to Mentra's
+PostHog project unless analytics are disabled.
+
+Captured properties are limited to non-sensitive SDK/app metadata:
+`event_source`, `sdk_platform`, `sdk_surface`, `sdk_version`, the app package or
+bundle identifier, OS platform/version, `event_kind`, and for connection events
+only `fully_booted` plus a glasses model value when the SDK knows it. The SDK
+does not upload BLE MAC addresses, CoreBluetooth identifiers, serial numbers,
+Bluetooth device names, user ids, tokens, Wi-Fi credentials, microphone data,
+photos, or transcripts. PostHog receives a locally generated anonymous SDK
+install id as `distinct_id`, and events include `$process_person_profile: false`.
+
 ## React Hooks
 
 React Native apps can import optional lifecycle helpers from the `react`
@@ -409,7 +458,7 @@ For bare native iOS apps, use the public SwiftPM repository:
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Add the `MentraBluetoothSDK` product to your app target at version `0.1.11` or newer.
+Add the `MentraBluetoothSDK` product to your app target at version `0.1.12` or newer.
 
 For local SDK development, add this package folder directly in Xcode:
 
