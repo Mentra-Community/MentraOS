@@ -157,6 +157,19 @@ export default function PairingSuccessScreen() {
         },
       ]
       break
+    case DeviceTypes.NIMO:
+      steps = [
+        {
+          name: "Start Onboarding",
+          type: "image",
+          source: glassesImage,
+          containerClassName: "px-12",
+          transition: false,
+          title: translate("common:success"),
+          subtitle: translate("onboarding:nimoConnected"),
+        },
+      ]
+      break
     case DeviceTypes.G1:
     default:
       steps = [

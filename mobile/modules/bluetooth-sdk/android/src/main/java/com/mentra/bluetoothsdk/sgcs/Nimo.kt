@@ -134,6 +134,9 @@ internal object NimoProtocol {
 
     // enterApp modes
     const val APP_MODE_STANDALONE = 0x00
+    // Undocumented: defined in the vendor SDK constants (appModePopup) but never used there.
+    // Hardware-tested June 2026: does NOT remove the ASR view's time/battery status bar.
+    const val APP_MODE_POPUP = 0x01
 
     // widget resTypes
     const val WIDGET_TEXT_NEW = 0x00
