@@ -133,7 +133,7 @@ export default function DisplayPage() {
     const next = incrementCount(code)
     // First press: just the corner code. Subsequent presses: code + count.
     const label = `${code} ${next}`
-    invoke("showBitmapView", [makeBitmap(100, 100, label), {x, y, width: 100, height: 100}])
+    invoke("showBitmapView", [makeBitmap(100, 100, label), {x, y, width: 100, height: 100}]).catch(() => {})
   }
 
   const incrementCount = (code: CornerCode) => {
@@ -153,9 +153,9 @@ export default function DisplayPage() {
         <Label htmlFor="display-text">text</Label>
         <Input id="display-text" value={text} onChange={(e) => setText(e.target.value)} />
         <div className="mt-3 flex flex-col gap-2">
-          <Button onClick={() => invoke("showTextWall", [text])}>showTextWall(text)</Button>
-          <Button onClick={() => invoke("showReferenceCard", ["Title", text])}>showReferenceCard(title, text)</Button>
-          <Button onClick={() => invoke("showDoubleTextWall", ["Top", text])}>showDoubleTextWall(top, bottom)</Button>
+          <Button onClick={() => invoke("showTextWall", [text]).catch(() => {})}>showTextWall(text)</Button>
+          <Button onClick={() => invoke("showReferenceCard", ["Title", text]).catch(() => {})}>showReferenceCard(title, text)</Button>
+          <Button onClick={() => invoke("showDoubleTextWall", ["Top", text]).catch(() => {})}>showDoubleTextWall(top, bottom)</Button>
         </div>
 
         <p className="mb-2 mt-5 text-[13px] text-muted-foreground">
@@ -177,7 +177,7 @@ export default function DisplayPage() {
           <Button
             onClick={() => {
               let next = incrementCount("CE")
-              invoke("showBitmapView", [makeBitmap(100, 100, `CE ${next}`), {x: 288 - 100 / 2, y: 144 - 100 / 2, width: 100, height: 100}])
+              invoke("showBitmapView", [makeBitmap(100, 100, `CE ${next}`), {x: 288 - 100 / 2, y: 144 - 100 / 2, width: 100, height: 100}]).catch(() => {})
             }}>
             Center
           </Button>
@@ -187,7 +187,7 @@ export default function DisplayPage() {
               invoke("showBitmapView", [
                 makeBitmap(288, 144, `full ${next}`),
                 {x: 288 - 288 / 2, y: 144 - 144 / 2, width: 288, height: 144},
-              ])
+              ]).catch(() => {})
             }}>
             Large
           </Button>
@@ -198,7 +198,7 @@ export default function DisplayPage() {
             variant="destructive"
             onClick={() => {
               setCounts({TL: 0, TR: 0, BR: 0, BL: 0, CE: 0, full: 0})
-              invoke("clear", [])
+              invoke("clear", []).catch(() => {})
             }}>
             clearDisplay()
           </Button>

@@ -5,13 +5,13 @@ import {MiniappHeader} from "@mentra/miniapp/ui"
 
 import {useTester} from "../../hooks/useTester"
 import {Shell} from "../Shell"
-import {TableRow} from "./_TesterRow"
+import {ErrorRow, TableRow} from "./_TesterRow"
 
 export default function PhonePage() {
   const navigate = useNavigate()
-  const {log} = useTester("phone")
-  const lastNotif = [...log].reverse().find((e) => e.kind === "notification")
-  const lastBattery = [...log].reverse().find((e) => e.kind === "battery")
+  const {log, latestByKind, lastError} = useTester("phone")
+  const lastNotif = latestByKind("notification")
+  const lastBattery = latestByKind("battery")
   return (
     <Shell>
       <MiniappHeader title="session.phone" onBack={() => navigate("/")} />
@@ -33,6 +33,7 @@ export default function PhonePage() {
           label="last .onBattery()"
           data={lastBattery ? ((lastBattery.payload as unknown) as Record<string, unknown>) : null}
         />
+        <ErrorRow event={lastError} />
         <p className="mt-3 text-[12px] text-muted-foreground">{log.length} event(s) seen</p>
       </div>
     </Shell>

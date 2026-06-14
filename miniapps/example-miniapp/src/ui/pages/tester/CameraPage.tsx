@@ -1,7 +1,8 @@
-// Tester page — exercises session.camera. Background's TesterController
-// dispatches the call as a generic `tester:fire` → session.camera.takePhoto;
-// the result lands on the tester:event channel as `kind: "result"`.
+// Tester page — exercises session.camera via the `tester:invoke` RPC.
+// takePhoto() resolves through the RPC reply (the awaited return value of
+// invoke()), NOT a streamed tester:event — so capture it in local state.
 
+import {useState} from "react"
 import {useNavigate} from "react-router-dom"
 import {MiniappHeader} from "@mentra/miniapp/ui"
 
@@ -18,12 +19,16 @@ interface PhotoResult {
 
 export default function CameraPage() {
   const navigate = useNavigate()
-  const {latestByKind, log, fire, lastError} = useTester("camera")
+  const {invoke, lastError} = useTester("camera")
+  const [result, setResult] = useState<PhotoResult | undefined>(undefined)
 
-  const latestResult = latestByKind("result")
-  const result = latestResult
-    ? ((latestResult.payload as {result?: PhotoResult}).result as PhotoResult | undefined)
-    : undefined
+  const takePhoto = (size: "small" | "medium" | "large") => {
+    invoke("takePhoto", [{size}])
+      .then((r) => setResult(r as PhotoResult))
+      .catch(() => {
+        /* error already surfaced via lastError → ErrorRow */
+      })
+  }
 
   return (
     <Shell>
@@ -35,15 +40,9 @@ export default function CameraPage() {
           is a short-TTL (~24h) Cloudflare R2 signed URL.
         </p>
         <div className="mt-1 flex flex-col gap-2">
-          <Button onClick={() => fire("takePhoto", [{size: "small"}])}>
-            takePhoto(small)
-          </Button>
-          <Button onClick={() => fire("takePhoto", [{size: "medium"}])}>
-            takePhoto(medium)
-          </Button>
-          <Button onClick={() => fire("takePhoto", [{size: "large"}])}>
-            takePhoto(large)
-          </Button>
+          <Button onClick={() => takePhoto("small")}>takePhoto(small)</Button>
+          <Button onClick={() => takePhoto("medium")}>takePhoto(medium)</Button>
+          <Button onClick={() => takePhoto("large")}>takePhoto(large)</Button>
         </div>
         <Row
           emoji="🖼️"
@@ -52,14 +51,10 @@ export default function CameraPage() {
         />
         {result?.photoUrl && (
           <div className="mt-2 overflow-hidden rounded-xl border border-border">
-            {/* eslint-disable-next-line jsx-a11y/alt-text */}
-            <img src={result.photoUrl} className="w-full" />
+            <img src={result.photoUrl} alt="Photo captured by the glasses camera" className="w-full" />
           </div>
         )}
         <ErrorRow event={lastError} />
-        <p className="mt-3 text-[12px] text-muted-foreground">
-          {log.length} event(s) seen
-        </p>
       </div>
     </Shell>
   )

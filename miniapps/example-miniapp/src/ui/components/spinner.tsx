@@ -3,6 +3,8 @@ import {cn} from "./button"
 interface SpinnerProps {
   className?: string
   size?: "sm" | "default" | "lg"
+  /** Accessible label announced by assistive tech. */
+  label?: string
 }
 
 const sizeClasses = {
@@ -11,10 +13,12 @@ const sizeClasses = {
   lg: "h-6 w-6",
 }
 
-export function Spinner({className, size = "default"}: SpinnerProps) {
+export function Spinner({className, size = "default", label = "Loading"}: SpinnerProps) {
   return (
     <svg
       className={cn("animate-spin text-current", sizeClasses[size], className)}
+      role="status"
+      aria-label={label}
       xmlns="http://www.w3.org/2000/svg"
       fill="none"
       viewBox="0 0 24 24">

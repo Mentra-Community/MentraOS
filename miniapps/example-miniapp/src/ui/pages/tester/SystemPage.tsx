@@ -13,13 +13,27 @@ import {ErrorRow, TableRow} from "./_TesterRow"
 
 export default function SystemPage() {
   const navigate = useNavigate()
-  // We open a tester subscription so the result/error events from `invoke`
-  // calls flow back here as `tester:event`s. The system module itself
-  // has no streamed event surface.
-  const {log, invoke, lastError} = useTester("system")
-  const lastResult = [...log].reverse().find((e) => e.kind === "result")
+  // session.system is imperative-only — every action resolves through the
+  // `tester:invoke` RPC reply (the awaited return of invoke()), so capture
+  // the latest result in local state rather than off the event stream.
+  const {invoke, lastError} = useTester("system")
+  const [lastResult, setLastResult] = useState<Record<string, unknown> | null>(null)
   const [url, setUrl] = useState("https://mentra.glass")
   const [clipText, setClipText] = useState("Hello from session.system.copyToClipboard")
+
+  const run = (method: string, args: unknown[]) => {
+    invoke(method, args)
+      .then((r) =>
+        setLastResult(
+          r && typeof r === "object"
+            ? {method, ...(r as Record<string, unknown>)}
+            : {method, result: r ?? "(ok)"},
+        ),
+      )
+      .catch(() => {
+        /* error already surfaced via lastError → ErrorRow */
+      })
+  }
   return (
     <Shell>
       <MiniappHeader title="session.system" onBack={() => navigate("/")} />
@@ -31,21 +45,17 @@ export default function SystemPage() {
         <Label htmlFor="sys-url">URL</Label>
         <Input id="sys-url" value={url} onChange={(e) => setUrl(e.target.value)} />
         <div className="mt-2 flex flex-wrap gap-2">
-          <Button onClick={() => invoke("openUrl", [url])}>openUrl(url)</Button>
-          <Button onClick={() => invoke("share", [{url, title: "Shared from Mentra"}])}>
+          <Button onClick={() => run("openUrl", [url])}>openUrl(url)</Button>
+          <Button onClick={() => run("share", [{url, title: "Shared from Mentra"}])}>
             share({"{"}url, title{"}"})
           </Button>
         </div>
         <Label htmlFor="sys-clip" className="mt-4 block">clipboard text</Label>
         <Input id="sys-clip" value={clipText} onChange={(e) => setClipText(e.target.value)} />
         <div className="mt-2 flex gap-2">
-          <Button onClick={() => invoke("copyToClipboard", [clipText])}>copyToClipboard(text)</Button>
+          <Button onClick={() => run("copyToClipboard", [clipText])}>copyToClipboard(text)</Button>
         </div>
-        <TableRow
-          emoji="📨"
-          label="last invoke() result"
-          data={lastResult ? ((lastResult.payload as unknown) as Record<string, unknown>) : null}
-        />
+        <TableRow emoji="📨" label="last invoke() result" data={lastResult} ordered />
         <ErrorRow event={lastError} />
       </div>
     </Shell>

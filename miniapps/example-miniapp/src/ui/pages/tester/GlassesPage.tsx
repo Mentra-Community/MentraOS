@@ -9,9 +9,9 @@ import {TableRow} from "./_TesterRow"
 
 export default function GlassesPage() {
   const navigate = useNavigate()
-  const {log} = useTester("glasses")
-  const lastBattery = [...log].reverse().find((e) => e.kind === "battery")
-  const lastConnection = [...log].reverse().find((e) => e.kind === "connection")
+  const {log, latestByKind} = useTester("glasses")
+  const lastBattery = latestByKind("battery")
+  const lastConnection = latestByKind("connection")
   return (
     <Shell>
       <MiniappHeader title="session.glasses" onBack={() => navigate("/")} />

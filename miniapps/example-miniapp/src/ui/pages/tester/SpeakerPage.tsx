@@ -22,8 +22,8 @@ export default function SpeakerPage() {
         <Label htmlFor="speaker-phrase">phrase</Label>
         <Input id="speaker-phrase" value={phrase} onChange={(e) => setPhrase(e.target.value)} />
         <div className="mt-3 flex gap-2">
-          <Button onClick={() => invoke("speak", [phrase])}>speak(phrase)</Button>
-          <Button variant="destructive" onClick={() => invoke("stop", [])}>
+          <Button onClick={() => invoke("speak", [phrase]).catch(() => {})}>speak(phrase)</Button>
+          <Button variant="destructive" onClick={() => invoke("stop", []).catch(() => {})}>
             stop()
           </Button>
         </div>

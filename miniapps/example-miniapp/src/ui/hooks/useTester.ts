@@ -24,7 +24,9 @@ export function useTester(
   lastError: TesterEventPayload | null
   invoke: (method: string, args?: unknown[]) => Promise<unknown>
 } {
-  const windowSize = options.windowSize ?? 50
+  // Guard against 0 / negative — those disable trimming and let the log
+  // grow unbounded (`slice(-0)` returns the whole array).
+  const windowSize = Math.max(1, options.windowSize ?? 50)
   const [latest, setLatest] = useState<TesterEventPayload | null>(null)
   const [log, setLog] = useState<TesterEventPayload[]>([])
   const [lastError, setLastError] = useState<TesterEventPayload | null>(null)
@@ -33,6 +35,11 @@ export function useTester(
   const rpcInvoke = useRpc<Channels, "tester:invoke">("tester:invoke")
 
   useEffect(() => {
+    // Switching iface re-subscribes; clear the previous iface's state so a
+    // stale latest/log/lastError can't bleed into the new tester surface.
+    setLatest(null)
+    setLog([])
+    setLastError(null)
     mentra.send("tester:start", {iface})
     const unsub = mentra.on("tester:event", (raw) => {
       const ev = raw as TesterEventPayload

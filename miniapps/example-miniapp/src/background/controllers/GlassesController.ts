@@ -38,6 +38,10 @@ export class GlassesController {
   private history: string[] = []
   private lastButton = ""
   private mirrorToGlasses = false
+  // Tracked glasses-connection state. Seeded from session.ready in start(),
+  // then kept current by the glasses.onConnection subscription so the
+  // snapshot and the live `captions:connection-update` channel agree.
+  private connected = false
 
   constructor(private readonly session: MiniappSession) {}
 
@@ -45,6 +49,7 @@ export class GlassesController {
   start(): void {
     if (this.subscribed) return
     this.subscribed = true
+    this.connected = !!this.session.ready
 
     const ui = this.session.ui as unknown as {
       send: Send
@@ -78,49 +83,69 @@ export class GlassesController {
       }),
     )
 
+    // Glasses connection — push to the UI on every flip so the status dot
+    // stays accurate after a disconnect/reconnect while the page is open.
+    this.unsubs.push(
+      this.session.glasses.onConnection((data) => {
+        this.connected = data.connected
+        ui.send("captions:connection-update", {connected: data.connected})
+      }),
+    )
+
     // UI lifecycle — push a full snapshot every time a fresh WebView opens.
-    ui.onOpen(() => {
-      const caps = this.session.capabilities
-      ui.send("captions:snapshot", {
-        capabilities: {
-          hasCamera: !!(caps && (caps as Record<string, unknown>).hasCamera),
-          hasMicrophone: !!(caps && (caps as Record<string, unknown>).hasMicrophone),
-          hasDisplay: !!(caps && (caps as Record<string, unknown>).hasDisplay),
-          hasSpeaker: !!(caps && (caps as Record<string, unknown>).hasSpeaker),
-          hasWifi: !!(caps && (caps as Record<string, unknown>).hasWifi),
-          modelName: (caps as Record<string, unknown>)?.modelName as string | undefined,
-        },
-        connection: {connected: !!this.session.ready},
-        settings: {mirrorToGlasses: this.mirrorToGlasses},
-        liveTranscript: this.liveTranscript,
-        history: [...this.history],
-        lastButton: this.lastButton,
-      })
-    })
+    // Tracked in `unsubs` so stop() tears it down and a restart doesn't
+    // register a duplicate handler.
+    this.unsubs.push(
+      ui.onOpen(() => {
+        const caps = this.session.capabilities
+        ui.send("captions:snapshot", {
+          capabilities: {
+            hasCamera: !!(caps && (caps as Record<string, unknown>).hasCamera),
+            hasMicrophone: !!(caps && (caps as Record<string, unknown>).hasMicrophone),
+            hasDisplay: !!(caps && (caps as Record<string, unknown>).hasDisplay),
+            hasSpeaker: !!(caps && (caps as Record<string, unknown>).hasSpeaker),
+            hasWifi: !!(caps && (caps as Record<string, unknown>).hasWifi),
+            modelName: (caps as Record<string, unknown>)?.modelName as string | undefined,
+          },
+          connection: {connected: this.connected},
+          settings: {mirrorToGlasses: this.mirrorToGlasses},
+          liveTranscript: this.liveTranscript,
+          history: [...this.history],
+          lastButton: this.lastButton,
+        })
+      }),
+    )
 
-    // UI → background imperative channels.
-    ui.on("captions:clear", () => {
-      this.history = []
-      this.liveTranscript = ""
-      this.session.display.clear()
-      ui.send("captions:history-update", {history: []})
-      ui.send("captions:live-transcript", {text: ""})
-    })
+    // UI → background imperative channels. Tracked in `unsubs` so stop()
+    // detaches them and a restart can't stack duplicate handlers.
+    this.unsubs.push(
+      ui.on("captions:clear", () => {
+        this.history = []
+        this.liveTranscript = ""
+        this.session.display.clear()
+        ui.send("captions:history-update", {history: []})
+        ui.send("captions:live-transcript", {text: ""})
+      }),
+    )
 
-    ui.on("captions:speak-summary", async () => {
-      const last3 = this.history.slice(-3).join(". ")
-      const phrase = last3 ? `Here's what was said: ${last3}` : "Nothing to summarize yet."
-      try {
-        await this.session.speaker.speak(phrase)
-      } catch {
-        /* swallow — UI can poll session.speaker.state via background if needed */
-      }
-    })
+    this.unsubs.push(
+      ui.on("captions:speak-summary", async () => {
+        const last3 = this.history.slice(-3).join(". ")
+        const phrase = last3 ? `Here's what was said: ${last3}` : "Nothing to summarize yet."
+        try {
+          await this.session.speaker.speak(phrase)
+        } catch {
+          /* swallow — UI can poll session.speaker.state via background if needed */
+        }
+      }),
+    )
 
-    ui.on("captions:set-mirror", ({mirrorToGlasses}) => {
-      this.mirrorToGlasses = mirrorToGlasses
-      ui.send("captions:settings-update", {mirrorToGlasses})
-    })
+    this.unsubs.push(
+      ui.on("captions:set-mirror", ({mirrorToGlasses}) => {
+        this.mirrorToGlasses = mirrorToGlasses
+        ui.send("captions:settings-update", {mirrorToGlasses})
+      }),
+    )
   }
 
   stop(): void {

@@ -29,8 +29,13 @@ export default function LocationPage() {
   })()
 
   const requestOneShot = async () => {
-    const result = (await invoke("getOnce", [])) as Record<string, unknown>
-    setOneShotFix(result)
+    try {
+      const result = (await invoke("getOnce", [])) as Record<string, unknown>
+      setOneShotFix(result)
+    } catch {
+      // Error is surfaced via lastError → ErrorRow; the catch also prevents
+      // an unhandled promise rejection on a failed location request.
+    }
   }
 
   return (

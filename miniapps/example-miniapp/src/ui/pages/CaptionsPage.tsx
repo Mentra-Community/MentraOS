@@ -31,6 +31,7 @@ export default function CaptionsPage() {
   const historyUpdate = useChannel("captions:history-update")
   const lastButtonUpdate = useChannel("captions:last-button")
   const settingsUpdate = useChannel("captions:settings-update")
+  const connectionUpdate = useChannel("captions:connection-update")
 
   // Resolve a single render-time view of state, preferring hot updates
   // over the (older) snapshot. The hot-update channels arrive on every
@@ -40,7 +41,9 @@ export default function CaptionsPage() {
   const lastButton = lastButtonUpdate?.label ?? snapshot?.lastButton ?? ""
   const mirrorToGlasses = settingsUpdate?.mirrorToGlasses ?? snapshot?.settings?.mirrorToGlasses ?? false
   const capabilities = snapshot?.capabilities
-  const connected = snapshot?.connection?.connected ?? false
+  // Prefer the live connection-update channel (pushed on every connect/
+  // disconnect) over the open-time snapshot so the status dot stays current.
+  const connected = connectionUpdate?.connected ?? snapshot?.connection?.connected ?? false
 
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -61,6 +64,13 @@ export default function CaptionsPage() {
     mentra.send("captions:set-mirror", {mirrorToGlasses: v})
   }
   const mirrorChecked = pendingMirror ?? mirrorToGlasses
+  // Drop the optimistic value once background echoes the matching setting,
+  // so a later external change isn't masked by stale local state.
+  useEffect(() => {
+    if (pendingMirror !== null && mirrorToGlasses === pendingMirror) {
+      setPendingMirror(null)
+    }
+  }, [mirrorToGlasses, pendingMirror])
 
   return (
     <Shell>

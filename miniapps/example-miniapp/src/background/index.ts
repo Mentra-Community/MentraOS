@@ -19,6 +19,16 @@ import {GlassesController} from "./controllers/GlassesController"
 import {TesterController} from "./controllers/TesterController"
 
 registerMiniapp((session) => {
-  new GlassesController(session).start()
-  new TesterController(session).start()
+  // Start each controller independently — a throw in one must not prevent
+  // the other from initializing for this session.
+  try {
+    new GlassesController(session).start()
+  } catch (err) {
+    console.error("[example-miniapp] GlassesController failed to start", err)
+  }
+  try {
+    new TesterController(session).start()
+  } catch (err) {
+    console.error("[example-miniapp] TesterController failed to start", err)
+  }
 })

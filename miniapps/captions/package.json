@@ -1,7 +1,7 @@
 {
   "name": "captions-miniapp",
   "private": true,
-  "description": "Example MentraOS miniapp demonstrating the @mentra/miniapp SDK",
+  "description": "Live captions for MentraOS smart glasses — real-time speech transcription with history and optional mirroring to the glasses display",
   "scripts": {
     "dev": "mentra-miniapp dev",
     "build": "bun run build.ts",

@@ -12,11 +12,11 @@ import {Row, TableRow} from "./_TesterRow"
 
 export default function InputPage() {
   const navigate = useNavigate()
-  const {log} = useTester("input")
+  const {latestByKind} = useTester("input")
 
   // Pull the most-recent event of each kind out of the log.
-  const lastButton = lastOfKind(log, "button")
-  const lastTouch = lastOfKind(log, "touch")
+  const lastButton = latestByKind("button")
+  const lastTouch = latestByKind("touch")
 
   return (
     <Shell>
@@ -43,11 +43,4 @@ export default function InputPage() {
       </div>
     </Shell>
   )
-}
-
-function lastOfKind<T extends {kind: string}>(log: T[], kind: string): T | null {
-  for (let i = log.length - 1; i >= 0; i--) {
-    if (log[i]!.kind === kind) return log[i]!
-  }
-  return null
 }

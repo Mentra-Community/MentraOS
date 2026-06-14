@@ -10,8 +10,8 @@ import {Row, TableRow} from "./_TesterRow"
 
 export default function TranscriptionPage() {
   const navigate = useNavigate()
-  const {latest, log} = useTester("transcription")
-  const lastFinal = [...log].reverse().find((e) => e.kind === "final")
+  const {latest, latestByKind} = useTester("transcription")
+  const lastFinal = latestByKind("final")
   return (
     <Shell>
       <MiniappHeader title="session.transcription" onBack={() => navigate("/")} />

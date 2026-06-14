@@ -52,16 +52,16 @@ export default function LedPage() {
           onChange={(e) => setDurationMs(e.target.value)}
         />
         <div className="mt-3 grid grid-cols-2 gap-2">
-          <Button onClick={() => invoke("turnOn", [{color, ontime: duration, count: 1}])}>
+          <Button onClick={() => invoke("turnOn", [{color, ontime: duration, count: 1}]).catch(() => {})}>
             turnOn({color}, {duration}ms)
           </Button>
-          <Button onClick={() => invoke("solid", [color, duration])}>
+          <Button onClick={() => invoke("solid", [color, duration]).catch(() => {})}>
             solid({color}, {duration})
           </Button>
-          <Button onClick={() => invoke("blink", [color, 250, 250, 4])}>
+          <Button onClick={() => invoke("blink", [color, 250, 250, 4]).catch(() => {})}>
             blink({color}, 250, 250, 4)
           </Button>
-          <Button variant="destructive" onClick={() => invoke("turnOff", [])}>
+          <Button variant="destructive" onClick={() => invoke("turnOff", []).catch(() => {})}>
             turnOff()
           </Button>
         </div>

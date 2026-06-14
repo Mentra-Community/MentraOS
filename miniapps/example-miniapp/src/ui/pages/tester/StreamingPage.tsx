@@ -7,9 +7,11 @@
 //     mints an ingest URL + playback URLs (HLS/DASH/WHEP). Once HLS is ready
 //     we embed Cloudflare's hosted player so you can see what the viewer sees.
 //
-// Status events from glasses publisher, Cloudflare poll, and the coordinator
-// itself all flow through the same `stream_status` event channel, so the
-// timeline at the bottom shows everything in chronological order.
+// start*() resolve through the `tester:invoke` RPC reply (the awaited return
+// of invoke()), so the start result is captured in local state. Status events
+// from glasses publisher, Cloudflare poll, and the coordinator itself flow
+// through the `stream_status` event channel as `kind:"status"`, so the timeline
+// at the bottom shows everything in chronological order.
 
 import {useMemo, useState} from "react"
 import {useNavigate} from "react-router-dom"
@@ -22,18 +24,18 @@ import {Input} from "../../components/input"
 import {Label} from "../../components/label"
 import {ErrorRow} from "./_TesterRow"
 
-interface ManagedStartResult {
+// Mirrors the SDK's StreamPublisherStartResult / ManagedStreamResult.
+// Both unmanaged and managed resolve to an object: unmanaged gives
+// {streamId, status}; managed additionally carries the Cloudflare playback
+// fields. `hlsUrl` (managed-only) is the discriminator below.
+interface StreamStartResult {
   streamId: string
-  liveInputId: string
-  hlsUrl: string
-  dashUrl: string
+  status?: string
+  liveInputId?: string
+  hlsUrl?: string
+  dashUrl?: string
   webrtcUrl?: string
 }
-
-// SDK returns a bare string (the streamId) from startUnmanaged(). Modeling it
-// explicitly so the type guard below — `typeof result === "string"` vs object
-// shape — is exhaustive.
-type StartResult = string | ManagedStartResult
 
 type StatusEvent = {
   streamId?: string
@@ -44,13 +46,24 @@ type StatusEvent = {
 
 export default function StreamingPage() {
   const navigate = useNavigate()
-  const {latestByKind, log, fire, lastError} = useTester("stream")
+  const {log, invoke, lastError} = useTester("stream")
   const [unmanagedUrl, setUnmanagedUrl] = useState("rtmp://")
+  const [result, setResult] = useState<StreamStartResult | undefined>(undefined)
 
-  const lastResultEvent = latestByKind("result")
-  const result: StartResult | undefined = lastResultEvent
-    ? ((lastResultEvent.payload as {result?: unknown}).result as StartResult | undefined)
-    : undefined
+  const start = (method: "startUnmanaged" | "startManaged", args: unknown[]) => {
+    invoke(method, args)
+      .then((r) => setResult(r as StreamStartResult))
+      .catch(() => {
+        /* error already surfaced via lastError → ErrorRow */
+      })
+  }
+  const stop = () => {
+    invoke("stop", [])
+      .then(() => setResult(undefined))
+      .catch(() => {
+        /* error already surfaced via lastError → ErrorRow */
+      })
+  }
 
   // Status events, newest first, capped for sanity.
   const statusEvents = useMemo(
@@ -63,11 +76,8 @@ export default function StreamingPage() {
     [log],
   )
 
-  // Distinguish the two shapes: unmanaged returns a bare streamId string,
-  // managed returns a {streamId, liveInputId, hlsUrl, ...} object.
-  const managed: ManagedStartResult | null =
-    result && typeof result === "object" && "hlsUrl" in result ? result : null
-  const unmanagedStreamId: string | null = typeof result === "string" ? result : null
+  // Managed start results carry Cloudflare playback URLs; unmanaged don't.
+  const managed = result?.hlsUrl ? result : null
 
   // Cloudflare hosted-player iframe. The streamId we get back is phone-minted
   // (`phone-m-...`), so use the Cloudflare liveInputId surfaced explicitly on
@@ -94,11 +104,11 @@ export default function StreamingPage() {
           placeholder="rtmp://your.server/app/key"
         />
         <div className="mt-2 flex flex-col gap-2">
-          <Button onClick={() => fire("startUnmanaged", [{streamUrl: unmanagedUrl}])}>
+          <Button onClick={() => start("startUnmanaged", [{streamUrl: unmanagedUrl}])}>
             startUnmanaged(streamUrl)
           </Button>
-          <Button onClick={() => fire("startManaged", [{}])}>startManaged()</Button>
-          <Button variant="destructive" onClick={() => fire("stop", [])}>
+          <Button onClick={() => start("startManaged", [{}])}>startManaged()</Button>
+          <Button variant="destructive" onClick={stop}>
             stop()
           </Button>
         </div>
@@ -107,7 +117,7 @@ export default function StreamingPage() {
           <div className="mt-3 rounded-xl border border-border bg-muted/30 px-4 py-3 text-[12px]">
             <div className="font-semibold text-foreground">latest start result</div>
             <div className="mt-1 break-all font-mono text-muted-foreground">
-              streamId: {managed?.streamId ?? unmanagedStreamId}
+              streamId: {result.streamId}
             </div>
             {managed?.hlsUrl && (
               <div className="mt-1 break-all font-mono text-muted-foreground">

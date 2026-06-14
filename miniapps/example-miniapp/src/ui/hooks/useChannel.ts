@@ -1,4 +1,4 @@
-import {useEffect, useState} from "react"
+import {useEffect, useRef, useState} from "react"
 
 import type {Channels} from "../../shared/channels"
 
@@ -21,7 +21,13 @@ export function useChannel<C extends keyof Channels & string>(
   initial?: Channels[C],
 ): Channels[C] | undefined {
   const [value, setValue] = useState<Channels[C] | undefined>(initial)
+  // Hold `initial` in a ref so resetting on channel change doesn't make the
+  // effect re-run on every render when callers pass an inline object literal.
+  const initialRef = useRef(initial)
   useEffect(() => {
+    // Switching channel re-subscribes; reset to the seed so a payload from
+    // the previous channel can't render as if it belonged to the new one.
+    setValue(initialRef.current)
     // `mentra.on` rejects RPC channels at the type level. This hook is
     // intentionally a thin pass-through over any channel name; the cast
     // tells TS to trust the runtime — non-broadcast channels just won't

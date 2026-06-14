@@ -22,8 +22,13 @@ export default function ImuPage() {
   // auto-enables on subscribe, so these are an override / diagnostic.
   const [imuEnabled, setImuEnabled] = useState(true)
   const setEnabled = async (next: boolean) => {
-    await invoke("setEnabled", [next])
-    setImuEnabled(next)
+    try {
+      await invoke("setEnabled", [next])
+      setImuEnabled(next)
+    } catch {
+      // Leave the toggle as-is on failure; the error is surfaced via
+      // lastError → ErrorRow. The catch also prevents an unhandled rejection.
+    }
   }
 
   return (
