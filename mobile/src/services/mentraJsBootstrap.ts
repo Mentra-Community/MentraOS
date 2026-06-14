@@ -96,7 +96,11 @@ export function bootstrapMentraJS() {
             return false
           }
         }
-        return useAppStatusStore.getState().start(app)
+        // Native offline built-ins / cloud apps have no background-only mode, so
+        // they go through the normal start (which runs the host gates — hardware
+        // compat, captions STT/transcriber setup, etc.). But pass skipNavigation
+        // so an intent-start still never changes the user's route.
+        return useAppStatusStore.getState().start(app, {skipNavigation: true})
       },
       stopApp: (pkg: string) => useAppStatusStore.getState().stop(pkg),
       // Headless wake for action invoke: spawn the background context + wait for

@@ -2709,6 +2709,26 @@ class LocalMiniappRuntime {
       return
     }
 
+    // The wake waited for CONNECT, but the target could have dropped in the gap
+    // before delivery — fail fast rather than arming a timer for a call that
+    // sendToMiniapp would silently drop (the caller would otherwise wait the
+    // full invoke timeout for an ACTION_CALL that was never delivered).
+    if (!this.connectedApps.has(target)) {
+      this.sendResult(callerPackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.WAKE_FAILED,
+        message: `${target} disconnected before the action could be delivered`,
+      })
+      this.auditInterop({
+        caller: callerPackageName,
+        op: "invoke",
+        target,
+        actionId,
+        ok: false,
+        errorCode: MiniappErrorCode.WAKE_FAILED,
+      })
+      return
+    }
+
     // Deliver the call and arm the handler timeout; ACTION_RESULT resolves it.
     const callId = `act-${Date.now().toString(36)}-${this.actionCallSeq++}`
     const timer = BgTimer.setTimeout(() => {
