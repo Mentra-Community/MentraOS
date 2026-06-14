@@ -38,9 +38,12 @@ export class GlassesController {
   private history: string[] = []
   private lastButton = ""
   private mirrorToGlasses = false
-  // Tracked glasses-connection state. Seeded from session.ready in start(),
-  // then kept current by the glasses.onConnection subscription so the
-  // snapshot and the live `captions:connection-update` channel agree.
+  // Tracked glasses-link state. Starts unknown (false); the
+  // glasses.onConnection subscription sets it on initial bind and on every
+  // flip, keeping the snapshot and the live `captions:connection-update`
+  // channel in agreement. Deliberately NOT seeded from session.ready —
+  // that's host-session readiness (CONNECT_ACK), not the glasses link, and
+  // would falsely read "connected" until the first onConnection arrives.
   private connected = false
 
   constructor(private readonly session: MiniappSession) {}
@@ -49,7 +52,6 @@ export class GlassesController {
   start(): void {
     if (this.subscribed) return
     this.subscribed = true
-    this.connected = !!this.session.ready
 
     const ui = this.session.ui as unknown as {
       send: Send

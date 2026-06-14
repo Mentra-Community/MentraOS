@@ -6,7 +6,7 @@
   "description": "Reference miniapp for the @mentra/miniapp SDK. Demonstrates transcription, text wall display, TTS, button events, and the full per-iface SDK Tester surface.",
   "icon": "icon.png",
   "type": "standard",
-  "sdkVersion": "0.2.0",
+  "sdkVersion": "0.3.0",
   "minHostVersion": "1.42.0",
   "entry": {
     "background": "background/index.js",
