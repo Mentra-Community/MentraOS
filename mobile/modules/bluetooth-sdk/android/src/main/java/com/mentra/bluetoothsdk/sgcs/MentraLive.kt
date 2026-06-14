@@ -4654,11 +4654,19 @@ class MentraLive : SGCManager() {
     /**
      * Send OTA start command to glasses. Called when user approves an update (onboarding or
      * background mode). Triggers glasses to begin download and installation.
+     *
+     * When [otaVersionUrl] is non-null it is sent as the `ota_version_url` field so the glasses
+     * download from that manifest; asg_client's OtaCommandHandler reads and validates that field
+     * (it must be an http(s) URL). A null url omits the field, leaving the glasses to fall back to
+     * their prefetched/default version manifest.
      */
-    fun sendOtaStart() {
+    fun sendOtaStart(otaVersionUrl: String? = null) {
         try {
             val json = JSONObject()
             json.put("type", "ota_start")
+            if (otaVersionUrl != null) {
+                json.put("ota_version_url", otaVersionUrl)
+            }
             json.put("timestamp", System.currentTimeMillis())
             sendJson(json, true)
             Bridge.log("LIVE: 📱 Sending ota_start command to glasses")

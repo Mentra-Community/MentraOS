@@ -156,6 +156,7 @@ export default function MiniappDeveloperUrlScreen() {
         devUrl: entry.url,
         permissions: manifest.permissions as DevAppRecord["permissions"],
         hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+        actions: manifest.actions as DevAppRecord["actions"],
       })
 
       // launchDevMiniapp re-runs the reachability + manifest fetch (cheap;

@@ -82,6 +82,7 @@ function buildMockRuntime() {
   const handleRawCalls: Array<{packageName: string; raw: string}> = []
   const unregisterCalls: string[] = []
   const setManifestCalls: Array<{packageName: string; installedManifest: unknown}> = []
+  const resetHandshakeCalls: string[] = []
   const runtime = {
     registerApp(packageName: string, sendFn: (raw: string) => void, installedManifest?: unknown) {
       registerCalls.push({packageName, sendFn, installedManifest})
@@ -95,8 +96,11 @@ function buildMockRuntime() {
     setInstalledManifest(packageName: string, installedManifest: unknown) {
       setManifestCalls.push({packageName, installedManifest})
     },
+    resetHandshake(packageName: string) {
+      resetHandshakeCalls.push(packageName)
+    },
   } as unknown as LocalMiniappRuntime
-  return {runtime, registerCalls, handleRawCalls, unregisterCalls, setManifestCalls}
+  return {runtime, registerCalls, handleRawCalls, unregisterCalls, setManifestCalls, resetHandshakeCalls}
 }
 
 function silentLogger() {
@@ -140,9 +144,7 @@ describe("MentraJSRouter", () => {
       method: "send",
       args: ['{"type":"DISPLAY","text":"hi"}'],
     })
-    expect(runtimeMock.handleRawCalls).toEqual([
-      {packageName: "com.foo", raw: '{"type":"DISPLAY","text":"hi"}'},
-    ])
+    expect(runtimeMock.handleRawCalls).toEqual([{packageName: "com.foo", raw: '{"type":"DISPLAY","text":"hi"}'}])
   })
 
   test("__bridge.send (argsJson string form) routes raw envelope into handleRawMessage", () => {

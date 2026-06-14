@@ -1,0 +1,80 @@
+---
+title: Miniapp Interop & Actions
+description: Let one miniapp discover, launch, and trigger actions in another. The capability layer Mentra AI uses to drive your miniapp.
+icon: arrows-left-right
+---
+
+Miniapps can expose **actions** — typed, described capabilities that other miniapps can invoke — and **system** miniapps (Mentra AI first) can list, start, stop, and invoke actions on other miniapps. The surface splits into two namespaces:
+
+- **`session.miniapps`** — discover and control the lifecycle of *other* miniapps (`list` / `start` / `stop`). **SYSTEM-only.**
+- **`session.actions`** — the action layer, both directions: `invoke` (call another miniapp's action — **SYSTEM-only**) and `handle` (expose one of your own — **open to every miniapp**).
+
+Actions map 1:1 onto [MCP](https://modelcontextprotocol.io) tools (`id`→`name`, `description`, `parameters`→`inputSchema`), so the same declarations that let Mentra AI call your miniapp can be surfaced to external agents later.
+
+## Exposing actions (any miniapp)
+
+Declare actions in `miniapp.json`, then handle them in your **background** layer.
+
+```json miniapp.json
+{
+  "actions": [
+    {
+      "id": "add_todo",
+      "description": "Add an item to the user's todo list. Use when the user asks to remember, note, or add something.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": { "type": "string", "description": "The todo item text" }
+        },
+        "required": ["text"]
+      }
+    }
+  ]
+}
+```
+
+```ts background/index.ts
+session.actions.handle("add_todo", async (params, ctx) => {
+  // ctx.callerPackageName is host-stamped — trustworthy.
+  await todos.add(String(params.text))
+  return {ok: true, count: todos.size}
+})
+```
+
+Rules:
+
+- **`id`** — `^[a-z][a-z0-9_]*$`, unique within your miniapp, ≤64 chars.
+- **`description`** — required, non-empty. This is the AI-facing contract; say *when* to use the action.
+- **`parameters`** — a JSON-Schema object (the MCP subset): top-level `type: "object"`, `properties` typed `string` / `number` / `boolean` / `array` (of primitives), plus `enum`, `description`, `items`, and a top-level `required` array. Use `number`, not `integer`.
+- One handler per `id` — registering twice throws. A thrown handler rejects the caller's `invoke()`. The return value is delivered back to the caller (max 256 KB serialized).
+
+## Calling another miniapp (system miniapps)
+
+```ts
+// Discover — compatible miniapps only by default; each carries its declared actions.
+const apps = await session.miniapps.list()
+const apps2 = await session.miniapps.list({includeIncompatible: true})
+
+// Lifecycle — start runs the miniapp in the BACKGROUND: it spawns the
+// background context and reports as running, without changing the user's phone
+// navigation or foregrounding anything (its WebView mounts only if opened).
+await session.miniapps.start("com.mentra.todo")
+await session.miniapps.stop("com.mentra.todo")
+
+// Invoke — wakes the target headlessly if it's stopped, runs the handler, returns the result.
+const res = await session.actions.invoke("com.mentra.todo", "add_todo", {text: "milk"}, {timeoutMs: 30000})
+```
+
+`invoke` (and all of `session.miniapps`) reject with `NOT_PERMITTED` unless your miniapp is a system app. `handle` is always available.
+
+### Errors
+
+`invoke()` rejects with a `{code, message}` where `code` is one of: `NOT_PERMITTED`, `APP_NOT_FOUND`, `APP_NOT_COMPATIBLE`, `ACTION_NOT_FOUND`, `NO_ACTION_HANDLER`, `WAKE_FAILED`, `ACTION_TIMEOUT`, `PAYLOAD_TOO_LARGE`, or the target handler's own error.
+
+## How a wake works
+
+Invoking an action on a stopped miniapp **headlessly wakes** it: the host spawns its background JS context (no UI, no foreground change — your current app is never disturbed), waits for its `CONNECT` handshake, delivers the call, and returns the handler's result. The woken miniapp keeps running until it is explicitly stopped.
+
+<Note>
+Interop is **SYSTEM-only** in v1 — `list` / `start` / `stop` / `invoke` are restricted to system miniapps (Mentra AI). Exposing actions via `handle` is open to everyone, so your miniapp is invokable by Mentra AI today.
+</Note>

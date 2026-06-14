@@ -22,7 +22,7 @@ import {unzip} from "react-native-zip-archive"
 import semver from "semver"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
-import type {AppletPermission, AppPermissionType, ClientApp} from "../types/applet"
+import type {AppletPermission, AppPermissionType, ClientApp, DeclaredAction} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
@@ -63,6 +63,29 @@ export function normalizeManifestPermissions(
           ...(typeof p.description === "string" ? {description: p.description} : {}),
         })
       }
+    }
+  }
+  return out
+}
+
+/**
+ * Normalize a manifest's `actions` into DeclaredAction[]. Defensive — keeps only
+ * well-formed `{id, description}` entries (installed/dev bundles may be
+ * malformed). Shared by installed (disk) and dev-sideload projection so both
+ * surface declared actions to session.miniapps.list + the invoke gate.
+ */
+export function normalizeManifestActions(raw: unknown): DeclaredAction[] {
+  if (!Array.isArray(raw)) return []
+  const out: DeclaredAction[] = []
+  for (const a of raw as Array<{id?: unknown; description?: unknown; parameters?: unknown}>) {
+    if (a && typeof a.id === "string" && typeof a.description === "string") {
+      out.push({
+        id: a.id,
+        description: a.description,
+        ...(a.parameters && typeof a.parameters === "object"
+          ? {parameters: a.parameters as Record<string, unknown>}
+          : {}),
+      })
     }
   }
   return out
@@ -469,10 +492,10 @@ class AppRegistry {
     this.notify()
   }
 
-  public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string, version: string, name: string}, Error> {
+  public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string; version: string; name: string}, Error> {
     return Res.try_async(async () => {
       const trimmed = baseUrl.replace(/\/$/, "")
-  
+
       const manifestRes = await fetch(`${trimmed}/miniapp.json`)
       if (!manifestRes.ok) {
         throw new Error(`Failed to fetch miniapp.json: ${manifestRes.status}`)
@@ -483,10 +506,10 @@ class AppRegistry {
       const name = (manifest.name as string | undefined) ?? packageName ?? "Mini app"
       if (!packageName) throw new Error("miniapp.json missing packageName")
       if (!version) throw new Error("miniapp.json missing version")
-  
+
       const installRes = await appRegistry.installFromUrl(`${trimmed}/bundle.zip`)
       if (installRes.is_error()) throw installRes.error
-  
+
       return {packageName, version, name}
     })
   }
@@ -706,10 +729,14 @@ class AppRegistry {
         const manifest = this.getMiniappManifest(lmaInfo.packageName, versionString) as {
           permissions?: Array<string | {type: string; required?: boolean; description?: string}>
           hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+          actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
         } | null
 
         const permissions = normalizeManifestPermissions(manifest?.permissions)
         const hardwareRequirements = buildHardwareRequirements(manifest?.hardwareRequirements, lmaInfo.packageName)
+
+        // Declared actions (for session.miniapps.list + invoke gating).
+        const actions = normalizeManifestActions(manifest?.actions)
 
         // Dev miniapps live in the same lmas/ tree as installed ones, but
         // their version directory name starts with "dev-".
@@ -736,6 +763,10 @@ class AppRegistry {
           type: "standard",
           permissions,
           hardwareRequirements,
+          // Always project actions (even []) so the invoke gate can enforce
+          // declared-action membership unconditionally — an app with no declared
+          // actions must reject every invoke, not bypass the check.
+          actions,
           ...(isMiniappDev ? {isMiniappDev: true} : {}),
           ...(devUrl ? {devUrl} : {}),
           onStart: () => saveLocalAppRunningState(lmaInfo.packageName, true),
@@ -789,6 +820,7 @@ class AppRegistry {
         type: "standard",
         permissions,
         hardwareRequirements,
+        actions: normalizeManifestActions(rec.actions),
         isMiniappDev: true,
         devUrl: rec.devUrl,
         onStart: () => saveLocalAppRunningState(rec.packageName, true),
@@ -805,7 +837,7 @@ class AppRegistry {
     return this.offlineApps.map((a) => {
       const running = getLocalAppRunningState(a.packageName)
       const screenshot = getLocalAppScreenshot(a.packageName)
-      
+
       return {...a, running, screenshot}
     })
   }
@@ -869,6 +901,8 @@ export interface DevAppRecord {
   devPort?: number
   permissions?: Array<string | {type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+  /** Manifest-declared actions — so dev-sideloaded miniapps can be invoked too. */
+  actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
   /**
    * The dev miniapp's real manifest package name. `packageName` is overwritten to
    * {@link DEV_APP_PACKAGE_NAME} so the launch chain routes consistently, so this field

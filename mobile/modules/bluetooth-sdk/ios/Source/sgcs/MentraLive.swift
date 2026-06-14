@@ -1234,6 +1234,9 @@ class MentraLive: NSObject, SGCManager {
     func getBatteryStatus() {}
     func setBrightness(_: Int, autoMode _: Bool) {}
     func clearDisplay() {}
+    func sendText(_ text: String) async {
+        await sendTextWall(text)
+    }
     func sendTextWall(_: String) async {}
     func ping() {
         Bridge.log("LIVE: ping()")

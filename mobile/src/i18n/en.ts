@@ -535,6 +535,7 @@ const en = {
     glassesWifiDescription: "Configure WiFi settings for your smart glasses.",
     wifiUnavailable: "Connect a pair of glasses that support WiFi to access WiFi settings.",
     debugSettings: "Debug settings",
+    developerSettings: "Developer settings",
     miniappDeveloperSettings: "Miniapp Developer Settings",
     disconnectGlasses: "Disconnect Glasses",
     forgetGlasses: "Unpair glasses",

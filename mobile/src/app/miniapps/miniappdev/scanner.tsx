@@ -18,7 +18,7 @@ import {
 } from "@mentra/island"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
-import { DEV_APP_NAME } from "@mentra/island/src/services/AppRegistry"
+import {DEV_APP_NAME} from "@mentra/island/src/services/AppRegistry"
 
 export default function MiniappDeveloperScannerScreen() {
   const {theme} = useAppTheme()
@@ -130,6 +130,7 @@ export default function MiniappDeveloperScannerScreen() {
           devPort: Number.isFinite(portNum) ? portNum : undefined,
           permissions: manifest.permissions as DevAppRecord["permissions"],
           hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+          actions: manifest.actions as DevAppRecord["actions"],
         })
       }
 
@@ -205,7 +206,11 @@ export default function MiniappDeveloperScannerScreen() {
               tx="debugSettings:miniappScanPermissionBody"
             />
             <Button
-              tx={permission.canAskAgain ? "debugSettings:miniappScanGrantAccess" : "debugSettings:miniappScanOpenSettings"}
+              tx={
+                permission.canAskAgain
+                  ? "debugSettings:miniappScanGrantAccess"
+                  : "debugSettings:miniappScanOpenSettings"
+              }
               onPress={async () => {
                 if (permission.canAskAgain) {
                   await requestPermission()
@@ -228,7 +233,11 @@ export default function MiniappDeveloperScannerScreen() {
 
   return (
     <Screen preset="fixed">
-      <Header title={translate("debugSettings:miniappScanTitle")} leftIcon="chevron-left" onLeftPress={() => goBack()} />
+      <Header
+        title={translate("debugSettings:miniappScanTitle")}
+        leftIcon="chevron-left"
+        onLeftPress={() => goBack()}
+      />
 
       <View className="px-4 pt-2 pb-4 gap-2">
         <Text className="text-base font-semibold" tx="debugSettings:miniappScanHeadline" />

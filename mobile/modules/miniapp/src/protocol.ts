@@ -113,6 +113,18 @@ export enum MiniappRequestType {
   STREAM_STOP = "miniapp_stream_stop",
   MANAGED_STREAM_START = "miniapp_managed_stream_start",
   MANAGED_STREAM_STOP = "miniapp_managed_stream_stop",
+
+  // ----- Inter-miniapp interop (SYSTEM apps only) -----
+  /** List installed miniapps (compatibility-filtered, with declared actions). */
+  MINIAPPS_LIST = "miniapp_apps_list",
+  /** Start another miniapp (user-tap semantics). */
+  MINIAPPS_START = "miniapp_apps_start",
+  /** Stop another miniapp. */
+  MINIAPPS_STOP = "miniapp_apps_stop",
+  /** Invoke a declared action on another miniapp; headless-wakes it if stopped. */
+  ACTION_INVOKE = "miniapp_action_invoke",
+  /** Target → host: the result of a delivered ACTION_CALL, correlated by callId. */
+  ACTION_RESULT = "miniapp_action_result",
 }
 
 // ============================================================================
@@ -154,6 +166,14 @@ export enum MiniappResponseType {
 
   /** Reply to PING. SDK auto-handles this; developers never see it. */
   PONG = "miniapp_pong",
+
+  /**
+   * Host → target: deliver an action call (from another miniapp's
+   * session.actions.invoke) to this miniapp's session.actions.handle handler.
+   * Carries {callId, actionId, params, callerPackageName}. The SDK runs the
+   * handler and replies with an ACTION_RESULT request keyed by callId.
+   */
+  ACTION_CALL = "miniapp_action_call",
 
   /**
    * Push: phone is about to tear down the miniapp's session. Gives the SDK
@@ -242,4 +262,22 @@ export enum MiniappErrorCode {
 
   /** Not connected / pre-ACK and transport closed. */
   NOT_CONNECTED = "NOT_CONNECTED",
+
+  // ----- Inter-miniapp interop -----
+  /** Caller is not a system app — interop APIs (list/start/stop/invoke) are SYSTEM-only. */
+  NOT_PERMITTED = "NOT_PERMITTED",
+  /** Target miniapp is not installed. */
+  APP_NOT_FOUND = "APP_NOT_FOUND",
+  /** Target miniapp is incompatible with the connected glasses. */
+  APP_NOT_COMPATIBLE = "APP_NOT_COMPATIBLE",
+  /** Target miniapp does not declare the requested action. */
+  ACTION_NOT_FOUND = "ACTION_NOT_FOUND",
+  /** Target connected but never registered a handler for the action (within the buffer window). */
+  NO_ACTION_HANDLER = "NO_ACTION_HANDLER",
+  /** Target failed to wake / complete its CONNECT handshake for an invoke. */
+  WAKE_FAILED = "WAKE_FAILED",
+  /** Action handler did not return within the caller's timeout. */
+  ACTION_TIMEOUT = "ACTION_TIMEOUT",
+  /** Action params or result exceeded the 256 KB size cap. */
+  PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE",
 }
