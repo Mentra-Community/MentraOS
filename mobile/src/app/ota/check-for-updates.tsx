@@ -9,7 +9,7 @@ import {Screen, Header, Button, Text, Icon} from "@/components/ignite"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {checkForOtaUpdate, OTA_VERSION_URL_PROD} from "@/effects/OtaUpdateChecker"
+import {checkForOtaUpdate, getAsgOtaVersionUrl} from "@/effects/OtaUpdateChecker"
 import {translate} from "@/i18n/translate"
 import {isGlassesConnected, selectGlassesConnected, useGlassesStore, waitForGlassesState} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
@@ -178,8 +178,9 @@ export default function OtaCheckForUpdatesScreen() {
           console.warn("OTA: Failed to refresh version_info before OTA compare:", error)
         })
 
+        const otaVersionUrl = getAsgOtaVersionUrl(useGlassesStore.getState().otaVersionUrl, currentBuildNumber)
         const result = await checkForOtaUpdate(
-          OTA_VERSION_URL_PROD,
+          otaVersionUrl,
           currentBuildNumber,
           latestMtkFirmwareVersion,
           latestBesFirmwareVersion,

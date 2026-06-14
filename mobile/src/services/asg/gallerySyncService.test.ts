@@ -213,7 +213,9 @@ describe("GallerySyncService", () => {
 
   it("aborts pre-flight quietly when glasses disconnect during any pre-flight await", async () => {
     const {checkConnectivityRequirementsUI} = require("@/utils/PermissionsUtils")
-    let resolveConnectivity: () => void = () => {}
+    let resolveConnectivity: () => void = () => {
+      throw new Error("Connectivity promise resolver was not initialized")
+    }
     ;(checkConnectivityRequirementsUI as jest.Mock).mockImplementationOnce(
       () =>
         new Promise<boolean>((resolve) => {
@@ -241,7 +243,9 @@ describe("GallerySyncService", () => {
 
   it("coalesces concurrent startSync calls into a single pre-flight attempt", async () => {
     const {checkConnectivityRequirementsUI} = require("@/utils/PermissionsUtils")
-    let resolveConnectivity: () => void = () => {}
+    let resolveConnectivity: () => void = () => {
+      throw new Error("Connectivity promise resolver was not initialized")
+    }
     ;(checkConnectivityRequirementsUI as jest.Mock).mockImplementation(
       () =>
         new Promise<boolean>((resolve) => {
