@@ -80,11 +80,27 @@ export function bootstrapMentraJS() {
       startApp: async (pkg: string) => {
         const app = useAppStatusStore.getState().apps.find((a) => a.packageName === pkg)
         if (!app) return false
+        // An intent-started miniapp runs HEADLESS: spawn its background JS
+        // context with NO foreground change and NO navigation — the user's phone
+        // routing is untouched, and the calling miniapp is never stopped by
+        // foreground arbitration. The app still shows as "running" (the launcher
+        // registers it); its WebView only mounts later if the user opens it.
+        // Native offline built-ins / cloud apps aren't headless, so they keep the
+        // normal foregrounding start().
+        if (app.local) {
+          try {
+            await miniappLauncher.ensureConnected(pkg)
+            return true
+          } catch (e) {
+            console.warn(`mentraJsBootstrap: headless start failed for ${pkg}`, e)
+            return false
+          }
+        }
         return useAppStatusStore.getState().start(app)
       },
       stopApp: (pkg: string) => useAppStatusStore.getState().stop(pkg),
-      // Headless wake: spawn the background context + wait for CONNECT. No
-      // foreground, no arbitration — does NOT go through start().
+      // Headless wake for action invoke: spawn the background context + wait for
+      // CONNECT. Same headless path as startApp for local miniapps.
       wakeMiniapp: (pkg: string) => miniappLauncher.ensureConnected(pkg),
       // Audit trail — one analytics event per interop call. An LLM caller
       // (Mentra AI) will eventually do something a user wants to trace.

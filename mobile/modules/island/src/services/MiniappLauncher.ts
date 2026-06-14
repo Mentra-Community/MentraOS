@@ -261,6 +261,17 @@ class MiniappLauncher {
 
   /** Tear down a miniapp's background JS context. */
   async stop(packageName: string): Promise<void> {
+    // If a launch is in flight, let it finish first. Otherwise unregister()
+    // no-ops on the not-yet-registered package and the pending spawn then
+    // re-registers the context — leaving it running despite the stop.
+    const pending = this.inFlight.get(packageName)
+    if (pending) {
+      try {
+        await pending
+      } catch {
+        // Launch failed — nothing got registered, so nothing to tear down.
+      }
+    }
     await this.deps?.router.unregister(packageName)
   }
 

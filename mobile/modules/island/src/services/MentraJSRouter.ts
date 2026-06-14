@@ -264,6 +264,11 @@ export class MentraJSRouter {
    * to respawn (with delay) or leave the context dead.
    */
   private handleCrash(packageName: string, reason: string): void {
+    // The native context is dead the instant a crash is observed — invalidate
+    // its CONNECT handshake NOW so waitForConnect() blocks through the respawn
+    // backoff window instead of resolving immediately against the dead context
+    // (an action invoked mid-backoff would otherwise be delivered to nothing).
+    this.runtime.resetHandshake(packageName)
     const controller = this.crashController
     if (!controller) return
     const cached = this.spawnCache.get(packageName)
@@ -301,10 +306,6 @@ export class MentraJSRouter {
           this.logger.error(`crash respawn failed for ${packageName}`)
           return
         }
-        // Fresh native context → invalidate the old CONNECT handshake so
-        // waitForConnect() blocks until this respawned context connects (the
-        // crash path bypasses register/unregister, which normally clear it).
-        this.runtime.resetHandshake(packageName)
         if (cached.permissions.length > 0) {
           await this.crust.mentraJsSetManifest(packageName, cached.permissions)
         }

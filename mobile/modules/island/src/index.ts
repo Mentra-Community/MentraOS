@@ -4,6 +4,7 @@ export {miniappRunningRegistry} from "./services/MiniappRunningRegistry"
 export {
   default as appRegistry,
   normalizeManifestPermissions,
+  normalizeManifestActions,
   buildHardwareRequirements,
   saveLocalAppRunningState,
   registerDevApp,

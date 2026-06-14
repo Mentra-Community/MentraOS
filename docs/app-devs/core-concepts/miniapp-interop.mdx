@@ -55,7 +55,9 @@ Rules:
 const apps = await session.miniapps.list()
 const apps2 = await session.miniapps.list({includeIncompatible: true})
 
-// Lifecycle — same as the user tapping the tile (start foregrounds it).
+// Lifecycle — start runs the miniapp in the BACKGROUND: it spawns the
+// background context and reports as running, without changing the user's phone
+// navigation or foregrounding anything (its WebView mounts only if opened).
 await session.miniapps.start("com.mentra.todo")
 await session.miniapps.stop("com.mentra.todo")
 

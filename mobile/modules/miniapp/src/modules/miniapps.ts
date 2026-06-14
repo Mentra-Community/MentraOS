@@ -67,8 +67,11 @@ export class MiniappsModule {
   }
 
   /**
-   * Start another miniapp — same path as the user tapping its tile (the app
-   * comes to the foreground). SYSTEM-only.
+   * Start another miniapp in the **background** — spawns its background JS
+   * context without changing the user's phone navigation or foregrounding
+   * anything. The app reports as running and can handle actions / drive the
+   * glasses immediately; its WebView only mounts if the user later opens it.
+   * SYSTEM-only.
    */
   async start(packageName: string): Promise<void> {
     await this.session.sendRequest<void>({
