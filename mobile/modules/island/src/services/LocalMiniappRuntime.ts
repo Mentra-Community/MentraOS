@@ -2655,7 +2655,14 @@ class LocalMiniappRuntime {
     const target = payload.targetPackageName as string | undefined
     const actionId = payload.actionId as string | undefined
     const params = (payload.params as Record<string, unknown> | undefined) ?? {}
-    const timeoutMs = Math.min(Math.max(Number(payload.timeoutMs) || 30_000, 1_000), 120_000)
+    // Floor the timeout at 6s so the host never rejects with ACTION_TIMEOUT before
+    // the target SDK's handler-registration window closes. A freshly-woken miniapp
+    // buffers an undelivered ACTION_CALL for HANDLER_WAIT_MS (5s in @mentra/miniapp's
+    // actions module) waiting for session.actions.handle; a shorter host timeout
+    // could fire while the target is still registering, then the action would run
+    // with no caller left to receive its result. 6s = that 5s buffer + 1s for the
+    // ACTION_RESULT/NO_ACTION_HANDLER reply to travel back. Keep these in sync.
+    const timeoutMs = Math.min(Math.max(Number(payload.timeoutMs) || 30_000, 6_000), 120_000)
     const interop = getRuntimeHooks().interop
 
     if (this.actionPayloadTooLarge(params)) {
