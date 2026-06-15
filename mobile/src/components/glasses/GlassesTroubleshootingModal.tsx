@@ -87,6 +87,25 @@ export const getModelSpecificTips = (model: string): PairingTip[] => {
           body: "Check that your phone's Bluetooth is enabled.",
         },
       ]
+    case "Nimo Glasses":
+      return [
+        {
+          title: "Force Stop the Nimo App",
+          body: "If your glasses were previously connected to the Nimo app, force stop that app, then try connecting again.",
+        },
+        {
+          title: "First Pairing Takes Longer",
+          body: "The first time you pair, it can take around a minute. Please be patient and keep waiting before retrying.",
+        },
+        {
+          title: "Glasses Not Responding",
+          body: "Close both arms for about 8 seconds, then try pairing again.",
+        },
+        {
+          title: "Reset the Glasses",
+          body: "If nothing else works, reset your glasses by holding the left and right touch areas at the same time for a few seconds, then restart the glasses.",
+        },
+      ]
     default:
       return [
         {
