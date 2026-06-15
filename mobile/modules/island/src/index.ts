@@ -77,6 +77,12 @@ export {
   type ConnectButtonAction,
 } from "./services/ConnectionCoordinator"
 export {classifyPairFailure, buildPairingRouteStack, type PairFailureRoute} from "./services/PairingCoordinator"
+export {
+  computeAppGrid,
+  type ComputeAppGridInput,
+  type ComputeAppGridResult,
+  type ComputeAppGridDeps,
+} from "./services/AppGrid"
 
 // Runtime config (host-injected adapters)
 export {

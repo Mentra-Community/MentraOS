@@ -280,6 +280,9 @@ jest.mock("@mentra/island", () => {
       stack.sort((a, b) => order.indexOf(a) - order.indexOf(b))
       return stack
     },
+    // AppGrid computation (consumed by AppsGrid). Passthrough stub — render tests
+    // don't assert on grid layout; the real algorithm is unit-tested directly.
+    computeAppGrid: (input) => ({orderedApps: input?.apps ?? [], nextOrderMap: input?.orderMap ?? {}}),
     useApps: jest.fn(() => appStatusState.apps),
     useForegroundApp: jest.fn(() => null),
     useAppStatusStore,
