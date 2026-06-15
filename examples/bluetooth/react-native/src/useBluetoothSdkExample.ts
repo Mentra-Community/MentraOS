@@ -964,6 +964,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         noiseReduction: false,
         edgeEnhancement: false,
         mfnr: false,
+        zsl: false,
         ispDigitalGain: 0,
         ispAnalogGain: 'low',
       };

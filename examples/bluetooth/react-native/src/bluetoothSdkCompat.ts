@@ -36,6 +36,7 @@ export type ScanPhotoRequestParams = {
   noiseReduction?: boolean;
   edgeEnhancement?: boolean;
   mfnr?: boolean;
+  zsl?: boolean;
   ispDigitalGain?: number;
   ispAnalogGain?: string;
 };
@@ -109,6 +110,9 @@ export function photoRequestParamsForNativeCompat(
   }
   if (params.mfnr != null) {
     payload.mfnr = params.mfnr;
+  }
+  if (params.zsl != null) {
+    payload.zsl = params.zsl;
   }
   if (params.ispDigitalGain != null) {
     payload.ispDigitalGain = Math.round(params.ispDigitalGain);

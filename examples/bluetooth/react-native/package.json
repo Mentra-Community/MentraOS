@@ -8,7 +8,7 @@
     "start": "expo start --dev-client",
     "ios": "bun run ios:setup && expo run:ios",
     "ios:setup": "bash ./modules/mentra-video-stream-receiver/scripts/setup-gstreamer-ios.sh",
-    "android": "expo run:android",
+    "android": "node ./scripts/android-run.mjs",
     "android:dev": "node ./scripts/android-dev.mjs",
     "web": "expo start --web"
   },

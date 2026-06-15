@@ -68,11 +68,15 @@ Run on a physical Android phone for Bluetooth testing. Some Android devices requ
 
 `bun run android:dev` starts Metro first, waits for `localhost:8081`, installs the development build without starting a second bundler, forwards the Android device's `localhost:8081` to your computer, and explicitly opens the Expo dev-client URL. This avoids the first-run blank launcher state where you have to manually tap the `localhost:8081` session.
 
-If multiple Android devices are connected, set `ANDROID_SERIAL` before running the command:
+Android install scripts (`bun run android`, `bun run android:dev`) **never target Mentra Live glasses** — only a USB-connected phone. If glasses and a phone are both attached, the scripts pick the phone automatically.
+
+If multiple phones are connected, set `ANDROID_SERIAL` before running:
 
 ```bash
-ANDROID_SERIAL=<device-serial> bun run android:dev
+ANDROID_SERIAL=<phone-serial> bun run android:dev
 ```
+
+Do not use `expo run:android` directly; it may install on whatever device Expo picks (including Mentra Live).
 
 ## SDK Plugin Configuration
 
