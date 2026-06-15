@@ -880,7 +880,11 @@ jobs:
         if: needs.build-asg.result == 'success' && github.ref_name == 'staging'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # wrangler reads the CLOUDFLARE_API_TOKEN env var; source it from the
+          # dedicated Pages-scoped token (needs Account > Cloudflare Pages > Edit
+          # and User > User Details > Read) rather than the shared CLOUDFLARE_API_TOKEN,
+          # which lacks those scopes and fails wrangler auth with error 10000.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
           BUILD_SHORT_SHA: ${{ steps.build-info.outputs.sha }}
           VERSION_CODE: ${{ needs.build-asg.outputs.version_code }}
         run: |
