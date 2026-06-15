@@ -18,8 +18,10 @@ import com.mentra.bluetoothsdk.sgcs.G1
 import com.mentra.bluetoothsdk.sgcs.G2
 import com.mentra.bluetoothsdk.sgcs.Mach1
 import com.mentra.bluetoothsdk.sgcs.MentraLive
-import com.mentra.bluetoothsdk.sgcs.RemoteHarness
 import com.mentra.bluetoothsdk.sgcs.MentraNex
+import com.mentra.bluetoothsdk.drivers.DeviceHostImpl
+import com.mentra.bluetoothsdk.drivers.GlassesDriverSgcAdapter
+import com.mentra.bluetoothsdk.drivers.RemoteHarnessDriver
 import com.mentra.bluetoothsdk.sgcs.SGCManager
 import com.mentra.bluetoothsdk.sgcs.Simulated
 import com.mentra.bluetoothsdk.utils.ControllerTypes
@@ -1048,7 +1050,9 @@ class DeviceManager {
         }
 
         if (wearable.contains(DeviceTypes.REMOTE_HARNESS)) {
-            sgc = RemoteHarness()
+            // Pluggable-driver contract: RemoteHarness is now a GlassesDriver
+            // wrapped onto SGCManager via the adapter (docs/device-driver-contract.md).
+            sgc = GlassesDriverSgcAdapter(RemoteHarnessDriver(), DeviceHostImpl(DeviceTypes.REMOTE_HARNESS))
         } else if (wearable.contains(DeviceTypes.SIMULATED)) {
             sgc = Simulated()
         } else if (wearable.contains(DeviceTypes.G1)) {
