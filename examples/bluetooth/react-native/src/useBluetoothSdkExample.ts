@@ -957,6 +957,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
         size: 'max',
         compress: 'none',
         sound: false,
+        save: true,
         exposureTimeNs: null,
         iso: null,
         aeExposureDivisor: scanAeDivisor,
@@ -973,6 +974,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       size: photoSize,
       compress: photoCompression,
       sound: true,
+      save: true,
       exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
       iso: photoExposureManual ? photoIso : null,
     };
