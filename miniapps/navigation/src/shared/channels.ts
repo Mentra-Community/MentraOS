@@ -71,6 +71,10 @@ export interface Channels {
   // test channels
   "test:show-text-test": Rpc<{text: string; durationMs?: number}, void>
   "test:show-bitmap-test": Rpc<void, void>
+  /** Render a gradient test bitmap. `size` is the width; `height` defaults to `size` (square). */
+  "test:show-bitmap-size": Rpc<{size: number; height?: number}, void>
+  /** PoC: fetch OSM roads around the test center and draw the bare network on the glasses. */
+  "test:show-osm-map": Rpc<void, {ok: boolean; error?: string}>
   "test:count-1-to-10": Rpc<void, void>
   "test:reset-nav-permission": Rpc<void, {ok: boolean; error?: string}>
 }

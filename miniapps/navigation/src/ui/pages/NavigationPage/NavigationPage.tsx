@@ -990,6 +990,53 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   </button>
                 </div>
                 <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Test bitmap width (h=88)</span>
+                  <div className="flex gap-1.5">
+                    {/* Vary WIDTH, height locked at 88 (the max visible height on the
+                        G2's 200px-tall panel). Probing for the max usable width. */}
+                    {([50, 100, 150, 200] as const).map((size) => (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={() => mentra.request("test:show-bitmap-size", {size, height: 88})}
+                        className="flex items-center gap-0.5 text-[11px] px-2 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                        <svg width="9" height="9" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                          <path
+                            d="M12 5V19M5 12H19"
+                            fill="none"
+                            stroke="#FFFFFF"
+                            strokeWidth="3"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                        {size}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">OSM road map (Hayes Valley)</span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      console.log("[OSM-MAP] 🖱️  Draw button clicked")
+                      const res = await mentra.request("test:show-osm-map", undefined)
+                      console.log("[OSM-MAP] result:", res?.ok ? "✅ ok" : `❌ ${res?.error}`)
+                    }}
+                    className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                    Draw
+                  </button>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Test bitmap 200×100</span>
+                  <button
+                    type="button"
+                    onClick={() => mentra.request("test:show-bitmap-size", {size: 200, height: 100})}
+                    className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                    Send
+                  </button>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
                   <span className="text-[13px] font-medium text-neutral-700">Count 1→10 every 3s</span>
                   <button
                     type="button"

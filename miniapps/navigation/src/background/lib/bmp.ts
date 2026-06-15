@@ -113,3 +113,20 @@ export function gradientTestImageBase64(width: number, height: number): string {
   }
   return encodeBmpBase64(gray, width, height)
 }
+
+/**
+ * Build an 8-bit grayscale test image of just the rectangle BORDER (outline)
+ * as a base64 BMP — a white frame `thickness` px wide on a black background.
+ * Handy for seeing the exact bounds/size of a bitmap container on the glasses.
+ */
+export function borderTestImageBase64(width: number, height: number, thickness = 2): string {
+  const t = Math.max(1, Math.min(thickness, Math.floor(Math.min(width, height) / 2)))
+  const gray = new Uint8Array(width * height) // 0 = black fill
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const onBorder = x < t || x >= width - t || y < t || y >= height - t
+      if (onBorder) gray[y * width + x] = 255 // white edge
+    }
+  }
+  return encodeBmpBase64(gray, width, height)
+}

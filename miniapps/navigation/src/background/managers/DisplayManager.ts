@@ -7,6 +7,7 @@
  */
 
 import type {MiniappSession} from "@mentra/miniapp"
+import {borderTestImageBase64} from "../lib/bmp"
 
 export class DisplayManager {
   constructor(private readonly session: MiniappSession) {}
@@ -55,8 +56,47 @@ export class DisplayManager {
    */
   showBitmapTest(base64Bmp: string): void {
     this.safeCall(() => {
-      this.session.display.clearView()
+      this.session.display.clear()
       this.session.display.showBitmapView(base64Bmp, {x: 144, y: 0, width: 288, height: 288})
+    })
+  }
+
+  /**
+   * Test-only: render a square gradient bitmap at `size`×`size` pixels, shown
+   * in a same-size container centered on the 576×288 canvas. Lets the dev panel
+   * compare how different bitmap sizes render — note the glasses flip into
+   * "quad mode" once width>200 or height>100 (see miniapp SDK display.ts).
+   */
+  showBitmapSize(size: number, height?: number): void {
+    // Clamp width to ≤200: a single G2 image container maxes out ~200px wide
+    // (defaultImgWidth in G2.kt). Containers wider than that need quad-mode
+    // tiling, which isn't implemented — they silently render nothing.
+    const w = Math.max(8, Math.min(size, 200))
+    const h = Math.max(8, Math.min(height ?? size, 288))
+    if (size > 200) {
+      console.log(`[NAV-MINI] bitmap width ${size} clamped to 200 (G2 single-container limit)`)
+    }
+    const base64Bmp = borderTestImageBase64(w, h)
+    const x = Math.round((576 - w) / 2)
+    const y = Math.round((288 - h) / 2)
+    this.safeCall(() => {
+      this.session.display.clear()
+      this.session.display.showBitmapView(base64Bmp, {x, y, width: w, height: h})
+    })
+  }
+
+  /**
+   * Test-only: show a pre-rendered base64 BMP at a given container size,
+   * centered and within the G2 ≤200px width limit. Used by the OSM line-map PoC.
+   */
+  showRawBitmap(base64Bmp: string, width: number, height: number): void {
+    const w = Math.max(8, Math.min(width, 200))
+    const h = Math.max(8, Math.min(height, 288))
+    const x = Math.round((576 - w) / 2)
+    const y = Math.round((288 - h) / 2)
+    this.safeCall(() => {
+      this.session.display.clear()
+      this.session.display.showBitmapView(base64Bmp, {x, y, width: w, height: h})
     })
   }
 

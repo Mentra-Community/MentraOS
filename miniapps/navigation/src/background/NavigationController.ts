@@ -30,6 +30,7 @@ import {formatDistance} from "./lib/formatDistance"
 import {distanceToPolylineMeters, haversineMeters, remainingRouteMeters, sideOfFinalSegment} from "./lib/geometry"
 import {renderMinimap} from "./lib/MinimapRenderer"
 import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
+import {buildOsmLineMap} from "./lib/OsmLineMapRenderer"
 
 export class NavigationController {
   private readonly ui: UIModule<Channels>
@@ -611,6 +612,40 @@ export class NavigationController {
     this.unsubs.push(
       this.ui.handle("test:show-bitmap-test", () => {
         this.display.showBitmapTest(TEST_BITMAP_288_B64)
+      }),
+    )
+
+    this.unsubs.push(
+      this.ui.handle("test:show-bitmap-size", ({size, height}) => {
+        this.display.showBitmapSize(size, height)
+      }),
+    )
+
+    this.unsubs.push(
+      this.ui.handle("test:show-osm-map", async () => {
+        // PoC: bare OSM road network around the Hayes Valley, SF test center.
+        const SIZE = 88
+        const center = {lat: 37.7766853, lng: -122.4229361}
+        console.log(`[OSM-MAP] 🗺️  button pressed — fetching roads around ${center.lat},${center.lng} (${SIZE}×${SIZE})`)
+        const t0 = Date.now()
+        try {
+          const base64 = await buildOsmLineMap({
+            center,
+            width: SIZE,
+            height: SIZE,
+            // Zoomed in 3× vs the original 400m: ~133m half-extent → more detail,
+            // same 88×88 output.
+            viewRadiusMeters: 133,
+            lineWidthPx: 2,
+          })
+          console.log(`[OSM-MAP] ✅ rendered ${SIZE}×${SIZE} BMP (${(base64.length / 1024).toFixed(1)} KB) in ${Date.now() - t0}ms — sending to glasses`)
+          this.display.showRawBitmap(base64, SIZE, SIZE)
+          return {ok: true}
+        } catch (err) {
+          const error = err instanceof Error ? err.message : String(err)
+          console.log(`[OSM-MAP] ❌ failed after ${Date.now() - t0}ms:`, error)
+          return {ok: false, error}
+        }
       }),
     )
 
