@@ -270,9 +270,14 @@ function buildAdapter(): CloudRuntimeAdapter {
         statusListeners.delete(cb)
       }
     },
+    tts: {
+      speak: (text, options) => {
+        if (!client) throw new Error("cloud client not connected")
+        return client.runtime.tts.speak(text, options)
+      },
+    },
     hasAudioSubscriptions: (): boolean => audioSubscriptions.length > 0,
     isConnected: (): boolean => connected,
-    getRuntimeBaseUrl: (): string => runtimeUrl().replace(/\/+$/, ""),
   }
 }
 

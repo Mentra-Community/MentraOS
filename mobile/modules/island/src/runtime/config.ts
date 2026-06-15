@@ -21,6 +21,25 @@ export interface CloudClientStatusSnapshot {
   audioTransport: CloudClientAudioTransport
 }
 
+export interface CloudRuntimeTtsSpeakOptions {
+  voiceId?: string
+  voice_id?: string
+  modelId?: string
+  model_id?: string
+  voiceSettings?: Record<string, unknown>
+  voice_settings?: Record<string, unknown>
+}
+
+export interface CloudRuntimeTtsSpeechSource {
+  audioUrl: string
+  contentType: string
+  source: "cloud"
+}
+
+export interface CloudRuntimeTtsAdapter {
+  speak: (text: string, options?: CloudRuntimeTtsSpeakOptions) => Promise<CloudRuntimeTtsSpeechSource>
+}
+
 import type {ClientApp} from "../types/applet"
 
 /**
@@ -70,6 +89,8 @@ export interface CloudRuntimeAdapter {
   getStatus: () => CloudClientStatusSnapshot
   /** Subscribe to cloud-client runtime status changes. Returns an unsubscribe fn. */
   onStatusChanged: (cb: (snapshot: CloudClientStatusSnapshot) => void) => () => void
+  /** Runtime TTS API. The cloud-client owns endpoint paths and validation. */
+  tts: CloudRuntimeTtsAdapter
   /**
    * Whether any transcription/translation subscription is currently set on v2.
    * The host's audio-capture site gates `sendAudioFrame` on this so we don't
@@ -78,8 +99,6 @@ export interface CloudRuntimeAdapter {
   hasAudioSubscriptions: () => boolean
   /** Whether the v2 live session is connected (handshake completed). */
   isConnected: () => boolean
-  /** HTTP base URL for runtime REST routes. Used for streamed runtime TTS. */
-  getRuntimeBaseUrl?: () => string | undefined
 }
 
 /**

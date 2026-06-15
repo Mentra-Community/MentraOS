@@ -3,8 +3,9 @@
  *
  * `index.ts` serves this for any HTTP request that isn't a WebSocket upgrade.
  * It mounts each service's routes plus the shared health app:
- *   - /api/audio/*  -> audio.api (subscriptions today; more as the service grows)
+ *   - /api/audio/*  -> audio.api (subscriptions)
  *   - /api/camera/* -> camera.api (managed photo + stream, later)
+ *   - /api/tts/*    -> tts.api (streaming speech synthesis)
  *   - /healthz, /readyz, ... -> the shared health app
  *
  * Client-initiated commands are REST (stateless, pod-agnostic) per the runtime
@@ -16,6 +17,7 @@ import { Hono } from "hono";
 import { createHealthApp, type ReadinessCheck } from "@mentra/cloud-shared";
 import { audioApi } from "./audio.api";
 import { cameraApi } from "./camera.api";
+import { ttsApi } from "./tts.api";
 
 export interface CreateApiAppOptions {
   /** Readiness probes surfaced at the health app's `/readyz`. */
@@ -28,6 +30,7 @@ export function createApiApp(opts: CreateApiAppOptions): Hono {
 
   app.route("/api/audio", audioApi);
   app.route("/api/camera", cameraApi);
+  app.route("/api/tts", ttsApi);
 
   // Health/readiness routes (/healthz, /readyz). Mounted at the root so its
   // own paths are unchanged.

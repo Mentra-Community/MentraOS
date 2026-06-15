@@ -1302,28 +1302,10 @@ class LocalMiniappRuntime {
         ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
 
       const modelId = typeof payload.model_id === "string" ? payload.model_id : undefined
-      const buildTtsUrl = (endpoint: string): string => {
-        const query = new URLSearchParams()
-        query.set("text", text)
-        if (voiceExplicit && voice !== "default") {
-          query.set("voice_id", voice)
-        }
-        if (modelId) {
-          query.set("model_id", modelId)
-        }
-        if (voiceSettings) {
-          query.set("voice_settings", JSON.stringify(voiceSettings))
-        }
-        return `${endpoint}?${query.toString()}`
-      }
-
-      const runtimeBaseUrl = hooks.cloud?.getRuntimeBaseUrl?.()?.replace(/\/+$/, "")
-      const backendUrl = hooks.settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.backendUrl)?.replace(/\/+$/, "")
-      const runtimeTtsUrl = runtimeBaseUrl ? buildTtsUrl(`${runtimeBaseUrl}/api/audio/tts`) : undefined
-      const legacyTtsUrl = backendUrl ? buildTtsUrl(`${backendUrl}/api/tts`) : undefined
-      const cloudConnected = hooks.cloud?.isConnected() === true || hooks.cloudConnection?.isConnected() === true
+      const cloud = hooks.cloud
+      const cloudConnected = cloud?.isConnected() === true
       console.log(
-        `${LOG_TAG}: TTS decision for ${packageName}: cloudConnected=${cloudConnected}, runtimeTts=${runtimeTtsUrl ? "yes" : "no"}, legacyTts=${legacyTtsUrl ? "yes" : "no"}, offlineVoice=${offlineSupportsVoice}`,
+        `${LOG_TAG}: TTS decision for ${packageName}: cloudConnected=${cloudConnected}, runtimeTts=${cloud?.tts ? "yes" : "no"}, offlineVoice=${offlineSupportsVoice}`,
       )
 
       let terminalSent = false
@@ -1388,12 +1370,28 @@ class LocalMiniappRuntime {
       }
 
       const playCloudTts = async (fallbackToOffline: boolean): Promise<boolean> => {
-        const ttsUrl = runtimeTtsUrl ?? legacyTtsUrl
-        if (!ttsUrl) return false
+        if (!cloud?.tts) return false
+
+        let source: Awaited<ReturnType<typeof cloud.tts.speak>>
+        try {
+          source = await cloud.tts.speak(text, {
+            ...(voiceExplicit && voice !== "default" ? {voice_id: voice} : {}),
+            ...(modelId ? {model_id: modelId} : {}),
+            ...(voiceSettings ? {voice_settings: voiceSettings} : {}),
+          })
+        } catch (cloudErr) {
+          const error = cloudErr instanceof Error ? cloudErr.message : String(cloudErr)
+          console.warn(`${LOG_TAG}: cloud TTS source failed: ${error}`)
+          if (fallbackToOffline && (await playOfflineTts("cloud tts source failed"))) {
+            return true
+          }
+          sendPlaybackResult(false, error, null, "tts failed")
+          return true
+        }
 
         await Promise.resolve(
           audioPlayback.play(
-            {requestId: audioRequestId, audioUrl: ttsUrl, appId: packageName, volume, stopOtherAudio},
+            {requestId: audioRequestId, audioUrl: source.audioUrl, appId: packageName, volume, stopOtherAudio},
             (_respId, success, error, duration) => {
               if (!success && fallbackToOffline) {
                 void playOfflineTts("cloud tts playback failed").then((started) => {

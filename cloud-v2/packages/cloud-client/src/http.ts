@@ -35,9 +35,11 @@ export interface ReqOpts {
 /** The REST surface the modules consume. */
 export interface HttpClient {
   get<T>(path: string, opts?: ReqOpts): Promise<T>;
+  head(path: string, opts?: ReqOpts): Promise<Response>;
   post<T>(path: string, body?: unknown, opts?: ReqOpts): Promise<T>;
   put<T>(path: string, body: unknown, opts?: ReqOpts): Promise<T>;
   delete<T>(path: string, opts?: ReqOpts): Promise<T>;
+  url(path: string): string;
 }
 
 /**
@@ -96,12 +98,12 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
    * a definite answer from the server, mapped to an `HttpError` for the caller
    * to branch on (auth handles its own 401 refresh-and-retry a layer up).
    */
-  async function request<T>(
-    method: "GET" | "POST" | "PUT" | "DELETE",
+  async function requestRaw(
+    method: "GET" | "POST" | "PUT" | "DELETE" | "HEAD",
     path: string,
     body: unknown,
     opts?: ReqOpts,
-  ): Promise<T> {
+  ): Promise<Response> {
     const url = joinUrl(baseUrl, path);
     const bearer = await resolveBearer(opts);
 
@@ -117,7 +119,7 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     // GET and DELETE are idempotent by HTTP semantics, so safe to retry; other
     // verbs opt in via the flag.
     const idempotent =
-      opts?.idempotent ?? (method === "GET" || method === "DELETE");
+      opts?.idempotent ?? (method === "GET" || method === "DELETE" || method === "HEAD");
 
     let lastNetworkError: unknown;
     for (let attempt = 0; attempt <= (idempotent ? MAX_RETRIES : 0); attempt++) {
@@ -142,7 +144,7 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
         throw await toHttpError(res, method, path);
       }
 
-      return await parseJson<T>(res);
+      return res;
     }
 
     // Exhausted retries on a transient failure.
@@ -155,6 +157,16 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     // thrown error keeps the original detail out of the message to avoid leaking
     // anything host-specific into a string a host might surface to a user.
     void lastNetworkError;
+  }
+
+  async function request<T>(
+    method: "GET" | "POST" | "PUT" | "DELETE",
+    path: string,
+    body: unknown,
+    opts?: ReqOpts,
+  ): Promise<T> {
+    const res = await requestRaw(method, path, body, opts);
+    return await parseJson<T>(res);
   }
 
   /**
@@ -198,6 +210,9 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     get<T>(path: string, opts?: ReqOpts): Promise<T> {
       return request<T>("GET", path, undefined, opts);
     },
+    head(path: string, opts?: ReqOpts): Promise<Response> {
+      return requestRaw("HEAD", path, undefined, opts);
+    },
     post<T>(path: string, body?: unknown, opts?: ReqOpts): Promise<T> {
       return request<T>("POST", path, body, opts);
     },
@@ -206,6 +221,9 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
     },
     delete<T>(path: string, opts?: ReqOpts): Promise<T> {
       return request<T>("DELETE", path, undefined, opts);
+    },
+    url(path: string): string {
+      return joinUrl(baseUrl, path);
     },
   };
 }

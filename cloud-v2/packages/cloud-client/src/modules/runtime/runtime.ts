@@ -8,6 +8,7 @@
  *   - subscriptions: the REST full-replace writer with the version counter.
  *   - camera: managed photo/stream (REST request, await the WebSocket push).
  *   - audio: the UDP audio path (encrypt each frame, hand bytes to the socket).
+ *   - tts: runtime TTS source preparation for host playback.
  *
  * Keeping the orchestration here, and the mechanics in the collaborators, means
  * each piece is testable on its own and this file reads as the protocol flow:
@@ -29,6 +30,7 @@ import { HandshakeRejectedError } from "./connection";
 import type { RuntimeEmitter, RuntimeEvents } from "./emitter";
 import type { Subscriptions } from "./subscriptions";
 import type { Camera, PhotoOptions, StreamOptions, ManagedStream, StreamStatusResult } from "./camera";
+import type { Tts, RuntimeTtsSpeakOptions, RuntimeTtsSpeechSource } from "./tts";
 import type { UdpAudio } from "./audio-udp";
 import type { RuntimeSnapshot } from "./status";
 
@@ -38,6 +40,7 @@ const UDP_LIVENESS_TIMEOUT_MS = 3_000;
 // Re-export the camera option/result types so a host importing the runtime gets
 // them from one place alongside the module that produces them.
 export type { PhotoOptions, StreamOptions, ManagedStream, StreamStatusResult } from "./camera";
+export type { RuntimeTtsSpeakOptions, RuntimeTtsSpeechSource } from "./tts";
 export type { RuntimeAudioTransport } from "./audio-udp";
 export type { RuntimeStatus, RuntimeSnapshot } from "./status";
 
@@ -76,6 +79,9 @@ export interface RuntimeModule {
   startManagedStream(opts: StreamOptions): Promise<ManagedStream>;
   getManagedStreamStatus(streamId: string): Promise<StreamStatusResult>;
   stopManagedStream(streamId: string): Promise<void>;
+  tts: {
+    speak(text: string, options?: RuntimeTtsSpeakOptions): Promise<RuntimeTtsSpeechSource>;
+  };
 
   onConnected(handler: () => void): () => void;
   onDisconnected(handler: (info: { reason: string }) => void): () => void;
@@ -92,6 +98,7 @@ export interface RuntimeDeps {
   emitter: RuntimeEmitter;
   subscriptions: Subscriptions;
   camera: Camera;
+  tts: Tts;
   audio: UdpAudio;
   logger: Logger;
   /**
@@ -114,6 +121,7 @@ export class Runtime implements RuntimeModule {
   private readonly emitter: RuntimeEmitter;
   private readonly subscriptions: Subscriptions;
   private readonly camera: Camera;
+  public readonly tts: Tts;
   private readonly audio: UdpAudio;
   private readonly logger: Logger;
   private readonly forceRefreshToken: () => Promise<string>;
@@ -150,6 +158,7 @@ export class Runtime implements RuntimeModule {
     this.emitter = deps.emitter;
     this.subscriptions = deps.subscriptions;
     this.camera = deps.camera;
+    this.tts = deps.tts;
     this.audio = deps.audio;
     this.logger = deps.logger;
     this.forceRefreshToken = deps.forceRefreshToken;

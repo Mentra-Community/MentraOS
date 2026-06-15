@@ -43,6 +43,8 @@ export type {
   RuntimeAudioTransport,
   RuntimeSnapshot,
   RuntimeStatus,
+  RuntimeTtsSpeakOptions,
+  RuntimeTtsSpeechSource,
 } from "@mentra/cloud-client";
 export {
   CloudClientError,

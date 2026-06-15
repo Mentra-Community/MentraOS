@@ -45,4 +45,6 @@ export type {
   RuntimeAudioTransport,
   RuntimeSnapshot,
   RuntimeStatus,
+  RuntimeTtsSpeakOptions,
+  RuntimeTtsSpeechSource,
 } from "./modules/runtime/runtime";
