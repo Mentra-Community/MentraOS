@@ -179,6 +179,7 @@ data class PhotoRequest @JvmOverloads constructor(
     val noiseReduction: Boolean? = null,
     val edgeEnhancement: Boolean? = null,
     val mfnr: Boolean? = null,
+    val zsl: Boolean? = null,
     val ispDigitalGain: Int? = null,
     val ispAnalogGain: String? = null,
     val resetCaptureTuning: Boolean? = null,
@@ -227,6 +228,7 @@ data class PhotoRequest @JvmOverloads constructor(
                 noiseReduction = boolValue(values, "noiseReduction"),
                 edgeEnhancement = boolValue(values, "edgeEnhancement"),
                 mfnr = boolValue(values, "mfnr"),
+                zsl = boolValue(values, "zsl"),
                 ispDigitalGain = ispDigitalGain,
                 ispAnalogGain = ispAnalogGain,
             )
@@ -243,6 +245,7 @@ data class PhotoRequest @JvmOverloads constructor(
             request.noiseReduction?.let { json.put("noiseReduction", it) }
             request.edgeEnhancement?.let { json.put("edgeEnhancement", it) }
             request.mfnr?.let { json.put("mfnr", it) }
+            request.zsl?.let { json.put("zsl", it) }
             request.ispDigitalGain?.let { json.put("ispDigitalGain", it) }
             request.ispAnalogGain?.let { json.put("ispAnalogGain", it) }
         }

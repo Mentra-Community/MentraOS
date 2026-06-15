@@ -300,6 +300,18 @@ public final class PhotoSession {
                 : PhotoCaptureSettings.EMPTY;
     }
 
+    /** Explicit {@code zsl} on the request wins; otherwise MFNR-off implies ZSL-off. */
+    private static Boolean resolveRequestZsl(
+            PhotoCaptureSettings captureSettings, Boolean requestMfnr) {
+        if (captureSettings != null && captureSettings.zsl != null) {
+            return captureSettings.zsl;
+        }
+        if (requestMfnr != null && !requestMfnr) {
+            return Boolean.FALSE;
+        }
+        return null;
+    }
+
     private long currentStartTimeMs() {
         return activeCapture != null ? activeCapture.startTimeMs : 0L;
     }
@@ -1305,10 +1317,9 @@ public final class PhotoSession {
             if (hooks.cameraSettings() != null) {
                 Boolean requestMfnr =
                         captureSettings.mfnr != null ? captureSettings.mfnr : null;
-                Boolean requestZsl =
-                        requestMfnr != null && !requestMfnr ? Boolean.FALSE : null;
+                Boolean requestZsl = resolveRequestZsl(captureSettings, requestMfnr);
                 if (!useManual) {
-                    if (requestMfnr != null) {
+                    if (requestMfnr != null || requestZsl != null) {
                         hooks.cameraSettings()
                                 .configureCaptureBuilder(stillBuilder, requestMfnr, requestZsl);
                     } else if (hooks.cameraSettings().mAsgSettings.isZslEnabled()
@@ -1333,6 +1344,31 @@ public final class PhotoSession {
                                 + zslInCapture
                                 + ")");
             }
+
+            Boolean requestMfnrForLog =
+                    captureSettings.mfnr != null ? captureSettings.mfnr : null;
+            Boolean requestZslForLog = resolveRequestZsl(captureSettings, requestMfnrForLog);
+            boolean globalMfnr =
+                    hooks.cameraSettings() != null
+                            && hooks.cameraSettings().mAsgSettings.isMfnrEnabled();
+            boolean globalZsl =
+                    hooks.cameraSettings() != null
+                            && hooks.cameraSettings().mAsgSettings.isZslEnabled();
+            PhotoCaptureSettings.logAppliedAtCapture(
+                    currentFilePath() != null ? currentFilePath() : "unknown",
+                    captureSettings,
+                    useManual,
+                    mLastMeteredExposureNs,
+                    useManual
+                            ? Long.valueOf(manualClampedNs)
+                            : currentExposureTimeNs(),
+                    useManual
+                            ? manualIso
+                            : captureRequest.get(CaptureRequest.SENSOR_SENSITIVITY),
+                    requestMfnrForLog,
+                    requestZslForLog,
+                    globalMfnr,
+                    globalZsl);
 
             if (useManual) {
                 Log.i(

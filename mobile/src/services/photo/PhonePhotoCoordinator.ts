@@ -26,7 +26,8 @@ import {normalizePhotoSize} from "@/services/SocketComms.normalizers"
 import {freePhoto, pollUntilReady, requestPhoto, type PhotoResult} from "./v2PhotoApi"
 
 export interface PhotoOpts {
-  size?: "low" | "medium" | "high" | "max"
+  /** Legacy cloud size names are normalized before the native take_photo command. */
+  size?: "low" | "medium" | "high" | "max" | "small" | "large" | "full"
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
   saveToGallery?: boolean

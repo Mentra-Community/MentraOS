@@ -542,6 +542,7 @@ export type PhotoRequestParams = {
   noiseReduction?: boolean
   edgeEnhancement?: boolean
   mfnr?: boolean
+  zsl?: boolean
   ispDigitalGain?: number
   ispAnalogGain?: string
 }

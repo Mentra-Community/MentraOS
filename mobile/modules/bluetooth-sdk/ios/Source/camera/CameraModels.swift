@@ -240,6 +240,7 @@ public struct PhotoRequest {
     public let noiseReduction: Bool?
     public let edgeEnhancement: Bool?
     public let mfnr: Bool?
+    public let zsl: Bool?
     public let ispDigitalGain: Int?
     public let ispAnalogGain: String?
 
@@ -260,6 +261,7 @@ public struct PhotoRequest {
         noiseReduction: Bool? = nil,
         edgeEnhancement: Bool? = nil,
         mfnr: Bool? = nil,
+        zsl: Bool? = nil,
         ispDigitalGain: Int? = nil,
         ispAnalogGain: String? = nil
     ) {
@@ -279,6 +281,7 @@ public struct PhotoRequest {
         self.noiseReduction = noiseReduction
         self.edgeEnhancement = edgeEnhancement
         self.mfnr = mfnr
+        self.zsl = zsl
         self.ispDigitalGain = ispDigitalGain
         self.ispAnalogGain = ispAnalogGain
     }
@@ -347,6 +350,7 @@ public struct PhotoRequest {
             noiseReduction: optionalBool("noiseReduction"),
             edgeEnhancement: optionalBool("edgeEnhancement"),
             mfnr: optionalBool("mfnr"),
+            zsl: optionalBool("zsl"),
             ispDigitalGain: optionalInt("ispDigitalGain"),
             ispAnalogGain: params["ispAnalogGain"] as? String
         )
@@ -367,6 +371,9 @@ public struct PhotoRequest {
         }
         if let mfnr {
             json["mfnr"] = mfnr
+        }
+        if let zsl {
+            json["zsl"] = zsl
         }
         if let ispDigitalGain {
             json["ispDigitalGain"] = ispDigitalGain

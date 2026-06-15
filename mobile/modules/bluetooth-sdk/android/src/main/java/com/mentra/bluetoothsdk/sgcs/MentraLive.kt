@@ -5996,14 +5996,80 @@ class MentraLive : SGCManager() {
     }
 
     fun sendButtonPhotoSettings(requestId: String?, size: String?) {
-        // Send photo size settings to glasses
+        sendButtonPhotoSettings(
+            requestId,
+            size,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            false,
+        )
+    }
+
+    fun sendButtonPhotoSettings(
+        requestId: String?,
+        size: String?,
+        mfnr: Boolean?,
+        zsl: Boolean?,
+        noiseReduction: Boolean?,
+        edgeEnhancement: Boolean?,
+        ispDigitalGain: Int?,
+        ispAnalogGain: String?,
+        aeExposureDivisor: Int?,
+        isoCap: Int?,
+        compress: String?,
+        sound: Boolean?,
+        resetCaptureTuning: Boolean,
+    ) {
         val command = JSONObject()
         try {
             command.put("type", "button_photo_setting")
             if (requestId != null && !requestId.isEmpty()) {
                 command.put("request_id", requestId)
             }
-            command.put("size", size)
+            if (size != null) {
+                command.put("size", size)
+            }
+            if (mfnr != null) {
+                command.put("mfnr", mfnr)
+            }
+            if (zsl != null) {
+                command.put("zsl", zsl)
+            }
+            if (noiseReduction != null) {
+                command.put("noiseReduction", noiseReduction)
+            }
+            if (edgeEnhancement != null) {
+                command.put("edgeEnhancement", edgeEnhancement)
+            }
+            if (ispDigitalGain != null) {
+                command.put("ispDigitalGain", ispDigitalGain)
+            }
+            if (!ispAnalogGain.isNullOrEmpty()) {
+                command.put("ispAnalogGain", ispAnalogGain)
+            }
+            if (aeExposureDivisor != null && aeExposureDivisor > 1) {
+                command.put("aeExposureDivisor", aeExposureDivisor)
+            }
+            if (isoCap != null && isoCap > 0) {
+                command.put("isoCap", isoCap)
+            }
+            if (!compress.isNullOrEmpty()) {
+                command.put("compress", compress)
+            }
+            if (sound != null) {
+                command.put("sound", sound)
+            }
+            if (resetCaptureTuning) {
+                command.put("resetCaptureTuning", true)
+            }
             sendJson(command, true)
         } catch (e: Exception) {
             Log.e(TAG, "Error sending button photo settings", e)

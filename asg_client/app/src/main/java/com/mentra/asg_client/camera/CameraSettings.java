@@ -205,13 +205,22 @@ public class CameraSettings {
     boolean mfnrEnabled = requestMfnr != null ? requestMfnr : mAsgSettings.isMfnrEnabled();
 
     if (!zslEnabled && !mfnrEnabled) {
-      if (mKeyAisRequestMode != null && requestMfnr != null && !requestMfnr) {
+      builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, false);
+      Log.d(TAG, "Set CONTROL_ENABLE_ZSL = false in capture builder");
+
+      if (mKeyZslMode != null) {
+        byte[] zslOff = new byte[]{0};
+        builder.set(mKeyZslMode, zslOff);
+        Log.d(TAG, "Capture: ZSL_MODE vendor key set to OFF (0)");
+      }
+
+      if (mKeyAisRequestMode != null) {
         int[] mfnrOff = new int[]{0};
         builder.set(mKeyAisRequestMode, mfnrOff);
-        Log.d(TAG, "Capture: MFNR/AIS mode set to OFF (0) per request");
-      } else {
-        Log.d(TAG, "ZSL and MFNR disabled - skipping vendor key configuration");
+        Log.d(TAG, "Capture: MFNR/AIS mode set to OFF (0)");
       }
+
+      Log.d(TAG, "ZSL and MFNR disabled for capture");
       return;
     }
 

@@ -1344,6 +1344,7 @@ struct ViewState {
             noiseReduction: request.noiseReduction,
             edgeEnhancement: request.edgeEnhancement,
             mfnr: request.mfnr,
+            zsl: request.zsl,
             ispDigitalGain: request.ispDigitalGain,
             ispAnalogGain: request.ispAnalogGain
         )

@@ -32,6 +32,8 @@ public class AsgSettings {
     private static final String KEY_BUTTON_PHOTO_ISO_CAP = "button_photo_iso_cap";
     private static final String KEY_BUTTON_PHOTO_COMPRESS = "button_photo_compress";
     private static final String KEY_BUTTON_PHOTO_SOUND = "button_photo_sound";
+    private static final String KEY_BUTTON_PHOTO_MFNR = "button_photo_mfnr";
+    private static final String KEY_BUTTON_PHOTO_ZSL = "button_photo_zsl";
     private static final String KEY_HDR_BURST_ENABLED = "hdr_burst_enabled";
     private static final String KEY_MCU_FIRMWARE_VERSION = "mcu_firmware_version";
     private static final String KEY_CAMERA_FOV = "camera_fov";
@@ -274,6 +276,50 @@ public class AsgSettings {
         prefs.edit().putBoolean(KEY_MFNR_ENABLED, enabled).commit();
     }
 
+    /** @return true if {@link #KEY_MFNR_ENABLED} has been written (not just default). */
+    public boolean hasMfnrPreference() {
+        return prefs.contains(KEY_MFNR_ENABLED);
+    }
+
+    /** @return true if {@link #KEY_ZSL_ENABLED} has been written (not just default). */
+    public boolean hasZslPreference() {
+        return prefs.contains(KEY_ZSL_ENABLED);
+    }
+
+    /** Stored phone preset for MFNR; {@code null} if unset. */
+    public Boolean getButtonPhotoMfnr() {
+        if (!prefs.contains(KEY_BUTTON_PHOTO_MFNR)) {
+            return null;
+        }
+        return prefs.getBoolean(KEY_BUTTON_PHOTO_MFNR, true);
+    }
+
+    public void setButtonPhotoMfnr(Boolean enabled) {
+        if (enabled == null) {
+            prefs.edit().remove(KEY_BUTTON_PHOTO_MFNR).commit();
+            return;
+        }
+        Log.d(TAG, "Setting button photo MFNR to: " + enabled);
+        prefs.edit().putBoolean(KEY_BUTTON_PHOTO_MFNR, enabled).commit();
+    }
+
+    /** Stored phone preset for ZSL; {@code null} if unset. */
+    public Boolean getButtonPhotoZsl() {
+        if (!prefs.contains(KEY_BUTTON_PHOTO_ZSL)) {
+            return null;
+        }
+        return prefs.getBoolean(KEY_BUTTON_PHOTO_ZSL, true);
+    }
+
+    public void setButtonPhotoZsl(Boolean enabled) {
+        if (enabled == null) {
+            prefs.edit().remove(KEY_BUTTON_PHOTO_ZSL).commit();
+            return;
+        }
+        Log.d(TAG, "Setting button photo ZSL to: " + enabled);
+        prefs.edit().putBoolean(KEY_BUTTON_PHOTO_ZSL, enabled).commit();
+    }
+
     /** Stored phone preset for noise reduction; {@code null} if unset. */
     public Boolean getButtonPhotoNoiseReduction() {
         if (!prefs.contains(KEY_BUTTON_PHOTO_NOISE_REDUCTION)) {
@@ -424,6 +470,8 @@ public class AsgSettings {
                 .remove(KEY_BUTTON_PHOTO_ISO_CAP)
                 .remove(KEY_BUTTON_PHOTO_COMPRESS)
                 .remove(KEY_BUTTON_PHOTO_SOUND)
+                .remove(KEY_BUTTON_PHOTO_MFNR)
+                .remove(KEY_BUTTON_PHOTO_ZSL)
                 .putBoolean(KEY_MFNR_ENABLED, true)
                 .putBoolean(KEY_ZSL_ENABLED, true)
                 .commit();

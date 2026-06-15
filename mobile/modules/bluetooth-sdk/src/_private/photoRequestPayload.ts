@@ -58,6 +58,9 @@ export function photoRequestParamsForNative(
   if (params.mfnr != null) {
     payload.mfnr = params.mfnr
   }
+  if (params.zsl != null) {
+    payload.zsl = params.zsl
+  }
   if (params.ispDigitalGain != null) {
     payload.ispDigitalGain = Math.round(params.ispDigitalGain)
   }

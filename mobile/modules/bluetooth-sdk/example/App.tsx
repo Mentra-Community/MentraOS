@@ -41,6 +41,7 @@ const SCAN_MODE_PRESET = {
   ispAnalogGain: "low" as const,
   edgeEnhancement: false,
   mfnr: false,
+  zsl: false,
   compress: "none" as const,
   sound: false,
 }

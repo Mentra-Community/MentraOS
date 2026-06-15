@@ -79,12 +79,18 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             String bleImgId = data.optString("bleImgId", "");
             boolean save = data.optBoolean("save", false);
             String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
-            PhotoCaptureSettings captureSettings = PhotoCaptureSettings.fromTakePhotoJson(data);
+            PhotoCaptureSettings requestCaptureSettings =
+                    PhotoCaptureSettings.fromTakePhotoJson(data);
+            PhotoCaptureSettings.logIncomingTakePhotoFields(data, requestId);
             AsgSettings asgSettings = serviceManager.getAsgSettings();
+            PhotoCaptureSettings captureSettings = requestCaptureSettings;
             if (asgSettings != null) {
                 captureSettings =
-                        PhotoCaptureSettings.mergeWithStoredDefaults(captureSettings, asgSettings);
+                        PhotoCaptureSettings.mergeWithStoredDefaults(
+                                requestCaptureSettings, asgSettings);
             }
+            PhotoCaptureSettings.logMergeDiagnostics(
+                    requestCaptureSettings, captureSettings, asgSettings, requestId);
             String compress = resolvePhotoCompress(data, asgSettings);
             boolean flash = data.optBoolean("flash", true);
             boolean sound = resolvePhotoSound(data, asgSettings);

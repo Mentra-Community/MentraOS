@@ -271,9 +271,11 @@ public class SettingsCommandHandler implements ICommandHandler {
                 }
                 asgSettings.setButtonPhotoSize(size);
                 if (mfnr != null) {
+                    asgSettings.setButtonPhotoMfnr(mfnr);
                     asgSettings.setMfnrEnabled(mfnr);
                 }
                 if (zsl != null) {
+                    asgSettings.setButtonPhotoZsl(zsl);
                     asgSettings.setZslEnabled(zsl);
                 }
                 if (hasNoiseReduction) {

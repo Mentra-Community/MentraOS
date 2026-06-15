@@ -194,6 +194,7 @@ export type {
   PhotoMeteredPreview,
   PhotoResponseEvent,
   PhotoRequestedCaptureConfig,
+  PhotoRequestParams,
   PhotoSize,
   PhotoStatusEvent,
   PhotoStatusState,

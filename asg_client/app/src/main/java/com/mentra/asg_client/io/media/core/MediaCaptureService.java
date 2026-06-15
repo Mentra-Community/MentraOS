@@ -2545,26 +2545,23 @@ public class MediaCaptureService {
                                 Log.d(TAG, "📊 Photo file size: " + photoFile.length() + " bytes");
                                 Log.d(TAG, "🌐 Sending photo request to: " + webhookUrl);
 
-                                // Create multipart form request with WiFi-appropriate timeouts:
-                                // - 5 seconds to connect (allows time for DNS+TCP+TLS over WiFi)
-                                // - 10 seconds to write the photo data
-                                // - 5 seconds to read the response
+                                // Large photos over phone-hotspot WiFi can take 15s+ for a 3MB
+                                // transfer. Mirror the video path: generous per-stall timeouts
+                                // plus an end-to-end callTimeout derived from file size.
+                                long minThroughputBytesPerSec = 64L * 1024L; // ~0.5 Mbps floor
+                                long callTimeoutSeconds =
+                                        30L + (photoFile.length() / minThroughputBytesPerSec);
                                 OkHttpClient client =
                                         new OkHttpClient.Builder()
                                                 .connectTimeout(
-                                                        5,
-                                                        java.util.concurrent.TimeUnit
-                                                                .SECONDS) // Allow time for
-                                                // DNS+TCP+TLS on WiFi
+                                                        15, java.util.concurrent.TimeUnit.SECONDS)
                                                 .writeTimeout(
-                                                        10,
-                                                        java.util.concurrent.TimeUnit
-                                                                .SECONDS) // Time to upload photo
-                                                // data
+                                                        60, java.util.concurrent.TimeUnit.SECONDS)
                                                 .readTimeout(
-                                                        5,
-                                                        java.util.concurrent.TimeUnit
-                                                                .SECONDS) // Time to get response
+                                                        30, java.util.concurrent.TimeUnit.SECONDS)
+                                                .callTimeout(
+                                                        callTimeoutSeconds,
+                                                        java.util.concurrent.TimeUnit.SECONDS)
                                                 .build();
 
                                 RequestBody fileBody =
