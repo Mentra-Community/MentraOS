@@ -33,13 +33,10 @@ type OtaManifest = {
 
 let configuredOtaVersionUrl = DEFAULT_OTA_VERSION_URL
 
-function normalizeHttpUrl(value: string | null): string | null {
-  if (value == null) {
-    return null
-  }
+function normalizeHttpUrl(value: string): string {
   const trimmed = value.trim()
   if (!trimmed) {
-    return null
+    throw new Error("OTA version URL must be a non-empty http(s) URL.")
   }
   let url: URL
   try {
@@ -53,8 +50,8 @@ function normalizeHttpUrl(value: string | null): string | null {
   return url.toString()
 }
 
-export function setOtaVersionUrl(otaVersionUrl: string | null): void {
-  configuredOtaVersionUrl = normalizeHttpUrl(otaVersionUrl) ?? DEFAULT_OTA_VERSION_URL
+export function setOtaVersionUrl(otaVersionUrl: string): void {
+  configuredOtaVersionUrl = normalizeHttpUrl(otaVersionUrl)
 }
 
 export function getOtaVersionUrl(): string {

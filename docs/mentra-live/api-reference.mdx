@@ -448,7 +448,7 @@ Mentra Live OTA installation is glasses-owned. The SDK checks the configured man
 
 | API | Purpose |
 | --- | --- |
-| `setOtaVersionUrl(url)` | Configure the manifest URL used by both `checkForOtaUpdate()` and `startOtaUpdate()`. Pass `null` to restore the SDK default. |
+| `setOtaVersionUrl(url)` | Configure the manifest URL used by both `checkForOtaUpdate()` and `startOtaUpdate()`. |
 | `getOtaVersionUrl()` | Return the currently configured manifest URL. |
 | `checkForOtaUpdate()` | Fetch the configured manifest and resolve `true` when an ASG APK, MTK, or BES update is available. |
 | `startOtaUpdate()` | Send `ota_start` with the configured manifest URL after your app presents the update and the user accepts it. Resolves with `OtaStartAckEvent` from the ASG client. |

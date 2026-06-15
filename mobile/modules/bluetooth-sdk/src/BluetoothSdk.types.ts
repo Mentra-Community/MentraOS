@@ -959,8 +959,8 @@ export interface BluetoothSdkPublicModule {
   ): Promise<RgbLedControlSuccessResponseEvent>
 
   requestVersionInfo(): Promise<VersionInfoResult>
-  /** Set the manifest URL used by phone-side OTA checks and ota_start. Pass null to restore the SDK default. */
-  setOtaVersionUrl(otaVersionUrl: string | null): void
+  /** Set the manifest URL used by phone-side OTA checks and ota_start. */
+  setOtaVersionUrl(otaVersionUrl: string): void
   /** Return the manifest URL currently configured for phone-side OTA checks and ota_start. */
   getOtaVersionUrl(): string
   /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */

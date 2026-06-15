@@ -335,7 +335,7 @@ Android and iOS async APIs use `BluetoothException` / `BluetoothError` for the s
 
 Mentra Live firmware owns the OTA flow. The SDK mirrors the MentraOS app commands and events:
 
-- `setOtaVersionUrl(url)` configures the manifest used by phone-side OTA checks and by `ota_start`. Pass `null` to restore the SDK default.
+- `setOtaVersionUrl(url)` configures the manifest used by phone-side OTA checks and by `ota_start`.
 - `getOtaVersionUrl()` returns the currently configured manifest URL.
 - `checkForOtaUpdate()` fetches the configured manifest and resolves with `true` when an ASG APK, MTK, or BES update is available.
 - `startOtaUpdate()` sends `ota_start` with the same configured manifest URL and resolves with the ASG start ack after your app presents the update and the user accepts it.
