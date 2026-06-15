@@ -927,11 +927,11 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    public func setOtaVersionUrl(_ otaVersionUrl: String) throws {
+    func setOtaVersionUrl(_ otaVersionUrl: String) throws {
         configuredOtaVersionUrl = try OtaManifestChecker.normalizeHttpUrl(otaVersionUrl)
     }
 
-    public func getOtaVersionUrl() -> String {
+    func getOtaVersionUrl() -> String {
         configuredOtaVersionUrl
     }
 

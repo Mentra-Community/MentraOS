@@ -872,11 +872,11 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    fun setOtaVersionUrl(otaVersionUrl: String) {
+    internal fun setOtaVersionUrl(otaVersionUrl: String) {
         configuredOtaVersionUrl = OtaManifestChecker.normalizeHttpUrl(otaVersionUrl)
     }
 
-    fun getOtaVersionUrl(): String = configuredOtaVersionUrl
+    internal fun getOtaVersionUrl(): String = configuredOtaVersionUrl
 
     /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
     fun checkForOtaUpdate(): Boolean {

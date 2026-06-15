@@ -95,8 +95,6 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setGlassesMediaVolume: PrivateBluetoothSdkModule.setGlassesMediaVolume.bind(PrivateBluetoothSdkModule),
   rgbLedControl: PrivateBluetoothSdkModule.rgbLedControl.bind(PrivateBluetoothSdkModule),
   requestVersionInfo: PrivateBluetoothSdkModule.requestVersionInfo.bind(PrivateBluetoothSdkModule),
-  setOtaVersionUrl: PrivateBluetoothSdkModule.setOtaVersionUrl.bind(PrivateBluetoothSdkModule),
-  getOtaVersionUrl: PrivateBluetoothSdkModule.getOtaVersionUrl.bind(PrivateBluetoothSdkModule),
   checkForOtaUpdate: PrivateBluetoothSdkModule.checkForOtaUpdate.bind(PrivateBluetoothSdkModule),
   startOtaUpdate: PrivateBluetoothSdkModule.startOtaUpdate.bind(PrivateBluetoothSdkModule),
   setSttModelDetails: PrivateBluetoothSdkModule.setSttModelDetails.bind(PrivateBluetoothSdkModule),
