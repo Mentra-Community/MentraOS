@@ -73,8 +73,12 @@ export function waitForGlassesReady(options: WaitForGlassesReadyOptions): Promis
       if (isGlassesReady(connection)) finish(true)
     })
 
-    // subscribe() may have fired synchronously and already settled — don't arm a timer.
-    if (!settled) {
+    if (settled) {
+      // subscribe() notified synchronously with a ready state, so finish() ran
+      // before unsubscribe was assigned and couldn't tear the subscription down.
+      // Do it now (and don't arm a timer).
+      unsubscribe()
+    } else {
       timer = BgTimer.setTimeout(() => finish(isGlassesReady(getConnection())), timeoutMs)
     }
   })

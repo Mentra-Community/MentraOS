@@ -69,6 +69,22 @@ describe("waitForGlassesReady", () => {
     expect(h.listenerCount()).toBe(0)
   })
 
+  it("unsubscribes even when subscribe notifies synchronously with a ready state", async () => {
+    // Some adapters emit their current state synchronously during subscribe();
+    // the wait must still tear down the subscription rather than leak it.
+    const listeners = new Set<(c: GlassesConnectionStatus) => void>()
+    const subscribe = (l: (c: GlassesConnectionStatus) => void) => {
+      listeners.add(l)
+      l({state: "connected", fullyBooted: true})
+      return () => {
+        listeners.delete(l)
+      }
+    }
+    const ready = await waitForGlassesReady({getConnection: () => ({state: "connecting"}), subscribe})
+    expect(ready).toBe(true)
+    expect(listeners.size).toBe(0)
+  })
+
   it("resolves false on timeout and unsubscribes", async () => {
     jest.useFakeTimers()
     try {
