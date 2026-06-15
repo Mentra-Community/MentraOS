@@ -1,0 +1,81 @@
+/**
+ * GlassesReadiness — the canonical connection predicates plus a wait-for-booted
+ * primitive.
+ *
+ * The predicates ("connected / booted / busy") are the single app-facing home
+ * for connection readiness: the app, the Connection coordinator, and the
+ * Pairing coordinator all read them through island rather than re-deriving the
+ * same checks in three places. They are defined here over the btsdk
+ * `GlassesConnectionStatus` type (imported type-only so the island module never
+ * pulls the native bluetooth bundle).
+ *
+ * waitForGlassesReady is the new primitive those coordinators build on:
+ * "resolve once the glasses report fully booted, or false on timeout". It is
+ * host-store-agnostic — callers inject a snapshot getter + a subscribe fn — so
+ * it is unit-testable without a live device.
+ */
+import type {GlassesConnectionStatus} from "@mentra/bluetooth-sdk"
+
+import {BgTimer} from "../utils/timers"
+
+export type {GlassesConnectionStatus}
+
+/** True when the BLE link is established (regardless of boot state). */
+export function isGlassesConnected(connection: GlassesConnectionStatus): boolean {
+  return connection.state === "connected"
+}
+
+/** True when connected AND the glasses OS has finished booting. */
+export function isGlassesReady(connection: GlassesConnectionStatus): boolean {
+  return connection.state === "connected" && connection.fullyBooted
+}
+
+/** True while the native link layer is mid scan / connect / bond. */
+export function isGlassesLinkLayerBusy(connection: GlassesConnectionStatus): boolean {
+  return connection.state === "scanning" || connection.state === "connecting" || connection.state === "bonding"
+}
+
+export interface WaitForGlassesReadyOptions {
+  /** Current connection snapshot. */
+  getConnection: () => GlassesConnectionStatus
+  /** Subscribe to connection changes; returns an unsubscribe fn. */
+  subscribe: (listener: (connection: GlassesConnectionStatus) => void) => () => void
+  /** Resolve false after this many ms if still not ready. Default 35s — the pairing boot budget. */
+  timeoutMs?: number
+}
+
+/**
+ * Resolves true once the glasses report fully booted, or false on timeout.
+ * Resolves immediately when already ready. Always tears down its subscription
+ * and timer before resolving.
+ */
+export function waitForGlassesReady(options: WaitForGlassesReadyOptions): Promise<boolean> {
+  const {getConnection, subscribe, timeoutMs = 35_000} = options
+  return new Promise<boolean>((resolve) => {
+    if (isGlassesReady(getConnection())) {
+      resolve(true)
+      return
+    }
+
+    let settled = false
+    let timer: number | null = null
+    let unsubscribe: (() => void) | null = null
+
+    const finish = (value: boolean) => {
+      if (settled) return
+      settled = true
+      if (unsubscribe) unsubscribe()
+      if (timer !== null) BgTimer.clearTimeout(timer)
+      resolve(value)
+    }
+
+    unsubscribe = subscribe((connection) => {
+      if (isGlassesReady(connection)) finish(true)
+    })
+
+    // subscribe() may have fired synchronously and already settled — don't arm a timer.
+    if (!settled) {
+      timer = BgTimer.setTimeout(() => finish(isGlassesReady(getConnection())), timeoutMs)
+    }
+  })
+}

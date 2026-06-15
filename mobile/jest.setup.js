@@ -255,6 +255,12 @@ jest.mock("@mentra/island", () => {
       setTimeout: jest.fn((callback, delay) => setTimeout(callback, delay)),
       clearTimeout: jest.fn((id) => clearTimeout(id)),
     },
+    // GlassesReadiness predicates (re-exported by @/stores/glasses). Real impls
+    // so tests that exercise readiness logic behave correctly.
+    isGlassesConnected: (c) => c?.state === "connected",
+    isGlassesReady: (c) => c?.state === "connected" && !!c?.fullyBooted,
+    isGlassesLinkLayerBusy: (c) => c?.state === "scanning" || c?.state === "connecting" || c?.state === "bonding",
+    waitForGlassesReady: jest.fn(() => Promise.resolve(true)),
     useApps: jest.fn(() => appStatusState.apps),
     useForegroundApp: jest.fn(() => null),
     useAppStatusStore,

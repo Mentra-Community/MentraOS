@@ -61,6 +61,14 @@ export {
   type DownloadStatus as OfflineModelDownloadStatus,
   type DownloadStage as OfflineModelDownloadStage,
 } from "./services/OfflineSpeechModelService"
+export {
+  isGlassesConnected,
+  isGlassesReady,
+  isGlassesLinkLayerBusy,
+  waitForGlassesReady,
+  type GlassesConnectionStatus,
+  type WaitForGlassesReadyOptions,
+} from "./services/GlassesReadiness"
 
 // Runtime config (host-injected adapters)
 export {
