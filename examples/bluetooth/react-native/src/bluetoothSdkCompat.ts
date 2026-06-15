@@ -29,6 +29,7 @@ export type ScanPhotoRequestParams = {
   size: PhotoSize;
   compress: string;
   sound: boolean;
+  save?: boolean;
   exposureTimeNs?: number | null;
   iso?: number | null;
   aeExposureDivisor?: number;
@@ -87,6 +88,9 @@ export function photoRequestParamsForNativeCompat(
   };
   if (params.authToken != null && params.authToken.length > 0) {
     payload.authToken = params.authToken;
+  }
+  if (params.save != null) {
+    payload.save = params.save;
   }
   const exposureTimeNs = params.exposureTimeNs;
   const hasManualExposure = exposureTimeNs != null && Number.isFinite(exposureTimeNs) && exposureTimeNs > 0;

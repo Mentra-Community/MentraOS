@@ -680,6 +680,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     private fun buildPhotoRequest(requestId: String, appId: String, webhookUrl: String): PhotoRequest {
         if (state.scanMode) {
+            // SDK 0.1.12 `PhotoRequest` cannot carry per-capture scan fields (aeExposureDivisor/
+            // isoCap/mfnr/...); those ship in 0.1.13. The scan preset still reaches the glasses via
+            // the `ButtonPhotoSettings` sync above (Maven 0.1.12 supports it). Capture at max detail.
             return PhotoRequest(
                 requestId = requestId,
                 appId = appId,
@@ -687,13 +690,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 webhookUrl = webhookUrl,
                 compress = PhotoCompression.NONE,
                 sound = false,
-                aeExposureDivisor = state.scanAeDivisor,
-                isoCap = state.scanIsoCap,
-                noiseReduction = false,
-                edgeEnhancement = false,
-                mfnr = false,
-                ispDigitalGain = 0,
-                ispAnalogGain = "low",
             )
         }
         return PhotoRequest(
