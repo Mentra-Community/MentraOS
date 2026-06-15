@@ -62,7 +62,6 @@ import com.mentra.examples.android.ui.GlassCard
 import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
 import com.mentra.examples.android.ui.scrollBottomPadding
-import java.util.Locale
 
 @Composable
 fun DeviceScreen(controller: MentraExampleController) {
@@ -130,7 +129,7 @@ fun DeviceScreen(controller: MentraExampleController) {
                 StatTile("WI-FI", wifiLabel(glasses), currentWifi?.localIp ?: "unknown", AppColor.muted, Modifier.weight(1f), bold = true)
                 StatTile("RSSI", rssiLabel(glasses), rssiUpdatedLabel(glasses), AppColor.greenAccent, Modifier.weight(1f), bold = true)
             }
-            if (state.otaStatus != null || state.otaUpdateAvailable != null) {
+            if (state.otaStatus != null || state.otaUpdateAvailable) {
                 OtaCard(controller, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp))
             }
             if (otaWifiRequired) {
@@ -289,14 +288,14 @@ private fun glassesImageRes(values: GlassesRuntimeState?): Int {
 }
 
 private fun canStartOta(state: com.mentra.examples.android.MentraExampleState): Boolean =
-    isGlassesConnected(state.glassesStatus) && isGlassesWifiConnected(state.glassesStatus) && state.otaUpdateAvailable != null && !isOtaInProgress(state)
+    isGlassesConnected(state.glassesStatus) && isGlassesWifiConnected(state.glassesStatus) && state.otaUpdateAvailable && !isOtaInProgress(state)
 
 private fun isOtaInProgress(state: com.mentra.examples.android.MentraExampleState): Boolean =
     state.otaStatus?.status == "in_progress" || state.otaStatus?.status == "step_complete"
 
 private fun otaStatusLine(state: com.mentra.examples.android.MentraExampleState): String =
     state.otaStatus?.let { "${it.status.replace('_', ' ')} · ${it.overallPercent}%" }
-        ?: state.otaUpdateAvailable?.let { "Update ${it.versionName ?: "available"}" }
+        ?: if (state.otaUpdateAvailable) "Update required" else null
         ?: state.otaStatusMessage
         ?: if (isGlassesConnected(state.glassesStatus)) "Check not run" else "Connect glasses"
 
@@ -304,7 +303,7 @@ private fun otaCardTitle(state: com.mentra.examples.android.MentraExampleState):
     when {
         state.otaStatus?.status == "failed" -> "Update failed"
         state.otaStatus != null && isOtaInProgress(state) -> "Updating ${state.otaStatus.stepType.ifBlank { "firmware" }}"
-        state.otaUpdateAvailable != null -> "Update ${state.otaUpdateAvailable.versionName ?: "available"}"
+        state.otaUpdateAvailable -> "Update required"
         else -> "OTA status"
     }
 
@@ -313,25 +312,16 @@ private fun otaCardDetail(state: com.mentra.examples.android.MentraExampleState)
     state.otaStatus?.let {
         return "${it.phase.ifBlank { "status" }} · step ${it.currentStep}/${it.totalSteps}"
     }
-    state.otaUpdateAvailable?.let {
-        val updates = it.updates.joinToString().ifBlank { "firmware" }
-        val size = it.totalSize?.let { totalSize -> " · ${formatBytes(totalSize)}" } ?: ""
-        return updates + size
+    if (state.otaUpdateAvailable) {
+        return "Update your glasses before continuing. This example app may not work properly until the glasses firmware is current."
     }
     return "Tap Check OTA to ask the glasses for availability and progress."
 }
 
-private fun formatBytes(bytes: Long): String =
-    when {
-        bytes <= 0 -> "unknown size"
-        bytes < 1024 * 1024 -> if (bytes < 1024) "$bytes B" else "${bytes / 1024} KB"
-        else -> String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
-    }
-
 @Composable
 private fun OtaCard(controller: MentraExampleController, modifier: Modifier = Modifier) {
     val state = controller.state
-    if (state.otaStatus == null && state.otaUpdateAvailable == null) return
+    if (state.otaStatus == null && !state.otaUpdateAvailable) return
     val percent = state.otaStatus?.overallPercent ?: 0
     Column(
         modifier = modifier

@@ -19,7 +19,7 @@ struct DeviceScreen: View {
                         .padding(.horizontal, 16)
                         .padding(.top, 12)
 
-                    if model.otaStatus != nil || model.otaUpdateAvailable != nil {
+                    if model.otaStatus != nil || model.otaUpdateAvailable {
                         otaCard
                             .padding(.horizontal, 16)
                             .padding(.top, 10)
@@ -401,7 +401,7 @@ private func targetDeviceDetail(_ device: Device) -> String {
 
 @MainActor
 private func canStartOta(model: BluetoothViewModel) -> Bool {
-    model.glassesConnected && model.glassesWifiConnected && model.otaUpdateAvailable != nil && !isOtaInProgress(model: model)
+    model.glassesConnected && model.glassesWifiConnected && model.otaUpdateAvailable && !isOtaInProgress(model: model)
 }
 
 @MainActor
@@ -414,8 +414,8 @@ private func otaStatusLine(model: BluetoothViewModel) -> String {
     if let status = model.otaStatus {
         return "\(status.status.replacingOccurrences(of: "_", with: " ")) · \(status.overallPercent)%"
     }
-    if let update = model.otaUpdateAvailable {
-        return "Update \(update.versionName ?? "available")"
+    if model.otaUpdateAvailable {
+        return "Update required"
     }
     if let message = model.otaStatusMessage {
         return message
@@ -431,8 +431,8 @@ private func otaCardTitle(model: BluetoothViewModel) -> String {
     if let status = model.otaStatus, isOtaInProgress(model: model) {
         return "Updating \(status.stepType.isEmpty ? "firmware" : status.stepType)"
     }
-    if let update = model.otaUpdateAvailable {
-        return "Update \(update.versionName ?? "available")"
+    if model.otaUpdateAvailable {
+        return "Update required"
     }
     return "OTA status"
 }
@@ -445,22 +445,10 @@ private func otaCardDetail(model: BluetoothViewModel) -> String {
     if let status = model.otaStatus {
         return "\(status.phase.isEmpty ? "status" : status.phase) · step \(status.currentStep)/\(status.totalSteps)"
     }
-    if let update = model.otaUpdateAvailable {
-        let updates = update.updates.isEmpty ? "firmware" : update.updates.joined(separator: ", ")
-        let size = update.totalSize.map { " · \(formatBytes($0))" } ?? ""
-        return updates + size
+    if model.otaUpdateAvailable {
+        return "Update your glasses before continuing. This example app may not work properly until the glasses firmware is current."
     }
     return "Tap Check OTA to ask the glasses for availability and progress."
-}
-
-private func formatBytes(_ bytes: Int) -> String {
-    if bytes <= 0 {
-        return "unknown size"
-    }
-    if bytes < 1024 * 1024 {
-        return "\(bytes / 1024) KB"
-    }
-    return String(format: "%.1f MB", Double(bytes) / (1024.0 * 1024.0))
 }
 
 @MainActor

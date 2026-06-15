@@ -270,7 +270,7 @@ function canStartOta(sdk: BluetoothSdkExampleModel) {
   if (!isGlassesConnected(sdk.glasses) || !isGlassesWifiConnected(sdk.glasses)) {
     return false;
   }
-  return !isOtaInProgress(sdk);
+  return sdk.otaUpdateAvailable && !isOtaInProgress(sdk);
 }
 
 function isOtaInProgress(sdk: BluetoothSdkExampleModel) {
@@ -282,7 +282,7 @@ function otaStatusLine(sdk: BluetoothSdkExampleModel) {
     return `${sdk.otaStatus.status.replace(/_/g, ' ')} · ${sdk.otaStatus.overall_percent ?? 0}%`;
   }
   if (sdk.otaUpdateAvailable) {
-    return `Update ${sdk.otaUpdateAvailable.version_name ?? 'available'}`;
+    return 'Update required';
   }
   if (sdk.otaStatusMessage) {
     return sdk.otaStatusMessage;
@@ -298,7 +298,7 @@ function otaCardTitle(sdk: BluetoothSdkExampleModel) {
     return `Updating ${sdk.otaStatus.step_type || 'firmware'}`;
   }
   if (sdk.otaUpdateAvailable) {
-    return `Update ${sdk.otaUpdateAvailable.version_name ?? 'available'}`;
+    return 'Update required';
   }
   return 'OTA status';
 }
@@ -311,23 +311,9 @@ function otaCardDetail(sdk: BluetoothSdkExampleModel) {
     return `${sdk.otaStatus.phase || 'status'} · step ${sdk.otaStatus.current_step}/${sdk.otaStatus.total_steps}`;
   }
   if (sdk.otaUpdateAvailable) {
-    const updates = (sdk.otaUpdateAvailable.updates ?? []).join(', ') || 'firmware';
-    const size = typeof sdk.otaUpdateAvailable.total_size === 'number'
-      ? ` · ${formatBytes(sdk.otaUpdateAvailable.total_size)}`
-      : '';
-    return `${updates}${size}`;
+    return 'Update your glasses before continuing. This example app may not work properly until the glasses firmware is current.';
   }
   return 'Tap Check OTA to ask the glasses for availability and progress.';
-}
-
-function formatBytes(bytes: number) {
-  if (!Number.isFinite(bytes) || bytes <= 0) {
-    return 'unknown size';
-  }
-  if (bytes < 1024 * 1024) {
-    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function OtaCard({ sdk }: { sdk: BluetoothSdkExampleModel }) {

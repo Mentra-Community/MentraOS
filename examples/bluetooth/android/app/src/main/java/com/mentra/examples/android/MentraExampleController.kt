@@ -32,7 +32,6 @@ import com.mentra.bluetoothsdk.MicLc3Event
 import com.mentra.bluetoothsdk.MicPcmEvent
 import com.mentra.bluetoothsdk.OtaQueryResult
 import com.mentra.bluetoothsdk.OtaStatusEvent
-import com.mentra.bluetoothsdk.OtaUpdateAvailableEvent
 import com.mentra.bluetoothsdk.ButtonPressEvent
 import com.mentra.bluetoothsdk.CameraFov
 import com.mentra.bluetoothsdk.CameraFovResult
@@ -224,7 +223,7 @@ data class MentraExampleState(
     val micRecording: Boolean = false,
     val otaStatus: OtaStatusEvent? = null,
     val otaStatusMessage: String? = null,
-    val otaUpdateAvailable: OtaUpdateAvailableEvent? = null,
+    val otaUpdateAvailable: Boolean = false,
     val pcmBytes: Int = 0,
     val pcmFrames: Int = 0,
     val speaking: Boolean? = null,
@@ -318,6 +317,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var actionSequence = 0L
     private val activeActions = linkedMapOf<Long, String>()
     private var streamConfigurationChangeInProgress = false
+    private var autoOtaCheckedConnectionKey: String? = null
+    private var autoOtaCheckInProgress = false
 
     private val micSampleRate = 16_000
     private val micChannelCount = 1
@@ -1630,6 +1631,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 pushScanButtonPreset(state.scanAeDivisor, state.scanIsoCap)
             }
         }
+        maybeAutoCheckOta()
         addEvent("STORE", summarize(glasses))
     }
 
@@ -1690,6 +1692,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             is WifiStatus.Connected -> status.ssid
             WifiStatus.Disconnected -> "disconnected"
         }
+        maybeAutoCheckOta()
         addEvent("STORE", "Wi-Fi $label")
     }
 
@@ -1895,23 +1898,15 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         applyOtaStatus(event)
     }
 
-    private fun handleOtaQueryResult(result: OtaQueryResult) {
+    private fun handleOtaQueryResult(result: OtaQueryResult): Boolean {
         if (result.type == "ota_update_available") {
-            val event = OtaUpdateAvailableEvent(
-                versionCode = result.values.longValue("version_code"),
-                versionName = result.values.stringValue("version_name"),
-                updates = (result.values["updates"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
-                totalSize = result.values.longValue("total_size"),
-                cacheReady = result.values["cache_ready"] as? Boolean,
-                values = result.values,
-            )
             state = state.copy(
                 otaStatus = null,
                 otaStatusMessage = null,
-                otaUpdateAvailable = event,
+                otaUpdateAvailable = true,
             )
-            addEvent("LIVE", "OTA available ${event.versionName ?: "unknown"} (${event.updates.joinToString().ifBlank { "update" }})")
-            return
+            addEvent("LIVE", "OTA update available")
+            return true
         }
 
         val event = OtaStatusEvent(
@@ -1928,6 +1923,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             values = result.values,
         )
         applyOtaStatus(event)
+        if (!isDisplayableOtaStatus(event)) {
+            state = state.copy(otaStatusMessage = "Glasses firmware is up to date")
+            addEvent("LIVE", "OTA up to date")
+        }
+        return false
     }
 
     override fun onMicPcm(event: MicPcmEvent) {
@@ -1978,6 +1978,34 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         requireConnected("check OTA")
         requireGlassesWifi("check for OTA updates")
         handleOtaQueryResult(withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() })
+    }
+
+    private fun maybeAutoCheckOta() {
+        val glasses = state.glassesStatus
+        if (!isGlassesConnected(glasses)) {
+            autoOtaCheckedConnectionKey = null
+            autoOtaCheckInProgress = false
+            return
+        }
+        if (!isGlassesWifiConnected(glasses) || autoOtaCheckInProgress || isOtaInProgress()) {
+            return
+        }
+        val connectionKey = otaConnectionKey(glasses)
+        if (autoOtaCheckedConnectionKey == connectionKey) {
+            return
+        }
+
+        autoOtaCheckedConnectionKey = connectionKey
+        autoOtaCheckInProgress = true
+        runAction("Auto-check OTA") {
+            try {
+                requireConnected("check OTA")
+                requireGlassesWifi("check for OTA updates")
+                handleOtaQueryResult(withContext(Dispatchers.IO) { mentraBluetoothSdk.checkForOtaUpdate() })
+            } finally {
+                autoOtaCheckInProgress = false
+            }
+        }
     }
 
     fun startOtaUpdate() = runAction("Start OTA") {
@@ -2278,6 +2306,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     private fun isGlassesConnected(): Boolean = isGlassesConnected(state.glassesStatus)
 
+    private fun isOtaInProgress(): Boolean =
+        state.otaStatus?.status == "in_progress" || state.otaStatus?.status == "step_complete"
+
     private fun requireGlassesWifi(feature: String) {
         if (isGlassesWifiConnected(state.glassesStatus)) {
             return
@@ -2388,7 +2419,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             hotspotEnabled = false,
             otaStatus = null,
             otaStatusMessage = null,
-            otaUpdateAvailable = null,
+            otaUpdateAvailable = false,
             micRecording = false,
             phoneAudioRoute = currentAudioOutputRouteLabel(),
             phonePhotoServerRunning = false,
@@ -2427,9 +2458,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(
             otaStatus = event,
             otaStatusMessage = null,
-            otaUpdateAvailable = state.otaUpdateAvailable.takeUnless {
-                event.status == "complete" || event.status == "failed"
-            },
+            otaUpdateAvailable = if (event.status == "complete" || event.status == "failed") false else state.otaUpdateAvailable,
         )
         addEvent("LIVE", "OTA ${event.status.ifBlank { "status" }} ${event.overallPercent}%")
     }
@@ -3302,6 +3331,13 @@ val GlassesRuntimeState.wifi: WifiStatus?
 
 fun connectedGlassesInfo(status: GlassesRuntimeState?) =
     (status as? GlassesRuntimeState.Connected)?.device
+
+fun otaConnectionKey(status: GlassesRuntimeState?): String =
+    listOfNotNull(
+        connectedGlassesInfo(status)?.bluetoothName,
+        connectedGlassesInfo(status)?.serialNumber,
+        connectedGlassesInfo(status)?.deviceModel?.deviceType,
+    ).joinToString("|").ifBlank { "connected" }
 
 fun deviceLabel(status: GlassesRuntimeState?): String =
     connectedGlassesInfo(status)?.bluetoothName

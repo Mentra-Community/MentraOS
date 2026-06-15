@@ -334,7 +334,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var micPlaybackHint: String?
     @Published private(set) var otaStatus: OtaStatusEvent?
     @Published private(set) var otaStatusMessage: String?
-    @Published private(set) var otaUpdateAvailable: OtaUpdateAvailableEvent?
+    @Published private(set) var otaUpdateAvailable = false
     @Published private(set) var ledColor = "green"
     @Published private(set) var ledMode = "Off"
     @Published var rawJsonExpanded = false
@@ -355,6 +355,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var directStreamStopTask: Task<Void, Never>?
     private var directStreamFirstFrameSeen = false
     private var lastDirectStreamFrameStatusRefresh = Date.distantPast
+    private var autoOtaCheckedConnectionKey: String?
+    private var autoOtaCheckInProgress = false
     private var scanSession: ScanSession?
     private var micStartedAt: Date?
     private var micElapsedTask: Task<Void, Never>?
@@ -561,7 +563,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAsyncAction("Check OTA") { [self] in
             try requireConnected("check OTA")
             try requireGlassesWifi("check for OTA updates")
-            handleOtaQueryResult(try await mentraBluetoothSdk.checkForOtaUpdate())
+            _ = try await checkForOtaUpdateResult()
         }
     }
 
@@ -1595,6 +1597,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             }
         }
         refreshGalleryServerStatusForCurrentHotspot(defaultStatus: hotspotEnabled ? galleryServerStatus : "Gallery server: hotspot off")
+        maybeAutoCheckOta()
         append(tag: "STORE", text: summarize(glasses))
     }
 
@@ -1655,18 +1658,26 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    private func handleOtaQueryResult(_ result: OtaQueryResult) {
+    private func checkForOtaUpdateResult() async throws -> Bool {
+        handleOtaQueryResult(try await mentraBluetoothSdk.checkForOtaUpdate())
+    }
+
+    private func handleOtaQueryResult(_ result: OtaQueryResult) -> Bool {
         if result.type == "ota_update_available" {
-            let event = OtaUpdateAvailableEvent(values: result.values)
             otaStatus = nil
             otaStatusMessage = nil
-            otaUpdateAvailable = event
-            append(tag: "LIVE", text: "OTA available \(event.versionName ?? "unknown") (\(event.updates.joined(separator: ", ")))")
-            return
+            otaUpdateAvailable = true
+            append(tag: "LIVE", text: "OTA update available")
+            return true
         }
 
         let event = OtaStatusEvent(values: result.values)
         applyOtaStatus(event)
+        if !isDisplayableOtaStatus(event) {
+            otaStatusMessage = "Glasses firmware is up to date"
+            append(tag: "LIVE", text: "OTA up to date")
+        }
+        return false
     }
 
     private func applyOtaStatus(_ event: OtaStatusEvent) {
@@ -1680,7 +1691,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         otaStatus = event
         otaStatusMessage = nil
         if event.status == "complete" || event.status == "failed" {
-            otaUpdateAvailable = nil
+            otaUpdateAvailable = false
         }
         append(tag: "LIVE", text: "OTA \(event.status.isEmpty ? "status" : event.status) \(event.overallPercent)%")
     }
@@ -1694,7 +1705,28 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         case .disconnected:
             label = "disconnected"
         }
+        maybeAutoCheckOta()
         append(tag: "STORE", text: "Wi-Fi \(label)")
+    }
+
+    private func maybeAutoCheckOta() {
+        guard glassesConnected else {
+            autoOtaCheckedConnectionKey = nil
+            autoOtaCheckInProgress = false
+            return
+        }
+        guard glassesWifiConnected, !autoOtaCheckInProgress, !isOtaInProgress() else { return }
+        let connectionKey = otaConnectionKey(glassesValues)
+        guard autoOtaCheckedConnectionKey != connectionKey else { return }
+
+        autoOtaCheckedConnectionKey = connectionKey
+        autoOtaCheckInProgress = true
+        runAsyncAction("Auto-check OTA") { [self] in
+            defer { autoOtaCheckInProgress = false }
+            try requireConnected("check OTA")
+            try requireGlassesWifi("check for OTA updates")
+            _ = try await checkForOtaUpdateResult()
+        }
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicPcm event: MicPcmEvent) {
@@ -1779,6 +1811,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAction("Auto-connect default") {
             try mentraBluetoothSdk.connectDefault()
         }
+    }
+
+    private func isOtaInProgress() -> Bool {
+        otaStatus?.status == "in_progress" || otaStatus?.status == "step_complete"
     }
 
     private func requireConnected(_ feature: String) throws {
@@ -2006,7 +2042,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         galleryServerStatus = "Gallery server: connect glasses first"
         otaStatus = nil
         otaStatusMessage = nil
-        otaUpdateAvailable = nil
+        otaUpdateAvailable = false
         if activePhotoRequestId != nil {
             activePhotoRequestId = nil
             pollGeneration += 1
@@ -2531,6 +2567,17 @@ func isGlassesConnected(_ status: GlassesRuntimeState?) -> Bool {
 
 func connectedGlassesInfo(_ status: GlassesRuntimeState?) -> ConnectedGlassesInfo? {
     status?.device
+}
+
+func otaConnectionKey(_ status: GlassesRuntimeState?) -> String {
+    let key = [
+        connectedGlassesInfo(status)?.bluetoothName,
+        connectedGlassesInfo(status)?.serialNumber,
+        connectedGlassesInfo(status)?.deviceModel?.deviceType,
+    ]
+    .compactMap { $0 }
+    .joined(separator: "|")
+    return key.isEmpty ? "connected" : key
 }
 
 func modelLabel(_ status: GlassesRuntimeState?) -> String {
