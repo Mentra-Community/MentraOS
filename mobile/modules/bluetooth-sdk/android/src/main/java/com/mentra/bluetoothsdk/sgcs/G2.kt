@@ -27,6 +27,7 @@ import java.io.ByteArrayOutputStream
 import java.util.TimeZone
 import java.util.UUID
 import java.util.regex.Pattern
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,6 +35,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 // ---------- G2 Protocol Constants ----------
 
@@ -1311,6 +1313,17 @@ class G2 : SGCManager() {
     private var textContainerID: Int = 1
     private var imageSessionCounter: Int = 0
     private var heartbeatCounter: Int = 0
+
+    // Image-send retry: the glasses reply once per image (not per fragment) with an ImgResCmd
+    // carrying ErrorCode 4=success / 5=failed. These correlate that single ACK back to the
+    // in-flight transfer by MapSessionId. Set after the last fragment of an attempt is sent and
+    // awaited by sendImageData(); completed by handleEvenHubResponse() when the matching ACK
+    // arrives (Boolean = success). Only one transfer is ever outstanding (sendImageData runs
+    // under displayMutex), so a single slot suffices.
+    private var pendingImgAckSession: Int? = null
+    private var pendingImgAck: CompletableDeferred<Boolean>? = null
+    private val IMG_ACK_TIMEOUT_MS = 600L
+    private val IMG_MAX_ATTEMPTS = 3
     private var authStarted: Boolean = false
     private var leftAuthenticated: Boolean = false
     private var rightAuthenticated: Boolean = false
@@ -2112,6 +2125,7 @@ class G2 : SGCManager() {
         val msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
+        delay(300) // 300ms to settle
         rebuildState()
     }
 
@@ -2125,7 +2139,6 @@ class G2 : SGCManager() {
         Bridge.log("G2: rebuildState()")
         // recreate the containers:
         createPageWithContainers()
-        
         delay(300) // 300ms to settle
 
         // go through each image container and send the data:
@@ -2155,9 +2168,14 @@ class G2 : SGCManager() {
     /**
      * Send a bitmap to an image container as fragmented updateImageRawData packets.
      *
-     * Suspends until every fragment has been sent, mirroring iOS `sendImageData` (which awaits
-     * 200ms after every fragment, including the last). Callers therefore get the same serialized
-     * timing window: the 300ms settle in [rebuildState] only runs once all fragments are out.
+     * The glasses reply ONCE per image (after all fragments arrive) with an ImgResCmd ErrorCode
+     * (4=success, 5=failed). After sending every fragment, this awaits that ACK for up to
+     * [IMG_ACK_TIMEOUT_MS]; a `failed` ACK OR no ACK within the window both count as a failure and
+     * the entire image is re-sent (fresh session id) up to [IMG_MAX_ATTEMPTS] times. On exhausting
+     * all attempts it logs a warning and returns (best-effort — callers are unaffected).
+     *
+     * Suspends until the image is acknowledged (or all attempts fail), so the 300ms settle in
+     * [rebuildState] only runs once the transfer has fully resolved.
      */
     private suspend fun sendImageData(
             containerID: Int,
@@ -2165,36 +2183,63 @@ class G2 : SGCManager() {
             bmpData: ByteArray
     ) {
         val fragmentSize = 4096
-        imageSessionCounter++
-        val sessionId = imageSessionCounter
         val totalSize = bmpData.size
-        var fragmentIndex = 0
-        var offset = 0
+        val fragmentCount = (bmpData.size + fragmentSize - 1) / fragmentSize
 
-        Bridge.log("G2: sendImageData($containerName) - $fragmentIndex fragments, ${bmpData.size} bytes")
+        Bridge.log("G2: sendImageData($containerName) - $fragmentCount fragments, ${bmpData.size} bytes")
 
-        while (offset < bmpData.size) {
-            val end = minOf(offset + fragmentSize, bmpData.size)
-            val fragment = bmpData.copyOfRange(offset, end)
+        for (attempt in 1..IMG_MAX_ATTEMPTS) {
+            // Fresh session per attempt so a late ACK from a prior attempt can't be mistaken for
+            // this one (handleEvenHubResponse matches on MapSessionId).
+            imageSessionCounter++
+            val sessionId = imageSessionCounter
 
-            val msg =
-                    EvenHubProto.updateImageRawDataMessage(
-                            containerID = containerID,
-                            containerName = containerName,
-                            mapSessionId = sessionId,
-                            mapTotalSize = totalSize,
-                            compressMode = 0,
-                            mapFragmentIndex = fragmentIndex,
-                            mapFragmentPacketSize = fragment.size,
-                            mapRawData = fragment
-                    )
-            sendEvenHubCommand(msg)
-            Bridge.log("G2: sendImageData($containerName) - sent fragment $fragmentIndex")
+            val ack = CompletableDeferred<Boolean>()
+            pendingImgAckSession = sessionId
+            pendingImgAck = ack
 
-            fragmentIndex++
-            offset = end
-            delay(200) // 200ms between fragments (and after the last, matching iOS)
+            var fragmentIndex = 0
+            var offset = 0
+            while (offset < bmpData.size) {
+                val end = minOf(offset + fragmentSize, bmpData.size)
+                val fragment = bmpData.copyOfRange(offset, end)
+
+                val msg =
+                        EvenHubProto.updateImageRawDataMessage(
+                                containerID = containerID,
+                                containerName = containerName,
+                                mapSessionId = sessionId,
+                                mapTotalSize = totalSize,
+                                compressMode = 0,
+                                mapFragmentIndex = fragmentIndex,
+                                mapFragmentPacketSize = fragment.size,
+                                mapRawData = fragment
+                        )
+                sendEvenHubCommand(msg)
+                Bridge.log("G2: sendImageData($containerName) - attempt $attempt sent fragment $fragmentIndex")
+
+                fragmentIndex++
+                offset = end
+                delay(300) // 300ms between fragments (android is slower than iOS)
+            }
+
+            // Await the single per-image ACK. null=timeout (no ACK), false=img_failed, true=success.
+            val ok = withTimeoutOrNull(IMG_ACK_TIMEOUT_MS) { ack.await() }
+            if (pendingImgAck === ack) {
+                pendingImgAck = null
+                pendingImgAckSession = null
+            }
+
+            if (ok == true) {
+                Bridge.log("G2: sendImageData($containerName) - acked on attempt $attempt")
+                return
+            }
+
+            val reason = if (ok == null) "timeout" else "img_failed"
+            Bridge.log("G2: sendImageData($containerName) - attempt $attempt failed ($reason)")
         }
+
+        Bridge.log("G2: WARN: sendImageData($containerName) - failed after $IMG_MAX_ATTEMPTS attempts")
     }
 
     /// Bring the Even Realities dashboard (the OS-level home/idle screen) to
@@ -3469,6 +3514,10 @@ class G2 : SGCManager() {
 
         val serviceId = result.first
         val payload = result.second
+        
+
+        // print raw log, first 32 bytes:
+        // Bridge.log("G2: handleNotifyData() - serviceId=$serviceId, payload=${payload.take(32).joinToString("") { String.format("%02X", it) }}")
 
         when (serviceId) {
             ServiceID.EVEN_HUB.value -> handleEvenHubResponse(payload)
@@ -3558,7 +3607,7 @@ class G2 : SGCManager() {
         val fields = reader.parseFields()
 
         // print raw payload:
-        Bridge.log("G2: EvenHub response payload: ${payload.joinToString("") { String.format("%02X", it) }}")
+        // Bridge.log("G2: EvenHub response payload: ${payload.joinToString("") { String.format("%02X", it) }}")
 
         val cmdValue =
                 fields[1] as? Int
@@ -3606,6 +3655,21 @@ class G2 : SGCManager() {
                 Bridge.log("G2: Menu selection ignored — placeholder or unknown appId=$appId")
             }
         } else {
+            // Correlate the per-image ACK back to the in-flight sendImageData() attempt and
+            // complete its deferred. Done BEFORE the logging dedup window below so the (possibly
+            // first-arriving) ACK is never swallowed by an unrelated recent EvenHub response.
+            // Dedup of the duplicate L/R ACK is handled by the session-id match plus the fact that
+            // completing an already-completed deferred is a no-op — no time window needed.
+            // ImgResCmd is field 6; MapSessionId = field 3, ErrorCode = field 8 (4=success, 5=failed).
+            (fields[6] as? ByteArray)?.let { resData ->
+                val resFields = ProtobufReader(resData).parseFields()
+                val errorCode = resFields[8] as? Int
+                val ackSession = resFields[3] as? Int
+                if (errorCode != null && ackSession != null && ackSession == pendingImgAckSession) {
+                    pendingImgAck?.complete(errorCode == 4)
+                }
+            }
+
             // Dedup only the non-critical logging path (img-success/error chatter), which L and R
             // both deliver. Page-state resets above are intentionally outside this window.
             val timestamp = System.currentTimeMillis()
@@ -3645,7 +3709,8 @@ class G2 : SGCManager() {
                 val resReader = ProtobufReader(resData)
                 val resFields = resReader.parseFields()
                 (resFields[8] as? Int)?.let { errorCode ->
-                    // ImgResCmd has ErrorCode in field 8
+                    // ImgResCmd ErrorCode in field 8 (the sendImageData ACK is completed above,
+                    // before the dedup window — this is just the deduped logging path).
                     if (errorCode == 4) {
                         Bridge.log("G2: img_success")
                     } else {
