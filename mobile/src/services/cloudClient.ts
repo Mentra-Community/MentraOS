@@ -272,6 +272,7 @@ function buildAdapter(): CloudRuntimeAdapter {
     },
     hasAudioSubscriptions: (): boolean => audioSubscriptions.length > 0,
     isConnected: (): boolean => connected,
+    getRuntimeBaseUrl: (): string => runtimeUrl().replace(/\/+$/, ""),
   }
 }
 

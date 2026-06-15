@@ -1182,7 +1182,8 @@ class LocalMiniappRuntime {
 
       this.setSpeakerState(packageName, "loading")
 
-      const audioPlayback = getRuntimeHooks().audioPlayback
+      const hooks = getRuntimeHooks()
+      const audioPlayback = hooks.audioPlayback
       if (!audioPlayback) {
         const message = "audio playback unavailable"
         this.setSpeakerState(packageName, "error", {
@@ -1196,33 +1197,85 @@ class LocalMiniappRuntime {
         return
       }
 
-      // Try offline TTS first; on synthesize failure (e.g. requested voice's
-      // language model isn't downloaded) fall through to cloud TTS rather
-      // than surfacing the offline error to the miniapp.
-      //
-      // If the miniapp passed an explicit `voice_id` that offline TTS can't
-      // honor (e.g. an ElevenLabs voice id), skip offline entirely instead of
-      // silently substituting the default offline voice — the miniapp asked
-      // for a specific voice and we shouldn't lie about which one it got.
       const voiceExplicit = payload.voice_id !== undefined || payload.voice !== undefined
       const offlineSupportsVoice =
         !voiceExplicit ||
         voice === "default" ||
         ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
-      let offlineGenerated: TtsSynthesisResult | undefined
-      if (offlineSupportsVoice && (await ttsModelManager.isModelAvailable())) {
+
+      const modelId = typeof payload.model_id === "string" ? payload.model_id : undefined
+      const buildTtsUrl = (endpoint: string): string => {
+        const query = new URLSearchParams()
+        query.set("text", text)
+        if (voiceExplicit && voice !== "default") {
+          query.set("voice_id", voice)
+        }
+        if (modelId) {
+          query.set("model_id", modelId)
+        }
+        if (voiceSettings) {
+          query.set("voice_settings", JSON.stringify(voiceSettings))
+        }
+        return `${endpoint}?${query.toString()}`
+      }
+
+      const runtimeBaseUrl = hooks.cloud?.getRuntimeBaseUrl?.()?.replace(/\/+$/, "")
+      const backendUrl = hooks.settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.backendUrl)?.replace(/\/+$/, "")
+      const runtimeTtsUrl = runtimeBaseUrl ? buildTtsUrl(`${runtimeBaseUrl}/api/audio/tts`) : undefined
+      const legacyTtsUrl = backendUrl ? buildTtsUrl(`${backendUrl}/api/tts`) : undefined
+      const cloudConnected = hooks.cloud?.isConnected() === true || hooks.cloudConnection?.isConnected() === true
+      console.log(
+        `${LOG_TAG}: TTS decision for ${packageName}: cloudConnected=${cloudConnected}, runtimeTts=${runtimeTtsUrl ? "yes" : "no"}, legacyTts=${legacyTtsUrl ? "yes" : "no"}, offlineVoice=${offlineSupportsVoice}`,
+      )
+
+      let terminalSent = false
+      const sendPlaybackResult = (
+        success: boolean,
+        error: string | null,
+        duration: number | null,
+        fallbackErrorMessage: string,
+      ) => {
+        if (terminalSent) return
+        terminalSent = true
+        if (success) {
+          this.setSpeakerState(packageName, "stopped", {durationMs: duration ?? undefined})
+        } else {
+          this.setSpeakerState(packageName, "error", {
+            errorCode: MiniappErrorCode.TTS_UPSTREAM_ERROR,
+            errorMessage: error ?? fallbackErrorMessage,
+            durationMs: duration ?? undefined,
+          })
+        }
+        this.sendResult(
+          packageName,
+          requestId,
+          success,
+          {completed: success, duration},
+          error
+            ? {
+                code: MiniappErrorCode.TTS_UPSTREAM_ERROR,
+                message: error,
+              }
+            : undefined,
+        )
+      }
+
+      const playOfflineTts = async (reason?: string): Promise<boolean> => {
+        if (!offlineSupportsVoice || !(await ttsModelManager.isModelAvailable())) {
+          return false
+        }
+
+        let offlineGenerated: TtsSynthesisResult | undefined
         try {
           const languageCode = ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
             ? voice
             : undefined
           offlineGenerated = await ttsModelManager.synthesizeToFile(text, {languageCode, speed})
         } catch (offlineErr) {
-          console.warn(`${LOG_TAG}: offline TTS synthesize failed, falling back to cloud:`, offlineErr)
-          offlineGenerated = undefined
+          console.warn(`${LOG_TAG}: offline TTS synthesize failed${reason ? ` after ${reason}` : ""}:`, offlineErr)
+          return false
         }
-      }
 
-      if (offlineGenerated) {
         const generated = offlineGenerated
         audioPlayback.play(
           {requestId: audioRequestId, audioUrl: generated.audioUrl, appId: packageName, volume, stopOtherAudio},
@@ -1230,63 +1283,60 @@ class LocalMiniappRuntime {
             void Promise.resolve(generated.cleanup?.()).catch((cleanupError) => {
               console.warn(`${LOG_TAG}: offline TTS cleanup failed`, cleanupError)
             })
-            if (success) {
-              this.setSpeakerState(packageName, "stopped", {durationMs: duration ?? undefined})
-            } else {
-              this.setSpeakerState(packageName, "error", {
-                errorCode: MiniappErrorCode.TTS_UPSTREAM_ERROR,
-                errorMessage: error ?? "offline tts playback failed",
-                durationMs: duration ?? undefined,
-              })
-            }
-            this.sendResult(
-              packageName,
-              requestId,
-              success,
-              {completed: success, duration},
-              error
-                ? {
-                    code: MiniappErrorCode.TTS_UPSTREAM_ERROR,
-                    message: error,
-                  }
-                : undefined,
-            )
+            sendPlaybackResult(success, error, duration, "offline tts playback failed")
           },
         )
         queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
+        return true
+      }
+
+      const playCloudTts = async (fallbackToOffline: boolean): Promise<boolean> => {
+        const ttsUrl = runtimeTtsUrl ?? legacyTtsUrl
+        if (!ttsUrl) return false
+
+        await Promise.resolve(
+          audioPlayback.play(
+            {requestId: audioRequestId, audioUrl: ttsUrl, appId: packageName, volume, stopOtherAudio},
+            (_respId, success, error, duration) => {
+              if (!success && fallbackToOffline) {
+                void playOfflineTts("cloud tts playback failed").then((started) => {
+                  if (!started) {
+                    sendPlaybackResult(false, error, duration, "tts failed")
+                  }
+                })
+                return
+              }
+              sendPlaybackResult(success, error, duration, "tts failed")
+            },
+          ),
+        )
+        queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
+        return true
+      }
+
+      if (cloudConnected && (await playCloudTts(true))) {
         return
       }
 
-      const backendUrl = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.backendUrl)
-      const ttsUrl = `${backendUrl}/api/tts?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voice)}`
+      // Offline is the disconnected-cloud fallback. If the model is not
+      // available, preserve the old behavior by trying cloud as a last resort.
+      if (await playOfflineTts(cloudConnected ? undefined : "cloud disconnected")) {
+        return
+      }
 
-      audioPlayback.play(
-        {requestId: audioRequestId, audioUrl: ttsUrl, appId: packageName, volume, stopOtherAudio},
-        (_respId, success, error, duration) => {
-          if (success) {
-            this.setSpeakerState(packageName, "stopped", {durationMs: duration ?? undefined})
-          } else {
-            this.setSpeakerState(packageName, "error", {
-              errorCode: MiniappErrorCode.TTS_UPSTREAM_ERROR,
-              errorMessage: error ?? "tts failed",
-              durationMs: duration ?? undefined,
-            })
-          }
-          this.sendResult(
-            packageName,
-            requestId,
-            success,
-            {completed: success, duration},
-            error
-              ? {
-                  code: MiniappErrorCode.TTS_UPSTREAM_ERROR,
-                  message: error,
-                }
-              : undefined,
-          )
-        },
-      )
-      queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
+      if (await playCloudTts(false)) {
+        return
+      }
+
+      const message = "tts unavailable: no cloud TTS URL or offline TTS model"
+      this.setSpeakerState(packageName, "error", {
+        errorCode: MiniappErrorCode.TTS_UPSTREAM_ERROR,
+        errorMessage: message,
+      })
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.TTS_UPSTREAM_ERROR,
+        message,
+      })
     } catch (err) {
       console.error(`${LOG_TAG}: speak error:`, err)
       const message = err instanceof Error ? err.message : "TTS error"

@@ -76,6 +76,8 @@ export interface CloudRuntimeAdapter {
   hasAudioSubscriptions: () => boolean
   /** Whether the v2 live session is connected (handshake completed). */
   isConnected: () => boolean
+  /** HTTP base URL for runtime REST routes. Used for streamed runtime TTS. */
+  getRuntimeBaseUrl?: () => string | undefined
 }
 
 /**
