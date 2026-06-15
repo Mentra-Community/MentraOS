@@ -11,6 +11,9 @@ import {waitForGlassesState} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 
 jest.mock("@/../../cloud/packages/types/src", () => ({
+  ControllerTypes: {
+    R1: "Mentra Mach1",
+  },
   DeviceTypes: {
     LIVE: "Mentra Live",
     G1: "Even Realities G1",
@@ -19,6 +22,9 @@ jest.mock("@/../../cloud/packages/types/src", () => ({
     MACH1: "Mach1",
     NEX: "Mentra Nex",
   },
+  getModelCapabilities: jest.fn((deviceModel: string) => ({
+    hasOta: deviceModel === "Mentra Live",
+  })),
 }))
 
 jest.mock("@react-navigation/native", () => ({

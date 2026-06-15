@@ -314,7 +314,7 @@ class G1: NSObject, SGCManager {
 
     func queryGalleryStatus() {}
 
-    func sendOtaStart() {}
+    func sendOtaStart(otaVersionUrl: String?) {}
     func sendOtaQueryStatus() {}
 
     func ping() {}
@@ -781,6 +781,10 @@ class G1: NSObject, SGCManager {
         //      CoreCommsService.log("encodedChunks: \(encodedChunks.count)")
         //      self.queueChunks(encodedChunks)
         //    }
+    }
+
+    func sendText(_ text: String) async {
+        await sendTextWall(text)
     }
 
     func sendTextWall(_ text: String) async {

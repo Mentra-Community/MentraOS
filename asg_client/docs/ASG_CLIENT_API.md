@@ -453,7 +453,11 @@ The glasses also emit `battery_status` outbound:
 {"type": "request_version"}
 ```
 
-Returns version information chunked across three messages — `version_info_1`, `version_info_2`, `version_info_3` — to fit BLE MTU. Each chunk carries APK build, OS version, MCU/BES firmware version, and serial.
+Returns version information chunked across three messages — `version_info_1`, `version_info_2`, `version_info_3` — to fit BLE MTU:
+
+- `version_info_1`: `app_version`, `build_number`, `device_model`, `android_version`, `system_time_ms`
+- `version_info_2`: `ota_version_url` (the ASG client's compiled default OTA manifest URL)
+- `version_info_3`: `bes_fw_version`, `mtk_fw_version`, `bt_mac_address`
 
 ---
 
@@ -816,19 +820,85 @@ User accepted an OTA update.
 {"type": "ota_start"}
 ```
 
+Optionally, the phone can supply a custom manifest URL for this install attempt:
+
+```json
+{"type": "ota_start", "ota_version_url": "https://staging.ota.mentraglass.com/staging_live_version.json"}
+```
+
+When `ota_version_url` is omitted, ASG uses the compiled production default. When provided, it must be a non-empty `http` or `https` URL.
+
+On receipt, ASG sends `ota_start_ack` before version checks or downloads:
+
+```json
+{"type": "ota_start_ack", "timestamp": 1708963201234}
+```
+
+Progress, completion, and failure are reported with `ota_status`:
+
+```json
+{
+  "type": "ota_status",
+  "sid": "ota-1708963201234",
+  "ts": 3,
+  "cs": 1,
+  "st": "apk",
+  "sq": ["apk", "mtk", "bes"],
+  "phase": "download",
+  "sp": 42,
+  "op": 14,
+  "status": "in_progress"
+}
+```
+
+Compact keys keep BLE payloads small: `sid` = `session_id`, `ts` = `total_steps`, `cs` = `current_step`, `st` = `step_type`, `sq` = `step_sequence`, `sp` = `step_percent`, `op` = `overall_percent`, `err` = `error_message`. Current ASG uses `ota_status`; `ota_progress` is legacy.
+
 If `OtaHelper` isn't initialized yet (can happen right after APK install), the handler retries up to 4 times with 2 s backoff. After exhausting retries it sends:
 
 ```json
 {
-  "type": "ota_progress",
-  "stage": "download",
-  "status": "FAILED",
-  "progress": 0,
-  "bytes_downloaded": 0,
-  "total_bytes": 0,
-  "current_update": "apk",
+  "type": "ota_status",
+  "session_id": "",
+  "total_steps": 0,
+  "current_step": 0,
+  "step_type": "apk",
+  "phase": "download",
+  "step_percent": 0,
+  "overall_percent": 0,
+  "status": "failed",
   "error_message": "OTA service failed to initialize. Please restart glasses and try again."
 }
+```
+
+#### `ota_query_status`
+
+Requests the current OTA session state. ASG replies with `ota_status`; if no session is active, the status is `idle`.
+
+```json
+{"type": "ota_query_status"}
+```
+
+Idle response:
+
+```json
+{
+  "type": "ota_status",
+  "status": "idle",
+  "total_steps": 0,
+  "current_step": 0,
+  "step_type": "apk",
+  "phase": "download",
+  "step_percent": 0,
+  "overall_percent": 0
+}
+```
+
+#### `ota_retry_version_check`
+
+Asks ASG to retry the last phone-started OTA after the phone completes recovery work (for example syncing the glasses clock). The retry re-uses the manifest URL from the last `ota_start`. ASG ignores the command — replying only with its current `ota_status` — unless a phone-started OTA previously failed with `clock_skew` or `ssl_error`.
+
+```json
+{"type": "ota_retry_version_check"}
 ```
 
 #### `ota_update_response` (deprecated)

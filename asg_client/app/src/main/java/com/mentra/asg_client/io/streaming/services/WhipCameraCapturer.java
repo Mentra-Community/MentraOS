@@ -63,8 +63,10 @@ public class WhipCameraCapturer implements VideoCapturer {
     private HandlerThread mCameraThread;
     private Handler mCameraHandler;
 
+    private final Object mCameraStateLock = new Object();
     private CameraDevice mCameraDevice;
     private CameraCaptureSession mCaptureSession;
+    private boolean mStopRequested;
 
     private int mWidth;
     private int mHeight;
@@ -115,6 +117,11 @@ public class WhipCameraCapturer implements VideoCapturer {
         mNextForwardFrameTimestampNs = 0L;
         mDroppedFrameCount = 0;
         mLoggedFrameSize = false;
+        synchronized (mCameraStateLock) {
+            mStopRequested = false;
+            mCameraDevice = null;
+            mCaptureSession = null;
+        }
 
         // Low-priority camera thread (matches StreamPackLite CameraExecutorManager)
         mCameraThread = new HandlerThread("WhipCameraThread");
@@ -203,7 +210,14 @@ public class WhipCameraCapturer implements VideoCapturer {
                     new CameraDevice.StateCallback() {
                         @Override
                         public void onOpened(@NonNull CameraDevice camera) {
-                            mCameraDevice = camera;
+                            synchronized (mCameraStateLock) {
+                                if (mStopRequested) {
+                                    Log.w(TAG, "Camera opened after WHIP capture stopped; closing stale camera");
+                                    camera.close();
+                                    return;
+                                }
+                                mCameraDevice = camera;
+                            }
                             createCaptureSession();
                         }
 
@@ -211,18 +225,34 @@ public class WhipCameraCapturer implements VideoCapturer {
                         public void onDisconnected(@NonNull CameraDevice camera) {
                             Log.w(TAG, "Camera disconnected");
                             camera.close();
-                            mCameraDevice = null;
-                            mObserver.onCapturerStarted(false);
-                            cleanupAfterStartFailure();
+                            boolean notifyFailure;
+                            synchronized (mCameraStateLock) {
+                                if (mCameraDevice == camera) {
+                                    mCameraDevice = null;
+                                }
+                                notifyFailure = !mStopRequested;
+                            }
+                            if (notifyFailure) {
+                                mObserver.onCapturerStarted(false);
+                                cleanupAfterStartFailure();
+                            }
                         }
 
                         @Override
                         public void onError(@NonNull CameraDevice camera, int error) {
                             Log.e(TAG, "Camera error: " + error);
                             camera.close();
-                            mCameraDevice = null;
-                            mObserver.onCapturerStarted(false);
-                            cleanupAfterStartFailure();
+                            boolean notifyFailure;
+                            synchronized (mCameraStateLock) {
+                                if (mCameraDevice == camera) {
+                                    mCameraDevice = null;
+                                }
+                                notifyFailure = !mStopRequested;
+                            }
+                            if (notifyFailure) {
+                                mObserver.onCapturerStarted(false);
+                                cleanupAfterStartFailure();
+                            }
                         }
                     },
                     mCameraHandler);
@@ -282,30 +312,61 @@ public class WhipCameraCapturer implements VideoCapturer {
     }
 
     private void createCaptureSession() {
+        CameraDevice cameraDevice;
+        Handler cameraHandler;
+        synchronized (mCameraStateLock) {
+            if (mStopRequested || mCameraDevice == null || mCameraHandler == null) {
+                Log.w(TAG, "Skipping WHIP capture session creation after capture stopped");
+                return;
+            }
+            cameraDevice = mCameraDevice;
+            cameraHandler = mCameraHandler;
+        }
         Surface surface = new Surface(mSurfaceTextureHelper.getSurfaceTexture());
 
         try {
-            mCameraDevice.createCaptureSession(
+            cameraDevice.createCaptureSession(
                     Collections.singletonList(surface),
                     new CameraCaptureSession.StateCallback() {
                         @Override
                         public void onConfigured(@NonNull CameraCaptureSession session) {
-                            mCaptureSession = session;
+                            synchronized (mCameraStateLock) {
+                                if (mStopRequested
+                                        || mCameraDevice == null
+                                        || session.getDevice() != mCameraDevice) {
+                                    Log.w(
+                                            TAG,
+                                            "WHIP capture session configured after capture stopped or camera changed; closing stale session");
+                                    session.close();
+                                    return;
+                                }
+                                mCaptureSession = session;
+                            }
                             startRepeatingRequest(surface);
                         }
 
                         @Override
                         public void onConfigureFailed(@NonNull CameraCaptureSession session) {
                             Log.e(TAG, "Capture session configuration failed");
-                            mObserver.onCapturerStarted(false);
-                            cleanupAfterStartFailure();
+                            if (!isStopRequested()) {
+                                mObserver.onCapturerStarted(false);
+                                cleanupAfterStartFailure();
+                            }
                         }
                     },
-                    mCameraHandler);
+                    cameraHandler);
         } catch (CameraAccessException e) {
             Log.e(TAG, "Failed to create capture session", e);
-            mObserver.onCapturerStarted(false);
-            cleanupAfterStartFailure();
+            if (!isStopRequested()) {
+                mObserver.onCapturerStarted(false);
+                cleanupAfterStartFailure();
+            }
+        } catch (RuntimeException e) {
+            Log.e(TAG, "Failed to create capture session due to stale camera state", e);
+            if (!isStopRequested()) {
+                mObserver.onCapturerStarted(false);
+                cleanupAfterStartFailure();
+            }
         }
     }
 
@@ -314,10 +375,26 @@ public class WhipCameraCapturer implements VideoCapturer {
      * applied.
      */
     private void startRepeatingRequest(Surface surface) {
+        CameraDevice cameraDevice;
+        CameraCaptureSession captureSession;
+        Handler cameraHandler;
+        synchronized (mCameraStateLock) {
+            if (mStopRequested
+                    || mCameraDevice == null
+                    || mCaptureSession == null
+                    || mCameraHandler == null) {
+                Log.w(TAG, "Skipping stale WHIP repeating request after capture stopped");
+                return;
+            }
+            cameraDevice = mCameraDevice;
+            captureSession = mCaptureSession;
+            cameraHandler = mCameraHandler;
+        }
+
         try {
             // TEMPLATE_PREVIEW: lighter processing than TEMPLATE_RECORD, reduces thermal load
             CaptureRequest.Builder builder =
-                    mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+                    cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
             builder.addTarget(surface);
 
             // Fixed FPS range. On K900, values inside the advertised [5,30] range are honored
@@ -349,7 +426,7 @@ public class WhipCameraCapturer implements VideoCapturer {
             // Avoid per-frame metadata callbacks: SENSOR_FRAME_DURATION is instantaneous and can
             // make
             // resolvedConfig.video.fps jitter even though the requested camera FPS is stable.
-            mCaptureSession.setRepeatingRequest(builder.build(), null, mCameraHandler);
+            captureSession.setRepeatingRequest(builder.build(), null, cameraHandler);
 
             // Match the stock WebRTC Camera2 session semantics:
             // 1. Apply a texture transform for sensor/front-camera correction.
@@ -459,30 +536,46 @@ public class WhipCameraCapturer implements VideoCapturer {
 
         } catch (CameraAccessException e) {
             Log.e(TAG, "Failed to start repeating request", e);
-            mObserver.onCapturerStarted(false);
-            cleanupAfterStartFailure();
+            if (!isStopRequested()) {
+                mObserver.onCapturerStarted(false);
+                cleanupAfterStartFailure();
+            }
+        } catch (RuntimeException e) {
+            Log.e(TAG, "Failed to start repeating request due to stale camera state", e);
+            if (!isStopRequested()) {
+                mObserver.onCapturerStarted(false);
+                cleanupAfterStartFailure();
+            }
         }
     }
 
     @Override
     public void stopCapture() throws InterruptedException {
+        CameraCaptureSession captureSession;
+        CameraDevice cameraDevice;
+        synchronized (mCameraStateLock) {
+            mStopRequested = true;
+            captureSession = mCaptureSession;
+            mCaptureSession = null;
+            cameraDevice = mCameraDevice;
+            mCameraDevice = null;
+        }
+
         if (mSurfaceTextureHelper != null) {
             mSurfaceTextureHelper.stopListening();
         }
 
-        if (mCaptureSession != null) {
+        if (captureSession != null) {
             try {
-                mCaptureSession.stopRepeating();
+                captureSession.stopRepeating();
             } catch (CameraAccessException e) {
                 Log.w(TAG, "Error stopping repeating request", e);
             }
-            mCaptureSession.close();
-            mCaptureSession = null;
+            captureSession.close();
         }
 
-        if (mCameraDevice != null) {
-            mCameraDevice.close();
-            mCameraDevice = null;
+        if (cameraDevice != null) {
+            cameraDevice.close();
         }
 
         if (mCameraThread != null) {
@@ -520,32 +613,47 @@ public class WhipCameraCapturer implements VideoCapturer {
     }
 
     private void cleanupAfterStartFailure() {
+        CameraCaptureSession captureSession;
+        CameraDevice cameraDevice;
+        HandlerThread cameraThread;
+        synchronized (mCameraStateLock) {
+            mStopRequested = true;
+            captureSession = mCaptureSession;
+            mCaptureSession = null;
+            cameraDevice = mCameraDevice;
+            mCameraDevice = null;
+            cameraThread = mCameraThread;
+            mCameraThread = null;
+            mCameraHandler = null;
+        }
+
         if (mSurfaceTextureHelper != null) {
             mSurfaceTextureHelper.stopListening();
         }
 
-        if (mCaptureSession != null) {
-            mCaptureSession.close();
-            mCaptureSession = null;
+        if (captureSession != null) {
+            captureSession.close();
         }
 
-        if (mCameraDevice != null) {
-            mCameraDevice.close();
-            mCameraDevice = null;
+        if (cameraDevice != null) {
+            cameraDevice.close();
         }
 
-        if (mCameraThread != null) {
-            HandlerThread thread = mCameraThread;
-            mCameraThread = null;
-            mCameraHandler = null;
-            thread.quitSafely();
-            if (Thread.currentThread() != thread) {
+        if (cameraThread != null) {
+            cameraThread.quitSafely();
+            if (Thread.currentThread() != cameraThread) {
                 try {
-                    thread.join(2000);
+                    cameraThread.join(2000);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
             }
+        }
+    }
+
+    private boolean isStopRequested() {
+        synchronized (mCameraStateLock) {
+            return mStopRequested;
         }
     }
 

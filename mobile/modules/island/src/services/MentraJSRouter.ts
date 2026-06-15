@@ -84,11 +84,10 @@ export type RouterLogger = {
 }
 
 const defaultLogger: RouterLogger = {
-  // eslint-disable-next-line no-console
   log: (m, p) => console.log(`[MentraJSRouter] ${m}`, p ?? ""),
-  // eslint-disable-next-line no-console
+
   warn: (m, p) => console.warn(`[MentraJSRouter] ${m}`, p ?? ""),
-  // eslint-disable-next-line no-console
+
   error: (m, p) => console.error(`[MentraJSRouter] ${m}`, p ?? ""),
 }
 
@@ -265,6 +264,11 @@ export class MentraJSRouter {
    * to respawn (with delay) or leave the context dead.
    */
   private handleCrash(packageName: string, reason: string): void {
+    // The native context is dead the instant a crash is observed — invalidate
+    // its CONNECT handshake NOW so waitForConnect() blocks through the respawn
+    // backoff window instead of resolving immediately against the dead context
+    // (an action invoked mid-backoff would otherwise be delivered to nothing).
+    this.runtime.resetHandshake(packageName)
     const controller = this.crashController
     if (!controller) return
     const cached = this.spawnCache.get(packageName)

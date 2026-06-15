@@ -133,12 +133,12 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
 
   // OTA Commands
-  sendOtaStart(): Promise<OtaStartAckEvent>
+  sendOtaStart(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
   sendOtaQueryStatus(): Promise<OtaQueryResult>
   /** Re-run glasses-side OTA version check (called after a clock fix invalidates a TLS failure). */
   retryOtaVersionCheck(): Promise<OtaQueryResult>
   checkForOtaUpdate(): Promise<OtaQueryResult>
-  startOtaUpdate(): Promise<OtaStartAckEvent>
+  startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
 
   // Version Info Commands
   requestVersionInfo(): Promise<VersionInfoResult>
@@ -150,7 +150,11 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     sound: boolean,
     settings?: VideoRecordingSettings,
   ): Promise<VideoRecordingStartedStatusEvent>
-  stopVideoRecording(requestId: string): Promise<VideoRecordingStoppedStatusEvent>
+  stopVideoRecording(
+    requestId: string,
+    webhookUrl?: string,
+    authToken?: string,
+  ): Promise<VideoRecordingStoppedStatusEvent>
 
   // Stream Commands
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>

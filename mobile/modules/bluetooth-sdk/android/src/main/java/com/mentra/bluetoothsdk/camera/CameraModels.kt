@@ -292,6 +292,8 @@ data class VideoRecordingRequest(
     val width: Int = 0,
     val height: Int = 0,
     val fps: Int = 0,
+    // Optional auto-stop timer in minutes; 0 = record until stopped/interrupted.
+    val maxRecordingTimeMinutes: Int = 0,
 )
 
 data class VideoRecordingStatusEvent(
@@ -303,6 +305,19 @@ data class VideoRecordingStatusEvent(
     val details: String? get() = stringValue(values, "details")
     val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()
     val data: Map<String, Any>? get() = stringMapValue(values["data"])
+}
+
+data class MediaUploadEvent(
+    val values: Map<String, Any>,
+) {
+    val type: String get() = stringValue(values, "type").orEmpty()
+    val requestId: String get() = stringValue(values, "requestId").orEmpty()
+    val mediaUrl: String? get() = stringValue(values, "mediaUrl")
+    val errorMessage: String? get() = stringValue(values, "errorMessage")
+    val mediaType: Int? get() = numberValue(values, "mediaType")
+    val timestamp: Long get() = longValue(values, "timestamp") ?: System.currentTimeMillis()
+    val isSuccess: Boolean get() = type == "media_success"
+    val isVideo: Boolean get() = mediaType == 2
 }
 
 data class GalleryStatusEvent(

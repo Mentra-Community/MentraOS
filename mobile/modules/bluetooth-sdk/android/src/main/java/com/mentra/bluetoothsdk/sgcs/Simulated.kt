@@ -86,6 +86,10 @@ class Simulated : SGCManager() {
     override fun clearDisplay() {
         Bridge.log("clearDisplay")
     }
+    
+    override fun sendText(text: String) {
+        Bridge.log("sendText")
+    }
 
     override fun sendTextWall(text: String) {
         Bridge.log("sendTextWall")

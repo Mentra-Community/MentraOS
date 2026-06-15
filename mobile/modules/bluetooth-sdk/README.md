@@ -150,6 +150,55 @@ uses a CoreBluetooth identifier when available, and the SDK falls back to
 platform reports RSSI, so picker UI should handle `undefined` and avoid
 reordering rows just because RSSI metadata arrives later.
 
+## Mentra SDK Usage Analytics
+
+The SDK sends two anonymous usage events to Mentra's PostHog project by default
+so Mentra can understand SDK adoption and successful glasses connections:
+
+- `bluetooth_sdk_started`: sent once per app runtime after the native SDK starts.
+- `bluetooth_sdk_glasses_connected`: sent when SDK status transitions from not connected to connected.
+
+Analytics delivery is fire-and-forget: events are submitted asynchronously, do
+not block Bluetooth SDK behavior, and are not retried if delivery fails.
+
+React Native / Expo apps can disable these events before SDK startup through
+the config plugin:
+
+```json
+{
+  "expo": {
+    "plugins": [
+      [
+        "@mentra/bluetooth-sdk",
+        {
+          "analytics": false
+        }
+      ]
+    ]
+  }
+}
+```
+
+Native Android apps can pass `BluetoothSdkAnalyticsConfig.disabled()` in
+`MentraBluetoothSdkConfig` or add
+`com.mentra.bluetoothsdk.analytics.disabled=true` as application metadata.
+Native iOS apps can pass `.disabled` in `MentraBluetoothSDKConfiguration` or set
+`MentraBluetoothSdkAnalyticsDisabled` to `true` in `Info.plist`.
+
+Mentra's PostHog project API key is embedded in the SDK as a public analytics
+write token, not a private PostHog personal API key. Apps do not configure the
+analytics destination; these SDK usage events are always sent to Mentra's
+PostHog project unless analytics are disabled.
+
+Captured properties are limited to non-sensitive SDK/app metadata:
+`event_source`, `sdk_platform`, `sdk_surface`, `sdk_version`, the app package or
+bundle identifier, OS platform/version, `event_kind`, and for connection events
+only `fully_booted` plus a glasses model value when the SDK knows it. The SDK
+does not upload BLE MAC addresses, CoreBluetooth identifiers, serial numbers,
+Bluetooth device names, user ids, tokens, Wi-Fi credentials, microphone data,
+photos, or transcripts. PostHog receives a locally generated anonymous SDK
+install id as `distinct_id`, and events include `$process_person_profile: false`.
+
 ## React Hooks
 
 React Native apps can import optional lifecycle helpers from the `react`
@@ -274,7 +323,7 @@ React Native narrows returned values to success shapes where the raw listener ev
 | --- | --- | --- |
 | `requestPhoto(...)` | Terminal `PhotoSuccessResponseEvent` with `state: "success"` after capture and delivery finish. `uploadUrl` is always present; webhook JSON metadata such as `photoUrl`, `statusUrl`, `contentType`, or `fileSizeBytes` is included when the receiver returns it. | Rejects when raw `photo_response.state === "error"`, the SDK cannot send the command, or the terminal photo response times out. |
 | `startVideoRecording(...)` | `VideoRecordingStartedStatusEvent` with `success: true` and `status: "recording_started"`. | Rejects on `success: false` statuses such as `already_recording`, send failure, or timeout. |
-| `stopVideoRecording(...)` | `VideoRecordingStoppedStatusEvent` with `success: true` and `status: "recording_stopped"`. | Rejects on `success: false` statuses such as `not_recording`, send failure, or timeout. |
+| `stopVideoRecording(...)` | `VideoRecordingStoppedStatusEvent` with `success: true` and `status: "recording_stopped"`. When a webhook URL is supplied, resolves after the video upload succeeds. | Rejects on `success: false` statuses such as `not_recording`, webhook upload failure, send failure, or timeout. |
 | `rgbLedControl(...)` | `RgbLedControlSuccessResponseEvent` with `state: "success"`. | Rejects when raw `rgb_led_control_response.state === "error"` or the response times out. |
 | `checkForOtaUpdate()` / `retryOtaVersionCheck()` | `OtaQueryResult`, either `ota_update_available` or current `ota_status`. | Rejects on command transport timeout/failure. A returned `ota_status.status === "failed"` is glasses OTA state, not a command rejection. |
 
@@ -332,7 +381,7 @@ For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `e
 
 Use `setCameraFov({fov, roiPosition})` to configure Mentra Live camera field of view and crop position. FOV is clamped to 62-118 degrees; ROI position is `"center"`, `"bottom"`, or `"top"`. You can also call `setCameraFov({preset: "narrow" | "standard" | "wide"})`; presets map to 82, 102, and 118 degrees with center ROI. The returned `CameraFovResult` resolves only after the ASG client reports that the setting was applied to camera hardware after the restart cooldown, and the promise rejects if the glasses report an error, persist the setting without hardware application, or time out. Raw `settings_ack` events remain available through `addListener("settings_ack", ...)` for diagnostic fields such as `hardwareApplied`. Treat FOV as a framing/ROI control; output resolution and effective detail can vary by capture path, firmware, and camera mode.
 
-`startVideoRecording(...)` and `stopVideoRecording(...)` resolve from successful ASG `video_recording_status` events only when the status matches the requested operation (`recording_started` or `recording_stopped`) and reject when the ASG reports `success: false`. Raw `video_recording_status` events remain available through listeners, including `recording_status` query events with `data.recording`.
+`startVideoRecording(...)` resolves from the ASG `video_recording_status` event whose status is `recording_started`. `stopVideoRecording(...)` without a webhook resolves from `recording_stopped`; with a webhook it waits for `recording_stopped` plus a video `media_success`, and rejects on `media_error`. Raw `video_recording_status`, `media_success`, and `media_error` events remain available through listeners.
 
 ## Streaming
 
@@ -409,7 +458,7 @@ For bare native iOS apps, use the public SwiftPM repository:
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Add the `MentraBluetoothSDK` product to your app target at version `0.1.10` or newer.
+Add the `MentraBluetoothSDK` product to your app target at version `0.1.12` or newer.
 
 For local SDK development, add this package folder directly in Xcode:
 

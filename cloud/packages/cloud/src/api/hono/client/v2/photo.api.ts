@@ -130,7 +130,7 @@ app.delete("/:requestId", clientAuth, handleDelete);
  * Returns: {requestId, uploadUrl, uploadToken}
  *
  * The phone passes the returned uploadUrl + uploadToken straight to
- * CoreModule.photoRequest, which hands them to glasses over BLE. Glasses
+ * BluetoothSdk.requestPhoto, which hands them to glasses over BLE. Glasses
  * (or phone's BLE fallback) POST multipart bytes to /upload/:requestId
  * with Authorization: Bearer <uploadToken>.
  */

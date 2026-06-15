@@ -1,0 +1,49 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.example",
+  "version": "1.0.0",
+  "name": "Mentra Example",
+  "description": "Reference miniapp for the @mentra/miniapp SDK. Demonstrates transcription, text wall display, TTS, button events, and the full per-iface SDK Tester surface.",
+  "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    {"type": "MICROPHONE", "description": "Used for live transcription"},
+    {"type": "LOCATION", "description": "Exercised by the SDK Tester page"},
+    {"type": "READ_NOTIFICATIONS", "description": "Exercised by the SDK Tester page"},
+    {"type": "CALENDAR", "description": "Exercised by the SDK Tester page"}
+  ],
+  "actions": [
+    {
+      "id": "echo",
+      "description": "Echo the params back to the caller. Demonstrates the session.actions request/response contract for system callers (e.g. Mentra AI).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message": {"type": "string", "description": "Text to echo back"}
+        },
+        "required": ["message"]
+      }
+    },
+    {
+      "id": "show_text",
+      "description": "Show a line of text on the glasses display. Use when the user asks to put something on their glasses.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {"type": "string", "description": "The text to display"}
+        },
+        "required": ["text"]
+      }
+    }
+  ],
+  "hardwareRequirements": [
+    {"type": "DISPLAY", "level": "REQUIRED", "description": "Shows live transcription"},
+    {"type": "MICROPHONE", "level": "REQUIRED", "description": "Captures speech for transcription"}
+  ]
+}

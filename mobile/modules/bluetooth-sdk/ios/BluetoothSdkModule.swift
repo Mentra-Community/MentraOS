@@ -32,6 +32,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "photo_response",
             "photo_status",
             "video_recording_status",
+            "media_success",
+            "media_error",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",
@@ -375,9 +377,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - OTA Commands
 
-        AsyncFunction("sendOtaStart") {
+        AsyncFunction("sendOtaStart") { (otaVersionUrl: String?) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.sendOtaStart().values
+            return try await sdk.sendOtaStart(otaVersionUrl: otaVersionUrl).values
         }
 
         AsyncFunction("sendOtaQueryStatus") {
@@ -415,9 +417,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("startVideoRecording") {
             (requestId: String, save: Bool, sound: Bool, settings: [String: Any]?) in
-            // Optional per-recording {width,height,fps}. Absent fields stay 0, which
-            // the glasses treat as "use the saved button-video default". JS numbers
-            // arrive as Double across the bridge, so coerce to Int.
+            /// Optional per-recording {width,height,fps}. Absent fields stay 0, which
+            /// the glasses treat as "use the saved button-video default". JS numbers
+            /// arrive as Double across the bridge, so coerce to Int.
             func dim(_ key: String) -> Int {
                 (settings?[key] as? NSNumber)?.intValue ?? 0
             }
@@ -425,14 +427,20 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.startVideoRecording(
                 VideoRecordingRequest(
                     requestId: requestId, save: save, sound: sound,
-                    width: dim("width"), height: dim("height"), fps: dim("fps")
+                    width: dim("width"), height: dim("height"), fps: dim("fps"),
+                    maxRecordingTimeMinutes: dim("maxRecordingTimeMinutes")
                 )
             ).values
         }
 
-        AsyncFunction("stopVideoRecording") { (requestId: String) in
+        // webhookUrl/authToken are supplied at stop (not start) so the token is
+        // fresh when the upload runs. Empty/nil webhook = keep on device.
+        AsyncFunction("stopVideoRecording") {
+            (requestId: String, webhookUrl: String?, authToken: String?) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.stopVideoRecording(requestId: requestId).values
+            return try await sdk.stopVideoRecording(
+                requestId: requestId, webhookUrl: webhookUrl, authToken: authToken
+            ).values
         }
 
         // MARK: - Stream Commands
@@ -583,7 +591,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return sdk
         }
 
-        let sdk = MentraBluetoothSDK()
+        let sdk = MentraBluetoothSDK(
+            configuration: MentraBluetoothSDKConfiguration(
+                analytics: BluetoothSdkAnalyticsConfiguration().withSurface("react_native")
+            )
+        )
         sdk.delegate = self
         self.sdk = sdk
         return sdk
@@ -662,6 +674,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             sendEvent("photo_status", status.values)
         case let .videoRecordingStatus(status):
             sendEvent("video_recording_status", status.values)
+        case let .mediaUpload(event):
+            sendEvent(event.type, event.values)
         case let .rgbLedControlResponse(response):
             sendEvent("rgb_led_control_response", response.values)
         case let .streamStatus(status):

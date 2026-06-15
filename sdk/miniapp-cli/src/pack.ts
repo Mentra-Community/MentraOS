@@ -1,18 +1,23 @@
-import { existsSync, mkdirSync, readFileSync, copyFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, copyFileSync, writeFileSync } from 'fs';
 import { resolve, join } from 'path';
 import { validateManifest } from './manifest.js';
 
 export interface PackOptions {
-  /** Where to write the resulting zip. Defaults to cwd. */
+  /** Where to write the resulting zip. Defaults to build/. */
   outDir?: string;
-  /** Quiet stdout. The `install` command swallows pack output and prints
+  /** Quiet stdout. The `release` command swallows pack output and prints
    * its own progress; standalone `pack` calls leave it on. */
   silent?: boolean;
 }
 
 /**
  * Validate manifest, copy manifest+icon into dist/, zip dist/ into
- * `<packageName>-<version>.zip`. Returns the absolute path of the zip.
+ * `build/<packageName>-<version>.zip`. Returns the absolute path of the zip.
+ *
+ * `build/` is self-ignoring: a `.gitignore` containing `*` is written into
+ * it on creation (the Cargo `target/` trick), so packed zips stay out of
+ * version control no matter which repo the miniapp lives in — no root
+ * .gitignore coordination needed.
  */
 export async function pack(opts: PackOptions = {}): Promise<string> {
   const cwd = process.cwd();
@@ -93,9 +98,13 @@ export async function pack(opts: PackOptions = {}): Promise<string> {
   const packageName = manifest.packageName as string;
   const version = manifest.version as string;
   const outputName = `${packageName}-${version}.zip`;
-  const outDir = opts.outDir ? resolve(cwd, opts.outDir) : cwd;
+  const outDir = resolve(cwd, opts.outDir ?? 'build');
   if (!existsSync(outDir)) {
     mkdirSync(outDir, { recursive: true });
+  }
+  const selfIgnore = join(outDir, '.gitignore');
+  if (!existsSync(selfIgnore)) {
+    writeFileSync(selfIgnore, '*\n');
   }
   const outputPath = resolve(outDir, outputName);
 

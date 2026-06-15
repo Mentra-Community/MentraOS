@@ -154,6 +154,7 @@ interface MentraBluetoothSdkListener {
     fun onPhotoResponse(event: PhotoResponseEvent) {}
     fun onPhotoStatus(event: PhotoStatusEvent) {}
     fun onVideoRecordingStatus(event: VideoRecordingStatusEvent) {}
+    fun onMediaUpload(event: MediaUploadEvent) {}
     fun onRgbLedControlResponse(event: RgbLedControlResponseEvent) {}
     fun onStreamStatus(event: StreamStatusEvent) {}
     fun onKeepAliveAck(event: KeepAliveAckEvent) {}
