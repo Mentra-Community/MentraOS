@@ -337,9 +337,10 @@ laptop simulator and dev/bench tools — again, not for shipping OEM apps):
 
 ## 11. Open questions
 
-- How does the OEM embed MentraOS — an Expo/RN library, a native AAR +
-  XCFramework, or both? How much of MentraOS's own UI (pairing, store) is
-  reused vs replaced by the OEM's branding?
+- **How the OEM embeds MentraOS** (RN library vs native AAR/XCFramework, how
+  much MentraOS UI is reused vs rebranded) is **owned separately** — out of
+  scope for this doc. This spec covers only the device-driver extension point,
+  which is independent of the embedding mechanism.
 - Driver registration in the OEM's app — an explicit `register()` they call at
   startup (simplest, recommended) vs autolinking discovery?
 - Wire-protocol encoding for the dev/sim transport — newline-JSON
