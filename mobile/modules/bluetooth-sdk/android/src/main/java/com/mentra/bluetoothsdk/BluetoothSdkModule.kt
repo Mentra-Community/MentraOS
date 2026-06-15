@@ -483,6 +483,16 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - OTA Commands
 
+        Function("setOtaVersionUrl") { otaVersionUrl: String ->
+            requireSdk().setOtaVersionUrl(otaVersionUrl)
+        }
+
+        Function("getOtaVersionUrl") { requireSdk().getOtaVersionUrl() }
+
+        AsyncFunction("checkForOtaUpdate") { requireSdk().checkForOtaUpdate() }
+
+        AsyncFunction("startOtaUpdate") { requireSdk().startOtaUpdate().values }
+
         AsyncFunction("sendOtaStart") { otaVersionUrl: String? ->
             requireSdk().sendOtaStart(otaVersionUrl).values
         }

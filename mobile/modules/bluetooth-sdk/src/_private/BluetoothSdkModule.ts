@@ -130,12 +130,14 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   requestPhoto(params: PhotoRequestParams): Promise<PhotoSuccessResponseEvent>
 
   // OTA Commands
+  setOtaVersionUrl(otaVersionUrl: string): void
+  getOtaVersionUrl(): string
+  checkForOtaUpdate(): Promise<boolean>
+  startOtaUpdate(): Promise<OtaStartAckEvent>
   sendOtaStart(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
   sendOtaQueryStatus(): Promise<OtaQueryResult>
   /** Re-run glasses-side OTA version check (called after a clock fix invalidates a TLS failure). */
   retryOtaVersionCheck(): Promise<OtaQueryResult>
-  checkForOtaUpdate(): Promise<OtaQueryResult>
-  startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
 
   // Version Info Commands
   requestVersionInfo(): Promise<VersionInfoResult>
@@ -570,8 +572,6 @@ const nativeStartStream = NativeBluetoothSdkModule.startStream.bind(NativeBlueto
 NativeBluetoothSdkModule.startExternallyManagedStream = function (params: StreamStartRequest) {
   return nativeStartStream({...params, keepAliveMode: "external"} as StreamStartRequest)
 }
-NativeBluetoothSdkModule.checkForOtaUpdate = NativeBluetoothSdkModule.sendOtaQueryStatus.bind(NativeBluetoothSdkModule)
-NativeBluetoothSdkModule.startOtaUpdate = NativeBluetoothSdkModule.sendOtaStart.bind(NativeBluetoothSdkModule)
 
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkInternalModule

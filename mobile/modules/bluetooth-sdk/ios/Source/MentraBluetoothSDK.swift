@@ -176,6 +176,7 @@ public final class MentraBluetoothSDK {
     private var pendingWifiStatus: PendingWifiStatusRequest?
     private var pendingHotspotStatus: PendingHotspotStatusRequest?
     private var pendingVersionInfo: PendingResponse<VersionInfoResult>?
+    private var configuredOtaVersionUrl = OtaManifestDefaults.defaultOtaVersionUrl
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
         self.configuration = configuration
@@ -926,8 +927,42 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    /// Ask connected Mentra Live glasses to check/report OTA availability and status.
-    public func checkForOtaUpdate() async throws -> OtaQueryResult {
+    public func setOtaVersionUrl(_ otaVersionUrl: String) throws {
+        configuredOtaVersionUrl = try OtaManifestChecker.normalizeHttpUrl(otaVersionUrl)
+    }
+
+    public func getOtaVersionUrl() -> String {
+        configuredOtaVersionUrl
+    }
+
+    /// Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available.
+    public func checkForOtaUpdate() async throws -> Bool {
+        let status = await getFreshGlassesStatus()
+        guard status.connected else {
+            throw BluetoothError(
+                code: "glasses_not_connected",
+                message: "Cannot check OTA update because glasses are not connected."
+            )
+        }
+        guard !status.buildNumber.isEmpty else {
+            throw BluetoothError(
+                code: "missing_glasses_version",
+                message: "Cannot check OTA update because glasses build number is unavailable."
+            )
+        }
+
+        let manifestUrl = resolveOtaVersionUrl(status: status)
+        let manifest = try await OtaManifestChecker.fetch(manifestUrl)
+        return try OtaManifestChecker.hasUpdate(
+            currentBuildNumber: status.buildNumber,
+            currentMtkVersion: status.mtkFirmwareVersion,
+            currentBesVersion: status.besFirmwareVersion,
+            manifest: manifest
+        )
+    }
+
+    /// Ask connected Mentra Live glasses to report the current OTA install/session status.
+    private func queryOtaStatus() async throws -> OtaQueryResult {
         try await performOtaQuery(operation: "OTA status query") {
             DeviceManager.shared.sendOtaQueryStatus()
         }
@@ -961,7 +996,13 @@ public final class MentraBluetoothSDK {
     }
 
     /// Start the OTA flow after your app has presented the available update to the user.
-    public func startOtaUpdate(otaVersionUrl: String? = nil) async throws -> OtaStartAckEvent {
+    public func startOtaUpdate() async throws -> OtaStartAckEvent {
+        let status = await getFreshGlassesStatus()
+        let otaVersionUrl = resolveOtaVersionUrl(status: status)
+        return try await sendOtaStart(otaVersionUrl: otaVersionUrl)
+    }
+
+    private func startOtaCommand(otaVersionUrl: String? = nil) async throws -> OtaStartAckEvent {
         if pendingOtaStart != nil {
             throw BluetoothError(
                 code: "request_in_flight",
@@ -986,16 +1027,46 @@ public final class MentraBluetoothSDK {
     }
 
     func sendOtaStart(otaVersionUrl: String? = nil) async throws -> OtaStartAckEvent {
-        try await startOtaUpdate(otaVersionUrl: otaVersionUrl)
+        try await startOtaCommand(otaVersionUrl: otaVersionUrl)
     }
 
-    func sendOtaQueryStatus() async throws -> OtaQueryResult { try await checkForOtaUpdate() }
+    func sendOtaQueryStatus() async throws -> OtaQueryResult { try await queryOtaStatus() }
 
     /// Re-run the glasses-side OTA version check after an internal clock-skew recovery.
     func retryOtaVersionCheck() async throws -> OtaQueryResult {
         try await performOtaQuery(operation: "OTA version retry") {
             DeviceManager.shared.retryOtaVersionCheck()
         }
+    }
+
+    private func getFreshGlassesStatus() async -> GlassesStatus {
+        let status = glassesStatus
+        if !status.connected || !status.buildNumber.isEmpty {
+            return status
+        }
+
+        do {
+            let versionInfo = try await requestVersionInfo()
+            return GlassesStatus(values: status.values.merging(versionInfo.dictionary) { _, new in new })
+        } catch {
+            return status
+        }
+    }
+
+    private func resolveOtaVersionUrl(status: GlassesStatus) -> String {
+        let deviceUrl = status.otaVersionUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isLegacyAsgOtaStartBuild(status.buildNumber) {
+            return deviceUrl.isEmpty ? OtaManifestDefaults.prodOtaVersionUrl : deviceUrl
+        }
+        if !configuredOtaVersionUrl.isEmpty {
+            return configuredOtaVersionUrl
+        }
+        return deviceUrl.isEmpty ? OtaManifestDefaults.prodOtaVersionUrl : deviceUrl
+    }
+
+    private func isLegacyAsgOtaStartBuild(_ buildNumber: String) -> Bool {
+        guard let parsed = Int(buildNumber) else { return false }
+        return parsed < 100_000
     }
 
     func sendShutdown() {

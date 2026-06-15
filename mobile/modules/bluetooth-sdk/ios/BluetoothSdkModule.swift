@@ -418,6 +418,30 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - OTA Commands
 
+        Function("setOtaVersionUrl") { (otaVersionUrl: String) in
+            try self.readOnMainActor {
+                let sdk = self.bluetoothSdk()
+                try sdk.setOtaVersionUrl(otaVersionUrl)
+            }
+        }
+
+        Function("getOtaVersionUrl") {
+            self.readOnMainActor {
+                let sdk = self.bluetoothSdk()
+                return sdk.getOtaVersionUrl()
+            }
+        }
+
+        AsyncFunction("checkForOtaUpdate") {
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.checkForOtaUpdate()
+        }
+
+        AsyncFunction("startOtaUpdate") {
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.startOtaUpdate().values
+        }
+
         AsyncFunction("sendOtaStart") { (otaVersionUrl: String?) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.sendOtaStart(otaVersionUrl: otaVersionUrl).values
@@ -642,16 +666,16 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         return sdk
     }
 
-    private func readOnMainActor<T>(_ body: @MainActor () -> T) -> T {
+    private func readOnMainActor<T>(_ body: @MainActor () throws -> T) rethrows -> T {
         if Thread.isMainThread {
-            return MainActor.assumeIsolated {
-                body()
+            return try MainActor.assumeIsolated {
+                try body()
             }
         }
 
-        return DispatchQueue.main.sync {
-            MainActor.assumeIsolated {
-                body()
+        return try DispatchQueue.main.sync {
+            try MainActor.assumeIsolated {
+                try body()
             }
         }
     }

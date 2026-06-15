@@ -45,6 +45,7 @@ class MentraBluetoothSdk private constructor(
     private var pendingWifiStatus: PendingWifiStatusRequest? = null
     private var pendingHotspotStatus: PendingHotspotStatusRequest? = null
     private var pendingVersionInfo: PendingResponse<VersionInfoResult>? = null
+    @Volatile private var configuredOtaVersionUrl = OtaManifestDefaults.DEFAULT_OTA_VERSION_URL
 
     init {
         listeners.add(listener)
@@ -871,8 +872,40 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
-    fun checkForOtaUpdate(): OtaQueryResult =
+    fun setOtaVersionUrl(otaVersionUrl: String) {
+        configuredOtaVersionUrl = OtaManifestChecker.normalizeHttpUrl(otaVersionUrl)
+    }
+
+    fun getOtaVersionUrl(): String = configuredOtaVersionUrl
+
+    /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
+    fun checkForOtaUpdate(): Boolean {
+        val status = getFreshGlassesStatus()
+        if (!status.connected) {
+            throw BluetoothException(
+                "glasses_not_connected",
+                "Cannot check OTA update because glasses are not connected.",
+            )
+        }
+        if (status.buildNumber.isBlank()) {
+            throw BluetoothException(
+                "missing_glasses_version",
+                "Cannot check OTA update because glasses build number is unavailable.",
+            )
+        }
+
+        val manifestUrl = resolveOtaVersionUrl(status)
+        val manifest = OtaManifestChecker.fetch(manifestUrl)
+        return OtaManifestChecker.hasUpdate(
+            status.buildNumber,
+            status.mtkFirmwareVersion,
+            status.besFirmwareVersion,
+            manifest,
+        )
+    }
+
+    /** Ask connected Mentra Live glasses to report the current OTA install/session status. */
+    private fun queryOtaStatus(): OtaQueryResult =
         performOtaQuery("OTA status query") {
             deviceManager.sendOtaQueryStatus()
         }
@@ -904,7 +937,12 @@ class MentraBluetoothSdk private constructor(
     }
 
     /** Start the OTA flow after your app has presented the available update to the user. */
-    fun startOtaUpdate(otaVersionUrl: String? = null): OtaStartAckEvent {
+    fun startOtaUpdate(): OtaStartAckEvent {
+        val otaVersionUrl = resolveOtaVersionUrl(getFreshGlassesStatus())
+        return sendOtaStart(otaVersionUrl)
+    }
+
+    private fun startOtaCommand(otaVersionUrl: String? = null): OtaStartAckEvent {
         val pending = PendingResponse<OtaStartAckEvent>("OTA start command")
         synchronized(oneShotLock) {
             if (pendingOtaStart != null) {
@@ -928,9 +966,9 @@ class MentraBluetoothSdk private constructor(
     }
 
     internal fun sendOtaStart(otaVersionUrl: String? = null): OtaStartAckEvent =
-        startOtaUpdate(otaVersionUrl)
+        startOtaCommand(otaVersionUrl)
 
-    internal fun sendOtaQueryStatus(): OtaQueryResult = checkForOtaUpdate()
+    internal fun sendOtaQueryStatus(): OtaQueryResult = queryOtaStatus()
 
     /** Re-run the glasses-side OTA version check after an internal clock-skew recovery. */
     @JvmSynthetic
@@ -938,6 +976,42 @@ class MentraBluetoothSdk private constructor(
         performOtaQuery("OTA version retry") {
             deviceManager.retryOtaVersionCheck()
         }
+
+    private fun getFreshGlassesStatus(): GlassesStatus {
+        val status = getRawGlassesStatus()
+        if (!status.connected || status.buildNumber.isNotBlank()) {
+            return status
+        }
+
+        return try {
+            val versionInfo = requestVersionInfo()
+            status.copy(
+                androidVersion = versionInfo.androidVersion.ifBlank { status.androidVersion },
+                firmwareVersion = versionInfo.firmwareVersion.ifBlank { status.firmwareVersion },
+                besFirmwareVersion = versionInfo.besFirmwareVersion.ifBlank { status.besFirmwareVersion },
+                mtkFirmwareVersion = versionInfo.mtkFirmwareVersion.ifBlank { status.mtkFirmwareVersion },
+                buildNumber = versionInfo.buildNumber.ifBlank { status.buildNumber },
+                systemTimeMs = versionInfo.systemTimeMs ?: status.systemTimeMs,
+                otaVersionUrl = versionInfo.otaVersionUrl.ifBlank { status.otaVersionUrl },
+                appVersion = versionInfo.appVersion.ifBlank { status.appVersion },
+            )
+        } catch (_: Throwable) {
+            status
+        }
+    }
+
+    private fun resolveOtaVersionUrl(status: GlassesStatus): String {
+        val deviceUrl = status.otaVersionUrl.trim()
+        if (isLegacyAsgOtaStartBuild(status.buildNumber)) {
+            return deviceUrl.ifBlank { OtaManifestDefaults.PROD_OTA_VERSION_URL }
+        }
+        return configuredOtaVersionUrl.ifBlank { deviceUrl.ifBlank { OtaManifestDefaults.PROD_OTA_VERSION_URL } }
+    }
+
+    private fun isLegacyAsgOtaStartBuild(buildNumber: String): Boolean {
+        val parsed = buildNumber.toIntOrNull()
+        return parsed != null && parsed < 100_000
+    }
 
     internal fun sendShutdown() {
         deviceManager.sendShutdown()
