@@ -75,34 +75,48 @@ function numberValue(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null
 }
 
-function latestAppInfo(manifest: OtaManifest | null): OtaManifestApp | null {
+function latestAppInfo(manifest: OtaManifest): OtaManifestApp {
   if (!manifest) {
-    return null
+    throw new Error("OTA manifest is empty.")
   }
   const app = manifest.apps?.[ASG_CLIENT_PACKAGE]
-  if (app?.versionCode) {
+  const appVersionCode = numberValue(app?.versionCode)
+  if (app && appVersionCode != null) {
     return app
   }
-  if (manifest.versionCode) {
+  const legacyVersionCode = numberValue(manifest.versionCode)
+  if (legacyVersionCode != null) {
     return {
-      versionCode: manifest.versionCode,
+      versionCode: legacyVersionCode,
       versionName: manifest.versionName ?? "",
       apkSize: manifest.apkSize ?? 0,
       sha256: manifest.sha256 ?? "",
     }
   }
-  return null
+  throw new Error("OTA manifest is missing ASG app versionCode.")
 }
 
-function hasApkUpdate(currentBuildNumber: string | undefined, manifest: OtaManifest | null): boolean {
+function hasApkUpdate(currentBuildNumber: string, manifest: OtaManifest): boolean {
   const currentVersion = Number.parseInt(currentBuildNumber ?? "", 10)
-  const serverVersion = numberValue(latestAppInfo(manifest)?.versionCode)
-  return Number.isFinite(currentVersion) && serverVersion != null && serverVersion > currentVersion
+  const serverVersion = numberValue(latestAppInfo(manifest).versionCode)
+  if (!Number.isFinite(currentVersion)) {
+    throw new Error("Cannot check OTA update because glasses build number is invalid.")
+  }
+  if (serverVersion == null) {
+    throw new Error("OTA manifest is missing ASG app versionCode.")
+  }
+  return serverVersion > currentVersion
 }
 
 function hasMtkUpdate(patches: MtkPatch[] | undefined, currentVersion: string | undefined): boolean {
-  if (!patches?.length || !currentVersion) {
+  if (!Array.isArray(patches)) {
+    throw new Error("OTA manifest is missing mtk_patches.")
+  }
+  if (!patches.length) {
     return false
+  }
+  if (!currentVersion) {
+    throw new Error("Cannot check OTA update because MTK firmware version is unavailable.")
   }
   return patches.some((patch) => {
     if (patch.start_firmware === currentVersion) {
@@ -131,8 +145,8 @@ function compareVersions(version1: string, version2: string): number {
 }
 
 function hasBesUpdate(besFirmware: BesFirmware | undefined, currentVersion: string | undefined): boolean {
-  if (!besFirmware) {
-    return false
+  if (!besFirmware?.version) {
+    throw new Error("OTA manifest is missing bes_firmware.version.")
   }
   if (!currentVersion) {
     return true
