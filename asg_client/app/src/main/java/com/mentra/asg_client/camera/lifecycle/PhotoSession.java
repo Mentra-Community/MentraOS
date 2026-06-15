@@ -322,6 +322,12 @@ public final class PhotoSession {
      */
     private void activateQueuedRequest(QueuedPhotoRequest queued) {
         resetCaptureMetadataState();
+        // Scan exposure is derived from the AE-metered readings of the CURRENT scene. Clear the
+        // previous shot's metering so a warm/burst session reuse or a camera reopen cannot make
+        // shouldUseScanExposure()/shouldUseManualExposure() short-circuit AE convergence and apply
+        // a stale exposure/ISO to this request. The AE callback re-populates these after metering.
+        mLastMeteredExposureNs = null;
+        mLastMeteredIso = null;
         activeCapture = ActivePhotoCapture.fromQueued(queued);
         rememberConfiguredCamera(queued);
     }

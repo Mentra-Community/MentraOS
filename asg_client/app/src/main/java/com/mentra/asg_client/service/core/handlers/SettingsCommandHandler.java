@@ -197,6 +197,7 @@ public class SettingsCommandHandler implements ICommandHandler {
     public boolean handleButtonPhotoSetting(JSONObject data) {
         try {
             String requestId = getRequestId(data);
+            boolean hasSize = data.has("size") && !data.isNull("size");
             String size = PhotoSizeTier.normalize(data.optString("size", "medium"));
             boolean hasMfnr = data.has("mfnr") && !data.isNull("mfnr");
             boolean hasZsl = data.has("zsl") && !data.isNull("zsl");
@@ -269,7 +270,12 @@ public class SettingsCommandHandler implements ICommandHandler {
                 if (resetCaptureTuning) {
                     asgSettings.clearButtonPhotoCaptureTuning();
                 }
-                asgSettings.setButtonPhotoSize(size);
+                // Only persist size when the update actually carries it; size is optional on the
+                // wire (sender omits it when unchanged), so an unconditional write would clobber a
+                // stored tier (e.g. max) with the "medium" default on a partial/reset-only update.
+                if (hasSize) {
+                    asgSettings.setButtonPhotoSize(size);
+                }
                 if (mfnr != null) {
                     asgSettings.setButtonPhotoMfnr(mfnr);
                     asgSettings.setMfnrEnabled(mfnr);
