@@ -150,29 +150,64 @@ interface GlassesDriver {
 }
 ```
 
-### 4.3 Two integration tiers
+### 4.3 Deployment model: the OEM builds their own branded app
 
-OEMs pick the tier that fits their constraints:
+**This is the whole point and it drives everything else.** An OEM does not add a
+driver to *our* shipped app. An OEM **builds their own branded mobile app** and
+embeds the MentraOS device + cloud + miniapp stack as a **library/SDK**. Inside
+their app, at startup, they register their own glasses driver (+ capabilities +
+optional branding assets) into the MentraOS `DeviceRegistry`. MentraOS provides
+everything below the OEM's UI — pairing, the cloud client, the miniapp runtime,
+captions, etc.; the OEM provides their branding and their device driver.
 
-- **Tier A — in-process native plugin.** OEM implements `GlassesDriver` in
-  Kotlin **and** Swift, ships it as a separate autolinked module (Expo module
-  / Swift package / Android library), and calls `DeviceRegistry.register(...)`
-  at init. Tightest integration and best latency; cost is writing native code
-  in both our languages and tracking the contract version.
+```
+  Acme Glasses (the OEM's own app, on the App Store / Play Store)
+  ├── Acme's branding + UI
+  ├── AcmeX1Driver        (their GlassesDriver, native, in-process)
+  └── embeds MentraOS SDK  (device registry, cloud, miniapp runtime, ...)
+        └── DeviceRegistry.register(acmeX1Descriptor) at startup
+```
 
-- **Tier B — out-of-process adapter (RemoteHarness, productized).** OEM runs
-  their own driver process / SDK in **any language**, speaking a documented
-  wire protocol (newline-JSON or protobuf over TCP/IPC/BLE-bridge). A single
-  generic in-repo driver (`ExternalDeviceAdapter`, generalized from
-  `RemoteHarness`) proxies the `GlassesDriver` surface to it. Lowest friction —
-  zero native code in our app, no rebuild to add a device — at some latency
-  cost. This is the recommended default for most OEMs and is already
-  prototyped (see §7).
+Consequences:
 
-Both tiers register through the same `DeviceRegistry`; the app cannot tell the
-difference.
+- **The driver is in-process native code, linked at build time** into the OEM's
+  app — exactly like today's `G2`/`MentraLive` drivers run in our app. It
+  typically wraps the OEM's existing native BLE SDK behind the `GlassesDriver`
+  interface and calls `DeviceHost` for callbacks.
+- **No runtime code-loading problem.** Because it's the OEM's own build, their
+  driver is compiled in normally. (The alternative — dropping third-party
+  driver code into an already-shipped binary at runtime — is forbidden on iOS
+  and was never the plan.)
+- **There is no separate process and no socket** on the phone. Mobile OSes
+  sandbox apps; the production driver runs inside the OEM's app process and
+  uses the phone's Bluetooth directly.
 
-### 4.4 Controllers
+A secondary deployment also works with the identical mechanism: an OEM
+contributes a native driver module that ships inside the *MentraOS* app (we
+include it in our build). Same `DeviceRegistry.register`, same `GlassesDriver`;
+just a different "whose app." But the branded-app model above is the target.
+
+### 4.4 The out-of-process / socket transport is DEV + SIMULATION ONLY
+
+There is a second way to satisfy `GlassesDriver` — a generic
+`ExternalDeviceAdapter` that proxies the interface over a local socket to a
+separate program (the productized `RemoteHarness`/MDBP path, §7). **This is not
+an OEM production path** and cannot be: phones (especially iOS) don't allow a
+shipped app to talk to an OEM's separate process over a local socket. It exists
+only where separate processes + sockets exist — i.e. **on a computer, for
+development and simulation**:
+
+- `RemoteHarness` → the mentra-agent Mac daemon (drive real glasses from a
+  laptop during dev — no phone BLE radio needed in the emulator/simulator),
+- the **laptop simulator** (the Mac stands in as the glasses),
+- optionally an OEM **bench/bring-up tool** that runs their glasses SDK on a
+  desktop to exercise MentraOS before the native driver is written.
+
+It shares the same `GlassesDriver` interface (so the app can't tell the
+difference), which is what makes it a faithful dev stand-in — but it ships
+nowhere near a phone.
+
+### 4.5 Controllers
 
 `ControllerManager` gets the identical treatment: a public `ControllerDriver`
 interface, the same `DeviceHost`, capabilities (buttons, touchpad, IMU,
@@ -226,15 +261,15 @@ interface AssetResolver {
   settings) calls `registry.assetsFor(id)?.image(ctx)` and falls back to the
   current generic placeholder when null. `getGlassesImage` becomes the
   fallback path, not the source of truth.
-- **Shipping the images:** Tier A bundles them in the OEM module's assets and
-  returns `require`-style refs; Tier B passes `ImageRef`s as URIs / file paths
-  / base64 at registration time (the app caches/renders them). `ImageRef` is an
-  abstraction over both.
+- **Shipping the images:** the OEM's branded app bundles them in its assets and
+  returns `require`-style refs (the production path). The dev/sim external
+  adapter instead passes `ImageRef`s as URIs / file paths / base64 over the
+  wire (the app caches/renders them). `ImageRef` abstracts over both.
 
-## 7. The out-of-process adapter (already prototyped)
+## 7. The dev/simulation transport (out-of-process, already prototyped)
 
-`RemoteHarness` (dev-only, `agent-harness` branch) is the working seed of
-Tier B:
+This is the §4.4 dev-and-simulation transport — **not** an OEM production path.
+`RemoteHarness` (dev-only, `agent-harness` branch) is the working seed:
 
 - App side: `RemoteHarness.kt` / `RemoteHarness.swift` — an `SGCManager` that
   opens a TCP socket to a host process and speaks newline-delimited JSON:
@@ -244,8 +279,9 @@ Tier B:
 - Host side: the mentra-agent daemon (`tools/mentra-agent/ble/`) implements
   that protocol against real BLE glasses.
 
-To productize into `ExternalDeviceAdapter`:
-- Freeze + version the wire protocol (and document it in the OEM SDK).
+To generalize `RemoteHarness` into a reusable `ExternalDeviceAdapter` (for the
+laptop simulator and dev/bench tools — again, not for shipping OEM apps):
+- Freeze + version the wire protocol (MDBP), documented for dev/sim consumers.
 - Generalize the hardcoded host/port to a registered endpoint + transport
   (TCP / unix socket / BLE-bridge).
 - Carry capabilities + asset refs in the `hello`/`status` handshake (the
@@ -266,14 +302,15 @@ To productize into `ExternalDeviceAdapter`:
 
 ## 9. Trust & safety considerations
 
-- A registered driver runs with app privileges (Tier A) or can drive
-  display/mic/camera (both tiers) — treat third-party drivers as a trust
-  surface: capability allow-listing, no implicit access to unrelated app
-  state (the narrow `DeviceHost` enforces this), and clear user disclosure of
-  which OEM driver is active.
-- Tier B's external process is a separate trust/isolation boundary (and a
-  natural sandbox) but needs auth on the local transport so arbitrary local
-  processes can't impersonate glasses.
+- An in-process driver runs with the host app's privileges and can drive
+  display/mic/camera — treat third-party drivers as a trust surface: capability
+  allow-listing, no implicit access to unrelated app state (the narrow
+  `DeviceHost` enforces this), and clear user disclosure of which driver is
+  active. In the branded-app model the OEM owns their own app, so the trust
+  boundary is mostly between the OEM and the embedded MentraOS SDK.
+- The dev/sim external adapter's process is a separate trust/isolation boundary
+  but needs auth on the local transport so arbitrary local processes can't
+  impersonate glasses.
 
 ## 10. Incremental migration path
 
@@ -290,20 +327,24 @@ To productize into `ExternalDeviceAdapter`:
    resolver implementation), generic fallback preserved.
 5. **Publish `GlassesDriver`/`ControllerDriver`** as the OEM-facing subset over
    the internal `SGCManager` (adapter), versioned.
-6. **Productize `ExternalDeviceAdapter`** (Tier B) from `RemoteHarness`:
-   documented, versioned wire protocol + registered endpoints.
-7. **OEM SDK package + docs**: templates for Tier A (native module skeleton)
-   and Tier B (wire-protocol client libs), a conformance test suite, and a
-   sample driver.
+6. **Generalize `ExternalDeviceAdapter`** from `RemoteHarness` for the laptop
+   simulator + dev/bench tools: documented, versioned MDBP + registered
+   endpoints. (Dev/sim only — not shipped to phones.)
+7. **OEM SDK package + docs**: MentraOS published as an embeddable library so an
+   OEM can build their own branded app; a native `GlassesDriver` module
+   skeleton (Kotlin + Swift), a conformance test suite, and a sample driver +
+   sample branded app.
 
 ## 11. Open questions
 
-- Native plugin discovery on both platforms — autolinking convention vs an
-  explicit `register()` the OEM app calls at startup?
-- Wire-protocol encoding for Tier B — newline-JSON (human-debuggable, what the
-  harness uses) vs protobuf (we already have `mentraos_ble.pb`)?
-- Asset delivery for Tier B at scale — inline base64 vs a small local asset
-  server vs a cached CDN URL?
+- How does the OEM embed MentraOS — an Expo/RN library, a native AAR +
+  XCFramework, or both? How much of MentraOS's own UI (pairing, store) is
+  reused vs replaced by the OEM's branding?
+- Driver registration in the OEM's app — an explicit `register()` they call at
+  startup (simplest, recommended) vs autolinking discovery?
+- Wire-protocol encoding for the dev/sim transport — newline-JSON
+  (human-debuggable, what the harness uses) vs protobuf (we already have
+  `mentraos_ble.pb`)?
 - Do capabilities need to be **dynamic** (change post-connect once real
   hardware info arrives), or static at registration? (G2 vs G1 mic behavior
   suggests at least some dynamic capability refresh.)
@@ -313,6 +354,6 @@ To productize into `ExternalDeviceAdapter`:
 ## Related
 
 - `docs/bluetooth-sdk-public-api-surface-review.md` — existing public-API surface work
-- `tools/mentra-agent/ble/` + `RemoteHarness.{kt,swift}` — the Tier-B prototype
+- `tools/mentra-agent/ble/` + `RemoteHarness.{kt,swift}` — the dev/sim transport prototype
 - Laptop-simulator device (separate proposal) — a first-party consumer of this
   same extension point, backing display/mic/camera with the host machine.

@@ -158,6 +158,33 @@ process. An OEM device is the same shape, just owned by the OEM.
 
 # Part 2 — The OEM adapter, by example
 
+## 2.0 The deployment model (read this first)
+
+**OEMs build their own branded mobile app and embed MentraOS as a library/SDK.**
+They are not adding a driver to *our* app. Their app (on the App Store / Play
+Store, with their branding) links the MentraOS device + cloud + miniapp stack,
+and at startup registers their own glasses driver into it:
+
+```
+  "Acme Glasses" app (the OEM's own app)
+   ├── Acme branding + UI
+   ├── AcmeX1Driver           (their GlassesDriver — native, in-process)
+   └── embeds MentraOS SDK     (registry, cloud, miniapp runtime, captions, ...)
+          DeviceRegistry.registerDevice(acmeX1)   // at startup
+```
+
+This is why the driver is **in-process native code** (Kotlin + Swift, linked at
+build time into the OEM's app) — exactly the shape of today's `G2`/`MentraLive`
+drivers, usually wrapping the OEM's own BLE SDK. There is **no separate process
+and no socket** on the phone; mobile OSes sandbox apps and iOS forbids loading
+un-reviewed code at runtime, but none of that matters here because it's the
+OEM's own normally-compiled build.
+
+The **socket / MDBP / out-of-process** path (§2.4) is **development + simulation
+only** — it's how the harness drives real glasses from a Mac and how the laptop
+simulator works. It is *not* how a shipping OEM integrates. Keep that split
+firmly in mind through the rest of Part 2.
+
 ## 2.1 Naming
 
 | Concept | Proposed name | What it is |
@@ -169,8 +196,8 @@ process. An OEM device is the same shape, just owned by the OEM.
 | Capabilities | **`DeviceCapabilities`** | drives feature-gating |
 | Branding images | **`DeviceAssets`** with `imageFor(context)` | optional, state+variant resolver |
 | The registry | **`DeviceRegistry`** (`registerDevice(descriptor)`) | replaces the `initSGC` switch |
-| Tier A | **native plugin** | implement `GlassesDriver` in Kotlin+Swift, ship a module |
-| Tier B | **`ExternalDeviceAdapter`** speaking **MDBP** (Mentra Device Bridge Protocol) | OEM runs a process in any language; productized `RemoteHarness` |
+| **Production path** | in-process **native driver** registered in the OEM's own branded app | implement `GlassesDriver` in Kotlin+Swift (wraps their BLE SDK); the only thing that ships to phones |
+| **Dev/sim transport** | **`ExternalDeviceAdapter`** speaking **MDBP** (Mentra Device Bridge Protocol) | a separate program over a socket — desktop only (RemoteHarness, laptop sim); **not** an OEM ship path |
 
 `id` is reverse-DNS and OEM-owned: `com.acme.glasses.x1`. It namespaces the
 device so two OEMs never collide (unlike today's free-form strings).
@@ -212,11 +239,12 @@ registerDevice({
 If `capabilities`/`assets` are omitted, the device still works but with default
 gating and a generic image — they're progressive enhancement.
 
-## 2.3 Tier A — in-process native driver (Kotlin/Swift)
+## 2.3 The production path — in-process native driver (Kotlin/Swift)
 
-The OEM implements `GlassesDriver`. The key difference from today's
-`SGCManager`: it receives a **`DeviceHost`** and calls *that* instead of the
-global `Bridge`/`DeviceStore`. Illustrative Kotlin:
+This is what ships in the OEM's branded app. The OEM implements `GlassesDriver`
+in native code (typically wrapping their existing BLE SDK). The key difference
+from today's `SGCManager`: it receives a **`DeviceHost`** and calls *that*
+instead of the global `Bridge`/`DeviceStore`. Illustrative Kotlin:
 
 ```kotlin
 class AcmeX1Driver(private val host: DeviceHost) : GlassesDriver {
@@ -266,19 +294,24 @@ Internally the app wraps the OEM's `GlassesDriver` in an **adapter** that
 satisfies the existing internal `SGCManager`, so the rest of `DeviceManager`
 doesn't change. The OEM never sees `SGCManager`.
 
-## 2.4 Tier B — out-of-process (any language), the recommended default
+## 2.4 The dev/sim transport — out-of-process (DESKTOP ONLY, not for OEM apps)
 
-The OEM doesn't write Kotlin/Swift at all. They run **their own process** that
-speaks **MDBP** (the productized `RemoteHarness` protocol — newline-delimited
-JSON over a local socket). The app side is a single built-in
-`ExternalDeviceAdapter` that implements `GlassesDriver` by relaying to that
-process. The OEM registers a descriptor whose `driver` is the external adapter
-pointed at their endpoint:
+This is **not** how an OEM ships. It only runs on a computer, for development
+and simulation — because it needs a separate program talking to the app over a
+local socket, which phones (especially iOS) don't allow. Use it for: the harness
+driving real glasses from a Mac (`RemoteHarness`), the laptop simulator, and OEM
+bench/bring-up tools.
+
+A separate program speaks **MDBP** (the `RemoteHarness` protocol — newline-JSON
+over a local socket). The app side is a single built-in `ExternalDeviceAdapter`
+that implements `GlassesDriver` by relaying to that process — so the same
+interface works for a dev stand-in, and the app can't tell the difference:
 
 ```ts
+// dev/sim only — e.g. the laptop simulator or the harness daemon endpoint
 registerDevice({
-  id: "com.acme.glasses.x1",
-  displayName: "Acme X1",
+  id: "glass.mentra.laptop-sim",
+  displayName: "Laptop Simulator",
   kind: "glasses",
   capabilities: { /* sent in the MDBP handshake instead, see below */ },
   driver: externalDriver({ transport: "tcp", host: "127.0.0.1", port: 9400 }),
@@ -304,14 +337,15 @@ The wire protocol (what RemoteHarness already does, generalized):
 { "event": "ping" }                              // liveness
 ```
 
-Note the `hello` carries **capabilities and assets** — so a Tier-B OEM doesn't
-touch any TS at all; the device fully describes itself over the socket. (This
-is the one real generalization needed beyond today's RemoteHarness, which sends
-only a family name.)
+Note the `hello` carries **capabilities and assets** — so the external program
+fully describes itself over the socket without touching any app code. (This is
+the one real generalization beyond today's RemoteHarness, which sends only a
+family name.)
 
-This is exactly how the **laptop simulator** will work: it's a Tier-B backend
-whose "hardware" is the Mac (a display window + the laptop mic/camera), proving
-the path before any OEM uses it.
+This is exactly how the **laptop simulator** will work: a desktop program whose
+"hardware" is the Mac (a display window + the laptop mic/camera), speaking MDBP
+to the app. It's the main consumer of this transport — and it's a first-party
+dev tool, not an OEM shipping path.
 
 ## 2.5 Assets — state + variant resolver
 
@@ -331,48 +365,52 @@ The G1's existing `getEvenRealitiesG1Image(style, color, state, side, dark,
 battery)` becomes the *first implementation* of an `imageFor` resolver, instead
 of a special case wired into the app.
 
-## 2.6 What an OEM's repo looks like
+## 2.6 What an OEM's project looks like (the production path)
 
-**Tier A (native plugin)** — a standalone Expo module the OEM publishes:
+The OEM's **own branded app**, embedding MentraOS as a library and registering
+their native driver:
 
 ```
-acme-mentra-glasses/                 # OEM's own repo, depends on @mentra/device-sdk
-├── package.json                     # peerDep: @mentra/device-sdk
+acme-glasses-app/                    # the OEM's own app — ships to the App/Play Store
+├── package.json                     # deps: @mentra/device-sdk (+ the MentraOS app SDK)
+├── app.config.ts                    # "Acme Glasses" name, icon, splash — their branding
 ├── src/
-│   └── index.ts                     # registerDevice({... driver: native ...})
+│   ├── App.tsx                      # Acme UI; mounts the embedded MentraOS experience
+│   └── registerAcme.ts              # registerDevice({ id, capabilities, assets,
+│                                    #                  driver: (host) => AcmeX1Driver(host) })
 ├── ios/
-│   ├── AcmeX1Driver.swift           # implements GlassesDriver
-│   └── AcmeMentraGlasses.podspec
+│   └── AcmeX1Driver.swift           # implements GlassesDriver (wraps Acme's BLE SDK)
 ├── android/
-│   └── src/main/java/.../AcmeX1Driver.kt
+│   └── src/main/java/.../AcmeX1Driver.kt   # same, Kotlin
 └── assets/glasses/x1/               # connected.png, searching.png, black.png, icon.png
 ```
-The app gains the device by adding this package as a dependency.
 
-**Tier B (external process)** — no native code, any language:
+The native driver is compiled into Acme's app at build time; at startup
+`registerAcme.ts` registers it into the embedded MentraOS `DeviceRegistry`.
+Everything else (pairing, cloud, miniapps, captions) comes from the SDK.
+
+**Dev/sim only — external bridge (any language), never shipped to a phone:**
 
 ```
-acme-glasses-bridge/                 # OEM's own repo, any language
+acme-glasses-bench/                  # a desktop dev tool, OEM's repo, any language
 ├── bridge.py        (or .go/.rs/.ts)# speaks MDBP on a local socket
-├── README.md                        # "run this alongside MentraOS"
+├── README.md                        # "run on your Mac to test against MentraOS"
 └── assets/                          # images referenced by file:// in the hello
 ```
-The OEM ships a tiny config (or a one-line `registerDevice` in a thin plugin)
-telling the app the endpoint; everything else flows over MDBP.
+This lets an OEM exercise MentraOS from a laptop before/while writing the native
+driver — same as how our harness and the laptop simulator work.
 
-## 2.7 How a command flows, end to end (Acme X1, Tier B)
+## 2.7 How a command flows, end to end (Acme X1, production / in-process)
 
 ```
 miniapp: session.layouts.showText("Hi")
-  → cloud → app → DeviceManager.sgc (= ExternalDeviceAdapter for com.acme.glasses.x1)
-  → adapter.showText("Hi")
-  → MDBP: { "cmd":"text", "text":"Hi" }  over the socket
-  → Acme's process → Acme's BLE/proprietary link → the X1 lens
+  → cloud → Acme's app → DeviceManager.sgc (= adapter wrapping AcmeX1Driver)
+  → acmeX1Driver.showText("Hi")            // direct in-process call
+  → Acme's BLE SDK → the X1 lens
 ```
 And mic back:
 ```
-X1 mic → Acme's process → MDBP { "event":"audio","b64":... }
-  → ExternalDeviceAdapter → host.emitMicAudio(lc3,40)
+X1 mic → Acme's BLE SDK → AcmeX1Driver → host.emitMicAudio(lc3, 40)
   → DeviceManager.handleGlassesMicData → Bridge.sendMicLc3 → JS → cloud → captions
 ```
 The app code in the middle is identical to what runs for a real G2 — the OEM
@@ -387,5 +425,7 @@ The lowest-risk first step is extracting `DeviceHost` by refactoring
 `RemoteHarness` to use it (no behavior change), then introducing
 `DeviceRegistry` so built-ins register through it, then routing capabilities and
 assets through the registry. The laptop simulator is the first end-to-end
-consumer of Tier B and shakes out the MDBP handshake (capabilities + assets)
-before any external OEM depends on it.
+consumer of the dev/sim MDBP transport and shakes out the handshake
+(capabilities + assets); the production OEM path is the same registry +
+`GlassesDriver`, just with a native in-process driver inside the OEM's own
+branded app.
