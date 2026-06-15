@@ -18,7 +18,7 @@ import type {
 } from "@mentra/miniapp/background"
 
 import type {Channels} from "../shared/channels"
-import type {Coords, DevSettings, LogEntry, NavSnapshot, TripState} from "../shared/types"
+import type {Coords, DevSettings, LogEntry, NavSnapshot, TripState, UnitSystem} from "../shared/types"
 
 import {CompassManager} from "./managers/CompassManager"
 import {DisplayManager} from "./managers/DisplayManager"
@@ -116,6 +116,12 @@ export class NavigationController {
     useRawInstructions: true,
   }
 
+  // User's distance-unit preference. Loaded from storage in start() and
+  // mirrored into every snapshot. Drives formatDistance() across the
+  // glasses HUD and (via the snapshot) the UI. Defaults to metric until
+  // the stored value loads.
+  private unitSystem: UnitSystem = "metric"
+
   // Cached raw Google `navigationInstruction.instructions` strings, in
   // step order, from the most recent successful Routes API call. Drives
   // the `useRawInstructions` debug toggle — the live SDK doesn't carry
@@ -150,6 +156,7 @@ export class NavigationController {
     this.wireHUDPump()
     this.primeNavigationPermission()
     this.seedInitialFix()
+    this.loadUnitSystem()
 
     this.session.onBeforeDisconnect(() => this.dispose())
   }
@@ -562,6 +569,22 @@ export class NavigationController {
     )
 
     this.unsubs.push(
+      this.ui.on("nav:set-units", ({unitSystem}) => {
+        if (unitSystem === this.unitSystem) return
+        this.unitSystem = unitSystem
+        // Persist (fire-and-forget — the in-memory value is already
+        // authoritative for this session; storage just survives reloads).
+        this.storage.setUnitSystem(unitSystem).catch((err) => {
+          this.appendLog(`unit-system persist failed: ${err instanceof Error ? err.message : String(err)}`)
+        })
+        this.ui.send("nav:units-update", {unitSystem})
+        // Re-render the glasses HUD so the distance suffix flips units
+        // immediately rather than waiting for the next pivot/coord tick.
+        this.refreshHUD()
+      }),
+    )
+
+    this.unsubs.push(
       this.ui.on("nav:set-show-minimap", (show) => {
         if (show === this.showMinimap) return
         this.showMinimap = show
@@ -654,7 +677,7 @@ export class NavigationController {
       // logOffRouteThresholds) or crosses 30m and the auto-rebuild
       // flow takes over.
       const d = this.offRouteAdvisoryDistanceM
-      next = d != null ? `Go back\n${formatDistance(d)}` : "Go back\nto route"
+      next = d != null ? `Go back\n${formatDistance(d, this.unitSystem)}` : "Go back\nto route"
     } else if (this.activePivot?.direction) {
       // At the turn. Layout:
       //   ←|→
@@ -709,15 +732,15 @@ export class NavigationController {
         ? this.lookupRawInstructionForPivot(this.upcomingPivot)
         : null
       next = rawTop
-        ? `${arrow}\nIn ${formatDistance(dist)}\n${rawTop}`
-        : [arrow, topLine, `${verb} in ${formatDistance(dist)}`].filter(Boolean).join("\n")
+        ? `${arrow}\nIn ${formatDistance(dist, this.unitSystem)}\n${rawTop}`
+        : [arrow, topLine, `${verb} in ${formatDistance(dist, this.unitSystem)}`].filter(Boolean).join("\n")
     } else if (maneuver?.distanceToDestinationMeters != null && maneuver.distanceToDestinationMeters >= 0) {
       // Final-leg "Arriving in Xm" — no more pivots between here and
       // the destination, so the directional arrow stays ↑ (straight
       // ahead) until the ≤7m-remaining trigger flips status to
       // "arrived". Matches the approach-pivot HUD's arrow-on-top
       // layout for visual continuity.
-      next = `↑\nArriving in ${formatDistance(maneuver.distanceToDestinationMeters)}`
+      next = `↑\nArriving in ${formatDistance(maneuver.distanceToDestinationMeters, this.unitSystem)}`
     } else if (running) {
       next = `↑\nArriving`
     }
@@ -1140,7 +1163,29 @@ export class NavigationController {
       upcomingPivot: this.upcomingPivot,
       log: [...this.log],
       devSettings: this.devSettings,
+      unitSystem: this.unitSystem,
     }
+  }
+
+  /**
+   * Load the persisted distance-unit preference on startup and, if it
+   * differs from the metric default, broadcast it so the UI (and the
+   * glasses HUD on the next refresh) pick it up. Fire-and-forget: the
+   * snapshot already carries the current value, so a slow storage read
+   * just means the UI briefly shows metric before the stored choice lands.
+   */
+  private loadUnitSystem(): void {
+    this.storage
+      .getUnitSystem()
+      .then((unit) => {
+        if (unit === this.unitSystem) return
+        this.unitSystem = unit
+        this.ui.send("nav:units-update", {unitSystem: unit})
+        this.refreshHUD()
+      })
+      .catch((err) => {
+        this.appendLog(`unit-system load failed: ${err instanceof Error ? err.message : String(err)}`)
+      })
   }
 
   private dispose(): void {

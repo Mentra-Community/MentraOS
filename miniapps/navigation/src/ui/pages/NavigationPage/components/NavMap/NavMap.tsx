@@ -4,7 +4,7 @@ import {motion, useMotionValue, useTransform} from "motion/react"
 import {useNavStore} from "@/ui/store/navStore"
 import {bearingDeg, haversineMeters, rdpSmooth} from "@/ui/lib/geometry"
 import {formatDistance} from "@/ui/lib/formatDistance"
-import {MinusIcon, PlusIcon, RecenterIcon} from "@/ui/components/icons"
+import {RecenterIcon, SettingsIcon} from "@/ui/components/icons"
 
 // Experiment toggle: render the route line with RDP smoothing applied or
 // straight from the raw points Google returned. Flip to false to see the
@@ -29,6 +29,7 @@ export function NavMap({
   hideControls = false,
   onLongPress,
   onPlaceTap,
+  onOpenSettings,
 }: {
   me: LatLng | null
   destination: LatLng | null
@@ -76,6 +77,9 @@ export function NavMap({
    * Google's default place card.
    */
   onPlaceTap?: (placeId: string) => void
+  /** Fires when the user taps the settings gear in the right-rail.
+   *  Parent navigates to the settings page. */
+  onOpenSettings?: () => void
 }) {
   // Map readiness is local — driven directly by the Google Maps script
   // load. Decoupled from `useNavStore` so a stalled background handshake
@@ -114,6 +118,7 @@ export function NavMap({
     }
   }, [])
   const compassHeading = useNavStore((s) => s.heading)
+  const unitSystem = useNavStore((s) => s.unitSystem)
   // mapsError is no longer tracked separately — ready=false covers
   // both "still-loading" and "failed"; the loading overlay handles both.
   const error: string | null = null
@@ -143,9 +148,9 @@ export function NavMap({
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<any | null>(null)
-  const meDotRef = useRef<any | null>(null)        // OverlayView instance
+  const meDotRef = useRef<any | null>(null) // OverlayView instance
   const meArrowElRef = useRef<HTMLElement | null>(null) // inner arrow div for CSS rotation
-  const meArrowAngleRef = useRef<number>(0)             // unwrapped angle to avoid 360° spins
+  const meArrowAngleRef = useRef<number>(0) // unwrapped angle to avoid 360° spins
   const meConeRef = useRef<any | null>(null)
   const destMarkerRef = useRef<any | null>(null)
   const routeRef = useRef<any | null>(null)
@@ -220,7 +225,9 @@ export function NavMap({
     // Skip GPS-driven panTo while the user is touching the map — otherwise
     // every coords update fights the in-flight gesture. `isTouching` ref
     // is read by the me-marker effect.
-    const onTouchActive = () => { isTouchingRef.current = true }
+    const onTouchActive = () => {
+      isTouchingRef.current = true
+    }
     const onTouchInactive = (e: TouchEvent) => {
       if (e.touches.length === 0) isTouchingRef.current = false
     }
@@ -332,12 +339,7 @@ export function NavMap({
         console.warn("[NavMap] long-press: no projection available; pin not dropped")
         return
       }
-      console.log(
-        `[NavMap] long-press @`,
-        coord.lat.toFixed(6),
-        coord.lng.toFixed(6),
-        `(via ${source})`,
-      )
+      console.log(`[NavMap] long-press @`, coord.lat.toFixed(6), coord.lng.toFixed(6), `(via ${source})`)
       onLongPressRef.current?.(coord)
     }
     const onDown = (e: PointerEvent) => {
@@ -428,16 +430,23 @@ export function NavMap({
     if (!ready || !mapRef.current || !me) return
     const g = window.google
 
-    if (meConeRef.current) { meConeRef.current.setMap(null); meConeRef.current = null }
+    if (meConeRef.current) {
+      meConeRef.current.setMap(null)
+      meConeRef.current = null
+    }
 
     if (!meDotRef.current) {
       class MeOverlay extends g.maps.OverlayView {
         private pos: any
         private div: HTMLDivElement | null = null
-        constructor(pos: any) { super(); this.pos = pos }
+        constructor(pos: any) {
+          super()
+          this.pos = pos
+        }
         onAdd() {
           const div = document.createElement("div")
-          div.style.cssText = "position:absolute;width:48px;height:48px;transform:translate(-50%,-50%);pointer-events:none"
+          div.style.cssText =
+            "position:absolute;width:48px;height:48px;transform:translate(-50%,-50%);pointer-events:none"
           div.innerHTML = `
             <div style="position:absolute;inset:0;border-radius:50%;background:#00000029"></div>
             <div style="position:absolute;inset:6px;border-radius:50%;background:#1A1A1A;box-shadow:0 4px 14px #00000066;display:flex;align-items:center;justify-content:center">
@@ -458,8 +467,15 @@ export function NavMap({
           this.div.style.left = `${pt.x}px`
           this.div.style.top = `${pt.y}px`
         }
-        setPosition(pos: any) { this.pos = pos; this.draw() }
-        onRemove() { this.div?.parentNode?.removeChild(this.div); this.div = null; meArrowElRef.current = null }
+        setPosition(pos: any) {
+          this.pos = pos
+          this.draw()
+        }
+        onRemove() {
+          this.div?.parentNode?.removeChild(this.div)
+          this.div = null
+          meArrowElRef.current = null
+        }
       }
       const overlay = new MeOverlay(new g.maps.LatLng(me.lat, me.lng))
       overlay.setMap(mapRef.current)
@@ -471,7 +487,7 @@ export function NavMap({
     // Unwrap the angle so we always take the shortest arc (no 360° spins)
     if (meArrowElRef.current && effectiveHeading != null) {
       const prev = meArrowAngleRef.current
-      let delta = (effectiveHeading - ((prev % 360) + 360) % 360)
+      let delta = effectiveHeading - (((prev % 360) + 360) % 360)
       if (delta > 180) delta -= 360
       else if (delta < -180) delta += 360
       meArrowAngleRef.current = prev + delta
@@ -527,11 +543,17 @@ export function NavMap({
   // current placeId set so we don't churn every render. Markers are
   // hidden when a destination is selected because the destination pin
   // visually overlaps and would compete; this keeps the idle map clean.
+  //
+  // Saved-place pins are currently disabled on the map entirely: the
+  // effect still runs so any markers left over from a previous state get
+  // cleaned up, but `showSaved` is forced false so none are drawn. Flip
+  // SHOW_SAVED_PINS back to true to restore the green home/work/star tags.
+  const SHOW_SAVED_PINS = false
   useEffect(() => {
     if (!ready || !mapRef.current) return
     const g = window.google
     const map = mapRef.current
-    const showSaved = !destination && savedPlaces.length > 0
+    const showSaved = SHOW_SAVED_PINS && !destination && savedPlaces.length > 0
     const current = savedMarkersRef.current
     const wantedIds = new Set(showSaved ? savedPlaces.map((p) => p.placeId) : [])
     // Remove any markers no longer in the wanted set.
@@ -607,15 +629,24 @@ export function NavMap({
       let minDist = Infinity
 
       for (let i = 0; i < path.length - 1; i++) {
-        const ax = path[i].lng, ay = path[i].lat
-        const bx = path[i + 1].lng, by = path[i + 1].lat
-        const px = me.lng, py = me.lat
-        const dx = bx - ax, dy = by - ay
+        const ax = path[i].lng,
+          ay = path[i].lat
+        const bx = path[i + 1].lng,
+          by = path[i + 1].lat
+        const px = me.lng,
+          py = me.lat
+        const dx = bx - ax,
+          dy = by - ay
         const lenSq = dx * dx + dy * dy
         const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq))
-        const cx = ax + t * dx, cy = ay + t * dy
+        const cx = ax + t * dx,
+          cy = ay + t * dy
         const dist = Math.hypot(px - cx, py - cy)
-        if (dist < minDist) { minDist = dist; bestSegment = i; bestT = t }
+        if (dist < minDist) {
+          minDist = dist
+          bestSegment = i
+          bestT = t
+        }
       }
 
       const projected = {
@@ -699,15 +730,24 @@ export function NavMap({
     let bestT = 0
     let minDist = Infinity
     for (let i = 0; i < routePoints.length - 1; i++) {
-      const ax = routePoints[i].lng, ay = routePoints[i].lat
-      const bx = routePoints[i + 1].lng, by = routePoints[i + 1].lat
-      const px = me.lng, py = me.lat
-      const dx = bx - ax, dy = by - ay
+      const ax = routePoints[i].lng,
+        ay = routePoints[i].lat
+      const bx = routePoints[i + 1].lng,
+        by = routePoints[i + 1].lat
+      const px = me.lng,
+        py = me.lat
+      const dx = bx - ax,
+        dy = by - ay
       const lenSq = dx * dx + dy * dy
       const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq))
-      const cx = ax + t * dx, cy = ay + t * dy
+      const cx = ax + t * dx,
+        cy = ay + t * dy
       const d = Math.hypot(px - cx, py - cy)
-      if (d < minDist) { minDist = d; bestSegment = i; bestT = t }
+      if (d < minDist) {
+        minDist = d
+        bestSegment = i
+        bestT = t
+      }
     }
     const projected: LatLng = {
       lat: routePoints[bestSegment].lat + bestT * (routePoints[bestSegment + 1].lat - routePoints[bestSegment].lat),
@@ -719,10 +759,7 @@ export function NavMap({
       lng: (me.lng + projected.lng) / 2,
     }
 
-    const path = [
-      new g.maps.LatLng(me.lat, me.lng),
-      new g.maps.LatLng(projected.lat, projected.lng),
-    ]
+    const path = [new g.maps.LatLng(me.lat, me.lng), new g.maps.LatLng(projected.lat, projected.lng)]
     if (!offRouteLineRef.current) {
       offRouteLineRef.current = new g.maps.Polyline({
         map: mapRef.current,
@@ -776,7 +813,7 @@ export function NavMap({
         this.div = null
       }
     }
-    const labelText = formatDistance(distMeters)
+    const labelText = formatDistance(distMeters, unitSystem)
     const labelPos = new g.maps.LatLng(midpoint.lat, midpoint.lng)
     if (!offRouteLabelRef.current) {
       const overlay = new OffRouteLabelOverlay(labelPos, labelText)
@@ -787,7 +824,7 @@ export function NavMap({
     }
 
     return teardown
-  }, [ready, me?.lat, me?.lng, routePoints, devEnabled, showOffRouteLine])
+  }, [ready, me?.lat, me?.lng, routePoints, devEnabled, showOffRouteLine, unitSystem])
 
   // Debug overlay: render a red dot at each turn point. Lets us visually
   // verify that turns land where they belong.
@@ -869,9 +906,7 @@ export function NavMap({
       }
     }
 
-    function drawDots(
-      turns: Array<{lat: number; lng: number; label?: string | null; direction?: string | null}>,
-    ) {
+    function drawDots(turns: Array<{lat: number; lng: number; label?: string | null; direction?: string | null}>) {
       if (!mapRef.current) return
       for (const p of turns) {
         const dot = new g.maps.Circle({
@@ -890,11 +925,7 @@ export function NavMap({
 
         // Hovering badge above the dot: direction on top, road below.
         if (p.label) {
-          const label = new PivotLabelOverlay(
-            new g.maps.LatLng(p.lat, p.lng),
-            p.label,
-            p.direction ?? null,
-          )
+          const label = new PivotLabelOverlay(new g.maps.LatLng(p.lat, p.lng), p.label, p.direction ?? null)
           label.setMap(mapRef.current)
           pivotLabelsRef.current.push(label)
         }
@@ -950,8 +981,7 @@ export function NavMap({
             }
             const direction: "Turn left" | "Turn right" | null =
               p.direction === "left" ? "Turn left" : p.direction === "right" ? "Turn right" : null
-            const label =
-              p.fromRoad && p.toRoad ? `${p.fromRoad} → ${p.toRoad}` : (p.toRoad ?? p.fromRoad ?? null)
+            const label = p.fromRoad && p.toRoad ? `${p.fromRoad} → ${p.toRoad}` : (p.toRoad ?? p.fromRoad ?? null)
             return {lat: p.lat, lng: p.lng, label, direction}
           })
           drawDots(formatted)
@@ -976,10 +1006,7 @@ export function NavMap({
 
   return (
     <div className="relative w-full h-full overflow-hidden">
-      <div
-        ref={containerRef}
-        className="w-full h-full select-none touch-manipulation [-webkit-touch-callout:none]"
-      />
+      <div ref={containerRef} className="w-full h-full select-none touch-manipulation [-webkit-touch-callout:none]" />
 
       {!ready ? (
         <div className="absolute inset-0 flex items-center justify-center bg-neutral-100 text-neutral-500 text-[13px]">
@@ -1000,8 +1027,6 @@ export function NavMap({
         </div>
       ) : null}
 
-
-
       {ready && !hideControls ? (
         <motion.div
           // Anchored to the drawer's top edge via `bottom={railBottom}`
@@ -1010,32 +1035,6 @@ export function NavMap({
           // the buttons stay tappable no matter which drawer is open.
           style={{bottom: railBottom}}
           className="absolute right-3 z-50 flex flex-col gap-2">
-
-
-          <button
-            type="button"
-            aria-label="Zoom in"
-            className="flex items-center justify-center rounded-[22px] bg-white [box-shadow:#0000001F_0px_4px_14px] w-11 h-11 shrink-0 active:opacity-70"
-            onClick={() => {
-              const m = mapRef.current
-              if (!m) return
-              m.setZoom(Math.min((m.getZoom() ?? 17) + 1, 21))
-            }}>
-            <PlusIcon size={20} color="#000000D9" />
-          </button>
-
-          <button
-            type="button"
-            aria-label="Zoom out"
-            className="flex items-center justify-center rounded-[22px] bg-white [box-shadow:#0000001F_0px_4px_14px] w-11 h-11 shrink-0 active:opacity-70"
-            onClick={() => {
-              const m = mapRef.current
-              if (!m) return
-              m.setZoom(Math.max((m.getZoom() ?? 17) - 1, 3))
-            }}>
-            <MinusIcon />
-          </button>
-
           <button
             type="button"
             aria-label="Recenter on me"
@@ -1047,6 +1046,17 @@ export function NavMap({
               setFollowUser(true)
             }}>
             <RecenterIcon active={followUser} />
+          </button>
+
+          <button
+            type="button"
+            aria-label="Settings"
+            className="flex items-center justify-center rounded-[22px] bg-white [box-shadow:#0000001F_0px_4px_14px] w-11 h-11 shrink-0 active:opacity-70"
+            onClick={() => {
+              console.log("[NavMap] settings button tapped")
+              onOpenSettings?.()
+            }}>
+            <SettingsIcon size={20} color="#000000D9" />
           </button>
         </motion.div>
       ) : null}

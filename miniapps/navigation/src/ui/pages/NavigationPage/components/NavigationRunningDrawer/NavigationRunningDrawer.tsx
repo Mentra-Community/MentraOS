@@ -2,6 +2,7 @@ import {AnimatePresence, motion} from "motion/react"
 import {useLayoutEffect, useRef, useState} from "react"
 
 import {useDrawerOffset} from "@/ui/components/Drawer/DrawerOffsetContext"
+import {useNavStore} from "@/ui/store/navStore"
 import {formatDistance} from "@/ui/lib/formatDistance"
 import {haversineMeters} from "@/ui/lib/geometry"
 import type {LatLng, PlaceDetails} from "@/shared/types"
@@ -28,6 +29,7 @@ export function NavigationRunningDrawer({
   routeDurationSeconds,
   onStop,
 }: Props) {
+  const unitSystem = useNavStore((s) => s.unitSystem)
   // Prefer the SDK's mode-correct, polyline-following remaining values;
   // fall back to crow-flies + walking speed until the first event lands.
   const haversineDistance = destination && me ? haversineMeters(me, destination) : null
@@ -39,7 +41,7 @@ export function NavigationRunningDrawer({
       : haversineDistance != null
         ? haversineDistance / FALLBACK_WALKING_M_PER_S
         : null
-  const distanceLabel = distanceMeters != null ? formatDistance(distanceMeters) : "—"
+  const distanceLabel = distanceMeters != null ? formatDistance(distanceMeters, unitSystem) : "—"
   const etaLabel = durationSeconds != null ? formatEta(durationSeconds) : "—"
   const arrivalLabel = durationSeconds != null ? formatArrival(durationSeconds) : "—"
 

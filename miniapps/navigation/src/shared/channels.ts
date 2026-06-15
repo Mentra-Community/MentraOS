@@ -28,6 +28,7 @@ import type {
   PlaceSuggestion,
   SavedPlace,
   TripState,
+  UnitSystem,
 } from "./types"
 
 export interface Channels {
@@ -41,6 +42,7 @@ export interface Channels {
   "nav:log-append": LogEntry
   "nav:log-clear": Record<string, never>
   "nav:dev-settings-update": DevSettings
+  "nav:units-update": {unitSystem: UnitSystem}
 
   // ── UI → background broadcasts (fire-and-forget) ───────────────────────
   "nav:start": StartNavigationOptions & {destinationName?: string}
@@ -49,6 +51,7 @@ export interface Channels {
   "nav:set-destination": PlaceDetails | null
   "nav:set-dev-settings": Partial<DevSettings>
   "nav:set-show-minimap": boolean
+  "nav:set-units": {unitSystem: UnitSystem}
 
   // ── UI → background RPC ────────────────────────────────────────────────
   "nav:compute-route": Rpc<ComputeRouteOptions, ComputeRouteResult>
