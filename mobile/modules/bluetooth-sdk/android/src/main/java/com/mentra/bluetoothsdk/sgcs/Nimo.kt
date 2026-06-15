@@ -872,8 +872,18 @@ class Nimo : SGCManager() {
 
         private const val TWS_TIMEOUT_MS = 10_000L
         private const val ACK_TIMEOUT_MS = 5_000L
-        // Generous: covers classic discovery + bonding dialog + the 10s TWS gate.
-        private const val PAIRING_TIMEOUT_MS = 40_000L
+        // Generous: the glasses' classic bond can take 30-45s PER attempt and may need
+        // a retry, so this must cover several bond attempts + discovery + the 10s TWS gate.
+        private const val PAIRING_TIMEOUT_MS = 120_000L
+        // Settle time after BOND_BONDED before the first GATT connect — connecting
+        // immediately races the BR/EDR teardown + CTKD finalization (status 133).
+        // Measured: 1.5s was too short (the first connect-after-bond still hit 133 and
+        // only the 5s reconnection timer recovered it); 5s lets the first connect land.
+        private const val POST_BOND_SETTLE_MS = 5_000L
+        // The glasses' BR/EDR bond is slow and flaky — it can report BOND_NONE mid-pairing
+        // yet succeed on a retry, so don't treat the first failure as terminal.
+        private const val MAX_BOND_ATTEMPTS = 3
+        private const val BOND_RETRY_DELAY_MS = 2_000L
         private const val BATTERY_POLL_MS = 30_000L
         private const val TEXT_QUEUE_TICK_MS = 100L
         private const val WRITE_WATCHDOG_MS = 1_000L
@@ -884,8 +894,6 @@ class Nimo : SGCManager() {
     init {
         type = DeviceTypes.NIMO
         hasMic = true
-        // Honor an already-enabled debug playback flag from a previous session.
-        applyNexAudioPlaybackSetting()
     }
 
     // The text surface every sendTextWall renders into. The ASR note view (appId 0x04,
@@ -977,35 +985,9 @@ class Nimo : SGCManager() {
     private val audioClient =
             NimoAudioClient(
                     sendCommand = { bytes -> micChar?.let { enqueueWrite(it, bytes) } },
-                    onPcm = { pcm ->
-                        DeviceManager.getInstance().handlePcm(pcm)
-                        // Debug: play the glasses mic on the phone speaker
-                        // (Developer Settings → audio playback toggle).
-                        pcmPlayer?.streamPCMData(pcm)
-                    },
+                    onPcm = { pcm -> DeviceManager.getInstance().handlePcm(pcm) },
                     onActivity = { DeviceManager.getInstance().reportGlassesAudioActivity() }
             )
-
-    // Debug audio playback of the glasses mic on the phone (16 kHz mono), driven by
-    // the same Developer Settings flag the Nex uses.
-    @Volatile
-    private var pcmPlayer: com.mentra.bluetoothsdk.utils.audio.PCMAudioPlayer? = null
-
-    private val audioPlaybackEnabled: Boolean
-        get() = DeviceStore.get("bluetooth", "nex_audio_playback") as? Boolean ?: false
-
-    override fun applyNexAudioPlaybackSetting() {
-        if (audioPlaybackEnabled) {
-            Bridge.log("NIMO: phone audio playback enabled — glasses mic will play on the phone speaker")
-            if (pcmPlayer == null) {
-                pcmPlayer = com.mentra.bluetoothsdk.utils.audio.PCMAudioPlayer(context)
-            }
-        } else {
-            Bridge.log("NIMO: phone audio playback disabled")
-            pcmPlayer?.stop()
-            pcmPlayer = null
-        }
-    }
 
     // ---------- SGCManager: Connection Management ----------
 
@@ -1021,6 +1003,7 @@ class Nimo : SGCManager() {
         DEVICE_SEARCH_ID = id
         DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTING)
         isDisconnecting = false
+        bondAttempts = 0
         startPairingTimeout()
         // Bonded target → connect directly, WITHOUT starting classic discovery.
         // Inquiry monopolizes the BR/EDR radio and kills an in-flight GATT page
@@ -1548,24 +1531,60 @@ class Nimo : SGCManager() {
                 }
         if (bondState != android.bluetooth.BluetoothDevice.BOND_BONDED) {
             // Bond over classic first (CTKD gives us the LE keys); connect on completion.
-            Bridge.log("NIMO: not bonded — creating classic bond with ${device.address}")
-            DeviceStore.apply("glasses", "connectionState", ConnTypes.BONDING)
-            registerBondReceiver(device)
-            val started =
-                    try {
-                        device.createBond()
-                    } catch (e: SecurityException) {
-                        Bridge.log("NIMO: createBond SecurityException: ${e.message}")
-                        false
-                    }
-            if (!started) {
-                Bridge.log("NIMO: createBond failed to start — trying LE connect anyway")
-                unregisterBondReceiver()
-                connectLeTransport(device)
-            }
+            startBond(device)
             return
         }
         connectLeTransport(device)
+    }
+
+    /**
+     * Kicks off (or retries) the classic bond. The glasses' BR/EDR bond is slow (30-45s)
+     * and flaky — it can report BOND_NONE mid-pairing yet succeed on a retry — so this is
+     * called both on the initial attempt and from the BOND_NONE handler.
+     */
+    private fun startBond(device: android.bluetooth.BluetoothDevice) {
+        val bondState =
+                try {
+                    device.bondState
+                } catch (e: SecurityException) {
+                    android.bluetooth.BluetoothDevice.BOND_NONE
+                }
+        // A previous (apparently failed) attempt may have bonded in the background.
+        if (bondState == android.bluetooth.BluetoothDevice.BOND_BONDED) {
+            Bridge.log("NIMO: already bonded with ${device.address} — connecting")
+            unregisterBondReceiver()
+            connectLeTransport(device)
+            return
+        }
+        // Don't fire a second createBond on top of one already in flight (duplicate
+        // connectById calls do this, and it poisons the bond).
+        if (bondState == android.bluetooth.BluetoothDevice.BOND_BONDING ||
+                        (bondReceiver != null && bondingAddress == device.address)
+        ) {
+            Bridge.log("NIMO: bond already in progress for ${device.address} — waiting")
+            registerBondReceiver(device)
+            bondingAddress = device.address
+            return
+        }
+        bondAttempts++
+        Bridge.log(
+                "NIMO: creating classic bond with ${device.address} (attempt $bondAttempts/$MAX_BOND_ATTEMPTS)"
+        )
+        DeviceStore.apply("glasses", "connectionState", ConnTypes.BONDING)
+        registerBondReceiver(device)
+        bondingAddress = device.address
+        val started =
+                try {
+                    device.createBond()
+                } catch (e: SecurityException) {
+                    Bridge.log("NIMO: createBond SecurityException: ${e.message}")
+                    false
+                }
+        if (!started) {
+            Bridge.log("NIMO: createBond failed to start — trying LE connect anyway")
+            unregisterBondReceiver()
+            connectLeTransport(device)
+        }
     }
 
     private fun connectLeTransport(device: android.bluetooth.BluetoothDevice) {
@@ -1587,6 +1606,8 @@ class Nimo : SGCManager() {
     }
 
     private var bondReceiver: android.content.BroadcastReceiver? = null
+    private var bondAttempts = 0
+    private var bondingAddress: String? = null
 
     private fun registerBondReceiver(target: android.bluetooth.BluetoothDevice) {
         unregisterBondReceiver()
@@ -1613,14 +1634,38 @@ class Nimo : SGCManager() {
                         mainHandler.post {
                             when (state) {
                                 android.bluetooth.BluetoothDevice.BOND_BONDED -> {
-                                    Bridge.log("NIMO: bonded with ${device.address}")
+                                    Bridge.log(
+                                            "NIMO: bonded with ${device.address} — settling before GATT connect"
+                                    )
                                     unregisterBondReceiver()
-                                    connectLeTransport(device)
+                                    // Connecting GATT the instant BOND_BONDED fires races the
+                                    // BR/EDR link teardown + CTKD finalization and comes back as
+                                    // status 133. Let the stack settle so the first-ever connect
+                                    // (right after pairing) succeeds instead of failing until the
+                                    // user manually retries into the already-bonded fast path.
+                                    mainHandler.postDelayed(
+                                            { connectLeTransport(device) },
+                                            POST_BOND_SETTLE_MS
+                                    )
                                 }
                                 android.bluetooth.BluetoothDevice.BOND_NONE -> {
-                                    Bridge.log("NIMO: bonding failed with ${device.address}")
                                     unregisterBondReceiver()
-                                    Bridge.sendPairFailureEvent("errors:pairNeedDisconnect")
+                                    // The bond can report NONE mid-pairing yet succeed on a
+                                    // retry — only surface failure once retries are exhausted.
+                                    if (bondAttempts < MAX_BOND_ATTEMPTS && !isDisconnecting) {
+                                        Bridge.log(
+                                                "NIMO: bond attempt $bondAttempts failed for ${device.address} — retrying in ${BOND_RETRY_DELAY_MS}ms"
+                                        )
+                                        mainHandler.postDelayed(
+                                                { if (!isDisconnecting) startBond(device) },
+                                                BOND_RETRY_DELAY_MS
+                                        )
+                                    } else {
+                                        Bridge.log(
+                                                "NIMO: bonding failed with ${device.address} after $bondAttempts attempts"
+                                        )
+                                        Bridge.sendPairFailureEvent("errors:pairNeedDisconnect")
+                                    }
                                 }
                                 // BOND_BONDING: in progress — wait.
                             }
@@ -1643,6 +1688,7 @@ class Nimo : SGCManager() {
             } catch (_: Exception) {}
         }
         bondReceiver = null
+        bondingAddress = null
     }
 
     private fun connectByAddress(): Boolean {
@@ -2041,6 +2087,9 @@ class Nimo : SGCManager() {
             }
             Bridge.log("NIMO: Attempting reconnection...")
             isDisconnecting = false
+            // Each reconnection cycle is a fresh bond budget — the glasses drop their
+            // bond on some disconnects (status 19), so this path may need to re-bond.
+            bondAttempts = 0
             if (!connectByAddress()) {
                 startScan()
             }
