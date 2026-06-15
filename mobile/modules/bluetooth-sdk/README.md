@@ -325,7 +325,7 @@ React Native narrows returned values to success shapes where the raw listener ev
 | `startVideoRecording(...)` | `VideoRecordingStartedStatusEvent` with `success: true` and `status: "recording_started"`. | Rejects on `success: false` statuses such as `already_recording`, send failure, or timeout. |
 | `stopVideoRecording(...)` | `VideoRecordingStoppedStatusEvent` with `success: true` and `status: "recording_stopped"`. When a webhook URL is supplied, resolves after the video upload succeeds. | Rejects on `success: false` statuses such as `not_recording`, webhook upload failure, send failure, or timeout. |
 | `rgbLedControl(...)` | `RgbLedControlSuccessResponseEvent` with `state: "success"`. | Rejects when raw `rgb_led_control_response.state === "error"` or the response times out. |
-| `checkForOtaUpdate()` / `retryOtaVersionCheck()` | `OtaQueryResult`, either `ota_update_available` or current `ota_status`. | Rejects on command transport timeout/failure. A returned `ota_status.status === "failed"` is glasses OTA state, not a command rejection. |
+| `checkForOtaUpdate()` | `boolean`, true when the configured OTA manifest has an ASG APK, MTK, or BES update for the connected glasses. | Resolves false when the glasses are disconnected, version info is unavailable, the manifest cannot be fetched, or no update is available. |
 
 Android and iOS async APIs use `BluetoothException` / `BluetoothError` for the same error paths. Their returned event structs are the successful response in normal `try`/`await` code, while raw listener/delegate events still include both success and error payloads.
 
@@ -335,9 +335,12 @@ Android and iOS async APIs use `BluetoothException` / `BluetoothError` for the s
 
 Mentra Live firmware owns the OTA flow. The SDK mirrors the MentraOS app commands and events:
 
-- `checkForOtaUpdate()` sends `ota_query_status` and resolves with the ASG response (`ota_update_available` or the current `ota_status`).
-- `startOtaUpdate()` sends `ota_start` and resolves with the ASG start ack after your app presents the update and the user accepts it.
-- `retryOtaVersionCheck()` sends `ota_retry_version_check` and resolves with the same ASG response shape as `checkForOtaUpdate()`; use it only after fixing a known clock-skew/TLS failure.
+- `setOtaVersionUrl(url)` configures the manifest used by phone-side OTA checks and by `ota_start`. Pass `null` to restore the SDK default.
+- `getOtaVersionUrl()` returns the currently configured manifest URL.
+- `checkForOtaUpdate()` fetches the configured manifest and resolves with `true` when an ASG APK, MTK, or BES update is available.
+- `startOtaUpdate()` sends `ota_start` with the same configured manifest URL and resolves with the ASG start ack after your app presents the update and the user accepts it.
+
+The default manifest is `https://staging.ota.mentraglass.com/staging_live_version.json` for SDK apps. Pre-wall-clock ASG builds that ignore `ota_start.ota_version_url` are checked against the URL they advertise, or the production default if they do not advertise one, so the app does not prompt for an update the glasses cannot install.
 
 ```ts
 import BluetoothSdk from '@mentra/bluetooth-sdk'
@@ -346,9 +349,11 @@ BluetoothSdk.addListener('ota_status', (event) => {
   console.log(`OTA ${event.status}: ${event.overall_percent}%`)
 })
 
-const ota = await BluetoothSdk.checkForOtaUpdate()
-if (ota.type === 'ota_update_available') {
-  const userAccepted = await promptUserToInstallUpdate(ota) // your app's UI
+BluetoothSdk.setOtaVersionUrl('https://staging.ota.mentraglass.com/staging_live_version.json')
+
+const hasUpdate = await BluetoothSdk.checkForOtaUpdate()
+if (hasUpdate) {
+  const userAccepted = await promptUserToInstallUpdate() // your app's UI
   if (userAccepted) {
     const startAck = await BluetoothSdk.startOtaUpdate()
     console.log('OTA start acknowledged', startAck.timestamp)

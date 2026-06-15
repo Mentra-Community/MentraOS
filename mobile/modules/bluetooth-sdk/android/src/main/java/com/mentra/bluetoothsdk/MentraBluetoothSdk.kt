@@ -927,16 +927,17 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
-    fun retryOtaVersionCheck(): OtaQueryResult =
-        performOtaQuery("OTA version retry") {
-            deviceManager.retryOtaVersionCheck()
-        }
-
     internal fun sendOtaStart(otaVersionUrl: String? = null): OtaStartAckEvent =
         startOtaUpdate(otaVersionUrl)
 
     internal fun sendOtaQueryStatus(): OtaQueryResult = checkForOtaUpdate()
+
+    /** Re-run the glasses-side OTA version check after an internal clock-skew recovery. */
+    @JvmSynthetic
+    internal fun retryOtaVersionCheck(): OtaQueryResult =
+        performOtaQuery("OTA version retry") {
+            deviceManager.retryOtaVersionCheck()
+        }
 
     internal fun sendShutdown() {
         deviceManager.sendShutdown()

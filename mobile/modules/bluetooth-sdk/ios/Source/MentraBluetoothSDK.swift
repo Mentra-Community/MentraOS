@@ -985,18 +985,18 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    /// Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures.
-    public func retryOtaVersionCheck() async throws -> OtaQueryResult {
-        try await performOtaQuery(operation: "OTA version retry") {
-            DeviceManager.shared.retryOtaVersionCheck()
-        }
-    }
-
     func sendOtaStart(otaVersionUrl: String? = nil) async throws -> OtaStartAckEvent {
         try await startOtaUpdate(otaVersionUrl: otaVersionUrl)
     }
 
     func sendOtaQueryStatus() async throws -> OtaQueryResult { try await checkForOtaUpdate() }
+
+    /// Re-run the glasses-side OTA version check after an internal clock-skew recovery.
+    func retryOtaVersionCheck() async throws -> OtaQueryResult {
+        try await performOtaQuery(operation: "OTA version retry") {
+            DeviceManager.shared.retryOtaVersionCheck()
+        }
+    }
 
     func sendShutdown() {
         DeviceManager.shared.sendShutdown()

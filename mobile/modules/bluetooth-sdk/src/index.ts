@@ -1,5 +1,6 @@
 import PrivateBluetoothSdkModule from "./_private/BluetoothSdkModule"
 import type {BluetoothSdkEventListener, BluetoothSdkEventName, BluetoothSdkPublicModule} from "./BluetoothSdk.types"
+import {checkForOtaUpdate, getOtaVersionUrl, setOtaVersionUrl, startOtaUpdate} from "./ota"
 
 const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "log",
@@ -96,9 +97,10 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setGlassesMediaVolume: PrivateBluetoothSdkModule.setGlassesMediaVolume.bind(PrivateBluetoothSdkModule),
   rgbLedControl: PrivateBluetoothSdkModule.rgbLedControl.bind(PrivateBluetoothSdkModule),
   requestVersionInfo: PrivateBluetoothSdkModule.requestVersionInfo.bind(PrivateBluetoothSdkModule),
-  checkForOtaUpdate: PrivateBluetoothSdkModule.sendOtaQueryStatus.bind(PrivateBluetoothSdkModule),
-  startOtaUpdate: PrivateBluetoothSdkModule.sendOtaStart.bind(PrivateBluetoothSdkModule),
-  retryOtaVersionCheck: PrivateBluetoothSdkModule.retryOtaVersionCheck.bind(PrivateBluetoothSdkModule),
+  setOtaVersionUrl,
+  getOtaVersionUrl,
+  checkForOtaUpdate,
+  startOtaUpdate,
   setSttModelDetails: PrivateBluetoothSdkModule.setSttModelDetails.bind(PrivateBluetoothSdkModule),
   getSttModelPath: PrivateBluetoothSdkModule.getSttModelPath.bind(PrivateBluetoothSdkModule),
   checkSttModelAvailable: PrivateBluetoothSdkModule.checkSttModelAvailable.bind(PrivateBluetoothSdkModule),

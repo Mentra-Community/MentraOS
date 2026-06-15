@@ -2,7 +2,6 @@ import {NativeModule, requireNativeModule} from "expo"
 
 import {
   BluetoothSettingsUpdate,
-  BluetoothSdkPublicModule,
   BluetoothSdkModuleEvents,
   BluetoothStatus,
   ButtonPhotoSize,
@@ -575,4 +574,4 @@ NativeBluetoothSdkModule.checkForOtaUpdate = NativeBluetoothSdkModule.sendOtaQue
 NativeBluetoothSdkModule.startOtaUpdate = NativeBluetoothSdkModule.sendOtaStart.bind(NativeBluetoothSdkModule)
 
 export default NativeBluetoothSdkModule
-export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkPublicModule
+export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkInternalModule
