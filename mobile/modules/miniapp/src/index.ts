@@ -108,10 +108,14 @@ export type {
   StreamVideoConfig,
 } from "./modules/stream"
 export type {ShareOptions, ShareResult, DownloadOptions, DownloadResult} from "./modules/system"
+export type {MiniappInfo, MiniappActionInfo, MiniappCompatibility, ListMiniappsOptions} from "./modules/miniapps"
+export type {ActionContext, ActionHandler, InvokeOptions} from "./modules/actions"
 
 // Domain module types — exported so consumers can type module references
 // (rare; most authors interact via session.<module>.<method> directly).
 export type {DisplayManager} from "./modules/display"
+export type {MiniappsModule} from "./modules/miniapps"
+export type {ActionsModule} from "./modules/actions"
 export type {GlassesModule} from "./modules/glasses"
 export type {HeadingModule} from "./modules/heading"
 export type {ImuModule} from "./modules/imu"

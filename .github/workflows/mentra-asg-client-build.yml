@@ -17,7 +17,9 @@ permissions:
 
 jobs:
   build:
-    runs-on: self-hosted
+    # Pinned to the mac runners: they have the ASG signing keystore provisioned
+    # (~/.mentra/credentials + ~/.gradle/gradle.properties), the Linux Azure VM doesn't.
+    runs-on: [self-hosted, macOS, ARM64]
 
     steps:
       - name: Update PR comment - Build started

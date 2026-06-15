@@ -54,6 +54,7 @@ protocol SGCManager {
 
     func setBrightness(_ level: Int, autoMode: Bool)
     func clearDisplay()
+    func sendText(_ text: String) async
     func sendTextWall(_ text: String) async
     func sendDoubleTextWall(_ top: String, _ bottom: String) async
     /// Display a bitmap. Optional `x`/`y`/`width`/`height` position and size the target
@@ -118,7 +119,7 @@ protocol SGCManager {
     func sendWifiCredentials(_ ssid: String, _ password: String)
     func forgetWifiNetwork(_ ssid: String)
     func sendHotspotState(_ enabled: Bool)
-    func sendOtaStart()
+    func sendOtaStart(otaVersionUrl: String?)
     func sendOtaQueryStatus()
     func sendSetSystemTime(_ timestampMs: Int64)
     func sendOtaRetryVersionCheck()

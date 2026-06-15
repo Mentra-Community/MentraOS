@@ -19,6 +19,7 @@ import {
   ALLOWED_PERMISSIONS,
   ALLOWED_HARDWARE_TYPES,
   ALLOWED_HARDWARE_LEVELS,
+  ALLOWED_ACTION_PARAM_TYPES,
 } from './manifest.js';
 
 const SCHEMA_ID = 'https://schemas.mentra.glass/miniapp/v1.json';
@@ -135,6 +136,52 @@ export function generateSchema(): Record<string, unknown> {
             description: {
               type: 'string',
               description: 'How the miniapp uses this hardware',
+            },
+          },
+        },
+      },
+      actions: {
+        type: 'array',
+        description: 'Actions other (system) miniapps can invoke via session.actions. Maps 1:1 onto MCP tools.',
+        items: {
+          type: 'object',
+          required: ['id', 'description'],
+          additionalProperties: false,
+          properties: {
+            id: {
+              type: 'string',
+              pattern: '^[a-z][a-z0-9_]*$',
+              maxLength: 64,
+              description: 'Unique-within-app action id (lowercase, starts with a letter).',
+            },
+            description: {
+              type: 'string',
+              description: 'AI-facing contract — say when to use the action.',
+            },
+            parameters: {
+              type: 'object',
+              description: 'JSON-Schema input descriptor (the MCP inputSchema subset).',
+              properties: {
+                type: {const: 'object'},
+                properties: {
+                  type: 'object',
+                  additionalProperties: {
+                    type: 'object',
+                    properties: {
+                      type: {type: 'string', enum: [...ALLOWED_ACTION_PARAM_TYPES]},
+                      description: {type: 'string'},
+                      enum: {type: 'array'},
+                      items: {
+                        type: 'object',
+                        properties: {
+                          type: {type: 'string', enum: ['string', 'number', 'boolean']},
+                        },
+                      },
+                    },
+                  },
+                },
+                required: {type: 'array', items: {type: 'string'}},
+              },
             },
           },
         },

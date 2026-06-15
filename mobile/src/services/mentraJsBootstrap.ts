@@ -14,18 +14,18 @@ import {
   MentraJSCrashController,
   MentraJSRouter,
   MentraUIRouter,
-  appRegistry,
-  decideDevLaunchRoute,
+  configureLauncher,
+  configureRuntime,
   devServerBridge,
-  type InstalledMiniappManifest,
   localMiniappRuntime,
-  storage,
+  miniappLauncher,
   useAppStatusStore,
 } from "@mentra/island"
-import {File} from "expo-file-system"
 
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
+import {SYSTEM_APPS} from "@/constants/miniapps"
 import {useNavigationStore} from "@/stores/navigation"
+import {logEvent} from "@/utils/analytics"
 import showAlert from "@/utils/AlertUtils"
 
 const MENTRA_JS_ENGINE = Platform.OS === "ios" ? "jsc" : "quickjs"
@@ -49,13 +49,79 @@ export function bootstrapMentraJS() {
   })
   const uiRouter = new MentraUIRouter({
     mentraJsDispatchToJs: (packageName: string, envelope: Record<string, unknown>) =>
-      (CrustModule as unknown as {
-        mentraJsDispatchToJs: (p: string, e: Record<string, unknown>) => Promise<void>
-      }).mentraJsDispatchToJs(packageName, envelope),
+      (
+        CrustModule as unknown as {
+          mentraJsDispatchToJs: (p: string, e: Record<string, unknown>) => Promise<void>
+        }
+      ).mentraJsDispatchToJs(packageName, envelope),
   })
   const router = new MentraJSRouter(localMiniappRuntime, crust)
   router.crashController = crashController
   router.uiRouter = uiRouter
+
+  // Hand the router to the island MiniappLauncher so headless launch/teardown
+  // (apps.ts start/stop, the action broker, the WebView mount path) all spawn
+  // through one place. The router is host-constructed (needs the native Crust
+  // binding) and injected here — same DI seam as configureRuntime.
+  configureLauncher({router})
+
+  // Wire the inter-miniapp interop adapter (session.miniapps + session.actions
+  // .invoke). The host owns the system-app policy (SYSTEM_APPS + dev sideloads)
+  // and the app-store operations; the runtime enforces the protocol. Merged
+  // into the runtime hooks — doesn't clobber other configureRuntime() calls.
+  configureRuntime({
+    interop: {
+      isSystemApp: (pkg: string) => {
+        if (SYSTEM_APPS.includes(pkg)) return true
+        // Dev sideloads are trusted (same trust model as adb on Android) — this
+        // is how the Mentra AI team iterates before it ships as a built-in.
+        const app = useAppStatusStore.getState().apps.find((a) => a.packageName === pkg)
+        return app?.isMiniappDev === true
+      },
+      listApps: () => useAppStatusStore.getState().apps,
+      startApp: async (pkg: string) => {
+        const app = useAppStatusStore.getState().apps.find((a) => a.packageName === pkg)
+        if (!app) return false
+        // An intent-started miniapp runs HEADLESS: spawn its background JS
+        // context with NO foreground change and NO navigation — the user's phone
+        // routing is untouched, and the calling miniapp is never stopped by
+        // foreground arbitration. The app still shows as "running" (the launcher
+        // registers it); its WebView only mounts later if the user opens it.
+        // Native offline built-ins / cloud apps aren't headless, so they keep the
+        // normal foregrounding start().
+        if (app.local) {
+          try {
+            await miniappLauncher.ensureConnected(pkg)
+            return true
+          } catch (e) {
+            console.warn(`mentraJsBootstrap: headless start failed for ${pkg}`, e)
+            return false
+          }
+        }
+        // Native offline built-ins / cloud apps have no background-only mode, so
+        // they go through the normal start (which runs the host gates — hardware
+        // compat, captions STT/transcriber setup, etc.). But pass skipNavigation
+        // so an intent-start still never changes the user's route.
+        return useAppStatusStore.getState().start(app, {skipNavigation: true})
+      },
+      stopApp: (pkg: string) => useAppStatusStore.getState().stop(pkg),
+      // Headless wake for action invoke: spawn the background context + wait for
+      // CONNECT. Same headless path as startApp for local miniapps.
+      wakeMiniapp: (pkg: string) => miniappLauncher.ensureConnected(pkg),
+      // Audit trail — one analytics event per interop call. An LLM caller
+      // (Mentra AI) will eventually do something a user wants to trace.
+      audit: (event) => {
+        void logEvent("miniapp_interop", {
+          caller: event.caller,
+          op: event.op,
+          target: event.target ?? "",
+          actionId: event.actionId ?? "",
+          ok: event.ok,
+          errorCode: event.errorCode ?? "",
+        })
+      },
+    },
+  })
 
   // Surface crashloop transitions as Sentry events tagged with the
   // miniapp packageName + engine + host version + platform so on-call
@@ -137,68 +203,23 @@ export function bootstrapMentraJS() {
   // miniapps fall back to reading the installed file:// snapshot.
   devServerBridge.onRespawnBackground(async (packageName) => {
     try {
-      let bgSource: string | null = null
-      // Carry the declared permissions + manifest across the respawn. The
-      // original spawn (LocalMiniappView's launch effect) passes these to
-      // spawnAndRegister; omitting them here would respawn the JSContext
-      // with no permissions, so SUBSCRIBE gates and per-call dispatch
-      // checks would start rejecting after a background hot-reload.
-      let declaredPermissions: string[] = []
-      let installedManifest: InstalledMiniappManifest | undefined
-
-      const devUrlRes = storage.load<string>(`${packageName}_dev_url`)
-      if (devUrlRes.is_ok()) {
-        // Dev: re-fetch the manifest (entry path may have changed) + the
-        // freshly built background bundle over HTTP.
-        const devUrl = devUrlRes.value
-        const route = await decideDevLaunchRoute(packageName, devUrl)
-        if (route.decision === "offline" || !route.manifest) {
-          console.warn(`MentraJS: respawn-bg dev server unreachable for ${packageName}`)
-          return
-        }
-        const manifest = route.manifest
-        const entry = manifest.entry as {background?: string} | undefined
-        if (!entry?.background) return
-        const perms = manifest.permissions as Array<{type?: string} | string> | undefined
-        declaredPermissions = (perms ?? [])
-          .map((p) => (typeof p === "string" ? p : p?.type))
-          .filter((t): t is string => typeof t === "string")
-        installedManifest = {
-          permissions: manifest.permissions as InstalledMiniappManifest["permissions"],
-          hardwareRequirements:
-            manifest.hardwareRequirements as InstalledMiniappManifest["hardwareRequirements"],
-        }
-        const bgUrl = `${devUrl.replace(/\/$/, "")}/dist/${entry.background.replace(/^\.?\/+/, "")}`
-        const res = await fetch(bgUrl)
-        if (!res.ok) {
-          console.warn(`MentraJS: respawn-bg fetch ${res.status} for ${packageName}`)
-          return
-        }
-        bgSource = await res.text()
-      } else {
-        const version = await appRegistry.getActiveVersion(packageName)
-        if (!version) return
-        const entry = appRegistry.getMiniappEntryPaths(packageName, version)
-        const bgUri = entry?.background
-        if (!bgUri) return
-        const manifest = appRegistry.getMiniappManifest(packageName, version) as {
-          permissions?: Array<{type: string; required?: boolean; description?: string}>
-          hardwareRequirements?: Array<{type: string; level: string; description?: string}>
-        } | null
-        declaredPermissions = (manifest?.permissions ?? [])
-          .map((p) => p.type)
-          .filter((t): t is string => typeof t === "string")
-        installedManifest = manifest
-          ? {permissions: manifest.permissions, hardwareRequirements: manifest.hardwareRequirements}
-          : undefined
-        bgSource = new File(bgUri).textSync()
+      // Re-resolve the freshly built bundle (dev: HTTP off the dev server;
+      // released: file:// snapshot) via the launcher's shared recipe. Carries
+      // the declared permissions + manifest across the respawn — omitting them
+      // would respawn the JSContext with no permissions, so SUBSCRIBE gates and
+      // per-call dispatch checks would start rejecting after a background
+      // hot-reload.
+      const resolved = await miniappLauncher.resolveBundle(packageName)
+      if (!resolved) {
+        console.warn(`MentraJS: respawn-bg could not resolve bundle for ${packageName}`)
+        return
       }
-
-      if (bgSource === null) return
+      // Force a respawn (kill + spawn) rather than launcher.ensureRunning,
+      // which is idempotent and would no-op an already-registered context.
       await router.unregister(packageName)
-      const ok = await router.spawnAndRegister(packageName, bgSource, {
-        permissions: declaredPermissions,
-        installedManifest,
+      const ok = await router.spawnAndRegister(packageName, resolved.bgSource, {
+        permissions: resolved.declaredPermissions,
+        installedManifest: resolved.installedManifest,
       })
       if (!ok) {
         console.warn(`MentraJS: respawn-bg failed for ${packageName}`)

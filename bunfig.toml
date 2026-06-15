@@ -1,0 +1,8 @@
+# Use the isolated linker so workspace packages that are ALSO members of other
+# workspaces (mobile/modules/miniapp lives inside the mobile app's tree) get their
+# own node_modules links. With the default hoisted linker, resolving `react` from
+# mobile/modules/miniapp walks up into mobile/node_modules and finds the React
+# Native app's copy — bundling two React instances into miniapp UIs (null
+# dispatcher / useState crash).
+[install]
+linker = "isolated"

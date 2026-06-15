@@ -41,6 +41,8 @@ import {SimpleStorage} from "./modules/storage"
 import {SpeakerModule} from "./modules/speaker"
 import {StreamModule} from "./modules/stream"
 import {SystemModule} from "./modules/system"
+import {MiniappsModule} from "./modules/miniapps"
+import {ActionsModule} from "./modules/actions"
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -172,6 +174,16 @@ export class MiniappSession {
    * bound; the WebView buffers until ready).
    */
   public readonly ui: UIModule
+  /**
+   * Inter-miniapp lifecycle + discovery (list / start / stop). SYSTEM-only —
+   * calls reject with NOT_PERMITTED unless this miniapp is a system app.
+   */
+  public readonly miniapps: MiniappsModule
+  /**
+   * Inter-miniapp action layer. `invoke` (SYSTEM-only) calls another miniapp's
+   * declared action; `handle` (open to all) exposes one of your own.
+   */
+  public readonly actions: ActionsModule
 
   /** Phone-declared glasses capabilities. Null until CONNECT_ACK arrives. */
   public capabilities: GlassesCapabilities | null = null
@@ -238,6 +250,8 @@ export class MiniappSession {
     this.transcription = new TranscriptionModule(this)
     this.translation = new TranslationModule(this)
     this.ui = new UIModuleImpl(this)
+    this.miniapps = new MiniappsModule(this)
+    this.actions = new ActionsModule(this)
   }
 
   /**
@@ -521,6 +535,19 @@ export class MiniappSession {
         const streamType = payload.streamType as string | undefined
         if (!streamType) return
         this.events._forwardEvent(streamType, payload.data)
+        return
+      }
+
+      case MiniappResponseType.ACTION_CALL: {
+        // Another miniapp invoked one of our declared actions. Route to the
+        // registered handler (or buffer briefly for one to register). The SDK
+        // replies with an ACTION_RESULT request keyed by callId.
+        const callId = payload.callId as string | undefined
+        const actionId = payload.actionId as string | undefined
+        if (!callId || !actionId) return
+        const params = (payload.params as Record<string, unknown> | undefined) ?? {}
+        const callerPackageName = (payload.callerPackageName as string | undefined) ?? ""
+        this.actions._deliver(callId, actionId, params, {callerPackageName})
         return
       }
 

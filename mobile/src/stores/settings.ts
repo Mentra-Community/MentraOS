@@ -24,9 +24,10 @@ interface Setting {
 
 export const SETTINGS: Record<string, Setting> = {
   // feature flags / mantle settings:
-  dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
+  dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},// deprecated
+  debug_mode: {key: "debug_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
   super_mode: {key: "super_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
-  public_dev_mode: {key: "public_dev_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  miniapp_dev_mode: {key: "miniapp_dev_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
   enable_squircles: {
     key: "enable_squircles",
     defaultValue: () => true,
@@ -55,6 +56,13 @@ export const SETTINGS: Record<string, Setting> = {
   ios_glass_effect: {
     key: "ios_glass_effect",
     defaultValue: () => true,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
+  ios_app_switcher_bottom_swipe: {
+    key: "ios_app_switcher_bottom_swipe",
+    defaultValue: () => false,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -172,6 +180,23 @@ export const SETTINGS: Record<string, Setting> = {
     defaultValue: () => [],
     writable: true,
     saveOnServer: true,
+    persist: true,
+  },
+  // Developer override for the ASG OTA manifest URL. null/empty = no override;
+  // the normal selection applies (legacy-glasses gate, EXPO_PUBLIC_ASG_OTA_VERSION_URL,
+  // glasses-reported URL, then production). See getAsgOtaVersionUrl.
+  ota_version_url: {
+    key: "ota_version_url",
+    defaultValue: () => null,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  saved_ota_version_urls: {
+    key: "saved_ota_version_urls",
+    defaultValue: () => [],
+    writable: true,
+    saveOnServer: false,
     persist: true,
   },
   reconnect_on_app_foreground: {

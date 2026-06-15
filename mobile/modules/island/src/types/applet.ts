@@ -2,14 +2,16 @@
  * @mentra/types - App/Applet types for client interfaces
  */
 
-import type { ReactNode } from "react";
+import type {ReactNode} from "react"
 
-import { HardwareRequirement } from "./hardware";
+import {HardwareRequirement} from "./hardware"
+
+import type {CompatibilityResult} from "../utils/hardware/hardware"
 
 /**
  * App execution model types
  */
-export type AppletType = "standard" | "background" | "system_dashboard";
+export type AppletType = "standard" | "background" | "system_dashboard"
 
 /**
  * Permission types that apps can request
@@ -22,15 +24,15 @@ export type AppPermissionType =
   | "LOCATION"
   | "BACKGROUND_LOCATION"
   | "READ_NOTIFICATIONS"
-  | "POST_NOTIFICATIONS";
+  | "POST_NOTIFICATIONS"
 
 /**
  * Permission object with type and description
  */
 export interface AppletPermission {
-  type: AppPermissionType;
-  description?: string;
-  required?: boolean;
+  type: AppPermissionType
+  description?: string
+  required?: boolean
 }
 
 /**
@@ -41,14 +43,14 @@ export interface AppletPermission {
  * Internal cloud services use AppI from models (more fields).
  */
 export interface AppletInterface {
-  packageName: string;
-  name: string;
-  webviewUrl: string;
-  logoUrl: string;
-  iconComponent?: ReactNode;
-  type: AppletType;
-  permissions: AppletPermission[];
-  running: boolean;
+  packageName: string
+  name: string
+  webviewUrl: string
+  logoUrl: string
+  iconComponent?: ReactNode
+  type: AppletType
+  permissions: AppletPermission[]
+  running: boolean
   /**
    * True while this app's UI WebView is mounted in the Compositor overlay.
    * At most one app is foregrounded at a time. Distinct from `running`:
@@ -57,16 +59,14 @@ export interface AppletInterface {
    * concrete boolean by the apps store's projectApps; literal call sites
    * may omit it.
    */
-  foregrounded?: boolean;
-  healthy: boolean;
-  hardwareRequirements: HardwareRequirement[];
+  foregrounded?: boolean
+  healthy: boolean
+  hardwareRequirements: HardwareRequirement[]
   /** ISO date string when the app was installed */
-  installedDate?: string;
+  installedDate?: string
   /** ISO date string when the app was last run. Undefined if never run (app is "new") */
-  lastActiveAt?: string;
+  lastActiveAt?: string
 }
-
-import type {CompatibilityResult} from "../utils/hardware/hardware";
 
 /**
  * Runtime applet shape used by the island apps store and OEM hosts.
@@ -77,22 +77,36 @@ import type {CompatibilityResult} from "../utils/hardware/hardware";
  * dev-miniapp escape hatches (`devUrl` / `isMiniappDev`) that surface a
  * `mentra-miniapp dev` snapshot.
  */
+/**
+ * A manifest-declared action a miniapp exposes for other (system) miniapps to
+ * invoke via `session.actions`. Populated from `miniapp.json`'s `actions` field.
+ * Shape maps 1:1 onto an MCP tool (id→name, description, parameters→inputSchema).
+ */
+export interface DeclaredAction {
+  id: string
+  description: string
+  /** JSON-Schema input descriptor (MCP-compatible subset). */
+  parameters?: Record<string, unknown>
+}
+
 export interface ClientApp extends AppletInterface {
-  offline: boolean;
-  offlineRoute: string;
-  compatibility?: CompatibilityResult;
-  loading: boolean;
-  local: boolean;
-  hidden: boolean;
-  onStart?: () => void;
-  onStop?: () => void;
-  screenshot?: string;
-  runtimePermissions?: string[];
-  declaredPermissions?: string[];
-  version?: string;
-  needsPcm?: boolean;
-  needsTranscript?: boolean;
-  devUrl?: string;
-  devPort?: number;
-  isMiniappDev?: boolean;
+  offline: boolean
+  offlineRoute: string
+  compatibility?: CompatibilityResult
+  loading: boolean
+  local: boolean
+  hidden: boolean
+  onStart?: () => void
+  onStop?: () => void
+  screenshot?: string
+  runtimePermissions?: string[]
+  declaredPermissions?: string[]
+  version?: string
+  needsPcm?: boolean
+  needsTranscript?: boolean
+  devUrl?: string
+  devPort?: number
+  isMiniappDev?: boolean
+  /** Manifest-declared actions (for session.miniapps.list + invoke gating). */
+  actions?: DeclaredAction[]
 }

@@ -901,7 +901,7 @@ class R1 : ControllerManager() {
     override fun sendWifiCredentials(ssid: String, password: String) {}
     override fun forgetWifiNetwork(ssid: String) {}
     override fun sendHotspotState(enabled: Boolean) {}
-    override fun sendOtaStart() {}
+    override fun sendOtaStart(otaVersionUrl: String?) {}
     override fun sendUserEmailToGlasses(email: String) {}
     override fun queryGalleryStatus() {}
     override fun sendGalleryMode() {}

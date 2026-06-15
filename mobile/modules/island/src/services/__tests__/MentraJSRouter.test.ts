@@ -83,6 +83,7 @@ function buildMockRuntime() {
   const unregisterCalls: string[] = []
   const probeCalls: Array<{packageName: string; reason?: string}> = []
   const setManifestCalls: Array<{packageName: string; installedManifest: unknown}> = []
+  const resetHandshakeCalls: string[] = []
   const runtime = {
     registerApp(packageName: string, sendFn: (raw: string) => void, installedManifest?: unknown) {
       registerCalls.push({packageName, sendFn, installedManifest})
@@ -99,8 +100,11 @@ function buildMockRuntime() {
     setInstalledManifest(packageName: string, installedManifest: unknown) {
       setManifestCalls.push({packageName, installedManifest})
     },
+    resetHandshake(packageName: string) {
+      resetHandshakeCalls.push(packageName)
+    },
   } as unknown as LocalMiniappRuntime
-  return {runtime, registerCalls, handleRawCalls, unregisterCalls, probeCalls, setManifestCalls}
+  return {runtime, registerCalls, handleRawCalls, unregisterCalls, probeCalls, setManifestCalls, resetHandshakeCalls}
 }
 
 function silentLogger() {

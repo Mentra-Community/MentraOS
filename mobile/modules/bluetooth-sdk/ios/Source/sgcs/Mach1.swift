@@ -26,7 +26,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
     var connectionState: String = ConnTypes.DISCONNECTED
 
-    func sendOtaStart() {}
+    func sendOtaStart(otaVersionUrl: String?) {}
     func sendOtaQueryStatus() {}
 
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
@@ -323,6 +323,10 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
     func stopScan() {
         UltraliteManager.shared.stopScan()
+    }
+
+    func sendText(_ text: String) async {
+        await sendTextWall(text)
     }
 
     func sendTextWall(_ text: String) async {

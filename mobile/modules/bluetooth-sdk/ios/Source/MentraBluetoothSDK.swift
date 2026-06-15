@@ -961,7 +961,7 @@ public final class MentraBluetoothSDK {
     }
 
     /// Start the OTA flow after your app has presented the available update to the user.
-    public func startOtaUpdate() async throws -> OtaStartAckEvent {
+    public func startOtaUpdate(otaVersionUrl: String? = nil) async throws -> OtaStartAckEvent {
         if pendingOtaStart != nil {
             throw BluetoothError(
                 code: "request_in_flight",
@@ -970,7 +970,7 @@ public final class MentraBluetoothSDK {
         }
         let pending = PendingResponse<OtaStartAckEvent>(operation: "OTA start command")
         pendingOtaStart = pending
-        DeviceManager.shared.sendOtaStart()
+        DeviceManager.shared.sendOtaStart(otaVersionUrl: otaVersionUrl)
         do {
             let event = try await pending.wait()
             if pendingOtaStart === pending {
@@ -992,7 +992,9 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    func sendOtaStart() async throws -> OtaStartAckEvent { try await startOtaUpdate() }
+    func sendOtaStart(otaVersionUrl: String? = nil) async throws -> OtaStartAckEvent {
+        try await startOtaUpdate(otaVersionUrl: otaVersionUrl)
+    }
 
     func sendOtaQueryStatus() async throws -> OtaQueryResult { try await checkForOtaUpdate() }
 

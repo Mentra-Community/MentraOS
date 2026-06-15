@@ -143,21 +143,12 @@ public class SerialPortBridge {
      *
      * @param data The file data to send
      */
-    public boolean sendFile(byte[] data) {
-        return sendFile(data, data != null ? data.length : 0);
-    }
-
-    public boolean sendFile(byte[] data, int length) {
-        if (data == null || length <= 0 || length > data.length) {
-            Log.e(TAG, "Cannot send file - invalid data length: " + length);
-            return false;
-        }
+    public void sendFile(byte[] data) {
         if (mbStart && mOS != null && !mbOtaUpdating) {
             try {
                 // Don't log file data content, just write it
-                mOS.write(data, 0, length);
+                mOS.write(data);
                 mOS.flush();
-                return true;
             } catch (IOException e) {
                 Log.e(TAG, "Error writing file to serial port: " + e.getMessage());
             }
@@ -173,7 +164,6 @@ public class SerialPortBridge {
                                 + mOS);
             }
         }
-        return false;
     }
 
     /**
@@ -240,12 +230,10 @@ public class SerialPortBridge {
             int readSize;
 
             while (!mbStop) {
-                boolean receivedData = false;
                 if (mIS != null) {
                     try {
                         readSize = mIS.read(mReadBuf);
                         if (readSize > 0) {
-                            receivedData = true;
                             // Route data based on OTA state
                             if (mbOtaUpdating) {
                                 if (mOtaListener != null) {
@@ -263,9 +251,6 @@ public class SerialPortBridge {
                 }
 
                 try {
-                    if (mbRequestFast && receivedData) {
-                        continue;
-                    }
                     // Use fast mode (5ms) for file transfers, normal mode (50ms) otherwise
                     // Note: Original K900_server_sdk used 150ms, but K900Server_common uses
                     // 50ms/5ms
