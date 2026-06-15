@@ -69,6 +69,13 @@ export {
   type GlassesConnectionStatus,
   type WaitForGlassesReadyOptions,
 } from "./services/GlassesReadiness"
+export {
+  decideReconnect,
+  decideConnectButtonAction,
+  type ReconnectDecision,
+  type ReconnectDecisionInput,
+  type ConnectButtonAction,
+} from "./services/ConnectionCoordinator"
 
 // Runtime config (host-injected adapters)
 export {

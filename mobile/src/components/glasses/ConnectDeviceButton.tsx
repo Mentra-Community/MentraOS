@@ -1,5 +1,6 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import {decideConnectButtonAction} from "@mentra/island"
 import {ActivityIndicator, View} from "react-native"
 
 import {Button} from "@/components/ignite"
@@ -45,7 +46,8 @@ export const ConnectDeviceButton = () => {
 
   // New handler: if already connecting, pressing the button calls disconnect.
   const handleConnectOrDisconnect = async () => {
-    if (isSearching) {
+    const action = decideConnectButtonAction({hasDefaultWearable: !!defaultWearable, busy: isSearching})
+    if (action === "cancel") {
       await BluetoothSdk.disconnect()
     } else {
       await connectGlasses()
@@ -132,7 +134,8 @@ export const ConnectControllerButton = () => {
 
   // New handler: if already connecting, pressing the button calls disconnect.
   const handleConnectOrDisconnect = async () => {
-    if (isSearching) {
+    const action = decideConnectButtonAction({hasDefaultWearable: !!defaultController, busy: isSearching})
+    if (action === "cancel") {
       await BluetoothSdk.disconnectController()
     } else {
       await connectController()

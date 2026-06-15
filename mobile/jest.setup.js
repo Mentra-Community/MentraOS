@@ -261,6 +261,14 @@ jest.mock("@mentra/island", () => {
     isGlassesReady: (c) => c?.state === "connected" && !!c?.fullyBooted,
     isGlassesLinkLayerBusy: (c) => c?.state === "scanning" || c?.state === "connecting" || c?.state === "bonding",
     waitForGlassesReady: jest.fn(() => Promise.resolve(true)),
+    // ConnectionCoordinator decisions (consumed by the reconnect effect + connect buttons).
+    decideReconnect: (input) => {
+      if (!input?.reconnectOnForeground) return {kind: "skip", result: true}
+      if (!input?.defaultWearable || input?.isSimulated) return {kind: "skip", result: false}
+      if (input?.connection?.state === "connected" || input?.searching) return {kind: "skip", result: true}
+      return {kind: "connect"}
+    },
+    decideConnectButtonAction: (input) => (input?.busy ? "cancel" : !input?.hasDefaultWearable ? "pair" : "connect"),
     useApps: jest.fn(() => appStatusState.apps),
     useForegroundApp: jest.fn(() => null),
     useAppStatusStore,
