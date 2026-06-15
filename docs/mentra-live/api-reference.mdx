@@ -410,7 +410,7 @@ React Native exposes the narrowest return types for clear branching after `await
 | `startStream(...)` | `StreamStatusEvent` for the requested stream once `status` is `streaming`. | `stream_status` error/reconnect failure, timeout, or send failure. |
 | `stopStream()` | `StreamStatusEvent` once `status` is `stopped`; an already-stopped / not-streaming glasses reply resolves as a normalized stopped event. | Real stop error, timeout, send failure, or another stream stop in flight. |
 | `rgbLedControl(...)` | React Native `RgbLedControlSuccessResponseEvent`; Android/iOS successful `RgbLedControlResponseEvent`. | Raw `rgb_led_control_response.state === "error"`, timeout, or send failure. |
-| `checkForOtaUpdate()` | `boolean`, true when the configured OTA manifest has an ASG APK, MTK, or BES update for the connected glasses; false only when the manifest was checked successfully and no update is available. | Rejects when the glasses are disconnected, version info is unavailable, the manifest cannot be fetched, or the manifest response is invalid/missing required OTA fields. |
+| `checkForOtaUpdate()` | `boolean`, true when the configured OTA manifest has an ASG APK, MTK, or BES update for the connected glasses; false only when the manifest was checked successfully and no update is available. | Rejects when the glasses are disconnected, version info is unavailable, the manifest cannot be fetched, or the manifest response is invalid/missing required ASG app version fields. |
 | `startOtaUpdate()` | `OtaStartAckEvent` from `ota_start_ack`. | Start-ack timeout, send failure, or another OTA start in flight. |
 
 ## Gallery Mode

@@ -109,8 +109,11 @@ function hasApkUpdate(currentBuildNumber: string, manifest: OtaManifest): boolea
 }
 
 function hasMtkUpdate(patches: MtkPatch[] | undefined, currentVersion: string | undefined): boolean {
+  if (patches == null) {
+    return false
+  }
   if (!Array.isArray(patches)) {
-    throw new Error("OTA manifest is missing mtk_patches.")
+    throw new Error("OTA manifest mtk_patches must be an array.")
   }
   if (!patches.length) {
     return false
@@ -145,8 +148,11 @@ function compareVersions(version1: string, version2: string): number {
 }
 
 function hasBesUpdate(besFirmware: BesFirmware | undefined, currentVersion: string | undefined): boolean {
-  if (!besFirmware?.version) {
-    throw new Error("OTA manifest is missing bes_firmware.version.")
+  if (besFirmware == null) {
+    return false
+  }
+  if (!besFirmware.version) {
+    throw new Error("OTA manifest bes_firmware.version is missing.")
   }
   if (!currentVersion) {
     return true
