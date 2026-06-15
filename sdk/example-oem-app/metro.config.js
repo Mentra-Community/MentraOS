@@ -3,14 +3,17 @@ const {getDefaultConfig} = require("expo/metro-config")
 const path = require("path")
 
 const projectRoot = __dirname
-const modulesRoot = path.resolve(projectRoot, "..", "..", "mobile", "modules")
+const sdkRoot = path.resolve(projectRoot, "..") // the `sdk` workspace root
+const repoRoot = path.resolve(projectRoot, "..", "..") // monorepo root
+const modulesRoot = path.resolve(repoRoot, "mobile", "modules")
 
 const config = getDefaultConfig(projectRoot)
 
-// The Mentra SDK packages live in the monorepo under mobile/modules and are
-// consumed straight from there, so Metro must watch that folder and be able to
-// resolve the @mentra/* specifiers to it.
-config.watchFolders = [modulesRoot]
+// This app lives in the `sdk` bun workspace (isolated linker), and the Mentra
+// SDK packages live under mobile/modules. Metro must watch the workspace store
+// (sdk/node_modules/.bun/*) and the modules folder so every symlinked package —
+// including transitive deps of `expo` — resolves.
+config.watchFolders = [sdkRoot, modulesRoot]
 
 config.resolver.extraNodeModules = {
   ...(config.resolver.extraNodeModules ?? {}),
@@ -18,13 +21,13 @@ config.resolver.extraNodeModules = {
   "@mentra/island": path.resolve(modulesRoot, "island"),
 }
 
-// Resolve React / React Native (and the SDKs' own deps) from this app's
-// node_modules first. Pulling a second copy of React from a parent workspace
-// bundles two React instances and crashes hooks at runtime.
+// Search the app's own node_modules first (so React / React Native resolve to a
+// single copy), then the workspace store where bun's isolated linker places the
+// real packages and their transitive dependencies.
 config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, "node_modules"),
-  path.resolve(modulesRoot, "bluetooth-sdk", "node_modules"),
-  path.resolve(modulesRoot, "island", "node_modules"),
+  path.resolve(sdkRoot, "node_modules"),
+  path.resolve(repoRoot, "node_modules"),
 ]
 
 module.exports = config

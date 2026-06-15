@@ -21,14 +21,14 @@
         "NSMicrophoneUsageDescription": "This app uses the microphone when you enable audio features.",
         "NSLocalNetworkUsageDescription": "This app connects to local photo and streaming helpers during development.",
         "NSLocationWhenInUseUsageDescription": "Location is used while scanning for nearby glasses over Bluetooth."
-      }
+      },
+      "appleTeamId": "T5XXXL6N36"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.mentra.exampleoemapp",
       "permissions": [
@@ -53,8 +53,7 @@
         "expo-build-properties",
         {
           "ios": {
-            "deploymentTarget": "15.5",
-            "buildReactNativeFromSource": true
+            "deploymentTarget": "15.5"
           },
           "android": {
             "minSdkVersion": 28,
