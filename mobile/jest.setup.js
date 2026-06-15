@@ -269,6 +269,17 @@ jest.mock("@mentra/island", () => {
       return {kind: "connect"}
     },
     decideConnectButtonAction: (input) => (input?.busy ? "cancel" : !input?.hasDefaultWearable ? "pair" : "connect"),
+    // PairingCoordinator decisions (consumed by the pairing loading + success screens).
+    classifyPairFailure: (error) => (error === "errors:pairNeedDisconnect" ? "unpair-even" : "failure"),
+    buildPairingRouteStack: (input) => {
+      if (!input?.hasOta) return []
+      const order = ["/pairing/btclassic", "/wifi/scan", "/ota/check-for-updates", "/onboarding/live", "/onboarding/os"]
+      const stack = []
+      if (!(input.isAndroid || input.bluetoothClassicConnected)) stack.push("/pairing/btclassic")
+      stack.push("/ota/check-for-updates")
+      stack.sort((a, b) => order.indexOf(a) - order.indexOf(b))
+      return stack
+    },
     useApps: jest.fn(() => appStatusState.apps),
     useForegroundApp: jest.fn(() => null),
     useAppStatusStore,

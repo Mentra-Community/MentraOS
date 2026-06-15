@@ -5,6 +5,7 @@ import {useRoute} from "@react-navigation/native"
 import {Screen} from "@/components/ignite"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
+import {buildPairingRouteStack} from "@mentra/island"
 import {waitForGlassesState} from "@/stores/glasses"
 import {useNavigationStore} from "@/stores/navigation"
 import {getGlassesImage} from "@/utils/getGlassesImage"
@@ -18,7 +19,6 @@ export default function PairingSuccessScreen() {
   const route = useRoute()
   const {deviceModel: routeDeviceModel} = (route.params as {deviceModel?: string}) || {}
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const [onboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
   const [buttonText, setButtonText] = useState<string>(translate("common:continue"))
   const [isStackReady, setIsStackReady] = useState(false)
   const stackPromiseRef = useRef<Promise<string[]> | null>(null)
@@ -36,39 +36,22 @@ export default function PairingSuccessScreen() {
   const glassesImage = getGlassesImage(deviceModel)
 
   const buildLiveStack = useCallback(async (): Promise<string[]> => {
-    const order = ["/pairing/btclassic", "/wifi/scan", "/ota/check-for-updates", "/onboarding/live", "/onboarding/os"]
-    let newStack: string[] = []
     const features = getModelCapabilities(deviceModel as DeviceTypes)
-
-    if (features.hasOta) {
-      let bluetoothClassicConnected = await waitForGlassesState(
-        "bluetoothClassicConnected",
-        (value) => value === true,
-        1000,
-      )
-      console.log("PAIR_SUCCESS: bluetoothClassicConnected", bluetoothClassicConnected)
-      if (Platform.OS === "android") {
-        bluetoothClassicConnected = true
-      }
-
-      if (!bluetoothClassicConnected) {
-        newStack.push("/pairing/btclassic")
-      }
-      // OTA check runs on the phone; WiFi is only required after an update is confirmed (see check-for-updates).
-      newStack.push("/ota/check-for-updates")
-      if (!onboardingOsCompleted) {
-        // newStack.push("/onboarding/os")
-      }
-
-      newStack.sort((a, b) => order.indexOf(a) - order.indexOf(b))
+    if (!features.hasOta) {
+      return []
     }
-    if (deviceModel === DeviceTypes.G1 || deviceModel === DeviceTypes.G2) {
-      if (!onboardingOsCompleted) {
-        // newStack.push("/onboarding/os")
-      }
-    }
-    return newStack
-  }, [deviceModel, onboardingOsCompleted])
+    // OTA check runs on the phone; WiFi is only required after an update is confirmed (see check-for-updates).
+    const bluetoothClassicConnected = await waitForGlassesState(
+      "bluetoothClassicConnected",
+      (value) => value === true,
+      1000,
+    )
+    return buildPairingRouteStack({
+      hasOta: features.hasOta,
+      isAndroid: Platform.OS === "android",
+      bluetoothClassicConnected,
+    })
+  }, [deviceModel])
 
   useEffect(() => {
     stackPromiseRef.current = buildLiveStack().then((routes) => {

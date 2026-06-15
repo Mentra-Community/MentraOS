@@ -76,6 +76,7 @@ export {
   type ReconnectDecisionInput,
   type ConnectButtonAction,
 } from "./services/ConnectionCoordinator"
+export {classifyPairFailure, buildPairingRouteStack, type PairFailureRoute} from "./services/PairingCoordinator"
 
 // Runtime config (host-injected adapters)
 export {
