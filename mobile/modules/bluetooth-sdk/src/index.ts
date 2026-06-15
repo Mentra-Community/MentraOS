@@ -37,7 +37,6 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "mic_pcm",
   "mic_lc3",
   "stream_status",
-  "ota_update_available",
   "ota_start_ack",
   "ota_status",
   "version_info",

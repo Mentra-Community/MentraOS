@@ -859,7 +859,6 @@ export type BluetoothSdkEventMap = {
   mic_pcm: MicPcmEvent
   mic_lc3: MicLc3Event
   stream_status: StreamStatusEvent
-  ota_update_available: OtaUpdateAvailableEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
   version_info: VersionInfoEvent
