@@ -42,16 +42,22 @@ export interface WaitForGlassesReadyOptions {
   subscribe: (listener: (connection: GlassesConnectionStatus) => void) => () => void
   /** Resolve false after this many ms if still not ready. Default 35s — the pairing boot budget. */
   timeoutMs?: number
+  /** Abort the wait early (e.g. the screen unmounted). Tears down the subscription + timer; resolves false. */
+  signal?: AbortSignal
 }
 
 /**
- * Resolves true once the glasses report fully booted, or false on timeout.
- * Resolves immediately when already ready. Always tears down its subscription
- * and timer before resolving.
+ * Resolves true once the glasses report fully booted, false on timeout, or
+ * false if the optional signal aborts. Resolves immediately when already ready.
+ * Always tears down its subscription, timer, and abort listener before resolving.
  */
 export function waitForGlassesReady(options: WaitForGlassesReadyOptions): Promise<boolean> {
-  const {getConnection, subscribe, timeoutMs = 35_000} = options
+  const {getConnection, subscribe, timeoutMs = 35_000, signal} = options
   return new Promise<boolean>((resolve) => {
+    if (signal?.aborted) {
+      resolve(false)
+      return
+    }
     if (isGlassesReady(getConnection())) {
       resolve(true)
       return
@@ -60,13 +66,20 @@ export function waitForGlassesReady(options: WaitForGlassesReadyOptions): Promis
     let settled = false
     let timer: number | null = null
     let unsubscribe: (() => void) | null = null
+    let onAbort: (() => void) | null = null
 
     const finish = (value: boolean) => {
       if (settled) return
       settled = true
       if (unsubscribe) unsubscribe()
       if (timer !== null) BgTimer.clearTimeout(timer)
+      if (onAbort && signal) signal.removeEventListener("abort", onAbort)
       resolve(value)
+    }
+
+    if (signal) {
+      onAbort = () => finish(false)
+      signal.addEventListener("abort", onAbort)
     }
 
     unsubscribe = subscribe((connection) => {

@@ -260,7 +260,28 @@ jest.mock("@mentra/island", () => {
     isGlassesConnected: (c) => c?.state === "connected",
     isGlassesReady: (c) => c?.state === "connected" && !!c?.fullyBooted,
     isGlassesLinkLayerBusy: (c) => c?.state === "scanning" || c?.state === "connecting" || c?.state === "bonding",
-    waitForGlassesReady: jest.fn(() => Promise.resolve(true)),
+    waitForGlassesReady: jest.fn((opts) => {
+      const {getConnection, subscribe, timeoutMs = 35_000, signal} = opts || {}
+      const ready = (c) => c?.state === "connected" && !!c?.fullyBooted
+      return new Promise((resolve) => {
+        if (signal?.aborted) return resolve(false)
+        if (getConnection && ready(getConnection())) return resolve(true)
+        let settled = false
+        let unsub
+        let timer
+        const finish = (v) => {
+          if (settled) return
+          settled = true
+          if (unsub) unsub()
+          if (timer) clearTimeout(timer)
+          resolve(v)
+        }
+        if (signal) signal.addEventListener("abort", () => finish(false))
+        unsub = subscribe ? subscribe((c) => (ready(c) ? finish(true) : undefined)) : undefined
+        if (!settled) timer = setTimeout(() => finish(getConnection ? ready(getConnection()) : false), timeoutMs)
+        return undefined
+      })
+    }),
     // ConnectionCoordinator decisions (consumed by the reconnect effect + connect buttons).
     decideReconnect: (input) => {
       if (!input?.reconnectOnForeground) return {kind: "skip", result: true}

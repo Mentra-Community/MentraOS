@@ -98,4 +98,32 @@ describe("waitForGlassesReady", () => {
       jest.useRealTimers()
     }
   })
+
+  it("resolves false and unsubscribes when the signal aborts", async () => {
+    const controller = new AbortController()
+    const h = makeHarness({state: "connecting"})
+    const p = waitForGlassesReady({
+      getConnection: h.getConnection,
+      subscribe: h.subscribe,
+      timeoutMs: 10_000,
+      signal: controller.signal,
+    })
+    expect(h.listenerCount()).toBe(1)
+    controller.abort()
+    await expect(p).resolves.toBe(false)
+    expect(h.listenerCount()).toBe(0)
+  })
+
+  it("resolves false immediately when the signal is already aborted", async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const h = makeHarness({state: "connecting"})
+    const ready = await waitForGlassesReady({
+      getConnection: h.getConnection,
+      subscribe: h.subscribe,
+      signal: controller.signal,
+    })
+    expect(ready).toBe(false)
+    expect(h.listenerCount()).toBe(0)
+  })
 })

@@ -1,6 +1,6 @@
 import {useRoute} from "@react-navigation/native"
 import BluetoothSdk, {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
-import {classifyPairFailure} from "@mentra/island"
+import {classifyPairFailure, waitForGlassesReady} from "@mentra/island"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {View} from "react-native"
 
@@ -19,20 +19,11 @@ export default function GlassesPairingLoadingScreen() {
   const route = useRoute()
   const {deviceModel, deviceName} = route.params as {deviceModel: string; deviceName?: string}
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const glassesFullyBootedRef = useRef(false)
   const showGlassesBootingRef = useRef(false)
   const hasSubmittedTimeoutIncidentRef = useRef(false)
   const hasNavigatedRef = useRef(false)
   const glassesFullyBooted = useGlassesStore(selectGlassesReady)
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
-
-  const clearPairingTimeout = useCallback(() => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current)
-      timerRef.current = null
-    }
-  }, [])
 
   useEffect(() => {
     let sub = BluetoothSdk.addListener("glasses_not_ready", (_event: GlassesNotReadyEvent) => {
@@ -46,13 +37,11 @@ export default function GlassesPairingLoadingScreen() {
   focusEffectPreventBack()
 
   const handleGoBack = useCallback(() => {
-    clearPairingTimeout()
     goBack()
-  }, [clearPairingTimeout, goBack])
+  }, [goBack])
 
   const handlePairFailure = useCallback(
     (error: string) => {
-      clearPairingTimeout()
       BluetoothSdk.forget()
       if (classifyPairFailure(error) === "unpair-even") {
         replace("/pairing/unpair-even", {deviceModel: deviceModel})
@@ -60,7 +49,7 @@ export default function GlassesPairingLoadingScreen() {
       }
       replace("/pairing/failure", {error: error, deviceModel: deviceModel})
     },
-    [clearPairingTimeout, replace, deviceModel],
+    [replace, deviceModel],
   )
 
   useEffect(() => {
@@ -73,60 +62,63 @@ export default function GlassesPairingLoadingScreen() {
   }, [handlePairFailure])
 
   useEffect(() => {
-    glassesFullyBootedRef.current = glassesFullyBooted
-  }, [glassesFullyBooted])
-
-  useEffect(() => {
     showGlassesBootingRef.current = showGlassesBooting
   }, [showGlassesBooting])
 
   useEffect(() => {
     hasSubmittedTimeoutIncidentRef.current = false
+    const controller = new AbortController()
 
-    timerRef.current = setTimeout(() => {
-      if (!glassesFullyBootedRef.current && !hasSubmittedTimeoutIncidentRef.current) {
-        hasSubmittedTimeoutIncidentRef.current = true
-        const actualBehavior = JSON.stringify(
-          {
-            deviceModel,
-            deviceName,
-            showGlassesBooting: showGlassesBootingRef.current,
-            elapsedMs: 35_000,
-            route: "/pairing/loading",
-          },
-          null,
-          2,
-        )
-
-        void submitAutomaticBugIncident({
-          categorization: {
-            submissionMode: "AUTOMATIC",
-            triggerArea: "pairing_loading",
-            triggerReason: "glasses_connect_timeout",
-          },
-          expectedBehavior: "Glasses should connect successfully within 35 seconds.",
-          actualBehavior,
-          severityRating: 4,
-          dedupeKey: `pairing_timeout|${deviceModel}|${deviceName || "unknown"}`,
-          logTag: "PairingTimeoutBugReport",
-        })
+    void waitForGlassesReady({
+      getConnection: () => useGlassesStore.getState().connection,
+      subscribe: (listener) => useGlassesStore.subscribe((s) => s.connection, listener),
+      timeoutMs: 35_000,
+      signal: controller.signal,
+    }).then((ready) => {
+      // Booted in time (or the screen unmounted) — nothing to report.
+      if (ready || controller.signal.aborted || hasSubmittedTimeoutIncidentRef.current) {
+        return
       }
-    }, 35_000)
+      hasSubmittedTimeoutIncidentRef.current = true
+      const actualBehavior = JSON.stringify(
+        {
+          deviceModel,
+          deviceName,
+          showGlassesBooting: showGlassesBootingRef.current,
+          elapsedMs: 35_000,
+          route: "/pairing/loading",
+        },
+        null,
+        2,
+      )
+
+      void submitAutomaticBugIncident({
+        categorization: {
+          submissionMode: "AUTOMATIC",
+          triggerArea: "pairing_loading",
+          triggerReason: "glasses_connect_timeout",
+        },
+        expectedBehavior: "Glasses should connect successfully within 35 seconds.",
+        actualBehavior,
+        severityRating: 4,
+        dedupeKey: `pairing_timeout|${deviceModel}|${deviceName || "unknown"}`,
+        logTag: "PairingTimeoutBugReport",
+      })
+    })
 
     return () => {
-      clearPairingTimeout()
+      controller.abort()
     }
-  }, [clearPairingTimeout, deviceModel, deviceName])
+  }, [deviceModel, deviceName])
 
   useEffect(() => {
     if (!glassesFullyBooted) return
     if (hasNavigatedRef.current) return
     hasNavigatedRef.current = true
-    clearPairingTimeout()
     setTimeout(() => {
       replace("/pairing/success", {deviceModel: deviceModel})
     }, 1000)
-  }, [clearPairingTimeout, glassesFullyBooted, replace, deviceModel])
+  }, [glassesFullyBooted, replace, deviceModel])
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
