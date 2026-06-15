@@ -1,5 +1,5 @@
 import {useRoute} from "@react-navigation/native"
-import {classifyPairFailure, waitForGlassesReady, BluetoothSdk} from "@mentra/island"
+import {waitForGlassesReady, BluetoothSdk} from "@mentra/island"
 import type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/island"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {View} from "react-native"
@@ -43,7 +43,7 @@ export default function GlassesPairingLoadingScreen() {
   const handlePairFailure = useCallback(
     (error: string) => {
       BluetoothSdk.forget()
-      if (classifyPairFailure(error) === "unpair-even") {
+      if (error === "errors:pairNeedDisconnect") {
         replace("/pairing/unpair-even", {deviceModel: deviceModel})
         return
       }

@@ -76,13 +76,6 @@ export {
   type ReconnectDecisionInput,
   type ConnectButtonAction,
 } from "./services/ConnectionCoordinator"
-export {classifyPairFailure, buildPairingRouteStack, type PairFailureRoute} from "./services/PairingCoordinator"
-export {
-  computeAppGrid,
-  type ComputeAppGridInput,
-  type ComputeAppGridResult,
-  type ComputeAppGridDeps,
-} from "./services/AppGrid"
 
 // Bluetooth SDK passthrough — the full @mentra/bluetooth-sdk surface re-exported
 // so the app reaches the SDK through island instead of importing it directly.

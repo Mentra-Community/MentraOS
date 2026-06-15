@@ -290,20 +290,6 @@ jest.mock("@mentra/island", () => {
       return {kind: "connect"}
     },
     decideConnectButtonAction: (input) => (input?.busy ? "cancel" : !input?.hasDefaultWearable ? "pair" : "connect"),
-    // PairingCoordinator decisions (consumed by the pairing loading + success screens).
-    classifyPairFailure: (error) => (error === "errors:pairNeedDisconnect" ? "unpair-even" : "failure"),
-    buildPairingRouteStack: (input) => {
-      if (!input?.hasOta) return []
-      const order = ["/pairing/btclassic", "/wifi/scan", "/ota/check-for-updates", "/onboarding/live", "/onboarding/os"]
-      const stack = []
-      if (!(input.isAndroid || input.bluetoothClassicConnected)) stack.push("/pairing/btclassic")
-      stack.push("/ota/check-for-updates")
-      stack.sort((a, b) => order.indexOf(a) - order.indexOf(b))
-      return stack
-    },
-    // AppGrid computation (consumed by AppsGrid). Passthrough stub — render tests
-    // don't assert on grid layout; the real algorithm is unit-tested directly.
-    computeAppGrid: (input) => ({orderedApps: input?.apps ?? [], nextOrderMap: input?.orderMap ?? {}}),
     // Bluetooth SDK passthrough — the same mock singleton @mentra/bluetooth-sdk
     // is mocked with, so emitBluetoothSdkEvent/resetBluetoothSdkMock still drive
     // screens that now import BluetoothSdk from island.

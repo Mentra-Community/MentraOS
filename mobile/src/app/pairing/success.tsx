@@ -5,7 +5,6 @@ import {useRoute} from "@react-navigation/native"
 import {Screen} from "@/components/ignite"
 import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {buildPairingRouteStack} from "@mentra/island"
 import {waitForGlassesState} from "@/stores/glasses"
 import {useNavigationStore} from "@/stores/navigation"
 import {getGlassesImage} from "@/utils/getGlassesImage"
@@ -41,16 +40,19 @@ export default function PairingSuccessScreen() {
       return []
     }
     // OTA check runs on the phone; WiFi is only required after an update is confirmed (see check-for-updates).
-    const bluetoothClassicConnected = await waitForGlassesState(
-      "bluetoothClassicConnected",
-      (value) => value === true,
-      1000,
-    )
-    return buildPairingRouteStack({
-      hasOta: features.hasOta,
-      isAndroid: Platform.OS === "android",
-      bluetoothClassicConnected,
-    })
+    let bluetoothClassicConnected = await waitForGlassesState("bluetoothClassicConnected", (value) => value === true, 1000)
+    // Android pairs Bluetooth Classic at the native stack level, so that screen is never needed there.
+    if (Platform.OS === "android") {
+      bluetoothClassicConnected = true
+    }
+    const order = ["/pairing/btclassic", "/wifi/scan", "/ota/check-for-updates", "/onboarding/live", "/onboarding/os"]
+    const newStack: string[] = []
+    if (!bluetoothClassicConnected) {
+      newStack.push("/pairing/btclassic")
+    }
+    newStack.push("/ota/check-for-updates")
+    newStack.sort((a, b) => order.indexOf(a) - order.indexOf(b))
+    return newStack
   }, [deviceModel])
 
   useEffect(() => {

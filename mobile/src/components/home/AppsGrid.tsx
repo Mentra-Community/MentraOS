@@ -8,7 +8,6 @@ import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {
-  computeAppGrid,
   DUMMY_APPLET,
   getAppsOrder,
   saveAppsOrder,
@@ -235,12 +234,122 @@ export function AppsGrid({
   // a useEffect commits the new orderMap via setOrderMap only when it
   // actually changes. Same semantics, no mutation of React state during render.
   const {gridData, nextOrderMap} = useMemo(() => {
-    const {orderedApps, nextOrderMap} = computeAppGrid(
-      {apps, orderMap, showAllApps, searchQuery},
-      {dummyApplet: DUMMY_APPLET, sortByPriority: sortAppsByPackageNamePriority},
+    let filteredApps = apps.filter((app) => {
+      if (showAllApps) {
+        return true
+      }
+      if (app.hidden) {
+        return false
+      }
+      return true
+    })
+
+    // Apply search filter if searchQuery exists
+    if (searchQuery && searchQuery.trim() !== "") {
+      const query = searchQuery.toLowerCase().trim()
+      filteredApps = filteredApps.filter(
+        (app) => app.name?.toLowerCase().includes(query) || app.packageName?.toLowerCase().includes(query),
+      )
+    }
+
+    // Local working copy — never mutate state during memo.
+    const workingOrderMap: OrderMap = {...orderMap}
+
+    // add dummy apps so we can place apps anywhere in the grid:
+    const totalItems = filteredApps.length
+    const remainder = totalItems % GRID_COLUMNS
+    const MIN_APPS = 20
+    let emptySlots = GRID_COLUMNS - remainder
+    if (remainder == 0) {
+      emptySlots = 0
+    }
+    while (emptySlots + totalItems < MIN_APPS) {
+      emptySlots += GRID_COLUMNS
+    }
+    if (emptySlots < GRID_COLUMNS) {
+      emptySlots += GRID_COLUMNS
+    }
+
+    // Fill gaps in workingOrderMap with dummy apps
+    if (!showAllApps) {
+      const orderedPackages = new Set(
+        filteredApps.filter((app) => workingOrderMap[app.packageName] !== undefined).map((app) => app.packageName),
+      )
+      const usedIndices = new Set<number>()
+      orderedPackages.forEach((pkg) => usedIndices.add(workingOrderMap[pkg]))
+
+      if (usedIndices.size > 0) {
+        const highestRealIndex = Math.max(...usedIndices)
+        let maxIndex = filteredApps.length + emptySlots
+        for (let i = 0; i <= highestRealIndex; i++) {
+          if (!usedIndices.has(i)) {
+            filteredApps.push({...DUMMY_APPLET, packageName: `@empty${i}`})
+            workingOrderMap[`@empty${i}`] = i
+            emptySlots -= 1
+            maxIndex = filteredApps.length + emptySlots
+          }
+        }
+
+        // add the remaining dummy apps:
+        for (let i = highestRealIndex + 1; i <= maxIndex - 1; i++) {
+          filteredApps.push({...DUMMY_APPLET, packageName: `@empty${i}`})
+          workingOrderMap[`@empty${i}`] = i
+          emptySlots -= 1
+        }
+      }
+    }
+
+    if (showAllApps) {
+      emptySlots = Math.min(emptySlots, GRID_COLUMNS * 2)
+      for (let i = 0; i < emptySlots; i++) {
+        let index = filteredApps.length + i + 100
+        filteredApps.push({...DUMMY_APPLET, packageName: `@empty${index}`})
+        workingOrderMap[`@empty${index}`] = index
+      }
+    }
+
+    // Assign unpositioned real apps to the first available empty slots
+    const unpositioned = filteredApps.filter(
+      (app) => !app.packageName.startsWith("@empty") && workingOrderMap[app.packageName] === undefined,
     )
-    const data: MasonryAppItem[] = orderedApps.map((app) => ({...app, id: app.packageName, height: 110}))
-    return {gridData: data, nextOrderMap}
+    if (unpositioned.length > 0) {
+      const dummySlots = filteredApps
+        .filter((app) => app.packageName.startsWith("@empty") && workingOrderMap[app.packageName] !== undefined)
+        .sort((a, b) => workingOrderMap[a.packageName] - workingOrderMap[b.packageName])
+
+      for (const app of unpositioned) {
+        const dummy = dummySlots.shift()
+        if (dummy) {
+          workingOrderMap[app.packageName] = workingOrderMap[dummy.packageName]
+          delete workingOrderMap[dummy.packageName]
+          const idx = filteredApps.indexOf(dummy)
+          if (idx !== -1) filteredApps.splice(idx, 1)
+        }
+      }
+    }
+
+    filteredApps.sort((a, b) => {
+      const aIndex = workingOrderMap[a.packageName]
+      const bIndex = workingOrderMap[b.packageName]
+      if (aIndex === undefined && bIndex === undefined) {
+        return sortAppsByPackageNamePriority(a, b)
+      }
+      if (aIndex === undefined) return 1
+      if (bIndex === undefined) return -1
+      return aIndex - bIndex
+    })
+
+    if (showAllApps) {
+      filteredApps.sort(sortAppsByPackageNamePriority)
+    }
+
+    const data: MasonryAppItem[] = filteredApps.map((app) => ({
+      ...app,
+      id: app.packageName,
+      height: 110,
+    }))
+
+    return {gridData: data, nextOrderMap: workingOrderMap}
   }, [apps, orderMap, showAllApps, searchQuery])
 
   // Commit the updated orderMap to state only when it actually differs from
