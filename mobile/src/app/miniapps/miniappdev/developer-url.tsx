@@ -109,13 +109,13 @@ export default function MiniappDeveloperUrlScreen() {
   const handleLoadUrl = async () => {
     const trimmed = url.trim().replace(/\/+$/, "")
     if (!trimmed) {
-      showAlert(translate("devSettings:miniappUrlEmptyTitle"), translate("devSettings:miniappUrlEmptyBody"), [
+      showAlert(translate("debugSettings:miniappUrlEmptyTitle"), translate("debugSettings:miniappUrlEmptyBody"), [
         {text: "OK"},
       ])
       return
     }
     if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-      showAlert(translate("devSettings:miniappUrlInvalidTitle"), translate("devSettings:miniappUrlInvalidBody"), [
+      showAlert(translate("debugSettings:miniappUrlInvalidTitle"), translate("debugSettings:miniappUrlInvalidBody"), [
         {text: "OK"},
       ])
       return
@@ -128,8 +128,8 @@ export default function MiniappDeveloperUrlScreen() {
       const launchResult = await decideDevLaunchRoute("", trimmed)
       if (launchResult.decision === "offline") {
         showAlert(
-          translate("devSettings:miniappUrlFetchErrorTitle"),
-          translate("devSettings:miniappUrlFetchErrorBody", {url: trimmed}),
+          translate("debugSettings:miniappUrlFetchErrorTitle"),
+          translate("debugSettings:miniappUrlFetchErrorBody", {url: trimmed}),
           [{text: "OK"}],
         )
         return
@@ -156,6 +156,7 @@ export default function MiniappDeveloperUrlScreen() {
         devUrl: entry.url,
         permissions: manifest.permissions as DevAppRecord["permissions"],
         hardwareRequirements: manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+        actions: manifest.actions as DevAppRecord["actions"],
       })
 
       // launchDevMiniapp re-runs the reachability + manifest fetch (cheap;
@@ -169,17 +170,17 @@ export default function MiniappDeveloperUrlScreen() {
 
   return (
     <Screen preset="fixed">
-      <Header title={translate("devSettings:miniappUrlTitle")} leftIcon="chevron-left" onLeftPress={() => goBack()} />
+      <Header title={translate("debugSettings:miniappUrlTitle")} leftIcon="chevron-left" onLeftPress={() => goBack()} />
 
       <ScrollView className="flex px-6 -mx-6">
         <View className="flex gap-6">
-          <Group title={translate("devSettings:miniappUrlGroupTitle")}>
+          <Group title={translate("debugSettings:miniappUrlGroupTitle")}>
             <GlassView className="bg-primary-foreground rounded-2xl px-4 py-4 gap-2">
-              <Text className="text-base text-text" tx="devSettings:miniappUrlLabel" />
+              <Text className="text-base text-text" tx="debugSettings:miniappUrlLabel" />
               <Text className="text-xs text-textDim flex-row flex-wrap">
-                {translate("devSettings:miniappUrlSubtitlePrefix")}
+                {translate("debugSettings:miniappUrlSubtitlePrefix")}
                 <Text className="font-mono text-text" text="/miniapp.json" />
-                {translate("devSettings:miniappUrlSubtitleSuffix")}
+                {translate("debugSettings:miniappUrlSubtitleSuffix")}
               </Text>
               <TextInput
                 className="bg-background border border-primary rounded-lg px-3 py-2 text-sm mt-1 mb-1 text-text"
@@ -193,7 +194,7 @@ export default function MiniappDeveloperUrlScreen() {
                 editable={!loading}
               />
               <Button
-                tx={loading ? "devSettings:miniappUrlLoadingButton" : "devSettings:miniappUrlLoadButton"}
+                tx={loading ? "debugSettings:miniappUrlLoadingButton" : "debugSettings:miniappUrlLoadButton"}
                 onPress={handleLoadUrl}
                 disabled={loading}
                 preset="alternate"
@@ -203,7 +204,7 @@ export default function MiniappDeveloperUrlScreen() {
           </Group>
 
           {recent.length > 0 && (
-            <Group title={translate("devSettings:miniappUrlRecentTitle")}>
+            <Group title={translate("debugSettings:miniappUrlRecentTitle")}>
               {recent.map((item) => (
                 <RouteButton
                   key={item.url}

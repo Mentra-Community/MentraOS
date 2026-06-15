@@ -14,6 +14,7 @@ package com.mentra.asg_client.io.ota.utils;
 public class FirmwareDownloadException extends Exception {
     public static final String CODE_FILE_TOO_LARGE = "firmware_too_large";
     public static final String CODE_VERIFY_FAILED = "firmware_verify_failed";
+    public static final String CODE_APK_VERIFY_FAILED = "apk_verify_failed";
 
     private final String errorCode;
 

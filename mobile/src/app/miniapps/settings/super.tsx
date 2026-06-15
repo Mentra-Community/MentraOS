@@ -16,8 +16,8 @@ export default function SuperSettingsScreen() {
     SETTINGS.debug_navigation_history.key,
   )
   const [debugCoreStatusBarEnabled, setDebugCoreStatusBarEnabled] = useSetting(SETTINGS.debug_core_status_bar.key)
+  const [iosAppSwitcherBottomSwipe, setIosAppSwitcherBottomSwipe] = useSetting(SETTINGS.ios_app_switcher_bottom_swipe.key)
   const {push} = useNavigationStore.getState()
-
   return (
     <Screen preset="fixed">
       <Header title="Super Settings" leftIcon="chevron-left" onLeftPress={() => goBack()} />
@@ -48,6 +48,12 @@ export default function SuperSettingsScreen() {
               label="Use Native G2 Dashboard"
               value={useNativeDashboard}
               onValueChange={(value) => setUseNativeDashboard(value)}
+            />
+
+            <ToggleSetting
+              label="Enable iOS App Switcher Bottom Swipe"
+              value={iosAppSwitcherBottomSwipe}
+              onValueChange={(value) => setIosAppSwitcherBottomSwipe(value)}
             />
           </Group>
 

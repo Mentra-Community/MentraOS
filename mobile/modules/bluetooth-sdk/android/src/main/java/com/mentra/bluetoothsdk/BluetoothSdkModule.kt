@@ -262,7 +262,14 @@ class BluetoothSdkModule : Module() {
                             ?: appContext.currentActivity
                                     ?: throw IllegalStateException("No context available")
             BleTraceLogger.logLifecycle(context, "BluetoothSdkModule", "module_create")
-            sdk = MentraBluetoothSdk.create(context, sdkListener)
+            sdk =
+                    MentraBluetoothSdk.create(
+                            context,
+                            MentraBluetoothSdkConfig(
+                                    analytics = BluetoothSdkAnalyticsConfig().withSurface("react_native")
+                            ),
+                            sdkListener,
+                    )
             deviceManager = DeviceManager.getInstance()
         }
 
@@ -476,7 +483,9 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - OTA Commands
 
-        AsyncFunction("sendOtaStart") { requireSdk().sendOtaStart().values }
+        AsyncFunction("sendOtaStart") { otaVersionUrl: String? ->
+            requireSdk().sendOtaStart(otaVersionUrl).values
+        }
 
         AsyncFunction("sendOtaQueryStatus") { requireSdk().sendOtaQueryStatus().values }
 

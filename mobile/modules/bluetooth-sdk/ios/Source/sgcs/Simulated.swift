@@ -133,6 +133,10 @@ class Simulated: SGCManager {
         Bridge.log("clearDisplay")
     }
 
+    func sendText(_ text: String) async {
+        await sendTextWall(text)
+    }
+
     func sendTextWall(_: String) async {
         Bridge.log("sendTextWall")
     }
@@ -246,7 +250,7 @@ class Simulated: SGCManager {
         Bridge.log("sendUserEmailToGlasses: \(email)")
     }
 
-    func sendOtaStart() {
+    func sendOtaStart(otaVersionUrl: String?) {
         Bridge.log("sendOtaStart")
     }
 

@@ -87,7 +87,7 @@ abstract class ControllerManager {
     abstract fun sendWifiCredentials(ssid: String, password: String)
     abstract fun forgetWifiNetwork(ssid: String)
     abstract fun sendHotspotState(enabled: Boolean)
-    abstract fun sendOtaStart()
+    abstract fun sendOtaStart(otaVersionUrl: String? = null)
 
     // User Context (for crash reporting)
     abstract fun sendUserEmailToGlasses(email: String)

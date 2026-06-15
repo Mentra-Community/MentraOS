@@ -20,17 +20,17 @@ export function isDevModeAllowlisted(email: string | null | undefined): boolean 
 export async function ensureDevModeForUser(email: string | null | undefined): Promise<void> {
   if (!isDevModeAllowlisted(email)) return
 
-  const current = useSettingsStore.getState().getSetting(SETTINGS.dev_mode.key)
+  const current = useSettingsStore.getState().getSetting(SETTINGS.debug_mode.key)
   if (current === true) return
 
-  console.log("DEV: Auto-enabling dev_mode for allowlisted user")
-  const result = await useSettingsStore.getState().setSetting(SETTINGS.dev_mode.key, true)
+  console.log("DEV: Auto-enabling debug_mode for allowlisted user")
+  const result = await useSettingsStore.getState().setSetting(SETTINGS.debug_mode.key, true)
   if (result.is_error()) {
-    console.warn("DEV: Failed to persist dev_mode:", result.error)
+    console.warn("DEV: Failed to persist debug_mode:", result.error)
     // Still enable locally so Developer settings is reachable this session.
     useSettingsStore.setState((state) => ({
-      settings: {...state.settings, [SETTINGS.dev_mode.key]: true},
+      settings: {...state.settings, [SETTINGS.debug_mode.key]: true},
     }))
-    void restComms.writeUserSettings({[SETTINGS.dev_mode.key]: true})
+    void restComms.writeUserSettings({[SETTINGS.debug_mode.key]: true})
   }
 }

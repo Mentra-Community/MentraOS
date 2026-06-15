@@ -502,6 +502,13 @@ class MentraNex : SGCManager() {
         // sendTextWall(" ")
         Bridge.log("Nex: clearDisplay() - sent clear display request command bytes");
     }
+    
+
+    override fun sendText(text: String) {
+        Bridge.log("Nex: sendText() - text: " + text);
+        val textChunks: ByteArray = createTextWallChunksForNex(text)
+        sendProtobuf(textChunks)
+    }
 
     override fun sendTextWall(text: String) {
         Bridge.log("Nex: sendTextWall() - text: " + text);

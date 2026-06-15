@@ -418,9 +418,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - OTA Commands
 
-        AsyncFunction("sendOtaStart") {
+        AsyncFunction("sendOtaStart") { (otaVersionUrl: String?) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.sendOtaStart().values
+            return try await sdk.sendOtaStart(otaVersionUrl: otaVersionUrl).values
         }
 
         AsyncFunction("sendOtaQueryStatus") {
@@ -458,9 +458,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("startVideoRecording") {
             (requestId: String, save: Bool, sound: Bool, settings: [String: Any]?) in
-            // Optional per-recording {width,height,fps}. Absent fields stay 0, which
-            // the glasses treat as "use the saved button-video default". JS numbers
-            // arrive as Double across the bridge, so coerce to Int.
+            /// Optional per-recording {width,height,fps}. Absent fields stay 0, which
+            /// the glasses treat as "use the saved button-video default". JS numbers
+            /// arrive as Double across the bridge, so coerce to Int.
             func dim(_ key: String) -> Int {
                 (settings?[key] as? NSNumber)?.intValue ?? 0
             }
@@ -632,7 +632,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return sdk
         }
 
-        let sdk = MentraBluetoothSDK()
+        let sdk = MentraBluetoothSDK(
+            configuration: MentraBluetoothSDKConfiguration(
+                analytics: BluetoothSdkAnalyticsConfiguration().withSurface("react_native")
+            )
+        )
         sdk.delegate = self
         self.sdk = sdk
         return sdk

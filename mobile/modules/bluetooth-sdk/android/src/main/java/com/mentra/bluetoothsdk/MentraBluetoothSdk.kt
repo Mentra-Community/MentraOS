@@ -23,6 +23,7 @@ class MentraBluetoothSdk private constructor(
     private val deviceManager: DeviceManager
     private val listeners =
         Collections.synchronizedSet(mutableSetOf<MentraBluetoothSdkListener>())
+    private val analytics = BluetoothSdkAnalytics(appContext, config.analytics)
     private val discoveredDeviceNames = mutableSetOf<String>()
     private val bridgeEventSinkId: String
     private val storeListenerId: String
@@ -50,7 +51,13 @@ class MentraBluetoothSdk private constructor(
         Bridge.initialize(appContext)
         deviceManager = DeviceManager.getInstance()
         bridgeEventSinkId = Bridge.addEventSink { eventName, data -> dispatchBridgeEvent(eventName, data) }
+        // Baseline the analytics connection state before subscribing to the store:
+        // store updates invoke listeners synchronously on the updating thread, so a
+        // connected status observed before the baseline would be reported as a fresh
+        // bluetooth_sdk_glasses_connected transition.
+        analytics.initializeGlassesStatus(getRawGlassesStatus())
         storeListenerId = DeviceStore.store.addListener { category, changes -> dispatchStoreUpdate(category, changes) }
+        analytics.captureStarted()
     }
 
     companion object {
@@ -897,7 +904,7 @@ class MentraBluetoothSdk private constructor(
     }
 
     /** Start the OTA flow after your app has presented the available update to the user. */
-    fun startOtaUpdate(): OtaStartAckEvent {
+    fun startOtaUpdate(otaVersionUrl: String? = null): OtaStartAckEvent {
         val pending = PendingResponse<OtaStartAckEvent>("OTA start command")
         synchronized(oneShotLock) {
             if (pendingOtaStart != null) {
@@ -909,7 +916,7 @@ class MentraBluetoothSdk private constructor(
             pendingOtaStart = pending
         }
         try {
-            deviceManager.sendOtaStart()
+            deviceManager.sendOtaStart(otaVersionUrl)
             return pending.await()
         } finally {
             synchronized(oneShotLock) {
@@ -926,7 +933,8 @@ class MentraBluetoothSdk private constructor(
             deviceManager.retryOtaVersionCheck()
         }
 
-    internal fun sendOtaStart(): OtaStartAckEvent = startOtaUpdate()
+    internal fun sendOtaStart(otaVersionUrl: String? = null): OtaStartAckEvent =
+        startOtaUpdate(otaVersionUrl)
 
     internal fun sendOtaQueryStatus(): OtaQueryResult = checkForOtaUpdate()
 
@@ -946,12 +954,14 @@ class MentraBluetoothSdk private constructor(
         stopStreamKeepAliveMonitor()
         Bridge.removeEventSink(bridgeEventSinkId)
         DeviceStore.store.removeListener(storeListenerId)
+        analytics.shutdown()
         listeners.clear()
     }
 
     private fun dispatchStoreUpdate(category: String, changes: Map<String, Any>) {
         when (ObservableStore.normalizeCategory(category)) {
             "glasses" -> {
+                analytics.observeGlassesStatus(getRawGlassesStatus())
                 val state = getState()
                 dispatchToListeners {
                     it.onStateChanged(state)

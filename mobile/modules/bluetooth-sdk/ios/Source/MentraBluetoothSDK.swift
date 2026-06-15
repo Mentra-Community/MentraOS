@@ -162,6 +162,7 @@ public final class MentraBluetoothSDK {
     private var defaultDeviceApplyGeneration = 0
     private var activeScanSessions: [UUID: ActiveScanSession] = [:]
     private var activeStreamKeepAlive: ActiveStreamKeepAlive?
+    private let analytics: BluetoothSdkAnalytics
     private var pendingPhotoRequests: [String: PendingResponse<PhotoResponseEvent>] = [:]
     private var pendingVideoRecordingRequests: [String: PendingVideoRecordingRequest] = [:]
     private var pendingRgbLedRequests: [String: PendingResponse<RgbLedControlResponseEvent>] = [:]
@@ -178,6 +179,7 @@ public final class MentraBluetoothSDK {
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
         self.configuration = configuration
+        analytics = BluetoothSdkAnalytics(configuration: configuration.analytics)
         bluetoothAvailabilityListenerId = BluetoothAvailability.shared.addStateListener { [weak self] state in
             Task { @MainActor [weak self] in
                 self?.handleBluetoothAvailability(state)
@@ -193,6 +195,8 @@ public final class MentraBluetoothSDK {
                 self?.dispatchStoreUpdate(category, changes)
             }
         }
+        analytics.initializeGlassesStatus(glassesStatus)
+        analytics.captureStarted()
     }
 
     public var state: MentraBluetoothState {
@@ -957,7 +961,7 @@ public final class MentraBluetoothSDK {
     }
 
     /// Start the OTA flow after your app has presented the available update to the user.
-    public func startOtaUpdate() async throws -> OtaStartAckEvent {
+    public func startOtaUpdate(otaVersionUrl: String? = nil) async throws -> OtaStartAckEvent {
         if pendingOtaStart != nil {
             throw BluetoothError(
                 code: "request_in_flight",
@@ -966,7 +970,7 @@ public final class MentraBluetoothSDK {
         }
         let pending = PendingResponse<OtaStartAckEvent>(operation: "OTA start command")
         pendingOtaStart = pending
-        DeviceManager.shared.sendOtaStart()
+        DeviceManager.shared.sendOtaStart(otaVersionUrl: otaVersionUrl)
         do {
             let event = try await pending.wait()
             if pendingOtaStart === pending {
@@ -988,7 +992,9 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    func sendOtaStart() async throws -> OtaStartAckEvent { try await startOtaUpdate() }
+    func sendOtaStart(otaVersionUrl: String? = nil) async throws -> OtaStartAckEvent {
+        try await startOtaUpdate(otaVersionUrl: otaVersionUrl)
+    }
 
     func sendOtaQueryStatus() async throws -> OtaQueryResult { try await checkForOtaUpdate() }
 
@@ -1416,6 +1422,7 @@ public final class MentraBluetoothSDK {
     private func dispatchStoreUpdate(_ category: String, _ changes: [String: Any]) {
         switch ObservableStore.normalizeCategory(category) {
         case "glasses":
+            analytics.observeGlassesStatus(glassesStatus)
             let nextState = state
             delegate?.mentraBluetoothSDK(self, didUpdate: nextState)
             delegate?.mentraBluetoothSDK(self, didUpdateGlasses: nextState.glasses)
