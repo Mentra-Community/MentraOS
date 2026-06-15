@@ -1,33 +1,35 @@
 # Example OEM App
 
-A minimal Expo app that demonstrates the two Mentra device-side SDKs an OEM
-integrator would consume:
+A minimal Expo app that demonstrates consuming the **`@mentra/island`** SDK —
+the on-device miniapp registry and runtime — the way an OEM integrator would.
 
-- **`@mentra/island`** — the on-device miniapp registry and runtime. The demo
-  shows starting/stopping miniapps, listing the running set, stopping all, and
-  refreshing the app registry.
-- **`@mentra/bluetooth-sdk`** — direct Bluetooth communication with the glasses
-  (scan, connect, display, camera, mic, WiFi/hotspot, firmware/OTA). The demo
-  wires most public `BluetoothSdk` methods to buttons, plus the
-  `useBluetoothStatus` hook for live connection state.
+The screen exposes the core miniapp controls:
+
+- **Start miniapp** — launches the first registered app (`useStart`).
+- **Stop miniapp** — stops the running miniapp (`useStop`).
+- **List running miniapps** — reads `miniappRunningRegistry` and the app registry.
 
 Every button routes through an on-screen console (bottom of the screen) so you
 can see each call's result or error without a Metro terminal attached.
+
+> Island depends on `@mentra/bluetooth-sdk` (its native module + Expo config
+> plugin), so that package is still installed and wired into the native build —
+> but the app's own code imports only `@mentra/island`.
 
 ## Layout
 
 | File | Purpose |
 | --- | --- |
-| `App.tsx` | Single screen with sectioned button groups + status + console |
+| `App.tsx` | Single screen: state, miniapp buttons, console |
 | `src/ui.tsx` | `Section` / `ActionButton` / `StatusRow` presentational helpers |
-| `src/useLog.ts` | Tiny in-memory console hook (`run` wraps an SDK call) |
-| `app.json` | Expo config: BT plugin, permissions, build properties |
+| `src/useLog.ts` | Tiny in-memory console hook (`run` wraps an island call) |
+| `app.json` | Expo config: bluetooth-sdk plugin (native module), build properties |
 | `metro.config.js` | Watches `mobile/modules` so the SDKs resolve from the monorepo |
 
 ## Running
 
-This app contains native code (the Bluetooth SDK), so **Expo Go cannot load it**
-— you need a development build on a physical phone.
+This app pulls in native code (via island's bluetooth-sdk dependency), so
+**Expo Go cannot load it** — you need a development build on a physical phone.
 
 ```sh
 # from this directory
@@ -36,9 +38,9 @@ bunx expo prebuild
 bunx expo run:ios       # or: bunx expo run:android
 ```
 
-The SDK packages are consumed straight from the monorepo
-(`mobile/modules/bluetooth-sdk`, `mobile/modules/island`). If you edit the island
-source, rebuild it first — it resolves to its `build/` output, not `src/`:
+The SDK is consumed straight from the monorepo (`mobile/modules/island`). If you
+edit the island source, rebuild it first — it resolves to its `build/` output,
+not `src/`:
 
 ```sh
 cd ../../mobile/modules/island && bun run build
@@ -46,8 +48,8 @@ cd ../../mobile/modules/island && bun run build
 
 ## Notes
 
-- The miniapp **Start** button launches the first registered app. In a real OEM
-  integration you configure the island host (`configureIsland`, `configureRuntime`)
-  and install miniapps; this demo simply drives whatever the registry already holds.
-- Some calls (display, camera, mic, OTA) require connected Mentra Live glasses and
-  will surface a descriptive error in the console when no device is connected.
+- The **Start** button launches the first registered app. In a real OEM
+  integration you configure the island host (`configureIsland`,
+  `configureRuntime`) and install miniapps; this demo simply drives whatever the
+  registry already holds, so with no host wiring the registry starts empty and
+  the buttons report "no miniapps registered."

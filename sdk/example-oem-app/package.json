@@ -10,6 +10,8 @@
     "prebuild": "expo prebuild"
   },
   "dependencies": {
+    "@mentra/island": "workspace:*",
+    "@mentra/bluetooth-sdk": "workspace:*",
     "@dr.pogodin/react-native-fs": "^2.34.0",
     "expo": "~54.0.0",
     "expo-battery": "~10.0.0",

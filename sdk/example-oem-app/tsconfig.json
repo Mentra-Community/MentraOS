@@ -3,8 +3,6 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@mentra/bluetooth-sdk": ["../../mobile/modules/bluetooth-sdk/src/index"],
-      "@mentra/bluetooth-sdk/*": ["../../mobile/modules/bluetooth-sdk/src/*"],
       "@mentra/island": ["../../mobile/modules/island/build/index.d.ts"]
     }
   },
