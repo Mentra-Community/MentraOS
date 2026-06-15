@@ -236,9 +236,9 @@ backend. Watch each concept fire.
 2. **Vouch (exchange, asymmetric, RFC 8693).** The OEM backend signs a subject
    JWT for this user. The cloud-client sends it to `/api/client/auth/exchange`.
    Mentra verifies it with the OEM's public key, finds-or-creates the user, and
-   returns an **access token** (`sub = mentraUserId`, ~1h) plus a **refresh
-   token**.
-3. **The device holds the access token** and renews it via `/refresh` as needed.
+   returns a **Core access token** (`aud = "cloud-core"`, `sub = mentraUserId`,
+   ~1h) plus a **refresh token**.
+3. **The device holds the Core access token** and renews it via `/refresh` as needed.
    This token is **never** handed to a miniapp.
 4. **Per-miniapp mint (audience).** When the weather miniapp launches, the
    cloud-client calls `/api/client/auth/miniapp-token` with `packageName`. It gets
@@ -258,11 +258,12 @@ asymmetric signing both directions (2, 7), JWKS + `kid` (7), audience pinning (4
 7), expiry + refresh (3), token exchange (2).
 
 The flow has two parts. First the device authenticates once and the cloud-client gets
-an access token. Then, for each miniapp, that access token is turned into a scoped
-token the miniapp's own backend can verify by itself.
+a Core access token. Then, for each miniapp, that Core token is turned into a scoped
+token the miniapp's own backend can verify by itself. Runtime live services use a
+separate `cloud-runtime` audience token; see issue 007.
 
 **Part 1: the device authenticates (cloud-client auth).** The cloud-client trades the
-OEM's vouch for a Mentra access token, once.
+OEM's vouch for Core-backed credentials, once.
 
 ```mermaid
 sequenceDiagram

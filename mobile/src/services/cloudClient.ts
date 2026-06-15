@@ -33,6 +33,7 @@ const FALLBACK_RUNTIME_URL = "http://localhost:3001"
 
 const CORE_PORT = 3000
 const RUNTIME_PORT = 3001
+const LOCAL_AUTH_PORT = 3002
 
 function metroUrl(port: number): string | undefined {
   const host = devServerHost()
@@ -104,6 +105,44 @@ async function getSupabaseSubjectToken(): Promise<{token: string; type: "supabas
   return {token: res.value.token, type: "supabase"}
 }
 
+let localDevRuntimeToken: {token: string; expiresAtMs: number} | null = null
+
+function shouldUseLocalDevRuntimeToken(endpoints: {runtime: string}): boolean {
+  if (!__DEV__) return false
+  try {
+    const host = new URL(endpoints.runtime).hostname
+    return host === "localhost" || host === "127.0.0.1" || host === "10.0.2.2"
+  } catch {
+    return false
+  }
+}
+
+async function getLocalDevRuntimeToken(opts?: {forceRefresh?: boolean}): Promise<string> {
+  const now = Date.now()
+  if (!opts?.forceRefresh && localDevRuntimeToken && localDevRuntimeToken.expiresAtMs - now > 60_000) {
+    return localDevRuntimeToken.token
+  }
+
+  const base = new URL(runtimeUrl())
+  base.port = String(LOCAL_AUTH_PORT)
+  base.pathname = "/api/dev/runtime-token"
+  base.search = new URLSearchParams({userId: "local-phone-user", oemId: "mentra"}).toString()
+  const url = base.toString()
+  const res = await fetch(url)
+  if (!res.ok) {
+    throw new Error(`cloudClient: local dev runtime token failed (${res.status})`)
+  }
+  const body = (await res.json()) as {access_token?: string; expires_in?: number}
+  if (!body.access_token) {
+    throw new Error("cloudClient: local dev runtime token response missing access_token")
+  }
+  localDevRuntimeToken = {
+    token: body.access_token,
+    expiresAtMs: now + (body.expires_in ?? 300) * 1000,
+  }
+  return body.access_token
+}
+
 /**
  * Holds the singleton client plus the currently-applied audio subscription set.
  * We track the set locally (rather than reading it back off the client) so the
@@ -165,9 +204,8 @@ const cloudLogger = {
 
 /**
  * Listeners that want to know when the live session connects/disconnects. The
- * host wires the LocalSttFallbackCoordinator's `cloudConnection` adapter to
- * these so the local-miniapp on-device-STT fallback tracks cloud liveness (not
- * the v1 WebSocket). Notified on every transition out of `onConnected`/
+ * Local-miniapp on-device-STT fallback tracks cloud-client liveness (not the
+ * v1 WebSocket). Notified on every transition out of `onConnected`/
  * `onDisconnected`.
  */
 const connectionListeners = new Set<(connected: boolean) => void>()
@@ -328,12 +366,17 @@ export const cloudClient = {
     const endpoints = {core: coreUrl(), runtime: runtimeUrl()}
     console.log(`${LOG_TAG}: endpoints ${JSON.stringify(endpoints)}`)
 
+    const coreAuth = {getSubjectToken: getSupabaseSubjectToken}
+    const auth = shouldUseLocalDevRuntimeToken(endpoints)
+      ? {core: coreAuth, runtime: {getToken: getLocalDevRuntimeToken}}
+      : {core: coreAuth, runtime: {source: "core" as const}}
+
     client = new CloudClient({
       endpoints,
       // The phone LC3-encodes mic audio (even in phone/simulated mode), so we
       // announce LC3 at 16 kHz with the same frame size the encoder emits.
       audio: {codec: "lc3", sampleRate: 16000, frameSizeBytes: lc3FrameSizeBytes()},
-      auth: {getSubjectToken: getSupabaseSubjectToken},
+      auth,
       logger: cloudLogger,
     })
 
@@ -406,6 +449,7 @@ export const cloudClient = {
 
     const wasConnected = connected
     client = null
+    localDevRuntimeToken = null
     connected = false
     resetRuntimeStatus()
     // Notify so the local-miniapp STT fallback engages while the client is torn

@@ -66,13 +66,18 @@ within a major version.
 
 ## Auth and handshake
 
-Auth is intentionally simple for now: the access token (the v2 token from the
-OEM mint plus exchange flow) is sent in the first frame. The v1-style `?token=`
-query parameter is supported as a fallback because the dev stack already
-exercises it and it is useful under the Chrome JS debugger, where header-based
-auth does not work. A real `Authorization: Bearer` header (RN supports it
-natively) and Nitro token-refresh are future enhancements that do not change
-this contract.
+Runtime accepts a `cloud-runtime` audience token. The issuer is deployment
+configured: hosted Runtime normally trusts the normalized Cloud Runtime issuer
+from Core/Auth, while an OEM-hosted Runtime can trust the OEM's own issuer/JWKS
+through environment config. Runtime verifies tokens locally (signature, issuer,
+audience, expiry, and identity claim mapping); it does not call Core on each
+request.
+
+The token is sent in the first frame. The v1-style `?token=` query parameter is
+supported as a fallback because the dev stack already exercises it and it is
+useful under the Chrome JS debugger, where header-based auth does not work. A
+real `Authorization: Bearer` header (RN supports it natively) and Nitro
+token-refresh are future enhancements that do not change this contract.
 
 The handshake establishes the runtime session generically. Service-scoped config
 rides in scoped blocks; today the only one is `audio`. As services are added, the
@@ -180,7 +185,8 @@ audio service's `SUBSCRIPTION_INVALID`); those are documented in the service doc
 ## REST conventions
 
 - All client-initiated commands are REST, stateless, and pod-agnostic, behind the
-  normal load balancer. Auth is `Authorization: Bearer <access_token>`.
+  normal load balancer. Auth is
+  `Authorization: Bearer <cloud-runtime token>`.
 - Endpoints live under an `/api/...` prefix on the runtime's own domain, scoped by
   service, with **no version segment**: the domain (a fresh v2 service) already
   distinguishes this from the legacy cloud, and the runtime API is on its first

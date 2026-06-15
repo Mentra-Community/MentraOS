@@ -20,7 +20,7 @@ import type { CloudClientTransports } from "./transports";
  */
 export interface CloudClientConfig {
   // proxy rewrites both core and runtime when present
-  endpoints: { core: string; runtime: string; proxy?: string };
+  endpoints: { core?: string; runtime: string; proxy?: string };
   auth: AuthConfig;
   transports: CloudClientTransports;
   logger?: Logger;
@@ -53,10 +53,28 @@ export type SubjectTokenType = "oem-jwt" | "mentra-core" | "supabase";
  * themselves expire), or an already-exchanged access/refresh pair (for example
  * restored from secure storage on relaunch).
  */
-export type AuthConfig =
+export type CoreAuthConfig =
   // exchanged once on first use
   | { subjectToken: string; subjectTokenType: SubjectTokenType }
   // fetched on demand, for subject tokens that expire before exchange
   | { getSubjectToken: () => Promise<{ token: string; type: SubjectTokenType }> }
   // already exchanged, skip straight to refresh
   | { accessToken: string; refreshToken: string };
+
+export type RuntimeAuthConfig =
+  | {
+      /**
+       * Ask Cloud Core/Auth to mint a short-lived `cloud-runtime` token. This is
+       * explicit hosted-Core mode, not an implicit Core-token fallback.
+       */
+      source: "core";
+    }
+  | {
+      /** Host/OEM/local-dev supplied runtime-token provider. */
+      getToken(opts?: { forceRefresh?: boolean }): Promise<string>;
+    };
+
+export interface AuthConfig {
+  core?: CoreAuthConfig;
+  runtime: RuntimeAuthConfig;
+}

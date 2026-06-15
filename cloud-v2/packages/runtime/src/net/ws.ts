@@ -31,7 +31,7 @@ import { ulid } from "ulid";
 import {
   AccessTokenError,
   createLogger,
-  verifyAccessTokenSignature,
+  verifyRuntimeToken,
 } from "@mentra/cloud-shared";
 import {
   ingestAudioPacket,
@@ -337,9 +337,9 @@ export async function tryWsUpgrade(
     return protocolErrorResponse("AUTH_FAILED", "missing or malformed Authorization");
   }
 
-  let verified: Awaited<ReturnType<typeof verifyAccessTokenSignature>>;
+  let verified: Awaited<ReturnType<typeof verifyRuntimeToken>>;
   try {
-    verified = await verifyAccessTokenSignature(token);
+    verified = await verifyRuntimeToken(token);
   } catch (err) {
     if (err instanceof AccessTokenError) {
       const code = isExpiredTokenError(err) ? "AUTH_EXPIRED" : "AUTH_FAILED";

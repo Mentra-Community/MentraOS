@@ -24,6 +24,7 @@ import * as jose from "jose";
 import { ulid } from "ulid";
 import {
   createLogger,
+  signRuntimeToken,
   verifyAccessTokenSignature,
   AccessTokenError,
   type VerifiedAccessToken,
@@ -46,10 +47,11 @@ const logger = createLogger("core").child({ service: "session.service" });
 // === Token lifetimes ===
 
 const ACCESS_TOKEN_TTL_SEC = 60 * 60; // 1 hour
+const RUNTIME_TOKEN_TTL_SEC = 15 * 60; // 15 minutes
 const REFRESH_TOKEN_TTL_SEC = 30 * 24 * 60 * 60; // 30 days
 
-const MENTRA_ISSUER = "mentra-cloud";
-const MENTRA_AUDIENCE = "mentra-cloud";
+const CORE_ISSUER = "cloud-core";
+const CORE_AUDIENCE = "cloud-core";
 const MENTRA_ALG = "EdDSA";
 
 // Miniapp-scoped tokens use "mentra" as the issuer (per auth/spec.md "Miniapp-
@@ -319,6 +321,28 @@ export async function issueMiniappToken(args: {
 }
 
 /**
+ * Mint a short-lived token for Runtime Services. This is deliberately separate
+ * from the Core access token: Runtime verifies `aud=cloud-runtime` locally and
+ * never accepts Core/product tokens.
+ */
+export async function issueRuntimeToken(args: {
+  mentraUserId: string;
+  oemId: string;
+}): Promise<{ token: string; expiresAt: number }> {
+  const expiresAt = Math.floor(Date.now() / 1000) + RUNTIME_TOKEN_TTL_SEC;
+  const token = await signRuntimeToken({
+    privateKey: requireEnv("MENTRA_JWT_PRIVATE_KEY"),
+    issuer: process.env.CLOUD_CORE_RUNTIME_TOKEN_ISSUER ?? "cloud-core",
+    subject: args.mentraUserId,
+    oemId: args.oemId,
+    jti: ulid(),
+    expiresInSeconds: RUNTIME_TOKEN_TTL_SEC,
+    kid: "cloud-core-runtime-1",
+  });
+  return { token, expiresAt };
+}
+
+/**
  * Resolve the miniapp-token TTL: the env override if a positive integer is
  * set, otherwise the 1h default. Parsed per call (not cached) so tests can
  * flip it between cases.
@@ -553,8 +577,8 @@ async function issueAccessToken(args: {
   })
     // The `kid` points verifiers at the access-token public key in the JWKS.
     .setProtectedHeader({ alg: MENTRA_ALG, kid: ACCESS_TOKEN_KID })
-    .setIssuer(MENTRA_ISSUER)
-    .setAudience(MENTRA_AUDIENCE)
+    .setIssuer(CORE_ISSUER)
+    .setAudience(CORE_AUDIENCE)
     .setSubject(args.mentraUserId)
     .setJti(jti)
     .setIssuedAt()

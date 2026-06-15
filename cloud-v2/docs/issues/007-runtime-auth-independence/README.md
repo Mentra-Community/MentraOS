@@ -6,7 +6,7 @@
 
 Mentra Runtime Services are meant to be self-hostable, but the current
 cloud-client auth lifecycle still assumes Cloud Core is available to exchange and
-refresh Mentra access tokens. Runtime itself does not import Core or call Core on
+refresh access tokens. Runtime itself does not import Core or call Core on
 each request, but a phone cannot stay connected forever without a Core-backed
 credential lifecycle.
 
@@ -28,7 +28,7 @@ cloud.core
 ```
 
 That makes sense for Mentra-managed deployments, where the same SDK talks to both
-Mentra Core and Mentra Runtime. It is too strict for runtime-only deployments.
+Cloud Core and Cloud Runtime. It is too strict for runtime-only deployments.
 
 Making them optional means:
 
@@ -48,10 +48,10 @@ miniapp-token minting, console/store/oem portal, and other non-live-service APIs
 
 Runtime authentication currently works like this:
 
-1. Cloud-client obtains a Mentra access token from Core via
+1. Cloud-client obtains a Core-backed access token from Core via
    `/api/client/auth/exchange`.
 2. Cloud-client refreshes through Core via `/api/client/auth/refresh`.
-3. Runtime WebSocket/REST receives the access token.
+3. Runtime WebSocket/REST receives that access token.
 4. Runtime verifies the token locally with `@mentra/cloud-shared`
    `verifyAccessTokenSignature`.
 
@@ -62,7 +62,8 @@ the token issuer/refresh path and the fixed token audience/issuer assumptions.
 ## Goals
 
 - Allow Runtime Services to operate with zero live dependency on Cloud Core.
-- Let Mentra-managed deployments continue using Mentra Core as the default issuer.
+- Let Mentra-managed deployments continue using Cloud Core/Auth as the default
+  broker and issuer.
 - Let OEMs choose between:
   - using Mentra Core directly;
   - proxying Mentra Core;
@@ -84,20 +85,21 @@ the token issuer/refresh path and the fixed token audience/issuer assumptions.
 
 ## Proposed token split
 
-Separate the live-service token from the Core/product token.
+Separate the live-service token from the Core/product token. Avoid brand names in
+audiences so the protocol survives a product/company rename.
 
 ### Core token
 
-- Audience: `mentra-core`.
-- Issuer: Mentra Core, or an OEM proxy that delegates to Mentra Core.
+- Audience: `cloud-core`.
+- Issuer: Cloud Core/Auth, or an OEM proxy that delegates to Cloud Core/Auth.
 - Used for Core-owned APIs: account/session product APIs, catalog/install,
   miniapp-token minting, and future Core services.
 
 ### Runtime token
 
-- Audience: `mentra-runtime`.
+- Audience: `cloud-runtime`.
 - Issuer: any configured runtime issuer:
-  - Mentra Core/Auth;
+  - Cloud Core/Auth;
   - OEM auth service;
   - OEM proxy to Mentra;
   - local/dev issuer.
@@ -108,29 +110,78 @@ The same JWKS can sign both token families in Mentra-managed deployments, but
 the design must not require that. Runtime should trust configured issuers, not a
 hard-coded "Core exists" assumption.
 
+## Deployment modes
+
+### Hosted Core + hosted Runtime
+
+This is the default Mentra-managed path. An OEM onboards through the portal with:
+
+- a unique `oemId`;
+- production issuer metadata (`issuer`, JWKS or well-known URL);
+- optional sandbox/staging issuer metadata for development environments.
+
+Core/Auth verifies the OEM's subject token using that onboarded metadata, maps
+`(oemId, oemUserId)`, then mints normalized `cloud-runtime` tokens for the hosted
+Runtime. Hosted Runtime only has to trust the normalized Cloud Runtime issuer.
+
+Mentra's own mobile app is treated as one OEM integration. During migration, its
+login credential can still be the v1 core token obtained from the legacy backend;
+Core/Auth uses that credential to issue the same normalized runtime token shape.
+
+### Hosted Runtime via OEM proxy
+
+An OEM may hide Mentra endpoints behind its own backend. The proxy can either
+delegate token exchange to Cloud Core/Auth or return a Cloud Runtime token minted
+by an issuer our hosted Runtime is configured to trust. Runtime still sees a
+normal `cloud-runtime` JWT and does local verification.
+
+### OEM-hosted Runtime
+
+The OEM runs the Cloud Runtime service itself, typically from our Docker image
+with environment config. Their runtime can trust their own issuer/JWKS directly
+and does not need a Cloud Core endpoint for live services. They may still use
+Cloud Core separately for store/catalog/account product APIs if desired.
+
+### Local/dev Runtime
+
+Local test harnesses can use a dev issuer and JWKS/static key without starting
+Core, as long as the client supplies a valid `cloud-runtime` token.
+
 ## Runtime verifier config
 
 Runtime should verify JWTs from a configured issuer list:
 
 ```ts
 runtimeAuth: {
-  audience: "mentra-runtime",
+  audience: "cloud-runtime",
   issuers: [
     {
-      issuer: "https://core.mentra.glass",
-      jwksUrl: "https://core.mentra.glass/.well-known/jwks.json",
+      issuer: "https://auth.example.com",
+      jwksUrl: "https://auth.example.com/.well-known/jwks.json",
       userIdClaim: "sub",
       oemIdClaim: "oem_id"
     },
     {
-      issuer: "https://auth.oem.example",
-      jwksUrl: "https://auth.oem.example/.well-known/jwks.json",
+      issuer: "https://sandbox-auth.example.com",
+      jwksUrl: "https://sandbox-auth.example.com/.well-known/jwks.json",
       userIdClaim: "sub",
-      fixedOemId: "oem_example"
+      fixedOemId: "acme"
     }
   ]
 }
 ```
+
+The two issuer entries above are examples of two mapping modes, not two required
+entries:
+
+- `oemIdClaim` means the token carries the OEM id in a claim such as `oem_id`.
+- `fixedOemId` means this issuer is dedicated to one OEM, so Runtime gets the OEM
+  id from config.
+
+Every configured issuer must provide exactly one way to derive `oemId`. `sub` is
+the JWT-standard "subject" claim and should be the default user id claim, but the
+claim name is configurable for OEM compatibility. Runtime normalizes the result
+internally to a stable runtime user id plus `oemId`.
 
 Open claim-shape question: should runtime continue requiring
 `session_id` and `jti`, or should those become optional/issuer-specific claims?
@@ -177,6 +228,10 @@ auth: {
 }
 ```
 
+In hosted-Core mode, the runtime token provider may call Core/Auth under the
+hood. In runtime-only mode, it may call an OEM auth backend, read an already
+issued token, or use a local/dev issuer. `cloud.runtime` should not know which.
+
 ## `cloud.core` behavior in runtime-only mode
 
 Options:
@@ -211,20 +266,19 @@ independence for live captions/audio/camera.
 
 1. Add a runtime token verifier abstraction in `@mentra/cloud-runtime`.
    - Support JWKS URL(s), issuer, audience, and claim mapping.
-   - Preserve current env-key verifier as the Mentra-managed default or local dev
-     shortcut.
-2. Introduce runtime-token audience `mentra-runtime`.
-   - Keep compatibility with existing `mentra-cloud` access tokens during the
-     migration window if needed.
+   - Require explicit issuer config at runtime startup.
+2. Introduce runtime-token audience `cloud-runtime`.
+   - Runtime must not accept Core/product tokens as a fallback.
 3. Split cloud-client auth providers.
    - Runtime module asks for runtime tokens.
    - Core module asks for Core tokens.
-   - Existing Core-backed mode wires both to the current `cloud.auth`.
+   - Hosted Core mode uses an explicit Core broker provider that calls
+     `/api/client/auth/runtime-token`.
 4. Make Core endpoint optional in runtime-only construction.
 5. Decide and implement `cloud.core` runtime-only behavior.
 6. Update docs for four deployment modes:
-   - Mentra-managed Core + Mentra-managed Runtime.
-   - Mentra Core through OEM proxy + OEM Runtime.
+   - Cloud Core/Auth + hosted Cloud Runtime.
+   - Cloud Core/Auth through OEM proxy + OEM-hosted Runtime.
    - OEM runtime auth issuer + no Core for live services.
    - local/dev runtime-only.
 7. Add tests and E2E harness cases.
@@ -250,8 +304,8 @@ independence for live captions/audio/camera.
   optional session correlation?
 - Do runtime tokens use `sub = mentraUserId`, OEM user ID, or an issuer-mapped
   stable runtime user ID?
-- Should Mentra Core mint runtime tokens as a distinct audience/token type, or
-  should the current access token evolve into a multi-audience token during
+- Should Cloud Core/Auth mint runtime tokens as a distinct audience/token type,
+  or should the current access token evolve into a multi-audience token during
   migration?
 - What is the minimum miniapp-backend auth story for runtime-only deployments?
 

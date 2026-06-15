@@ -9,6 +9,7 @@
  *
  *   test-oem : http://127.0.0.1:3102   (mint OEM JWTs)
  *   core     : http://127.0.0.1:3000   (client auth, REST)
+ *   auth     : http://127.0.0.1:3002   (local-dev runtime tokens)
  *   runtime  : ws://127.0.0.1:3001/ws/session   (+ UDP :8000)
  *
  * Auth flow the mobile replicates (same as the test client):
@@ -33,6 +34,7 @@ import { startCore } from "../packages/core/src/index";
 import { startRuntime } from "../packages/runtime/src/index";
 import { startTestOem } from "../test/test-oem/src/index";
 import { OemModel } from "../packages/core/src/models/oem.model";
+import { signRuntimeToken } from "../packages/shared/src/auth";
 
 const PORT_CORE = Number(process.env.DEV_CORE_PORT ?? 3000);
 const PORT_RUNTIME_HTTP = Number(
@@ -42,24 +44,49 @@ const PORT_RUNTIME_UDP = Number(
   process.env.DEV_RUNTIME_UDP_PORT ?? process.env.DEV_AUDIO_UDP_PORT ?? 8000,
 );
 const PORT_TEST_OEM = Number(process.env.DEV_TEST_OEM_PORT ?? 3102);
+const PORT_LOCAL_AUTH = Number(process.env.DEV_LOCAL_AUTH_PORT ?? 3002);
 const OEM_ID = process.env.DEV_OEM_ID ?? "dev-local-oem";
 const ADVERTISE_HOST = resolveAdvertiseHost();
 
-// Fresh Ed25519 keypair for this run, shared across core (signs) and runtime
-// (verifies). Set before shared/auth caches it. (Same pattern as the smoke.)
+const stripPem = (p: string) =>
+  p
+    .replace(/-----BEGIN [A-Z ]+-----/, "")
+    .replace(/-----END [A-Z ]+-----/, "")
+    .replace(/\s+/g, "");
+
+// Fresh Ed25519 keypairs for this run. Core signs `cloud-core` tokens and can
+// broker `cloud-runtime` tokens. The separate local auth issuer signs local-dev
+// runtime-only tokens so Runtime never issues tokens for itself.
 {
-  const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
-  const strip = (p: string) =>
-    p
-      .replace(/-----BEGIN [A-Z ]+-----/, "")
-      .replace(/-----END [A-Z ]+-----/, "")
-      .replace(/\s+/g, "");
-  process.env.MENTRA_JWT_PRIVATE_KEY = strip(
-    privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+  const coreKeys = crypto.generateKeyPairSync("ed25519");
+  const localRuntimeKeys = crypto.generateKeyPairSync("ed25519");
+  process.env.MENTRA_JWT_PRIVATE_KEY = stripPem(
+    coreKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
   );
-  process.env.MENTRA_JWT_PUBLIC_KEY = strip(
-    publicKey.export({ type: "spki", format: "pem" }).toString(),
+  process.env.MENTRA_JWT_PUBLIC_KEY = stripPem(
+    coreKeys.publicKey.export({ type: "spki", format: "pem" }).toString(),
   );
+  process.env.LOCAL_RUNTIME_AUTH_PRIVATE_KEY = stripPem(
+    localRuntimeKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+  );
+  process.env.LOCAL_RUNTIME_AUTH_PUBLIC_KEY = stripPem(
+    localRuntimeKeys.publicKey.export({ type: "spki", format: "pem" }).toString(),
+  );
+  process.env.CLOUD_RUNTIME_AUTH_AUDIENCE ??= "cloud-runtime";
+  process.env.CLOUD_RUNTIME_AUTH_ISSUERS ??= JSON.stringify([
+    {
+      issuer: "cloud-core",
+      publicKeyEnv: "MENTRA_JWT_PUBLIC_KEY",
+      userIdClaim: "sub",
+      oemIdClaim: "oem_id",
+    },
+    {
+      issuer: "local-dev-runtime",
+      publicKeyEnv: "LOCAL_RUNTIME_AUTH_PUBLIC_KEY",
+      userIdClaim: "sub",
+      oemIdClaim: "oem_id",
+    },
+  ]);
   process.env.REFRESH_TOKEN_PEPPER ??= "dev-stack-pepper";
   process.env.MONGO_URL ??= "mongodb://127.0.0.1:27017/cloud-v2-dev-stack";
   process.env.REDIS_URL ??= "redis://127.0.0.1:6379/5";
@@ -80,7 +107,8 @@ console.log("[dev-stack] booting test-oem, core, runtime…");
 
 const testOem = await startTestOem({ port: PORT_TEST_OEM, oemId: OEM_ID });
 const core = await startCore({ port: PORT_CORE });
-await startRuntime({
+const localAuth = startLocalAuthIssuer(PORT_LOCAL_AUTH);
+const runtime = await startRuntime({
   httpPort: PORT_RUNTIME_HTTP,
   udpPort: PORT_RUNTIME_UDP,
   udpAdvertisedHost: ADVERTISE_HOST,
@@ -101,6 +129,7 @@ console.log("");
 console.log("[dev-stack] cloud-v2 is up:");
 console.log(`  test-oem : ${testOem.url}`);
 console.log(`  core     : ${core.url}`);
+console.log(`  auth     : ${localAuth.url}`);
 console.log(`  runtime WS : ws://${ADVERTISE_HOST}:${PORT_RUNTIME_HTTP}/ws/session`);
 console.log(`  runtime UDP: ${ADVERTISE_HOST}:${PORT_RUNTIME_UDP}`);
 console.log(`  provider : ${provider}`);
@@ -159,27 +188,14 @@ function isPrivateIpv4(address: string): boolean {
   return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
 }
 
-/** Mint an OEM JWT then exchange it at core for a v2 access token. */
-async function mintAccessToken(oemUserId: string): Promise<string> {
-  const mint = await fetch(`${testOem.url}/test-oem/mint-jwt`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ oemUserId }),
-  });
-  if (!mint.ok) throw new Error(`mint-jwt failed: ${mint.status}`);
-  const { jwt } = (await mint.json()) as { jwt: string };
-
-  const ex = await fetch(`${core.url}/api/client/auth/exchange`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
-      subject_token: jwt,
-      subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
-    }),
-  });
-  if (!ex.ok) throw new Error(`token exchange failed: ${ex.status}`);
-  const { access_token } = (await ex.json()) as { access_token: string };
+/** Mint a local-dev runtime token, bypassing Core to exercise runtime-only auth. */
+async function mintRuntimeToken(oemUserId: string): Promise<string> {
+  const res = await fetch(
+    `${localAuth.url}/api/dev/runtime-token?` +
+      new URLSearchParams({ userId: oemUserId, oemId: "dev-local-oem" }),
+  );
+  if (!res.ok) throw new Error(`dev runtime-token failed: ${res.status}`);
+  const { access_token } = (await res.json()) as { access_token: string };
   return access_token;
 }
 
@@ -188,9 +204,9 @@ async function mintAccessToken(oemUserId: string): Promise<string> {
  * WS via `?token=` (the mobile's path), to confirm the cloud side is ready.
  */
 async function selfCheck(): Promise<void> {
-  const token = await mintAccessToken("dev-selfcheck-user");
+  const token = await mintRuntimeToken("dev-selfcheck-user");
   console.log(
-    `[dev-stack] sample access token (1h):\n  ${token}\n`,
+    `[dev-stack] sample runtime token (15m):\n  ${token}\n`,
   );
 
   const wsUrl = `ws://${ADVERTISE_HOST}:${PORT_RUNTIME_HTTP}/ws/session?token=${encodeURIComponent(token)}`;
@@ -247,9 +263,9 @@ async function selfCheck(): Promise<void> {
           resolve(true);
         }
       }
-      if (msg.type === "audio.transcription") {
+      if (msg.type === "stream.transcript") {
         clearTimeout(timer);
-        console.log("[dev-stack] self-check: audio.transcription received OK");
+        console.log("[dev-stack] self-check: stream.transcript received OK");
         resolve(true);
       }
     };
@@ -261,4 +277,41 @@ async function selfCheck(): Promise<void> {
 
   ws.close();
   console.log(`[dev-stack] self-check: ${got ? "PASS" : "FAIL"}`);
+}
+
+function startLocalAuthIssuer(port: number): { url: string; stop(): void } {
+  const server = Bun.serve({
+    port,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname !== "/api/dev/runtime-token") {
+        return new Response("Not Found", { status: 404 });
+      }
+
+      const userId = url.searchParams.get("userId") || "local-dev-user";
+      const oemId = url.searchParams.get("oemId") || "dev-local-oem";
+      const token = await signRuntimeToken({
+        privateKey: process.env.LOCAL_RUNTIME_AUTH_PRIVATE_KEY!,
+        issuer: "local-dev-runtime",
+        subject: userId,
+        oemId,
+        jti: crypto.randomUUID(),
+        expiresInSeconds: 15 * 60,
+        kid: "local-dev-runtime-1",
+      });
+
+      return Response.json({
+        access_token: token,
+        token_type: "Bearer",
+        expires_in: 15 * 60,
+      });
+    },
+  });
+
+  return {
+    url: `http://127.0.0.1:${server.port}`,
+    stop() {
+      server.stop();
+    },
+  };
 }

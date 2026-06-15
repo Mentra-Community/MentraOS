@@ -427,11 +427,11 @@ Failover scenarios follow.
 
 1. Phone opens WS to the load balancer; LB routes to some pod (call
    it Pod B).
-2. Pod B accepts the WS handshake, validates the Mentra access token
+2. Pod B accepts the WS handshake, validates the `cloud-runtime` token
    the phone presented in the connection (per
-   [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md)). On
-   failure: close WS with auth error.
-3. Pod B reads the verified `mentraUserId` from the access token.
+   [`../../007-runtime-auth-independence/README.md`](../../007-runtime-auth-independence/README.md)).
+   On failure: close WS with auth error.
+3. Pod B reads the verified user id and `oemId` from the runtime token.
 4. Pod B claims ownership:
    `SET {user:<mentraUserId>}:owner "<podHostname>:<workerIdx>" NX EX 5`.
    On success: continue. On failure (someone else owns): close WS,
@@ -731,5 +731,6 @@ Per-user verbosity is bounded: log at INFO for state transitions
   rejected alternatives.
 - [`wire.md`](./wire.md): the audio wire surface (subscription REST, push events, UDP
   frames).
-- [`../../001-cloud-core/auth/oem-auth.md`](../../001-cloud-core/auth/oem-auth.md):
-  the Mentra access token format (verified at the WS handshake).
+- [`../../007-runtime-auth-independence/README.md`](../../007-runtime-auth-independence/README.md):
+  the `cloud-runtime` token format and issuer/JWKS verification model used at the
+  WS handshake.

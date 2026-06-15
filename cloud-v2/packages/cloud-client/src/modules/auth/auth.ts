@@ -1,11 +1,9 @@
 /**
  * @fileoverview `cloud.auth`: the one owner of credentials.
  *
- * It holds the access token in memory, persists the refresh token through the
- * injected storage, mints per-miniapp tokens, and never hands the access token
- * to a miniapp. The other two modules (`cloud.runtime`, `cloud.core`) get the
- * access token from here via `getAccessToken`, which refreshes transparently
- * when the token is near expiry.
+ * It owns the credential lifecycle for the configured services. Core tokens are
+ * exchanged/refreshed through Cloud Core. Runtime tokens are either supplied by
+ * the host/OEM or explicitly minted by Core's `/runtime-token` broker endpoint.
  *
  * Token lifecycle:
  *  - First use exchanges the configured subject token at `/exchange` for an
@@ -25,7 +23,12 @@
  * See docs/issues/004-cloud-client/spec.md ("cloud.auth"), design.md, and
  * docs/issues/001-cloud-core/auth/spec.md (endpoints + token shapes).
  */
-import type { AuthConfig, SubjectTokenType } from "../../config";
+import type {
+  AuthConfig,
+  CoreAuthConfig,
+  RuntimeAuthConfig,
+  SubjectTokenType,
+} from "../../config";
 import type { HttpClient } from "../../http";
 import type { Logger } from "../../logger";
 import { AuthExpiredError } from "../../errors";
@@ -38,14 +41,16 @@ import { TokenStore } from "./token-store";
  * Declared here (rather than imported) because it is a client-side module
  * contract, not a wire type: the protocol package owns the on-the-wire shapes,
  * this owns the module shapes. `cloud.runtime` and `cloud.core` depend only on
- * `getAccessToken`.
+ * `getRuntimeToken` / `getCoreToken`.
  */
 export interface AuthModule {
-  // current access token, refreshing as needed (used by runtime/core). Pass
+  // current runtime token, refreshing as needed. Pass
   // `{ forceRefresh: true }` to bypass the in-memory cache and refresh now, for
   // the case where the cloud rejected a token the client still thinks is fresh
   // (clock skew or a mid-session revoke surfaced as AUTH_EXPIRED).
-  getAccessToken(opts?: { forceRefresh?: boolean }): Promise<string>;
+  getRuntimeToken(opts?: { forceRefresh?: boolean }): Promise<string>;
+  // current Core token, refreshing as needed (Core-backed mode only).
+  getCoreToken(opts?: { forceRefresh?: boolean }): Promise<string>;
   // a miniapp-scoped token, cached per packageName and re-minted before expiry
   getMiniappToken(packageName: string): Promise<{ token: string; expiresAt: number }>;
   // the user/oem identity read off the access token's claims
@@ -79,10 +84,12 @@ const EXPIRY_MARGIN_SECONDS = 60;
 /** The cloud's token endpoints, relative to the core base URL. */
 const EXCHANGE_PATH = "/api/client/auth/exchange";
 const REFRESH_PATH = "/api/client/auth/refresh";
+const RUNTIME_TOKEN_PATH = "/api/client/auth/runtime-token";
 const MINIAPP_TOKEN_PATH = "/api/client/auth/miniapp-token";
 
 /** Single-flight keys. The miniapp key is suffixed per packageName below. */
 const FLIGHT_ACCESS = "access-token";
+const FLIGHT_RUNTIME = "runtime-token";
 const MINIAPP_FLIGHT_PREFIX = "miniapp-token:";
 
 /** The cloud's RFC-shaped token response from `/exchange` and `/refresh`. */
@@ -99,10 +106,22 @@ interface MiniappTokenEntry {
   expiresAt: number;
 }
 
+interface RuntimeTokenResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+}
+
+interface RuntimeTokenEntry {
+  token: string;
+  expiresAt: number;
+}
+
 export class Auth implements AuthModule {
   private readonly http: HttpClient;
   private readonly store: TokenStore;
-  private readonly config: AuthConfig;
+  private readonly coreConfig?: CoreAuthConfig;
+  private readonly runtimeConfig: RuntimeAuthConfig;
   private readonly logger: Logger;
   /**
    * Base URL for the form-encoded `/exchange` and `/refresh` calls.
@@ -118,6 +137,8 @@ export class Auth implements AuthModule {
 
   /** Miniapp tokens cached per packageName until near expiry. */
   private readonly miniappCache = new Map<string, MiniappTokenEntry>();
+  /** Core-brokered runtime token cache. */
+  private runtimeToken: RuntimeTokenEntry | null = null;
 
   /** Registered `onExpired` handlers. */
   private readonly expiredHandlers = new Set<() => void>();
@@ -137,7 +158,8 @@ export class Auth implements AuthModule {
   }) {
     this.http = deps.http;
     this.store = deps.store;
-    this.config = deps.config;
+    this.coreConfig = deps.config.core;
+    this.runtimeConfig = deps.config.runtime;
     this.logger = deps.logger;
     this.baseUrl = deps.baseUrl;
   }
@@ -149,7 +171,24 @@ export class Auth implements AuthModule {
    * margin is returned with no network call. Otherwise we obtain one through a
    * single-flight so concurrent callers share the same request.
    */
-  async getAccessToken(opts?: { forceRefresh?: boolean }): Promise<string> {
+  async getRuntimeToken(opts?: { forceRefresh?: boolean }): Promise<string> {
+    if ("getToken" in this.runtimeConfig) {
+      return this.runtimeConfig.getToken(opts);
+    }
+
+    if (opts?.forceRefresh) {
+      this.runtimeToken = null;
+    } else if (this.runtimeToken && !this.isExpiring(this.runtimeToken.expiresAt)) {
+      return this.runtimeToken.token;
+    }
+
+    return this.store.singleFlight(FLIGHT_RUNTIME, () =>
+      this.obtainCoreBrokeredRuntimeToken(),
+    );
+  }
+
+  async getCoreToken(opts?: { forceRefresh?: boolean }): Promise<string> {
+    this.requireCoreConfig();
     // A forced refresh drops the cached access token first, so the cache check
     // below misses and we go straight to the single-flight refresh. The
     // single-flight still de-dupes, so a burst of forced refreshes (one per
@@ -190,7 +229,7 @@ export class Auth implements AuthModule {
         return { token: fresh.token, expiresAt: fresh.expiresAt };
       }
 
-      const accessToken = await this.getAccessToken();
+      const accessToken = await this.getCoreToken();
       const res = await this.http.post<MiniappTokenEntry>(
         MINIAPP_TOKEN_PATH,
         { packageName },
@@ -251,7 +290,7 @@ export class Auth implements AuthModule {
   /**
    * Obtain a fresh access token: refresh if we hold a refresh token, otherwise
    * do the first-use exchange. Runs inside the single-flight from
-   * `getAccessToken`, so only one of these is ever in flight.
+   * `getCoreToken`, so only one of these is ever in flight.
    */
   private async obtainAccessToken(): Promise<string> {
     const refreshToken = await this.store.refreshToken();
@@ -272,18 +311,19 @@ export class Auth implements AuthModule {
    * only reach `exchange` when no refresh token is stored.
    */
   private async exchange(): Promise<string> {
+    const config = this.requireCoreConfig();
     // Pre-exchanged credentials: seed the store and refresh, no /exchange call.
-    if ("refreshToken" in this.config) {
+    if ("refreshToken" in config) {
       await this.store.save({
-        accessToken: this.config.accessToken,
-        refreshToken: this.config.refreshToken,
+        accessToken: config.accessToken,
+        refreshToken: config.refreshToken,
       });
       // The seeded access token may already be near expiry, so refresh through
       // the normal path to guarantee a fresh one.
-      return this.refresh(this.config.refreshToken);
+      return this.refresh(config.refreshToken);
     }
 
-    const subject = await this.resolveSubjectToken();
+    const subject = await this.resolveSubjectToken(config);
     const body = new URLSearchParams({
       grant_type: TOKEN_EXCHANGE_GRANT,
       subject_token: subject.token,
@@ -343,14 +383,44 @@ export class Auth implements AuthModule {
    * Only reached for the two non-pre-exchanged config shapes; the caller handles
    * the pre-exchanged shape before us, so the final throw is just exhaustiveness.
    */
-  private async resolveSubjectToken(): Promise<{ token: string; type: SubjectTokenType }> {
-    if ("subjectToken" in this.config) {
-      return { token: this.config.subjectToken, type: this.config.subjectTokenType };
+  private async resolveSubjectToken(
+    config: CoreAuthConfig,
+  ): Promise<{ token: string; type: SubjectTokenType }> {
+    if ("subjectToken" in config) {
+      return { token: config.subjectToken, type: config.subjectTokenType };
     }
-    if ("getSubjectToken" in this.config) {
-      return this.config.getSubjectToken();
+    if ("getSubjectToken" in config) {
+      return config.getSubjectToken();
     }
     throw new AuthExpiredError("no subject token available to exchange");
+  }
+
+  private requireCoreConfig(): CoreAuthConfig {
+    if (!this.coreConfig) {
+      throw new AuthExpiredError("core auth is not configured");
+    }
+    return this.coreConfig;
+  }
+
+  private async obtainCoreBrokeredRuntimeToken(): Promise<string> {
+    const fresh = this.runtimeToken;
+    if (fresh && !this.isExpiring(fresh.expiresAt)) {
+      return fresh.token;
+    }
+
+    const coreToken = await this.getCoreToken();
+    const res = await this.http.post<RuntimeTokenResponse>(
+      RUNTIME_TOKEN_PATH,
+      {},
+      { bearer: coreToken },
+    );
+    if (res.token_type !== "Bearer" || !res.access_token) {
+      throw new AuthExpiredError("core returned an invalid runtime token response");
+    }
+
+    const expiresAt = Math.floor(Date.now() / 1000) + res.expires_in;
+    this.runtimeToken = { token: res.access_token, expiresAt };
+    return res.access_token;
   }
 
   /**
