@@ -11,18 +11,18 @@ import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import type {CaptureGroup} from "@/types/asg"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
-  const {coreModuleMock} = require("@/test-utils/mockCoreModule")
+  const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
   return {
     __esModule: true,
-    default: coreModuleMock,
+    default: bluetoothSdkMock,
   }
 })
 
 jest.mock("@mentra/bluetooth-sdk-internal", () => {
-  const {coreModuleMock} = require("@/test-utils/mockCoreModule")
+  const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
   return {
     __esModule: true,
-    default: coreModuleMock,
+    default: bluetoothSdkMock,
   }
 })
 
@@ -213,7 +213,9 @@ describe("GallerySyncService", () => {
 
   it("aborts pre-flight quietly when glasses disconnect during any pre-flight await", async () => {
     const {checkConnectivityRequirementsUI} = require("@/utils/PermissionsUtils")
-    let resolveConnectivity: (() => void) | null = null
+    let resolveConnectivity: () => void = () => {
+      throw new Error("Connectivity promise resolver was not initialized")
+    }
     ;(checkConnectivityRequirementsUI as jest.Mock).mockImplementationOnce(
       () =>
         new Promise<boolean>((resolve) => {
@@ -230,7 +232,7 @@ describe("GallerySyncService", () => {
     // Disconnect while connectivity check is in flight — shouldAbortPreFlight catches it after the await
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
 
-    resolveConnectivity?.()
+    resolveConnectivity()
     await startPromise
 
     expect(useGallerySyncStore.getState().syncState).toBe("idle")
@@ -241,7 +243,9 @@ describe("GallerySyncService", () => {
 
   it("coalesces concurrent startSync calls into a single pre-flight attempt", async () => {
     const {checkConnectivityRequirementsUI} = require("@/utils/PermissionsUtils")
-    let resolveConnectivity: (() => void) | null = null
+    let resolveConnectivity: () => void = () => {
+      throw new Error("Connectivity promise resolver was not initialized")
+    }
     ;(checkConnectivityRequirementsUI as jest.Mock).mockImplementation(
       () =>
         new Promise<boolean>((resolve) => {
@@ -257,7 +261,7 @@ describe("GallerySyncService", () => {
     expect(gallerySyncService.isSyncStarting()).toBe(true)
     expect(checkConnectivityRequirementsUI).toHaveBeenCalledTimes(1)
 
-    resolveConnectivity?.()
+    resolveConnectivity()
     await Promise.all([first, second])
 
     expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")

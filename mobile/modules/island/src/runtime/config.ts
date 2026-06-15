@@ -12,6 +12,8 @@
  * getter when reasonable.
  */
 
+import type {ClientApp} from "../types/applet"
+
 /**
  * Snapshot the host exposes about the connected glasses. The host's full
  * glasses store is too rich for the runtime — these are the fields the
@@ -317,6 +319,51 @@ export interface CameraSettingsAdapter {
   setFov: (packageName: string, request: CameraFovRequest) => Promise<CameraFovResult>
 }
 
+/** One audited inter-miniapp call. An LLM caller (Mentra AI) will eventually do
+ * something a user wants to trace — every interop op emits one of these. */
+export interface InteropAuditEvent {
+  /** The system app that made the call. */
+  caller: string
+  op: "list" | "start" | "stop" | "invoke"
+  /** Target miniapp (start/stop/invoke). */
+  target?: string
+  /** Action id (invoke only). */
+  actionId?: string
+  /** True if the call was permitted and accepted; false on denial / pre-flight failure. */
+  ok: boolean
+  /** MiniappErrorCode when ok is false. */
+  errorCode?: string
+}
+
+/**
+ * Inter-miniapp interop adapter — backs `session.miniapps` (list/start/stop)
+ * and `session.actions.invoke`. The host provides the system-app *policy* and
+ * the app-store operations so the runtime stays decoupled from the host's
+ * store and its hardcoded SYSTEM_APPS list. Wired by the host at bootstrap.
+ */
+export interface InteropAdapter {
+  /** Is this package a system app — allowed to use the SYSTEM-only interop APIs? */
+  isSystemApp: (packageName: string) => boolean
+  /** Snapshot of all installed miniapps (the host's app-store state). */
+  listApps: () => ClientApp[]
+  /**
+   * Start (and foreground) another miniapp — user-tap semantics. Resolves true
+   * if it actually started; false if a host gate aborted it (incompatible
+   * hardware, captions STT gate, …) or its JS context failed to spawn.
+   */
+  startApp: (packageName: string) => Promise<boolean>
+  /** Stop another miniapp. */
+  stopApp: (packageName: string) => Promise<void>
+  /**
+   * Headless-wake a miniapp's background context AND wait for its CONNECT
+   * handshake (for action invoke). No foreground, no arbitration. Rejects on
+   * spawn/connect failure.
+   */
+  wakeMiniapp: (packageName: string) => Promise<void>
+  /** Optional audit sink — one event per interop call (caller, op, outcome). */
+  audit?: (event: InteropAuditEvent) => void
+}
+
 export interface RuntimeHooks {
   socketComms?: SocketCommsAdapter
   audioPlayback?: AudioPlaybackAdapter
@@ -365,6 +412,8 @@ export interface RuntimeHooks {
   cameraSettings?: CameraSettingsAdapter
   /** Phone-orchestrated RTMP/SRT/WHIP publishing. */
   streaming?: StreamingAdapter
+  /** Inter-miniapp interop (session.miniapps + session.actions.invoke). */
+  interop?: InteropAdapter
 }
 
 /**

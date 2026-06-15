@@ -48,11 +48,23 @@ abstract class SGCManager {
         width: Int,
         height: Int,
         fps: Int,
+        maxRecordingTimeMinutes: Int,
     ) {
         startVideoRecording(requestId, save, flash, sound)
     }
 
     abstract fun stopVideoRecording(requestId: String)
+
+    /**
+     * Stop recording and upload the result to [webhookUrl] (multipart) using
+     * [authToken]. These are supplied at stop time so the token is fresh when
+     * the upload runs. The base implementation ignores the upload target and
+     * just stops; devices that support webhook upload (e.g. Mentra Live)
+     * override this. An empty/null [webhookUrl] means "keep the video on device".
+     */
+    open fun stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?) {
+        stopVideoRecording(requestId)
+    }
 
     // Button Settings
     abstract fun sendButtonPhotoSettings()
@@ -64,6 +76,7 @@ abstract class SGCManager {
     // Display Control
     abstract fun setBrightness(level: Int, autoMode: Boolean)
     abstract fun clearDisplay()
+    abstract fun sendText(text: String)
     abstract fun sendTextWall(text: String)
     abstract fun sendDoubleTextWall(top: String, bottom: String)
     /**

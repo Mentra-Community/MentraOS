@@ -17,6 +17,7 @@ import Animated, {runOnJS, useAnimatedStyle, useSharedValue, withTiming} from "r
 
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {Text} from "@/components/ignite"
+import {DevIcon} from "@/components/miniapps/DevIcons"
 
 interface MiniappSplashProps {
   iconUrl?: string
@@ -25,26 +26,40 @@ interface MiniappSplashProps {
   name?: string
   error?: string
   label?: string
+  devApp?: boolean
+  /** Render at full opacity immediately instead of fading in (fade out still applies). */
+  disableFadeIn?: boolean
 }
 
 const FADE_IN_DURATION_MS = 50
 const FADE_OUT_DURATION_MS = 200
 const MIN_VISIBLE_MS = 700
 
-export default function MiniappSplash({iconUrl, bgColor, isLoaded = false, name, error, label}: MiniappSplashProps) {
+export default function MiniappSplash({
+  iconUrl,
+  bgColor,
+  isLoaded = false,
+  name,
+  error,
+  label,
+  devApp = false,
+  disableFadeIn = false,
+}: MiniappSplashProps) {
   const {theme} = useAppTheme()
   const size = 128
   const borderRadius = theme.spacing.s3
 
-  const opacity = useSharedValue(0)
+  const opacity = useSharedValue(disableFadeIn ? 1 : 0)
   const [hidden, setHidden] = useState(false)
   const [minVisibleElapsed, setMinVisibleElapsed] = useState(false)
 
   useEffect(() => {
-    opacity.value = withTiming(1, {duration: FADE_IN_DURATION_MS})
+    if (!disableFadeIn) {
+      opacity.value = withTiming(1, {duration: FADE_IN_DURATION_MS})
+    }
     const t = setTimeout(() => setMinVisibleElapsed(true), MIN_VISIBLE_MS)
     return () => clearTimeout(t)
-  }, [opacity])
+  }, [opacity, disableFadeIn])
 
   useEffect(() => {
     if (!isLoaded || !minVisibleElapsed) return
@@ -79,7 +94,8 @@ export default function MiniappSplash({iconUrl, bgColor, isLoaded = false, name,
             alignItems: "center",
             justifyContent: "center",
           }}>
-          {iconUrl ? (
+          {devApp && <DevIcon size={size} />}
+          {!devApp && iconUrl ? (
             <Image
               source={iconUrl}
               style={{width: "100%", height: "100%"}}

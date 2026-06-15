@@ -305,6 +305,24 @@ export type VideoRecordingStoppedStatusEvent = Omit<VideoRecordingStatusEvent, "
 
 export type VideoRecordingSuccessStatusEvent = VideoRecordingStartedStatusEvent | VideoRecordingStoppedStatusEvent
 
+export type MediaUploadSuccessEvent = {
+  type: "media_success"
+  requestId: string
+  mediaUrl: string
+  mediaType: number
+  timestamp: number
+}
+
+export type MediaUploadErrorEvent = {
+  type: "media_error"
+  requestId: string
+  errorMessage: string
+  mediaType: number
+  timestamp: number
+}
+
+export type MediaUploadEvent = MediaUploadSuccessEvent | MediaUploadErrorEvent
+
 export type GalleryStatusEvent = {
   type: "gallery_status"
   photos: number
@@ -414,6 +432,12 @@ export interface VideoRecordingSettings {
   width?: number
   height?: number
   fps?: number
+  /**
+   * Optional auto-stop timer in minutes, sent on `start_video_recording`.
+   * `0` (the default) means record until stopped or interrupted
+   * (battery/storage/thermal/error).
+   */
+  maxRecordingTimeMinutes?: number
 }
 export const DeviceModels = {
   Simulated: "Simulated Glasses",
@@ -742,6 +766,8 @@ export type BluetoothSdkModuleEvents = {
   photo_response: (event: PhotoResponseEvent) => void
   photo_status: (event: PhotoStatusEvent) => void
   video_recording_status: (event: VideoRecordingStatusEvent) => void
+  media_success: (event: MediaUploadSuccessEvent) => void
+  media_error: (event: MediaUploadErrorEvent) => void
   gallery_status: (event: GalleryStatusEvent) => void
   compatible_glasses_search_stop: (event: CompatibleGlassesSearchStopEvent) => void
   heartbeat_sent: (event: HeartbeatSentEvent) => void
@@ -817,6 +843,8 @@ export type BluetoothSdkEventMap = {
   photo_response: PhotoResponseEvent
   photo_status: PhotoStatusEvent
   video_recording_status: VideoRecordingStatusEvent
+  media_success: MediaUploadSuccessEvent
+  media_error: MediaUploadErrorEvent
   gallery_status: GalleryStatusEvent
   compatible_glasses_search_stop: CompatibleGlassesSearchStopEvent
   swipe_volume_status: SwipeVolumeStatusEvent
@@ -897,7 +925,18 @@ export interface BluetoothSdkPublicModule {
     sound: boolean,
     settings?: VideoRecordingSettings,
   ): Promise<VideoRecordingStartedStatusEvent>
-  stopVideoRecording(requestId: string): Promise<VideoRecordingStoppedStatusEvent>
+  /**
+   * Stop the active recording. When {@link webhookUrl} is provided, the glasses
+   * upload the recorded video to it (multipart) using {@link authToken}. These
+   * are supplied at stop time (not start) so the token is fresh when the upload
+   * runs — a recording can last arbitrarily long. An empty/omitted webhook keeps
+   * the video on device (no upload).
+   */
+  stopVideoRecording(
+    requestId: string,
+    webhookUrl?: string,
+    authToken?: string,
+  ): Promise<VideoRecordingStoppedStatusEvent>
 
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
   stopStream(): Promise<StreamStatusEvent>
@@ -922,7 +961,7 @@ export interface BluetoothSdkPublicModule {
   /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
   checkForOtaUpdate(): Promise<OtaQueryResult>
   /** Start the OTA flow after your app has presented the available update to the user. */
-  startOtaUpdate(): Promise<OtaStartAckEvent>
+  startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
   /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
   retryOtaVersionCheck(): Promise<OtaQueryResult>
 

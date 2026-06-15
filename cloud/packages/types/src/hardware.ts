@@ -150,6 +150,9 @@ export interface Capabilities {
 
   // WiFi capability
   hasWifi: boolean;
+
+  // OTA capability
+  hasOta: boolean;
 }
 
 /**

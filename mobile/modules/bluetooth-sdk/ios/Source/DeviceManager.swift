@@ -1171,9 +1171,9 @@ struct ViewState {
     /// Send OTA start command to glasses.
     /// Called when user approves an update (onboarding or background mode).
     /// Triggers glasses to begin download and installation.
-    func sendOtaStart() {
+    func sendOtaStart(otaVersionUrl: String? = nil) {
         Bridge.log("MAN: 📱 Sending OTA start command to glasses")
-        sgc?.sendOtaStart()
+        sgc?.sendOtaStart(otaVersionUrl: otaVersionUrl)
     }
 
     func sendOtaQueryStatus() {
@@ -1240,20 +1240,22 @@ struct ViewState {
 
     func startVideoRecording(
         _ requestId: String, _ save: Bool, _ sound: Bool, _ width: Int = 0, _ height: Int = 0,
-        _ fps: Int = 0
+        _ fps: Int = 0, _ maxRecordingTimeMinutes: Int = 0
     ) {
         Bridge.log(
-            "MAN: onStartVideoRecording: requestId=\(requestId), save=\(save), flash=true, sound=\(sound), resolution=\(width)x\(height)@\(fps)fps"
+            "MAN: onStartVideoRecording: requestId=\(requestId), save=\(save), flash=true, sound=\(sound), resolution=\(width)x\(height)@\(fps)fps, maxRecordingTimeMinutes=\(maxRecordingTimeMinutes)"
         )
         sgc?.startVideoRecording(
             requestId: requestId, save: save, flash: true, sound: sound, width: width, height: height,
-            fps: fps
+            fps: fps, maxRecordingTimeMinutes: maxRecordingTimeMinutes
         )
     }
 
-    func stopVideoRecording(_ requestId: String) {
-        Bridge.log("MAN: onStopVideoRecording: requestId=\(requestId)")
-        sgc?.stopVideoRecording(requestId: requestId)
+    func stopVideoRecording(_ requestId: String, _ webhookUrl: String?, _ authToken: String?) {
+        Bridge.log(
+            "MAN: onStopVideoRecording: requestId=\(requestId), webhook=\((webhookUrl?.isEmpty ?? true) ? "none" : "set")"
+        )
+        sgc?.stopVideoRecording(requestId: requestId, webhookUrl: webhookUrl, authToken: authToken)
     }
 
     func setMicState() {
@@ -1452,6 +1454,7 @@ struct ViewState {
         DeviceStore.shared.apply("glasses", "deviceModel", "")
         DeviceStore.shared.apply("glasses", "fullyBooted", false)
         DeviceStore.shared.apply("glasses", "connected", false)
+        DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
         DeviceStore.shared.apply("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.voiceActivityDetectionEnabled)
         // disconnect the controller as well:
         searchingController = false

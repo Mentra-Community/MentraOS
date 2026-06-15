@@ -79,6 +79,13 @@
                 ]
               },
               {
+                "group": "Miniapp Interop",
+                "icon": "arrows-left-right",
+                "pages": [
+                  "app-devs/core-concepts/miniapp-interop"
+                ]
+              },
+              {
                 "group": "Device",
                 "icon": "glasses",
                 "pages": [
@@ -231,7 +238,7 @@
             "group": "Getting Started",
             "icon": "bluetooth",
             "pages": [
-              "mentra-live/index",
+              "mentra-live/overview",
               "mentra-live/ai-ide-integration",
               "mentra-live/quickstart",
               "mentra-live/examples"

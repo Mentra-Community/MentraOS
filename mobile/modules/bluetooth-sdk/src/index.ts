@@ -21,6 +21,8 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "photo_response",
   "photo_status",
   "video_recording_status",
+  "media_success",
+  "media_error",
   "gallery_status",
   "compatible_glasses_search_stop",
   "swipe_volume_status",

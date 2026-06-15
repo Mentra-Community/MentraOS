@@ -3,7 +3,11 @@ import Foundation
 public struct MentraBluetoothSDKConfiguration {
     public static let `default` = MentraBluetoothSDKConfiguration()
 
-    public init() {}
+    public let analytics: BluetoothSdkAnalyticsConfiguration
+
+    public init(analytics: BluetoothSdkAnalyticsConfiguration = BluetoothSdkAnalyticsConfiguration()) {
+        self.analytics = analytics
+    }
 }
 
 public enum DeviceModel: String {

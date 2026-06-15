@@ -4,6 +4,7 @@ export {miniappRunningRegistry} from "./services/MiniappRunningRegistry"
 export {
   default as appRegistry,
   normalizeManifestPermissions,
+  normalizeManifestActions,
   buildHardwareRequirements,
   saveLocalAppRunningState,
   registerDevApp,
@@ -16,6 +17,14 @@ export {default as devServerBridge} from "./services/DevServerBridge"
 export {default as displayProcessor} from "./services/DisplayProcessor"
 export {default as localDisplayManager, type DisplayPayload} from "./services/LocalDisplayManager"
 export {default as localMiniappRuntime, type InstalledMiniappManifest} from "./services/LocalMiniappRuntime"
+export {
+  miniappLauncher,
+  configureLauncher,
+  type LauncherDeps,
+  type LaunchHints,
+  type LaunchResult,
+  type ResolvedBundle,
+} from "./services/MiniappLauncher"
 export {
   MentraJSRouter,
   type MentraJSCrustBinding,
@@ -67,6 +76,8 @@ export {
   type GlassesSnapshot,
   type StreamingAdapter,
   type PhotoAdapter,
+  type InteropAdapter,
+  type InteropAuditEvent,
 } from "./runtime/config"
 
 // Stores

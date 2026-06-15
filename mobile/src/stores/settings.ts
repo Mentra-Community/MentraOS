@@ -24,15 +24,10 @@ interface Setting {
 
 export const SETTINGS: Record<string, Setting> = {
   // feature flags / mantle settings:
-  dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
+  dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},// deprecated
+  debug_mode: {key: "debug_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
   super_mode: {key: "super_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
-  public_dev_mode: {
-    key: "public_dev_mode",
-    defaultValue: () => false,
-    writable: true,
-    saveOnServer: true,
-    persist: true,
-  },
+  miniapp_dev_mode: {key: "miniapp_dev_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
   enable_squircles: {
     key: "enable_squircles",
     defaultValue: () => true,
@@ -65,6 +60,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  ios_app_switcher_bottom_swipe: {
+    key: "ios_app_switcher_bottom_swipe",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   debug_console: {
     key: "debug_console",
     defaultValue: () => false,
@@ -88,7 +90,7 @@ export const SETTINGS: Record<string, Setting> = {
   },
   // Mentra Nex feature flags (off by default; toggled from Nex Developer Settings).
   // When on, the Nex display skips ASCII-only text sanitization so CJK/Chinese
-  // captions render on glasses. Synced to core via CORE_SETTINGS_KEYS.
+  // captions render on glasses. Synced to the Bluetooth SDK via BLUETOOTH_SETTING_KEYS.
   nex_chinese_captions: {
     key: "nex_chinese_captions",
     defaultValue: () => false,
@@ -158,6 +160,23 @@ export const SETTINGS: Record<string, Setting> = {
     defaultValue: () => [],
     writable: true,
     saveOnServer: true,
+    persist: true,
+  },
+  // Developer override for the ASG OTA manifest URL. null/empty = no override;
+  // the normal selection applies (legacy-glasses gate, EXPO_PUBLIC_ASG_OTA_VERSION_URL,
+  // glasses-reported URL, then production). See getAsgOtaVersionUrl.
+  ota_version_url: {
+    key: "ota_version_url",
+    defaultValue: () => null,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  saved_ota_version_urls: {
+    key: "saved_ota_version_urls",
+    defaultValue: () => [],
+    writable: true,
+    saveOnServer: false,
     persist: true,
   },
   reconnect_on_app_foreground: {
@@ -616,10 +635,10 @@ export const SETTINGS: Record<string, Setting> = {
 
 export const OFFLINE_APPLETS: string[] = ["com.mentra.livecaptions", "com.mentra.camera"]
 
-// These settings are automatically synced to core.
+// These settings are automatically synced to the Bluetooth SDK.
 // Keep this list hardware-facing; app/UI/cloud-only preferences should stay in JS/Crust.
-const CORE_SETTINGS_KEYS: string[] = [
-  // core settings:
+const BLUETOOTH_SETTING_KEYS: string[] = [
+  // Bluetooth settings:
   SETTINGS.sensing_enabled.key,
   SETTINGS.power_saving_mode.key,
   SETTINGS.voice_activity_detection_enabled.key,
@@ -685,7 +704,7 @@ interface SettingsState {
   // Utility methods
   getRestUrl: () => string
   getWsUrl: () => string
-  getCoreSettings: () => Record<string, any>
+  getBluetoothSettings: () => Record<string, any>
   resetAllSettingsLocally: () => void
 }
 
@@ -902,15 +921,15 @@ export const useSettingsStore = create<SettingsState>()(
       const secure = url.protocol === "https:"
       return `${secure ? "wss" : "ws"}://${url.hostname}:${url.port || (secure ? 443 : 80)}/glasses-ws`
     },
-    getCoreSettings: () => {
+    getBluetoothSettings: () => {
       const state = get()
-      const coreSettings: Record<string, any> = {}
+      const bluetoothSettings: Record<string, any> = {}
       Object.values(SETTINGS).forEach((setting) => {
-        if (CORE_SETTINGS_KEYS.includes(setting.key)) {
-          coreSettings[setting.key] = state.getSetting(setting.key)
+        if (BLUETOOTH_SETTING_KEYS.includes(setting.key)) {
+          bluetoothSettings[setting.key] = state.getSetting(setting.key)
         }
       })
-      return coreSettings
+      return bluetoothSettings
     },
     resetAllSettingsLocally: () => {
       set((_state) => ({

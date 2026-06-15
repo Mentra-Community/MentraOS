@@ -132,7 +132,7 @@ describe("PhoneStreamCoordinator", () => {
       expect(coord.owns(streamId)).toBe(true)
     })
 
-    test("start rolls back state if CoreModule.startExternallyManagedStream rejects", async () => {
+    test("start rolls back state if BluetoothSdk.startExternallyManagedStream rejects", async () => {
       startExternallyManagedStream.mockRejectedValueOnce(new Error("BLE down"))
       const coord = new PhoneStreamCoordinator({
         hlsReadinessInitialDelayMs: 5,
@@ -370,7 +370,7 @@ describe("PhoneStreamCoordinator", () => {
       })
       const startP = coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
       // Fire stop before start has resolved. Without the lock, stop would
-      // immediately call CoreModule.stopStream and clear `current`, racing
+      // immediately call BluetoothSdk.stopStream and clear `current`, racing
       // with the still-in-flight start.
       const stopP = coord.stop("com.a")
       await Promise.all([startP, stopP])

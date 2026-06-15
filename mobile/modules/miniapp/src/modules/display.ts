@@ -11,7 +11,7 @@
  *     layout: { layoutType: "text_wall", text: "..." },
  *     durationMs?: number }
  *
- * The phone's LocalMiniappRuntime forwards this to CoreModule.displayEvent,
+ * The phone's LocalMiniappRuntime forwards this to BluetoothSdk.displayEvent,
  * which reads event.view and event.layout.layoutType.
  */
 

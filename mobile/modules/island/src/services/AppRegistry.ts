@@ -22,7 +22,7 @@ import {unzip} from "react-native-zip-archive"
 import semver from "semver"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
-import type {AppletPermission, AppPermissionType, ClientApp} from "../types/applet"
+import type {AppletPermission, AppPermissionType, ClientApp, DeclaredAction} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
@@ -63,6 +63,29 @@ export function normalizeManifestPermissions(
           ...(typeof p.description === "string" ? {description: p.description} : {}),
         })
       }
+    }
+  }
+  return out
+}
+
+/**
+ * Normalize a manifest's `actions` into DeclaredAction[]. Defensive — keeps only
+ * well-formed `{id, description}` entries (installed/dev bundles may be
+ * malformed). Shared by installed (disk) and dev-sideload projection so both
+ * surface declared actions to session.miniapps.list + the invoke gate.
+ */
+export function normalizeManifestActions(raw: unknown): DeclaredAction[] {
+  if (!Array.isArray(raw)) return []
+  const out: DeclaredAction[] = []
+  for (const a of raw as Array<{id?: unknown; description?: unknown; parameters?: unknown}>) {
+    if (a && typeof a.id === "string" && typeof a.description === "string") {
+      out.push({
+        id: a.id,
+        description: a.description,
+        ...(a.parameters && typeof a.parameters === "object"
+          ? {parameters: a.parameters as Record<string, unknown>}
+          : {}),
+      })
     }
   }
   return out
@@ -706,10 +729,14 @@ class AppRegistry {
         const manifest = this.getMiniappManifest(lmaInfo.packageName, versionString) as {
           permissions?: Array<string | {type: string; required?: boolean; description?: string}>
           hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+          actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
         } | null
 
         const permissions = normalizeManifestPermissions(manifest?.permissions)
         const hardwareRequirements = buildHardwareRequirements(manifest?.hardwareRequirements, lmaInfo.packageName)
+
+        // Declared actions (for session.miniapps.list + invoke gating).
+        const actions = normalizeManifestActions(manifest?.actions)
 
         // Dev miniapps live in the same lmas/ tree as installed ones, but
         // their version directory name starts with "dev-".
@@ -736,6 +763,10 @@ class AppRegistry {
           type: "standard",
           permissions,
           hardwareRequirements,
+          // Always project actions (even []) so the invoke gate can enforce
+          // declared-action membership unconditionally — an app with no declared
+          // actions must reject every invoke, not bypass the check.
+          actions,
           ...(isMiniappDev ? {isMiniappDev: true} : {}),
           ...(devUrl ? {devUrl} : {}),
           onStart: () => saveLocalAppRunningState(lmaInfo.packageName, true),
@@ -789,6 +820,7 @@ class AppRegistry {
         type: "standard",
         permissions,
         hardwareRequirements,
+        actions: normalizeManifestActions(rec.actions),
         isMiniappDev: true,
         devUrl: rec.devUrl,
         onStart: () => saveLocalAppRunningState(rec.packageName, true),
@@ -869,6 +901,8 @@ export interface DevAppRecord {
   devPort?: number
   permissions?: Array<string | {type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+  /** Manifest-declared actions — so dev-sideloaded miniapps can be invoked too. */
+  actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown}>
   /**
    * The dev miniapp's real manifest package name. `packageName` is overwritten to
    * {@link DEV_APP_PACKAGE_NAME} so the launch chain routes consistently, so this field
@@ -892,13 +926,18 @@ const DEV_APPS_INDEX_KEY = "dev_apps_index"
  * the dev URL/port and foreground target used the manifest name.
  */
 export const DEV_APP_PACKAGE_NAME = "com.dev"
-// const DEV_APP_NAME = "Dev App"
+export const DEV_APP_NAME = "Dev"
 
 /**
  * Register (or replace) THE dev miniapp. Persists the home-tile metadata AND
  * the dev_url/dev_port keyed on {@link DEV_APP_PACKAGE_NAME}, so this function
  * is the single source of truth for the dev slot — callers must not write the
  * `*_dev_url` / `*_dev_port` keys under the manifest's real package name.
+ *
+ * Callers pass the manifest's REAL packageName/name; this function overwrites
+ * both (packageName → {@link DEV_APP_PACKAGE_NAME}, name → {@link DEV_APP_NAME})
+ * so the home tile and launch chain key on the single dev slot, while the real
+ * package survives in `sourcePackageName` for clearDevArtifacts.
  */
 export function registerDevApp(record: DevAppRecord): void {
   const devRecord: DevAppRecord = {
@@ -908,7 +947,7 @@ export function registerDevApp(record: DevAppRecord): void {
     // actually targets the dev slot.
     sourcePackageName: record.sourcePackageName ?? record.packageName,
     packageName: DEV_APP_PACKAGE_NAME,
-    // name: DEV_APP_NAME,
+    name: DEV_APP_NAME,
     iconUrl: record.iconUrl,
   }
   storage.save(`${DEV_APP_PACKAGE_NAME}_dev_meta`, JSON.stringify(devRecord))

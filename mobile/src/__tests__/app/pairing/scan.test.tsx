@@ -14,10 +14,10 @@ import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {resetCoreModuleMock} from "@/test-utils/mockCoreModule"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
-  const {coreModuleMock} = require("@/test-utils/mockCoreModule")
+  const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
   return {
     __esModule: true,
-    default: coreModuleMock,
+    default: bluetoothSdkMock,
   }
 })
 
@@ -149,6 +149,21 @@ jest.mock("@/components/ignite", () => {
   }
 })
 
+import {render, fireEvent, waitFor} from "@testing-library/react-native"
+import type {ReactNode} from "react"
+import {Platform} from "react-native"
+
+import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {useLocalSearchParams} from "expo-router"
+import {usePushUnder} from "@/contexts/NavigationHistoryContext"
+import {useNavigationStore} from "@/stores/navigation"
+import {requestFeaturePermissions} from "@/utils/PermissionsUtils"
+import SelectGlassesBluetoothScreen from "@/app/pairing/scan"
+import {useCoreStore} from "@/stores/core"
+import {useGlassesStore} from "@/stores/glasses"
+import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
+
 const originalPlatformOS = Platform.OS
 
 function setPlatformOS(os: typeof Platform.OS) {
@@ -162,7 +177,7 @@ describe("pairing scan screen", () => {
   const goBack = jest.fn()
 
   beforeEach(() => {
-    resetCoreModuleMock()
+    resetBluetoothSdkMock()
     jest.clearAllMocks()
     useCoreStore.getState().reset()
     useGlassesStore.getState().reset()

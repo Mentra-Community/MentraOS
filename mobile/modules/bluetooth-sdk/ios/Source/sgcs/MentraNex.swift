@@ -81,6 +81,10 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         updateGlassesAutoBrightness(autoMode)
     }
 
+    func sendText(_ text: String) async {
+        await sendTextWall(text)
+    }
+
     func sendDoubleTextWall(_ top: String, _ bottom: String) async {
         await sendTextWall("\(top)\n\(bottom)")
     }
@@ -178,7 +182,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     func sendHotspotState(_: Bool) {}
 
-    func sendOtaStart() {}
+    func sendOtaStart(otaVersionUrl: String?) {}
     func sendOtaQueryStatus() {}
 
     func sendUserEmailToGlasses(_: String) {}

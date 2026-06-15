@@ -77,6 +77,18 @@ export interface AppletInterface {
  * dev-miniapp escape hatches (`devUrl` / `isMiniappDev`) that surface a
  * `mentra-miniapp dev` snapshot.
  */
+/**
+ * A manifest-declared action a miniapp exposes for other (system) miniapps to
+ * invoke via `session.actions`. Populated from `miniapp.json`'s `actions` field.
+ * Shape maps 1:1 onto an MCP tool (id→name, description, parameters→inputSchema).
+ */
+export interface DeclaredAction {
+  id: string
+  description: string
+  /** JSON-Schema input descriptor (MCP-compatible subset). */
+  parameters?: Record<string, unknown>
+}
+
 export interface ClientApp extends AppletInterface {
   offline: boolean
   offlineRoute: string
@@ -94,4 +106,6 @@ export interface ClientApp extends AppletInterface {
   needsTranscript?: boolean
   devUrl?: string
   isMiniappDev?: boolean
+  /** Manifest-declared actions (for session.miniapps.list + invoke gating). */
+  actions?: DeclaredAction[]
 }

@@ -63,7 +63,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
             </View>
           )}
           {app.isMiniappDev && <DevIcon size={iconSize.width as number} />}
-          {!app.isMiniappDev && (
+          {!app.isMiniappDev && !app.iconComponent && (
             <Image
               source={imageSource}
               style={{width: "100%", height: "100%", resizeMode: "cover"}}

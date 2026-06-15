@@ -9,8 +9,6 @@
 import {useEffect} from "react"
 import {ScrollView, View, Text} from "react-native"
 
-import CoreModule from "@mentra/bluetooth-sdk"
-
 import {Header, Screen} from "@/components/ignite"
 import {Group} from "@/components/ui"
 import {RouteButton} from "@/components/ui/RouteButton"
@@ -42,7 +40,7 @@ export default function StressTest() {
           )
         }
       } catch {
-        // CoreModule may not be loaded on Android — ignore.
+        // BluetoothSdk may not be loaded on Android — ignore.
       }
     }
     tick()

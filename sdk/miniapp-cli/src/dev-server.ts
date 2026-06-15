@@ -227,6 +227,7 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
     if (isUnder(filename, "node_modules")) return
     if (isUnder(filename, ".git")) return
     if (isUnder(filename, "dist")) return
+    if (isUnder(filename, "build")) return // pack/release zip output
     if (isUnder(filename, ".next")) return
 
     // Decide which layer the change touched. Order matters: a single batch
