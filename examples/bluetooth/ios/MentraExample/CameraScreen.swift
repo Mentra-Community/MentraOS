@@ -3,7 +3,7 @@ import MentraBluetoothSDK
 import SwiftUI
 import UIKit
 
-private let photoSizeOptions: [PhotoSize] = [.small, .medium, .large, .full]
+private let photoSizeOptions: [PhotoSize] = [.low, .medium, .high, .max]
 private let photoCompressionOptions: [PhotoCompression] = [.none, .medium, .heavy]
 
 private func cameraSdkCall(
@@ -13,8 +13,33 @@ private func cameraSdkCall(
     exposureTimeNs: Int,
     iso: Int,
     cameraFov: Int,
-    cameraRoiPosition: Int
+    cameraRoiPosition: Int,
+    scanMode: Bool,
+    scanAeDivisor: Int,
+    scanIsoCap: Int
 ) -> String {
+    if scanMode {
+        return """
+    let photo = try await mentraBluetoothSdk.requestPhoto(
+        PhotoRequest(
+          requestId: requestId,
+          appId: "com.mentra.bluetoothsdk.example.ios",
+          size: .max,
+          webhookUrl: uploadUrl,
+          compress: .none,
+          sound: false,
+          aeExposureDivisor: \(scanAeDivisor),
+          isoCap: \(scanIsoCap),
+          noiseReduction: false,
+          edgeEnhancement: false,
+          mfnr: false,
+          ispDigitalGain: 0,
+          ispAnalogGain: "low"
+        )
+    )
+    print("Scan photo delivered: \\(photo.requestId)")
+    """
+    }
     let exposureLine = exposureManual
         ? "      exposureTimeNs: \(exposureTimeNs),"
         : "      exposureTimeNs: nil, // auto exposure"
@@ -140,7 +165,7 @@ struct CameraScreen: View {
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "camera").foregroundColor(.white).font(.system(size: 15, weight: .bold))
-                    Text(!model.glassesConnected ? "Connect glasses first" : !model.glassesWifiConnected ? "Connect glasses to Wi-Fi" : model.activeAction == "Capture & upload" ? "Capturing..." : "Capture photo").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
+                    Text(!model.glassesConnected ? "Connect glasses first" : !model.glassesWifiConnected ? "Connect glasses to Wi-Fi" : model.activeAction == "Capture & upload" ? "Capturing..." : model.scanMode ? "Capture scan photo" : "Capture photo").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
                 .background(LinearGradient(colors: [Color(hex: 0x26473A), Color(hex: 0x1F3A2A)], startPoint: .top, endPoint: .bottom))
@@ -149,6 +174,10 @@ struct CameraScreen: View {
             .disabled(!model.glassesConnected || !model.glassesWifiConnected)
             .opacity(model.glassesConnected && model.glassesWifiConnected ? 1 : 0.55)
             .padding(.horizontal, 6).padding(.top, 14)
+
+            ScanModeSettingsCard(model: model)
+                .padding(.horizontal, 6)
+                .padding(.top, 12)
         }
     }
 
@@ -160,7 +189,10 @@ struct CameraScreen: View {
             exposureTimeNs: model.photoExposureTimeNs,
             iso: model.photoIso,
             cameraFov: model.cameraFov,
-            cameraRoiPosition: model.cameraRoiPosition
+            cameraRoiPosition: model.cameraRoiPosition,
+            scanMode: model.scanMode,
+            scanAeDivisor: model.scanAeDivisor,
+            scanIsoCap: model.scanIsoCap
         )
         return VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
@@ -288,8 +320,15 @@ struct CameraScreen: View {
             VStack(alignment: .leading, spacing: 10) {
                 CameraOptionGroup(label: "size") {
                     ForEach(photoSizeOptions, id: \.rawValue) { size in
-                        CameraOptionChip(value: size.rawValue, highlight: model.photoSize == size)
-                            .onTapGesture { model.setPhotoSize(size) }
+                        CameraOptionChip(
+                            value: size.rawValue,
+                            highlight: !model.scanMode && model.photoSize == size
+                        )
+                        .opacity(model.scanMode ? 0.45 : 1)
+                        .onTapGesture {
+                            guard !model.scanMode else { return }
+                            model.setPhotoSize(size)
+                        }
                     }
                 }
 
@@ -353,6 +392,50 @@ struct CameraScreen: View {
                 }
             }
         }
+    }
+}
+
+private struct ScanModeSettingsCard: View {
+    @ObservedObject var model: BluetoothViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("SCAN MODE")
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(1.1)
+                        .foregroundColor(AppColor.muted)
+                    Text(model.scanMode ? "Document / barcode capture preset" : "Standard photo capture")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(AppColor.greenAccent)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(get: { model.scanMode }, set: model.setScanMode))
+                    .labelsHidden()
+                    .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
+            }
+            if model.scanMode {
+                Text("Pushes size, MFNR, NR, edge, and ISP gain presets to glasses (HAL may warn not_implemented). AE÷\(model.scanAeDivisor) and ISO cap \(model.scanIsoCap) still ship on capture.")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(AppColor.muted)
+                HStack(spacing: 8) {
+                    CameraOptionChip(value: "AE ÷3", highlight: model.scanAeDivisor == 3)
+                        .onTapGesture { model.setScanAeDivisor(3) }
+                    CameraOptionChip(value: "AE ÷5", highlight: model.scanAeDivisor == 5)
+                        .onTapGesture { model.setScanAeDivisor(5) }
+                }
+                HStack(spacing: 8) {
+                    CameraOptionChip(value: "ISO 800", highlight: model.scanIsoCap == 800)
+                        .onTapGesture { model.setScanIsoCap(800) }
+                    CameraOptionChip(value: "ISO 400", highlight: model.scanIsoCap == 400)
+                        .onTapGesture { model.setScanIsoCap(400) }
+                }
+            }
+        }
+        .padding(14)
+        .background(AppColor.ink.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 }
 

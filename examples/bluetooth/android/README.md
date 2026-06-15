@@ -17,7 +17,7 @@ This example installs the SDK as `com.mentraglass:bluetooth-sdk` and is intended
 The example reads the SDK version from `gradle.properties`:
 
 ```properties
-mentraSdkVersion=0.1.11
+mentraSdkVersion=0.1.12
 ```
 
 Use the latest SDK version published by Mentra. If a future release note lists an additional Maven repository, add it to `settings.gradle.kts` beside `google()` and `mavenCentral()`.
@@ -84,7 +84,7 @@ artifacts instead of a stale local copy.
 The example has five tabs:
 
 - **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state, and explicitly check/start OTA updates once the glasses are connected to Wi-Fi.
-- **Camera**: request photo upload to the local demo cloud or directly to this phone, tune manual exposure and ISO, then preview the received JPEG.
+- **Camera**: request photo upload to the local demo cloud or directly to this phone, tune manual exposure and ISO, enable **Scan Mode** for document/barcode capture presets (max resolution, AE divisor, ISO cap, edge/MFNR off), then preview the received JPEG.
 - **Stream**: start RTMP, SRT, or WebRTC streams with SDK-managed keep-alives and preview HLS/WebRTC output. WebRTC can be received directly on the phone through the app-hosted GStreamer WHIP receiver.
 - **System**: scan/connect/forget Wi-Fi, toggle hotspot, change gallery mode, receive microphone PCM, and send RGB LED controls.
 - **Console**: watch button, touch, swipe, BLE, TX, STORE, hotspot, stream, photo, microphone, and SDK diagnostic events.

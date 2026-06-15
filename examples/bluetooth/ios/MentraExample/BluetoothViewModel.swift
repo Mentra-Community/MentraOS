@@ -198,7 +198,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var photoPreviewUrl: URL?
     @Published private(set) var photoPreviewImage: UIImage?
     @Published private(set) var photoDestination: PhotoDestination = .thisPhone
-    @Published private(set) var photoSize: PhotoSize = .full
+    @Published private(set) var photoSize: PhotoSize = .max
+    @Published private(set) var scanMode = false
+    @Published private(set) var scanAeDivisor = 3
+    @Published private(set) var scanIsoCap = 800
     @Published private(set) var photoCompression: PhotoCompression = .none
     @Published private(set) var photoExposureManual = false
     @Published private(set) var photoExposureTimeNs = photoExposureDefaultNs
@@ -488,6 +491,85 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         photoCompression = compression
     }
 
+    func setScanMode(_ enabled: Bool) {
+        scanMode = enabled
+        guard glassesConnected else { return }
+        Task {
+            do {
+                if enabled {
+                    _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
+                        ButtonPhotoSettings(
+                            size: .max,
+                            mfnr: false,
+                            zsl: false,
+                            noiseReduction: false,
+                            edgeEnhancement: false,
+                            ispDigitalGain: 0,
+                            ispAnalogGain: "low",
+                            aeExposureDivisor: scanAeDivisor,
+                            isoCap: scanIsoCap,
+                            compress: "none",
+                            sound: false
+                        )
+                    )
+                } else {
+                    let size = ButtonPhotoSize(rawValue: photoSize.rawValue) ?? .max
+                    _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
+                        ButtonPhotoSettings(
+                            size: size,
+                            mfnr: true,
+                            zsl: true,
+                            resetCaptureTuning: true
+                        )
+                    )
+                }
+            } catch {
+                cameraStatus = "Camera: failed to sync scan preset - \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func setScanAeDivisor(_ divisor: Int) {
+        let nextDivisor = divisor > 3 ? 5 : 3
+        scanAeDivisor = nextDivisor
+        if scanMode {
+            pushScanButtonPreset(aeDivisor: nextDivisor, isoCap: scanIsoCap)
+        }
+    }
+
+    func setScanIsoCap(_ isoCap: Int) {
+        let nextIsoCap = isoCap <= 400 ? 400 : 800
+        scanIsoCap = nextIsoCap
+        if scanMode {
+            pushScanButtonPreset(aeDivisor: scanAeDivisor, isoCap: nextIsoCap)
+        }
+    }
+
+    private func pushScanButtonPreset(aeDivisor: Int, isoCap: Int) {
+        guard glassesConnected else { return }
+        Task {
+            do {
+                _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
+                    ButtonPhotoSettings(
+                        size: .max,
+                        mfnr: false,
+                        zsl: false,
+                        noiseReduction: false,
+                        edgeEnhancement: false,
+                        ispDigitalGain: 0,
+                        ispAnalogGain: "low",
+                        aeExposureDivisor: aeDivisor,
+                        isoCap: isoCap,
+                        compress: "none",
+                        sound: false
+                    )
+                )
+            } catch {
+                cameraStatus = "Camera: failed to sync scan preset - \(error.localizedDescription)"
+            }
+        }
+    }
+
     func setPhotoExposureManual(_ enabled: Bool) {
         photoExposureManual = enabled
     }
@@ -565,16 +647,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             let responseEvent: PhotoResponseEvent
             do {
                 responseEvent = try await mentraBluetoothSdk.requestPhoto(
-                    PhotoRequest(
-                        requestId: requestId,
-                        appId: "com.mentra.bluetoothsdk.example.ios",
-                        size: photoSize,
-                        webhookUrl: uploadUrl,
-                        compress: photoCompression,
-                        sound: true,
-                        exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
-                        iso: photoExposureManual ? photoIso : nil
-                    )
+                    buildPhotoRequest(requestId: requestId, appId: "com.mentra.bluetoothsdk.example.ios", webhookUrl: uploadUrl)
                 )
             } catch {
                 if activePhotoRequestId == requestId {
@@ -609,16 +682,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         let responseEvent: PhotoResponseEvent
         do {
             responseEvent = try await mentraBluetoothSdk.requestPhoto(
-                PhotoRequest(
-                    requestId: requestId,
-                    appId: "com.mentra.bluetoothsdk.example.ios",
-                    size: photoSize,
-                    webhookUrl: uploadUrl,
-                    compress: photoCompression,
-                    sound: true,
-                    exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
-                    iso: photoExposureManual ? photoIso : nil
-                )
+                buildPhotoRequest(requestId: requestId, appId: "com.mentra.bluetoothsdk.example.ios", webhookUrl: uploadUrl)
             )
         } catch {
             directPhotoTimeoutTask?.cancel()
@@ -630,6 +694,36 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
         handlePhotoResponse(responseEvent.response)
         append(tag: "TX", text: "requestPhoto requestId=\(requestId) webhookUrl=\(uploadUrl)")
+    }
+
+    private func buildPhotoRequest(requestId: String, appId: String, webhookUrl: String) -> PhotoRequest {
+        if scanMode {
+            return PhotoRequest(
+                requestId: requestId,
+                appId: appId,
+                size: .max,
+                webhookUrl: webhookUrl,
+                compress: .none,
+                sound: false,
+                aeExposureDivisor: scanAeDivisor,
+                isoCap: scanIsoCap,
+                noiseReduction: false,
+                edgeEnhancement: false,
+                mfnr: false,
+                ispDigitalGain: 0,
+                ispAnalogGain: "low"
+            )
+        }
+        return PhotoRequest(
+            requestId: requestId,
+            appId: appId,
+            size: photoSize,
+            webhookUrl: webhookUrl,
+            compress: photoCompression,
+            sound: true,
+            exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
+            iso: photoExposureManual ? photoIso : nil
+        )
     }
 
     private func startPhonePhotoServer() throws -> String {

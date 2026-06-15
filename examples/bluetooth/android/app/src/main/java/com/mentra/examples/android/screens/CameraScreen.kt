@@ -86,6 +86,9 @@ fun CameraScreen(controller: MentraExampleController) {
         state.photoIso,
         state.cameraFov,
         state.cameraRoiPosition,
+        state.scanMode,
+        state.scanAeDivisor,
+        state.scanIsoCap,
     )
     val clipboardManager = LocalClipboardManager.current
     var photoDetailsExpanded by remember { mutableStateOf(false) }
@@ -155,6 +158,8 @@ fun CameraScreen(controller: MentraExampleController) {
                             "Connect glasses to Wi-Fi"
                         } else if (state.activeAction == "Capture & upload") {
                             "Capturing..."
+                        } else if (state.scanMode) {
+                            "Capture scan photo"
                         } else {
                             "Capture photo"
                         },
@@ -163,6 +168,10 @@ fun CameraScreen(controller: MentraExampleController) {
                         fontWeight = FontWeight.SemiBold
                     )
                 }
+            }
+            Spacer(Modifier.height(12.dp))
+            Box(Modifier.padding(horizontal = 6.dp)) {
+                ScanModeSettingsCard(controller)
             }
         }
 
@@ -321,7 +330,11 @@ fun CameraScreen(controller: MentraExampleController) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 CameraOptionGroup("size") {
                     photoSizeOptions.forEach { size ->
-                        OptionChip(size, state.photoSize == size) { controller.setPhotoSize(size) }
+                        OptionChip(
+                            size,
+                            !state.scanMode && state.photoSize == size,
+                            enabled = !state.scanMode,
+                        ) { controller.setPhotoSize(size) }
                     }
                 }
                 CameraOptionGroup("compress") {
@@ -337,6 +350,48 @@ fun CameraScreen(controller: MentraExampleController) {
         }
 
         Spacer(Modifier.height(scrollBottomPadding()))
+    }
+}
+
+@Composable
+private fun ScanModeSettingsCard(controller: MentraExampleController) {
+    val state = controller.state
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(AppColor.ink.copy(alpha = 0.04f))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("SCAN MODE", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+                Text(
+                    if (state.scanMode) "Document / barcode capture preset" else "Standard photo capture",
+                    color = AppColor.greenAccent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Switch(checked = state.scanMode, onCheckedChange = controller::setScanMode)
+        }
+        if (state.scanMode) {
+            Text(
+                "Pushes size, MFNR, NR, edge, and ISP gain presets to glasses (HAL may warn not_implemented). AE÷${state.scanAeDivisor} and ISO cap ${state.scanIsoCap} still ship on capture.",
+                color = AppColor.muted,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OptionChip("AE ÷3", state.scanAeDivisor == 3) { controller.setScanAeDivisor(3) }
+                OptionChip("AE ÷5", state.scanAeDivisor == 5) { controller.setScanAeDivisor(5) }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OptionChip("ISO 800", state.scanIsoCap == 800) { controller.setScanIsoCap(800) }
+                OptionChip("ISO 400", state.scanIsoCap == 400) { controller.setScanIsoCap(400) }
+            }
+        }
     }
 }
 
