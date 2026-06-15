@@ -1140,6 +1140,12 @@ class Nimo : SGCManager() {
         sendTextWall(" ")
     }
 
+    override fun sendText(text: String) {
+        // Coalesced: only the most recent pending text survives until the next 100ms drain.
+        Bridge.log("NIMO: sendText(text=$text)")
+        pendingText = text
+    }
+
     override fun sendTextWall(text: String) {
         // Coalesced: only the most recent pending text survives until the next 100ms drain.
         Bridge.log("NIMO: sendTextWall(text=$text)")
