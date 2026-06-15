@@ -8,6 +8,8 @@ import org.json.JSONObject
 
 internal object OtaManifestDefaults {
     const val DEFAULT_OTA_VERSION_URL = "https://staging.ota.mentraglass.com/staging_live_version.json"
+    // Keep prod as the legacy-device fallback: pre-override ASG builds ignore
+    // ota_start.ota_version_url and use their compiled MentraOS default.
     const val PROD_OTA_VERSION_URL = "https://ota.mentraglass.com/prod_live_version.json"
 }
 
