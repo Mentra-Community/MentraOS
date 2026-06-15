@@ -467,28 +467,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
         runAction(if (enabled) "Apply scan preset on glasses" else "Restore photo preset on glasses") {
             requireConnected("sync photo capture settings")
+            // SDK 0.1.12 `ButtonPhotoSettings` only carries `size`. The granular scan tuning
+            // (mfnr/zsl/aeExposureDivisor/isoCap/edge/NR/ISP gains/resetCaptureTuning) ships in
+            // 0.1.13; bump the Maven pin and restore the full preset once published.
             val settings =
                 if (enabled) {
-                    ButtonPhotoSettings(
-                        size = ButtonPhotoSize.MAX,
-                        mfnr = false,
-                        zsl = false,
-                        noiseReduction = false,
-                        edgeEnhancement = false,
-                        ispDigitalGain = 0,
-                        ispAnalogGain = "low",
-                        aeExposureDivisor = state.scanAeDivisor,
-                        isoCap = state.scanIsoCap,
-                        compress = "none",
-                        sound = false,
-                    )
+                    ButtonPhotoSettings(size = ButtonPhotoSize.MAX)
                 } else {
-                    ButtonPhotoSettings(
-                        size = ButtonPhotoSize.fromValue(state.photoSize),
-                        mfnr = true,
-                        zsl = true,
-                        resetCaptureTuning = true,
-                    )
+                    ButtonPhotoSettings(size = ButtonPhotoSize.fromValue(state.photoSize))
                 }
             withContext(Dispatchers.IO) { mentraBluetoothSdk.setButtonPhotoSettings(settings) }
         }
@@ -514,23 +500,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (!isGlassesConnected()) {
             return
         }
+        // SDK 0.1.12 `ButtonPhotoSettings` cannot carry aeExposureDivisor/isoCap; the divisor and
+        // ISO-cap chips only drive on-device UI state until the 0.1.13 preset ships. Re-assert the
+        // max-size scan button preset so the hardware button stays in sync.
         runAction("Apply scan preset on glasses") {
             requireConnected("sync photo capture settings")
             withContext(Dispatchers.IO) {
                 mentraBluetoothSdk.setButtonPhotoSettings(
-                    ButtonPhotoSettings(
-                        size = ButtonPhotoSize.MAX,
-                        mfnr = false,
-                        zsl = false,
-                        noiseReduction = false,
-                        edgeEnhancement = false,
-                        ispDigitalGain = 0,
-                        ispAnalogGain = "low",
-                        aeExposureDivisor = aeDivisor,
-                        isoCap = isoCap,
-                        compress = "none",
-                        sound = false,
-                    ),
+                    ButtonPhotoSettings(size = ButtonPhotoSize.MAX),
                 )
             }
         }
@@ -2489,6 +2466,8 @@ fun cameraSdkCall(
 ): String {
     if (scanMode) {
         return """
+// Scan tuning (aeExposureDivisor $scanAeDivisor, isoCap $scanIsoCap, mfnr/edge off)
+// ships in SDK 0.1.13's PhotoRequest. On 0.1.12 we capture at max detail:
 val photo = mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
       requestId = requestId,
@@ -2497,13 +2476,6 @@ val photo = mentraBluetoothSdk.requestPhoto(
       webhookUrl = uploadUrl,
       compress = PhotoCompression.NONE,
       sound = false,
-      aeExposureDivisor = $scanAeDivisor,
-      isoCap = $scanIsoCap,
-      noiseReduction = false,
-      edgeEnhancement = false,
-      mfnr = false,
-      ispDigitalGain = 0,
-      ispAnalogGain = "low",
     )
 )
 println("Scan photo delivered: ${'$'}{photo.response.requestId}")

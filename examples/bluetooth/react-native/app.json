@@ -60,7 +60,14 @@
         }
       ],
       "expo-audio",
-      "expo-splash-screen",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#ffffff",
+          "image": "./assets/glasses/mentra_live.png",
+          "imageWidth": 200
+        }
+      ],
       "expo-video"
     ]
   }
