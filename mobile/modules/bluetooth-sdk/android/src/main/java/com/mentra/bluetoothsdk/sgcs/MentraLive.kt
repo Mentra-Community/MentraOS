@@ -4668,6 +4668,9 @@ class MentraLive : SGCManager() {
                 json.put("ota_version_url", otaVersionUrl)
             }
             json.put("timestamp", System.currentTimeMillis())
+            if (!otaVersionUrl.isNullOrBlank()) {
+                json.put("ota_version_url", otaVersionUrl)
+            }
             sendJson(json, true)
             Bridge.log("LIVE: 📱 Sending ota_start command to glasses")
         } catch (e: JSONException) {

@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.ai.local",
+  "version": "1.0.0",
+  "name": "Mentra AI",
+  "description": "Your AI assistant, running locally on the glasses. Say \"Hey Mentra\" followed by your question. Answers questions, sees what you see, and searches the web.",
+  "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    {"type": "MICROPHONE", "description": "Listens for the \"Hey Mentra\" wake word and your spoken questions"},
+    {"type": "CAMERA", "description": "Captures what you're looking at to answer visual questions"},
+    {"type": "LOCATION", "description": "Provides local context for questions about weather, places, and where you are"},
+    {"type": "READ_NOTIFICATIONS", "description": "Lets the assistant reference your recent phone notifications when relevant"}
+  ],
+  "hardwareRequirements": [
+    {"type": "MICROPHONE", "level": "REQUIRED", "description": "Captures your voice for wake word and questions"}
+  ]
+}

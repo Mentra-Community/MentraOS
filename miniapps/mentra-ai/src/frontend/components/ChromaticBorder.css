@@ -1,0 +1,85 @@
+@property --angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes chromatic-rotate {
+  from { --angle: 0deg; }
+  to { --angle: 360deg; }
+}
+
+@keyframes chromatic-pulse-opacity {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.8; }
+}
+
+/* Base glow layer */
+.chromatic-glow {
+  position: absolute;
+  inset: 0;
+  transition: opacity 0.3s ease-out;
+  backface-visibility: hidden;
+}
+
+/* Primary glow - clockwise */
+.chromatic-glow-1 {
+  background: conic-gradient(
+    from var(--angle),
+    #c4507a,
+    #b070c0,
+    #7080c8,
+    #60a8c8,
+    #60b890,
+    #c0b868,
+    #c88860,
+    #c4507a
+  );
+  animation: chromatic-rotate 3.5s linear infinite;
+}
+
+/* Secondary glow - counter-clockwise, diffused */
+.chromatic-glow-2 {
+  background: conic-gradient(
+    from calc(360deg - var(--angle)),
+    #c4507a,
+    #b070c0,
+    #7080c8,
+    #60a8c8,
+    #60b890,
+    #c0b868,
+    #c88860,
+    #c4507a
+  );
+  animation: chromatic-rotate 5s linear infinite;
+  filter: blur(10px);
+}
+
+/* State: idle */
+.chromatic-idle {
+  opacity: 0;
+}
+
+/* State: active */
+.chromatic-active.chromatic-glow-1 {
+  opacity: 0.85;
+}
+.chromatic-active.chromatic-glow-2 {
+  opacity: 0.5;
+}
+
+/* State: pulse */
+.chromatic-pulse.chromatic-glow-1 {
+  animation: chromatic-rotate 3.5s linear infinite, chromatic-pulse-opacity 2.5s ease-in-out infinite;
+}
+.chromatic-pulse.chromatic-glow-2 {
+  animation: chromatic-rotate 5s linear infinite, chromatic-pulse-opacity 2.5s ease-in-out infinite;
+  animation-delay: 0s, -1.25s;
+}
+
+/* Cover - foggy transition from glow to clean center */
+.chromatic-cover {
+  position: absolute;
+  z-index: 1;
+  filter: blur(20px);
+}

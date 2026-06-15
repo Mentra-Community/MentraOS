@@ -1,0 +1,31 @@
+{
+  "name": "mentra-ai-local",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Mentra AI as a local (on-phone) MentraOS miniapp. Voice assistant with wake-word, vision, web search, and a chat webview — no server, no session management.",
+  "scripts": {
+    "dev": "mentra-miniapp dev",
+    "build": "bun run build.ts",
+    "release": "mentra-miniapp release",
+    "pack": "mentra-miniapp pack"
+  },
+  "dependencies": {
+    "@mentra/miniapp": "workspace:*",
+    "expr-eval": "^2.0.2",
+    "framer-motion": "^12.34.0",
+    "lottie-react": "^2.4.1",
+    "lucide-react": "^0.564.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "tailwindcss": "^4.1.17",
+    "tw-animate-css": "^1.3.8"
+  },
+  "devDependencies": {
+    "@mentra/miniapp-cli": "workspace:*",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "bun-plugin-tailwind": "^0.1.2",
+    "bun-types": "^1.3.14"
+  }
+}
