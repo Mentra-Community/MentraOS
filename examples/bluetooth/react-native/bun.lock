@@ -14,6 +14,7 @@
         "expo-dev-client": "~55.0.34",
         "expo-file-system": "~55.0.20",
         "expo-linear-gradient": "~55.0.14",
+        "expo-splash-screen": "~55.0.21",
         "expo-video": "~55.0.17",
         "react": "19.2.0",
         "react-native": "0.83.6",
@@ -576,6 +577,8 @@
     "expo-modules-core": ["expo-modules-core@55.0.25", "", { "dependencies": { "invariant": "^2.2.4" }, "peerDependencies": { "react": "*", "react-native": "*", "react-native-worklets": "^0.7.4 || ^0.8.0" }, "optionalPeers": ["react-native-worklets"] }, "sha512-yXpfg7aHLbuqoXocK34Vua6Aey5SCyqLygAsXAMbul9P8vfBjLpaOPiTJ5cLVF7Drfq8ownqVJO6qpGEtZ6GOw=="],
 
     "expo-server": ["expo-server@55.0.9", "", {}, "sha512-N5Ipn1NwqaJzEm+G97o0Jbe4g/th3R/16N1DabnYryXKCiZwDkK13/w3VfGkQN9LOOaBP+JIRxGf4M8lQKPzyA=="],
+
+    "expo-splash-screen": ["expo-splash-screen@55.0.21", "", { "dependencies": { "@expo/prebuild-config": "^55.0.18" }, "peerDependencies": { "expo": "*" } }, "sha512-hFGEap69ggCckbHIdDXMe5rqfBR9TwcnY5gBhyaACUxU64w827T6prOQcIvLmAdv00kp3Gqt7hgE+mNn37EF+A=="],
 
     "expo-updates-interface": ["expo-updates-interface@55.1.6", "", { "peerDependencies": { "expo": "*" } }, "sha512-evxNpagCkjT3lE6bGV570TFzRtKuIuLY8I37RYHoriXCJ+ZKCN1hbmklK29uAixya+BxGpeTI2K4FqYeJLvfrw=="],
 

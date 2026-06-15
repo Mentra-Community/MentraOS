@@ -60,6 +60,7 @@
         }
       ],
       "expo-audio",
+      "expo-splash-screen",
       "expo-video"
     ]
   }
