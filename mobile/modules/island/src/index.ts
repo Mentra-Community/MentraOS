@@ -84,6 +84,15 @@ export {
   type ComputeAppGridDeps,
 } from "./services/AppGrid"
 
+// Bluetooth SDK passthrough — the full @mentra/bluetooth-sdk surface re-exported
+// so the app reaches the SDK through island instead of importing it directly.
+// This is the escape hatch for what no island facade models yet (OTA, raw device
+// control); prefer a facade when one exists. The curated public
+// @mentra/bluetooth-sdk entry is for external enterprise SDK consumers — inside
+// the app we use the complete (internal) surface.
+export {default as BluetoothSdk} from "@mentra/bluetooth-sdk-internal"
+export type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk-internal"
+
 // Runtime config (host-injected adapters)
 export {
   configureRuntime,

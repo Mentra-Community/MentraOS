@@ -1,6 +1,5 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import {decideConnectButtonAction} from "@mentra/island"
+import {decideConnectButtonAction, BluetoothSdk} from "@mentra/island"
 import {ActivityIndicator, View} from "react-native"
 
 import {Button} from "@/components/ignite"

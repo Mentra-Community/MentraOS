@@ -1,6 +1,6 @@
 import {useRoute} from "@react-navigation/native"
-import BluetoothSdk, {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
-import {classifyPairFailure, waitForGlassesReady} from "@mentra/island"
+import {classifyPairFailure, waitForGlassesReady, BluetoothSdk} from "@mentra/island"
+import type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/island"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {View} from "react-native"
 

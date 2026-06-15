@@ -304,6 +304,10 @@ jest.mock("@mentra/island", () => {
     // AppGrid computation (consumed by AppsGrid). Passthrough stub — render tests
     // don't assert on grid layout; the real algorithm is unit-tested directly.
     computeAppGrid: (input) => ({orderedApps: input?.apps ?? [], nextOrderMap: input?.orderMap ?? {}}),
+    // Bluetooth SDK passthrough — the same mock singleton @mentra/bluetooth-sdk
+    // is mocked with, so emitBluetoothSdkEvent/resetBluetoothSdkMock still drive
+    // screens that now import BluetoothSdk from island.
+    BluetoothSdk: require("./src/test-utils/mockBluetoothSdk").bluetoothSdkMock,
     useApps: jest.fn(() => appStatusState.apps),
     useForegroundApp: jest.fn(() => null),
     useAppStatusStore,
