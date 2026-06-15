@@ -663,7 +663,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             return PhotoRequest(
                 requestId = requestId,
                 appId = appId,
-                size = PhotoSize.MAX,
+                size = PhotoSize.FULL,
                 webhookUrl = webhookUrl,
                 compress = PhotoCompression.NONE,
                 sound = false,
@@ -2472,7 +2472,7 @@ val photo = mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
       requestId = requestId,
       appId = "com.mentra.bluetoothsdk.example.android",
-      size = PhotoSize.MAX,
+      size = PhotoSize.FULL,
       webhookUrl = uploadUrl,
       compress = PhotoCompression.NONE,
       sound = false,
