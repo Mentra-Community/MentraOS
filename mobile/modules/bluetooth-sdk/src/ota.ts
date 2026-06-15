@@ -164,25 +164,25 @@ async function getFreshGlassesStatus(): Promise<GlassesStatus> {
   }
 }
 
-async function fetchOtaManifest(otaVersionUrl: string): Promise<OtaManifest | null> {
+async function fetchOtaManifest(otaVersionUrl: string): Promise<OtaManifest> {
   const response = await fetch(otaVersionUrl)
   if (!response.ok) {
-    return null
+    throw new Error(`OTA manifest request failed with HTTP ${response.status}.`)
   }
   return (await response.json()) as OtaManifest
 }
 
 export async function checkForOtaUpdate(): Promise<boolean> {
   const status = await getFreshGlassesStatus()
-  if (!isConnectedGlassesConnectionStatus(status.connection) || !status.buildNumber) {
-    return false
+  if (!isConnectedGlassesConnectionStatus(status.connection)) {
+    throw new Error("Cannot check OTA update because glasses are not connected.")
+  }
+  if (!status.buildNumber) {
+    throw new Error("Cannot check OTA update because glasses build number is unavailable.")
   }
 
   const otaVersionUrl = resolveOtaVersionUrl(status)
   const manifest = await fetchOtaManifest(otaVersionUrl)
-  if (!manifest) {
-    return false
-  }
 
   return (
     hasApkUpdate(status.buildNumber, manifest) ||
