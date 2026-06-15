@@ -1,3 +1,4 @@
+import { requireNativeModule } from 'expo';
 import BluetoothSdk, {
   type PhotoSuccessResponseEvent,
   type SettingsAckSuccessEvent,
@@ -39,14 +40,14 @@ export type ScanPhotoRequestParams = {
   ispAnalogGain?: string;
 };
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const PrivateBluetoothSdkModule = require('@mentra/bluetooth-sdk/build/_private/BluetoothSdkModule')
-  .default as {
+type NativeBluetoothSdkModule = {
   setButtonPhotoCaptureSettings?: (
     settings: ScanButtonPhotoSettings,
   ) => Promise<SettingsAckSuccessEvent>;
   requestPhoto: (params: Record<string, string | number | boolean>) => Promise<PhotoSuccessResponseEvent>;
 };
+
+const NativeBluetoothSdkModule = requireNativeModule<NativeBluetoothSdkModule>('BluetoothSdk');
 
 /** Maps unknown/legacy size strings to the current wire format. */
 function normalizePhotoSizeTier(size: string | undefined): PhotoSize {
@@ -127,7 +128,7 @@ export async function setButtonPhotoSettingsCompat(
       sizeOrSettings as Parameters<typeof BluetoothSdk.setButtonPhotoSettings>[0],
     );
   }
-  const native = PrivateBluetoothSdkModule.setButtonPhotoCaptureSettings;
+  const native = NativeBluetoothSdkModule.setButtonPhotoCaptureSettings;
   if (typeof native !== 'function') {
     throw new Error(
       'Scan mode requires setButtonPhotoCaptureSettings in the native build. Rebuild with bun android.',
@@ -137,5 +138,5 @@ export async function setButtonPhotoSettingsCompat(
 }
 
 export async function requestPhotoCompat(params: ScanPhotoRequestParams): Promise<PhotoSuccessResponseEvent> {
-  return PrivateBluetoothSdkModule.requestPhoto(photoRequestParamsForNativeCompat(params));
+  return NativeBluetoothSdkModule.requestPhoto(photoRequestParamsForNativeCompat(params));
 }
