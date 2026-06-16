@@ -5197,8 +5197,34 @@ extension MentraLive {
     }
 
     func sendButtonPhotoSettings() {
-        let size = DeviceStore.shared.get("bluetooth", "button_photo_size") as! String
-        sendButtonPhotoSettings(requestId: nil, size: size)
+        let size = DeviceStore.shared.get("bluetooth", "button_photo_size") as? String
+        let mfnr = DeviceStore.shared.get("bluetooth", "button_photo_mfnr") as? Bool
+        let zsl = DeviceStore.shared.get("bluetooth", "button_photo_zsl") as? Bool
+        let noiseReduction = DeviceStore.shared.get("bluetooth", "button_photo_noise_reduction") as? Bool
+        let edgeEnhancement = DeviceStore.shared.get("bluetooth", "button_photo_edge_enhancement") as? Bool
+        let ispDigitalGain = DeviceStore.shared.get("bluetooth", "button_photo_isp_digital_gain") as? Int
+        let ispAnalogGain = DeviceStore.shared.get("bluetooth", "button_photo_isp_analog_gain") as? String
+        let aeExposureDivisor = DeviceStore.shared.get("bluetooth", "button_photo_ae_exposure_divisor") as? Int
+        let isoCap = DeviceStore.shared.get("bluetooth", "button_photo_iso_cap") as? Int
+        let compressStr = DeviceStore.shared.get("bluetooth", "button_photo_compress") as? String
+        let sound = DeviceStore.shared.get("bluetooth", "button_photo_sound") as? Bool
+
+        let settings = ButtonPhotoSettings(
+            size: ButtonPhotoSize(normalizedRawValue: size ?? "medium") ?? .medium,
+            mfnr: mfnr,
+            zsl: zsl,
+            noiseReduction: noiseReduction,
+            edgeEnhancement: edgeEnhancement,
+            ispDigitalGain: ispDigitalGain,
+            ispAnalogGain: ispAnalogGain,
+            aeExposureDivisor: aeExposureDivisor,
+            isoCap: isoCap,
+            compress: compressStr,
+            sound: sound,
+            resetCaptureTuning: false
+        )
+
+        sendButtonPhotoSettings(requestId: nil, settings: settings)
     }
 
     func sendButtonPhotoSettings(requestId: String?, size: String) {
