@@ -1,0 +1,82 @@
+version: v2
+name: cloud-debug
+
+# Debug uses the AWS dev Doppler-backed env group for now. App-level env
+# below overrides only the public debug/runtime values that must differ per app.
+envGroups:
+  - cloud-v2-dev-doppler
+
+env:
+  - key: LOG_STDOUT_JSON
+    value: "true"
+  - key: AUDIO_UDP_PORT
+    value: "8000"
+  - key: AUDIO_UDP_ADVERTISED_HOST
+    value: audio-udp.debug.us-west-2.dev.mentraglass.com
+  - key: AUDIO_UDP_ADVERTISED_PORT
+    value: "8000"
+  - key: AUDIO_WORKERS
+    value: "1"
+  - key: CLOUD_RUNTIME_AUTH_AUDIENCE
+    value: cloud-runtime
+  - key: CLOUD_RUNTIME_AUTH_ISSUERS
+    value: '[{"issuer":"cloud-core","publicKeyEnv":"MENTRA_JWT_PUBLIC_KEY","userIdClaim":"sub","oemIdClaim":"oem_id"}]'
+
+build:
+  method: docker
+  context: ./
+  dockerfile: ./docker/Dockerfile
+
+services:
+  - name: core
+    type: web
+    run: bun packages/core/src/index.ts
+    port: 3000
+    cpuCores: 1
+    ramMegabytes: 1024
+    domains:
+      - name: core.debug.us-west-2.dev.mentraglass.com
+    livenessCheck:
+      enabled: true
+      httpPath: /healthz
+      timeoutSeconds: 3
+      initialDelaySeconds: 15
+    readinessCheck:
+      enabled: true
+      httpPath: /ready
+      timeoutSeconds: 5
+      initialDelaySeconds: 15
+    ingressAnnotations:
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    terminationGracePeriodSeconds: 10
+
+  - name: runtime
+    type: web
+    run: bun packages/runtime/src/index.ts
+    port: 3001
+    instances: 1
+    cpuCores: 1
+    ramMegabytes: 2048
+    domains:
+      - name: runtime.debug.us-west-2.dev.mentraglass.com
+    livenessCheck:
+      enabled: true
+      httpPath: /healthz
+      timeoutSeconds: 3
+      initialDelaySeconds: 15
+    readinessCheck:
+      enabled: true
+      httpPath: /ready
+      timeoutSeconds: 5
+      initialDelaySeconds: 15
+    ingressAnnotations:
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    terminationGracePeriodSeconds: 10
+    additionalPorts:
+      - port: 8000
+        protocol: UDP
+        name: udp-audio
