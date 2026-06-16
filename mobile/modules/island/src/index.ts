@@ -128,6 +128,12 @@ export {cloudSecureStore} from "./utils/cloudClient/cloudSecureStore"
 // runtime-hook wiring happen here; the host's @/services/cloudClient is a thin
 // delegating wrapper that keeps endpoint resolution (dev/settings) host-side.
 export {cloudClientService} from "./services/CloudClientService"
+// Settings store + RestComms — the mutually-coupled v1-comms pair, moved into
+// island together (settings needs RestComms for cloud-sync; RestComms needs
+// settings for the backend URL). Re-exported via host shims (@/stores/settings,
+// @/services/RestComms). v1-transitional: deleted in place when v1 retires.
+export {SETTINGS, OFFLINE_APPLETS, useSettingsStore, useSetting} from "./stores/settings"
+export {default as restComms} from "./services/RestComms"
 
 // Bluetooth SDK internal compatibility passthrough. The island package uses the
 // declared @mentra/bluetooth-sdk/internal subpath so it does not reach into SDK
