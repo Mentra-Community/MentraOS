@@ -118,6 +118,12 @@ export {
   selectGlassesGalleryStatus,
 } from "./stores/gallerySync"
 export type {PhotoInfo, SyncState, HotspotInfo, SyncQueue, GallerySyncInfo} from "./stores/gallerySync"
+// Cloud-client runtime status store + secure credential store — moved into
+// island as part of owning the cloud-v2 client. Re-exported via host shims
+// (@/stores/cloudClientStatus, @/utils/cloudClient/MmkvSecureStore).
+export {useCloudClientStatusStore} from "./stores/cloudClientStatus"
+export type {RuntimeAudioTransport, RuntimeSnapshot, RuntimeStatus} from "./stores/cloudClientStatus"
+export {cloudSecureStore} from "./utils/cloudClient/cloudSecureStore"
 
 // Bluetooth SDK internal compatibility passthrough. The island package uses the
 // declared @mentra/bluetooth-sdk/internal subpath so it does not reach into SDK

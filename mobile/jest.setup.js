@@ -241,6 +241,7 @@ jest.mock("@mentra/island", () => {
   const realCore = jest.requireActual("./modules/island/src/stores/core")
   const realConnection = jest.requireActual("./modules/island/src/stores/connection")
   const realGallerySync = jest.requireActual("./modules/island/src/stores/gallerySync")
+  const realCloudStatus = jest.requireActual("./modules/island/src/stores/cloudClientStatus")
   const appStatusState = {
     apps: [],
     refresh: jest.fn(),
@@ -266,6 +267,8 @@ jest.mock("@mentra/island", () => {
     ...realCore,
     ...realConnection,
     ...realGallerySync,
+    // Real cloud-client runtime status store (useCloudClientStatusStore).
+    ...realCloudStatus,
     // The namespaced (A) host API. Mirrors the real `toolkit` object; members are
     // jest.fn()s so host/screen tests can assert delegation without native btsdk.
     toolkit: {
@@ -325,6 +328,7 @@ jest.mock("@mentra/island", () => {
         core: realCore.useCoreStore,
         connection: realConnection.useConnectionStore,
         gallerySync: realGallerySync.useGallerySyncStore,
+        cloudClientStatus: realCloudStatus.useCloudClientStatusStore,
       },
     },
     BgTimer: {

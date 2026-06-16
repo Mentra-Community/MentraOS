@@ -17,6 +17,7 @@ import {useDisplayStore} from "./stores/display"
 import {useCoreStore} from "./stores/core"
 import {useConnectionStore} from "./stores/connection"
 import {useGallerySyncStore} from "./stores/gallerySync"
+import {useCloudClientStatusStore} from "./stores/cloudClientStatus"
 
 export const toolkit = {
   /** Front door — hand island auth + config, then start/stop the runtime. */
@@ -40,5 +41,6 @@ export const toolkit = {
     core: useCoreStore,
     connection: useConnectionStore,
     gallerySync: useGallerySyncStore,
+    cloudClientStatus: useCloudClientStatusStore,
   },
 }

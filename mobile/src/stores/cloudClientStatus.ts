@@ -1,31 +1,7 @@
-import {create} from "zustand"
-
-import type {RuntimeAudioTransport, RuntimeSnapshot, RuntimeStatus} from "@mentra/cloud-client/react-native"
-
-const initialSnapshot: RuntimeSnapshot = {
-  status: "disconnected",
-  audioTransport: "none",
-}
-
-interface CloudClientStatusState extends RuntimeSnapshot {
-  lastChangedAt: Date | null
-  setSnapshot: (snapshot: RuntimeSnapshot) => void
-  reset: () => void
-}
-
-export const useCloudClientStatusStore = create<CloudClientStatusState>((set) => ({
-  ...initialSnapshot,
-  lastChangedAt: null,
-  setSnapshot: (snapshot) =>
-    set({
-      ...snapshot,
-      lastChangedAt: new Date(),
-    }),
-  reset: () =>
-    set({
-      ...initialSnapshot,
-      lastChangedAt: null,
-    }),
-}))
-
-export type {RuntimeAudioTransport, RuntimeSnapshot, RuntimeStatus}
+/**
+ * @fileoverview Re-export shim — the cloud-client runtime status store now lives
+ * in @mentra/island (island owns the cloud-v2 runtime status). Kept so existing
+ * `@/stores/cloudClientStatus` imports resolve unchanged.
+ */
+export {useCloudClientStatusStore} from "@mentra/island"
+export type {RuntimeAudioTransport, RuntimeSnapshot, RuntimeStatus} from "@mentra/island"
