@@ -138,9 +138,11 @@ export async function setButtonPhotoSettingsCompat(
   }
   const native = NativeBluetoothSdkModule.setButtonPhotoCaptureSettings;
   if (typeof native !== 'function') {
-    throw new Error(
-      'Scan mode requires setButtonPhotoCaptureSettings in the native build. Rebuild with bun android.',
-    );
+    // Granular scan-preset API is not available in the currently-installed native build
+    // (SDK < 0.1.13). Fall back to the size-only path so the glasses at least get max
+    // resolution; scan-mode tuning fields (AE÷, ISO cap, etc.) will not be applied.
+    const size: PhotoSize = (sizeOrSettings.size as PhotoSize | undefined) ?? ('max' as PhotoSize);
+    return BluetoothSdk.setButtonPhotoSettings(size as any);
   }
   return native(sizeOrSettings);
 }

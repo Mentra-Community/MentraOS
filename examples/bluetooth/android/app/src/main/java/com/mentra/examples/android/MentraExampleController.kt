@@ -2891,7 +2891,9 @@ fun rgbLedColorFor(color: String): RgbLedColor =
 fun disconnectedGlassesStatus(status: GlassesRuntimeState?): GlassesRuntimeState? =
     status?.let { GlassesRuntimeState.Disconnected() }
 
-val photoSizeOptions = listOf("low", "medium", "high", "full")
+// SDK 0.1.12 exposes PhotoSize as SMALL/MEDIUM/LARGE/FULL; keep labels aligned with
+// those enum names until the Maven pin moves to 0.1.13 (LOW/MEDIUM/HIGH/MAX).
+val photoSizeOptions = listOf("small", "medium", "large", "full")
 val photoCompressionOptions = listOf("none", "medium", "heavy")
 
 fun roiPositionLabel(roiPosition: Int): String =
