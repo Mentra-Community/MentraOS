@@ -1193,7 +1193,7 @@ struct ViewState {
     func sendButtonPhotoSettings(requestId: String, size: String) throws {
         try sendButtonPhotoSettings(
             requestId: requestId,
-            settings: ButtonPhotoSettings(size: ButtonPhotoSize(normalizedRawValue: size) ?? .medium)
+            settings: ButtonPhotoSettings(size: ButtonPhotoSize(normalizedRawValue: size))
         )
     }
 

@@ -1334,11 +1334,10 @@ public final class PhotoSession {
                     }
                 } else if ((requestMfnr != null && !requestMfnr)
                         || (requestZsl != null && !requestZsl)) {
+                    // Pass the explicit values as-is; null = "use global device default",
+                    // false = "explicitly disabled". Do NOT coerce null to false here.
                     hooks.cameraSettings()
-                            .configureCaptureBuilder(
-                                    stillBuilder,
-                                    requestMfnr != null ? requestMfnr : false,
-                                    requestZsl != null ? requestZsl : false);
+                            .configureCaptureBuilder(stillBuilder, requestMfnr, requestZsl);
                 }
             }
 

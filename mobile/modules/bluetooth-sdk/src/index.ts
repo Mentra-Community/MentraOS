@@ -82,8 +82,15 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setGalleryModeEnabled: PrivateBluetoothSdkModule.setGalleryModeEnabled.bind(PrivateBluetoothSdkModule),
   setVoiceActivityDetectionEnabled:
     PrivateBluetoothSdkModule.setVoiceActivityDetectionEnabled.bind(PrivateBluetoothSdkModule),
-  setButtonPhotoSettings: (settings: ButtonPhotoSettings) =>
-    PrivateBluetoothSdkModule.setButtonPhotoCaptureSettings(settings),
+  setButtonPhotoSettings: (settings: ButtonPhotoSettings) => {
+    // setButtonPhotoCaptureSettings is available in SDK 0.1.13+. Guard for OTA version-skew
+    // where a new JS bundle runs against an older native module that only has the string form.
+    if (typeof PrivateBluetoothSdkModule.setButtonPhotoCaptureSettings === "function") {
+      return PrivateBluetoothSdkModule.setButtonPhotoCaptureSettings(settings)
+    }
+    // Legacy fallback: forward size to old native method
+    return PrivateBluetoothSdkModule.setButtonPhotoSettings(settings)
+  },
   setButtonVideoRecordingSettings:
     PrivateBluetoothSdkModule.setButtonVideoRecordingSettings.bind(PrivateBluetoothSdkModule),
   setButtonCameraLed: PrivateBluetoothSdkModule.setButtonCameraLed.bind(PrivateBluetoothSdkModule),
