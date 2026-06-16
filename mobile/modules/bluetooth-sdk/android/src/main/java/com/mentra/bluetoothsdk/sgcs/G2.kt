@@ -2244,6 +2244,7 @@ class G2 : SGCManager() {
                     transferOk = false
                     break
                 }
+                delay(50)
 
                 fragmentIndex++
                 offset = end
