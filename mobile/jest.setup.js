@@ -322,6 +322,11 @@ jest.mock("@mentra/island", () => {
           onMirror: jest.fn(() => () => {}),
         },
       },
+      session: {
+        status: jest.fn(() => ({status: "disconnected", audioTransport: "none"})),
+        onStatus: jest.fn(() => () => {}),
+        isConnected: jest.fn(() => false),
+      },
       stores: {
         glasses: realGlasses.useGlassesStore,
         display: realDisplay.useDisplayStore,
@@ -330,6 +335,19 @@ jest.mock("@mentra/island", () => {
         gallerySync: realGallerySync.useGallerySyncStore,
         cloudClientStatus: realCloudStatus.useCloudClientStatusStore,
       },
+    },
+    // island now owns the cloud client (keystone #5); the host wrapper delegates
+    // to this. Mocked so host/service tests don't construct a real CloudClient.
+    cloudClientService: {
+      init: jest.fn(),
+      reconnect: jest.fn(),
+      startManagedPhoto: jest.fn(() => Promise.resolve({})),
+      awaitManagedPhotoReady: jest.fn(() => Promise.resolve({})),
+      startManagedStream: jest.fn(() => Promise.resolve({})),
+      getManagedStreamStatus: jest.fn(() => Promise.resolve({})),
+      stopManagedStream: jest.fn(() => Promise.resolve()),
+      isConnected: jest.fn(() => false),
+      onConnectionChange: jest.fn(() => () => {}),
     },
     BgTimer: {
       setInterval: jest.fn((callback, delay) => setInterval(callback, delay)),

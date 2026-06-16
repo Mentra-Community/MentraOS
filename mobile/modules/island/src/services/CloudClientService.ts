@@ -1,0 +1,376 @@
+/**
+ * Owns the singleton `@mentra/cloud-client` (CloudClient) for the island runtime
+ * — the keystone move that pulls backend comms INTO island.
+ *
+ * island constructs the client from island-owned pieces (the native UDP socket,
+ * the MMKV secure store, the cloud-status store) plus the two things the host
+ * provides through the toolkit front door: `auth.getSubjectToken` (the one
+ * permanent seam — the OEM owns login) and the resolved cloud endpoints
+ * (`config.coreUrl/runtimeUrl`, computed host-side from dev/settings). On init it
+ * self-wires the `cloud` + `cloudConnection` runtime hooks, so the host no longer
+ * injects a CloudRuntimeAdapter — island owns construction AND wiring.
+ *
+ * The local-miniapp path drives the cloud's transcription/translation through
+ * the adapter this registers.
+ */
+import {CloudClient, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
+import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
+import type {SubjectTokenType} from "@mentra/cloud-client"
+import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-runtime/protocol"
+
+import {getAuth, getConfigValues} from "../runtime/bootstrap"
+import {
+  configureRuntime,
+  type CloudClientStatusSnapshot,
+  type CloudRuntimeAdapter,
+} from "../runtime/config"
+import {createCloudUdpSocket} from "../utils/cloudClient/RnUdpAdapter"
+import {cloudSecureStore} from "../utils/cloudClient/cloudSecureStore"
+import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
+
+const LOG_TAG = "cloudClient"
+
+type Lc3FrameSizeBytes = 20 | 40 | 60
+
+// Neutral last-ditch fallbacks (reachable under `adb reverse`) for when the host
+// passes no endpoints. The host normally resolves the real URLs (dev override /
+// Metro host / env) and hands them in via `toolkit.configure({config})`.
+const FALLBACK_CORE_URL = "http://localhost:3000"
+const FALLBACK_RUNTIME_URL = "http://localhost:3001"
+
+let client: CloudClient | null = null
+let adapter: CloudRuntimeAdapter | null = null
+let wired = false
+let connected = false
+let audioSubscriptions: AudioSubscription[] = []
+let transportsReady = false
+/** Endpoints to build with — seeded from config, overridable via reconnect(). */
+let endpointsOverride: {core: string; runtime: string} | null = null
+let runtimeStatusUnsubscribe: (() => void) | null = null
+let transcriptUnsubscribe: (() => void) | null = null
+let translationUnsubscribe: (() => void) | null = null
+
+const transcriptListeners = new Set<(d: TranscriptionData) => void>()
+const translationListeners = new Set<(d: TranslationData) => void>()
+const statusListeners = new Set<(snapshot: CloudClientStatusSnapshot) => void>()
+const connectionListeners = new Set<(connected: boolean) => void>()
+
+function resolveEndpoints(): {core: string; runtime: string} {
+  if (endpointsOverride) return endpointsOverride
+  const cfg = getConfigValues()
+  return {
+    core: cfg.coreUrl?.trim() || FALLBACK_CORE_URL,
+    runtime: cfg.runtimeUrl?.trim() || FALLBACK_RUNTIME_URL,
+  }
+}
+
+function frameSizeBytes(): Lc3FrameSizeBytes {
+  const size = getConfigValues().audioFrameSizeBytes
+  return size === 20 || size === 40 || size === 60 ? size : 20
+}
+
+async function getSubjectToken(): Promise<{token: string; type: SubjectTokenType}> {
+  const a = getAuth()
+  if (!a) throw new Error("cloudClient: toolkit.configure({auth}) not called")
+  const r = await a.getSubjectToken()
+  // IslandAuth's SubjectTokenType is intentionally open (`string & {}`) so OEMs
+  // can use other token kinds; cloud-client's is a closed union. The host's
+  // actual value ("supabase") is valid — narrow at this boundary.
+  return {token: r.token, type: r.type as SubjectTokenType}
+}
+
+function toCloudClientStatusSnapshot(snapshot: RuntimeSnapshot): CloudClientStatusSnapshot {
+  return {status: snapshot.status, audioTransport: snapshot.audioTransport}
+}
+
+function currentRuntimeStatus(): CloudClientStatusSnapshot {
+  const state = useCloudClientStatusStore.getState()
+  return {status: state.status, audioTransport: state.audioTransport}
+}
+
+function setRuntimeStatus(snapshot: RuntimeSnapshot): void {
+  useCloudClientStatusStore.getState().setSnapshot(snapshot)
+  emitStatus(toCloudClientStatusSnapshot(snapshot))
+}
+
+function resetRuntimeStatus(): void {
+  useCloudClientStatusStore.getState().reset()
+  emitStatus(currentRuntimeStatus())
+}
+
+function stringifyMeta(meta: unknown): string {
+  if (!meta || typeof meta !== "object") return ""
+  try {
+    return ` ${JSON.stringify(meta)}`
+  } catch {
+    return ""
+  }
+}
+
+const cloudLogger = {
+  debug: (msg: string, meta?: unknown) => console.log(`${LOG_TAG}: debug: ${msg}${stringifyMeta(meta)}`),
+  info: (msg: string, meta?: unknown) => console.log(`${LOG_TAG}: info: ${msg}${stringifyMeta(meta)}`),
+  warn: (msg: string, meta?: unknown) => console.warn(`${LOG_TAG}: warn: ${msg}${stringifyMeta(meta)}`),
+  error: (msg: string, meta?: unknown) => console.warn(`${LOG_TAG}: error: ${msg}${stringifyMeta(meta)}`),
+}
+
+function notifyConnectionListeners(next: boolean): void {
+  for (const l of connectionListeners) {
+    try {
+      l(next)
+    } catch (err) {
+      console.warn(`${LOG_TAG}: connection listener threw: ${(err as Error)?.message ?? err}`)
+    }
+  }
+}
+
+function emitTranscript(data: TranscriptionData): void {
+  for (const l of transcriptListeners) {
+    try {
+      l(data)
+    } catch (err) {
+      console.warn(`${LOG_TAG}: transcript listener threw: ${(err as Error)?.message ?? err}`)
+    }
+  }
+}
+
+function emitTranslation(data: TranslationData): void {
+  for (const l of translationListeners) {
+    try {
+      l(data)
+    } catch (err) {
+      console.warn(`${LOG_TAG}: translation listener threw: ${(err as Error)?.message ?? err}`)
+    }
+  }
+}
+
+function emitStatus(snapshot: CloudClientStatusSnapshot): void {
+  for (const l of statusListeners) {
+    try {
+      l(snapshot)
+    } catch (err) {
+      console.warn(`${LOG_TAG}: status listener threw: ${(err as Error)?.message ?? err}`)
+    }
+  }
+}
+
+function ensureTransports(): void {
+  if (transportsReady) return
+  transportsReady = true
+  setNativeUdp(() => createCloudUdpSocket())
+  setSecureStorage(cloudSecureStore)
+}
+
+function clearRuntimeEventSubscriptions(): void {
+  runtimeStatusUnsubscribe?.()
+  runtimeStatusUnsubscribe = null
+  transcriptUnsubscribe?.()
+  transcriptUnsubscribe = null
+  translationUnsubscribe?.()
+  translationUnsubscribe = null
+}
+
+function buildAdapter(): CloudRuntimeAdapter {
+  return {
+    setSubscriptions: async (subs: AudioSubscription[]): Promise<void> => {
+      // Cache unconditionally so the desired set survives a not-yet-connected
+      // session and reconnects; only push when connected (the runtime throws
+      // otherwise). The onConnected handler re-applies the cached set, so
+      // subscribe-before-connect self-heals.
+      audioSubscriptions = subs
+      const c = client
+      if (connected && c) {
+        await c.runtime.setSubscriptions(subs)
+      }
+    },
+    sendAudioFrame: (frame: Uint8Array): void => {
+      client?.runtime.sendAudioFrame(frame)
+    },
+    onTranscript: (cb: (d: TranscriptionData) => void): (() => void) => {
+      transcriptListeners.add(cb)
+      return () => {
+        transcriptListeners.delete(cb)
+      }
+    },
+    onTranslation: (cb: (d: TranslationData) => void): (() => void) => {
+      translationListeners.add(cb)
+      return () => {
+        translationListeners.delete(cb)
+      }
+    },
+    getStatus: (): CloudClientStatusSnapshot => currentRuntimeStatus(),
+    onStatusChanged: (cb: (snapshot: CloudClientStatusSnapshot) => void): (() => void) => {
+      statusListeners.add(cb)
+      return () => {
+        statusListeners.delete(cb)
+      }
+    },
+    tts: {
+      speak: (text, options) => {
+        if (!client) throw new Error("cloud client not connected")
+        return client.runtime.tts.speak(text, options)
+      },
+    },
+    hasAudioSubscriptions: (): boolean => audioSubscriptions.length > 0,
+    isConnected: (): boolean => connected,
+  }
+}
+
+/** Register island's own cloud adapter + connection surface into the runtime
+ * hooks (once). Replaces the host's former `configureRuntime({cloud, ...})`. */
+function selfWire(): void {
+  if (wired) return
+  wired = true
+  configureRuntime({
+    cloud: adapter ?? undefined,
+    cloudConnection: {
+      isConnected: () => connected,
+      addListener: (l) => cloudClientService.onConnectionChange(l),
+    },
+  })
+}
+
+function construct(): void {
+  ensureTransports()
+  if (!adapter) adapter = buildAdapter()
+
+  const endpoints = resolveEndpoints()
+  console.log(`${LOG_TAG}: endpoints ${JSON.stringify(endpoints)}`)
+
+  client = new CloudClient({
+    endpoints,
+    // The phone LC3-encodes mic audio (even in phone/simulated mode); announce
+    // LC3 at 16 kHz with the frame size the encoder emits.
+    audio: {codec: "lc3", sampleRate: 16000, frameSizeBytes: frameSizeBytes()},
+    auth: {getSubjectToken},
+    logger: cloudLogger,
+  })
+
+  const c = client
+  clearRuntimeEventSubscriptions()
+  runtimeStatusUnsubscribe = c.runtime.onStatusChanged((status) => {
+    if (c !== client) return
+    setRuntimeStatus(status)
+  })
+  transcriptUnsubscribe = c.runtime.onTranscript((data) => {
+    if (c !== client) return
+    emitTranscript(data)
+  })
+  translationUnsubscribe = c.runtime.onTranslation((data) => {
+    if (c !== client) return
+    emitTranslation(data)
+  })
+  setRuntimeStatus(c.runtime.getStatus())
+
+  c.runtime.onConnected(() => {
+    if (c !== client) return
+    connected = true
+    console.log(`${LOG_TAG}: runtime connected`)
+    // Re-apply any subscriptions queued before connect (or dropped across a
+    // reconnect) — best-effort; never throw out of the connect handler.
+    if (audioSubscriptions.length > 0) {
+      c.runtime
+        .setSubscriptions(audioSubscriptions)
+        .catch((err) =>
+          console.warn(`${LOG_TAG}: re-applying queued subscriptions failed: ${(err as Error)?.message ?? err}`),
+        )
+    }
+    notifyConnectionListeners(true)
+  })
+  c.runtime.onDisconnected((info) => {
+    if (c !== client) return
+    connected = false
+    console.log(`${LOG_TAG}: runtime disconnected (${info.reason})`)
+    notifyConnectionListeners(false)
+  })
+  c.runtime.onError((err) => {
+    console.warn(`${LOG_TAG}: runtime error: ${err.code}`)
+  })
+
+  // Best-effort connect. Do not crash the app if the dev cloud is unreachable.
+  c.runtime
+    .connect()
+    .then(() => console.log(`${LOG_TAG}: connect() resolved`))
+    .catch((err) => console.warn(`${LOG_TAG}: connect() failed: ${err?.message ?? err}`))
+}
+
+/**
+ * island's cloud client. Owns the singleton CloudClient, its connection state,
+ * and the runtime-hook wiring.
+ */
+export const cloudClientService = {
+  /**
+   * Construct (once) + connect the client, and self-wire the runtime cloud
+   * hooks. Idempotent. Best-effort connect — a failure is logged and the app
+   * keeps running. Requires `toolkit.configure({auth, config})` first.
+   */
+  init(): void {
+    if (client) {
+      selfWire()
+      return
+    }
+    construct()
+    selfWire()
+  },
+
+  /**
+   * Tear down + rebuild with freshly-resolved endpoints (the dev "Cloud V2"
+   * override, applied without an app rebuild). Pass new endpoints to switch
+   * URLs; omit to rebuild with the current config.
+   */
+  reconnect(endpoints?: {core: string; runtime: string}): void {
+    if (endpoints) endpointsOverride = endpoints
+    try {
+      client?.runtime.close()
+    } catch (err) {
+      console.warn(`${LOG_TAG}: reconnect close() failed: ${(err as Error)?.message ?? err}`)
+    }
+    clearRuntimeEventSubscriptions()
+
+    const wasConnected = connected
+    client = null
+    connected = false
+    resetRuntimeStatus()
+    if (wasConnected) notifyConnectionListeners(false)
+
+    construct()
+    selfWire()
+  },
+
+  /** Device-side managed photo (cloud-v2): presign now, deliver bytes, await ready. */
+  startManagedPhoto(opts: Record<string, unknown> = {}) {
+    if (!client) throw new Error("cloud client not connected")
+    return client.runtime.startManagedPhoto(opts)
+  },
+  awaitManagedPhotoReady(requestId: string) {
+    if (!client) throw new Error("cloud client not connected")
+    return client.runtime.awaitManagedPhotoReady(requestId)
+  },
+
+  /** Managed stream (cloud-v2): provision ingest+playback on the runtime. */
+  startManagedStream(opts: Record<string, unknown> = {}) {
+    if (!client) throw new Error("cloud client not connected")
+    return client.runtime.startManagedStream(opts)
+  },
+  getManagedStreamStatus(streamId: string) {
+    if (!client) throw new Error("cloud client not connected")
+    return client.runtime.getManagedStreamStatus(streamId)
+  },
+  stopManagedStream(streamId: string) {
+    if (!client) throw new Error("cloud client not connected")
+    return client.runtime.stopManagedStream(streamId)
+  },
+
+  /** Current live-session connection state (handshake completed). */
+  isConnected(): boolean {
+    return connected
+  },
+
+  /** Subscribe to connection-state transitions. Returns an unsubscribe fn. */
+  onConnectionChange(listener: (connected: boolean) => void): () => void {
+    connectionListeners.add(listener)
+    return () => {
+      connectionListeners.delete(listener)
+    }
+  },
+}

@@ -18,7 +18,7 @@ import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
-import {cloudClient} from "@/services/cloudClient"
+import {cloudClient, cloudConfigValues} from "@/services/cloudClient"
 import {devServerHost} from "@/utils/cloudClient/devHost"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
 import {handleOtaClockSkewFromGlasses} from "@/services/asg/glassesClockSync"
@@ -179,6 +179,9 @@ class MantleManager {
           return {token: res.value.token, type: "supabase"}
         },
       },
+      // Resolved cloud endpoints + LC3 frame size. island builds its cloud
+      // client from these; the host keeps the dev/settings URL resolution.
+      config: cloudConfigValues(),
     })
     void toolkit.start()
 
@@ -193,16 +196,18 @@ class MantleManager {
     // island service that reads settings / glasses status / sockets / audio
     // (LocalMiniappRuntime, LocalDisplayManager, LocalSttFallbackCoordinator,
     // DisplayProcessor) is touched.
-    // Construct + connect the cloud client (best-effort) and wire its runtime
-    // adapter. The island/local-miniapp path is powered by this client.
-    const cloud = cloudClient.init()
+    // Construct + connect the cloud client (best-effort). It now lives in island
+    // (cloudClientService) and self-wires the runtime cloud/cloudConnection
+    // hooks from island-owned transports + the auth/config passed above, so the
+    // host no longer injects a CloudRuntimeAdapter. The local-miniapp path is
+    // powered by this client.
+    cloudClient.init()
 
     configureRuntime({
       socketComms: {
         sendMessage: (message) => socketComms.sendMessage(message as Parameters<typeof socketComms.sendMessage>[0]),
         updatePhoneSubscriptions: (subs) => socketComms.updatePhoneSubscriptions(subs),
       },
-      cloud,
       audioPlayback: {
         play: (request, onComplete) => audioPlaybackService.play(request, onComplete),
         stopForApp: (packageName) => audioPlaybackService.stopForApp(packageName),
@@ -232,18 +237,9 @@ class MantleManager {
             (value) => onChange(value as never),
           ),
       },
-      cloudConnection: {
-        // Local island miniapps are powered ONLY by the cloud client, so the
-        // on-device STT fallback for miniapps must track cloud liveness, not the
-        // v1 WebSocket. When the cloud is connected and delivering transcripts
-        // the fallback stays off (the cloud powers captions); when it is down,
-        // local STT engages. This adapter is consumed exclusively by
-        // LocalSttFallbackCoordinator, whose only consumer is the local-miniapp
-        // path. The glasses offline-captions display runs off its own
-        // `offline_captions_running` setting and is unaffected.
-        isConnected: () => cloudClient.isConnected(),
-        addListener: (l) => cloudClient.onConnectionChange(l),
-      },
+      // cloudConnection is self-wired by island's cloudClientService now (it
+      // powers the local-miniapp on-device-STT fallback off cloud liveness), so
+      // the host no longer injects it.
       // The dev laptop's live address, from Metro. The island runtime uses it
       // to repair persisted dev-miniapp URLs that froze a previous network's
       // IP (the bundle host is, by construction, reachable right now).

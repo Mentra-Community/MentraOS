@@ -147,6 +147,22 @@ const event = toolkit.display.mirror.current()             // current display ev
 const off   = toolkit.display.mirror.onMirror((e) => { … }) // subscribe; returns unsubscribe
 ```
 
+## `toolkit.session`
+
+The cloud (cloud-v2) live-session surface. island owns the cloud client — it
+constructs it from island-owned transports + the `auth` you passed to
+`configure()` — so this reads the session it manages.
+
+```ts
+const s = toolkit.session.status()            // { status, audioTransport }
+const off = toolkit.session.onStatus((s) => { … }) // subscribe; returns unsubscribe
+const live = toolkit.session.isConnected()    // handshake completed?
+```
+
+`status` is one of `connected | connecting | reconnecting | disconnected`;
+`audioTransport` is `udp | ws | offline | none`. (Account operations —
+delete/export — are not on this surface yet.)
+
 ## `toolkit.stores.*` — escape hatch (not the OEM contract)
 
 The raw device-state stores are also exposed under `toolkit.stores`

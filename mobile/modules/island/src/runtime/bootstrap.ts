@@ -28,6 +28,11 @@ export interface IslandConfigValues {
   runtimeUrl?: string
   /** OEM identifier (Mentra is OEM #0); reserved for OEM auth/telemetry. */
   oemId?: string
+  /**
+   * LC3 frame size (bytes) the phone's mic encoder emits — announced to the
+   * cloud on connect (20 for G1, 40 for G2, …). Defaults to 20 if unset.
+   */
+  audioFrameSizeBytes?: number
 }
 
 export type IslandAnalytics = (event: string, props?: Record<string, unknown>) => void
