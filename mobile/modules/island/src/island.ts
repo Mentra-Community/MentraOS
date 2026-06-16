@@ -11,6 +11,7 @@
 import {configure, start, stop} from "./runtime/bootstrap"
 import {glasses} from "./facades/glasses"
 import {displayMirror} from "./facades/displayMirror"
+import {speech} from "./facades/speech"
 import {useGlassesStore} from "./stores/glasses"
 import {useDisplayStore} from "./stores/display"
 import {useCoreStore} from "./stores/core"
@@ -23,6 +24,7 @@ export const toolkit = {
   start,
   stop,
   glasses,
+  speech,
   display: {
     mirror: displayMirror,
   },

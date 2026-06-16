@@ -291,6 +291,28 @@ jest.mock("@mentra/island", () => {
           onStatus: jest.fn(() => () => {}),
         },
       },
+      speech: {
+        stt: {
+          currentLanguage: jest.fn(() => "en"),
+          languages: jest.fn(() => []),
+          languageInfo: jest.fn(() => Promise.resolve([])),
+          download: jest.fn(() => Promise.resolve()),
+          activate: jest.fn(),
+          cancelDownload: jest.fn(() => Promise.resolve()),
+          deleteModel: jest.fn(() => Promise.resolve()),
+          status: jest.fn(() => null),
+          onStatusChanged: jest.fn(() => () => {}),
+        },
+        tts: {
+          currentLanguage: jest.fn(() => "en"),
+          languages: jest.fn(() => []),
+          languageInfo: jest.fn(() => Promise.resolve([])),
+          download: jest.fn(() => Promise.resolve()),
+          activate: jest.fn(),
+          cancelDownload: jest.fn(() => Promise.resolve()),
+          deleteModel: jest.fn(() => Promise.resolve()),
+        },
+      },
       display: {
         mirror: {
           current: jest.fn(() => null),
