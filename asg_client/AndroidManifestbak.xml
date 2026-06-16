@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.mentra.asg_client">
+
+    <uses-feature
+        android:name="android.hardware.telephony"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="true" />
+
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!--  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>-->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.hardware.camera.full" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
+    <!-- Screen wake permissions -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- BACKGROUND CAMERA FOR GLASSES -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.WRITE_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Add camera background permission -->
+    <uses-permission android:name="android.permission.CAMERA_BACKGROUND" />
+
+
+    <!-- Application node is not neccessary for libraries -->
+    <application
+        android:name="com.mentra.asg_client.AsgClientApplication"
+        android:usesCleartextTraffic="true">
+        <!--      android:usesCleartextTraffic="true"-->
+        <!--      android:icon="@mipmap/ic_launcher"-->
+        <!--      android:label="@string/app_name"-->
+        <!--      android:roundIcon="@mipmap/ic_launcher_round"-->
+        <!--      android:supportsRtl="true"-->
+        <!--      android:theme="@style/AppTheme">-->
+
+
+        <receiver
+            android:name="com.mentra.asg_client.AsgClientBootReceiver"
+            android:directBootAware="true"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Transparent bootstrap activity that starts the service -->
+        <activity
+            android:name="com.mentra.asg_client.BootstrapActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Receiver for handling restart requests from OTA updater -->
+        <receiver
+            android:name="com.mentra.asg_client.AsgClientRestartReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.mentra.asg_client.ACTION_RESTART_SERVICE" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name="com.mentra.asg_client.audio.I2SAudioBroadcastReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.xy.sound.AUDIO_PLAYSTATE_CHANGE" />
+                <action android:name="com.xy.sound.AUDIO_PLAYSTATE_ACTION" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- MTK OTA firmware update progress receiver -->
+        <receiver
+            android:name="com.mentra.asg_client.io.ota.receivers.MtkOtaReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.xy.otaupdateresult" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Debug receiver for testing BES OTA via adb -->
+        <receiver
+            android:name="com.mentra.asg_client.receiver.DebugBesOtaReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.mentra.DEBUG_BES_OTA" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Debug receiver for testing APK OTA via adb -->
+        <receiver
+            android:name="com.mentra.asg_client.receiver.DebugApkOtaReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.mentra.DEBUG_APK_OTA" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Intent IPC receiver for third-party app commands -->
+        <receiver
+            android:name="com.mentra.asg_client.receiver.IntentCommandReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.mentra.asg_client.ACTION_SEND_COMMAND" />
+                <action android:name="com.mentra.asg_client.ACTION_REGISTER_LISTENER" />
+                <action android:name="com.mentra.asg_client.ACTION_UNREGISTER_LISTENER" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name="com.mentra.asg_client.service.core.AsgClientService"
+            android:enabled="true"
+            android:exported="true"
+            android:foregroundServiceType="camera|microphone">
+            <intent-filter>
+                <action android:name="com.mentra.asg_client.ACTION_RESTART_SERVICE" />
+            </intent-filter>
+        </service>
+
+        <service
+            android:name="com.mentra.asg_client.camera.CameraNeoService"
+            android:enabled="true"
+            android:exported="true"
+            android:foregroundServiceType="camera|microphone" />
+
+        <service
+            android:name="com.mentra.asg_client.io.streaming.services.RtmpStreamingService"
+            android:enabled="true"
+            android:exported="true"
+            android:foregroundServiceType="camera|microphone" />
+
+        <service
+            android:name="com.mentra.asg_client.io.streaming.services.SrtStreamingService"
+            android:enabled="true"
+            android:exported="true"
+            android:foregroundServiceType="camera|microphone" />
+
+        <service
+            android:name="com.mentra.asg_client.io.streaming.services.WhipStreamingService"
+            android:enabled="true"
+            android:exported="true"
+            android:foregroundServiceType="camera|microphone" />
+
+        <service
+            android:name="com.mentra.asg_client.io.ota.services.OtaService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <activity
+            android:name="com.mentra.asg_client.MainActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
+                    android:host="open"
+                    android:scheme="augmentos" />
+            </intent-filter>
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_provider" />
+        </provider>
+
+        <!-- Service health monitoring is handled by AsgClientService -->
+
+
+        <!-- Sentry configuration - DSN will be set programmatically for security -->
+        <!-- Add data like request headers, user ip address and device name, see https://docs.sentry.io/platforms/android/data-management/data-collected/ for more info -->
+        <meta-data
+            android:name="io.sentry.send-default-pii"
+            android:value="true" />
+
+        <!-- enable automatic breadcrumbs for user interactions (clicks, swipes, scrolls) -->
+        <meta-data
+            android:name="io.sentry.traces.user-interaction.enable"
+            android:value="true" />
+        <!-- enable screenshot for crashes (could contain sensitive/PII data) -->
+        <meta-data
+            android:name="io.sentry.attach-screenshot"
+            android:value="true" />
+        <!-- enable view hierarchy for crashes -->
+        <meta-data
+            android:name="io.sentry.attach-view-hierarchy"
+            android:value="true" />
+
+        <!-- enable the performance API by setting a sample-rate, adjust in production env -->
+        <meta-data
+            android:name="io.sentry.traces.sample-rate"
+            android:value="1.0" />
+
+        <meta-data android:name="io.sentry.auto-init" android:value="false" />
+
+    </application>
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
+    <queries>
+        <intent>
+            <action android:name="AUGMENTOS_INTENT" />
+        </intent>
+    </queries>
+
+    <queries>
+        <package android:name="com.mentra.augmentos" />
+        <package android:name="com.mentra.otaupdater" />
+    </queries>
+
+</manifest>

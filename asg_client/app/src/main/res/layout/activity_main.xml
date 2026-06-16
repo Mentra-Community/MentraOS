@@ -10,40 +10,15 @@
     android:background="#000000"
     tools:context="com.mentra.asg_client.MainActivity">
 
-  <TextView
-      android:id="@+id/main_title"
-      android:layout_width="wrap_content"
-      android:layout_height="wrap_content"
-      android:text="AugmentOS Launcher"
-      android:textColor="#FFFFFF"
-      android:textSize="24sp"
-      app:layout_constraintBottom_toBottomOf="parent"
-      app:layout_constraintLeft_toLeftOf="parent"
-      app:layout_constraintRight_toRightOf="parent"
-      app:layout_constraintTop_toTopOf="parent" />
-
-  <TextView
-      android:id="@+id/tv_version"
-      android:layout_width="wrap_content"
-      android:layout_height="wrap_content"
-      android:text="Ver:"
-      android:visibility="gone"
-      android:textColor="#FFFFFF"
-      android:textSize="24sp"
-      app:layout_constraintLeft_toLeftOf="parent"
-      app:layout_constraintRight_toRightOf="parent"
-      app:layout_constraintTop_toBottomOf="@+id/main_title" />
-
-  <Button
-      android:id="@+id/btn_odm_launcher"
-      android:layout_width="wrap_content"
-      android:layout_height="wrap_content"
-      android:text="ODM Factory Test"
-      android:visibility="visible"
-      android:onClick="launchOdmLauncher"
-      app:layout_constraintBottom_toBottomOf="parent"
-      app:layout_constraintEnd_toEndOf="parent"
-      android:layout_marginEnd="16dp"
-      android:layout_marginBottom="16dp" />
+    <TextView
+        android:id="@+id/tv_version"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Ver:"
+        android:textColor="#FFFFFF"
+        android:textSize="24sp"
+        android:visibility="gone"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
