@@ -470,15 +470,58 @@ class MentraBluetoothSdk private constructor(
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "voice_activity_detection_enabled", enabled)
     }
 
-    fun setButtonPhotoSettings(size: ButtonPhotoSize): SettingsAckEvent =
+    fun setButtonPhotoSettings(settings: ButtonPhotoSettings): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_photo",
-            updateStore = { _ -> DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", size.value) },
-            send = { requestId -> deviceManager.sendButtonPhotoSettings(requestId, size.value) },
+            updateStore = { _ ->
+                if (settings.resetCaptureTuning) {
+                    // Clear all stored scan-tuning keys from phone cache
+                    listOf(
+                        "button_photo_mfnr",
+                        "button_photo_zsl",
+                        "button_photo_noise_reduction",
+                        "button_photo_edge_enhancement",
+                        "button_photo_isp_digital_gain",
+                        "button_photo_isp_analog_gain",
+                        "button_photo_ae_exposure_divisor",
+                        "button_photo_iso_cap",
+                        "button_photo_compress",
+                        "button_photo_sound",
+                    ).forEach { key ->
+                        DeviceStore.store.remove(ObservableStore.BLUETOOTH_CATEGORY, key)
+                    }
+                }
+                // Only update size if explicitly provided; omitted size = leave stored value unchanged
+                settings.size?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", it.value) }
+                settings.mfnr?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_mfnr", it) }
+                settings.zsl?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl", it) }
+                settings.noiseReduction?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_noise_reduction", it)
+                }
+                settings.edgeEnhancement?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_edge_enhancement", it)
+                }
+                settings.ispDigitalGain?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_isp_digital_gain", it)
+                }
+                settings.ispAnalogGain?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_isp_analog_gain", it)
+                }
+                settings.aeExposureDivisor?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_ae_exposure_divisor", it)
+                }
+                settings.isoCap?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_iso_cap", it)
+                }
+                settings.compress?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_compress", it)
+                }
+                settings.sound?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_sound", it)
+                }
+            },
+            send = { requestId -> deviceManager.sendButtonPhotoSettings(requestId, settings) },
         )
-
-    fun setButtonPhotoSettings(settings: ButtonPhotoSettings): SettingsAckEvent =
-        setButtonPhotoSettings(size = settings.size)
 
     fun setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int): SettingsAckEvent =
         performSettingsCommand(
@@ -677,19 +720,7 @@ class MentraBluetoothSdk private constructor(
         val pending = PendingResponse<PhotoResponseEvent>("photo request ${request.requestId}")
         pendingPhotoRequests[request.requestId] = pending
         try {
-            deviceManager.requestPhoto(
-                request.requestId,
-                request.appId,
-                request.size.value,
-                request.webhookUrl,
-                request.authToken,
-                request.compress.value,
-                request.flash,
-                request.save,
-                request.sound,
-                request.exposureTimeNs,
-                request.iso,
-            )
+            deviceManager.requestPhoto(request)
             return pending.await()
         } finally {
             pendingPhotoRequests.remove(request.requestId, pending)

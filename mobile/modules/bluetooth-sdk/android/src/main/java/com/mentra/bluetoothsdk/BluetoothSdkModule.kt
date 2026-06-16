@@ -441,8 +441,37 @@ class BluetoothSdkModule : Module() {
             sdk?.setVoiceActivityDetectionEnabled(enabled)
         }
 
-        AsyncFunction("setButtonPhotoSettings") { size: String ->
-            requireSdk().setButtonPhotoSettings(ButtonPhotoSize.fromValue(size)).values
+        AsyncFunction("setButtonPhotoCaptureSettings") { params: Map<String, Any?> ->
+            val size = (params["size"] as? String)?.let { ButtonPhotoSize.fromValue(it) }
+            val mfnr = params["mfnr"] as? Boolean
+            val zsl = params["zsl"] as? Boolean
+            val noiseReduction = params["noiseReduction"] as? Boolean
+            val edgeEnhancement = params["edgeEnhancement"] as? Boolean
+            val ispDigitalGain = (params["ispDigitalGain"] as? Number)?.toInt()
+            val ispAnalogGain = params["ispAnalogGain"] as? String
+            val aeExposureDivisor = (params["aeExposureDivisor"] as? Number)?.toInt()
+            val isoCap = (params["isoCap"] as? Number)?.toInt()
+            val compress = params["compress"] as? String
+            val sound = params["sound"] as? Boolean
+            val resetCaptureTuning = params["resetCaptureTuning"] as? Boolean == true
+            requireSdk()
+                .setButtonPhotoSettings(
+                    ButtonPhotoSettings(
+                        size = size,
+                        mfnr = mfnr,
+                        zsl = zsl,
+                        noiseReduction = noiseReduction,
+                        edgeEnhancement = edgeEnhancement,
+                        ispDigitalGain = ispDigitalGain,
+                        ispAnalogGain = ispAnalogGain,
+                        aeExposureDivisor = aeExposureDivisor,
+                        isoCap = isoCap,
+                        compress = compress,
+                        sound = sound,
+                        resetCaptureTuning = resetCaptureTuning,
+                    ),
+                )
+                .values
         }
 
         AsyncFunction("setButtonVideoRecordingSettings") { width: Int, height: Int, fps: Int ->

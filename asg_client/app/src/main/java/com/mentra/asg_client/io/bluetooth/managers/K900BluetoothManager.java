@@ -821,8 +821,22 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         // Send the packet using sendFile (no logging)
         long sendStartTime = System.currentTimeMillis();
-        comManager.sendFile(packet);
+        boolean sent = comManager.sendFile(packet);
         long sendEndTime = System.currentTimeMillis();
+        if (!sent) {
+            Log.e(TAG, "Failed to write file packet " + packetIndex + " to UART");
+            BluetoothReporting.reportFileTransferFailure(
+                    context, currentFileTransfer.filePath, "send_file", "uart_write_failed", null);
+            notificationManager.showDebugNotification(
+                    "File Transfer Failed", "UART write failed at packet " + packetIndex);
+            notifyTransferFailedToPhone("uart_write_failed");
+            comManager.setFastMode(false);
+            currentFileTransfer.isActive = false;
+            currentFileTransfer = null;
+            pendingPackets.clear();
+            consecutiveFailures = 0;
+            return;
+        }
 
         // Track packet state for acknowledgment (preserve retry count if resending)
         FilePacketState existingState = pendingPackets.get(packetIndex);
@@ -920,11 +934,19 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return;
         }
 
-        // MCU uses 1-based indexing, convert to 0-based for our packet tracking
-        int zeroBasedIndex = index - 1;
+        // BES uses 1-based ACK indexing for BOTH success and failure: it sends
+        // index = packet_index + 1 (see agents/ble_file_transfer_implementation.md, "BES ACK
+        // Index Behavior"). Convert to our 0-based packet index. On success this is the accepted
+        // packet; on failure it is the packet to resend.
+        // NOTE: a prior revision treated the failure index as already 0-based (retry = index),
+        // which skipped the failed packet and resent the next one, corrupting flow-control
+        // retries and truncating BLE photos.
+        int ackedPacketIndex = index - 1;
+        int retryPacketIndex = index - 1;
+        int trackedPacketIndex = state == 1 ? ackedPacketIndex : retryPacketIndex;
 
         // Calculate time since packet was sent
-        FilePacketState packetState = pendingPackets.get(zeroBasedIndex);
+        FilePacketState packetState = pendingPackets.get(trackedPacketIndex);
         long ackDelay =
                 packetState != null ? (System.currentTimeMillis() - packetState.lastSendTime) : -1;
 
@@ -934,8 +956,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         + state
                         + ", index="
                         + index
-                        + " (0-based: "
-                        + zeroBasedIndex
+                        + " (tracked: "
+                        + trackedPacketIndex
                         + "), ACK received after "
                         + ackDelay
                         + "ms"
@@ -947,11 +969,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (state == 1) { // Success (K900 uses state=1 for success)
             // CRITICAL: Ignore duplicate ACKs for packets we've already moved past
             // This prevents scheduling multiple sendNextFilePacket() calls
-            if (zeroBasedIndex < currentFileTransfer.currentPacketIndex) {
+            if (ackedPacketIndex < currentFileTransfer.currentPacketIndex) {
                 Log.w(
                         TAG,
                         "⚠️ Ignoring duplicate ACK for already-processed packet "
-                                + zeroBasedIndex
+                                + ackedPacketIndex
                                 + " (current="
                                 + currentFileTransfer.currentPacketIndex
                                 + ")");
@@ -962,10 +984,10 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             consecutiveFailures = 0;
 
             // Remove from pending packets
-            pendingPackets.remove(zeroBasedIndex);
+            pendingPackets.remove(ackedPacketIndex);
 
             // Move to next packet
-            currentFileTransfer.currentPacketIndex = zeroBasedIndex + 1;
+            currentFileTransfer.currentPacketIndex = ackedPacketIndex + 1;
 
             // Send next packet immediately - BES flow control via ACKs handles pacing
             sendNextFilePacket();
@@ -974,11 +996,11 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             // state=0 means BES couldn't process the packet (flow control)
 
             // Ignore failures for packets we've already moved past (stale ACKs)
-            if (zeroBasedIndex < currentFileTransfer.currentPacketIndex) {
+            if (retryPacketIndex < currentFileTransfer.currentPacketIndex) {
                 Log.w(
                         TAG,
                         "⚠️ Ignoring stale failure ACK for packet "
-                                + zeroBasedIndex
+                                + retryPacketIndex
                                 + " (current="
                                 + currentFileTransfer.currentPacketIndex
                                 + ")");
@@ -1008,7 +1030,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         "BLE TX stuck after "
                                 + consecutiveFailures
                                 + " failures at packet "
-                                + zeroBasedIndex);
+                                + retryPacketIndex);
 
                 notifyTransferFailedToPhone("ble_tx_stuck_consecutive_failures");
 
@@ -1029,7 +1051,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             Log.w(
                     TAG,
                     "⚠️ File packet "
-                            + zeroBasedIndex
+                            + retryPacketIndex
                             + " failed (state="
                             + state
                             + "), consecutive failures: "
@@ -1038,7 +1060,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             + backoffMs
                             + "ms");
 
-            currentFileTransfer.currentPacketIndex = zeroBasedIndex;
+            currentFileTransfer.currentPacketIndex = retryPacketIndex;
 
             // Add exponential backoff delay to let BES2700 drain its buffers
             fileTransferExecutor.schedule(
@@ -1047,7 +1069,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             Log.d(
                                     TAG,
                                     "📦 Retrying packet "
-                                            + zeroBasedIndex
+                                            + retryPacketIndex
                                             + " after "
                                             + backoffMs
                                             + "ms backoff");

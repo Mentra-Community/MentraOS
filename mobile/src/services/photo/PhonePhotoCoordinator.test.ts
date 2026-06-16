@@ -163,12 +163,13 @@ describe("PhonePhotoCoordinator", () => {
       })
     })
 
-    test("passes size 'full' through to the native take_photo command", async () => {
+    test("normalizes legacy size 'full' to 'max' for the native take_photo command", async () => {
       const coord = new PhonePhotoCoordinator()
+      // Legacy wire values may still arrive from older cloud apps at runtime.
       await coord.takePhoto("com.a", {size: "full"})
 
       expect(requestPhotoNative).toHaveBeenCalledTimes(1)
-      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({size: "full"})
+      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({size: "max"})
     })
 
     test("owns(requestId) true mid-flight, false after completion", async () => {

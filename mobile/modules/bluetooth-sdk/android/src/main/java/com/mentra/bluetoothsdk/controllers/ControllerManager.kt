@@ -2,6 +2,7 @@ package com.mentra.bluetoothsdk.controllers
 
 import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.DeviceStore
+import com.mentra.bluetoothsdk.PhotoRequest
 
 abstract class ControllerManager {
     @JvmField var type: String = ""
@@ -15,19 +16,7 @@ abstract class ControllerManager {
     abstract fun sendJson(jsonOriginal: Map<String, Any>, wakeUp: Boolean, requireAck: Boolean)
 
     // Camera & Media
-    abstract fun requestPhoto(
-        requestId: String,
-        appId: String,
-        size: String?,
-        webhookUrl: String?,
-        authToken: String?,
-        compress: String?,
-        flash: Boolean,
-        save: Boolean,
-        sound: Boolean,
-        exposureTimeNs: Long?,
-        iso: Int?,
-    )
+    abstract fun requestPhoto(request: PhotoRequest)
     abstract fun startStream(message: Map<String, Any>)
     abstract fun stopStream()
     abstract fun sendStreamKeepAlive(message: Map<String, Any>)
