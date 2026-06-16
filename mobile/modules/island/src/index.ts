@@ -208,6 +208,9 @@ export {createCloudUdpSocket} from "./utils/cloudClient/RnUdpAdapter"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
 export {BgTimer, throttle, debounce} from "./utils/timers"
 export {storage, printDirectory} from "./utils/storage"
+// Process-wide event bus — one shared instance for island services + host
+// (re-exported via the @/utils/GlobalEventEmitter shim).
+export {default as GlobalEventEmitter} from "./utils/GlobalEventEmitter"
 
 // Types (copied from @mentra/types — keep in sync with cloud/packages/types/src)
 export {
