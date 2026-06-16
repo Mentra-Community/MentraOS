@@ -34,7 +34,16 @@ type ReverseGeocode = (coord: {lat: number; lng: number}) => Promise<{
   error?: string
 }>
 
-const DIRECTION_WORDS = new Set(["right", "left", "the right", "the left", "north", "south", "east", "west"])
+const DIRECTION_WORDS = new Set([
+  "right",
+  "left",
+  "the right",
+  "the left",
+  "north",
+  "south",
+  "east",
+  "west",
+])
 
 /**
  * Pull a short road name out of a Routes-API instruction. Instructions
@@ -95,7 +104,7 @@ export async function resolveStepRoads<S extends StepLike>(
     }
     const mid = {lat: (s.lat + s.endLat) / 2, lng: (s.lng + s.endLng) / 2}
     return reverseGeocode(mid)
-      .then((r) => (r.ok ? (r.road ?? null) : null))
+      .then((r) => (r.ok ? r.road ?? null : null))
       .catch(() => null)
   })
   const roads = await Promise.all(probes)

@@ -11,13 +11,11 @@ const noopLogger: LifecycleLogger = {
   error: () => undefined,
 }
 
-function makeController(
-  overrides: Partial<{
-    keepAliveIntervalMs: number
-    ackTimeoutMs: number
-    maxMissedAcks: number
-  }> = {},
-) {
+function makeController(overrides: Partial<{
+  keepAliveIntervalMs: number
+  ackTimeoutMs: number
+  maxMissedAcks: number
+}> = {}) {
   const sendKeepAlive = mock<(ackId: string) => Promise<void>>(async () => {})
   const onTimeout = mock<() => void>(() => {})
 

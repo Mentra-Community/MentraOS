@@ -6,8 +6,8 @@
  */
 
 // Main class
-export {TextMeasurer} from "./TextMeasurer"
-export type {CharMeasurement, TextMeasurement} from "./TextMeasurer"
+export { TextMeasurer } from "./TextMeasurer"
+export type { CharMeasurement, TextMeasurement } from "./TextMeasurer"
 
 // Script detection utilities
 export {

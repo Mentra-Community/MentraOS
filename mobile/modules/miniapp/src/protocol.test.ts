@@ -31,7 +31,8 @@ describe("MiniappRequestType wire values", () => {
   test("STREAM_STOP", () => expect(MiniappRequestType.STREAM_STOP).toBe("miniapp_stream_stop"))
   test("MANAGED_STREAM_START", () =>
     expect(MiniappRequestType.MANAGED_STREAM_START).toBe("miniapp_managed_stream_start"))
-  test("MANAGED_STREAM_STOP", () => expect(MiniappRequestType.MANAGED_STREAM_STOP).toBe("miniapp_managed_stream_stop"))
+  test("MANAGED_STREAM_STOP", () =>
+    expect(MiniappRequestType.MANAGED_STREAM_STOP).toBe("miniapp_managed_stream_stop"))
   test("SHARE", () => expect(MiniappRequestType.SHARE).toBe("miniapp_share"))
   test("OPEN_URL", () => expect(MiniappRequestType.OPEN_URL).toBe("miniapp_open_url"))
   test("COPY_CLIPBOARD", () => expect(MiniappRequestType.COPY_CLIPBOARD).toBe("miniapp_copy_clipboard"))
@@ -42,8 +43,10 @@ describe("MiniappResponseType wire values", () => {
   test("CONNECT_ACK", () => expect(MiniappResponseType.CONNECT_ACK).toBe("miniapp_connect_ack"))
   test("EVENT", () => expect(MiniappResponseType.EVENT).toBe("miniapp_event"))
   test("REQUEST_RESULT", () => expect(MiniappResponseType.REQUEST_RESULT).toBe("miniapp_request_result"))
-  test("CAPABILITIES_UPDATE", () => expect(MiniappResponseType.CAPABILITIES_UPDATE).toBe("miniapp_capabilities_update"))
-  test("VISIBILITY_CHANGE", () => expect(MiniappResponseType.VISIBILITY_CHANGE).toBe("miniapp_visibility_change"))
+  test("CAPABILITIES_UPDATE", () =>
+    expect(MiniappResponseType.CAPABILITIES_UPDATE).toBe("miniapp_capabilities_update"))
+  test("VISIBILITY_CHANGE", () =>
+    expect(MiniappResponseType.VISIBILITY_CHANGE).toBe("miniapp_visibility_change"))
   test("PONG", () => expect(MiniappResponseType.PONG).toBe("miniapp_pong"))
   test("ERROR", () => expect(MiniappResponseType.ERROR).toBe("miniapp_error"))
 })

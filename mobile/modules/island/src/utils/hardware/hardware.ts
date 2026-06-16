@@ -4,8 +4,8 @@ import {
   HardwareType,
   HardwareRequirementLevel,
   DeviceTypes,
-  simulatedGlasses,
 } from "../../types"
+import {simulatedGlasses} from "../../types"
 
 /**
  * Result of a hardware compatibility check

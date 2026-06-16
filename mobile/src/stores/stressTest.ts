@@ -46,8 +46,10 @@ export const useStressTestStore = create<StressTestState>((set) => ({
       const memWarnCount = e.kind === "memwarn" ? s.memWarnCount + 1 : s.memWarnCount
       // STRESS: structured log line so a CLI can grep these out of `log stream`
       // even when the screen isn't open. Cheap and one-line on purpose.
-
-      console.log(`STRESS: event ${JSON.stringify({...e, residentMB: s.residentMB, memWarnCount})}`)
+      // eslint-disable-next-line no-console
+      console.log(
+        `STRESS: event ${JSON.stringify({...e, residentMB: s.residentMB, memWarnCount})}`,
+      )
       return {events, memWarnCount}
     }),
 

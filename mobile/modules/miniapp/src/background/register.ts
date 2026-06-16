@@ -47,7 +47,10 @@ interface InitGlobals {
  *     })
  *   })
  */
-export function registerMiniapp(handler: MiniappInitHandler, options: MiniappSessionOptions = {}): void {
+export function registerMiniapp(
+  handler: MiniappInitHandler,
+  options: MiniappSessionOptions = {},
+): void {
   const g = globalThis as unknown as InitGlobals
   g.__mentraInitCallback = (_sessionId: string) => {
     const session = new MiniappSession(options)
@@ -57,13 +60,16 @@ export function registerMiniapp(handler: MiniappInitHandler, options: MiniappSes
       const result = handler(session)
       if (result && typeof (result as Promise<void>).then === "function") {
         ;(result as Promise<void>).catch((err: unknown) => {
+          // eslint-disable-next-line no-console
           console.error("[mentra-miniapp] registerMiniapp handler rejected:", err)
         })
       }
     } catch (err) {
+      // eslint-disable-next-line no-console
       console.error("[mentra-miniapp] registerMiniapp handler threw:", err)
     }
     session.connect().catch((err: unknown) => {
+      // eslint-disable-next-line no-console
       console.error("[mentra-miniapp] session.connect() rejected:", err)
       // Surface to the host's crash controller as a structured uncaught
       // error so the existing backoff + crashloop machinery handles it.

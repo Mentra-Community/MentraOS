@@ -1,4 +1,4 @@
-import {DisplayProfile} from "./types"
+import { DisplayProfile } from "./types";
 
 /**
  * Vuzix Z100 glyph widths - extracted from NotoSans-Regular.ttf at 21px
@@ -117,7 +117,7 @@ const Z100_GLYPH_WIDTHS: Record<string, number> = {
   "|": 12,
   "}": 8,
   "~": 12,
-}
+};
 
 /**
  * Vuzix Z100 Smart Glasses Display Profile
@@ -183,16 +183,16 @@ export const Z100_PROFILE: DisplayProfile = {
     noStartChars: [".", ",", "!", "?", ":", ";", ")", "]", "}", "。", "，", "！", "？", "：", "；", "）", "】", "」"],
     noEndChars: ["(", "[", "{", "（", "【", "「"],
   },
-}
+};
 
 /**
  * Get the hyphen width for Z100 in pixels.
  * Used for line breaking calculations.
  */
-export const Z100_HYPHEN_WIDTH_PX = 7
+export const Z100_HYPHEN_WIDTH_PX = 7;
 
 /**
  * Get the space width for Z100 in pixels.
  * Used for column alignment calculations.
  */
-export const Z100_SPACE_WIDTH_PX = 5
+export const Z100_SPACE_WIDTH_PX = 5;

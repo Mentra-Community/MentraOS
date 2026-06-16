@@ -99,11 +99,7 @@ export default function SelectGlassesBluetoothScreen() {
 
   const startPairing = async (device: Device) => {
     const deviceTypesWithBtClassic = [DeviceTypes.LIVE]
-    if (
-      Platform.OS === "android" ||
-      bluetoothClassicConnected ||
-      !deviceTypesWithBtClassic.includes(device.model as DeviceTypes)
-    ) {
+    if (Platform.OS === "android" || bluetoothClassicConnected || !deviceTypesWithBtClassic.includes(device.model as DeviceTypes)) {
       setTimeout(() => {
         BluetoothSdk.connect(device).catch((error) => {
           console.error("Failed to connect to glasses:", error)
@@ -147,7 +143,9 @@ export default function SelectGlassesBluetoothScreen() {
     })
   }, [searchResults])
 
-  const visibleResults = rememberedSearchResults.filter((r) => r.name !== "NOTREQUIREDSKIP" && r.model === deviceModel)
+  const visibleResults = rememberedSearchResults.filter(
+    (r) => r.name !== "NOTREQUIREDSKIP" && r.model === deviceModel,
+  )
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
@@ -175,10 +173,10 @@ export default function SelectGlassesBluetoothScreen() {
                   let deviceName = filterDeviceName(res.name)
 
                   return (
-                    <View
-                      key={res.id}
-                      className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">
-                      <TouchableOpacity className="flex-1" onPress={() => triggerGlassesPairingGuide(res)}>
+                    <View key={res.id} className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">
+                      <TouchableOpacity
+                        className="flex-1"
+                        onPress={() => triggerGlassesPairingGuide(res)}>
                         <View className="flex-1 px-2.5 flex-col">
                           <Text text={deviceModel} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
                           <Text text={deviceName} className="text-xs text-muted-foreground" numberOfLines={1} />

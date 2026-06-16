@@ -309,7 +309,11 @@ export class NavigationHandlers {
     }
   }
 
-  async handleComputeRoute(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+  async handleComputeRoute(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
     try {
       const navigation = getRuntimeHooks().navigation
       const result = navigation
@@ -339,7 +343,11 @@ export class NavigationHandlers {
    * `{ok, road?}` — a missing road is `{ok: true, road: null}`, not
    * an error.
    */
-  async handleReverseGeocode(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+  async handleReverseGeocode(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
     try {
       const lat = Number(payload.lat)
       const lng = Number(payload.lng)

@@ -1,6 +1,6 @@
 import {Image} from "expo-image"
 import {SquircleView} from "expo-squircle-view"
-import React, {memo} from "react"
+import {memo} from "react"
 import {ActivityIndicator, StyleProp, StyleSheet, TouchableOpacity, View, ViewStyle} from "react-native"
 import {withUniwind} from "uniwind"
 
@@ -9,6 +9,7 @@ import {DevIcon} from "@/components/miniapps/DevIcons"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useCachedRemoteImageSource} from "@/hooks/useCachedRemoteImageSource"
 import type {ClientApp} from "@mentra/island"
+import React from "react"
 
 // Helper to extract style properties for width/height override
 const extractStyleProps = (style: StyleProp<ViewStyle>): Partial<ViewStyle> => {

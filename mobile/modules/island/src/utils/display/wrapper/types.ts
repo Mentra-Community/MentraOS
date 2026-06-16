@@ -3,13 +3,13 @@
  */
 export interface WrapOptions {
   /** Maximum width in pixels (defaults to profile's displayWidthPx) */
-  maxWidthPx?: number
+  maxWidthPx?: number;
 
   /** Maximum number of lines (defaults to profile's maxLines) */
-  maxLines?: number
+  maxLines?: number;
 
   /** Maximum total bytes (defaults to profile's maxPayloadBytes) */
-  maxBytes?: number
+  maxBytes?: number;
 
   /**
    * Break mode:
@@ -17,19 +17,19 @@ export interface WrapOptions {
    * - 'word': Break at word boundaries, hyphenate only if word > line
    * - 'strict-word': Break at word boundaries only, truncate long words
    */
-  breakMode?: BreakMode
+  breakMode?: BreakMode;
 
   /** Character to use for hyphenation (default: '-') */
-  hyphenChar?: string
+  hyphenChar?: string;
 
   /** Minimum characters before allowing hyphen break (default: 3) */
-  minCharsBeforeHyphen?: number
+  minCharsBeforeHyphen?: number;
 
   /** Whether to trim whitespace from line ends (default: true) */
-  trimLines?: boolean
+  trimLines?: boolean;
 
   /** Whether to preserve explicit newlines in input (default: true) */
-  preserveNewlines?: boolean
+  preserveNewlines?: boolean;
 }
 
 /**
@@ -39,32 +39,32 @@ export interface WrapOptions {
  * - 'word': Break at word boundaries, hyphenate only if word > line
  * - 'strict-word': Break at word boundaries only, truncate long words
  */
-export type BreakMode = "character" | "character-no-hyphen" | "word" | "strict-word"
+export type BreakMode = "character" | "character-no-hyphen" | "word" | "strict-word";
 
 /**
  * Result of wrapping operation.
  */
 export interface WrapResult {
   /** Wrapped lines */
-  lines: string[]
+  lines: string[];
 
   /** Whether content was truncated to fit constraints */
-  truncated: boolean
+  truncated: boolean;
 
   /** Total pixel width of widest line */
-  maxLineWidthPx: number
+  maxLineWidthPx: number;
 
   /** Total byte size of all lines */
-  totalBytes: number
+  totalBytes: number;
 
   /** Per-line metadata */
-  lineMetrics: LineMetrics[]
+  lineMetrics: LineMetrics[];
 
   /** Original input text */
-  originalText: string
+  originalText: string;
 
   /** Break mode used */
-  breakMode: BreakMode
+  breakMode: BreakMode;
 }
 
 /**
@@ -72,22 +72,22 @@ export interface WrapResult {
  */
 export interface LineMetrics {
   /** The line text */
-  text: string
+  text: string;
 
   /** Width in pixels */
-  widthPx: number
+  widthPx: number;
 
   /** Byte size of this line */
-  bytes: number
+  bytes: number;
 
   /** Utilization percentage (widthPx / maxWidthPx * 100) */
-  utilizationPercent: number
+  utilizationPercent: number;
 
   /** Whether this line ends with a hyphen from breaking */
-  endsWithHyphen: boolean
+  endsWithHyphen: boolean;
 
   /** Whether this line was created from an explicit newline */
-  fromExplicitNewline: boolean
+  fromExplicitNewline: boolean;
 }
 
 /**
@@ -99,4 +99,4 @@ export const DEFAULT_WRAP_OPTIONS: Required<Omit<WrapOptions, "maxWidthPx" | "ma
   minCharsBeforeHyphen: 3,
   trimLines: true,
   preserveNewlines: true,
-}
+};

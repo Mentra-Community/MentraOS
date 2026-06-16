@@ -639,7 +639,9 @@ export function DraggableList<T extends DraggableItem>(props: DraggableListProps
   // ---------- render ----------
   return (
     <GestureDetector gesture={composed}>
-      <View onLayout={onContainerLayout} style={[styles.container, {height: totalHeight}, contentContainerStyle]}>
+      <View
+        onLayout={onContainerLayout}
+        style={[styles.container, {height: totalHeight}, contentContainerStyle]}>
         {containerWidth > 0 &&
           data.map((item, index) => {
             const k = getKey(item)

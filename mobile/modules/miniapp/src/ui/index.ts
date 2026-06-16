@@ -82,7 +82,10 @@ export interface MentraUiGlobal<TChannels extends object = Record<string, unknow
 // React adapters are re-exported here so authors can import everything
 // from a single sub-path. The actual hooks live in src/react/ and are
 // already shipped as a separate sub-path for backwards-compat.
-export {MentraProvider, type MentraProviderProps} from "../react/MentraProvider"
+export {
+  MentraProvider,
+  type MentraProviderProps,
+} from "../react/MentraProvider"
 export {MiniappHeader} from "../react/MiniappHeader"
 export {useColorScheme} from "../react/useColorScheme"
 export {useCapabilities} from "../react/useCapabilities"

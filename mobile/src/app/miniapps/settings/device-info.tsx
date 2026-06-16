@@ -37,17 +37,13 @@ export default function DeviceInfoScreen() {
             <RouteButton label={translate("deviceInfo:model")} text={deviceModel || defaultWearable || "Unknown"} />
             {!!bluetoothId && <RouteButton label={translate("deviceInfo:deviceId")} text={bluetoothId} />}
             {!!serialNumber && <RouteButton label={translate("deviceInfo:serialNumber")} text={serialNumber} />}
-            {!!bluetoothMacAddress && (
-              <RouteButton label={translate("deviceInfo:bluetoothMacAddress")} text={bluetoothMacAddress} />
-            )}
+            {!!bluetoothMacAddress && <RouteButton label={translate("deviceInfo:bluetoothMacAddress")} text={bluetoothMacAddress} />}
           </Group>
 
           {/* Software Version */}
           <Group title={translate("deviceInfo:softwareVersion")}>
             {!!buildNumber && <RouteButton label={translate("deviceInfo:buildNumber")} text={buildNumber} />}
-            {!!firmwareVersion && (
-              <RouteButton label={translate("deviceInfo:firmwareVersion")} text={firmwareVersion} />
-            )}
+            {!!firmwareVersion && <RouteButton label={translate("deviceInfo:firmwareVersion")} text={firmwareVersion} />}
             {!!appVersion && <RouteButton label={translate("deviceInfo:appVersion")} text={appVersion} />}
           </Group>
 

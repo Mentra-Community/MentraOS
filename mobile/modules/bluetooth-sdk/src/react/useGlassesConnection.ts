@@ -11,7 +11,12 @@ export type DefaultDeviceStorage = {
   save: (device: Device | null) => Promise<void>
 }
 
-export type GlassesConnectionAction = "idle" | "scanning" | "connecting" | "disconnecting" | "forgetting"
+export type GlassesConnectionAction =
+  | "idle"
+  | "scanning"
+  | "connecting"
+  | "disconnecting"
+  | "forgetting"
 
 export type UseGlassesConnectionOptions = {
   autoConnectDefault?: boolean
@@ -34,7 +39,9 @@ export type GlassesConnectionHookResult = BluetoothStatusHookResult & {
   setDefaultDevice: (device: Device | null) => Promise<void>
 }
 
-export function useGlassesConnection(options: UseGlassesConnectionOptions = {}): GlassesConnectionHookResult {
+export function useGlassesConnection(
+  options: UseGlassesConnectionOptions = {},
+): GlassesConnectionHookResult {
   const status = useBluetoothStatus({onError: options.onError})
   const scan = useBluetoothScan({
     model: options.scanModel,

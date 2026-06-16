@@ -35,21 +35,6 @@
 // Profiles - Hardware configurations for different glasses
 // =============================================================================
 
-// Import for factory functions
-import {G1_PROFILE_LEGACY, G2_PROFILE, Z100_PROFILE, NEX_PROFILE} from "./profiles"
-
-// =============================================================================
-// Convenience factory functions
-// =============================================================================
-
-import {TextMeasurer} from "./measurer"
-import {TextWrapper} from "./wrapper"
-import {DisplayHelpers} from "./helpers"
-import {ColumnComposer} from "./composer"
-import {G1_PROFILE} from "./profiles"
-import type {DisplayProfile} from "./profiles"
-import type {WrapOptions} from "./wrapper"
-
 export type {
   DisplayProfile,
   FontMetrics,
@@ -57,25 +42,28 @@ export type {
   FallbackConfig,
   DisplayConstraints,
   ScriptType,
-} from "./profiles"
+} from "./profiles";
 
-export {G1_PROFILE, G1_PROFILE_LEGACY, G1_HYPHEN_WIDTH_PX, G1_SPACE_WIDTH_PX} from "./profiles"
+export { G1_PROFILE, G1_PROFILE_LEGACY, G1_HYPHEN_WIDTH_PX, G1_SPACE_WIDTH_PX } from "./profiles";
 
 // G2 Profile
-export {G2_PROFILE, G2_HYPHEN_WIDTH_PX, G2_SPACE_WIDTH_PX} from "./profiles"
+export { G2_PROFILE, G2_HYPHEN_WIDTH_PX, G2_SPACE_WIDTH_PX } from "./profiles";
 
 // Z100 Profile
-export {Z100_PROFILE, Z100_HYPHEN_WIDTH_PX, Z100_SPACE_WIDTH_PX} from "./profiles"
+export { Z100_PROFILE, Z100_HYPHEN_WIDTH_PX, Z100_SPACE_WIDTH_PX } from "./profiles";
 
 // Mentra Nex Profile (a.k.a. Mentra Display)
-export {NEX_PROFILE, NEX_HYPHEN_WIDTH_PX, NEX_SPACE_WIDTH_PX} from "./profiles"
+export { NEX_PROFILE, NEX_HYPHEN_WIDTH_PX, NEX_SPACE_WIDTH_PX } from "./profiles";
+
+// Import for factory functions
+import { G1_PROFILE_LEGACY, G2_PROFILE, Z100_PROFILE, NEX_PROFILE } from "./profiles";
 
 // =============================================================================
 // Measurer - Pixel-accurate text measurement
 // =============================================================================
 
-export {TextMeasurer} from "./measurer"
-export type {CharMeasurement, TextMeasurement} from "./measurer"
+export { TextMeasurer } from "./measurer";
+export type { CharMeasurement, TextMeasurement } from "./measurer";
 
 // Script detection utilities
 export {
@@ -86,29 +74,41 @@ export {
   isUnsupportedScript,
   needsHyphenForBreak,
   SCRIPT_RANGES,
-} from "./measurer"
+} from "./measurer";
 
 // =============================================================================
 // Wrapper - Text wrapping with multiple break modes
 // =============================================================================
 
-export {TextWrapper} from "./wrapper"
-export type {WrapOptions, WrapResult, LineMetrics, BreakMode} from "./wrapper"
-export {DEFAULT_WRAP_OPTIONS} from "./wrapper"
+export { TextWrapper } from "./wrapper";
+export type { WrapOptions, WrapResult, LineMetrics, BreakMode } from "./wrapper";
+export { DEFAULT_WRAP_OPTIONS } from "./wrapper";
 
 // =============================================================================
 // Helpers - Optional convenience utilities
 // =============================================================================
 
-export {DisplayHelpers, ScrollView} from "./helpers"
-export type {TruncateResult, Page, Chunk, ScrollPosition, ScrollViewport} from "./helpers"
+export { DisplayHelpers, ScrollView } from "./helpers";
+export type { TruncateResult, Page, Chunk, ScrollPosition, ScrollViewport } from "./helpers";
 
 // =============================================================================
 // Composer - Multi-column layout composition
 // =============================================================================
 
-export {ColumnComposer, createColumnComposer} from "./composer"
-export type {ColumnConfig, ComposeOptions, ComposeResult} from "./composer"
+export { ColumnComposer, createColumnComposer } from "./composer";
+export type { ColumnConfig, ComposeOptions, ComposeResult } from "./composer";
+
+// =============================================================================
+// Convenience factory functions
+// =============================================================================
+
+import { TextMeasurer } from "./measurer";
+import { TextWrapper } from "./wrapper";
+import { DisplayHelpers } from "./helpers";
+import { ColumnComposer } from "./composer";
+import { G1_PROFILE } from "./profiles";
+import type { DisplayProfile } from "./profiles";
+import type { WrapOptions } from "./wrapper";
 
 /**
  * Create a complete display toolkit for a given profile.
@@ -127,16 +127,16 @@ export function createDisplayToolkit(
   profile: DisplayProfile = G1_PROFILE,
   wrapOptions?: WrapOptions,
 ): {
-  measurer: TextMeasurer
-  wrapper: TextWrapper
-  helpers: DisplayHelpers
-  composer: ColumnComposer
-  profile: DisplayProfile
+  measurer: TextMeasurer;
+  wrapper: TextWrapper;
+  helpers: DisplayHelpers;
+  composer: ColumnComposer;
+  profile: DisplayProfile;
 } {
-  const measurer = new TextMeasurer(profile)
-  const wrapper = new TextWrapper(measurer, wrapOptions)
-  const helpers = new DisplayHelpers(measurer, wrapper)
-  const composer = new ColumnComposer(profile, wrapOptions?.breakMode || "word")
+  const measurer = new TextMeasurer(profile);
+  const wrapper = new TextWrapper(measurer, wrapOptions);
+  const helpers = new DisplayHelpers(measurer, wrapper);
+  const composer = new ColumnComposer(profile, wrapOptions?.breakMode || "word");
 
   return {
     measurer,
@@ -144,7 +144,7 @@ export function createDisplayToolkit(
     helpers,
     composer,
     profile,
-  }
+  };
 }
 
 /**
@@ -161,15 +161,15 @@ export function createDisplayToolkit(
  * ```
  */
 export function createG1Toolkit(): {
-  measurer: TextMeasurer
-  wrapper: TextWrapper
-  helpers: DisplayHelpers
-  composer: ColumnComposer
-  profile: DisplayProfile
+  measurer: TextMeasurer;
+  wrapper: TextWrapper;
+  helpers: DisplayHelpers;
+  composer: ColumnComposer;
+  profile: DisplayProfile;
 } {
   return createDisplayToolkit(G1_PROFILE, {
     breakMode: "character-no-hyphen",
-  })
+  });
 }
 
 /**
@@ -190,15 +190,15 @@ export function createG1Toolkit(): {
  * ```
  */
 export function createG1LegacyToolkit(): {
-  measurer: TextMeasurer
-  wrapper: TextWrapper
-  helpers: DisplayHelpers
-  composer: ColumnComposer
-  profile: DisplayProfile
+  measurer: TextMeasurer;
+  wrapper: TextWrapper;
+  helpers: DisplayHelpers;
+  composer: ColumnComposer;
+  profile: DisplayProfile;
 } {
   return createDisplayToolkit(G1_PROFILE_LEGACY, {
     breakMode: "character-no-hyphen",
-  })
+  });
 }
 
 /**
@@ -214,15 +214,15 @@ export function createG1LegacyToolkit(): {
  * ```
  */
 export function createG2Toolkit(): {
-  measurer: TextMeasurer
-  wrapper: TextWrapper
-  helpers: DisplayHelpers
-  composer: ColumnComposer
-  profile: DisplayProfile
+  measurer: TextMeasurer;
+  wrapper: TextWrapper;
+  helpers: DisplayHelpers;
+  composer: ColumnComposer;
+  profile: DisplayProfile;
 } {
   return createDisplayToolkit(G2_PROFILE, {
     breakMode: "character-no-hyphen",
-  })
+  });
 }
 
 /**
@@ -237,15 +237,15 @@ export function createG2Toolkit(): {
  * ```
  */
 export function createZ100Toolkit(): {
-  measurer: TextMeasurer
-  wrapper: TextWrapper
-  helpers: DisplayHelpers
-  composer: ColumnComposer
-  profile: DisplayProfile
+  measurer: TextMeasurer;
+  wrapper: TextWrapper;
+  helpers: DisplayHelpers;
+  composer: ColumnComposer;
+  profile: DisplayProfile;
 } {
   return createDisplayToolkit(Z100_PROFILE, {
     breakMode: "character-no-hyphen",
-  })
+  });
 }
 
 /**
@@ -261,13 +261,13 @@ export function createZ100Toolkit(): {
  * ```
  */
 export function createNexToolkit(): {
-  measurer: TextMeasurer
-  wrapper: TextWrapper
-  helpers: DisplayHelpers
-  composer: ColumnComposer
-  profile: DisplayProfile
+  measurer: TextMeasurer;
+  wrapper: TextWrapper;
+  helpers: DisplayHelpers;
+  composer: ColumnComposer;
+  profile: DisplayProfile;
 } {
   return createDisplayToolkit(NEX_PROFILE, {
     breakMode: "character-no-hyphen",
-  })
+  });
 }

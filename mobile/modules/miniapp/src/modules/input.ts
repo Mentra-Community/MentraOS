@@ -42,7 +42,10 @@ export class InputModule {
   ): UnsubscribeFn {
     // Plain handler — subscribe to all touches.
     if (typeof gestureOrHandler === "function") {
-      return this.session._subscribe(MiniappStreamType.TOUCH_EVENT, gestureOrHandler as (data: unknown) => void)
+      return this.session._subscribe(
+        MiniappStreamType.TOUCH_EVENT,
+        gestureOrHandler as (data: unknown) => void,
+      )
     }
 
     const handler = maybeHandler!
@@ -51,7 +54,9 @@ export class InputModule {
 
     const unsubs: UnsubscribeFn[] = []
     for (const g of gestures) {
-      unsubs.push(this.session._subscribe(`${MiniappStreamType.TOUCH_EVENT}:${g}`, handler as (data: unknown) => void))
+      unsubs.push(
+        this.session._subscribe(`${MiniappStreamType.TOUCH_EVENT}:${g}`, handler as (data: unknown) => void),
+      )
     }
     return () => {
       for (const u of unsubs) {

@@ -17,7 +17,8 @@ const VARIANTS = {
   },
 }
 
-const variant = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? VARIANTS.china : VARIANTS.default
+const variant =
+  process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? VARIANTS.china : VARIANTS.default
 
 export const PACKAGE_NAME = variant.packageName
 export const PLAY_STORE_URL = variant.playStoreUrl

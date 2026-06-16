@@ -5,7 +5,7 @@
  * Defines the hardware and software features available on this device.
  */
 
-import type {Capabilities} from "../hardware"
+import type { Capabilities } from "../hardware";
 
 /**
  * Vuzix Z100 capability profile
@@ -24,8 +24,8 @@ export const vuzixZ100: Capabilities = {
     isColor: false,
     color: "green",
     canDisplayBitmap: false,
-    resolution: {width: 640, height: 480},
-    fieldOfView: {horizontal: 30},
+    resolution: { width: 640, height: 480 },
+    fieldOfView: { horizontal: 30 },
     maxTextLines: 7,
     adjustBrightness: true,
   },
@@ -57,4 +57,4 @@ export const vuzixZ100: Capabilities = {
 
   // WiFi capabilities - does not support WiFi
   hasWifi: false,
-}
+};

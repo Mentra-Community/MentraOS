@@ -1,7 +1,10 @@
 import {useEffect, useRef} from "react"
 
 import BluetoothSdk from "../index"
-import type {BluetoothSdkEventListener, BluetoothSdkEventName} from "../BluetoothSdk.types"
+import type {
+  BluetoothSdkEventListener,
+  BluetoothSdkEventName,
+} from "../BluetoothSdk.types"
 
 export type UseBluetoothEventOptions = {
   enabled?: boolean

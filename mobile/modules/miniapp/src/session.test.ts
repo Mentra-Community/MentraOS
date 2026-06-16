@@ -156,7 +156,10 @@ describe("MiniappSession request correlation", () => {
     expect(outbound!.requestId).toBeDefined()
     const reqId = outbound!.requestId!
 
-    transport.deliverFromPhone({type: MiniappResponseType.REQUEST_RESULT, ok: true, data: {value: "hello"}}, reqId)
+    transport.deliverFromPhone(
+      {type: MiniappResponseType.REQUEST_RESULT, ok: true, data: {value: "hello"}},
+      reqId,
+    )
     const value = await resultPromise
     expect(value).toBe("hello")
   })

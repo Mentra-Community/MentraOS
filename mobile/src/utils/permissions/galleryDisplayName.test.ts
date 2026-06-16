@@ -24,9 +24,9 @@ describe("deriveGalleryDisplayName", () => {
   })
 
   it("uses capture folder name for stabilized video outputs", () => {
-    expect(deriveGalleryDisplayName("/tmp/VID_20260606_090222_158_588/base.mp4.stabilized.mp4")).toBe(
-      "VID_20260606_090222_158_588.mp4",
-    )
+    expect(
+      deriveGalleryDisplayName("/tmp/VID_20260606_090222_158_588/base.mp4.stabilized.mp4"),
+    ).toBe("VID_20260606_090222_158_588.mp4")
   })
 
   it("keeps legacy flat filenames unchanged", () => {

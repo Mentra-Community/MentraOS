@@ -29,63 +29,63 @@ export default function MainSettingsPage() {
   })
 
   return (
-    <Screen preset="fixed" safeAreaEdges={["top"]} ref={viewShotRef} className="px-0">
-      <ScrollView className="pt-8 px-6" contentInsetAdjustmentBehavior="automatic">
-        <View style={{flex: 1, gap: theme.spacing.s6}}>
-          <Group title={translate("account:accountSettings")}>
-            <RouteButton
-              icon={<Icon name="circle-user" size={24} color={theme.colors.secondary_foreground} />}
-              label={translate("settings:profileSettings")}
-              onPress={() => push("/miniapps/settings/profile")}
-            />
-            <RouteButton
-              icon={<Icon name="message-2-star" size={24} color={theme.colors.secondary_foreground} />}
-              label={translate("settings:feedback")}
-              onPress={() => push("/miniapps/settings/feedback")}
-            />
-          </Group>
-
-          {defaultWearable && (
-            <Group title={translate("account:deviceSettings")}>
+      <Screen preset="fixed" safeAreaEdges={["top"]} ref={viewShotRef} className="px-0">
+        <ScrollView className="pt-8 px-6" contentInsetAdjustmentBehavior="automatic">
+          <View style={{flex: 1, gap: theme.spacing.s6}}>
+            <Group title={translate("account:accountSettings")}>
               <RouteButton
-                icon={<Icon name="glasses" color={theme.colors.secondary_foreground} size={24} />}
-                label={defaultWearable}
-                onPress={() => push("/miniapps/settings/glasses")}
+                icon={<Icon name="circle-user" size={24} color={theme.colors.secondary_foreground} />}
+                label={translate("settings:profileSettings")}
+                onPress={() => push("/miniapps/settings/profile")}
+              />
+              <RouteButton
+                icon={<Icon name="message-2-star" size={24} color={theme.colors.secondary_foreground} />}
+                label={translate("settings:feedback")}
+                onPress={() => push("/miniapps/settings/feedback")}
               />
             </Group>
-          )}
 
-          <Group title={translate("account:appSettings")}>
-            {superMode && (
-              <RouteButton
-                icon={<Icon name="sun" size={24} color={theme.colors.secondary_foreground} />}
-                label={translate("settings:appAppearance")}
-                onPress={() => push("/miniapps/settings/appearance")}
-              />
+            {defaultWearable && (
+              <Group title={translate("account:deviceSettings")}>
+                <RouteButton
+                  icon={<Icon name="glasses" color={theme.colors.secondary_foreground} size={24} />}
+                  label={defaultWearable}
+                  onPress={() => push("/miniapps/settings/glasses")}
+                />
+              </Group>
             )}
-            {(Platform.OS === "android" || superMode) && (
+
+            <Group title={translate("account:appSettings")}>
+              {superMode && (
+                <RouteButton
+                  icon={<Icon name="sun" size={24} color={theme.colors.secondary_foreground} />}
+                  label={translate("settings:appAppearance")}
+                  onPress={() => push("/miniapps/settings/appearance")}
+                />
+              )}
+              {(Platform.OS === "android" || superMode) && (
+                <RouteButton
+                  icon={<Icon name="bell" size={24} color={theme.colors.secondary_foreground} />}
+                  label={translate("settings:notificationsSettings")}
+                  onPress={() => push("/miniapps/settings/notifications")}
+                />
+              )}
               <RouteButton
-                icon={<Icon name="bell" size={24} color={theme.colors.secondary_foreground} />}
-                label={translate("settings:notificationsSettings")}
-                onPress={() => push("/miniapps/settings/notifications")}
+                icon={<Icon name="microphone" size={24} color={theme.colors.secondary_foreground} />}
+                label={translate("deviceSettings:microphone")}
+                onPress={() => push("/miniapps/settings/microphone")}
               />
-            )}
-            <RouteButton
-              icon={<Icon name="microphone" size={24} color={theme.colors.secondary_foreground} />}
-              label={translate("deviceSettings:microphone")}
-              onPress={() => push("/miniapps/settings/microphone")}
-            />
-            <RouteButton
-              icon={<Icon name="volume" size={24} color={theme.colors.secondary_foreground} />}
-              label={translate("settings:speechSettings")}
-              onPress={() => push("/miniapps/settings/speech")}
-            />
-            <RouteButton
-              icon={<Icon name="shield-lock" size={24} color={theme.colors.secondary_foreground} />}
-              label={translate("settings:privacySettings")}
-              onPress={() => push("/miniapps/settings/privacy")}
-            />
-          </Group>
+              <RouteButton
+                icon={<Icon name="volume" size={24} color={theme.colors.secondary_foreground} />}
+                label={translate("settings:speechSettings")}
+                onPress={() => push("/miniapps/settings/speech")}
+              />
+              <RouteButton
+                icon={<Icon name="shield-lock" size={24} color={theme.colors.secondary_foreground} />}
+                label={translate("settings:privacySettings")}
+                onPress={() => push("/miniapps/settings/privacy")}
+              />
+            </Group>
 
             <Group title={translate("deviceSettings:advancedSettings")}>
               {debugMode && (
@@ -104,9 +104,9 @@ export default function MainSettingsPage() {
             </Group>
           </View>
 
-        <VersionInfo />
-        <Spacer height={theme.spacing.s10} />
-      </ScrollView>
-    </Screen>
+          <VersionInfo />
+          <Spacer height={theme.spacing.s10} />
+        </ScrollView>
+      </Screen>
   )
 }

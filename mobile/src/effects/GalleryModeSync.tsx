@@ -32,7 +32,9 @@ export function GalleryModeSync() {
     const cameraApp = applets.find((app) => app.packageName === cameraPackageName && app.running)
     const otherButtonHandlingApp = applets.find(
       (app) =>
-        (app.type === "standard" || app.type === "background") && app.running && app.packageName !== cameraPackageName,
+        (app.type === "standard" || app.type === "background") &&
+        app.running &&
+        app.packageName !== cameraPackageName,
     )
 
     const shouldEnableCapture = !!cameraApp || !otherButtonHandlingApp

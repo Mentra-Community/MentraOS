@@ -482,10 +482,6 @@ class SocketComms {
       return
     }
 
-    const layoutType = msg.layout?.layoutType ?? "?"
-    const preview = String(msg.layout?.text ?? msg.layout?.topText ?? "").slice(0, 60)
-    console.log(`SOCKET: display_event received: view=${msg.view} layout=${layoutType} text="${preview}"`)
-
     let processedEvent
     try {
       processedEvent = displayProcessor.processDisplayEvent(msg)

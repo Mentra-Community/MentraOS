@@ -871,7 +871,10 @@ async function readLocationServicesEnabled(): Promise<boolean> {
   const locationServicesEnabled = await Promise.race([
     CrustModule.isLocationServicesEnabled(),
     new Promise<boolean>((_, reject) => {
-      setTimeout(() => reject(new Error("Location services check timed out")), LOCATION_SERVICES_CHECK_TIMEOUT_MS)
+      setTimeout(
+        () => reject(new Error("Location services check timed out")),
+        LOCATION_SERVICES_CHECK_TIMEOUT_MS,
+      )
     }),
   ])
   console.log("Location services enabled (native check):", locationServicesEnabled)

@@ -1,6 +1,9 @@
 import {NativeModule, registerWebModule} from "expo"
 
-import type {MentraPhotoReceiverModuleEvents, PhotoReceiverResult} from "./MentraPhotoReceiver.types"
+import type {
+  MentraPhotoReceiverModuleEvents,
+  PhotoReceiverResult,
+} from "./MentraPhotoReceiver.types"
 
 class MentraPhotoReceiverModule extends NativeModule<MentraPhotoReceiverModuleEvents> {
   async isSupported(): Promise<boolean> {

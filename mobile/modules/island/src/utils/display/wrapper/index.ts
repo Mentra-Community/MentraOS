@@ -8,8 +8,8 @@
  */
 
 // Main class
-export {TextWrapper} from "./TextWrapper"
+export { TextWrapper } from "./TextWrapper"
 
 // Types
-export type {WrapOptions, WrapResult, LineMetrics, BreakMode} from "./types"
-export {DEFAULT_WRAP_OPTIONS} from "./types"
+export type { WrapOptions, WrapResult, LineMetrics, BreakMode } from "./types"
+export { DEFAULT_WRAP_OPTIONS } from "./types"

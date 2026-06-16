@@ -48,7 +48,10 @@ export async function getDefaultMenuApps(allApps: ClientApp[]): Promise<GlassesM
  * Filter a saved menu list against current miniapp compatibility.
  * Returns only items whose miniapps are still installed and compatible.
  */
-export function filterCompatibleMenuItems(savedItems: GlassesMenuItem[], allApps: ClientApp[]): GlassesMenuItem[] {
+export function filterCompatibleMenuItems(
+  savedItems: GlassesMenuItem[],
+  allApps: ClientApp[],
+): GlassesMenuItem[] {
   return savedItems.filter((item) => {
     const app = allApps.find((a) => a.packageName === item.packageName)
     return app && app.compatibility?.isCompatible !== false

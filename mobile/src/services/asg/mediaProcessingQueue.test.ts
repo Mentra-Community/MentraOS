@@ -3,8 +3,6 @@ import * as RNFS from "@dr.pogodin/react-native-fs"
 import {localStorageService} from "@/services/asg/localStorageService"
 import {useGallerySyncStore} from "@/stores/gallerySync"
 
-import {mediaProcessingQueue} from "./mediaProcessingQueue"
-
 jest.mock("@dr.pogodin/react-native-fs", () => ({
   exists: jest.fn(),
   stat: jest.fn(),
@@ -37,6 +35,8 @@ jest.mock("@/utils/permissions/MediaLibraryPermissions", () => ({
   },
 }))
 
+import {mediaProcessingQueue} from "./mediaProcessingQueue"
+
 describe("mediaProcessingQueue", () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -67,9 +67,7 @@ describe("mediaProcessingQueue", () => {
   it("does not compare processed output size against capture total size", async () => {
     ;(RNFS.exists as jest.Mock).mockResolvedValue(true)
     ;(RNFS.stat as jest.Mock).mockResolvedValue({size: 100})
-    ;(RNFS.read as jest.Mock).mockResolvedValue(
-      Buffer.from([0xff, 0xd8, 0x76, 0x61, 0x6c, 0x69, 0x64]).toString("base64"),
-    )
+    ;(RNFS.read as jest.Mock).mockResolvedValue(Buffer.from([0xff, 0xd8, 0x76, 0x61, 0x6c, 0x69, 0x64]).toString("base64"))
 
     mediaProcessingQueue.reset()
     mediaProcessingQueue.enqueue({

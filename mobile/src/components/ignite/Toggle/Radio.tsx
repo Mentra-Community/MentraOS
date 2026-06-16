@@ -60,7 +60,10 @@ function RadioInput(props: RadioInputProps) {
     colors.palette.secondary500,
   ].filter(Boolean)[0]
 
-  const onBackgroundColor = [status === "error" && colors.errorBackground, colors.palette.neutral100].filter(Boolean)[0]
+  const onBackgroundColor = [
+    status === "error" && colors.errorBackground,
+    colors.palette.neutral100,
+  ].filter(Boolean)[0]
 
   const dotBackgroundColor = [
     disabled && colors.palette.neutral600,
@@ -71,7 +74,12 @@ function RadioInput(props: RadioInputProps) {
   return (
     <View
       style={[$inputOuter, {backgroundColor: offBackgroundColor, borderColor: outerBorderColor}, $outerStyleOverride]}>
-      <Animated.View style={[{backgroundColor: onBackgroundColor}, $innerStyleOverride, {opacity: opacity.current}]}>
+      <Animated.View
+        style={[
+          {backgroundColor: onBackgroundColor},
+          $innerStyleOverride,
+          {opacity: opacity.current},
+        ]}>
         <View style={[$radioDetail, {backgroundColor: dotBackgroundColor}, $detailStyleOverride]} />
       </Animated.View>
     </View>

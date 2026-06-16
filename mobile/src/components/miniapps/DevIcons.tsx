@@ -19,11 +19,14 @@ export function DevIcon({size = 24}: {size?: number}) {
     //   style={{width: size, height: size}}>
     //   <Icon name="user-code" size={20} color={theme.colors.primary_foreground} />
     // </View>
-    <View className="absolute flex-1 items-center justify-center bg-foreground z-1" style={{width: size, height: size}}>
-      <Icon name="hammer" size={size - 16} color={theme.colors.primary} />
+    <View
+      className="absolute flex-1 items-center justify-center bg-foreground z-1"
+      style={{width: size, height: size}}>
+      <Icon name="hammer" size={size-16} color={theme.colors.primary} />
     </View>
   )
 }
+
 
 export function DevToolsIcon({size = 24}: {size?: number}) {
   const {theme} = useAppTheme()
@@ -33,8 +36,10 @@ export function DevToolsIcon({size = 24}: {size?: number}) {
     //   style={{width: size, height: size}}>
     //   <Icon name="user-code" size={20} color={theme.colors.primary_foreground} />
     // </View>
-    <View className="absolute flex-1 items-center justify-center bg-foreground z-1" style={{width: size, height: size}}>
-      <Icon name="wrench" size={size - 16} color={theme.colors.primary} />
+    <View
+      className="absolute flex-1 items-center justify-center bg-foreground z-1"
+      style={{width: size, height: size}}>
+      <Icon name="wrench" size={size-16} color={theme.colors.primary} />
     </View>
   )
 }

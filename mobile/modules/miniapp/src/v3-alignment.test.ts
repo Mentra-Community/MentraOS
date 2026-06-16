@@ -182,10 +182,7 @@ describe("v3 alignment — session.transcription", () => {
     transport.sent.length = 0
     session.transcription.configure({languageHints: ["en"], vocabulary: ["MentraOS"], diarization: true})
     const env = parseEnvelope(transport.sent[0]!)
-    const payload = env!.payload as {
-      type: string
-      config: {languageHints: string[]; vocabulary: string[]; diarization: boolean}
-    }
+    const payload = env!.payload as {type: string; config: {languageHints: string[]; vocabulary: string[]; diarization: boolean}}
     expect(payload.type).toBe(MiniappRequestType.TRANSCRIPTION_CONFIG)
     expect(payload.config.languageHints).toEqual(["en"])
     expect(payload.config.vocabulary).toEqual(["MentraOS"])

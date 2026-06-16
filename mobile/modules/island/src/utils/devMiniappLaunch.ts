@@ -28,7 +28,9 @@ export type DevManifest = {
   [key: string]: unknown
 }
 
-export type DevLaunchResult = {decision: "live"; manifest: DevManifest} | {decision: "offline"; manifest: null}
+export type DevLaunchResult =
+  | {decision: "live"; manifest: DevManifest}
+  | {decision: "offline"; manifest: null}
 
 /**
  * GET <devUrl>/miniapp.json with a hard timeout. Returns the parsed
@@ -41,7 +43,10 @@ export type DevLaunchResult = {decision: "live"; manifest: DevManifest} | {decis
  * The fetch doubles as the reachability probe AND the manifest source —
  * one request per launch attempt instead of two.
  */
-export async function decideDevLaunchRoute(packageName: string, devUrl: string): Promise<DevLaunchResult> {
+export async function decideDevLaunchRoute(
+  packageName: string,
+  devUrl: string,
+): Promise<DevLaunchResult> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REACHABILITY_TIMEOUT_MS)
   try {

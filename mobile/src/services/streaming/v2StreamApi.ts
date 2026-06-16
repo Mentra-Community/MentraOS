@@ -76,9 +76,11 @@ function baseUrl(): string {
 function authHeader(): Record<string, string> {
   const token = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken)
   if (!token) {
-    throw new StreamConfigError("Managed streaming needs the host's core_token; user is not authenticated.")
+    throw new StreamConfigError(
+      "Managed streaming needs the host's core_token; user is not authenticated.",
+    )
   }
-  return {"authorization": `Bearer ${token}`, "content-type": "application/json"}
+  return {authorization: `Bearer ${token}`, "content-type": "application/json"}
 }
 
 export async function provisionManagedStream(
@@ -97,9 +99,10 @@ export async function provisionManagedStream(
 }
 
 export async function getManagedStreamStatus(liveInputId: string): Promise<CloudflareStatus> {
-  const res = await fetch(`${baseUrl()}/api/v2/client/streams/managed/${encodeURIComponent(liveInputId)}/status`, {
-    headers: authHeader(),
-  })
+  const res = await fetch(
+    `${baseUrl()}/api/v2/client/streams/managed/${encodeURIComponent(liveInputId)}/status`,
+    {headers: authHeader()},
+  )
   if (!res.ok) {
     const text = await res.text().catch(() => "")
     throw new Error(`getManagedStreamStatus HTTP ${res.status}: ${text || res.statusText}`)
@@ -108,10 +111,10 @@ export async function getManagedStreamStatus(liveInputId: string): Promise<Cloud
 }
 
 export async function teardownManagedStream(liveInputId: string): Promise<void> {
-  const res = await fetch(`${baseUrl()}/api/v2/client/streams/managed/${encodeURIComponent(liveInputId)}`, {
-    method: "DELETE",
-    headers: authHeader(),
-  })
+  const res = await fetch(
+    `${baseUrl()}/api/v2/client/streams/managed/${encodeURIComponent(liveInputId)}`,
+    {method: "DELETE", headers: authHeader()},
+  )
   if (!res.ok) {
     const text = await res.text().catch(() => "")
     throw new Error(`teardownManagedStream HTTP ${res.status}: ${text || res.statusText}`)

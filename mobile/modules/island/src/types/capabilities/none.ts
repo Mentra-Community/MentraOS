@@ -6,7 +6,7 @@
  * This profile matches the Vuzix Z100 capabilities for testing purposes.
  */
 
-import type {Capabilities} from "../hardware"
+import type { Capabilities } from "../hardware";
 
 /**
  * Simulated Glasses capability profile
@@ -25,8 +25,8 @@ export const none: Capabilities = {
     isColor: false,
     color: "green",
     canDisplayBitmap: false,
-    resolution: {width: 640, height: 480},
-    fieldOfView: {horizontal: 30},
+    resolution: { width: 640, height: 480 },
+    fieldOfView: { horizontal: 30 },
     maxTextLines: 7,
     adjustBrightness: true,
   },
@@ -73,4 +73,4 @@ export const none: Capabilities = {
 
   // WiFi capabilities - does not support WiFi
   hasWifi: false,
-}
+};

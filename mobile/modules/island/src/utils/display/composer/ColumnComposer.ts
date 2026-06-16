@@ -14,10 +14,10 @@
  * @see cloud/issues/026-mobile-display-processor for design docs
  */
 
-import type {DisplayProfile} from "../profiles/types"
-import {TextMeasurer} from "../measurer/TextMeasurer"
-import {TextWrapper} from "../wrapper/TextWrapper"
-import type {WrapOptions, BreakMode} from "../wrapper/types"
+import type { DisplayProfile } from "../profiles/types";
+import { TextMeasurer } from "../measurer/TextMeasurer";
+import { TextWrapper } from "../wrapper/TextWrapper";
+import type { WrapOptions, BreakMode } from "../wrapper/types";
 
 // =============================================================================
 // Types
@@ -28,15 +28,15 @@ import type {WrapOptions, BreakMode} from "../wrapper/types"
  */
 export interface ColumnConfig {
   /** Width of the left column in pixels */
-  leftColumnWidthPx: number
+  leftColumnWidthPx: number;
   /** X position where the right column starts in pixels */
-  rightColumnStartPx: number
+  rightColumnStartPx: number;
   /** Width of the right column in pixels (calculated from start position) */
-  rightColumnWidthPx: number
+  rightColumnWidthPx: number;
   /** Maximum number of lines to display */
-  maxLines: number
+  maxLines: number;
   /** Left margin in spaces (for indentation) */
-  leftMarginSpaces?: number
+  leftMarginSpaces?: number;
 }
 
 /**
@@ -44,9 +44,9 @@ export interface ColumnConfig {
  */
 export interface ComposeOptions {
   /** Break mode for text wrapping */
-  breakMode?: BreakMode
+  breakMode?: BreakMode;
   /** Custom column configuration (overrides profile defaults) */
-  columnConfig?: Partial<ColumnConfig>
+  columnConfig?: Partial<ColumnConfig>;
 }
 
 /**
@@ -54,13 +54,13 @@ export interface ComposeOptions {
  */
 export interface ComposeResult {
   /** The fully composed text with both columns merged */
-  composedText: string
+  composedText: string;
   /** Lines from the left column (for debugging/preview) */
-  leftLines: string[]
+  leftLines: string[];
   /** Lines from the right column (for debugging/preview) */
-  rightLines: string[]
+  rightLines: string[];
   /** The column configuration that was used */
-  config: ColumnConfig
+  config: ColumnConfig;
 }
 
 // =============================================================================
@@ -78,20 +78,20 @@ export interface ComposeResult {
  * ```
  */
 export class ColumnComposer {
-  private profile: DisplayProfile
-  private measurer: TextMeasurer
-  private wrapper: TextWrapper
-  private spaceWidthPx: number
+  private profile: DisplayProfile;
+  private measurer: TextMeasurer;
+  private wrapper: TextWrapper;
+  private spaceWidthPx: number;
 
   constructor(profile: DisplayProfile, breakMode: BreakMode = "character-no-hyphen") {
-    this.profile = profile
-    this.measurer = new TextMeasurer(profile)
+    this.profile = profile;
+    this.measurer = new TextMeasurer(profile);
     this.wrapper = new TextWrapper(this.measurer, {
       breakMode,
-    })
+    });
 
     // Cache space width for alignment calculations
-    this.spaceWidthPx = this.measurer.measureText(" ")
+    this.spaceWidthPx = this.measurer.measureText(" ");
   }
 
   // ===========================================================================
@@ -110,42 +110,42 @@ export class ColumnComposer {
    * @returns Composed result with merged text and metadata
    */
   public composeDoubleTextWall(leftText: string, rightText: string, options: ComposeOptions = {}): ComposeResult {
-    const config = this.getColumnConfig(options.columnConfig)
+    const config = this.getColumnConfig(options.columnConfig);
 
     // Wrap each column independently
     const leftWrapOptions: WrapOptions = {
       maxWidthPx: config.leftColumnWidthPx,
       maxLines: config.maxLines,
-    }
+    };
 
     const rightWrapOptions: WrapOptions = {
       maxWidthPx: config.rightColumnWidthPx,
       maxLines: config.maxLines,
-    }
+    };
 
-    const leftResult = this.wrapper.wrap(leftText || "", leftWrapOptions)
-    const rightResult = this.wrapper.wrap(rightText || "", rightWrapOptions)
+    const leftResult = this.wrapper.wrap(leftText || "", leftWrapOptions);
+    const rightResult = this.wrapper.wrap(rightText || "", rightWrapOptions);
 
     // Pad arrays to have exactly maxLines entries
-    const leftLines = this.padLines(leftResult.lines, config.maxLines)
-    const rightLines = this.padLines(rightResult.lines, config.maxLines)
+    const leftLines = this.padLines(leftResult.lines, config.maxLines);
+    const rightLines = this.padLines(rightResult.lines, config.maxLines);
 
     // Merge columns with space alignment
-    const composedText = this.mergeColumns(leftLines, rightLines, config)
+    const composedText = this.mergeColumns(leftLines, rightLines, config);
 
     return {
       composedText,
       leftLines,
       rightLines,
       config,
-    }
+    };
   }
 
   /**
    * Get the default column configuration for the current profile.
    */
   public getDefaultColumnConfig(): ColumnConfig {
-    return this.getColumnConfig()
+    return this.getColumnConfig();
   }
 
   /**
@@ -154,7 +154,7 @@ export class ColumnComposer {
   public setBreakMode(breakMode: BreakMode): void {
     this.wrapper = new TextWrapper(this.measurer, {
       breakMode,
-    })
+    });
   }
 
   // ===========================================================================
@@ -165,7 +165,7 @@ export class ColumnComposer {
    * Get column configuration, merging defaults with overrides.
    */
   private getColumnConfig(overrides?: Partial<ColumnConfig>): ColumnConfig {
-    const displayWidth = this.profile.displayWidthPx
+    const displayWidth = this.profile.displayWidthPx;
 
     // Default layout: 50% for left column, right starts at 55%
     // This matches the native G1Text implementations
@@ -175,23 +175,23 @@ export class ColumnComposer {
       rightColumnWidthPx: displayWidth - Math.floor(displayWidth * 0.55),
       maxLines: this.profile.maxLines,
       leftMarginSpaces: 0,
-    }
+    };
 
     return {
       ...defaults,
       ...overrides,
-    }
+    };
   }
 
   /**
    * Pad lines array to exactly `count` entries.
    */
   private padLines(lines: string[], count: number): string[] {
-    const result = [...lines]
+    const result = [...lines];
     while (result.length < count) {
-      result.push("")
+      result.push("");
     }
-    return result.slice(0, count)
+    return result.slice(0, count);
   }
 
   /**
@@ -204,34 +204,34 @@ export class ColumnComposer {
    * 4. Append spaces and right column text
    */
   private mergeColumns(leftLines: string[], rightLines: string[], config: ColumnConfig): string {
-    const lines: string[] = []
+    const lines: string[] = [];
 
     for (let i = 0; i < config.maxLines; i++) {
-      const leftText = this.cleanEnspaces(leftLines[i] || "")
-      const rightText = this.cleanEnspaces(rightLines[i] || "")
+      const leftText = this.cleanEnspaces(leftLines[i] || "");
+      const rightText = this.cleanEnspaces(rightLines[i] || "");
 
       // Calculate pixel width of left text
-      const leftWidthPx = this.measurer.measureText(leftText)
+      const leftWidthPx = this.measurer.measureText(leftText);
 
       // Calculate spaces needed to reach the right column start
-      const spacesNeeded = this.calculateSpacesForAlignment(leftWidthPx, config.rightColumnStartPx)
+      const spacesNeeded = this.calculateSpacesForAlignment(leftWidthPx, config.rightColumnStartPx);
 
       // Build the merged line
-      let line = ""
+      let line = "";
 
       // Add left margin if configured
       if (config.leftMarginSpaces && config.leftMarginSpaces > 0) {
-        line += " ".repeat(config.leftMarginSpaces)
+        line += " ".repeat(config.leftMarginSpaces);
       }
 
-      line += leftText
-      line += " ".repeat(spacesNeeded)
-      line += rightText
+      line += leftText;
+      line += " ".repeat(spacesNeeded);
+      line += rightText;
 
-      lines.push(line)
+      lines.push(line);
     }
 
-    return lines.join("\n")
+    return lines.join("\n");
   }
 
   /**
@@ -242,11 +242,11 @@ export class ColumnComposer {
    * @returns Number of space characters needed
    */
   private calculateSpacesForAlignment(currentWidthPx: number, targetPositionPx: number): number {
-    const pixelsNeeded = targetPositionPx - currentWidthPx
+    const pixelsNeeded = targetPositionPx - currentWidthPx;
 
     // Ensure at least one space for separation
     if (pixelsNeeded <= 0) {
-      return 1
+      return 1;
     }
 
     // Calculate spaces needed. Use Math.floor (not Math.ceil) to ensure the
@@ -254,10 +254,10 @@ export class ColumnComposer {
     // the right column to start 1–5px further right than planned, shrinking
     // its usable width and causing the last character to wrap onto the next
     // line's left position.
-    const spaces = Math.max(1, Math.floor(pixelsNeeded / this.spaceWidthPx))
+    const spaces = Math.max(1, Math.floor(pixelsNeeded / this.spaceWidthPx));
 
     // Cap at a reasonable maximum to prevent runaway spacing
-    return Math.min(spaces, 100)
+    return Math.min(spaces, 100);
   }
 
   /**
@@ -265,7 +265,7 @@ export class ColumnComposer {
    * Native implementations do this cleanup before merging.
    */
   private cleanEnspaces(text: string): string {
-    return text.replace(/\u2002/g, "")
+    return text.replace(/\u2002/g, "");
   }
 }
 
@@ -281,5 +281,5 @@ export class ColumnComposer {
  * @returns Configured ColumnComposer instance
  */
 export function createColumnComposer(profile: DisplayProfile, breakMode: BreakMode = "word"): ColumnComposer {
-  return new ColumnComposer(profile, breakMode)
+  return new ColumnComposer(profile, breakMode);
 }

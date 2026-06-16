@@ -243,7 +243,7 @@ export class PivotEngine {
     )
     if (instructionPivots.length === 0) {
       // No survived turns from the instruction path — defer to geometry.
-
+      // eslint-disable-next-line no-console
       console.log(
         `[PivotEngine] falling back to setRoute (geometry) — input steps:\n` +
           computedSteps

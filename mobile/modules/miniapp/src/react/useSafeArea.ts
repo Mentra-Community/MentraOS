@@ -9,7 +9,11 @@
 
 import {useState} from "react"
 
-import {getMentraOSGlobals, type MiniappCapsuleMenuRect, type MiniappSafeAreaInsets} from "../globals"
+import {
+  getMentraOSGlobals,
+  type MiniappCapsuleMenuRect,
+  type MiniappSafeAreaInsets,
+} from "../globals"
 
 const EMPTY_INSETS: MiniappSafeAreaInsets = {top: 0, bottom: 0, left: 0, right: 0}
 

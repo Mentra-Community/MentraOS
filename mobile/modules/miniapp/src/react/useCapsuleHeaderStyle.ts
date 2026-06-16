@@ -28,12 +28,16 @@ export interface UseCapsuleHeaderStyleOptions {
   fallbackMarginTop?: number
 }
 
-export function useCapsuleHeaderStyle(options: UseCapsuleHeaderStyleOptions = {}): CSSProperties {
+export function useCapsuleHeaderStyle(
+  options: UseCapsuleHeaderStyleOptions = {},
+): CSSProperties {
   const {leftPadding = 20, rightGap = 16, fallbackHeight = 32, fallbackMarginTop = 16} = options
   const {insets, capsuleMenu} = useSafeArea()
 
   const height = capsuleMenu?.height ?? fallbackHeight
-  const center = capsuleMenu ? capsuleMenu.top + capsuleMenu.height / 2 - insets.top : fallbackMarginTop + height / 2
+  const center = capsuleMenu
+    ? capsuleMenu.top + capsuleMenu.height / 2 - insets.top
+    : fallbackMarginTop + height / 2
   const marginTop = Math.max(0, center - height / 2)
   const paddingRight = capsuleMenu ? capsuleMenu.width + rightGap : leftPadding
 

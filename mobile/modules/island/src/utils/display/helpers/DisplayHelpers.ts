@@ -1,7 +1,7 @@
-import type {DisplayProfile} from "../profiles/types"
-import {TextMeasurer} from "../measurer/TextMeasurer"
-import {TextWrapper} from "../wrapper/TextWrapper"
-import type {WrapOptions, WrapResult} from "../wrapper/types"
+import type { DisplayProfile } from "../profiles/types"
+import { TextMeasurer } from "../measurer/TextMeasurer"
+import { TextWrapper } from "../wrapper/TextWrapper"
+import type { WrapOptions, WrapResult } from "../wrapper/types"
 
 /**
  * Truncation result with metadata.
@@ -94,7 +94,11 @@ export class DisplayHelpers {
    * @param ellipsis - Ellipsis string (default: '...')
    * @returns Truncation result
    */
-  truncateWithEllipsis(text: string, maxWidthPx?: number, ellipsis: string = "..."): TruncateResult {
+  truncateWithEllipsis(
+    text: string,
+    maxWidthPx?: number,
+    ellipsis: string = "..."
+  ): TruncateResult {
     const width = maxWidthPx ?? this.profile.displayWidthPx
     const textWidth = this.measurer.measureText(text)
 
