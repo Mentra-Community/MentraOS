@@ -92,6 +92,19 @@ export type {
   SubjectTokenType,
 } from "./runtime/bootstrap"
 
+// Glasses device-state store — moved into island so island owns device state.
+// Re-exported through the host's @/stores/glasses shim so the app keeps its
+// imports. Also surfaced as island.glassesStore (the escape hatch). Predicates
+// (isGlassesConnected/…) come from GlassesReadiness above, not re-exported here.
+export {
+  useGlassesStore,
+  selectGlassesConnected,
+  selectGlassesReady,
+  getGlasesInfoPartial,
+  getGlassesSystemTimeMs,
+  waitForGlassesState,
+} from "./stores/glasses"
+
 // Bluetooth SDK internal compatibility passthrough. The island package uses the
 // declared @mentra/bluetooth-sdk/internal subpath so it does not reach into SDK
 // build output directly. Prefer an island facade when one exists; this remains

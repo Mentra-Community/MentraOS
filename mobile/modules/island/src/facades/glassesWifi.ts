@@ -8,17 +8,16 @@
  * instead of importing bluetooth-sdk directly — that's the native-import boundary
  * the toolkit is built around.
  *
- * Scope note: this is actions only (`scan`/`connect`/`forget`). The wifi *status*
- * read-model (`status()`/`onStatus()`) is deliberately deferred — it's derived from
- * multiple sources in the glasses connection state (the `wifi_status_change` event
- * *and* legacy connection-info fields), so it lands with the glasses-store migration,
- * not here. `connect()` propagates bluetooth-sdk's coded errors unchanged so callers
- * keep their existing error mapping.
+ * `connect()` propagates bluetooth-sdk's coded errors unchanged so callers keep
+ * their existing error mapping. The `status()`/`onStatus()` read-model reads the
+ * glasses-state store island now owns (wifi status is derived there from the
+ * device's connection info).
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk"
-import type {WifiSearchResult} from "@mentra/bluetooth-sdk"
+import type {WifiSearchResult, WifiStatus} from "@mentra/bluetooth-sdk"
+import {useGlassesStore} from "../stores/glasses"
 
-export type {WifiSearchResult}
+export type {WifiSearchResult, WifiStatus}
 
 export const glassesWifi = {
   /** Scan for nearby wifi networks. Request/response — resolves with the results. */
@@ -38,5 +37,15 @@ export const glassesWifi = {
   /** Forget a saved network on the glasses. */
   async forget(ssid: string): Promise<void> {
     await BluetoothSdk.forgetWifiNetwork(ssid)
+  },
+
+  /** The glasses' current wifi connection status (snapshot). */
+  status(): WifiStatus {
+    return useGlassesStore.getState().wifi
+  },
+
+  /** Subscribe to wifi-status changes; returns an unsubscribe. */
+  onStatus(cb: (status: WifiStatus) => void): () => void {
+    return useGlassesStore.subscribe((s) => s.wifi, cb)
   },
 }

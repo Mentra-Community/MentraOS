@@ -3,6 +3,7 @@
 // @mentra/bluetooth-sdk is globally mocked in jest.setup.js — the facade calls it.
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {glassesWifi} from "../../modules/island/src/facades/glassesWifi"
+import {useGlassesStore} from "../../modules/island/src/stores/glasses"
 
 describe("glassesWifi facade", () => {
   beforeEach(() => {
@@ -30,5 +31,21 @@ describe("glassesWifi facade", () => {
   it("forget() delegates to forgetWifiNetwork", async () => {
     await glassesWifi.forget("home")
     expect(BluetoothSdk.forgetWifiNetwork).toHaveBeenCalledWith("home")
+  })
+
+  it("status() reads the glasses store's wifi state", () => {
+    useGlassesStore.setState({wifi: {state: "connected", ssid: "home"}})
+    expect(glassesWifi.status()).toEqual({state: "connected", ssid: "home"})
+  })
+
+  it("onStatus() fires on wifi change and stops after unsubscribe", () => {
+    useGlassesStore.setState({wifi: {state: "disconnected"}})
+    const cb = jest.fn()
+    const unsub = glassesWifi.onStatus(cb)
+    useGlassesStore.setState({wifi: {state: "connected", ssid: "home"}})
+    expect(cb).toHaveBeenCalledWith({state: "connected", ssid: "home"}, {state: "disconnected"})
+    unsub()
+    useGlassesStore.setState({wifi: {state: "disconnected"}})
+    expect(cb).toHaveBeenCalledTimes(1)
   })
 })
