@@ -23,8 +23,17 @@ export const session = {
   /** Current cloud live-session status (connection state + audio transport). */
   status: (): CloudClientStatusSnapshot => project(),
   /** Subscribe to cloud session-status changes; returns an unsubscribe. */
-  onStatus: (cb: (status: CloudClientStatusSnapshot) => void): (() => void) =>
-    useCloudClientStatusStore.subscribe(() => cb(project())),
+  onStatus: (cb: (status: CloudClientStatusSnapshot) => void): (() => void) => {
+    // Dedupe: fire only when the projected {status, audioTransport} changes.
+    let last = JSON.stringify(project())
+    return useCloudClientStatusStore.subscribe(() => {
+      const snap = project()
+      const key = JSON.stringify(snap)
+      if (key === last) return
+      last = key
+      cb(snap)
+    })
+  },
   /** Whether the live-session handshake has completed. */
   isConnected: (): boolean => cloudClientService.isConnected(),
 
