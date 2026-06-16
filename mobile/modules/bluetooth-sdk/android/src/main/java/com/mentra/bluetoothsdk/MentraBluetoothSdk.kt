@@ -946,7 +946,7 @@ class MentraBluetoothSdk private constructor(
         return startOtaUpdate(otaVersionUrl)
     }
 
-    private fun startOtaCommand(otaVersionUrl: String? = null): OtaStartAckEvent {
+    private fun startOtaCommand(otaVersionUrl: String): OtaStartAckEvent {
         val pending = PendingResponse<OtaStartAckEvent>("OTA start command")
         synchronized(oneShotLock) {
             if (pendingOtaStart != null) {
@@ -969,7 +969,7 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    internal fun startOtaUpdate(otaVersionUrl: String?): OtaStartAckEvent =
+    internal fun startOtaUpdate(otaVersionUrl: String): OtaStartAckEvent =
         startOtaCommand(otaVersionUrl)
 
     internal fun sendOtaQueryStatus(): OtaQueryResult = queryOtaStatus()

@@ -1007,7 +1007,7 @@ public final class MentraBluetoothSDK {
         return try await startOtaUpdate(otaVersionUrl: otaVersionUrl)
     }
 
-    private func startOtaCommand(otaVersionUrl: String? = nil) async throws -> OtaStartAckEvent {
+    private func startOtaCommand(otaVersionUrl: String) async throws -> OtaStartAckEvent {
         if pendingOtaStart != nil {
             throw BluetoothError(
                 code: "request_in_flight",
@@ -1031,7 +1031,7 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    func startOtaUpdate(otaVersionUrl: String?) async throws -> OtaStartAckEvent {
+    func startOtaUpdate(otaVersionUrl: String) async throws -> OtaStartAckEvent {
         try await startOtaCommand(otaVersionUrl: otaVersionUrl)
     }
 
