@@ -6,15 +6,20 @@
  * This is additive: it grows one facade at a time and lives *alongside* the flat
  * named exports in `index.ts` during the migration. The flat exports (and the
  * `BluetoothSdk` passthrough) stay until every screen has moved onto `island.*`.
- *
- * First member: `island.glasses.wifi`. The bootstrap front door
- * (`island.configure`/`start`/`stop`) and the remaining domains attach here in
- * follow-up PRs.
  */
+import {configure, start, stop} from "./runtime/bootstrap"
 import {glassesWifi} from "./facades/glassesWifi"
+import {displayMirror} from "./facades/displayMirror"
 
 export const island = {
+  /** Front door — hand island auth + config, then start/stop the runtime. */
+  configure,
+  start,
+  stop,
   glasses: {
     wifi: glassesWifi,
+  },
+  display: {
+    mirror: displayMirror,
   },
 }
