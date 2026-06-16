@@ -2781,6 +2781,7 @@ class G2 : SGCManager() {
     override fun disconnect() {
         Bridge.log("G2: disconnect()")
         isDisconnecting = true
+        clearDisplay()
         cancelPairingTimeout()
         stopScan()
         stopHeartbeats()
@@ -3003,9 +3004,6 @@ class G2 : SGCManager() {
     }
 
     override fun sendShutdown() {
-        // Send the EvenHub shutdown synchronously before tearing down BLE. clearDisplay() is now
-        // fire-and-forget (it serializes on displayScope), so calling it here would let disconnect()
-        // close the GATT before the deferred shutdown packet was ever written.
         val msg = EvenHubProto.shutdownMessage()
         sendEvenHubCommand(msg)
         pageCreated = false
@@ -3672,7 +3670,7 @@ class G2 : SGCManager() {
                                 ackSession == pendingImgAckSession &&
                                 ackFragment == pendingImgAckFragment
                 ) {
-                    Bridge.log("G2: img_res: session=$ackSession fragment=$ackFragment errorCode=$errorCode success=${errorCode == 4}")
+                    // Bridge.log("G2: img_res: session=$ackSession fragment=$ackFragment errorCode=$errorCode success=${errorCode == 4}")
                     pendingImgAck?.complete(errorCode == 4)
                 }
             }
