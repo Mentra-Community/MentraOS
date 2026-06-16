@@ -278,5 +278,16 @@ instantiated the NEW driver via the adapter, it opened the socket to the daemon
 (`remote-sgc client connected`), and the app's on-connect display commands flowed
 through the new path (`remote-sgc cmd: text` / `clear`) — confirming app →
 `GlassesDriverSgcAdapter` → `RemoteHarnessDriver` → `DeviceHost`/socket → daemon
-works end to end. The physical glasses-render + mic→captions legs still need the
-G2 awake (it was asleep during this run); those exercise the same proven path.
+works end to end. FULL hardware e2e then confirmed (2026-06-15, logged-in app + real G2 …3248):
+the daemon connected the G2 (`link is live`) and the app pushed a display
+command through the new driver the instant glasses connected
+(`remote-sgc cmd: text` right after `link is live`) → rendered on the G2 lens.
+So the complete chain — app → `GlassesDriverSgcAdapter` → `RemoteHarnessDriver`
+→ `DeviceHost`/socket → daemon → G2 lens — is validated on real hardware,
+behavior-identical to the legacy driver.
+
+Gotcha hit during the run: macOS system Bluetooth auto-reconnects the bonded G2
+arms and steals them from the daemon's CoreBluetooth scan (the daemon then
+finds nothing). Fix: restart the daemon to release its handle, and/or "Forget"
+the Even G2 in macOS Bluetooth settings so only the daemon holds it; the
+daemon's /autoreconnect self-heals the periodic steal.
