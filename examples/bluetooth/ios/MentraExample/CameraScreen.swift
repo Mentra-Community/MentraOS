@@ -693,7 +693,7 @@ private struct ScanModeSettingsCard: View {
                     .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
             }
             if model.scanMode {
-                Text("Pushes size, MFNR, NR, edge, and ISP gain presets to glasses (HAL may warn not_implemented). AE÷\(model.scanAeDivisor) and ISO cap \(model.scanIsoCap) still ship on capture.")
+                Text("Pushes max-size preset to glasses button via setButtonPhotoSettings. AE÷\(model.scanAeDivisor) and ISO cap \(model.scanIsoCap) ship on every capture via requestPhoto (available in SDK ≥0.1.13 locally; button preset covers 0.1.12).")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(AppColor.muted)
                 HStack(spacing: 8) {

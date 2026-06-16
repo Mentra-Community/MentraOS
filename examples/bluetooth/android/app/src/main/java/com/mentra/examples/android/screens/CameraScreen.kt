@@ -218,8 +218,10 @@ fun CameraScreen(controller: MentraExampleController) {
                                 "Connect glasses first"
                             } else if (!glassesWifiConnected) {
                                 "Connect glasses to Wi-Fi"
-                            } else if (state.activeAction == "Capture & upload") {
+                            } else if (state.activeAction == "Capture & upload" || state.activeAction == "Capture scan photo") {
                                 "Capturing..."
+                            } else if (state.scanMode) {
+                                "Capture scan photo"
                             } else {
                                 "Capture photo"
                             },
@@ -582,7 +584,7 @@ private fun ScanModeSettingsCard(controller: MentraExampleController) {
         }
         if (state.scanMode) {
             Text(
-                "Pushes size, MFNR, NR, edge, and ISP gain presets to glasses (HAL may warn not_implemented). AE÷${state.scanAeDivisor} and ISO cap ${state.scanIsoCap} still ship on capture.",
+                "Pushes max-size preset to glasses button via setButtonPhotoSettings. AE÷${state.scanAeDivisor} and ISO cap ${state.scanIsoCap} ship on every capture via requestPhoto (available in SDK ≥0.1.13 locally; button preset covers 0.1.12).",
                 color = AppColor.muted,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,

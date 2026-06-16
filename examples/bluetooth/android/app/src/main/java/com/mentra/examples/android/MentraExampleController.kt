@@ -236,7 +236,7 @@ data class MentraExampleState(
     val videoPreviewUrl: String? = null,
     val videoRecording: Boolean = false,
     val photoCompression: String = "none",
-    val photoSize: String = "max",
+    val photoSize: String = "full", // "full" = max detail; SDK 0.1.12 uses FULL; 0.1.13 renames to MAX
     val scanMode: Boolean = false,
     val scanAeDivisor: Int = 3,
     val scanIsoCap: Int = 800,
@@ -729,7 +729,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         return PhotoRequest(
             requestId = requestId,
             appId = appId,
-            size = PhotoSize.fromValue(state.photoSize),
+            // SDK 0.1.12 exposes PhotoSize.FULL for max resolution; the UI uses "max" as the label.
+            // When 0.1.13 lands with PhotoSize.MAX, replace FULL with fromValue(state.photoSize).
+            size = if (state.photoSize == "max") PhotoSize.FULL else PhotoSize.fromValue(state.photoSize),
             webhookUrl = webhookUrl,
             compress = PhotoCompression.fromValue(state.photoCompression),
             sound = true,
@@ -2889,7 +2891,7 @@ fun rgbLedColorFor(color: String): RgbLedColor =
 fun disconnectedGlassesStatus(status: GlassesRuntimeState?): GlassesRuntimeState? =
     status?.let { GlassesRuntimeState.Disconnected() }
 
-val photoSizeOptions = listOf("low", "medium", "high", "max")
+val photoSizeOptions = listOf("low", "medium", "high", "full")
 val photoCompressionOptions = listOf("none", "medium", "heavy")
 
 fun roiPositionLabel(roiPosition: Int): String =
