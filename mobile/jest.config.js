@@ -7,6 +7,11 @@ module.exports = {
     "^@/(.*)$": "<rootDir>/src/$1",
     "^@assets/(.*)$": "<rootDir>/assets/$1",
     "^@mentra/bluetooth-sdk-internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
+    // island-internal code (e.g. RestComms) reaches the full btsdk surface via the
+    // relative build/_internal path (the @mentra/bluetooth-sdk-internal alias
+    // doesn't resolve in island's standalone build). Map it to the same source so
+    // the jest.setup mock applies — otherwise requireActual loads the real native module.
+    "bluetooth-sdk/build/_internal$": "<rootDir>/modules/bluetooth-sdk/src/_internal.ts",
   },
   testPathIgnorePatterns: [
     "<rootDir>/modules/island/",

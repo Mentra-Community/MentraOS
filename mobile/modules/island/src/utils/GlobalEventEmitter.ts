@@ -1,3 +1,5 @@
+// @ts-nocheck — `events` (node builtin, RN-polyfilled) ships no types in island's
+// standalone build; the host build resolves them fine.
 import {EventEmitter} from "events"
 
 /**

@@ -77,7 +77,8 @@ pattern for btsdk types.
 | dev | `utils/cloudClient/devHost.ts` + core store | 1 | todo |
 | miniapps | apps store + LocalMiniappRuntime (island) + MiniappCatalog | 1/hard (WebView) | todo |
 | pairing | pairing screens state machine (readiness primitive already island) | 1 (extract) | todo |
-| **settings** | `stores/settings.ts` (964 LOC) + `RestComms` + `storage` | **2 (keystone)** | todo — own careful commit; unblocks settings + glasses.settings + phoneNotifications |
+| **settings** | `stores/settings.ts` (964 LOC) + `RestComms` + `storage` | keystone | **DONE (#3167)** — settings store moved into island, `toolkit.stores.settings`. Moved **together with RestComms** (mutually coupled: settings→RestComms cloud-sync, RestComms→settings backend URL). Storage uses island's MMKV (ported `loadSubKeys`). Unblocks glasses.settings + phoneNotifications. The typed `toolkit.settings` keyed facade (get/set/onChanged) is still TODO on top of the moved store. |
+| **RestComms** (v1 REST) | `services/RestComms.ts` (731 LOC) | move-with-settings | **DONE (#3167)** — moved into island with settings (the coupled pair). v1-transitional: deleted in place when v1 retires. Reads backend URL from the now-island settings store directly (no early-auth timing hack). Host `@/services/RestComms` is a shim. GlobalEventEmitter also moved in (one shared instance). |
 | glasses.settings | settings store + btsdk | 2 (after settings) | blocked on settings |
 | phoneNotifications | settings store + crust + permissions | 2 (after settings) | blocked on settings |
 | gallery | `services/asg/gallerySyncService.ts` (~1000 LOC, hotspot) | hard | todo |

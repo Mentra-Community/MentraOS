@@ -242,6 +242,10 @@ jest.mock("@mentra/island", () => {
   const realConnection = jest.requireActual("./modules/island/src/stores/connection")
   const realGallerySync = jest.requireActual("./modules/island/src/stores/gallerySync")
   const realCloudStatus = jest.requireActual("./modules/island/src/stores/cloudClientStatus")
+  // Settings store + RestComms moved into island; tests used the real host store
+  // before the move, so requireActual preserves that exact behavior.
+  const realSettings = jest.requireActual("./modules/island/src/stores/settings")
+  const realRestComms = jest.requireActual("./modules/island/src/services/RestComms")
   const appStatusState = {
     apps: [],
     refresh: jest.fn(),
@@ -269,6 +273,10 @@ jest.mock("@mentra/island", () => {
     ...realGallerySync,
     // Real cloud-client runtime status store (useCloudClientStatusStore).
     ...realCloudStatus,
+    // Real settings store (SETTINGS, useSettingsStore, useSetting, OFFLINE_APPLETS)
+    // + RestComms singleton — both moved into island.
+    ...realSettings,
+    restComms: realRestComms.default,
     // The namespaced (A) host API. Mirrors the real `toolkit` object; members are
     // jest.fn()s so host/screen tests can assert delegation without native btsdk.
     toolkit: {
@@ -334,11 +342,13 @@ jest.mock("@mentra/island", () => {
         connection: realConnection.useConnectionStore,
         gallerySync: realGallerySync.useGallerySyncStore,
         cloudClientStatus: realCloudStatus.useCloudClientStatusStore,
+        settings: realSettings.useSettingsStore,
       },
     },
-    // Shared process-wide event bus (moved into island) — a real EventEmitter so
-    // tests that emit/listen across the boundary work.
-    GlobalEventEmitter: new (require("events").EventEmitter)(),
+    // Shared process-wide event bus (moved into island) — the REAL island
+    // instance (not a fresh one) so the instance RestComms emits on is the same
+    // one tests listen on across the boundary.
+    GlobalEventEmitter: jest.requireActual("./modules/island/src/utils/GlobalEventEmitter").default,
     // island now owns the cloud client (keystone #5); the host wrapper delegates
     // to this. Mocked so host/service tests don't construct a real CloudClient.
     cloudClientService: {
