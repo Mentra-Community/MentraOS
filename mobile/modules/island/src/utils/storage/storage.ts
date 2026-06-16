@@ -51,6 +51,30 @@ class MMKVStorage {
     return Res.ok(undefined)
   }
 
+  public loadSubKeys(key: string): Result<Record<string, unknown>, Error> {
+    return Res.try(() => {
+      // return the key value pair of any keys that start with the given key and contain a colon:
+      const keys = this.store.getAllKeys()
+
+      const subKeys = keys.filter((k) => k.startsWith(key) && k.includes(":"))
+
+      if (subKeys.length === 0) {
+        throw new Error(`No subkeys found for ${key}`)
+      }
+
+      let subKeysObject: Record<string, unknown> = {}
+
+      for (const subKey of subKeys) {
+        const res = this.load(subKey)
+        if (res.is_ok()) {
+          subKeysObject[subKey] = res.value
+        }
+      }
+
+      return subKeysObject
+    })
+  }
+
   public remove(key: string): Result<void, Error> {
     this.store.remove(key)
     return Res.ok(undefined)

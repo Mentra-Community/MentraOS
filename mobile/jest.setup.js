@@ -336,6 +336,9 @@ jest.mock("@mentra/island", () => {
         cloudClientStatus: realCloudStatus.useCloudClientStatusStore,
       },
     },
+    // Shared process-wide event bus (moved into island) — a real EventEmitter so
+    // tests that emit/listen across the boundary work.
+    GlobalEventEmitter: new (require("events").EventEmitter)(),
     // island now owns the cloud client (keystone #5); the host wrapper delegates
     // to this. Mocked so host/service tests don't construct a real CloudClient.
     cloudClientService: {
