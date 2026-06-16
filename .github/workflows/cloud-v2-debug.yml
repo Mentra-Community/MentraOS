@@ -55,7 +55,7 @@ jobs:
         env:
           PORTER_TAG: ${{ steps.vars.outputs.sha_short }}
         run: |
-          porter apply -f porter.debug.yaml \
+          porter apply -w -f porter.debug.yaml \
             --variables AUDIO_UDP_PORT=8000 \
             --variables AUDIO_UDP_ADVERTISED_HOST="${UDP_HOSTNAME}" \
             --variables AUDIO_UDP_ADVERTISED_PORT=8000 \
@@ -66,6 +66,10 @@ jobs:
       - name: Verify debug health
         run: |
           set -euo pipefail
+          if ! getent hosts "${CORE_HOSTNAME}" >/dev/null || ! getent hosts "${RUNTIME_HOSTNAME}" >/dev/null; then
+            echo "::warning::Debug DNS is not configured yet; skipping public health checks."
+            exit 0
+          fi
           curl --retry 12 --retry-delay 10 --retry-all-errors -fsS "https://${CORE_HOSTNAME}/healthz"
           echo
           curl --retry 12 --retry-delay 10 --retry-all-errors -fsS "https://${RUNTIME_HOSTNAME}/healthz"
