@@ -334,6 +334,26 @@ jest.mock("@mentra/island", () => {
         status: jest.fn(() => ({status: "disconnected", audioTransport: "none"})),
         onStatus: jest.fn(() => () => {}),
         isConnected: jest.fn(() => false),
+        account: {
+          delete: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
+          confirmDelete: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
+        },
+      },
+      settings: {
+        get: jest.fn(() => undefined),
+        set: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
+        onChanged: jest.fn(() => () => {}),
+        descriptor: jest.fn(() => undefined),
+        keys: jest.fn(() => []),
+      },
+      dev: {
+        minimumClientVersion: jest.fn(() => Promise.resolve({is_ok: () => true, value: {required: "0", recommended: "0"}})),
+        backendUrl: jest.fn(() => undefined),
+        setBackendUrl: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
+        cloudUrls: jest.fn(() => ({})),
+        setCloudUrls: jest.fn(),
+        savedUrls: jest.fn(() => []),
+        reconnectCloud: jest.fn(),
       },
       stores: {
         glasses: realGlasses.useGlassesStore,

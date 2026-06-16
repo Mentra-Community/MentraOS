@@ -13,6 +13,8 @@ import {glasses} from "./facades/glasses"
 import {displayMirror} from "./facades/displayMirror"
 import {speech} from "./facades/speech"
 import {session} from "./facades/session"
+import {settings} from "./facades/settings"
+import {dev} from "./facades/dev"
 import {useGlassesStore} from "./stores/glasses"
 import {useDisplayStore} from "./stores/display"
 import {useCoreStore} from "./stores/core"
@@ -28,8 +30,12 @@ export const toolkit = {
   stop,
   glasses,
   speech,
-  /** Cloud (cloud-v2) live-session status — island owns the client (keystone #5). */
+  /** Cloud (cloud-v2) live-session status + account ops — island owns the client. */
   session,
+  /** Typed keyed user settings over the island-owned settings store. */
+  settings,
+  /** Developer/debug surface (backend+cloud URL overrides, reconnect, min version). */
+  dev,
   display: {
     mirror: displayMirror,
   },

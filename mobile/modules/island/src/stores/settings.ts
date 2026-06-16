@@ -6,7 +6,7 @@ import {subscribeWithSelector} from "zustand/middleware"
 import restComms from "../services/RestComms"
 import {storage} from "../utils/storage"
 
-interface Setting {
+export interface Setting {
   key: string
   defaultValue: () => any
   writable: boolean

@@ -4,11 +4,12 @@
  * audio transport, projected from the island-owned cloud-status store) and the
  * liveness flag.
  *
- * Account operations (`account.delete()` / `account.requestExport()` from the
- * Phase-1 contract) are still host RestComms calls; they land here when the
- * account/identity domain moves into island. The cloud-client `core` surface
- * exposes no account methods today.
+ * `account.*` operations route through the now-island RestComms (the account REST
+ * calls moved in with the settings+RestComms keystone), so they're adapter-free.
+ * (`requestExport` is a host UI navigation flow with no backend method yet, so it
+ * is not surfaced here.)
  */
+import restComms from "../services/RestComms"
 import {cloudClientService} from "../services/CloudClientService"
 import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
 import type {CloudClientStatusSnapshot} from "../runtime/config"
@@ -26,4 +27,13 @@ export const session = {
     useCloudClientStatusStore.subscribe(() => cb(project())),
   /** Whether the live-session handshake has completed. */
   isConnected: (): boolean => cloudClientService.isConnected(),
+
+  /** Identity / account operations (island-owned RestComms). */
+  account: {
+    /** Request account deletion — the backend emails a confirmation code. */
+    delete: () => restComms.requestAccountDeletion(),
+    /** Confirm a pending account deletion with the emailed code. */
+    confirmDelete: (requestId: string, confirmationCode: string) =>
+      restComms.confirmAccountDeletion(requestId, confirmationCode),
+  },
 }
