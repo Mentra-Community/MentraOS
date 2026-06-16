@@ -107,6 +107,17 @@ export {
 // Display/mirror store — also moved into island; re-exported through the host's
 // @/stores/display shim (and toolkit.displayStore). Read it via toolkit.display.mirror.
 export {useDisplayStore} from "./stores/display"
+// More device/runtime stores moved into island (re-exported via host shims +
+// toolkit.stores.*). WebSocketStatus + PhotoInfo were relocated off host modules.
+export {useCoreStore} from "./stores/core"
+export {useConnectionStore, WebSocketStatus} from "./stores/connection"
+export {
+  useGallerySyncStore,
+  selectSyncProgress,
+  selectIssyncing,
+  selectGlassesGalleryStatus,
+} from "./stores/gallerySync"
+export type {PhotoInfo, SyncState, HotspotInfo, SyncQueue, GallerySyncInfo} from "./stores/gallerySync"
 
 // Bluetooth SDK internal compatibility passthrough. The island package uses the
 // declared @mentra/bluetooth-sdk/internal subpath so it does not reach into SDK

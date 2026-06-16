@@ -238,6 +238,9 @@ jest.mock("@mentra/island", () => {
   // pure (zustand + type-only btsdk imports), so it loads cleanly under the mock.
   const realGlasses = jest.requireActual("./modules/island/src/stores/glasses")
   const realDisplay = jest.requireActual("./modules/island/src/stores/display")
+  const realCore = jest.requireActual("./modules/island/src/stores/core")
+  const realConnection = jest.requireActual("./modules/island/src/stores/connection")
+  const realGallerySync = jest.requireActual("./modules/island/src/stores/gallerySync")
   const appStatusState = {
     apps: [],
     refresh: jest.fn(),
@@ -259,6 +262,10 @@ jest.mock("@mentra/island", () => {
     ...realGlasses,
     // Real display/mirror store (useDisplayStore) — consumers need its real behavior.
     ...realDisplay,
+    // Real core / connection / gallerySync stores (+ WebSocketStatus, selectors).
+    ...realCore,
+    ...realConnection,
+    ...realGallerySync,
     // The namespaced (A) host API. Mirrors the real `toolkit` object; members are
     // jest.fn()s so host/screen tests can assert delegation without native btsdk.
     toolkit: {
@@ -280,8 +287,13 @@ jest.mock("@mentra/island", () => {
           onMirror: jest.fn(() => () => {}),
         },
       },
-      glassesStore: realGlasses.useGlassesStore,
-      displayStore: realDisplay.useDisplayStore,
+      stores: {
+        glasses: realGlasses.useGlassesStore,
+        display: realDisplay.useDisplayStore,
+        core: realCore.useCoreStore,
+        connection: realConnection.useConnectionStore,
+        gallerySync: realGallerySync.useGallerySyncStore,
+      },
     },
     BgTimer: {
       setInterval: jest.fn((callback, delay) => setInterval(callback, delay)),
