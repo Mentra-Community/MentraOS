@@ -23,6 +23,7 @@ import com.mentra.asg_client.camera.policy.AeStateMachine;
 import com.mentra.asg_client.camera.policy.CameraCapabilities;
 import com.mentra.asg_client.camera.policy.JpegOrientationResolver;
 import com.mentra.asg_client.camera.policy.ManualExposurePolicy;
+import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.camera.request.AeCaptureCallback;
 import com.mentra.asg_client.camera.request.AePreviewController;
 import com.mentra.asg_client.camera.request.HdrBurstBuilder;
