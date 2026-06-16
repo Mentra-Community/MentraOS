@@ -12,7 +12,7 @@ import type { Capabilities } from "../hardware";
  * Nimo Glasses capability profile
  */
 export const nimo: Capabilities = {
-  modelName: "Nimo Glasses",
+  modelName: "NIMO",
 
   // Camera capabilities - Nimo does not have a camera
   hasCamera: false,

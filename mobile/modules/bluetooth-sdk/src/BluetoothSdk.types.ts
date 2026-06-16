@@ -448,7 +448,7 @@ export const DeviceModels = {
   Mach1: "Mentra Mach1",
   Z100: "Vuzix Z100",
   Frame: "Brilliant Frame",
-  Nimo: "Nimo Glasses",
+  Nimo: "NIMO",
   R1: "Even Realities R1",
 } as const
 

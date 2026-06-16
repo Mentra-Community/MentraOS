@@ -9,7 +9,7 @@ object DeviceTypes {
     const val Z100 = "Vuzix Z100"
     const val FRAME = "Brilliant Frame"
     const val G2 = "Even Realities G2"
-    const val NIMO = "Nimo Glasses"
+    const val NIMO = "NIMO"
     val ALL = arrayOf(SIMULATED, G1, G2, MACH1, LIVE, Z100, FRAME, NEX, NIMO)
 }
 

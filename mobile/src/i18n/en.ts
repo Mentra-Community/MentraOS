@@ -232,7 +232,7 @@ const en = {
     g1Connected: "Even Realities G1 connected",
     g2Connected: "Even Realities G2 connected",
     r1Connected: "Even Realities R1 connected",
-    nimoConnected: "Nimo Glasses connected",
+    nimoConnected: "NIMO connected",
     osWelcomeTitle: "Welcome to Mentra",
     osWelcomeSubtitle: "Learn how to use apps on your glasses",
     osEndTitle: "You're all set",

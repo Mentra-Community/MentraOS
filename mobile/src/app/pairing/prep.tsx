@@ -413,11 +413,11 @@ export default function PairingPrepScreen() {
           <Text tx="pairing:instructions" className="text-2xl font-bold mb-4 text-secondary-foreground" />
           <Text
             className="text-lg text-secondary-foreground"
-            text="1. Make sure your Nimo glasses are fully charged and turned on."
+            text="1. Make sure your NIMO glasses are fully charged and turned on."
           />
           <Text
             className="text-lg text-secondary-foreground"
-            text="2. Disconnect your glasses from the Nimo app, or uninstall the Nimo app."
+            text="2. Disconnect your glasses from the NIMO app, or uninstall the NIMO app."
           />
           {Platform.OS === "ios" && (
             <Text

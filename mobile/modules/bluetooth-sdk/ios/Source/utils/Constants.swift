@@ -7,7 +7,7 @@ struct DeviceTypes {
     static let Z100 = "Vuzix Z100"
     static let NEX = "Mentra Display"
     static let FRAME = "Brilliant Frame"
-    static let NIMO = "Nimo Glasses"
+    static let NIMO = "NIMO"
 
     static let ALL = [
         SIMULATED,

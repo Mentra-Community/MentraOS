@@ -87,11 +87,11 @@ export const getModelSpecificTips = (model: string): PairingTip[] => {
           body: "Check that your phone's Bluetooth is enabled.",
         },
       ]
-    case "Nimo Glasses":
+    case "NIMO":
       return [
         {
-          title: "Force Stop the Nimo App",
-          body: "If your glasses were previously connected to the Nimo app, force stop that app, then try connecting again.",
+          title: "Force Stop the NIMO App",
+          body: "If your glasses were previously connected to the NIMO app, force stop that app, then try connecting again.",
         },
         {
           title: "First Pairing Takes Longer",
