@@ -102,6 +102,9 @@ export {
   getGlassesSystemTimeMs,
   waitForGlassesState,
 } from "./stores/glasses"
+// Display/mirror store — also moved into island; re-exported through the host's
+// @/stores/display shim (and toolkit.displayStore). Read it via toolkit.display.mirror.
+export {useDisplayStore} from "./stores/display"
 
 // Bluetooth SDK passthrough — the full @mentra/bluetooth-sdk surface re-exported
 // so the app reaches the SDK through island instead of importing it directly.
