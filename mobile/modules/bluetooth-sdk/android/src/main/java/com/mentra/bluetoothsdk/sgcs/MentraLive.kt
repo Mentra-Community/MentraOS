@@ -33,6 +33,7 @@ import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.DeviceStore
+import com.mentra.bluetoothsdk.ObservableStore
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.BlePhotoUploadService
 import com.mentra.bluetoothsdk.utils.ConnTypes
