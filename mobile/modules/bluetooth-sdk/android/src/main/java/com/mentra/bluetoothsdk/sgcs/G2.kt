@@ -2205,6 +2205,9 @@ class G2 : SGCManager() {
             var fragmentIndex = 0
             var offset = 0
             var transferOk = true
+            if (attempt > 1) {
+                Bridge.log("G2: sendImageData($containerName) - attempt $attempt starting")
+            }
             while (offset < bmpData.size) {
                 val end = minOf(offset + fragmentSize, bmpData.size)
                 val fragment = bmpData.copyOfRange(offset, end)
