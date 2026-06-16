@@ -53,8 +53,10 @@ import {
 } from "../services/audio/workers/pool";
 import {
   deleteSubscriptionsIfSessionIn,
+  readSubscriptions,
   refreshSubscriptions,
   seedSubscriptions,
+  takeoverSubscriptions,
 } from "../services/session/subscriptions-store";
 import { clientToCloudMessage } from "../protocol/messages";
 import { envelopeSchema, PROTOCOL_MAJOR } from "../protocol/envelope";
@@ -682,16 +684,54 @@ async function handleConnectionInit(
       // passed snapshot. Cross-pod writes use the control stream instead.
       reconcileSubscriptions(ws.data.mentraUserId);
     } else {
-      logger.warn(
-        { mentraUserId: ws.data.mentraUserId, audioSessionId: ws.data.audioSessionId },
-        "connection.init subscription seed skipped; another session is authoritative",
-      );
+      // Seed was refused because the key is held by another session. If that
+      // session has no live socket it's dead cluster-wide (a user's sessions run
+      // only on this owning pod), and deferring to it would wedge this fresh
+      // session's subscriptions behind a ghost until the 60s TTL or the next REST
+      // write. Take it over here — mirrors the REST dead-session takeover in
+      // audio.api.ts so init and REST share one policy.
+      const existing = await readSubscriptions(ws.data.mentraUserId);
+      if (
+        !existing ||
+        !hasLiveAudioSession(ws.data.mentraUserId, existing.sessionId)
+      ) {
+        logger.warn(
+          {
+            mentraUserId: ws.data.mentraUserId,
+            audioSessionId: ws.data.audioSessionId,
+            deadSessionId: existing?.sessionId,
+          },
+          "connection.init taking over dead session's subscription record",
+        );
+        await takeoverSubscriptions(ws.data.mentraUserId, {
+          subscriptions: subs,
+          sessionId: ws.data.audioSessionId,
+          version: 0,
+        });
+        reconcileSubscriptions(ws.data.mentraUserId);
+      } else {
+        logger.warn(
+          { mentraUserId: ws.data.mentraUserId, audioSessionId: ws.data.audioSessionId },
+          "connection.init subscription seed skipped; another live session is authoritative",
+        );
+      }
     }
   } catch (err) {
+    // Do NOT fall through to connection.ack: without a seeded subscription key
+    // the client would stream audio that is transcribed against nothing, with no
+    // in-band signal anything is wrong. Surface the failure and close so the
+    // client reconnects and re-runs the handshake cleanly.
     logger.error(
       { err, mentraUserId: ws.data.mentraUserId },
-      "failed to seed subscriptions on connection.init",
+      "failed to seed subscriptions on connection.init; closing socket",
     );
+    sendProtocolError(ws, "INTERNAL", "failed to initialize session");
+    try {
+      ws.close(1011, "init failed");
+    } catch {
+      /* already closing */
+    }
+    return;
   }
 
   ws.send(

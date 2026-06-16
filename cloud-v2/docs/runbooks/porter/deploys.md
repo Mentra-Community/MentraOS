@@ -11,7 +11,7 @@ share one Docker image — each just runs a different process from it:
 | Service | Run | HTTP port | UDP port |
 | --- | --- | --- | --- |
 | `core` | `bun packages/core/src/index.ts` | 3000 | — |
-| `audio` | `bun packages/audio/src/index.ts` | 3001 | 8000 |
+| `runtime` | `bun packages/runtime/src/index.ts` | 3001 | 8000 |
 
 (The proxy service from `packages/proxy/` joins once it has real code.)
 
