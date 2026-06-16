@@ -1,6 +1,6 @@
 import {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 import {Alert, Linking, PermissionsAndroid, Platform} from "react-native"
 import BleManager from "react-native-ble-manager"
 import {check, PERMISSIONS, request, RESULTS} from "react-native-permissions"

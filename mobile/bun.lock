@@ -20,6 +20,7 @@
         "@livekit/react-native-expo-plugin": "^1.0.1",
         "@livekit/react-native-webrtc": "^137.0.2",
         "@mentra/bluetooth-sdk": "workspace:*",
+        "@mentra/crust": "workspace:*",
         "@mentra/island": "workspace:*",
         "@mentra/jspolyfill": "workspace:*",
         "@mentra/miniapp": "workspace:*",
@@ -36,7 +37,6 @@
         "authing-js-sdk": "^4.23.55",
         "axios": "^1.13.6",
         "babel-plugin-module-resolver": "5.0.0",
-        "crust": "workspace:*",
         "date-fns": "^4.1.0",
         "dotenv": "^17.3.1",
         "expo": "~55.0.24",
@@ -127,7 +127,6 @@
         "tweetnacl": "^1.0.3",
         "typesafe-ts": "^1.7.1",
         "uniwind": "^1.5.0",
-        "zod": "^3.24.1",
         "zustand": "^5.0.11",
         "zx": "^8.8.5",
       },
@@ -145,6 +144,7 @@
         "react-test-renderer": "19.2.0",
         "tsx": "^4.21.0",
         "typescript": "~5.9.2",
+        "zod": "^3.24.1",
       },
     },
     "modules/bluetooth-sdk": {
@@ -162,7 +162,7 @@
       },
     },
     "modules/crust": {
-      "name": "crust",
+      "name": "@mentra/crust",
       "version": "0.1.0",
       "dependencies": {
         "@mentra/jspolyfill": "workspace:*",
@@ -203,6 +203,7 @@
         "react-native-mmkv": "*",
         "react-native-nitro-bg-timer": "*",
         "react-native-share": "*",
+        "react-native-udp": "*",
         "react-native-zip-archive": "*",
         "semver": "*",
         "zustand": "*",
@@ -835,6 +836,8 @@
 
     "@mentra/bluetooth-sdk": ["@mentra/bluetooth-sdk@workspace:modules/bluetooth-sdk"],
 
+    "@mentra/crust": ["@mentra/crust@workspace:modules/crust"],
+
     "@mentra/island": ["@mentra/island@workspace:modules/island"],
 
     "@mentra/jspolyfill": ["@mentra/jspolyfill@workspace:modules/jspolyfill"],
@@ -1372,8 +1375,6 @@
     "create-jest": ["create-jest@29.7.0", "", { "dependencies": { "@jest/types": "^29.6.3", "chalk": "^4.0.0", "exit": "^0.1.2", "graceful-fs": "^4.2.9", "jest-config": "^29.7.0", "jest-util": "^29.7.0", "prompts": "^2.0.1" }, "bin": { "create-jest": "bin/create-jest.js" } }, "sha512-Adz2bdH0Vq3F53KEMJOoftQFutWCukm6J24wbPWRO4k1kMY7gS7ds/uoJkNuV8wDCtWWnuwGcJwpWcih+zEW1Q=="],
 
     "cross-spawn": ["cross-spawn@7.0.6", "", { "dependencies": { "path-key": "^3.1.0", "shebang-command": "^2.0.0", "which": "^2.0.1" } }, "sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA=="],
-
-    "crust": ["crust@workspace:modules/crust"],
 
     "crypto-js": ["crypto-js@4.2.0", "", {}, "sha512-KALDyEYgpY+Rlob/iriUtjV6d5Eq+Y191A5g4UqLAi8CyGP9N1+FdVbkc1SxKc2r4YAYqG8JzO2KGL+AizD70Q=="],
 
