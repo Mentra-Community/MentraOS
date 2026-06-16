@@ -1,8 +1,8 @@
 version: v2
-name: cloud-debug
+name: cloud-dev
 
 envGroups:
-  - cloud-v2-debug-doppler
+  - cloud-v2-dev-doppler
 
 build:
   method: docker
@@ -17,7 +17,7 @@ services:
     cpuCores: 1
     ramMegabytes: 1024
     domains:
-      - name: core.debug.us-west-2.mentraglass.com
+      - name: core.dev.us-west-2.mentraglass.com
     livenessCheck:
       enabled: true
       httpPath: /healthz
@@ -38,11 +38,10 @@ services:
     type: web
     run: bun packages/runtime/src/index.ts
     port: 3001
-    instances: 1
-    cpuCores: 1
+    cpuCores: 2
     ramMegabytes: 2048
     domains:
-      - name: runtime.debug.us-west-2.mentraglass.com
+      - name: runtime.dev.us-west-2.mentraglass.com
     livenessCheck:
       enabled: true
       httpPath: /healthz
