@@ -1,6 +1,6 @@
 import {type RgbLedControlResponseEvent, type StreamStartRequest, type TouchEvent} from "@mentra/bluetooth-sdk"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
-import {displayProcessor, toolkit, localMiniappRuntime, micStateCoordinator, throttle} from "@mentra/island"
+import {displayProcessor, localMiniappRuntime, micStateCoordinator, throttle} from "@mentra/island"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
 import mantle from "@/services/MantleManager"
@@ -533,8 +533,6 @@ class SocketComms {
     BluetoothSdk.displayEvent(processedEvent)
     const displayEventStr = JSON.stringify(processedEvent)
     useDisplayStore.getState().setDisplayEvent(displayEventStr)
-    // Feed island's own mirror read-model in parallel with the legacy host store.
-    toolkit.display.mirror.ingest(processedEvent)
   }
 
   private handle_set_location_tier(msg: any) {

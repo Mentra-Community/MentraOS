@@ -237,6 +237,7 @@ jest.mock("@mentra/island", () => {
   // REAL behavior (setState/getState/subscribe), so pull the actual store in. It's
   // pure (zustand + type-only btsdk imports), so it loads cleanly under the mock.
   const realGlasses = jest.requireActual("./modules/island/src/stores/glasses")
+  const realDisplay = jest.requireActual("./modules/island/src/stores/display")
   const appStatusState = {
     apps: [],
     refresh: jest.fn(),
@@ -256,6 +257,8 @@ jest.mock("@mentra/island", () => {
     // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
     // waitForGlassesState, getGlasesInfoPartial, getGlassesSystemTimeMs, predicates).
     ...realGlasses,
+    // Real display/mirror store (useDisplayStore) — consumers need its real behavior.
+    ...realDisplay,
     // The namespaced (A) host API. Mirrors the real `toolkit` object; members are
     // jest.fn()s so host/screen tests can assert delegation without native btsdk.
     toolkit: {
@@ -273,12 +276,12 @@ jest.mock("@mentra/island", () => {
       },
       display: {
         mirror: {
-          ingest: jest.fn(),
           current: jest.fn(() => null),
           onMirror: jest.fn(() => () => {}),
         },
       },
       glassesStore: realGlasses.useGlassesStore,
+      displayStore: realDisplay.useDisplayStore,
     },
     BgTimer: {
       setInterval: jest.fn((callback, delay) => setInterval(callback, delay)),

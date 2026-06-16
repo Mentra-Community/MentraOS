@@ -2,6 +2,7 @@
 // which jest mocks) so the actual logic runs under the mobile jest CI runner.
 import * as bootstrap from "../../modules/island/src/runtime/bootstrap"
 import {displayMirror} from "../../modules/island/src/facades/displayMirror"
+import {useDisplayStore} from "../../modules/island/src/stores/display"
 
 describe("island bootstrap front door", () => {
   beforeEach(async () => {
@@ -31,22 +32,21 @@ describe("island bootstrap front door", () => {
   })
 })
 
-describe("toolkit.display.mirror read-model", () => {
-  it("ingest() sets current() and notifies subscribers", () => {
-    const seen: unknown[] = []
-    const unsub = displayMirror.onMirror((e) => seen.push(e))
+describe("toolkit.display.mirror read facade over the display store", () => {
+  it("current() returns the store's current display event", () => {
     const event = {view: "main", layout: {layoutType: "text_wall", text: "hi"}}
-    displayMirror.ingest(event)
-    expect(displayMirror.current()).toBe(event)
-    expect(seen).toEqual([event])
-    unsub()
+    useDisplayStore.getState().setDisplayEvent(JSON.stringify(event))
+    expect(displayMirror.current()).toEqual(event)
   })
 
-  it("onMirror() unsubscribe stops delivery", () => {
+  it("onMirror() fires on display change and stops after unsubscribe", () => {
     const cb = jest.fn()
     const unsub = displayMirror.onMirror(cb)
+    useDisplayStore.getState().setDisplayEvent(JSON.stringify({view: "main", layout: {layoutType: "text_wall", text: "x"}}))
+    expect(cb).toHaveBeenCalled()
     unsub()
-    displayMirror.ingest({view: "dashboard"})
+    cb.mockClear()
+    useDisplayStore.getState().setDisplayEvent(JSON.stringify({view: "main", layout: {layoutType: "text_wall", text: "y"}}))
     expect(cb).not.toHaveBeenCalled()
   })
 })
