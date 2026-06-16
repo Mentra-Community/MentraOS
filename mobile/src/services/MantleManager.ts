@@ -21,7 +21,7 @@ import {CHINA_HIDDEN_APPS, isChinaBuild} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
-import {cloudClient} from "@/services/cloudClient"
+import {cloudClient, cloudConfigValues} from "@/services/cloudClient"
 import {devServerHost} from "@/utils/cloudClient/devHost"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
 import {handleOtaClockSkewFromGlasses} from "@/services/asg/glassesClockSync"
@@ -36,9 +36,6 @@ import {
   localSttFallbackCoordinator,
   micStateCoordinator,
   offlineSpeechModelService,
-  DEV_APP_PACKAGE_NAME,
-  getDevAppAttestation,
-  getDevAppSourcePackage,
   BgTimer,
   useAppStatusStore,
 } from "@mentra/island"
@@ -242,7 +239,11 @@ class MantleManager {
           }
           return {token: res.value.token, type: "supabase"}
         },
+        onStateChange: (callback) => mentraAuth.onAuthStateChange((event, session) => callback(event, session)),
       },
+      // Resolved cloud endpoints + LC3 frame size. island builds its cloud
+      // client from these; the host keeps the dev/settings URL resolution.
+      config: cloudConfigValues(),
     })
     void toolkit.start()
 
@@ -257,32 +258,17 @@ class MantleManager {
     // island service that reads settings / glasses status / sockets / audio
     // (LocalMiniappRuntime, LocalDisplayManager, LocalSttFallbackCoordinator,
     // DisplayProcessor) is touched.
-    // Construct + connect the cloud client (best-effort) and wire its runtime
-    // adapter. The island/local-miniapp path is powered by this client.
-    const cloud = cloudClient.init()
+    // Construct + connect the cloud client (best-effort). It now lives in island
+    // (cloudClientService) and self-wires the runtime cloud/cloudConnection
+    // hooks from island-owned transports + the auth/config passed above, so the
+    // host no longer injects a CloudRuntimeAdapter. The local-miniapp path is
+    // powered by this client.
+    cloudClient.init()
 
     configureRuntime({
       socketComms: {
         sendMessage: (message) => socketComms.sendMessage(message as Parameters<typeof socketComms.sendMessage>[0]),
         updatePhoneSubscriptions: (subs) => socketComms.updatePhoneSubscriptions(subs),
-      },
-      cloud,
-        miniappAuth: {
-          getToken: (packageName, opts) => {
-          const isDevApp = packageName === DEV_APP_PACKAGE_NAME
-          const authPackageName = isDevApp ? getDevAppSourcePackage() : packageName
-          if (!authPackageName) {
-            throw new Error("Dev miniapp auth token unavailable until the dev miniapp manifest is registered")
-          }
-          const devAttestation = isDevApp ? getDevAppAttestation() : undefined
-          if (isDevApp && !devAttestation) {
-            throw new Error("Dev miniapp auth token unavailable without a signed `mentra dev` attestation")
-          }
-          return cloudClient.getMiniappAuthToken(authPackageName, {
-            ...opts,
-            ...(devAttestation ? {devAttestation} : {}),
-          })
-        },
       },
       audioPlayback: {
         play: (request, onComplete) => audioPlaybackService.play(request, onComplete),
@@ -313,6 +299,9 @@ class MantleManager {
             (value) => onChange(value as never),
           ),
       },
+      // cloudConnection is self-wired by island's cloudClientService now (it
+      // powers the local-miniapp on-device-STT fallback off cloud liveness), so
+      // the host no longer injects it.
       // The dev laptop's live address, from Metro. The island runtime uses it
       // to repair persisted dev-miniapp URLs that froze a previous network's
       // IP (the bundle host is, by construction, reachable right now).

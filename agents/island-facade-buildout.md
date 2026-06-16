@@ -9,9 +9,14 @@ into `@mentra/island`, domain by domain, on branch `aisraelov/island-namespace-w
    (btsdk types via `../../../bluetooth-sdk/build/_internal`), wrap in a facade.
    Shim the old host path if the app still imports it. (Stores, speech, logs,
    permissions, incidents.)
-2. **Host-service-coupled** — move the logic in, but inject an adapter for the host
-   dependency via `configureRuntime` (the existing seam). Settings → `RestComms` +
-   `storage`; session → `cloud-client`.
+2. **Host-service-coupled** — move the logic in. Where it needs a host capability,
+   prefer **owning it in island** (the keystone moved storage + the status store +
+   the client itself in; only `auth` + endpoints come from the host, via the
+   permanent `configure()` front door, NOT a `configureRuntime` adapter). Per
+   OS-1622, every `configureRuntime` adapter is transitional scaffolding that
+   **deletes itself** as its domain lands — "zero permanent adapters remain." So a
+   `configureRuntime` bridge is a temporary means, not the destination; aim
+   adapter-free. The one permanent seam is `auth.getSubjectToken`.
 
 Rule: stores are the Mentra-app escape hatch (`toolkit.stores.*`), NOT the OEM
 contract. OEMs use the typed facade functions.
@@ -77,8 +82,9 @@ pattern for btsdk types.
 | phoneNotifications | settings store + crust + permissions | 2 (after settings) | blocked on settings |
 | gallery | `services/asg/gallerySyncService.ts` (~1000 LOC, hotspot) | hard | todo |
 | notifications | scattered detectors → new event bus | hard (new) | todo |
-| session | `cloud-client` (cloud-v2) | 2 | needs `git merge dev` (cloud-v2) first |
-| cloudClientStatus (store) | cloud-client types | — | rides with session |
+| session | `cloud-client` (cloud-v2) | keystone | **DONE (#3167)** — `CloudClientService` owns the CloudClient in island (built from island UDP + MMKV secure store + `getAuth()` + endpoints via `getConfigValues()`); self-wires the `cloud`/`cloudConnection` runtime hooks; `toolkit.session` exposes status. Account ops (delete/export) deferred (still host RestComms). Host `@/services/cloudClient` is a thin wrapper keeping dev/settings endpoint resolution. |
+| cloudClientStatus (store) | cloud-client types | — | **DONE (#3167)** — moved into island, `toolkit.stores.cloudClientStatus`. |
+| cloud secure store (MMKV) | cloud-client KeyValueStore | — | **DONE (#3167)** — moved into island (react-native-mmkv already an island dep; adapter-free). |
 
 ## Sequence
 **Cheap (logic already in island) — DONE this PR:** glasses-core, glasses.wifi,

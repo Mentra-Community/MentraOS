@@ -19,6 +19,12 @@ export type SubjectTokenType = "supabase" | "authing" | (string & {})
 export interface IslandAuth {
   /** Returns the host's current (auto-refreshed) subject token for the backend. */
   getSubjectToken: () => Promise<{token: string; type: SubjectTokenType}>
+  /**
+   * Optional auth-session listener. Hosts that can emit auth changes should
+   * wire this so island can reconnect backend sessions after restored login
+   * state lands post-boot.
+   */
+  onStateChange?: (callback: (event: string, session: {token?: string | null} | null) => void) => unknown
 }
 
 export interface IslandConfigValues {
@@ -28,6 +34,11 @@ export interface IslandConfigValues {
   runtimeUrl?: string
   /** OEM identifier (Mentra is OEM #0); reserved for OEM auth/telemetry. */
   oemId?: string
+  /**
+   * LC3 frame size (bytes) the phone's mic encoder emits — announced to the
+   * cloud on connect (20 for G1, 40 for G2, …). Defaults to 20 if unset.
+   */
+  audioFrameSizeBytes?: number
 }
 
 export type IslandAnalytics = (event: string, props?: Record<string, unknown>) => void

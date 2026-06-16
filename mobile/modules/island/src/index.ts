@@ -124,6 +124,10 @@ export type {PhotoInfo, SyncState, HotspotInfo, SyncQueue, GallerySyncInfo} from
 export {useCloudClientStatusStore} from "./stores/cloudClientStatus"
 export type {RuntimeAudioTransport, RuntimeSnapshot, RuntimeStatus} from "./stores/cloudClientStatus"
 export {cloudSecureStore} from "./utils/cloudClient/cloudSecureStore"
+// The cloud-client singleton now lives in island (keystone #5). Construction +
+// runtime-hook wiring happen here; the host's @/services/cloudClient is a thin
+// delegating wrapper that keeps endpoint resolution (dev/settings) host-side.
+export {cloudClientService} from "./services/CloudClientService"
 
 // Bluetooth SDK internal compatibility passthrough. The island package uses the
 // declared @mentra/bluetooth-sdk/internal subpath so it does not reach into SDK
