@@ -934,10 +934,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             return;
         }
 
-        // BES success ACK uses index as the next requested packet, so the accepted packet is
-        // index - 1. Failure ACK uses index as the exact 0-based packet to resend.
+        // BES uses 1-based ACK indexing for BOTH success and failure: it sends
+        // index = packet_index + 1 (see agents/ble_file_transfer_implementation.md, "BES ACK
+        // Index Behavior"). Convert to our 0-based packet index. On success this is the accepted
+        // packet; on failure it is the packet to resend.
+        // NOTE: a prior revision treated the failure index as already 0-based (retry = index),
+        // which skipped the failed packet and resent the next one, corrupting flow-control
+        // retries and truncating BLE photos.
         int ackedPacketIndex = index - 1;
-        int retryPacketIndex = index;
+        int retryPacketIndex = index - 1;
         int trackedPacketIndex = state == 1 ? ackedPacketIndex : retryPacketIndex;
 
         // Calculate time since packet was sent
