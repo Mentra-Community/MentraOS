@@ -206,8 +206,10 @@ const CONSUMER_NAME = `${POD_ID}:${WORKER_ID}`
 
 const XREAD_COUNT_PER_STREAM = 100
 const XREAD_IDLE_SLEEP_MS = 50
-/** Control-stream reads still block server-side; audio reads poll instead. */
-const CONTROL_XREAD_BLOCK_MS = 1000
+/** Both control and audio reads poll per-user (one stream per command) to stay
+ *  Redis Cluster-safe; this is the idle backoff when no control stream had
+ *  entries this pass. */
+const CONTROL_IDLE_SLEEP_MS = 100
 const XAUTOCLAIM_COUNT = 500
 const XAUTOCLAIM_MIN_IDLE_MS = 0
 const XAUTOCLAIM_LOOP_INTERVAL_MS = 2_000
@@ -226,9 +228,8 @@ const mainClient = new Redis(REDIS_URL, {
   maxRetriesPerRequest: 3,
 })
 
-// Dedicated client for the blocking control-stream read. A blocking
-// XREADGROUP holds its connection for the whole BLOCK window; sharing it with
-// the audio read or the control XACKs would serialize them behind each other.
+// Dedicated client for the control-stream read so control polling + XACKs
+// don't serialize behind the audio read's per-user XREADGROUPs (and vice versa).
 const controlClient = new Redis(REDIS_URL, {
   maxRetriesPerRequest: 3,
 })
@@ -559,76 +560,77 @@ async function controlReadLoop(): Promise<void> {
       continue
     }
 
-    const streams = users.map(controlStreamKey)
-    const ids = users.map(() => ">")
+    let sawEntries = false
+    for (const userId of users) {
+      try {
+        // One stream per command: Redis Cluster requires all keys in a command
+        // to share a hash slot, and each user's control stream hashes to that
+        // user. A per-user read avoids CROSSSLOT (mirrors freshReadLoop).
+        const result = (await controlClient.xreadgroup(
+          "GROUP",
+          CONTROL_STREAM_GROUP,
+          CONSUMER_NAME,
+          "COUNT",
+          100,
+          "STREAMS",
+          controlStreamKey(userId),
+          ">",
+        )) as Array<[string, Array<[string, string[]]>]> | null
 
-    try {
-      const result = (await controlClient.xreadgroup(
-        "GROUP",
-        CONTROL_STREAM_GROUP,
-        CONSUMER_NAME,
-        "COUNT",
-        100,
-        "BLOCK",
-        CONTROL_XREAD_BLOCK_MS,
-        "STREAMS",
-        ...streams,
-        ...ids,
-      )) as Array<[string, Array<[string, string[]]>]> | null
+        if (!result) continue
+        sawEntries = true
 
-      if (!result) continue
+        for (const [streamKey, entries] of result) {
+          const mentraUserId = controlUserFromKey(streamKey)
+          let shouldReconcile = false
 
-      for (const [streamKey, entries] of result) {
-        const mentraUserId = controlUserFromKey(streamKey)
-        let shouldReconcile = false
+          for (const [, fields] of entries) {
+            const map = fieldArrayToMap(fields)
+            switch (map.kind) {
+              case "subscriptions-changed":
+                // Reconcile once per batch, not once per entry: every subscription
+                // entry is the same "re-read the key" nudge.
+                shouldReconcile = true
+                break
+              case "udp-liveness-ack":
+                console.debug("[audio-worker] udp liveness ack control received", {
+                  mentraUserId,
+                  sessionTag: map.sessionTag,
+                  probeId: map.probeId,
+                })
+                self.postMessage({
+                  type: "UDP_LIVENESS_ACK",
+                  mentraUserId,
+                  sessionTag: Number(map.sessionTag ?? 0),
+                  audioSessionId: map.audioSessionId ?? "",
+                  probeId: map.probeId ?? "",
+                  receivedAt: Number(map.receivedAt ?? Date.now()),
+                } satisfies UdpLivenessAckMessage)
+                break
+            }
+          }
 
-        for (const [, fields] of entries) {
-          const map = fieldArrayToMap(fields)
-          switch (map.kind) {
-            case "subscriptions-changed":
-              // Reconcile once per batch, not once per entry: every subscription
-              // entry is the same "re-read the key" nudge.
-              shouldReconcile = true
-              break
-            case "udp-liveness-ack":
-              console.debug("[audio-worker] udp liveness ack control received", {
-                mentraUserId,
-                sessionTag: map.sessionTag,
-                probeId: map.probeId,
-              })
-              self.postMessage({
-                type: "UDP_LIVENESS_ACK",
-                mentraUserId,
-                sessionTag: Number(map.sessionTag ?? 0),
-                audioSessionId: map.audioSessionId ?? "",
-                probeId: map.probeId ?? "",
-                receivedAt: Number(map.receivedAt ?? Date.now()),
-              } satisfies UdpLivenessAckMessage)
-              break
+          if (shouldReconcile) await reconcileFromKey(mentraUserId)
+
+          for (const [entryId] of entries) {
+            try {
+              await controlClient.xack(streamKey, CONTROL_STREAM_GROUP, entryId)
+            } catch (err) {
+              console.error("[audio-worker] control xack failed:", err)
+            }
           }
         }
-
-        if (shouldReconcile) await reconcileFromKey(mentraUserId)
-
-        for (const [entryId] of entries) {
-          try {
-            await controlClient.xack(streamKey, CONTROL_STREAM_GROUP, entryId)
-          } catch (err) {
-            console.error("[audio-worker] control xack failed:", err)
-          }
-        }
-      }
-    } catch (err) {
-      const msg = (err as Error).message ?? ""
-      if (msg.includes("NOGROUP")) {
-        for (const userId of [...controlReadyUsers]) {
+      } catch (err) {
+        const msg = (err as Error).message ?? ""
+        if (msg.includes("NOGROUP")) {
           await ensureControlConsumerGroup(userId)
+          continue
         }
-        continue
+        console.error("[audio-worker] control xreadgroup failed:", err)
+        await Bun.sleep(500)
       }
-      console.error("[audio-worker] control xreadgroup failed:", err)
-      await Bun.sleep(500)
     }
+    if (!sawEntries) await Bun.sleep(CONTROL_IDLE_SLEEP_MS)
   }
 }
 

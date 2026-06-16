@@ -79,10 +79,10 @@ Here is our real **access token**, decoded (this is the device's main credential
 ```json
 {
   "sub": "663b1f...e91a",   // mentraUserId: which user (our users._id)
-  "oemId": "mentra",        // which OEM vouched for them
-  "sessionId": "...",       // this runtime session
-  "aud": "...",             // who this token is FOR (section 7)
-  "iss": "mentra",          // who issued it
+  "oem_id": "mentra",       // which OEM vouched for them
+  "session_id": "...",      // this runtime session
+  "aud": "mentra-cloud",    // who this token is FOR (section 7)
+  "iss": "mentra-cloud",    // who issued it
   "jti": "...",             // unique id, so a token can be single-use / revoked
   "exp": 1735689600         // expiry, Unix seconds (section 8)
 }
@@ -90,7 +90,9 @@ Here is our real **access token**, decoded (this is the device's main credential
 
 Standard claim names are three letters by convention: `sub` (subject = the user),
 `aud` (audience), `iss` (issuer), `exp` (expiry), `iat` (issued-at), `jti`
-(JWT id). The rest (`oemId`, `sessionId`) are ours.
+(JWT id). The rest (`oem_id`, `session_id`) are ours. (The miniapp token in
+section 7 uses a camelCase `oemId` and `iss: "mentra"` instead — that is a
+separate token, verified by developer backends, not the device access token.)
 
 ## 5. Signing: how a note cannot be forged
 

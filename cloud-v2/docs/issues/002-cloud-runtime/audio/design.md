@@ -492,9 +492,12 @@ race condition between "WS established" and "audio arriving."
 Same user, already connected, the phone wants to add or remove a
 subscription.
 
-1. Phone sends a `subscriptions-update` message over the WS, carrying
-   the **full new desired set** (not a delta).
-2. Pod B's main thread forwards to the user's worker:
+1. Phone sends the **full new desired set** (not a delta) via a guarded
+   REST write — `PUT /api/audio/subscriptions` with its `sessionId` and a
+   monotonic `version`. (Locked wire contract; see [`wire.md`](./wire.md).
+   `@mentra/cloud-client` posts to this REST path — it is **not** a WS message.)
+2. The runtime applies the guarded write to the per-user subscription key,
+   then publishes a control-stream nudge the user's worker reads:
    `{ kind: "user-subscriptions-changed", update: { userId, subscriptions } }`.
 3. Worker compares the new set to its current set (using structural
    equality after canonicalizing fields like sorting `hints[]` arrays).

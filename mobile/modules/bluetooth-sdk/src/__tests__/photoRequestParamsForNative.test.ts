@@ -30,4 +30,19 @@ describe("photoRequestParamsForNative", () => {
     expect(payload.exposureTimeNs).toBe(8_333_333)
     expect(payload.iso).toBe(402)
   })
+
+  it("includes scan-mode booleans when explicitly set", () => {
+    const payload = photoRequestParamsForNative({
+      ...baseParams,
+      mfnr: false,
+      zsl: false,
+      aeExposureDivisor: 3,
+      isoCap: 800,
+    })
+
+    expect(payload.mfnr).toBe(false)
+    expect(payload.zsl).toBe(false)
+    expect(payload.aeExposureDivisor).toBe(3)
+    expect(payload.isoCap).toBe(800)
+  })
 })

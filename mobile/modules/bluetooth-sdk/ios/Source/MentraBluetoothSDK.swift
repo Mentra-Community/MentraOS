@@ -478,15 +478,66 @@ public final class MentraBluetoothSDK {
     }
 
     public func setButtonPhotoSettings(size: ButtonPhotoSize) async throws -> SettingsAckEvent {
-        try await performSettingsCommand(
-            setting: "button_photo",
-            updateStore: { _ in DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_size", size.rawValue) },
-            send: { requestId in try DeviceManager.shared.sendButtonPhotoSettings(requestId: requestId, size: size.rawValue) }
-        )
+        try await setButtonPhotoSettings(ButtonPhotoSettings(size: size))
     }
 
     public func setButtonPhotoSettings(_ settings: ButtonPhotoSettings) async throws -> SettingsAckEvent {
-        try await setButtonPhotoSettings(size: settings.size)
+        try await performSettingsCommand(
+            setting: "button_photo",
+            updateStore: { _ in
+                if settings.resetCaptureTuning {
+                    // Mirror Android: clear all cached scan-tuning keys so reconnect sync
+                    // does not replay stale values after a reset.
+                    let cat = ObservableStore.bluetoothCategory
+                    for key in ["button_photo_mfnr", "button_photo_zsl", "button_photo_noise_reduction",
+                                "button_photo_edge_enhancement", "button_photo_isp_digital_gain",
+                                "button_photo_isp_analog_gain", "button_photo_ae_exposure_divisor",
+                                "button_photo_iso_cap", "button_photo_compress", "button_photo_sound"] {
+                        DeviceStore.shared.remove(cat, key)
+                    }
+                }
+                if let size = settings.size {
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_size", size.rawValue)
+                }
+                if let mfnr = settings.mfnr {
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_mfnr", mfnr)
+                }
+                if let zsl = settings.zsl {
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_zsl", zsl)
+                }
+                if let noiseReduction = settings.noiseReduction {
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_noise_reduction", noiseReduction)
+                }
+                if let edgeEnhancement = settings.edgeEnhancement {
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_edge_enhancement", edgeEnhancement)
+                }
+                if let ispDigitalGain = settings.ispDigitalGain {
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_isp_digital_gain", ispDigitalGain)
+                }
+                if let ispAnalogGain = settings.ispAnalogGain {
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_isp_analog_gain", ispAnalogGain)
+                }
+                if let aeExposureDivisor = settings.aeExposureDivisor {
+                    DeviceStore.shared.set(
+                        ObservableStore.bluetoothCategory,
+                        "button_photo_ae_exposure_divisor",
+                        aeExposureDivisor
+                    )
+                }
+                if let isoCap = settings.isoCap {
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_iso_cap", isoCap)
+                }
+                if let compress = settings.compress {
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_compress", compress)
+                }
+                if let sound = settings.sound {
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_sound", sound)
+                }
+            },
+            send: { requestId in
+                try DeviceManager.shared.sendButtonPhotoSettings(requestId: requestId, settings: settings)
+            }
+        )
     }
 
     public func setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int) async throws -> SettingsAckEvent {
@@ -714,19 +765,7 @@ public final class MentraBluetoothSDK {
         )
         let pending = PendingResponse<PhotoResponseEvent>(operation: "photo request \(request.requestId)")
         pendingPhotoRequests[request.requestId] = pending
-        DeviceManager.shared.requestPhoto(
-            request.requestId,
-            request.appId,
-            request.size.rawValue,
-            request.webhookUrl,
-            request.authToken,
-            request.compress?.rawValue,
-            request.flash,
-            request.save,
-            request.sound,
-            exposureTimeNs: request.exposureTimeNs,
-            iso: request.iso
-        )
+        DeviceManager.shared.requestPhoto(request)
         do {
             let event = try await pending.wait()
             pendingPhotoRequests.removeValue(forKey: request.requestId)

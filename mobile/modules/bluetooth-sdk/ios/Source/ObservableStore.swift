@@ -54,6 +54,17 @@ class ObservableStore {
         }
     }
 
+    func remove(_ category: String, _ key: String) {
+        let normalizedCategory = Self.normalizeCategory(category)
+        let fullKey = "\(normalizedCategory).\(key)"
+        guard values[fullKey] != nil else { return }
+        values.removeValue(forKey: fullKey)
+        // Emit updated category snapshot so UI listeners clear the removed key
+        let snapshot = getCategory(normalizedCategory)
+        onEmit?(normalizedCategory, snapshot)
+        for listener in Array(listeners.values) { listener(normalizedCategory, snapshot) }
+    }
+
     func get(_ category: String, _ key: String) -> Any? {
         values["\(Self.normalizeCategory(category)).\(key)"]
     }

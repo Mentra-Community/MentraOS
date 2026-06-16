@@ -522,7 +522,7 @@ export interface PhotoAdapter {
   takePhoto: (
     packageName: string,
     opts: {
-      size?: "small" | "medium" | "large" | "full"
+      size?: "low" | "medium" | "high" | "max" | "small" | "large" | "full"
       compress?: "none" | "low" | "medium" | "high"
       sound?: boolean
       saveToGallery?: boolean
