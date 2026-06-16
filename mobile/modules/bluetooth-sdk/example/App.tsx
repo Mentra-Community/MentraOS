@@ -71,13 +71,12 @@ export default function App() {
 
   const scanFields = useCallback((): Partial<PhotoRequestParams> => {
     if (!scanMode) {
-      return {size: "medium", compress: "none", sound: true, save: true}
+      return {size: "medium", compress: "none", sound: true}
     }
     return {
       ...SCAN_MODE_PRESET,
       aeExposureDivisor: aeDivisor,
       isoCap,
-      save: true,
     }
   }, [scanMode, aeDivisor, isoCap])
 
@@ -118,7 +117,7 @@ export default function App() {
   }
 
   const handlePhotoSizeChange = async (size: ButtonPhotoSize) => {
-    await BluetoothSdk.setButtonPhotoSettings(size)
+    await BluetoothSdk.setButtonPhotoSettings({size})
     setPhotoSize(size)
   }
 
