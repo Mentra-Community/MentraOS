@@ -20,7 +20,7 @@ export const selectGlassesConnected = (state: {connection: GlassesConnectionStat
 
 export const selectGlassesReady = (state: {connection: GlassesConnectionStatus}) => isGlassesReady(state.connection)
 
-interface GlassesState extends GlassesStatus {
+export interface GlassesState extends GlassesStatus {
   systemTimeMs: number
   wifiStatusKnown: boolean
   setGlassesInfo: (info: GlassesInfoUpdate) => void

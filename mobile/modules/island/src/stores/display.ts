@@ -35,7 +35,7 @@ function extractDisplayText(displayEvent: any): string[] {
   }
 }
 
-interface DisplayStore {
+export interface DisplayStore {
   currentEvent: any
   dashboardEvent: any
   mainEvent: any

@@ -10,7 +10,7 @@ export enum WebSocketStatus {
   ERROR = "error",
 }
 
-interface ConnectionState {
+export interface ConnectionState {
   status: WebSocketStatus
   url: string | null
   error: string | null
