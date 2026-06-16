@@ -45,7 +45,7 @@ class MentraBluetoothSdk private constructor(
     private var pendingWifiStatus: PendingWifiStatusRequest? = null
     private var pendingHotspotStatus: PendingHotspotStatusRequest? = null
     private var pendingVersionInfo: PendingResponse<VersionInfoResult>? = null
-    @Volatile private var configuredOtaVersionUrl = OtaManifestDefaults.DEFAULT_OTA_VERSION_URL
+    @Volatile private var configuredOtaVersionUrl: String? = null
 
     init {
         listeners.add(listener)
@@ -910,7 +910,7 @@ class MentraBluetoothSdk private constructor(
         configuredOtaVersionUrl = OtaManifestChecker.normalizeHttpUrl(otaVersionUrl)
     }
 
-    internal fun getOtaVersionUrl(): String = configuredOtaVersionUrl
+    internal fun getOtaVersionUrl(): String = configuredOtaVersionUrl ?: OtaManifestDefaults.defaultOtaVersionUrl()
 
     /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
     fun checkForOtaUpdate(): Boolean {
@@ -1083,7 +1083,9 @@ class MentraBluetoothSdk private constructor(
         if (isLegacyAsgOtaStartBuild(status.buildNumber)) {
             return deviceUrl.ifBlank { OtaManifestDefaults.PROD_OTA_VERSION_URL }
         }
-        return configuredOtaVersionUrl.ifBlank { deviceUrl.ifBlank { OtaManifestDefaults.PROD_OTA_VERSION_URL } }
+        // SDK consumers are pinned to the manifest built for their SDK version.
+        // A future glasses-advertised URL should not silently change that pairing.
+        return configuredOtaVersionUrl ?: OtaManifestDefaults.defaultOtaVersionUrl()
     }
 
     private fun isLegacyAsgOtaStartBuild(buildNumber: String): Boolean {

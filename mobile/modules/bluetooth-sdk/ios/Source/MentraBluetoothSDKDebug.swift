@@ -6,7 +6,7 @@ public enum MentraBluetoothSDKDebug {
         try sdk.setOtaVersionUrl(otaVersionUrl)
     }
 
-    public static func getOtaVersionUrl(on sdk: MentraBluetoothSDK) -> String {
-        sdk.getOtaVersionUrl()
+    public static func getOtaVersionUrl(on sdk: MentraBluetoothSDK) throws -> String {
+        try sdk.getOtaVersionUrl()
     }
 }
