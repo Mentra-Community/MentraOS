@@ -495,7 +495,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           {PHOTO_SIZES.map((size) => (
             <Chip
               key={size}
-              active={sdk.photoSize === size}
+              active={!sdk.scanMode && sdk.photoSize === size}
               disabled={sdk.scanMode}
               value={size}
               onPress={() => sdk.setPhotoSize(size)}
