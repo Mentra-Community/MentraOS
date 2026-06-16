@@ -2,6 +2,19 @@
 
 console.log('Running postinstall...');
 
+// cloud-v2 is a SEPARATE bun workspace (manila/cloud-v2) consumed by the app via
+// metro + tsconfig aliases that point at its TypeScript SOURCE. The mobile
+// typecheck/bundle therefore type-checks cloud-v2 source, which imports cloud-v2's
+// own deps (zod, tweetnacl, …) — and module resolution is file-relative, so those
+// must live in cloud-v2/node_modules, NOT mobile's. The mobile install doesn't
+// cover cloud-v2, so install its deps here. Non-fatal so a cloud-v2 install hiccup
+// can't block the mobile install (it'd surface at typecheck instead).
+try {
+  await $({ stdio: 'inherit', cwd: '../cloud-v2' })`bun install`;
+} catch {
+  console.warn('\n[postinstall] WARNING: cloud-v2 dep install failed — the app typecheck may not resolve @mentra/cloud-client / @mentra/cloud-runtime source.\n');
+}
+
 // Workspace setup hoists deps to root node_modules — per-module `bun install`
 // is no longer needed and re-introduced duplicate react/react-native copies.
 
