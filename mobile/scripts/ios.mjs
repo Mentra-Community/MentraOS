@@ -49,4 +49,36 @@ const deviceUdid = connected.hardwareProperties.udid
 const deviceName = connected.deviceProperties.name
 
 console.log(`Using device: ${deviceName} (${deviceUdid})`)
-await $({stdio: "inherit"})`bun expo run:ios --device ${deviceUdid}`
+
+// Build & install the app without starting the bundler. `expo run:ios` does
+// not exit on its own after install (it stays attached to the device, showing
+// a "Connecting to <device>" spinner that pollutes the logs), so we stream its
+// output, kill it once the app is installed, then start Metro in a clean
+// process of our own.
+const runProc = $`bun expo run:ios --device ${deviceUdid} --no-bundler`
+
+let installed = false
+for await (const chunk of runProc.stdout) {
+  process.stdout.write(chunk)
+  if (/Installing .*\.app/.test(chunk.toString())) {
+    installed = true
+    // Give the install/launch a moment to finish, then stop the hung process.
+    await new Promise((r) => setTimeout(r, 4000))
+    runProc.kill("SIGINT")
+    break
+  }
+}
+
+try {
+  await runProc
+} catch {
+  // We SIGINT'd it on purpose; ignore the resulting non-zero exit.
+}
+
+if (!installed) {
+  console.error("Build/install did not complete; not starting Metro.")
+  process.exit(1)
+}
+
+// Start Metro separately in its own clean process.
+await $({stdio: "inherit"})`bun expo start --dev-client`
