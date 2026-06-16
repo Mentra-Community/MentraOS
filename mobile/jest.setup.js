@@ -370,6 +370,7 @@ jest.mock("@mentra/island", () => {
         reconnectCloud: jest.fn(),
       },
       incidents: {
+        file: jest.fn(() => Promise.resolve({incidentId: "test"})),
         create: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false, value: {incidentId: "test"}})),
         uploadLogs: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
         uploadAttachments: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
