@@ -160,8 +160,48 @@ const live = toolkit.session.isConnected()    // handshake completed?
 ```
 
 `status` is one of `connected | connecting | reconnecting | disconnected`;
-`audioTransport` is `udp | ws | offline | none`. (Account operations —
-delete/export — are not on this surface yet.)
+`audioTransport` is `udp | ws | offline | none`.
+
+```ts
+await toolkit.session.account.delete()                       // backend emails a confirmation code
+await toolkit.session.account.confirmDelete(requestId, code) // confirm the deletion
+```
+
+## `toolkit.settings`
+
+Typed keyed user settings over the island-owned settings store.
+
+```ts
+toolkit.settings.get(key)               // current value (or default)
+toolkit.settings.set(key, value)        // also syncs to backend (pass false to skip)
+toolkit.settings.onChanged(key, (v) => { … }) // subscribe; returns unsubscribe
+toolkit.settings.descriptor(key)        // schema (type/default/options)
+toolkit.settings.keys()                 // all known keys
+```
+
+## `toolkit.incidents`
+
+Bug-report / feedback submission. The OEM writes its own report screen + gathers
+diagnostics; island owns the submission.
+
+```ts
+const r = await toolkit.incidents.create(feedback, phoneState) // -> { incidentId }
+await toolkit.incidents.uploadLogs(incidentId, logs)
+await toolkit.incidents.uploadAttachments(incidentId, images)
+await toolkit.incidents.sendFeedback(feedback)
+```
+
+## `toolkit.dev`
+
+Developer/debug surface — backend + cloud-v2 URL overrides, reconnect, version gate.
+
+```ts
+toolkit.dev.minimumClientVersion()
+toolkit.dev.backendUrl(); toolkit.dev.setBackendUrl(url)
+toolkit.dev.cloudUrls(); toolkit.dev.setCloudUrls({core, runtime}) // sets + reconnects
+toolkit.dev.savedUrls()
+toolkit.dev.reconnectCloud()
+```
 
 ## `toolkit.stores.*` — escape hatch (not the OEM contract)
 

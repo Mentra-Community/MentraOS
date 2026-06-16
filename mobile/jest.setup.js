@@ -355,6 +355,12 @@ jest.mock("@mentra/island", () => {
         savedUrls: jest.fn(() => []),
         reconnectCloud: jest.fn(),
       },
+      incidents: {
+        create: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false, value: {incidentId: "test"}})),
+        uploadLogs: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
+        uploadAttachments: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
+        sendFeedback: jest.fn(() => Promise.resolve({is_ok: () => true, is_error: () => false})),
+      },
       stores: {
         glasses: realGlasses.useGlassesStore,
         display: realDisplay.useDisplayStore,
