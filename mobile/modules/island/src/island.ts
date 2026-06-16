@@ -9,7 +9,7 @@
  * `BluetoothSdk` passthrough) stay until every screen has moved onto `island.*`.
  */
 import {configure, start, stop} from "./runtime/bootstrap"
-import {glassesWifi} from "./facades/glassesWifi"
+import {glasses} from "./facades/glasses"
 import {displayMirror} from "./facades/displayMirror"
 import {useGlassesStore} from "./stores/glasses"
 import {useDisplayStore} from "./stores/display"
@@ -22,9 +22,7 @@ export const toolkit = {
   configure,
   start,
   stop,
-  glasses: {
-    wifi: glassesWifi,
-  },
+  glasses,
   display: {
     mirror: displayMirror,
   },
