@@ -20,4 +20,13 @@ export const displayMirror = {
   onMirror(cb: (event: DisplayMirrorEvent) => void): () => void {
     return useDisplayStore.subscribe((s) => s.currentEvent, cb)
   },
+
+  /** Which view is previewed — the main screen or the dashboard. */
+  view(): string {
+    return useDisplayStore.getState().view
+  },
+  /** Switch the previewed view between `"main"` and `"dashboard"`. */
+  setView(view: "main" | "dashboard"): void {
+    useDisplayStore.getState().setView(view)
+  },
 }
