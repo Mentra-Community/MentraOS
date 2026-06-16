@@ -490,7 +490,7 @@ public final class MentraBluetoothSDK {
         try await performSettingsCommand(
             setting: "button_photo",
             updateStore: { _ in
-                if settings.resetCaptureTuning {
+                if settings.resetCaptureTuning == true {
                     // Mirror Android: clear all cached scan-tuning keys so reconnect sync
                     // does not replay stale values after a reset.
                     let cat = ObservableStore.bluetoothCategory
@@ -501,9 +501,7 @@ public final class MentraBluetoothSDK {
                         DeviceStore.shared.remove(cat, key)
                     }
                 }
-                if let size = settings.size {
-                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_size", size.rawValue)
-                }
+                DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_size", settings.size.rawValue)
                 if let mfnr = settings.mfnr {
                     DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_mfnr", mfnr)
                 }
