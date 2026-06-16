@@ -2042,14 +2042,14 @@ class G2: NSObject, SGCManager {
         Task { await rebuildPage() }
     }
 
-    /// Send BMP data to an image container via fragmented updateImageRawData
     /// Send a bitmap to an image container as fragmented updateImageRawData packets.
     ///
-    /// The glasses reply ONCE per image (after all fragments arrive) with an ImgResCmd ErrorCode
-    /// (4=success, 5=failed). After sending every fragment, this awaits that ACK for up to
-    /// `IMG_ACK_TIMEOUT_NS`; a `failed` ACK OR no ACK within the window both count as a failure and
-    /// the entire image is re-sent (fresh session id) up to `IMG_MAX_ATTEMPTS` times. On exhausting
-    /// all attempts it logs a warning and returns (best-effort — callers are unaffected).
+    /// The glasses reply ONCE per fragment with an ImgResCmd ErrorCode (4=success, 5=failed).
+    /// Each fragment is sent with its own session id, then this awaits that fragment's ACK for up
+    /// to `IMG_ACK_TIMEOUT_NS` before sending the next. A `failed` ACK OR no ACK within the window
+    /// counts as a failure and the entire image is re-sent (fresh sessions) up to
+    /// `IMG_MAX_ATTEMPTS` times. On exhausting all attempts it logs a warning and returns
+    /// (best-effort — callers are unaffected).
     private func sendImageData(containerID: Int32, containerName: String, bmpData: Data) async {
         let fragmentSize = 4096
         let totalSize = Int32(bmpData.count)
@@ -2059,17 +2059,20 @@ class G2: NSObject, SGCManager {
             "G2: sendImageData(\(containerName)) - \(fragmentCount) fragments, \(bmpData.count) bytes"
         )
 
-        for attempt in 1...IMG_MAX_ATTEMPTS {
-            // Fresh session per attempt so a late ACK from a prior attempt can't be mistaken for
-            // this one (handleEvenHubResponse matches on MapSessionId).
-            imageSessionCounter += 1
-            let sessionId = imageSessionCounter
-
+        // for attempt in 1...IMG_MAX_ATTEMPTS {
             var fragmentIndex: Int32 = 0
             var offset = 0
+            var transferOk = true
             while offset < bmpData.count {
                 let end = min(offset + fragmentSize, bmpData.count)
                 let fragment = bmpData[offset..<end]
+
+                // Fresh session per FRAGMENT. The glasses ACK once per fragment, so each fragment
+                // gets its own session id; this lets awaitImageAck correlate that fragment's ACK
+                // and prevents the duplicate L/R ACK (or a prior fragment's late ACK) from being
+                // mistaken for the next fragment's.
+                imageSessionCounter += 1
+                let sessionId = imageSessionCounter
 
                 let msg = EvenHubProto.updateImageRawDataMessage(
                     containerID: containerID,
@@ -2086,19 +2089,28 @@ class G2: NSObject, SGCManager {
                     "G2: sendImageData(\(containerName)) - attempt \(attempt) sent fragment \(fragmentIndex)"
                 )
 
+                // Wait for THIS fragment's ACK (500ms timeout) before sending the next. On
+                // timeout/img_failed, abandon the attempt and retry the whole image.
+                // let ok = await awaitImageAck(sessionId: sessionId)
+                // if !ok {
+                //     Bridge.log(
+                //         "G2: sendImageData(\(containerName)) - attempt \(attempt) fragment \(fragmentIndex) failed (timeout/img_failed)"
+                //     )
+                //     transferOk = false
+                //     break
+                // }
+
+                try? await Task.sleep(nanoseconds: 300_000_000) // 300ms between fragments
+
                 fragmentIndex += 1
                 offset = end
-                try? await Task.sleep(nanoseconds: 250_000_000)  // 250ms between fragments
             }
 
-            // Await the single per-image ACK, with a timeout. true=success, false=img_failed/timeout.
-            let ok = await awaitImageAck(sessionId: sessionId)
-            if ok {
-                Bridge.log("G2: sendImageData(\(containerName)) - acked on attempt \(attempt)")
-                return
-            }
-            Bridge.log("G2: sendImageData(\(containerName)) - attempt \(attempt) failed (timeout/img_failed)")
-        }
+            // if transferOk {
+            //     Bridge.log("G2: sendImageData(\(containerName)) - acked on attempt \(attempt)")
+            //     return
+            // }
+        // }
 
         Bridge.log("G2: WARN: sendImageData(\(containerName)) - failed after \(IMG_MAX_ATTEMPTS) attempts")
     }
@@ -3577,6 +3589,8 @@ class G2: NSObject, SGCManager {
                 var resReader = ProtobufReader(resData)
                 let resFields = resReader.parseFields()
                 if let errorCode = resFields[8] as? Int32, let ackSession = resFields[3] as? Int32 {
+                    // Bridge.log("G2: EvenHub response img_res_cmd: session=\(ackSession), errorCode=\(errorCode)")
+                    Bridge.log("G2: img_res: errorCode=\(errorCode) success=\(errorCode == 4)")
                     completeImageAck(session: Int(ackSession), success: errorCode == 4)
                 }
             }
@@ -3611,14 +3625,14 @@ class G2: NSObject, SGCManager {
                             pageCreated = false
                         }
                     }
-                    if let errorCode = resFields[8] as? Int32 {
-                        // ImgResCmd has ErrorCode in field 8
-                        if errorCode == 4 {
-                            Bridge.log("G2: img_success")
-                        } else {
-                            Bridge.log("G2: EvenHub ImgRes errorCode=\(errorCode)")
-                        }
-                    }
+                    // if let errorCode = resFields[8] as? Int32 {
+                    //     // ImgResCmd has ErrorCode in field 8
+                    //     if errorCode == 4 {
+                    //         Bridge.log("G2: img_success")
+                    //     } else {
+                    //         Bridge.log("G2: EvenHub ImgRes errorCode=\(errorCode)")
+                    //     }
+                    // }
                 }
             }
 
