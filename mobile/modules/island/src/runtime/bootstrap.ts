@@ -1,5 +1,5 @@
 /**
- * Bootstrap — island's single front door (`island.configure` / `start` / `stop`).
+ * Bootstrap — the toolkit's single front door (`toolkit.configure` / `start` / `stop`).
  *
  * The Phase-1 contract's end state is: the host hands island its auth + config in
  * ONE call and island owns the rest. This is the additive first step of that: a
@@ -51,7 +51,7 @@ export function configure(opts: IslandConfigureOptions): void {
 export async function start(): Promise<void> {
   if (started) return
   if (!options) {
-    throw new Error("island.start() called before island.configure()")
+    throw new Error("toolkit.start() called before toolkit.configure()")
   }
   started = true
 }
