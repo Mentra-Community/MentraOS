@@ -233,6 +233,10 @@ jest.mock("@dr.pogodin/react-native-fs", () => ({
 // (react-native-share, expo-battery/clipboard/location, etc.). Tests that
 // only need a handful of exports get stubs here; specific tests can override.
 jest.mock("@mentra/island", () => {
+  // The glasses store moved into island; tests + the @/stores/glasses shim need its
+  // REAL behavior (setState/getState/subscribe), so pull the actual store in. It's
+  // pure (zustand + type-only btsdk imports), so it loads cleanly under the mock.
+  const realGlasses = jest.requireActual("./modules/island/src/stores/glasses")
   const appStatusState = {
     apps: [],
     refresh: jest.fn(),
@@ -249,6 +253,9 @@ jest.mock("@mentra/island", () => {
 
   return {
     __esModule: true,
+    // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
+    // waitForGlassesState, getGlasesInfoPartial, getGlassesSystemTimeMs, predicates).
+    ...realGlasses,
     // The namespaced (A) host API. Mirrors the real `island` object; members are
     // jest.fn()s so host/screen tests can assert delegation without native btsdk.
     island: {
@@ -260,6 +267,8 @@ jest.mock("@mentra/island", () => {
           scan: jest.fn(() => Promise.resolve([])),
           connect: jest.fn(() => Promise.resolve()),
           forget: jest.fn(() => Promise.resolve()),
+          status: jest.fn(() => ({state: "disconnected"})),
+          onStatus: jest.fn(() => () => {}),
         },
       },
       display: {
@@ -269,6 +278,7 @@ jest.mock("@mentra/island", () => {
           onMirror: jest.fn(() => () => {}),
         },
       },
+      glassesStore: realGlasses.useGlassesStore,
     },
     BgTimer: {
       setInterval: jest.fn((callback, delay) => setInterval(callback, delay)),

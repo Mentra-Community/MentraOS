@@ -10,6 +10,7 @@
 import {configure, start, stop} from "./runtime/bootstrap"
 import {glassesWifi} from "./facades/glassesWifi"
 import {displayMirror} from "./facades/displayMirror"
+import {useGlassesStore} from "./stores/glasses"
 
 export const island = {
   /** Front door — hand island auth + config, then start/stop the runtime. */
@@ -22,4 +23,10 @@ export const island = {
   display: {
     mirror: displayMirror,
   },
+  /**
+   * Escape hatch — the raw glasses device-state zustand store, exposed so the
+   * Mentra app keeps using it directly instead of rewriting every screen onto
+   * typed facades. Prefer a facade where one exists.
+   */
+  glassesStore: useGlassesStore,
 }
