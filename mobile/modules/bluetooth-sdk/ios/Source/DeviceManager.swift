@@ -612,38 +612,42 @@ struct ViewState {
             Bridge.log("MAN: SGC already initialized")
             return
         }
-        if wearable.contains(DeviceTypes.REMOTE_HARNESS) {
-            // Pluggable-driver contract: RemoteHarness is now a GlassesDriver
-            // wrapped onto SGCManager via the adapter (docs/device-driver-contract.md).
-            sgc = GlassesDriverSgcAdapter(driver: RemoteHarnessDriver(), host: DeviceHostImpl(deviceType: DeviceTypes.REMOTE_HARNESS))
-        } else if wearable.contains(DeviceTypes.SIMULATED) {
-            sgc = Simulated()
-        } else if wearable.contains(DeviceTypes.G1) {
-            sgc = G1()
-        } else if wearable.contains(DeviceTypes.G2) {
-            sgc = G2()
-        } else if wearable.contains(DeviceTypes.LIVE) {
-            sgc = MentraLive()
-        } else if wearable.contains(DeviceTypes.FRAME) {
-            // sgc = FrameManager()
-        }
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_NEX
-        if sgc == nil && wearable.contains(DeviceTypes.NEX) {
-            sgc = MentraNexSGC.getInstance()
-        }
-#endif
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_VUZIX
-        if sgc == nil {
-            if wearable.contains(DeviceTypes.MACH1) {
-                sgc = Mach1()
-            } else if wearable.contains(DeviceTypes.Z100) {
-                sgc = Mach1() // Z100 uses same hardware/SDK as Mach1
-                sgc?.type = DeviceTypes.Z100 // Override type to Z100
-            }
-        }
-#endif
+
+        // Resolve the wearable to an adapter through the registry (CTO Phase 2,
+        // docs/device-driver-contract.md §0). Built-ins register once, in their
+        // original branch order, so contains()-matching precedence is unchanged.
+        ensureBuiltinAdaptersRegistered()
+        sgc = DeviceRegistry.shared.make(wearable)
+
         // update device model:
         DeviceStore.shared.apply("glasses", "deviceModel", sgc?.type ?? "")
+    }
+
+    private var builtinAdaptersRegistered = false
+
+    private func ensureBuiltinAdaptersRegistered() {
+        if builtinAdaptersRegistered { return }
+        builtinAdaptersRegistered = true
+        // Order matches the legacy initSGC if/else so wearable.contains() precedence
+        // is identical. RemoteHarness is the dev/sim adapter — a plain SGCManager.
+        DeviceRegistry.shared.register(DeviceTypes.REMOTE_HARNESS) { RemoteHarness() }
+        DeviceRegistry.shared.register(DeviceTypes.SIMULATED) { Simulated() }
+        DeviceRegistry.shared.register(DeviceTypes.G1) { G1() }
+        DeviceRegistry.shared.register(DeviceTypes.G2) { G2() }
+        DeviceRegistry.shared.register(DeviceTypes.LIVE) { MentraLive() }
+        // FRAME intentionally unregistered (no FrameManager yet) — make() returns nil,
+        // matching the legacy no-op branch.
+#if !SWIFT_PACKAGE || MENTRA_FEATURE_NEX
+        DeviceRegistry.shared.register(DeviceTypes.NEX) { MentraNexSGC.getInstance() }
+#endif
+#if !SWIFT_PACKAGE || MENTRA_FEATURE_VUZIX
+        DeviceRegistry.shared.register(DeviceTypes.MACH1) { Mach1() }
+        DeviceRegistry.shared.register(DeviceTypes.Z100) {
+            let sgc = Mach1() // Z100 uses same hardware/SDK as Mach1
+            sgc.type = DeviceTypes.Z100 // Override type to Z100
+            return sgc
+        }
+#endif
     }
 
     func initController(_ controllerModel: String) {

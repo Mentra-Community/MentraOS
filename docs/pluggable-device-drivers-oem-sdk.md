@@ -1,8 +1,19 @@
 # Pluggable Device Drivers — OEM SDK / extension point
 
-Status: **design proposal** (no implementation yet)
+Status: **design proposal — reconciled with CTO Phase 2.**
 Author: drafted with the agent-harness work as reference
 Audience: MentraOS mobile/bluetooth-sdk maintainers + future hardware OEMs
+
+> **Reconciliation (authoritative):** the contract an OEM implements is the
+> existing `SGCManager` made public, registered through a `DeviceRegistry` keyed
+> on a stable model ID — not a separate driver interface with an injected host.
+> See `docs/device-driver-contract.md` §0 for the canonical plan and ordered
+> work items. Two deltas to this draft in particular: (1) the separate
+> `GlassesDriver`/`DeviceHost` split is dropped in favor of the public
+> `SGCManager`; (2) the optional per-state/variant **AssetResolver** is out of
+> scope — OEMs build their own branded UI and register no images. The sections
+> below remain useful for the OEM-experience narrative and the extension-point
+> motivation; defer to §0 of the contract doc wherever they disagree.
 
 ## 1. Summary
 

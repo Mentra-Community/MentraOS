@@ -19,9 +19,8 @@ import com.mentra.bluetoothsdk.sgcs.G2
 import com.mentra.bluetoothsdk.sgcs.Mach1
 import com.mentra.bluetoothsdk.sgcs.MentraLive
 import com.mentra.bluetoothsdk.sgcs.MentraNex
-import com.mentra.bluetoothsdk.drivers.DeviceHostImpl
-import com.mentra.bluetoothsdk.drivers.GlassesDriverSgcAdapter
-import com.mentra.bluetoothsdk.drivers.RemoteHarnessDriver
+import com.mentra.bluetoothsdk.drivers.DeviceRegistry
+import com.mentra.bluetoothsdk.sgcs.RemoteHarness
 import com.mentra.bluetoothsdk.sgcs.SGCManager
 import com.mentra.bluetoothsdk.sgcs.Simulated
 import com.mentra.bluetoothsdk.utils.ControllerTypes
@@ -1049,29 +1048,33 @@ class DeviceManager {
             return
         }
 
-        if (wearable.contains(DeviceTypes.REMOTE_HARNESS)) {
-            // Pluggable-driver contract: RemoteHarness is now a GlassesDriver
-            // wrapped onto SGCManager via the adapter (docs/device-driver-contract.md).
-            sgc = GlassesDriverSgcAdapter(RemoteHarnessDriver(), DeviceHostImpl(DeviceTypes.REMOTE_HARNESS))
-        } else if (wearable.contains(DeviceTypes.SIMULATED)) {
-            sgc = Simulated()
-        } else if (wearable.contains(DeviceTypes.G1)) {
-            sgc = G1()
-        } else if (wearable.contains(DeviceTypes.G2)) {
-            sgc = G2()
-        } else if (wearable.contains(DeviceTypes.LIVE)) {
-            sgc = MentraLive()
-        } else if (wearable.contains(DeviceTypes.NEX)) {
-            sgc = MentraNex()
-        } else if (wearable.contains(DeviceTypes.MACH1)) {
-            sgc = createOptionalMach1Sgc(DeviceTypes.MACH1)
-        } else if (wearable.contains(DeviceTypes.Z100)) {
-            sgc = createOptionalMach1Sgc(DeviceTypes.Z100)
-        } else if (wearable.contains(DeviceTypes.FRAME)) {
-            // sgc = FrameManager()
-        }
+        // Resolve the wearable to an adapter through the registry (CTO Phase 2,
+        // docs/device-driver-contract.md §0). Built-ins register once, in their
+        // original branch order, so contains()-matching precedence is unchanged.
+        ensureBuiltinAdaptersRegistered()
+        sgc = DeviceRegistry.make(wearable)
+
         // update device model:
         DeviceStore.apply("glasses", "deviceModel", sgc?.type ?: "")
+    }
+
+    private var builtinAdaptersRegistered = false
+
+    private fun ensureBuiltinAdaptersRegistered() {
+        if (builtinAdaptersRegistered) return
+        builtinAdaptersRegistered = true
+        // Order matches the legacy initSGC if/else so wearable.contains() precedence
+        // is identical. RemoteHarness is the dev/sim adapter — a plain SGCManager.
+        DeviceRegistry.register(DeviceTypes.REMOTE_HARNESS) { RemoteHarness() }
+        DeviceRegistry.register(DeviceTypes.SIMULATED) { Simulated() }
+        DeviceRegistry.register(DeviceTypes.G1) { G1() }
+        DeviceRegistry.register(DeviceTypes.G2) { G2() }
+        DeviceRegistry.register(DeviceTypes.LIVE) { MentraLive() }
+        DeviceRegistry.register(DeviceTypes.NEX) { MentraNex() }
+        DeviceRegistry.register(DeviceTypes.MACH1) { createOptionalMach1Sgc(DeviceTypes.MACH1) }
+        DeviceRegistry.register(DeviceTypes.Z100) { createOptionalMach1Sgc(DeviceTypes.Z100) }
+        // FRAME intentionally unregistered (no FrameManager yet) — make() returns null,
+        // matching the legacy no-op branch.
     }
 
     private fun createOptionalMach1Sgc(deviceType: String): SGCManager? {

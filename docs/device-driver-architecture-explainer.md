@@ -1,7 +1,14 @@
 # Device drivers: how it works today, and the OEM adapter by example
 
-Status: **explainer + design sketch** (no implementation yet)
+Status: **explainer + design sketch — reconciled with CTO Phase 2.**
 Companion to: `docs/pluggable-device-drivers-oem-sdk.md` (the formal spec)
+
+> **Reconciliation:** Part 1 (how it works today) is unchanged and accurate. For
+> the OEM adapter shape in Part 2, the canonical plan is now
+> `docs/device-driver-contract.md` §0: the OEM subclasses the public `SGCManager`
+> directly and registers it through a `DeviceRegistry` keyed on a model ID. Where
+> Part 2 shows a separate driver interface + host, read it as illustrative of the
+> inbound/outbound *call directions*, not the final class shape.
 
 This doc is for someone who hasn't worked in the device/Bluetooth layer before.
 **Part 1** explains how a pair of glasses works in the app *today*. **Part 2**

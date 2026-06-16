@@ -1,8 +1,86 @@
-# Device-driver contract (GlassesDriver / DeviceHost / DeviceCapabilities)
+# Device-driver contract (SGCManager as the public adapter)
 
-Status: **proposed contract** (interface design; first implementation in progress)
+Status: **reconciled with CTO Phase 2 plan (authoritative direction below).**
 Companion to: `docs/pluggable-device-drivers-oem-sdk.md`,
 `docs/device-driver-architecture-explainer.md`
+
+---
+
+## 0. Authoritative direction (CTO Phase 2)
+
+The contract an OEM implements **is the existing `SGCManager`**, made public and
+conformable — not a second wrapper layer on top of it. There is one concept, not
+two. The earlier `GlassesDriver` + `DeviceHost` + adapter design (appendix
+sections below) was a useful exploration that proved the surface end-to-end on a
+real G2, but it is **superseded** by this direction: a separate inbound interface
+plus an injected outbound facade is the "second wrapper" we are explicitly
+avoiding.
+
+What we are building instead, in order:
+
+1. **Public `SGCManager`.** Make the class public and conformable so a driver
+   author subclasses (Kotlin) / conforms to (Swift) it directly. Renaming to
+   `GlassesAdapter` is on the table but deferred — it touches ~52 call sites and
+   buys nothing functionally, so it is a late, mechanical rename, not a blocker.
+
+2. **`DeviceRegistry` keyed on a stable model ID.** A public
+   `registerGlassesAdapter(modelId, capabilities, make: () -> SGCManager)`.
+   Built-in SGCs (G1, G2, Live, Nex, Mach1/Z100, Simulated, Harness) register
+   themselves as built-ins. `DeviceManager.initSGC` becomes a registry lookup
+   instead of a hardcoded if/else. `DeviceTypes.ALL` opens so registered OEM
+   models flow through discovery and capability resolution like first-party ones.
+
+3. **Capability-flag dispatch (removes `as? MentraLive` downcasts).** Capabilities
+   are injected at registration (reusing the existing capabilities shape, not a
+   new `DeviceCapabilities` type). Today the app does `sgc as? MentraLive` to
+   reach camera/OTA/speaker methods; instead those methods move onto `SGCManager`
+   with default no-op/throw implementations and are gated by capability flags
+   (`hasCamera`, `hasOta`, `hasSpeaker`). The call site checks the flag, never the
+   concrete class. This is what lets an OEM device expose a camera without being
+   a `MentraLive`.
+
+4. **`onReady()` post-connect hook.** A single well-defined point that fires after
+   the link is live and device info is known, so adapters do post-connect setup in
+   one place instead of scattering it through connection callbacks.
+
+5. **Open the `DeviceModel` enum** with `.oem` and `.unknown` cases. Fixes the
+   `fromDeviceType` bug where unknown models silently defaulted to `.mentraLive`.
+
+6. **Cloud-V2 runtime capabilities path** — cross-team dependency. The cloud must
+   accept capabilities at runtime (from registration) rather than from a static
+   per-model map, or OEM devices get mis-gated server-side. This gates true e2e
+   for OEM models and is **not** ours alone to land; flagged as a dependency.
+
+Scope and ownership notes:
+
+- **Assets stay host-side / out of scope here.** OEMs build their own branded UI
+  and register **no** images. Our `getGlassesImage` state+variant resolver
+  (`mobile/src/utils/getGlassesImage.tsx`) stays a first-party concern; the
+  AssetResolver idea from the OEM SDK draft is demoted to "host decides," not part
+  of the adapter contract.
+- **Registration is native-to-native.** No JS adapter shim; an OEM's native code
+  registers against the native `SGCManager`/registry directly.
+- **Discovery stays per-SGC.** Each adapter owns `findCompatibleDevices`; the
+  registry does not centralize scanning.
+- Optional later refinement (not now): a 2-layer `GlassesTransport` +
+  `StandardGlassesProtocol` split, and default-impl versioning so adding a gated
+  method to `SGCManager` does not break existing OEM builds. Tracked, not started.
+
+Implementation status (this branch): the registry seam (item 2) is the first code
+step; the `GlassesDriver`/`DeviceHost`/adapter files are being retired and
+`RemoteHarness` returns to being a plain `SGCManager` registered through the
+registry. Items 3-6 are scoped here and land incrementally with per-device
+verification (item 6 blocked on the cloud team).
+
+---
+
+## Appendix (superseded): GlassesDriver / DeviceHost exploration
+
+> The sections below document the earlier inbound-`GlassesDriver` +
+> outbound-`DeviceHost` contract. They are retained because the method-by-method
+> derivation from `SGCManager` (and the §6 mapping table) is still an accurate
+> inventory of the real surface. The *split into two interfaces* is superseded by
+> section 0; read the method inventory, ignore the wrapper shape.
 
 This is the precise, method-by-method contract a driver author implements,
 derived from the real `SGCManager` surface
