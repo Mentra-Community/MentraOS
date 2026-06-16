@@ -613,7 +613,9 @@ struct ViewState {
             return
         }
         if wearable.contains(DeviceTypes.REMOTE_HARNESS) {
-            sgc = RemoteHarness()
+            // Pluggable-driver contract: RemoteHarness is now a GlassesDriver
+            // wrapped onto SGCManager via the adapter (docs/device-driver-contract.md).
+            sgc = GlassesDriverSgcAdapter(driver: RemoteHarnessDriver(), host: DeviceHostImpl(deviceType: DeviceTypes.REMOTE_HARNESS))
         } else if wearable.contains(DeviceTypes.SIMULATED) {
             sgc = Simulated()
         } else if wearable.contains(DeviceTypes.G1) {
