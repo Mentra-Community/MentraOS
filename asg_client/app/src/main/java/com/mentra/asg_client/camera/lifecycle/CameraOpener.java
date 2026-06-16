@@ -11,6 +11,7 @@ import android.util.Size;
 import com.mentra.asg_client.camera.CameraConstants;
 import com.mentra.asg_client.camera.policy.CameraSizeSelector;
 import com.mentra.asg_client.camera.policy.PhotoResolutionPolicy;
+import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.settings.VideoSettings;
 
 /** Camera id selection and output size resolution for {@link CameraNeoService}. */
@@ -120,10 +121,11 @@ public final class CameraOpener {
     }
 
     public static Size resolveJpegSize(
-            Size[] jpegSizes, boolean fromSdk, String requestedSizeTier) {
+            Size[] jpegSizes, boolean fromSdk, String rawRequestedSizeTier) {
         if (jpegSizes == null || jpegSizes.length == 0) {
             return null;
         }
+        String requestedSizeTier = PhotoSizeTier.normalize(rawRequestedSizeTier);
         if (CameraConstants.SIZE_MAX.equals(requestedSizeTier)) {
             Size maxSize = CameraSizeSelector.largestSize(jpegSizes);
             if (maxSize == null) {

@@ -41,13 +41,13 @@ export interface PhotoRequestOptions {
   /** Authentication token for custom webhook authentication */
   authToken?: string;
   /**
-   * Desired photo size. All sizes are optimized for fast transfer.
-   * - small: 640x480 (VGA) - ultra-fast transfers
-   * - medium: 1280x720 (720p) - good balance (default)
-   * - large: 1920x1080 (1080p) - high quality
-   * - full: native sensor resolution - maximum detail (slower transfer)
+   * Desired photo size.
+   * - low: smallest tier
+   * - medium: balanced default
+   * - high: high quality
+   * - max: largest sensor resolution
    */
-  size?: "small" | "medium" | "large" | "full";
+  size?: "low" | "medium" | "high" | "max";
   /** Image compression level for upload optimization. Defaults to "none". */
   compress?: "none" | "medium" | "heavy";
   /** Controls shutter sound. Defaults to true if omitted. */

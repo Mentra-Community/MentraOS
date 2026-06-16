@@ -45,6 +45,7 @@ class MentraBluetoothSdk private constructor(
     private var pendingWifiStatus: PendingWifiStatusRequest? = null
     private var pendingHotspotStatus: PendingHotspotStatusRequest? = null
     private var pendingVersionInfo: PendingResponse<VersionInfoResult>? = null
+    @Volatile private var configuredOtaVersionUrl = OtaManifestDefaults.DEFAULT_OTA_VERSION_URL
 
     init {
         listeners.add(listener)
@@ -68,6 +69,9 @@ class MentraBluetoothSdk private constructor(
         private const val VIDEO_UPLOAD_STOP_TIMEOUT_MS = 10 * 60 * 1000L
         private const val STREAM_START_TIMEOUT_MS = 30_000L
         private const val STREAM_STOP_TIMEOUT_MS = 15_000L
+        private const val OTA_BES_VERSION_WAIT_MS = 5_000L
+        private const val OTA_MTK_VERSION_WAIT_MS = 2_000L
+        private const val OTA_VERSION_POLL_MS = 100L
         private const val DEFAULT_STREAM_KEEP_ALIVE_INTERVAL_SECONDS = 5
         private const val MAX_MISSED_STREAM_KEEP_ALIVE_ACKS = 3
 
@@ -470,15 +474,58 @@ class MentraBluetoothSdk private constructor(
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "voice_activity_detection_enabled", enabled)
     }
 
-    fun setButtonPhotoSettings(size: ButtonPhotoSize): SettingsAckEvent =
+    fun setButtonPhotoSettings(settings: ButtonPhotoSettings): SettingsAckEvent =
         performSettingsCommand(
             setting = "button_photo",
-            updateStore = { _ -> DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", size.value) },
-            send = { requestId -> deviceManager.sendButtonPhotoSettings(requestId, size.value) },
+            updateStore = { _ ->
+                if (settings.resetCaptureTuning) {
+                    // Clear all stored scan-tuning keys from phone cache
+                    listOf(
+                        "button_photo_mfnr",
+                        "button_photo_zsl",
+                        "button_photo_noise_reduction",
+                        "button_photo_edge_enhancement",
+                        "button_photo_isp_digital_gain",
+                        "button_photo_isp_analog_gain",
+                        "button_photo_ae_exposure_divisor",
+                        "button_photo_iso_cap",
+                        "button_photo_compress",
+                        "button_photo_sound",
+                    ).forEach { key ->
+                        DeviceStore.store.remove(ObservableStore.BLUETOOTH_CATEGORY, key)
+                    }
+                }
+                // Only update size if explicitly provided; omitted size = leave stored value unchanged
+                settings.size?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", it.value) }
+                settings.mfnr?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_mfnr", it) }
+                settings.zsl?.let { DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl", it) }
+                settings.noiseReduction?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_noise_reduction", it)
+                }
+                settings.edgeEnhancement?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_edge_enhancement", it)
+                }
+                settings.ispDigitalGain?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_isp_digital_gain", it)
+                }
+                settings.ispAnalogGain?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_isp_analog_gain", it)
+                }
+                settings.aeExposureDivisor?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_ae_exposure_divisor", it)
+                }
+                settings.isoCap?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_iso_cap", it)
+                }
+                settings.compress?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_compress", it)
+                }
+                settings.sound?.let {
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_sound", it)
+                }
+            },
+            send = { requestId -> deviceManager.sendButtonPhotoSettings(requestId, settings) },
         )
-
-    fun setButtonPhotoSettings(settings: ButtonPhotoSettings): SettingsAckEvent =
-        setButtonPhotoSettings(size = settings.size)
 
     fun setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int): SettingsAckEvent =
         performSettingsCommand(
@@ -677,19 +724,7 @@ class MentraBluetoothSdk private constructor(
         val pending = PendingResponse<PhotoResponseEvent>("photo request ${request.requestId}")
         pendingPhotoRequests[request.requestId] = pending
         try {
-            deviceManager.requestPhoto(
-                request.requestId,
-                request.appId,
-                request.size.value,
-                request.webhookUrl,
-                request.authToken,
-                request.compress.value,
-                request.flash,
-                request.save,
-                request.sound,
-                request.exposureTimeNs,
-                request.iso,
-            )
+            deviceManager.requestPhoto(request)
             return pending.await()
         } finally {
             pendingPhotoRequests.remove(request.requestId, pending)
@@ -871,8 +906,41 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
-    fun checkForOtaUpdate(): OtaQueryResult =
+    internal fun setOtaVersionUrl(otaVersionUrl: String) {
+        configuredOtaVersionUrl = OtaManifestChecker.normalizeHttpUrl(otaVersionUrl)
+    }
+
+    internal fun getOtaVersionUrl(): String = configuredOtaVersionUrl
+
+    /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
+    fun checkForOtaUpdate(): Boolean {
+        val status = getFreshGlassesStatus()
+        if (!status.connected) {
+            throw BluetoothException(
+                "glasses_not_connected",
+                "Cannot check OTA update because glasses are not connected.",
+            )
+        }
+        if (status.buildNumber.isBlank()) {
+            throw BluetoothException(
+                "missing_glasses_version",
+                "Cannot check OTA update because glasses build number is unavailable.",
+            )
+        }
+
+        val manifestUrl = resolveOtaVersionUrl(status)
+        val manifest = OtaManifestChecker.fetch(manifestUrl)
+        val otaStatus = waitForOtaManifestStatus(status, manifest)
+        return OtaManifestChecker.hasUpdate(
+            otaStatus.buildNumber,
+            otaStatus.mtkFirmwareVersion,
+            otaStatus.besFirmwareVersion,
+            manifest,
+        )
+    }
+
+    /** Ask connected Mentra Live glasses to report the current OTA install/session status. */
+    private fun queryOtaStatus(): OtaQueryResult =
         performOtaQuery("OTA status query") {
             deviceManager.sendOtaQueryStatus()
         }
@@ -904,7 +972,12 @@ class MentraBluetoothSdk private constructor(
     }
 
     /** Start the OTA flow after your app has presented the available update to the user. */
-    fun startOtaUpdate(otaVersionUrl: String? = null): OtaStartAckEvent {
+    fun startOtaUpdate(): OtaStartAckEvent {
+        val otaVersionUrl = resolveOtaVersionUrl(getFreshGlassesStatus())
+        return startOtaUpdate(otaVersionUrl)
+    }
+
+    private fun startOtaCommand(otaVersionUrl: String): OtaStartAckEvent {
         val pending = PendingResponse<OtaStartAckEvent>("OTA start command")
         synchronized(oneShotLock) {
             if (pendingOtaStart != null) {
@@ -927,16 +1000,96 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
-    fun retryOtaVersionCheck(): OtaQueryResult =
+    internal fun startOtaUpdate(otaVersionUrl: String): OtaStartAckEvent =
+        startOtaCommand(otaVersionUrl)
+
+    internal fun sendOtaQueryStatus(): OtaQueryResult = queryOtaStatus()
+
+    /** Re-run the glasses-side OTA version check after an internal clock-skew recovery. */
+    @JvmSynthetic
+    internal fun retryOtaVersionCheck(): OtaQueryResult =
         performOtaQuery("OTA version retry") {
             deviceManager.retryOtaVersionCheck()
         }
 
-    internal fun sendOtaStart(otaVersionUrl: String? = null): OtaStartAckEvent =
-        startOtaUpdate(otaVersionUrl)
+    private fun getFreshGlassesStatus(): GlassesStatus {
+        val status = getRawGlassesStatus()
+        if (!status.connected || status.buildNumber.isNotBlank()) {
+            return status
+        }
 
-    internal fun sendOtaQueryStatus(): OtaQueryResult = checkForOtaUpdate()
+        return try {
+            val versionInfo = requestVersionInfo()
+            status.copy(
+                androidVersion = versionInfo.androidVersion.ifBlank { status.androidVersion },
+                firmwareVersion = versionInfo.firmwareVersion.ifBlank { status.firmwareVersion },
+                besFirmwareVersion = versionInfo.besFirmwareVersion.ifBlank { status.besFirmwareVersion },
+                mtkFirmwareVersion = versionInfo.mtkFirmwareVersion.ifBlank { status.mtkFirmwareVersion },
+                buildNumber = versionInfo.buildNumber.ifBlank { status.buildNumber },
+                systemTimeMs = versionInfo.systemTimeMs ?: status.systemTimeMs,
+                otaVersionUrl = versionInfo.otaVersionUrl.ifBlank { status.otaVersionUrl },
+                appVersion = versionInfo.appVersion.ifBlank { status.appVersion },
+            )
+        } catch (_: Throwable) {
+            status
+        }
+    }
+
+    private fun waitForOtaManifestStatus(
+        initialStatus: GlassesStatus,
+        manifest: org.json.JSONObject,
+    ): GlassesStatus {
+        var status = initialStatus
+        if (OtaManifestChecker.hasBesFirmware(manifest) && status.besFirmwareVersion.isBlank()) {
+            status = waitForGlassesStatus(status, OTA_BES_VERSION_WAIT_MS) {
+                !it.connected || it.besFirmwareVersion.isNotBlank()
+            }
+        }
+
+        if (OtaManifestChecker.hasMtkPatches(manifest) && status.mtkFirmwareVersion.isBlank()) {
+            status = waitForGlassesStatus(status, OTA_MTK_VERSION_WAIT_MS) {
+                !it.connected || it.mtkFirmwareVersion.isNotBlank()
+            }
+        }
+
+        if (!status.connected) {
+            throw BluetoothException(
+                "glasses_not_connected",
+                "Cannot check OTA update because glasses disconnected.",
+            )
+        }
+        return status
+    }
+
+    private fun waitForGlassesStatus(
+        initialStatus: GlassesStatus,
+        timeoutMs: Long,
+        isReady: (GlassesStatus) -> Boolean,
+    ): GlassesStatus {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var status = initialStatus
+        while (System.currentTimeMillis() < deadline) {
+            status = getRawGlassesStatus()
+            if (isReady(status)) return status
+            val remainingMs = deadline - System.currentTimeMillis()
+            if (remainingMs <= 0L) break
+            Thread.sleep(minOf(OTA_VERSION_POLL_MS, remainingMs))
+        }
+        return getRawGlassesStatus()
+    }
+
+    private fun resolveOtaVersionUrl(status: GlassesStatus): String {
+        val deviceUrl = status.otaVersionUrl.trim()
+        if (isLegacyAsgOtaStartBuild(status.buildNumber)) {
+            return deviceUrl.ifBlank { OtaManifestDefaults.PROD_OTA_VERSION_URL }
+        }
+        return configuredOtaVersionUrl.ifBlank { deviceUrl.ifBlank { OtaManifestDefaults.PROD_OTA_VERSION_URL } }
+    }
+
+    private fun isLegacyAsgOtaStartBuild(buildNumber: String): Boolean {
+        val parsed = buildNumber.toIntOrNull()
+        return parsed != null && parsed < 100_000
+    }
 
     internal fun sendShutdown() {
         deviceManager.sendShutdown()

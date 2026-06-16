@@ -343,7 +343,7 @@ export default function OtaProgressScreen() {
       const glassesState = useGlassesStore.getState()
       const otaVersionUrl = getAsgOtaVersionUrl(glassesState.otaVersionUrl, glassesState.buildNumber)
       console.log(`[OTA_PROGRESS] sending ota_start with manifest URL: ${otaVersionUrl}`)
-      await BluetoothSdk.sendOtaStart(otaVersionUrl)
+      await BluetoothSdk.startOtaUpdate(otaVersionUrl)
     } catch (err) {
       console.warn("[OTA_PROGRESS] sendOtaStart threw", err)
       clearRetryTimeout()

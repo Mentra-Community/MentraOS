@@ -9,6 +9,9 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
+import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
+import com.mentra.asg_client.settings.AsgSettings;
+import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
 import com.mentra.asg_client.hardware.K900RgbLedController;
 import com.mentra.asg_client.io.file.core.FileManager;
@@ -160,14 +163,15 @@ public class MediaCaptureService {
         // BLE transfer is limited by BES2700 TX buffer (~88 packets before overflow)
         // With 221-byte pack size, max reliable transfer is ~19KB
         // Target file sizes accordingly with aggressive compression
-        switch (requestedSize) {
-            case "small":
+        String tier = PhotoSizeTier.normalize(requestedSize);
+        switch (tier) {
+            case "low":
                 // Target ~8KB: 400x400 @ quality 28
                 return new BleParams(400, 400, 28);
-            case "large":
+            case "high":
                 // Target ~25KB: 800x800 @ quality 32 (may hit BLE limit)
                 return new BleParams(800, 800, 32);
-            case "full":
+            case "max":
                 // Target ~35KB: 1024x1024 @ quality 35 (will likely hit BLE limit)
                 return new BleParams(1024, 1024, 35);
             case "medium":
@@ -1445,16 +1449,36 @@ public class MediaCaptureService {
         captureDirFile.mkdirs();
         String photoFilePath = new File(captureDirFile, "base.jpg").getAbsolutePath();
 
-        Log.d(
+        AsgSettings asgSettings = new AsgSettings(mContext);
+        PhotoCaptureSettings captureSettings =
+                PhotoCaptureSettings.mergeWithStoredDefaults(PhotoCaptureSettings.EMPTY, asgSettings);
+        Boolean storedSound = asgSettings.getButtonPhotoSound();
+        boolean effectiveSound = storedSound != null ? storedSound : enableSound;
+
+        String storedCompress = asgSettings.getButtonPhotoCompress();
+        String effectiveCompress = storedCompress != null ? storedCompress : "none";
+
+        Log.i(
                 TAG,
-                "Taking photo locally at: "
-                        + photoFilePath
-                        + " with size: "
+                "📸 take_photo (button/local) resolved params"
+                        + " requestId=local_"
+                        + timeStamp
+                        + " size="
                         + size
-                        + ", flash: "
+                        + " compress="
+                        + effectiveCompress
+                        + " flash="
                         + enableFlash
-                        + ", sound: "
-                        + enableSound);
+                        + " sound="
+                        + effectiveSound
+                        + " save=true"
+                        + " transferMethod=local"
+                        + " exposureTimeNs=null"
+                        + " iso=null"
+                        + " captureTuning={"
+                        + captureSettings.describeForLog()
+                        + "}");
+        Log.d(TAG, "Taking photo locally at: " + photoFilePath);
 
         // Log test configuration for debugging
         PhotoCaptureTestHooks.logTestConfig();
@@ -1480,7 +1504,7 @@ public class MediaCaptureService {
         if (!shouldSuppressPhotoFeedback()) {
             // RGB LED always flashes for photos (user visibility indicator)
             triggerPhotoFlashLed();
-            if (enableSound) {
+            if (effectiveSound) {
                 // Button photo: isFromSdk=false, auto exposure (null) — matches the
                 // enqueuePhotoRequest call below so the warm/cold prediction lines up.
                 playShutterSound(size, false, null);
@@ -1512,13 +1536,16 @@ public class MediaCaptureService {
                 enableFlash,
                 false, // isFromSdk - button photo, use high quality resolution
                 null, // exposureTimeNs — auto exposure for button photos
+                null,
+                captureSettings,
                 new CameraNeoService.PhotoCaptureCallback() {
                     @Override
                     public void onPhotoConfigured(JSONObject resolvedConfig) {
                         sendPhotoStatus(
                                 requestId,
                                 "configuring",
-                                addPhotoTransferDetails(resolvedConfig, true, "local", "none"),
+                                addPhotoTransferDetails(
+                                        resolvedConfig, true, "local", effectiveCompress),
                                 null,
                                 null);
                     }
@@ -1623,7 +1650,11 @@ public class MediaCaptureService {
             boolean enableSound,
             String compress,
             Long exposureTimeNs,
-            Integer iso) {
+            Integer iso,
+            PhotoCaptureSettings captureSettings) {
+        if (captureSettings == null) {
+            captureSettings = PhotoCaptureSettings.EMPTY;
+        }
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
         recordTiming(requestId, "request_start");
@@ -1758,6 +1789,7 @@ public class MediaCaptureService {
                     true, // isFromSdk - use optimized resolution for fast transfer
                     exposureTimeNs,
                     iso,
+                    captureSettings,
                     new CameraNeoService.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoConfigured(JSONObject resolvedConfig) {
@@ -2513,26 +2545,23 @@ public class MediaCaptureService {
                                 Log.d(TAG, "📊 Photo file size: " + photoFile.length() + " bytes");
                                 Log.d(TAG, "🌐 Sending photo request to: " + webhookUrl);
 
-                                // Create multipart form request with WiFi-appropriate timeouts:
-                                // - 5 seconds to connect (allows time for DNS+TCP+TLS over WiFi)
-                                // - 10 seconds to write the photo data
-                                // - 5 seconds to read the response
+                                // Large photos over phone-hotspot WiFi can take 15s+ for a 3MB
+                                // transfer. Mirror the video path: generous per-stall timeouts
+                                // plus an end-to-end callTimeout derived from file size.
+                                long minThroughputBytesPerSec = 64L * 1024L; // ~0.5 Mbps floor
+                                long callTimeoutSeconds =
+                                        30L + (photoFile.length() / minThroughputBytesPerSec);
                                 OkHttpClient client =
                                         new OkHttpClient.Builder()
                                                 .connectTimeout(
-                                                        5,
-                                                        java.util.concurrent.TimeUnit
-                                                                .SECONDS) // Allow time for
-                                                // DNS+TCP+TLS on WiFi
+                                                        15, java.util.concurrent.TimeUnit.SECONDS)
                                                 .writeTimeout(
-                                                        10,
-                                                        java.util.concurrent.TimeUnit
-                                                                .SECONDS) // Time to upload photo
-                                                // data
+                                                        60, java.util.concurrent.TimeUnit.SECONDS)
                                                 .readTimeout(
-                                                        5,
-                                                        java.util.concurrent.TimeUnit
-                                                                .SECONDS) // Time to get response
+                                                        30, java.util.concurrent.TimeUnit.SECONDS)
+                                                .callTimeout(
+                                                        callTimeoutSeconds,
+                                                        java.util.concurrent.TimeUnit.SECONDS)
                                                 .build();
 
                                 RequestBody fileBody =
@@ -3346,7 +3375,8 @@ public class MediaCaptureService {
             boolean enableSound,
             String compress,
             Long exposureTimeNs,
-            Integer iso) {
+            Integer iso,
+            PhotoCaptureSettings captureSettings) {
         // Check if camera HAL is restarting after FOV change
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
@@ -3393,7 +3423,8 @@ public class MediaCaptureService {
                     enableSound,
                     compress,
                     exposureTimeNs,
-                    iso);
+                    iso,
+                    captureSettings);
         } else {
             // No WiFi - skip webhook entirely, go straight to BLE (saves 2-5s timeout wait)
             tracePhotoWifiRoute(requestId, "ble", "wifi_unavailable", webhookUrl, null);
@@ -3407,7 +3438,8 @@ public class MediaCaptureService {
                     enableFlash,
                     enableSound,
                     exposureTimeNs,
-                    iso);
+                    iso,
+                    captureSettings);
         }
     }
 
@@ -3432,7 +3464,11 @@ public class MediaCaptureService {
             boolean enableFlash,
             boolean enableSound,
             Long exposureTimeNs,
-            Integer iso) {
+            Integer iso,
+            PhotoCaptureSettings captureSettings) {
+        if (captureSettings == null) {
+            captureSettings = PhotoCaptureSettings.EMPTY;
+        }
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
         recordTiming(requestId, "ble_request_start");
@@ -3551,6 +3587,7 @@ public class MediaCaptureService {
                     true, // isFromSdk — same sizing as webhook SDK path
                     exposureTimeNs,
                     iso,
+                    captureSettings,
                     new CameraNeoService.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoConfigured(JSONObject resolvedConfig) {

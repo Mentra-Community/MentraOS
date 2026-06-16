@@ -78,7 +78,7 @@ beforeEach(() => {
   useConnectionOverlayConfig.getState().clearConfig()
   mockReplace.mockClear()
   BluetoothSdk.sendOtaQueryStatus.mockClear()
-  BluetoothSdk.sendOtaStart.mockClear()
+  BluetoothSdk.startOtaUpdate.mockClear()
 })
 
 afterEach(() => {
@@ -350,10 +350,10 @@ describe("progress.tsx watchdog timers", () => {
     expect(getByText(OtaProgressMessages.stalledOrStuck)).toBeDefined()
   })
 
-  it("delays sendOtaStart after reconnect when multi-step APK completed", async () => {
+  it("delays startOtaUpdate after reconnect when multi-step APK completed", async () => {
     useGlassesStore.getState().setGlassesInfo(connectedGlassesInfo({buildNumber: sb(MINIMUM_OTA_STATUS_BUILD + 3)}))
     render(<OtaProgressScreen />)
-    BluetoothSdk.sendOtaStart.mockClear()
+    BluetoothSdk.startOtaUpdate.mockClear()
 
     act(() => {
       useGlassesStore.getState().setOtaStatus({
@@ -375,13 +375,13 @@ describe("progress.tsx watchdog timers", () => {
       setGlassesConnected()
     })
 
-    expect(BluetoothSdk.sendOtaStart).not.toHaveBeenCalled()
+    expect(BluetoothSdk.startOtaUpdate).not.toHaveBeenCalled()
 
     await act(async () => {
       await jest.advanceTimersByTimeAsync(6000)
     })
 
-    expect(BluetoothSdk.sendOtaStart).toHaveBeenCalled()
+    expect(BluetoothSdk.startOtaUpdate).toHaveBeenCalled()
   })
 
   it("pings periodically while updating", async () => {
@@ -453,13 +453,13 @@ describe("progress.tsx progress heartbeat", () => {
 })
 
 describe("progress.tsx reconnect", () => {
-  it("sends sendOtaStart on mount when connected (no session yet)", () => {
+  it("starts OTA on mount when connected (no session yet)", () => {
     setGlassesConnected()
     render(<OtaProgressScreen />)
-    expect(BluetoothSdk.sendOtaStart).toHaveBeenCalled()
+    expect(BluetoothSdk.startOtaUpdate).toHaveBeenCalled()
   })
 
-  it("retry button calls sendOtaStart", () => {
+  it("retry button starts OTA", () => {
     setGlassesConnected()
     const {getByTestId} = render(<OtaProgressScreen />)
 
@@ -478,7 +478,7 @@ describe("progress.tsx reconnect", () => {
     })
 
     fireEvent.press(getByTestId("button-Retry"))
-    expect(BluetoothSdk.sendOtaStart).toHaveBeenCalled()
+    expect(BluetoothSdk.startOtaUpdate).toHaveBeenCalled()
   })
 })
 

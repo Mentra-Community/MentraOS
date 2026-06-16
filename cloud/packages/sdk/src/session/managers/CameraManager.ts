@@ -24,7 +24,7 @@ import {
 } from "../../types";
 
 export interface PhotoOptions {
-  size?: "small" | "medium" | "large" | "full";
+  size?: "low" | "medium" | "high" | "max";
   compression?: "none" | "medium" | "heavy";
   saveToGallery?: boolean;
   sound?: boolean;
