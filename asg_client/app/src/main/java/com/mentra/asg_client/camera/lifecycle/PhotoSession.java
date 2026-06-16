@@ -357,7 +357,7 @@ public final class PhotoSession {
             if (size == null) {
                 return CameraConstants.SDK_JPEG_QUALITY_MEDIUM;
             }
-            if (currentCaptureSettings().usesScanExposure()) {
+            if (shouldUseScanExposure()) {
                 return CameraConstants.SDK_JPEG_QUALITY_MAX;
             }
             switch (size) {
