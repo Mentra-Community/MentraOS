@@ -4,7 +4,8 @@
   "private": true,
   "main": "expo-router/entry",
   "workspaces": [
-    "modules/*"
+    "modules/*",
+    "../cloud-v2/packages/*"
   ],
   "scripts": {
     "preinstall": "zx ./scripts/preinstall.mjs",
@@ -67,6 +68,7 @@
     "@livekit/react-native-expo-plugin": "^1.0.1",
     "@livekit/react-native-webrtc": "^137.0.2",
     "@mentra/bluetooth-sdk": "workspace:*",
+    "@mentra/cloud-client": "workspace:*",
     "@mentra/island": "workspace:*",
     "@mentra/jspolyfill": "workspace:*",
     "@mentra/miniapp": "workspace:*",
