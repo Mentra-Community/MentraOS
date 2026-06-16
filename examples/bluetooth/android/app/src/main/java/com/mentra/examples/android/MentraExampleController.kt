@@ -2894,14 +2894,14 @@ fun disconnectedGlassesStatus(status: GlassesRuntimeState?): GlassesRuntimeState
 fun photoSizeToSdk(size: String): PhotoSize = when (size) {
     "low" -> PhotoSize.SMALL
     "high" -> PhotoSize.LARGE
-    "max" -> PhotoSize.FULL
+    "max", "full" -> PhotoSize.FULL
     else -> PhotoSize.MEDIUM
 }
 
 fun buttonPhotoSizeToSdk(size: String): ButtonPhotoSize = when (size) {
     "low" -> ButtonPhotoSize.SMALL
     "high" -> ButtonPhotoSize.LARGE
-    "max" -> ButtonPhotoSize.MAX
+    "max", "full" -> ButtonPhotoSize.MAX
     else -> ButtonPhotoSize.MEDIUM
 }
 

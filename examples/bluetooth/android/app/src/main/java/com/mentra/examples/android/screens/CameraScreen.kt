@@ -328,10 +328,10 @@ fun CameraScreen(controller: MentraExampleController) {
                     onToggle = { videoDetailsExpanded = !videoDetailsExpanded },
                 )
             }
-            Spacer(Modifier.height(12.dp))
-            Box(Modifier.padding(horizontal = 6.dp)) {
-                ScanModeSettingsCard(controller)
-            }
+        }
+
+        Box(Modifier.padding(horizontal = 6.dp).padding(top = 8.dp)) {
+            ScanModeSettingsCard(controller)
         }
 
         // SDK card
