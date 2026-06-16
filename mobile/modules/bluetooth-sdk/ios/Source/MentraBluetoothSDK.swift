@@ -180,7 +180,7 @@ public final class MentraBluetoothSDK {
     private var pendingWifiStatus: PendingWifiStatusRequest?
     private var pendingHotspotStatus: PendingHotspotStatusRequest?
     private var pendingVersionInfo: PendingResponse<VersionInfoResult>?
-    private var configuredOtaVersionUrl = OtaManifestDefaults.defaultOtaVersionUrl
+    private var configuredOtaVersionUrl: String?
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
         self.configuration = configuration
@@ -974,8 +974,8 @@ public final class MentraBluetoothSDK {
         configuredOtaVersionUrl = try OtaManifestChecker.normalizeHttpUrl(otaVersionUrl)
     }
 
-    func getOtaVersionUrl() -> String {
-        configuredOtaVersionUrl
+    func getOtaVersionUrl() throws -> String {
+        try configuredOtaVersionUrl ?? OtaManifestDefaults.defaultOtaVersionUrl()
     }
 
     /// Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available.
@@ -994,7 +994,7 @@ public final class MentraBluetoothSDK {
             )
         }
 
-        let manifestUrl = resolveOtaVersionUrl(status: status)
+        let manifestUrl = try resolveOtaVersionUrl(status: status)
         let manifest = try await OtaManifestChecker.fetch(manifestUrl)
         let otaStatus = try await waitForOtaManifestStatus(status, manifest: manifest)
         return try OtaManifestChecker.hasUpdate(
@@ -1042,7 +1042,7 @@ public final class MentraBluetoothSDK {
     /// Start the OTA flow after your app has presented the available update to the user.
     public func startOtaUpdate() async throws -> OtaStartAckEvent {
         let status = await getFreshGlassesStatus()
-        let otaVersionUrl = resolveOtaVersionUrl(status: status)
+        let otaVersionUrl = try resolveOtaVersionUrl(status: status)
         return try await startOtaUpdate(otaVersionUrl: otaVersionUrl)
     }
 
@@ -1149,15 +1149,17 @@ public final class MentraBluetoothSDK {
         return glassesStatus
     }
 
-    private func resolveOtaVersionUrl(status: GlassesStatus) -> String {
+    private func resolveOtaVersionUrl(status: GlassesStatus) throws -> String {
         let deviceUrl = status.otaVersionUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         if isLegacyAsgOtaStartBuild(status.buildNumber) {
             return deviceUrl.isEmpty ? OtaManifestDefaults.prodOtaVersionUrl : deviceUrl
         }
-        if !configuredOtaVersionUrl.isEmpty {
+        // SDK consumers are pinned to the manifest built for their SDK version.
+        // A future glasses-advertised URL should not silently change that pairing.
+        if let configuredOtaVersionUrl {
             return configuredOtaVersionUrl
         }
-        return deviceUrl.isEmpty ? OtaManifestDefaults.prodOtaVersionUrl : deviceUrl
+        return try OtaManifestDefaults.defaultOtaVersionUrl()
     }
 
     private func isLegacyAsgOtaStartBuild(_ buildNumber: String) -> Bool {

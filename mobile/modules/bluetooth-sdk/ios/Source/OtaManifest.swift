@@ -1,10 +1,22 @@
 import Foundation
 
 enum OtaManifestDefaults {
-    static let defaultOtaVersionUrl = "https://staging.ota.mentraglass.com/staging_live_version.json"
+    private static let sdkOtaReleaseBaseUrl = "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota"
     // Keep prod as the legacy-device fallback: pre-override ASG builds ignore
     // ota_start.ota_version_url and use their compiled MentraOS default.
     static let prodOtaVersionUrl = "https://ota.mentraglass.com/prod_live_version.json"
+
+    static func defaultOtaVersionUrl() throws -> String {
+        guard let sdkVersion = BluetoothSdkDefaults.sdkVersion,
+              !sdkVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            throw BluetoothError(
+                code: "missing_sdk_version",
+                message: "Cannot determine Bluetooth SDK version for the default OTA manifest URL."
+            )
+        }
+        return "\(sdkOtaReleaseBaseUrl)/bluetooth-sdk-\(sdkVersion)-version.json"
+    }
 }
 
 struct OtaManifestApp: Decodable {

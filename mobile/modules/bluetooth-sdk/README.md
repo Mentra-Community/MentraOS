@@ -338,7 +338,13 @@ Mentra Live firmware owns the OTA flow. The SDK mirrors the MentraOS app command
 - `checkForOtaUpdate()` fetches the configured manifest and resolves with `true` when an ASG APK, MTK, or BES update is available.
 - `startOtaUpdate()` sends `ota_start` with the same configured manifest URL and resolves with the ASG start ack after your app presents the update and the user accepts it.
 
-The default manifest is `https://staging.ota.mentraglass.com/staging_live_version.json` for SDK apps. Pre-wall-clock ASG builds that ignore `ota_start.ota_version_url` are checked against the URL they advertise, or the production default if they do not advertise one, so the app does not prompt for an update the glasses cannot install.
+The default manifest is derived from the SDK version:
+`https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota/bluetooth-sdk-<sdkVersion>-version.json`.
+Each published SDK version points at a durable ASG client APK and firmware
+manifest that were built for that SDK release. Pre-wall-clock ASG builds that
+ignore `ota_start.ota_version_url` are checked against the URL they advertise,
+or the production default if they do not advertise one, so the app does not
+prompt for an update the glasses cannot install.
 
 ```ts
 import BluetoothSdk from '@mentra/bluetooth-sdk'
