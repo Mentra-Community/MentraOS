@@ -83,6 +83,14 @@ export {
 // facade at a time alongside the flat exports below. See ./island.
 export {island} from "./island"
 export type {WifiSearchResult} from "./facades/glassesWifi"
+export type {DisplayMirrorEvent} from "./facades/displayMirror"
+export type {
+  IslandConfigureOptions,
+  IslandAuth,
+  IslandConfigValues,
+  IslandAnalytics,
+  SubjectTokenType,
+} from "./runtime/bootstrap"
 
 // Bluetooth SDK internal compatibility passthrough. The island package uses the
 // declared @mentra/bluetooth-sdk/internal subpath so it does not reach into SDK

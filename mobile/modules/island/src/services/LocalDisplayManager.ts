@@ -28,6 +28,7 @@
  */
 
 import displayProcessor from "./DisplayProcessor"
+import {displayMirror} from "../facades/displayMirror"
 import {getRuntimeHooks} from "../runtime/config"
 import {BgTimer} from "../utils/timers"
 
@@ -332,6 +333,8 @@ class LocalDisplayManager {
         })
       }
       getRuntimeHooks().setDisplayEvent?.(JSON.stringify(processedEvent))
+      // Feed island's own mirror read-model in parallel with the legacy host store.
+      displayMirror.ingest(processedEvent)
     } catch (err) {
       console.error(`${LOG_TAG}: native display failed:`, err)
     }
