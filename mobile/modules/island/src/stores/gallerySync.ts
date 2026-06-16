@@ -79,7 +79,7 @@ export interface GallerySyncInfo {
   lastError: string | null
 }
 
-interface GallerySyncState extends GallerySyncInfo {
+export interface GallerySyncState extends GallerySyncInfo {
   // State transitions
   setSyncState: (state: SyncState) => void
   setRequestingHotspot: () => void
