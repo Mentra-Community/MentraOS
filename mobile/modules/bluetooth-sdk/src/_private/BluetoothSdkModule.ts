@@ -5,7 +5,6 @@ import {
   BluetoothSdkPublicModule,
   BluetoothSdkModuleEvents,
   BluetoothStatus,
-  ButtonPhotoSize,
   ButtonPhotoSettings,
   CalendarEvent,
   CAMERA_FOV_DEFAULT,
@@ -123,6 +122,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   // Gallery Commands
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
+  setButtonPhotoSettings(settings: ButtonPhotoSettings): Promise<SettingsAckSuccessEvent>
   setButtonPhotoCaptureSettings(settings: ButtonPhotoSettings): Promise<SettingsAckSuccessEvent>
   setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<SettingsAckSuccessEvent>
   setButtonCameraLed(enabled: boolean): Promise<SettingsAckSuccessEvent>

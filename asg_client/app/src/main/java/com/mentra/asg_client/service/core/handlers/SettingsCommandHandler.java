@@ -277,12 +277,13 @@ public class SettingsCommandHandler implements ICommandHandler {
                     asgSettings.setButtonPhotoSize(size);
                 }
                 if (mfnr != null) {
+                    // Store as button-photo scan preset only; do NOT write to the global
+                    // mfnr_enabled device pref so unrelated SDK take_photo requests keep
+                    // their own MFNR default (mergeForSdkRequest falls back to that global).
                     asgSettings.setButtonPhotoMfnr(mfnr);
-                    asgSettings.setMfnrEnabled(mfnr);
                 }
                 if (zsl != null) {
                     asgSettings.setButtonPhotoZsl(zsl);
-                    asgSettings.setZslEnabled(zsl);
                 }
                 if (hasNoiseReduction) {
                     asgSettings.setButtonPhotoNoiseReduction(noiseReduction);
@@ -308,9 +309,13 @@ public class SettingsCommandHandler implements ICommandHandler {
                 if (hasSound) {
                     asgSettings.setButtonPhotoSound(sound);
                 }
-                Log.d(TAG, "✅ Button photo settings saved: size=" + size);
+                // For the ack, echo the persisted (effective) size rather than the wire value so
+                // clients that omit size receive the actual stored tier (e.g. max) in the response.
+                String ackedSize = asgSettings.getButtonPhotoSize();
+                if (ackedSize == null || ackedSize.isEmpty()) ackedSize = "medium";
+                Log.d(TAG, "✅ Button photo settings saved: size=" + ackedSize);
                 JSONObject values = new JSONObject();
-                values.put("size", size);
+                values.put("size", ackedSize);
                 if (mfnr != null) {
                     values.put("mfnr", mfnr);
                 }

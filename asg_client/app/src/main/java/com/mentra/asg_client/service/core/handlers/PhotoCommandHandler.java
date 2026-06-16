@@ -135,8 +135,12 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 return false;
             }
 
-            // Always use the permanent gallery path so photos are retained after upload.
-            String photoFilePath = generateCaptureFilePath(packageName, "IMG_", ".jpg");
+            // Use the permanent gallery path only when the caller wants to save; otherwise use
+            // the transient _sdk_pending tree so in-flight SDK photos are invisible to gallery
+            // sync and are cleaned up automatically after upload.
+            String photoFilePath = save
+                    ? generateCaptureFilePath(packageName, "IMG_", ".jpg")
+                    : generateTransientCaptureFilePath(packageName, "IMG_", ".jpg");
             if (photoFilePath == null) {
                 logCommandResult("take_photo", false, "Failed to generate file path");
                 captureService.sendPhotoErrorResponse(
@@ -383,9 +387,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
         if (data != null && data.has("compress") && !data.isNull("compress")) {
             return data.optString("compress", "none");
         }
-        if (stored != null && stored.getButtonPhotoCompress() != null) {
-            return stored.getButtonPhotoCompress();
-        }
+        // SDK take_photo requests that omit compress should use the SDK default (none), not
+        // a stored button scan preset — button presets are for hardware-button captures only.
         return "none";
     }
 
@@ -393,9 +396,8 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
         if (data != null && data.has("sound") && !data.isNull("sound")) {
             return data.optBoolean("sound", true);
         }
-        if (stored != null && stored.getButtonPhotoSound() != null) {
-            return stored.getButtonPhotoSound();
-        }
+        // Same as compress: SDK requests use the SDK default (sound on) regardless of
+        // any stored button_photo_setting scan preset.
         return true;
     }
 }

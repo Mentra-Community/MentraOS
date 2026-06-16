@@ -4,7 +4,6 @@ import type {
   BluetoothSdkEventName,
   BluetoothSdkPublicModule,
   ButtonPhotoSettings,
-  ButtonPhotoSize,
 } from "./BluetoothSdk.types"
 
 const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([

@@ -8124,10 +8124,23 @@ class MentraLive : SGCManager() {
         }
     }
 
-    /** Send button photo settings to glasses */
+    /** Send button photo settings to glasses, replaying all stored scan-tuning fields. */
     override fun sendButtonPhotoSettings() {
-        val size = DeviceStore.get("bluetooth", "button_photo_size") as String?
-        sendButtonPhotoSettings(null, size)
+        val size = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size") as String?
+        val mfnr = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_mfnr") as Boolean?
+        val zsl = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_zsl") as Boolean?
+        val noiseReduction = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_noise_reduction") as Boolean?
+        val edgeEnhancement = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_edge_enhancement") as Boolean?
+        val ispDigitalGain = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_isp_digital_gain") as Int?
+        val ispAnalogGain = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_isp_analog_gain") as String?
+        val aeExposureDivisor = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_ae_exposure_divisor") as Int?
+        val isoCap = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_iso_cap") as Int?
+        val compress = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_compress") as String?
+        val sound = DeviceStore.get(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_sound") as Boolean?
+        sendButtonPhotoSettings(
+            null, size, mfnr, zsl, noiseReduction, edgeEnhancement,
+            ispDigitalGain, ispAnalogGain, aeExposureDivisor, isoCap, compress, sound, false,
+        )
     }
 
     /** Send button camera LED setting to glasses */
