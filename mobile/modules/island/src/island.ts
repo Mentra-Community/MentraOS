@@ -15,6 +15,7 @@ import {speech} from "./facades/speech"
 import {session} from "./facades/session"
 import {settings} from "./facades/settings"
 import {dev} from "./facades/dev"
+import {incidents} from "./facades/incidents"
 import {useGlassesStore} from "./stores/glasses"
 import {useDisplayStore} from "./stores/display"
 import {useCoreStore} from "./stores/core"
@@ -36,6 +37,8 @@ export const toolkit = {
   settings,
   /** Developer/debug surface (backend+cloud URL overrides, reconnect, min version). */
   dev,
+  /** Bug-report / feedback submission (island-owned RestComms). */
+  incidents,
   display: {
     mirror: displayMirror,
   },
