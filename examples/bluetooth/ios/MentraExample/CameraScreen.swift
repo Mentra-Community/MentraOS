@@ -561,6 +561,7 @@ struct CameraScreen: View {
                             .onTapGesture {
                                 guard !model.scanMode else { return }
                                 model.setPhotoSize(size)
+                            }
                         }
                     }
 

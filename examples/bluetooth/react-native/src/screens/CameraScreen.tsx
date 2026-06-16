@@ -145,7 +145,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
       : sdk.videoPreviewDetails?.state ?? 'ready';
   const sdkCall = captureMode === 'video'
     ? videoSdkCall(sdk.cameraFov, sdk.cameraRoiPosition)
-    : cameraSdkCall(
+    : photoSdkCall(
         sdk.photoSize,
         sdk.photoCompression,
         sdk.photoCloudServerEnabled,
