@@ -116,6 +116,10 @@ class DeviceStore {
         store.set(category, key, value)
     }
 
+    func remove(_ category: String, _ key: String) {
+        store.remove(category, key)
+    }
+
     private func scheduleDashboardHeightToGlasses() {
         dashboardHeightDebounceTask?.cancel()
         dashboardHeightDebounceTask = Task { @MainActor in

@@ -88,8 +88,8 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
     if (typeof PrivateBluetoothSdkModule.setButtonPhotoCaptureSettings === "function") {
       return PrivateBluetoothSdkModule.setButtonPhotoCaptureSettings(settings)
     }
-    // Legacy fallback: forward size to old native method
-    return PrivateBluetoothSdkModule.setButtonPhotoSettings(settings)
+    // Legacy fallback: old native bridge only accepts a size string
+    return PrivateBluetoothSdkModule.setButtonPhotoSettings({size: settings.size ?? "max"} as any)
   },
   setButtonVideoRecordingSettings:
     PrivateBluetoothSdkModule.setButtonVideoRecordingSettings.bind(PrivateBluetoothSdkModule),
