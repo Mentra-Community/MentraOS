@@ -49,6 +49,10 @@ const addListener: BluetoothSdkPublicModule["addListener"] = (eventName, listene
   return PrivateBluetoothSdkModule.addListener(eventName, listener as BluetoothSdkEventListener<BluetoothSdkEventName>)
 }
 
+const startOtaUpdate: BluetoothSdkPublicModule["startOtaUpdate"] = () => {
+  return PrivateBluetoothSdkModule.startOtaUpdate(PrivateBluetoothSdkModule.getOtaVersionUrl())
+}
+
 export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   addListener,
   getDefaultDevice: PrivateBluetoothSdkModule.getDefaultDevice.bind(PrivateBluetoothSdkModule),
@@ -96,7 +100,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   rgbLedControl: PrivateBluetoothSdkModule.rgbLedControl.bind(PrivateBluetoothSdkModule),
   requestVersionInfo: PrivateBluetoothSdkModule.requestVersionInfo.bind(PrivateBluetoothSdkModule),
   checkForOtaUpdate: PrivateBluetoothSdkModule.checkForOtaUpdate.bind(PrivateBluetoothSdkModule),
-  startOtaUpdate: PrivateBluetoothSdkModule.startOtaUpdate.bind(PrivateBluetoothSdkModule),
+  startOtaUpdate,
   setSttModelDetails: PrivateBluetoothSdkModule.setSttModelDetails.bind(PrivateBluetoothSdkModule),
   getSttModelPath: PrivateBluetoothSdkModule.getSttModelPath.bind(PrivateBluetoothSdkModule),
   checkSttModelAvailable: PrivateBluetoothSdkModule.checkSttModelAvailable.bind(PrivateBluetoothSdkModule),

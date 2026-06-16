@@ -491,10 +491,8 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("checkForOtaUpdate") { requireSdk().checkForOtaUpdate() }
 
-        AsyncFunction("startOtaUpdate") { requireSdk().startOtaUpdate().values }
-
-        AsyncFunction("sendOtaStart") { otaVersionUrl: String? ->
-            requireSdk().sendOtaStart(otaVersionUrl).values
+        AsyncFunction("startOtaUpdate") { otaVersionUrl: String? ->
+            requireSdk().startOtaUpdate(otaVersionUrl).values
         }
 
         AsyncFunction("sendOtaQueryStatus") { requireSdk().sendOtaQueryStatus().values }

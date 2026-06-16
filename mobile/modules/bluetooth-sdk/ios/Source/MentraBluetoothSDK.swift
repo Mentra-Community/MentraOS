@@ -999,7 +999,7 @@ public final class MentraBluetoothSDK {
     public func startOtaUpdate() async throws -> OtaStartAckEvent {
         let status = await getFreshGlassesStatus()
         let otaVersionUrl = resolveOtaVersionUrl(status: status)
-        return try await sendOtaStart(otaVersionUrl: otaVersionUrl)
+        return try await startOtaUpdate(otaVersionUrl: otaVersionUrl)
     }
 
     private func startOtaCommand(otaVersionUrl: String? = nil) async throws -> OtaStartAckEvent {
@@ -1026,7 +1026,7 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    func sendOtaStart(otaVersionUrl: String? = nil) async throws -> OtaStartAckEvent {
+    func startOtaUpdate(otaVersionUrl: String?) async throws -> OtaStartAckEvent {
         try await startOtaCommand(otaVersionUrl: otaVersionUrl)
     }
 

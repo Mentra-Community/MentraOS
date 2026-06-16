@@ -939,7 +939,7 @@ class MentraBluetoothSdk private constructor(
     /** Start the OTA flow after your app has presented the available update to the user. */
     fun startOtaUpdate(): OtaStartAckEvent {
         val otaVersionUrl = resolveOtaVersionUrl(getFreshGlassesStatus())
-        return sendOtaStart(otaVersionUrl)
+        return startOtaUpdate(otaVersionUrl)
     }
 
     private fun startOtaCommand(otaVersionUrl: String? = null): OtaStartAckEvent {
@@ -965,7 +965,7 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    internal fun sendOtaStart(otaVersionUrl: String? = null): OtaStartAckEvent =
+    internal fun startOtaUpdate(otaVersionUrl: String?): OtaStartAckEvent =
         startOtaCommand(otaVersionUrl)
 
     internal fun sendOtaQueryStatus(): OtaQueryResult = queryOtaStatus()
