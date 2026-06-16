@@ -353,7 +353,8 @@ public final class PhotoSession {
 
     private int getJpegQualityForSize() {
         if (currentIsFromSdk()) {
-            String size = currentSize();
+            // Normalize so legacy tiers (small→low, large→high, full→max) map correctly.
+            String size = PhotoSizeTier.normalize(currentSize());
             if (size == null) {
                 return CameraConstants.SDK_JPEG_QUALITY_MEDIUM;
             }
