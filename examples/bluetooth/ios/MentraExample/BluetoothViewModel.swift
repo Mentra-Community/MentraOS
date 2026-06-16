@@ -282,7 +282,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var videoPreviewUrl: URL?
     @Published private(set) var videoRecording = false
     @Published private(set) var photoDestination: PhotoDestination = .thisPhone
-    @Published private(set) var photoSize: PhotoSize = .max
+    @Published private(set) var photoSize: PhotoSize = .full
     @Published private(set) var scanMode = false
     @Published private(set) var scanAeDivisor = 3
     @Published private(set) var scanIsoCap = 800
@@ -616,30 +616,16 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         Task {
             do {
                 if enabled {
+                    // SDK 0.1.12 `ButtonPhotoSettings` only carries `size`. The granular scan
+                    // tuning (mfnr/zsl/aeExposureDivisor/isoCap/edge/NR/ISP gains) ships in
+                    // 0.1.13; bump the SwiftPM pin and restore the full preset once published.
                     _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
-                        ButtonPhotoSettings(
-                            size: .max,
-                            mfnr: false,
-                            zsl: false,
-                            noiseReduction: false,
-                            edgeEnhancement: false,
-                            ispDigitalGain: 0,
-                            ispAnalogGain: "low",
-                            aeExposureDivisor: scanAeDivisor,
-                            isoCap: scanIsoCap,
-                            compress: "none",
-                            sound: false
-                        )
+                        ButtonPhotoSettings(size: .max)
                     )
                 } else {
                     let size = ButtonPhotoSize(rawValue: photoSize.rawValue) ?? .max
                     _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
-                        ButtonPhotoSettings(
-                            size: size,
-                            mfnr: true,
-                            zsl: true,
-                            resetCaptureTuning: true
-                        )
+                        ButtonPhotoSettings(size: size)
                     )
                 }
             } catch {
@@ -666,22 +652,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func pushScanButtonPreset(aeDivisor: Int, isoCap: Int) {
         guard glassesConnected else { return }
+        // SDK 0.1.12 `ButtonPhotoSettings` cannot carry aeExposureDivisor/isoCap; the divisor
+        // and ISO-cap chips only affect on-device UI state until the 0.1.13 preset ships. We
+        // still re-assert the max-size scan button preset so the hardware button stays in sync.
         Task {
             do {
                 _ = try await mentraBluetoothSdk.setButtonPhotoSettings(
-                    ButtonPhotoSettings(
-                        size: .max,
-                        mfnr: false,
-                        zsl: false,
-                        noiseReduction: false,
-                        edgeEnhancement: false,
-                        ispDigitalGain: 0,
-                        ispAnalogGain: "low",
-                        aeExposureDivisor: aeDivisor,
-                        isoCap: isoCap,
-                        compress: "none",
-                        sound: false
-                    )
+                    ButtonPhotoSettings(size: .max)
                 )
             } catch {
                 cameraStatus = "Camera: failed to sync scan preset - \(error.localizedDescription)"
@@ -817,20 +794,16 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func buildPhotoRequest(requestId: String, appId: String, webhookUrl: String) -> PhotoRequest {
         if scanMode {
+            // SDK 0.1.12 `PhotoRequest` cannot carry per-capture scan fields (aeExposureDivisor/
+            // isoCap/mfnr/...); those arrive in 0.1.13. Capture at max resolution with no
+            // compression so the scan still favors detail; the rest applies once the pin is bumped.
             return PhotoRequest(
                 requestId: requestId,
                 appId: appId,
-                size: .max,
+                size: .full,
                 webhookUrl: webhookUrl,
                 compress: .none,
-                sound: false,
-                aeExposureDivisor: scanAeDivisor,
-                isoCap: scanIsoCap,
-                noiseReduction: false,
-                edgeEnhancement: false,
-                mfnr: false,
-                ispDigitalGain: 0,
-                ispAnalogGain: "low"
+                sound: false
             )
         }
         return PhotoRequest(

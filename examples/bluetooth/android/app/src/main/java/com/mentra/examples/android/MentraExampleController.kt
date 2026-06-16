@@ -524,28 +524,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
         runAction(if (enabled) "Apply scan preset on glasses" else "Restore photo preset on glasses") {
             requireConnected("sync photo capture settings")
+            // SDK 0.1.12 `ButtonPhotoSettings` only carries `size`. The granular scan tuning
+            // (mfnr/zsl/aeExposureDivisor/isoCap/edge/NR/ISP gains/resetCaptureTuning) ships in
+            // 0.1.13; bump the Maven pin and restore the full preset once published.
             val settings =
                 if (enabled) {
-                    ButtonPhotoSettings(
-                        size = ButtonPhotoSize.MAX,
-                        mfnr = false,
-                        zsl = false,
-                        noiseReduction = false,
-                        edgeEnhancement = false,
-                        ispDigitalGain = 0,
-                        ispAnalogGain = "low",
-                        aeExposureDivisor = state.scanAeDivisor,
-                        isoCap = state.scanIsoCap,
-                        compress = "none",
-                        sound = false,
-                    )
+                    ButtonPhotoSettings(size = ButtonPhotoSize.MAX)
                 } else {
-                    ButtonPhotoSettings(
-                        size = ButtonPhotoSize.fromValue(state.photoSize),
-                        mfnr = true,
-                        zsl = true,
-                        resetCaptureTuning = true,
-                    )
+                    ButtonPhotoSettings(size = ButtonPhotoSize.fromValue(state.photoSize))
                 }
             withContext(Dispatchers.IO) { mentraBluetoothSdk.setButtonPhotoSettings(settings) }
         }
@@ -571,23 +557,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (!isGlassesConnected()) {
             return
         }
+        // SDK 0.1.12 `ButtonPhotoSettings` cannot carry aeExposureDivisor/isoCap; the divisor and
+        // ISO-cap chips only drive on-device UI state until the 0.1.13 preset ships. Re-assert the
+        // max-size scan button preset so the hardware button stays in sync.
         runAction("Apply scan preset on glasses") {
             requireConnected("sync photo capture settings")
             withContext(Dispatchers.IO) {
                 mentraBluetoothSdk.setButtonPhotoSettings(
-                    ButtonPhotoSettings(
-                        size = ButtonPhotoSize.MAX,
-                        mfnr = false,
-                        zsl = false,
-                        noiseReduction = false,
-                        edgeEnhancement = false,
-                        ispDigitalGain = 0,
-                        ispAnalogGain = "low",
-                        aeExposureDivisor = aeDivisor,
-                        isoCap = isoCap,
-                        compress = "none",
-                        sound = false,
-                    ),
+                    ButtonPhotoSettings(size = ButtonPhotoSize.MAX),
                 )
             }
         }
@@ -737,20 +714,16 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     private fun buildPhotoRequest(requestId: String, appId: String, webhookUrl: String): PhotoRequest {
         if (state.scanMode) {
+            // SDK 0.1.12 `PhotoRequest` cannot carry per-capture scan fields (aeExposureDivisor/
+            // isoCap/mfnr/...); those ship in 0.1.13. The scan preset still reaches the glasses via
+            // the `ButtonPhotoSettings` sync above (Maven 0.1.12 supports it). Capture at max detail.
             return PhotoRequest(
                 requestId = requestId,
                 appId = appId,
-                size = PhotoSize.MAX,
+                size = PhotoSize.FULL,
                 webhookUrl = webhookUrl,
                 compress = PhotoCompression.NONE,
                 sound = false,
-                aeExposureDivisor = state.scanAeDivisor,
-                isoCap = state.scanIsoCap,
-                noiseReduction = false,
-                edgeEnhancement = false,
-                mfnr = false,
-                ispDigitalGain = 0,
-                ispAnalogGain = "low",
             )
         }
         return PhotoRequest(

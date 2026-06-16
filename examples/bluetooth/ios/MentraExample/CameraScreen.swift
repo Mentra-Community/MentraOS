@@ -4,7 +4,9 @@ import MentraBluetoothSDK
 import SwiftUI
 import UIKit
 
-private let photoSizeOptions: [PhotoSize] = [.low, .medium, .high, .max]
+// SDK 0.1.12 `PhotoSize` ships the small/medium/large/full tiers. The low|medium|high|max
+// rename lands in 0.1.13; until the SwiftPM pin is bumped, use the published cases here.
+private let photoSizeOptions: [PhotoSize] = [.small, .medium, .large, .full]
 private let photoCompressionOptions: [PhotoCompression] = [.none, .medium, .heavy]
 
 private enum CameraCaptureMode {
@@ -27,21 +29,16 @@ private func cameraSdkCall(
 ) -> String {
     if scanMode {
         return """
+    // Scan tuning (aeExposureDivisor \(scanAeDivisor), isoCap \(scanIsoCap), mfnr/edge off)
+    // ships in SDK 0.1.13's PhotoRequest. On 0.1.12 we capture at max detail:
     let photo = try await mentraBluetoothSdk.requestPhoto(
         PhotoRequest(
           requestId: requestId,
           appId: "com.mentra.bluetoothsdk.example.ios",
-          size: .max,
+          size: .full,
           webhookUrl: uploadUrl,
           compress: .none,
-          sound: false,
-          aeExposureDivisor: \(scanAeDivisor),
-          isoCap: \(scanIsoCap),
-          noiseReduction: false,
-          edgeEnhancement: false,
-          mfnr: false,
-          ispDigitalGain: 0,
-          ispAnalogGain: "low"
+          sound: false
         )
     )
     print("Scan photo delivered: \\(photo.requestId)")
