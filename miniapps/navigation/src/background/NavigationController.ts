@@ -27,10 +27,9 @@ import {NavigationManager} from "./managers/NavigationManager"
 import {PlacesManager} from "./managers/PlacesManager"
 import {SimpleStorageManager} from "./managers/SimpleStorageManager"
 import {formatDistance} from "./lib/formatDistance"
-import {distanceToPolylineMeters, haversineMeters, remainingRouteMeters, sideOfFinalSegment} from "./lib/geometry"
-import {renderMinimap} from "./lib/MinimapRenderer"
+import {distanceToPolylineMeters, haversineMeters, remainingRouteMeters, sideOfFinalSegment, type LatLng} from "./lib/geometry"
 import {TEST_BITMAP_288_B64} from "./lib/testBitmap"
-import {buildOsmLineMap} from "./lib/OsmLineMapRenderer"
+import {buildOsmLineMap, fetchOsmRoads, renderOsmLineMap} from "./lib/OsmLineMapRenderer"
 
 export class NavigationController {
   private readonly ui: UIModule<Channels>
@@ -41,12 +40,23 @@ export class NavigationController {
   private readonly storage: SimpleStorageManager
   private readonly places: PlacesManager
 
+  // PoC OSM map: current view center, mutated by the pan buttons. Starts at
+  // Hayes Valley, SF.
+  private osmMapCenter = {lat: 37.7766853, lng: -122.4229361}
+  private readonly OSM_MAP_SIZE = 88
+  private readonly OSM_MAP_RADIUS_M = 133
+
   private unsubs: Array<() => void> = []
   private started = false
   private logSeq = 0
   private lastHudKey = ""
   private lastMinimapPng: string | null = null
   private showMinimap = false
+  // OSM-roads minimap cache: roads fetched around a center, reused while the
+  // user stays near it (re-fetch only when they move past a threshold).
+  private osmRoadsCache: LatLng[][] | null = null
+  private osmRoadsCenter: LatLng | null = null
+  private osmFetchInFlight = false
   private lastCoordsAt = 0
   private gettingFix = false
   // Tracks whether a trip has completed (arrived or stopped) in this
@@ -623,29 +633,24 @@ export class NavigationController {
 
     this.unsubs.push(
       this.ui.handle("test:show-osm-map", async () => {
-        // PoC: bare OSM road network around the Hayes Valley, SF test center.
-        const SIZE = 88
-        const center = {lat: 37.7766853, lng: -122.4229361}
-        console.log(`[OSM-MAP] 🗺️  button pressed — fetching roads around ${center.lat},${center.lng} (${SIZE}×${SIZE})`)
-        const t0 = Date.now()
-        try {
-          const base64 = await buildOsmLineMap({
-            center,
-            width: SIZE,
-            height: SIZE,
-            // Zoomed in 3× vs the original 400m: ~133m half-extent → more detail,
-            // same 88×88 output.
-            viewRadiusMeters: 133,
-            lineWidthPx: 2,
-          })
-          console.log(`[OSM-MAP] ✅ rendered ${SIZE}×${SIZE} BMP (${(base64.length / 1024).toFixed(1)} KB) in ${Date.now() - t0}ms — sending to glasses`)
-          this.display.showRawBitmap(base64, SIZE, SIZE)
-          return {ok: true}
-        } catch (err) {
-          const error = err instanceof Error ? err.message : String(err)
-          console.log(`[OSM-MAP] ❌ failed after ${Date.now() - t0}ms:`, error)
-          return {ok: false, error}
-        }
+        return this.renderOsmMap("draw")
+      }),
+    )
+
+    this.unsubs.push(
+      this.ui.handle("test:pan-osm-map", async ({dir}) => {
+        // Small nudge: shift the center by ~1/4 of the visible span. The visible
+        // span is 2×radius meters, so a quarter is radius/2 meters.
+        const stepM = this.OSM_MAP_RADIUS_M / 2
+        const mPerDegLat = 111_320
+        const mPerDegLng = 111_320 * Math.cos((this.osmMapCenter.lat * Math.PI) / 180)
+        const dLat = stepM / mPerDegLat
+        const dLng = stepM / mPerDegLng
+        if (dir === "up") this.osmMapCenter.lat += dLat
+        else if (dir === "down") this.osmMapCenter.lat -= dLat
+        else if (dir === "left") this.osmMapCenter.lng -= dLng
+        else if (dir === "right") this.osmMapCenter.lng += dLng
+        return this.renderOsmMap(`pan ${dir}`)
       }),
     )
 
@@ -659,6 +664,35 @@ export class NavigationController {
 
     // Mid-trip hydration: every fresh WebView open gets a snapshot.
     this.unsubs.push(this.ui.onOpen(() => this.ui.send("nav:snapshot", this.buildSnapshot())))
+  }
+
+  // ── OSM line-map PoC ─────────────────────────────────────────────────
+  /** Fetch + render the OSM road map at the current osmMapCenter and push it. */
+  private async renderOsmMap(reason: string): Promise<{ok: boolean; error?: string}> {
+    const {lat, lng} = this.osmMapCenter
+    const SIZE = this.OSM_MAP_SIZE
+    console.log(
+      `[OSM-MAP] 🗺️  ${reason} — fetching roads around ${lat.toFixed(6)},${lng.toFixed(6)} (${SIZE}×${SIZE})`,
+    )
+    const t0 = Date.now()
+    try {
+      const base64 = await buildOsmLineMap({
+        center: {lat, lng},
+        width: SIZE,
+        height: SIZE,
+        viewRadiusMeters: this.OSM_MAP_RADIUS_M,
+        lineWidthPx: 2,
+      })
+      console.log(
+        `[OSM-MAP] ✅ rendered ${SIZE}×${SIZE} BMP (${(base64.length / 1024).toFixed(1)} KB) in ${Date.now() - t0}ms — sending to glasses`,
+      )
+      this.display.showRawBitmap(base64, SIZE, SIZE)
+      return {ok: true}
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
+      console.log(`[OSM-MAP] ❌ failed after ${Date.now() - t0}ms:`, error)
+      return {ok: false, error}
+    }
   }
 
   // ── Glasses HUD pump ─────────────────────────────────────────────────
@@ -808,14 +842,48 @@ export class NavigationController {
    * text HUD (non-overlapping regions of the main view). De-duped on the
    * encoded PNG so we don't re-send identical frames while idle.
    */
+  // OSM-roads minimap: street network around the user's live position, with the
+  // active route drawn on top. Roads are cached and only re-fetched from Overpass
+  // when the user moves past a threshold (PoC: fetch-on-move, ~1s lag accepted).
+  private readonly OSM_MINIMAP_SIZE = 75 // matches the bottom-right container
+  private readonly OSM_MINIMAP_RADIUS_M = 200
+  private readonly OSM_REFETCH_THRESHOLD_M = 120
+
   private refreshMinimap(): void {
     if (!this.showMinimap) return
     if (!this.trip.running || !this.coords) return
-    const png = renderMinimap({
-      coords: {lat: this.coords.lat, lng: this.coords.lng},
-      heading: this.heading,
-      routePoints: this.trip.routePoints,
-      upcomingPivot: this.upcomingPivot ? {lat: this.upcomingPivot.lat, lng: this.upcomingPivot.lng} : null,
+
+    const me: LatLng = {lat: this.coords.lat, lng: this.coords.lng}
+
+    // Re-fetch roads if we have none yet, or the user has wandered far from the
+    // cached center. Fetch is async + best-effort; we render with whatever roads
+    // we currently have (possibly empty on the very first tick).
+    const movedFar =
+      !this.osmRoadsCenter ||
+      haversineMeters(me, this.osmRoadsCenter) > this.OSM_REFETCH_THRESHOLD_M
+    if (movedFar && !this.osmFetchInFlight) {
+      this.osmFetchInFlight = true
+      const fetchCenter = me
+      fetchOsmRoads(fetchCenter, this.OSM_MINIMAP_RADIUS_M * 2)
+        .then((roads) => {
+          this.osmRoadsCache = roads
+          this.osmRoadsCenter = fetchCenter
+          console.log(`[OSM-MINIMAP] fetched ${roads.length} roads around ${fetchCenter.lat.toFixed(5)},${fetchCenter.lng.toFixed(5)}`)
+          this.refreshMinimap() // redraw now that roads are in
+        })
+        .catch((err) => console.log("[OSM-MINIMAP] fetch failed:", err))
+        .finally(() => {
+          this.osmFetchInFlight = false
+        })
+    }
+
+    const png = renderOsmLineMap(this.osmRoadsCache ?? [], {
+      center: me,
+      width: this.OSM_MINIMAP_SIZE,
+      height: this.OSM_MINIMAP_SIZE,
+      viewRadiusMeters: this.OSM_MINIMAP_RADIUS_M,
+      lineWidthPx: 1,
+      route: this.trip.routePoints,
     })
     if (!png || png === this.lastMinimapPng) return
     this.lastMinimapPng = png

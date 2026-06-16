@@ -94,8 +94,11 @@ export class DisplayManager {
     const h = Math.max(8, Math.min(height, 288))
     const x = Math.round((576 - w) / 2)
     const y = Math.round((288 - h) / 2)
+    // No clear() first: the rect is always the same, so G2 reuses the existing
+    // image container and swaps the bitmap in place (see G2.displayBitmap's
+    // "reuse container if rect matches"). Clearing would destroy the container
+    // and force a full add+rebuild every redraw — that's the off→on flicker.
     this.safeCall(() => {
-      this.session.display.clear()
       this.session.display.showBitmapView(base64Bmp, {x, y, width: w, height: h})
     })
   }

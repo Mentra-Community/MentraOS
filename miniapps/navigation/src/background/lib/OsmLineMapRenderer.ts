@@ -90,6 +90,10 @@ export type OsmLineMapOptions = {
   lineWidthPx?: number
   /** Anti-aliasing: render at this multiple of the target size, then average down. Default 3. */
   supersample?: number
+  /** Active route polyline, drawn thicker on top of the road network. */
+  route?: LatLng[] | null
+  /** Width of the route overlay line (defaults to lineWidthPx + 2). */
+  routeWidthPx?: number
 }
 
 /**
@@ -175,6 +179,17 @@ export function renderOsmLineMap(roads: LatLng[][], opts: OsmLineMapOptions): st
       const a = project(way[i]!)
       const b = project(way[i + 1]!)
       raster.line(a.x, a.y, b.x, b.y, ROAD, lineWidth * ss)
+    }
+  }
+
+  // Route overlay: drawn on top, thicker, so it stands out over the network.
+  const route = opts.route
+  if (route && route.length >= 2) {
+    const routeWidth = opts.routeWidthPx ?? lineWidth + 2
+    for (let i = 0; i < route.length - 1; i++) {
+      const a = project(route[i]!)
+      const b = project(route[i + 1]!)
+      raster.line(a.x, a.y, b.x, b.y, ROAD, routeWidth * ss)
     }
   }
 

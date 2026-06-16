@@ -78,11 +78,33 @@ if (!backgroundResult.success) {
 
 const tailwind = (await import("bun-plugin-tailwind")).default
 
+// Force a SINGLE React copy in the UI bundle. The @mentra/miniapp SDK is
+// symlinked and can resolve its own (different-version) React from a separate
+// node_modules, which produces two React instances → "Invalid hook call /
+// more than one copy of React". This plugin rewrites every react / react-dom
+// (and their sub-paths) import to THIS app's copy, so app components and SDK
+// hooks share one React.
+const reactDedupePlugin: import("bun").BunPlugin = {
+  name: "react-dedupe",
+  setup(build) {
+    const appDir = import.meta.dir
+    const pin = (spec: string) => Bun.resolveSync(spec, appDir)
+    // Match `react`, `react-dom`, and their sub-paths (e.g. react/jsx-runtime).
+    build.onResolve({filter: /^react(-dom)?(\/.*)?$/}, (args) => {
+      try {
+        return {path: pin(args.path)}
+      } catch {
+        return undefined // fall back to default resolution
+      }
+    })
+  },
+}
+
 const uiResult = await Bun.build({
   entrypoints: ["./src/ui/index.html"],
   outdir: `${distDir}/ui`,
   target: "browser",
-  plugins: [tailwind],
+  plugins: [reactDedupePlugin, tailwind],
   minify: true,
   define: uiDefine,
 })

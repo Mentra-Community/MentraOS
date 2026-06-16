@@ -75,6 +75,8 @@ export interface Channels {
   "test:show-bitmap-size": Rpc<{size: number; height?: number}, void>
   /** PoC: fetch OSM roads around the test center and draw the bare network on the glasses. */
   "test:show-osm-map": Rpc<void, {ok: boolean; error?: string}>
+  /** PoC: pan the OSM map view by a small nudge in a direction, then redraw. */
+  "test:pan-osm-map": Rpc<{dir: "up" | "down" | "left" | "right"}, {ok: boolean; error?: string}>
   "test:count-1-to-10": Rpc<void, void>
   "test:reset-nav-permission": Rpc<void, {ok: boolean; error?: string}>
 }

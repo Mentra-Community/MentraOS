@@ -1028,6 +1028,38 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                   </button>
                 </div>
                 <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+                  <span className="text-[13px] font-medium text-neutral-700">Explore map (pan)</span>
+                  <div className="flex flex-col items-center gap-1">
+                    {(
+                      [
+                        [null, "up", null],
+                        ["left", null, "right"],
+                        [null, "down", null],
+                      ] as const
+                    ).map((row, ri) => (
+                      <div key={ri} className="flex gap-1">
+                        {row.map((dir, ci) =>
+                          dir ? (
+                            <button
+                              key={ci}
+                              type="button"
+                              onClick={async () => {
+                                console.log(`[OSM-MAP] 🖱️  pan ${dir}`)
+                                const res = await mentra.request("test:pan-osm-map", {dir})
+                                console.log("[OSM-MAP] result:", res?.ok ? "✅ ok" : `❌ ${res?.error}`)
+                              }}
+                              className="w-7 h-7 rounded-lg font-bold bg-red-600 text-white flex items-center justify-center">
+                              {dir === "up" ? "↑" : dir === "down" ? "↓" : dir === "left" ? "←" : "→"}
+                            </button>
+                          ) : (
+                            <span key={ci} className="w-7 h-7" />
+                          ),
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
                   <span className="text-[13px] font-medium text-neutral-700">Test bitmap 200×100</span>
                   <button
                     type="button"
