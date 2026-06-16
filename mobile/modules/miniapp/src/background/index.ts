@@ -59,6 +59,12 @@ export type {
   CameraRoiPosition,
   SetCameraFovOptions,
 } from "../modules/camera"
+export type {
+  CloudClientAudioTransport,
+  CloudClientConnectionStatus,
+  CloudClientStatus,
+  CloudModule,
+} from "../modules/cloud"
 export type {DashboardAPI} from "../modules/dashboard"
 export type {GlassesModule} from "../modules/glasses"
 export type {HeadingModule} from "../modules/heading"

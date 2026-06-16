@@ -22,7 +22,12 @@
       "@assets/*": ["./assets/*"],
       "@plugins/*": ["./plugins/*"],
       "@mentra/display-utils": ["../cloud/packages/display-utils/src"],
-      "@mentra/bluetooth-sdk-internal": ["./modules/bluetooth-sdk/src/_internal"]
+      "@mentra/bluetooth-sdk-internal": ["./modules/bluetooth-sdk/src/_internal"],
+      "@mentra/cloud-client": ["../cloud-v2/packages/cloud-client/src/index.ts"],
+      "@mentra/cloud-client/react-native": ["../cloud-v2/packages/cloud-client/react-native/index.ts"],
+      "@mentra/cloud-runtime/protocol": ["../cloud-v2/packages/runtime/src/protocol/index.ts"],
+      "@mentra/island": ["./modules/island/src/index.ts"],
+      "@mentra/island/*": ["./modules/island/src/*"]
     },
     "types": ["node", "react", "jest", "bun-types"]
   },

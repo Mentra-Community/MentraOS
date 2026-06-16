@@ -11,6 +11,34 @@
  * the host and the runtime. Prefer pushing data IN over pulling it via a
  * getter when reasonable.
  */
+import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-runtime/protocol"
+
+export type CloudClientConnectionStatus = "connected" | "connecting" | "reconnecting" | "disconnected"
+export type CloudClientAudioTransport = "udp" | "ws" | "offline" | "none"
+
+export interface CloudClientStatusSnapshot {
+  status: CloudClientConnectionStatus
+  audioTransport: CloudClientAudioTransport
+}
+
+export interface CloudRuntimeTtsSpeakOptions {
+  voiceId?: string
+  voice_id?: string
+  modelId?: string
+  model_id?: string
+  voiceSettings?: Record<string, unknown>
+  voice_settings?: Record<string, unknown>
+}
+
+export interface CloudRuntimeTtsSpeechSource {
+  audioUrl: string
+  contentType: string
+  source: "cloud"
+}
+
+export interface CloudRuntimeTtsAdapter {
+  speak: (text: string, options?: CloudRuntimeTtsSpeakOptions) => Promise<CloudRuntimeTtsSpeechSource>
+}
 
 import type {ClientApp} from "../types/applet"
 
@@ -34,6 +62,43 @@ export interface GlassesSnapshot {
 export interface SocketCommsAdapter {
   sendMessage: (message: object) => void
   updatePhoneSubscriptions: (subscriptions: string[]) => void
+}
+
+/**
+ * Cloud-v2 (`@mentra/cloud-client`) runtime surface, wired in alongside the v1
+ * `socketComms` path during the dual-cloud transition. The host owns the
+ * singleton CloudClient; this adapter is the thin slice the island runtime
+ * needs to drive transcription/translation subscriptions and fan results back
+ * to local miniapps.
+ *
+ * Typed against `@mentra/cloud-runtime/protocol` so the subscription/result
+ * shapes are the real wire types, not loosely-typed mirrors. Optional on
+ * `RuntimeHooks`: hosts still on v1-only leave it unset and the runtime keeps
+ * driving cloud transcription purely through `socketComms`.
+ */
+export interface CloudRuntimeAdapter {
+  /** Replace the v2 cloud's audio subscription set for the live session. */
+  setSubscriptions: (subs: AudioSubscription[]) => Promise<void>
+  /** Encrypt + send one LC3 (or PCM) audio frame over the v2 UDP path. */
+  sendAudioFrame: (frame: Uint8Array) => void
+  /** Subscribe to v2 transcription results. Returns an unsubscribe fn. */
+  onTranscript: (cb: (d: TranscriptionData) => void) => () => void
+  /** Subscribe to v2 translation results. Returns an unsubscribe fn. */
+  onTranslation: (cb: (d: TranslationData) => void) => () => void
+  /** Current cloud-client runtime status, without host UI labels. */
+  getStatus: () => CloudClientStatusSnapshot
+  /** Subscribe to cloud-client runtime status changes. Returns an unsubscribe fn. */
+  onStatusChanged: (cb: (snapshot: CloudClientStatusSnapshot) => void) => () => void
+  /** Runtime TTS API. The cloud-client owns endpoint paths and validation. */
+  tts: CloudRuntimeTtsAdapter
+  /**
+   * Whether any transcription/translation subscription is currently set on v2.
+   * The host's audio-capture site gates `sendAudioFrame` on this so we don't
+   * burn UDP bandwidth when nobody is subscribed on the v2 cloud.
+   */
+  hasAudioSubscriptions: () => boolean
+  /** Whether the v2 live session is connected (handshake completed). */
+  isConnected: () => boolean
 }
 
 /**
@@ -263,6 +328,8 @@ export interface StreamingAdapter {
       video?: unknown
       audio?: unknown
       sound?: boolean
+      /** "srt" (default; HLS playback + recording) or "whip" (sub-second WHEP, no HLS/recording). */
+      ingest?: "srt" | "whip"
     },
   ) => Promise<ManagedStreamStartResult>
   stop: (packageName: string, streamId?: string) => Promise<void>
@@ -287,6 +354,8 @@ export interface StreamPublisherStartResult {
 
 export interface ManagedStreamStartResult extends StreamPublisherStartResult {
   liveInputId: string
+  /** "hls" (SRT/RTMP ingest) or "webrtc" (WHIP ingest -> WHEP playback). */
+  mode: "hls" | "webrtc"
   hlsUrl: string
   dashUrl: string
   webrtcUrl?: string
@@ -366,6 +435,11 @@ export interface InteropAdapter {
 
 export interface RuntimeHooks {
   socketComms?: SocketCommsAdapter
+  /**
+   * Cloud-v2 (`@mentra/cloud-client`) runtime adapter. Additive alongside
+   * `socketComms` during the dual-cloud transition; unset on v1-only hosts.
+   */
+  cloud?: CloudRuntimeAdapter
   audioPlayback?: AudioPlaybackAdapter
   /** Returns the connected glasses' status snapshot. */
   glassesStatus?: StoreAccessor<GlassesSnapshot>
@@ -378,6 +452,14 @@ export interface RuntimeHooks {
   locationTier?: LocationTierAdapter
   /** Cloud WebSocket connection state surface. */
   cloudConnection?: CloudConnectionAdapter
+  /**
+   * The dev machine's live LAN host (no port), derived by the host from
+   * Metro's `hostUri` — the address this dev bundle was actually served from,
+   * so it is always current for whatever network the phone is on. Used to
+   * repair persisted dev-miniapp URLs that froze a previous network's IP.
+   * Unset outside Metro-served dev builds.
+   */
+  devServerHost?: () => string | undefined
   /**
    * Forward processed display events into the host's mirror store. The
    * default no-op skips the mirror — installed-only hosts (no UI mirror)

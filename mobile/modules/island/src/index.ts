@@ -69,6 +69,8 @@ export {
   ISLAND_SETTINGS_KEYS,
   type RuntimeHooks,
   type SocketCommsAdapter,
+  type CloudClientStatusSnapshot,
+  type CloudRuntimeAdapter,
   type AudioPlaybackAdapter,
   type AudioPlayRequest,
   type SettingsAccessor,
@@ -122,6 +124,7 @@ export {
   type MiniappSafeArea,
 } from "./utils/miniappGlobals"
 export {decideDevLaunchRoute, type DevLaunchResult, type DevManifest} from "./utils/devMiniappLaunch"
+export {createCloudUdpSocket} from "./utils/cloudClient/RnUdpAdapter"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
 export {BgTimer, throttle, debounce} from "./utils/timers"
 export {storage, printDirectory} from "./utils/storage"

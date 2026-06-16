@@ -23,6 +23,7 @@ export function useTester(
   log: TesterEventPayload[]
   lastError: TesterEventPayload | null
   invoke: (method: string, args?: unknown[]) => Promise<unknown>
+  status: InvokeStatus
 } {
   const windowSize = options.windowSize ?? 50
   const [latest, setLatest] = useState<TesterEventPayload | null>(null)
@@ -50,17 +51,29 @@ export function useTester(
     }
   }, [iface, windowSize])
 
+  // Live invoke status so a page can show "running…" the instant a button is
+  // tapped and the precise failure the instant it fails — no silent hang while
+  // a request is in flight, which is the single most confusing dev experience.
+  const [status, setStatus] = useState<InvokeStatus>({phase: "idle"})
+
   const invoke = async (method: string, args: unknown[] = []) => {
+    const startedAt = Date.now()
+    setStatus({phase: "running", method, startedAt})
     try {
-      return await rpcInvoke({iface: ifaceRef.current, method, args})
+      const result = await rpcInvoke({iface: ifaceRef.current, method, args})
+      setStatus({phase: "ok", method, startedAt, ms: Date.now() - startedAt})
+      return result
     } catch (err) {
-      // Surface error in the existing UI error slot so pages don't need
-      // a separate try/catch boilerplate.
+      // The host returns structured failures ({code, message, stage, transport}).
+      // Preserve every field so the UI can name exactly where and on which
+      // transport it broke, not just a flattened message string.
+      const detail = errorDetail(err)
       setLastError({
         iface: ifaceRef.current,
         kind: "error",
-        payload: {method, message: err instanceof Error ? err.message : String(err)},
+        payload: {method, ...detail},
       })
+      setStatus({phase: "error", method, startedAt, ms: Date.now() - startedAt, ...detail})
       throw err
     }
   }
@@ -72,5 +85,35 @@ export function useTester(
     return null
   }
 
-  return {latest, latestByKind, log, lastError, invoke}
+  return {latest, latestByKind, log, lastError, invoke, status}
+}
+
+export type InvokeStatus =
+  | {phase: "idle"}
+  | {phase: "running"; method: string; startedAt: number}
+  | {phase: "ok"; method: string; startedAt: number; ms: number}
+  | ({phase: "error"; method: string; startedAt: number; ms: number} & ErrorDetail)
+
+interface ErrorDetail {
+  message: string
+  /** Machine code from the host, e.g. PHOTO_REQUEST_FAILED, GLASSES_NOT_CONNECTED. */
+  code?: string
+  /** Pipeline stage that failed: presign | command | capture | upload | push. */
+  stage?: string
+  /** Transport in play when it failed: cloud-rest | ble | wifi | ws | udp. */
+  transport?: string
+}
+
+/** Pull every diagnostic field out of whatever the host threw. */
+function errorDetail(err: unknown): ErrorDetail {
+  if (err && typeof err === "object") {
+    const e = err as Record<string, unknown>
+    return {
+      message: typeof e.message === "string" ? e.message : String(err),
+      code: typeof e.code === "string" ? e.code : undefined,
+      stage: typeof e.stage === "string" ? e.stage : undefined,
+      transport: typeof e.transport === "string" ? e.transport : undefined,
+    }
+  }
+  return {message: String(err)}
 }

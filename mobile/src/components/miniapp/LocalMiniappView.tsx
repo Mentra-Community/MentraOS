@@ -1,6 +1,5 @@
 import {useCallback, useEffect, useRef, useState} from "react"
-import {ActivityIndicator, Image, Platform, View} from "react-native"
-import {useSafeAreaInsets} from "react-native-safe-area-context"
+import {AppState, Platform, View, type AppStateStatus} from "react-native"
 import {WebView, type WebViewMessageEvent} from "react-native-webview"
 
 import {Text} from "@/components/ignite"
@@ -43,6 +42,7 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 // Reload-retry tuning for the miniapp `ready` handshake (see readyTimerRef).
 const READY_TIMEOUT_MS = 5000
 const MAX_LOAD_ATTEMPTS = 10
+const UI_RESYNC_INTERVAL_MS = 10_000
 
 interface LocalMiniappViewProps {
   packageName: string
@@ -75,6 +75,7 @@ function LocalMiniappView({
 
   const viewShotRef = useRef<View | null>(null)
   const webViewRef = useRef<WebView | null>(null)
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState)
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
   const [uiUri, setUiUri] = useState<string | null>(null)
   const [uiBaseDir, setUiBaseDir] = useState<string | null>(null)
@@ -122,6 +123,22 @@ function LocalMiniappView({
     clearReadyTimer()
   }, [clearReadyTimer])
 
+  const refreshUiBinding = useCallback(
+    (reason: string, log = true, probeBackground = false) => {
+      if (!packageName) return
+      const mj = getMentraJS()
+      if (!mj?.uiRouter.isBound(packageName)) return
+      if (log) {
+        console.log(`LocalMiniappView: refreshing UI bridge for ${packageName} (${reason})`)
+      }
+      mj.uiRouter.notifyReopen(packageName)
+      if (probeBackground) {
+        mj.router.probeForegroundLiveness(packageName, reason)
+      }
+    },
+    [packageName],
+  )
+
   // Fresh handshake + retry budget — used on (re)launch and dev hot-reload.
   const resetLoadState = useCallback(() => {
     connectedRef.current = false
@@ -154,6 +171,30 @@ function LocalMiniappView({
       setAndroidGatePassed(true)
     }, 1000)
   }, [])
+
+  // WebView injections can be missed while Android/iOS is resuming or when the
+  // host process thaws after a sleep/network interruption. The background
+  // runtime owns canonical state, so periodically re-announce the mounted UI
+  // while foregrounded; miniapps hydrate from their session.ui.onOpen snapshot.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (nextState) => {
+      const prevState = appStateRef.current
+      appStateRef.current = nextState
+      if (prevState !== "active" && nextState === "active") {
+        refreshUiBinding("app-active", true, true)
+      }
+    })
+
+    const intervalId = BgTimer.setInterval(() => {
+      if (!connectedRef.current || AppState.currentState !== "active") return
+      refreshUiBinding("foreground-resync", false)
+    }, UI_RESYNC_INTERVAL_MS)
+
+    return () => {
+      sub.remove()
+      BgTimer.clearInterval(intervalId)
+    }
+  }, [refreshUiBinding])
 
   const {setForceGestureEnabled} = useNavigationStore.getState()
 
@@ -272,8 +313,13 @@ function LocalMiniappView({
           console.warn(`LocalMiniappView: inject failed for ${packageName}:`, e)
         }
       })
+      BgTimer.setTimeout(() => {
+        if (webViewRef.current === instance) {
+          refreshUiBinding("bind", false, true)
+        }
+      }, 250)
     },
-    [packageName],
+    [packageName, refreshUiBinding],
   )
 
   const handleMessage = useCallback(

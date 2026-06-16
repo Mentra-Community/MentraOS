@@ -247,6 +247,7 @@ class DeviceManager {
     private var audioOutputFormat: AudioOutputFormat = AudioOutputFormat.LC3
     private var lastLc3Event: Long? = null
     private var micReinitRunnable: Runnable? = null
+    private var systemMicAvailabilityRecheckRunnable: Runnable? = null
 
     // VAD
     private val vadBuffer = mutableListOf<ByteArray>()
@@ -356,6 +357,37 @@ class DeviceManager {
             Bridge.log("MAN: No audio activity in the last 5 seconds from glasses, reinitializing glasses mic")
             sgc?.setMicEnabled(true)
         }
+    }
+
+    private fun scheduleSystemMicAvailabilityRecheck(reason: String) {
+        if (systemMicAvailabilityRecheckRunnable != null) {
+            return
+        }
+
+        val recheck =
+                object : Runnable {
+                    override fun run() {
+                        systemMicAvailabilityRecheckRunnable = null
+
+                        if (!micEnabled || !systemMicUnavailable) {
+                            return
+                        }
+
+                        val stillBlocked = phoneMic?.hasBlockingMicInterruption() ?: true
+                        if (stillBlocked) {
+                            scheduleSystemMicAvailabilityRecheck(reason)
+                            return
+                        }
+
+                        systemMicUnavailable = false
+                        Bridge.log("MAN: MIC_UNAVAILABLE: FALSE recheck_after_$reason")
+                        appendLog("MAN: MIC_UNAVAILABLE: FALSE recheck_after_$reason")
+                        updateMicState()
+                    }
+                }
+
+        systemMicAvailabilityRecheckRunnable = recheck
+        mainHandler.postDelayed(recheck, 2_000)
     }
 
     // MARK: - Unique (Android)
@@ -947,6 +979,7 @@ class DeviceManager {
                 systemMicUnavailable = true
                 Bridge.log("MAN: MIC_UNAVAILABLE: TRUE external_app_recording")
                 appendLog("MAN: MIC_UNAVAILABLE: TRUE external_app_recording")
+                scheduleSystemMicAvailabilityRecheck("external_app_recording")
             }
             "audio_focus_available" -> {
                 // Audio focus is available again
@@ -965,6 +998,7 @@ class DeviceManager {
                 systemMicUnavailable = true
                 Bridge.log("MAN: MIC_UNAVAILABLE: TRUE phone_call_interruption")
                 appendLog("MAN: MIC_UNAVAILABLE: TRUE phone_call_interruption")
+                scheduleSystemMicAvailabilityRecheck("phone_call_interruption")
             }
             "phone_call_ended" -> {
                 // Phone call ended - mark mic as available again
@@ -977,12 +1011,14 @@ class DeviceManager {
                 systemMicUnavailable = true
                 Bridge.log("MAN: MIC_UNAVAILABLE: TRUE phone_call_active")
                 appendLog("MAN: MIC_UNAVAILABLE: TRUE phone_call_active")
+                scheduleSystemMicAvailabilityRecheck("phone_call_active")
             }
             "audio_focus_denied" -> {
                 // Another app has audio focus
                 systemMicUnavailable = true
                 Bridge.log("MAN: MIC_UNAVAILABLE: TRUE audio_focus_denied")
                 appendLog("MAN: MIC_UNAVAILABLE: TRUE audio_focus_denied")
+                scheduleSystemMicAvailabilityRecheck("audio_focus_denied")
             }
             "permission_denied" -> {
                 // Microphone permission not granted
@@ -1010,6 +1046,9 @@ class DeviceManager {
                 // systemMicUnavailable = false
                 Bridge.log("MAN: MIC_UNAVAILABLE: UNKNOWN recording_stopped")
                 appendLog("MAN: MIC_UNAVAILABLE: UNKNOWN recording_stopped")
+                if (systemMicUnavailable) {
+                    scheduleSystemMicAvailabilityRecheck("recording_stopped")
+                }
             }
             else -> {
                 // Other route changes (headset plug/unplug, BT connect/disconnect, etc.)
@@ -1792,6 +1831,8 @@ class DeviceManager {
 
         micReinitRunnable?.let { mainHandler.removeCallbacks(it) }
         micReinitRunnable = null
+        systemMicAvailabilityRecheckRunnable?.let { mainHandler.removeCallbacks(it) }
+        systemMicAvailabilityRecheckRunnable = null
 
         // Clean up transcriber resources
         transcriber?.shutdown()

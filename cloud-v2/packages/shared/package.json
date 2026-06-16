@@ -1,0 +1,24 @@
+{
+  "name": "@mentra/cloud-shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./logger": "./src/logger.ts",
+    "./health": "./src/health.ts",
+    "./auth": "./src/auth.ts"
+  },
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "hono": "^4.11.1",
+    "jose": "^5.9.6",
+    "pino": "^9.6.0"
+  },
+  "devDependencies": {
+    "pino-pretty": "^11.3.0"
+  }
+}
