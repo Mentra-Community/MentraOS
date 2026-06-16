@@ -211,7 +211,18 @@ jobs:
 
       - name: Install CocoaPods dependencies
         working-directory: ./mobile/ios
-        run: pod install
+        run: |
+          # Self-heal a corrupted prebuilt-framework cache: the cached Pods can be
+          # valid-by-lockfile-key yet missing the React-Core-prebuilt React.xcframework
+          # Info.plist (a known RN-0.83 prebuilt + CocoaPods cache flake on the
+          # self-hosted runners). On failure, clear the project Pods + the global pod
+          # cache and reinstall fresh. Happy path is unchanged.
+          pod install || {
+            echo "::warning::pod install failed (likely a stale/corrupt prebuilt cache) — clearing caches and retrying"
+            rm -rf Pods Podfile.lock
+            pod cache clean --all || true
+            pod install --repo-update
+          }
 
       - name: List available simulators
         run: xcrun simctl list devices available
