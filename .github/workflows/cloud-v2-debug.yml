@@ -76,27 +76,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          wait_for_jsonpath() {
-            local resource="$1"
-            local jsonpath="$2"
-            local value=""
-            for _ in $(seq 1 60); do
-              value=$(porter kubectl -- get "$resource" -o "jsonpath=${jsonpath}" 2>/dev/null || true)
-              if [ -n "$value" ]; then
-                printf '%s' "$value"
-                return 0
-              fi
-              sleep 10
-            done
-            echo "Timed out waiting for $resource $jsonpath" >&2
-            return 1
-          }
-
-          CORE_INGRESS=$(wait_for_jsonpath "ingress/cloud-debug-core" "{.status.loadBalancer.ingress[0].hostname}")
-          RUNTIME_INGRESS=$(wait_for_jsonpath "ingress/cloud-debug-runtime" "{.status.loadBalancer.ingress[0].hostname}")
+          CORE_INGRESS=$(porter kubectl -- get ingress cloud-debug-core -o 'jsonpath={.status.loadBalancer.ingress[0].hostname}')
+          RUNTIME_INGRESS=$(porter kubectl -- get ingress cloud-debug-runtime -o 'jsonpath={.status.loadBalancer.ingress[0].hostname}')
           UDP_NLB=""
           if porter kubectl -- get svc/cloud-debug-audio-udp >/dev/null 2>&1; then
-            UDP_NLB=$(wait_for_jsonpath "svc/cloud-debug-audio-udp" "{.status.loadBalancer.ingress[0].hostname}" || true)
+            UDP_NLB=$(porter kubectl -- get svc cloud-debug-audio-udp -o 'jsonpath={.status.loadBalancer.ingress[0].hostname}' || true)
           fi
           if [ -z "$UDP_NLB" ]; then
             echo "Debug UDP NLB is not available yet; skipping UDP DNS record." >&2
