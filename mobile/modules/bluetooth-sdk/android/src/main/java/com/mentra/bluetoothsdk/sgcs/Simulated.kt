@@ -1,19 +1,25 @@
-package com.mentra.core.sgcs
+package com.mentra.bluetoothsdk.sgcs
 
-import com.mentra.core.Bridge
-import com.mentra.core.CoreManager
-import com.mentra.core.utils.ConnTypes
-import com.mentra.core.utils.DeviceTypes
-import com.mentra.core.GlassesStore
+import com.mentra.bluetoothsdk.BluetoothSdkDefaults
+import com.mentra.bluetoothsdk.Bridge
+import com.mentra.bluetoothsdk.DeviceManager
+import com.mentra.bluetoothsdk.DeviceStore
+import com.mentra.bluetoothsdk.utils.ConnTypes
+import com.mentra.bluetoothsdk.utils.DeviceTypes
 
 class Simulated : SGCManager() {
 
     init {
         type = DeviceTypes.SIMULATED
-        GlassesStore.apply("glasses", "fullyBooted", true)
-        GlassesStore.apply("glasses", "connected", true)
-        GlassesStore.apply("glasses", "connectionState", ConnTypes.CONNECTED)
-        GlassesStore.apply("glasses", "micEnabled", false)
+        DeviceStore.apply("glasses", "fullyBooted", true)
+        DeviceStore.apply("glasses", "connected", true)
+        DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTED)
+        DeviceStore.apply("glasses", "micEnabled", false)
+        DeviceStore.apply(
+            "glasses",
+            "voiceActivityDetectionEnabled",
+            BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
+        )
     }
 
     // Audio Control
@@ -34,9 +40,12 @@ class Simulated : SGCManager() {
             authToken: String?,
             compress: String?,
             flash: Boolean,
-            sound: Boolean
+            save: Boolean,
+            sound: Boolean,
+            exposureTimeNs: Long?,
+            iso: Int?,
     ) {
-        Bridge.log("requestPhoto flash=$flash, sound=$sound")
+        Bridge.log("requestPhoto flash=$flash, save=$save, sound=$sound")
     }
 
     override fun startStream(message: MutableMap<String, Any>) {
@@ -88,6 +97,10 @@ class Simulated : SGCManager() {
     override fun clearDisplay() {
         Bridge.log("clearDisplay")
     }
+    
+    override fun sendText(text: String) {
+        Bridge.log("sendText")
+    }
 
     override fun sendTextWall(text: String) {
         Bridge.log("sendTextWall")
@@ -97,7 +110,13 @@ class Simulated : SGCManager() {
         Bridge.log("sendDoubleTextWall")
     }
 
-    override fun displayBitmap(base64ImageData: String): Boolean {
+    override fun displayBitmap(
+            base64ImageData: String,
+            x: Int?,
+            y: Int?,
+            width: Int?,
+            height: Int?
+    ): Boolean {
         Bridge.log("displayBitmap")
         return false
     }
@@ -140,8 +159,8 @@ class Simulated : SGCManager() {
             packageName: String?,
             action: String,
             color: String?,
-            ontime: Int,
-            offtime: Int,
+            onDurationMs: Int,
+            offDurationMs: Int,
             count: Int
     ) {
         Bridge.log("sendRgbLedControl - not supported on Simulated")

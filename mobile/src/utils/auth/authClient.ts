@@ -31,6 +31,10 @@ export abstract class AuthClient {
     return Res.error_async(new Error("Method not implemented"))
   }
 
+  public resetPasswordByCode(_email: string, _code: string, _newPassword: string): AsyncResult<void, Error> {
+    return Res.error_async(new Error("Method not implemented"))
+  }
+
   public updateUserPassword(_password: string): AsyncResult<void, Error> {
     return Res.error_async(new Error("Method not implemented"))
   }
@@ -93,7 +97,7 @@ function createLazyAuthClient(): AuthClient {
         const c = await ensureInit()
         const method = c[prop]
         if (typeof method === "function") {
-          return method.apply(c, args)
+          return (method as (...args: unknown[]) => unknown).apply(c, args)
         }
         return method
       }

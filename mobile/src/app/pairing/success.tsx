@@ -1,4 +1,4 @@
-import {ControllerTypes, DeviceTypes} from "@/../../cloud/packages/types/src"
+import {ControllerTypes, DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
 import {Platform} from "react-native"
 import {useRoute} from "@react-navigation/native"
 
@@ -38,15 +38,20 @@ export default function PairingSuccessScreen() {
   const buildLiveStack = useCallback(async (): Promise<string[]> => {
     const order = ["/pairing/btclassic", "/wifi/scan", "/ota/check-for-updates", "/onboarding/live", "/onboarding/os"]
     let newStack: string[] = []
+    const features = getModelCapabilities(deviceModel as DeviceTypes)
 
-    if (deviceModel === DeviceTypes.LIVE) {
-      let btcConnected = await waitForGlassesState("btcConnected", (value) => value === true, 1000)
-      console.log("PAIR_SUCCESS: btcConnected", btcConnected)
+    if (features.hasOta) {
+      let bluetoothClassicConnected = await waitForGlassesState(
+        "bluetoothClassicConnected",
+        (value) => value === true,
+        1000,
+      )
+      console.log("PAIR_SUCCESS: bluetoothClassicConnected", bluetoothClassicConnected)
       if (Platform.OS === "android") {
-        btcConnected = true
+        bluetoothClassicConnected = true
       }
 
-      if (!btcConnected) {
+      if (!bluetoothClassicConnected) {
         newStack.push("/pairing/btclassic")
       }
       // OTA check runs on the phone; WiFi is only required after an update is confirmed (see check-for-updates).

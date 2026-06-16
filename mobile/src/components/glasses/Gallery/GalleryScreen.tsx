@@ -35,7 +35,7 @@ import {translate} from "@/i18n"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
 import {localStorageService} from "@/services/asg/localStorageService"
 import {useGallerySyncStore} from "@/stores/gallerySync"
-import {useGlassesStore} from "@/stores/glasses"
+import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {spacing, ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
@@ -83,7 +83,7 @@ export function GalleryScreen() {
   const itemWidth = (screenWidth - HORIZONTAL_PADDING - ITEM_SPACING * (numColumns - 1)) / numColumns
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const features = getModelCapabilities(defaultWearable)
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
 
   // Subscribe to sync store
   const syncState = useGallerySyncStore((state) => state.syncState)
@@ -189,35 +189,72 @@ export function GalleryScreen() {
       const validPhotoInfos: PhotoInfo[] = []
       const staleFileNames: string[] = []
 
-      // Check all files exist on disk in parallel (50-100x faster than sequential)
+      // Check all files exist on disk in parallel (50-100x faster than sequential).
+      // Returns one of three states per entry:
+      //   "ok"           — keep the metadata, file is present and non-empty
+      //   "stale"        — drop the metadata (file missing OR zero-byte)
+      //   "unknown"      — keep the metadata (transient stat error; don't lose entries)
+      // Zero-byte files also flag for disk unlink so they don't accumulate.
       const validationPromises = Object.entries(downloadedFiles).map(async ([name, file]) => {
-        // console.log(`[GalleryScreen]   Checking file: ${name} at ${file.filePath}`)
-        const fileExists = await RNFS.exists(file.filePath)
-        return {
-          name,
-          file,
-          exists: fileExists,
+        let status: "ok" | "stale" | "unknown" = "unknown"
+        let shouldUnlink = false
+        try {
+          const fileExists = await RNFS.exists(file.filePath)
+          if (!fileExists) {
+            status = "stale"
+          } else {
+            try {
+              const stat = await RNFS.stat(file.filePath)
+              if (stat.size > 0) {
+                status = "ok"
+              } else {
+                console.warn(`[GalleryScreen] Removing zero-byte local file from gallery index: ${name}`)
+                status = "stale"
+                shouldUnlink = true
+              }
+            } catch (statError) {
+              // Transient stat failure — keep the metadata so we don't permanently
+              // drop a still-valid entry on a one-off filesystem hiccup.
+              console.warn(`[GalleryScreen] Could not stat local file ${name}:`, statError)
+              status = "unknown"
+            }
+          }
+        } catch (existsError) {
+          console.warn(`[GalleryScreen] Could not check existence of local file ${name}:`, existsError)
+          status = "unknown"
         }
+        return {name, file, status, shouldUnlink}
       })
 
       // Wait for all validations to complete (happens in parallel)
       const validationResults = await Promise.all(validationPromises)
 
       // Process results
+      const filesToUnlink: string[] = []
       for (const result of validationResults) {
-        if (result.exists) {
-          // console.log(`[GalleryScreen]     ✅ File exists on disk`)
+        if (result.status === "ok" || result.status === "unknown") {
           validPhotoInfos.push(localStorageService.convertToPhotoInfo(result.file))
         } else {
-          // console.log(`[GalleryScreen]     ❌ File missing on disk - marking as stale`)
           console.log(`[GalleryScreen] Cleaning up stale entry for missing file: ${result.name}`)
           staleFileNames.push(result.name)
+          if (result.shouldUnlink) {
+            filesToUnlink.push(result.file.filePath)
+          }
         }
       }
 
       // Clean up stale metadata entries (files that no longer exist on disk)
       for (const fileName of staleFileNames) {
         await localStorageService.deleteDownloadedFile(fileName)
+      }
+
+      // Also unlink zero-byte files from disk so they don't accumulate.
+      for (const path of filesToUnlink) {
+        try {
+          await RNFS.unlink(path)
+        } catch (unlinkError) {
+          console.warn(`[GalleryScreen] Failed to unlink zero-byte file ${path}:`, unlinkError)
+        }
       }
 
       if (staleFileNames.length > 0) {
@@ -481,7 +518,7 @@ export function GalleryScreen() {
 
   // Handle sync button press - delegate to service
   const handleSyncPress = () => {
-    if (gallerySyncService.isSyncing()) {
+    if (gallerySyncService.isSyncing() || gallerySyncService.isSyncStarting()) {
       console.log("[GalleryScreen] Already syncing, ignoring press")
       return
     }
@@ -569,24 +606,52 @@ export function GalleryScreen() {
 
     try {
       const photosToShare = allPhotos.filter((p) => p.photo && selectedPhotos.has(p.photo.name)).map((p) => p.photo!)
-      const shareUrls: string[] = []
+
       const cacheDir = `${RNFS.CachesDirectoryPath}/share`
       await RNFS.mkdir(cacheDir)
+
+      // Track resolved file paths to avoid duplicating the same physical file
+      const seenFilePaths = new Set<string>()
+      const shareUrls: string[] = []
 
       for (const photo of photosToShare) {
         let filePath = ""
         if (photo.filePath) {
-          filePath = photo.filePath.startsWith("file://") ? photo.filePath.replace("file://", "") : photo.filePath
+          filePath = photo.filePath.startsWith("file://") ? photo.filePath.slice("file://".length) : photo.filePath
         } else if (photo.download?.startsWith("file://")) {
-          filePath = photo.download.replace("file://", "")
+          filePath = photo.download.slice("file://".length)
         }
-        if (!filePath) continue
+
+        if (!filePath) {
+          console.warn(`[GalleryShare] Skipping ${photo.name}: no local file path`)
+          continue
+        }
+
+        // Skip duplicate file paths — prevents sharing the same physical file N times
+        if (seenFilePaths.has(filePath)) {
+          console.warn(`[GalleryShare] Skipping ${photo.name}: duplicate filePath ${filePath}`)
+          continue
+        }
+        seenFilePaths.add(filePath)
 
         const exists = await RNFS.exists(filePath)
-        if (!exists) continue
+        if (!exists) {
+          console.warn(`[GalleryShare] Skipping ${photo.name}: file not found at ${filePath}`)
+          continue
+        }
 
-        const basename = filePath.split("/").pop() || photo.name
-        const cachePath = `${cacheDir}/${basename}`
+        // Use the photo's unique name (not the basename of filePath) as the cache filename.
+        // For v2 capture-aware photos every filePath ends with the same leaf (e.g. "base.jpg.processed.jpg"),
+        // so basing the cache name on filePath.split("/").pop() would make every cache file appear
+        // identical to the receiving app even though they have different content.
+        // Prefix with a zero-padded index so two photos whose names sanitize to the same string
+        // (e.g. "My Photo!" and "My Photo?") don't collide in the cache directory.
+        const ext = filePath.includes(".") ? filePath.slice(filePath.lastIndexOf(".")) : ""
+        const safeName = photo.name.replace(/[^a-zA-Z0-9_.-]/g, "_")
+        const cacheIndex = String(shareUrls.length + 1).padStart(3, "0")
+        const cachePath = `${cacheDir}/${cacheIndex}-${safeName}${ext}`
+
+        console.log(`[GalleryShare] Copying ${photo.name}: ${filePath} → ${cachePath}`)
         await RNFS.unlink(cachePath).catch(() => {})
         await RNFS.copyFile(filePath, cachePath)
         shareUrls.push(`file://${cachePath}`)
@@ -597,7 +662,15 @@ export function GalleryScreen() {
         return
       }
 
-      await Share.open({urls: shareUrls})
+      console.log(`[GalleryShare] Sharing ${shareUrls.length} file(s)`)
+
+      // Determine a shared MIME type so Android ACTION_SEND_MULTIPLE works correctly.
+      // Mixed image+video → "*/*"; all images → "image/*"; all videos → "video/*".
+      const hasVideo = photosToShare.some((p) => p.is_video)
+      const hasPhoto = photosToShare.some((p) => !p.is_video)
+      const mimeType = hasVideo && hasPhoto ? "*/*" : hasVideo ? "video/*" : "image/*"
+
+      await Share.open({urls: shareUrls, type: mimeType})
 
       // Clean up cache copies
       for (const url of shareUrls) {

@@ -1,6 +1,6 @@
-import en, {Translations} from "./en"
+import en, {type TranslationResource} from "./en"
 
-const ja: Translations = {
+const ja = {
   ...en,
   common: {
     ok: "OK",
@@ -125,6 +125,6 @@ const ja: Translations = {
         "お気に入りのエピソードがまだありません。エピソードにあるハートマークにタップして、お気に入りに追加しましょう！",
     },
   },
-}
+} satisfies TranslationResource
 
 export default ja

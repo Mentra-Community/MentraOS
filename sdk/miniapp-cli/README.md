@@ -34,7 +34,7 @@ What it does:
 2. Spawns `bun run --hot server.ts` in the project. The starter template ships a tiny Bun.serve that serves `index.html`, `miniapp.json`, `icon.png`, and any assets under `public/`.
 3. Polls `http://localhost:<port>` until the server is reachable.
 4. Starts a **dev sidecar** on `port + 1` — a WebSocket the phone connects to for live reload + console-log forwarding back to your terminal. Failure here is non-fatal; the miniapp still runs without live reload.
-5. Detects the LAN IP, builds a `mentra-miniapp://dev?url=…&name=…&package=…&dev=<sidecarPort>` URL, and prints a terminal QR + the raw URL.
+5. Detects the LAN IP, builds a `miniapp://dev?url=…&name=…&package=…&dev=<sidecarPort>` URL, and prints a terminal QR + the raw URL.
 6. Watches for LAN-IP changes (Wi-Fi switch) every 10s and reprints the QR.
 
 Default `port` is `3000`; override with a `"port": <n>` field in `miniapp.json`.
@@ -57,20 +57,20 @@ The all-in-one verb: build a release, pack it, and serve it behind a QR so you c
 Flow:
 
 1. Validates `miniapp.json`.
-2. **Build cache.** Looks for `.mentra/<packageName>-<version>.zip`. If it exists and every project source file (excluding `node_modules`, `dist`, `.mentra`, `.git`) is older than the zip, reuses it. Otherwise rebuilds.
+2. **Build cache.** Looks for `build/<packageName>-<version>.zip`. If it exists and every project source file (excluding `node_modules`, `dist`, `build`, `.git`) is older than the zip, reuses it. Otherwise rebuilds.
 3. **Build.** Detects your package manager (`bun.lock` → `bun`, `pnpm-lock.yaml` → `pnpm`, `yarn.lock` → `yarn`, else `npm`) and runs `<pm> run build`. Your `package.json` must define a `build` script that produces `dist/`.
-4. **Pack.** Calls the same logic as `mentra-miniapp pack` — validates the manifest, copies `miniapp.json` + `icon.png` into `dist/`, zips to `.mentra/<packageName>-<version>.zip`. Prints size + duration.
+4. **Pack.** Calls the same logic as `mentra-miniapp pack` — validates the manifest, copies `miniapp.json` + `icon.png` into `dist/`, zips to `build/<packageName>-<version>.zip`. Prints size + duration.
 5. **Serve.** Picks a free port between 6789 and 6798. Hosts the bundle, manifest, and icon over HTTP on `0.0.0.0`:
    - `GET /miniapp.json`
    - `GET /icon.png`
    - `GET /bundle.zip`
    - `GET /__mentra_release/health`
-6. Prints a `mentra-miniapp://release?url=<lan-base>&package=…&version=…&name=…` URL + QR.
+6. Prints a `miniapp://release?url=<lan-base>&package=…&version=…&name=…` URL + QR.
 7. Stays up so multiple devices can install. Each `/bundle.zip` fetch logs `✓ Install #N — <name>@<version> → <remote>`.
 
 `Ctrl+C` to stop the server.
 
-**On the phone:** the MentraOS app's QR scanner branches on `mentra-miniapp://release` and uses the dev composer to download + install the bundle. The miniapp lands in `lmas/<package>/<version>/` and behaves like any installed local miniapp — runs offline, persists across restarts, no laptop required after install.
+**On the phone:** the MentraOS app's QR scanner branches on `miniapp://release` and uses the dev composer to download + install the bundle. The miniapp lands in `lmas/<package>/<version>/` and behaves like any installed local miniapp — runs offline, persists across restarts, no laptop required after install.
 
 > **Why "release" and not "install":** `install` collides with package managers (`bun run install` is reserved). Naming the action after the artifact you're producing avoids that collision and matches Android's `installRelease` mental model.
 
@@ -80,16 +80,20 @@ Flow:
 
 ```bash
 mentra-miniapp pack
+mentra-miniapp pack --no-build    # zip dist/ as-is, skip the build
 ```
 
 Produces a distributable ZIP. Use this when you want the artifact only — `release` calls `pack` internally.
 
 Steps:
 
-1. Verifies `dist/` exists. (Build first.)
-2. Validates `miniapp.json`.
-3. Copies `miniapp.json` and `icon.png` into `dist/`.
-4. Runs the system `zip -r` command to produce `<packageName>-<version>.zip` in the current directory.
+1. Runs `<pm> run build` with `NODE_ENV=production` (same as `release`), so the zip always contains a production bundle — never a stale dev build left behind by `dev`. Pass `--no-build` to skip this and zip whatever is already in `dist/`.
+2. Verifies `dist/` exists.
+3. Validates `miniapp.json`.
+4. Copies `miniapp.json` and `icon.png` into `dist/`.
+5. Runs the system `zip -r` command to produce `build/<packageName>-<version>.zip` and prints the absolute path.
+
+`build/` is self-ignoring — the CLI writes a `.gitignore` containing `*` into it on creation, so packed zips stay out of version control in any repo without touching the project's own `.gitignore`.
 
 The resulting ZIP is the artifact you'd upload to the miniapp store.
 
@@ -175,7 +179,7 @@ The published schema file ships at `node_modules/@mentra/miniapp-cli/schema/mini
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.example",
   "version": "1.0.0",
-  "name": "Live Captions",
+  "name": "Mentra Example",
   "description": "…",
   "icon": "icon.png",
   "port": 3000,

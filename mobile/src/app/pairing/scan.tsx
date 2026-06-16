@@ -1,4 +1,4 @@
-import CoreModule, {MentraDevice} from "@mentra/bluetooth-sdk"
+import BluetoothSdk, {type Device, type DeviceModel} from "@mentra/bluetooth-sdk"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
@@ -22,15 +22,15 @@ import {useCoreStore} from "@/stores/core"
 import GlassView from "@/components/ui/GlassView"
 
 export default function SelectGlassesBluetoothScreen() {
-  const {deviceModel}: {deviceModel: string} = useLocalSearchParams()
+  const {deviceModel} = useLocalSearchParams() as {deviceModel: DeviceModel}
   const {theme} = useAppTheme()
   const {goBack, replace, push} = useNavigationStore.getState()
   const pushUnder = usePushUnder()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  const btcConnected = useGlassesStore((state) => state.btcConnected)
+  const bluetoothClassicConnected = useGlassesStore((state) => state.bluetoothClassicConnected)
   const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
   const searchResults = useCoreStore((state) => state.searchResults)
-  const [rememberedSearchResults, setRememberedSearchResults] = useState<MentraDevice[]>(searchResults)
+  const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
 
   // useFocusEffect(
   //   useCallback(() => {
@@ -44,8 +44,8 @@ export default function SelectGlassesBluetoothScreen() {
     if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") {
       return
     }
-    CoreModule.disconnect()
-    CoreModule.forget()
+    BluetoothSdk.disconnect()
+    BluetoothSdk.forget()
     goBack()
   }, true)
 
@@ -60,7 +60,7 @@ export default function SelectGlassesBluetoothScreen() {
   useEffect(() => {
     const initializeAndSearchForDevices = async () => {
       try {
-        await CoreModule.startScan({model: deviceModel})
+        await BluetoothSdk.startScan(deviceModel)
       } catch (error) {
         console.error("Failed to start glasses scan:", error)
       }
@@ -69,7 +69,7 @@ export default function SelectGlassesBluetoothScreen() {
     void initializeAndSearchForDevices()
   }, [])
 
-  const triggerGlassesPairingGuide = async (device: MentraDevice) => {
+  const triggerGlassesPairingGuide = async (device: Device) => {
     if (Platform.OS === "android") {
       const hasLocationPermission = await requestFeaturePermissions(PermissionFeatures.LOCATION)
 
@@ -97,11 +97,11 @@ export default function SelectGlassesBluetoothScreen() {
     await startPairing(device)
   }
 
-  const startPairing = async (device: MentraDevice) => {
+  const startPairing = async (device: Device) => {
     const deviceTypesWithBtClassic = [DeviceTypes.LIVE]
-    if (Platform.OS === "android" || btcConnected || !deviceTypesWithBtClassic.includes(device.model as DeviceTypes)) {
+    if (Platform.OS === "android" || bluetoothClassicConnected || !deviceTypesWithBtClassic.includes(device.model as DeviceTypes)) {
       setTimeout(() => {
-        CoreModule.connect(device).catch((error) => {
+        BluetoothSdk.connect(device).catch((error) => {
           console.error("Failed to connect to glasses:", error)
         })
       }, 2000)
@@ -110,7 +110,7 @@ export default function SelectGlassesBluetoothScreen() {
       return
     }
 
-    await CoreModule.setDefaultDevice(device)
+    await BluetoothSdk.setDefaultDevice(device)
     setDeviceName(device.name)
     // pair bt classic first:
     replace("/pairing/btclassic")
@@ -169,11 +169,11 @@ export default function SelectGlassesBluetoothScreen() {
           ) : (
             <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
               <Group>
-                {visibleResults.map((res: MentraDevice) => {
+                {visibleResults.map((res: Device) => {
                   let deviceName = filterDeviceName(res.name)
 
                   return (
-                    <View key={res.id} className="flex-row items-center justify-between px-4 py-3 bg-background">
+                    <View key={res.id} className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">
                       <TouchableOpacity
                         className="flex-1"
                         onPress={() => triggerGlassesPairingGuide(res)}>

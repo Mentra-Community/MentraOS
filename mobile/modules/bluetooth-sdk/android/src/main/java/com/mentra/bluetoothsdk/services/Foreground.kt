@@ -1,4 +1,4 @@
-package com.mentra.core.services
+package com.mentra.bluetoothsdk.services
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -10,7 +10,8 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import com.mentra.core.Bridge
+import com.mentra.bluetoothsdk.Bridge
+import com.mentra.bluetoothsdk.debug.BleTraceLogger
 
 class ForegroundService : Service() {
     companion object {
@@ -21,11 +22,18 @@ class ForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         Bridge.log("ForegroundService: onCreate() called")
+        BleTraceLogger.logLifecycle(this, "ForegroundService", "service_create")
         startForegroundWithAutoDetectedType()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Bridge.log("ForegroundService: onStartCommand() called")
+        BleTraceLogger.logLifecycle(
+                this,
+                "ForegroundService",
+                "service_start_command",
+                mapOf("action" to intent?.action, "flags" to flags, "startId" to startId)
+        )
         // Re-check permissions in case they changed
         startForegroundWithAutoDetectedType()
         return START_STICKY
@@ -169,6 +177,11 @@ class ForegroundService : Service() {
             val notificationManager = getSystemService(NotificationManager::class.java)
             notificationManager.createNotificationChannel(channel)
         }
+    }
+
+    override fun onDestroy() {
+        BleTraceLogger.logLifecycle(this, "ForegroundService", "service_destroy")
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

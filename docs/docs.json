@@ -15,11 +15,15 @@
         "groups": [
           {
             "group": "Welcome",
-            "pages": ["index"]
+            "pages": [
+              "index"
+            ]
           },
           {
             "group": "Legal",
-            "pages": ["third-party-licenses"]
+            "pages": [
+              "third-party-licenses"
+            ]
           }
         ]
       },
@@ -53,7 +57,9 @@
               {
                 "group": "MiniAppServer",
                 "icon": "server",
-                "pages": ["app-devs/core-concepts/app-server"]
+                "pages": [
+                  "app-devs/core-concepts/app-server"
+                ]
               },
               {
                 "group": "Webviews",
@@ -68,7 +74,16 @@
               {
                 "group": "MentraSession",
                 "icon": "link",
-                "pages": ["app-devs/core-concepts/session"]
+                "pages": [
+                  "app-devs/core-concepts/session"
+                ]
+              },
+              {
+                "group": "Miniapp Interop",
+                "icon": "arrows-left-right",
+                "pages": [
+                  "app-devs/core-concepts/miniapp-interop"
+                ]
               },
               {
                 "group": "Device",
@@ -81,72 +96,95 @@
               {
                 "group": "Display",
                 "icon": "display",
-                "pages": ["app-devs/core-concepts/display/layouts"]
+                "pages": [
+                  "app-devs/core-concepts/display/layouts"
+                ]
               },
               {
                 "group": "Transcription",
                 "icon": "message-captions",
-                "pages": ["app-devs/core-concepts/microphone/speech-to-text"]
+                "pages": [
+                  "app-devs/core-concepts/microphone/speech-to-text"
+                ]
               },
               {
                 "group": "Translation",
                 "icon": "language",
-                "pages": ["app-devs/core-concepts/translation"]
+                "pages": [
+                  "app-devs/core-concepts/translation"
+                ]
               },
               {
                 "group": "Speaker",
                 "icon": "volume",
-                "pages": ["app-devs/core-concepts/speakers/text-to-speech"]
+                "pages": [
+                  "app-devs/core-concepts/speakers/text-to-speech"
+                ]
               },
               {
                 "group": "Microphone",
                 "icon": "microphone",
-                "pages": ["app-devs/core-concepts/microphone/audio-chunks"]
+                "pages": [
+                  "app-devs/core-concepts/microphone/audio-chunks"
+                ]
               },
-              {
-                "group": "Camera",
-                "icon": "camera",
-                "pages": ["app-devs/core-concepts/camera/photo-capture", "app-devs/core-concepts/camera/streaming"]
-              },
+              "app-devs/core-concepts/camera/README",
               {
                 "group": "Dashboard",
                 "icon": "gauge",
-                "pages": ["app-devs/core-concepts/display/dashboard"]
+                "pages": [
+                  "app-devs/core-concepts/display/dashboard"
+                ]
               },
               {
                 "group": "Permissions",
                 "icon": "lock",
-                "pages": ["app-devs/core-concepts/permissions"]
+                "pages": [
+                  "app-devs/core-concepts/permissions"
+                ]
               },
               {
                 "group": "Storage",
                 "icon": "database",
-                "pages": ["app-devs/core-concepts/storage"]
+                "pages": [
+                  "app-devs/core-concepts/storage"
+                ]
               },
               {
                 "group": "LED",
                 "icon": "lightbulb",
-                "pages": ["app-devs/core-concepts/led/overview"]
+                "pages": [
+                  "app-devs/core-concepts/led/overview"
+                ]
               },
               {
                 "group": "Location",
                 "icon": "location-dot",
-                "pages": ["app-devs/core-concepts/location"]
+                "pages": [
+                  "app-devs/core-concepts/location"
+                ]
               },
               {
                 "group": "Phone",
                 "icon": "mobile",
-                "pages": ["app-devs/core-concepts/phone"]
+                "pages": [
+                  "app-devs/core-concepts/phone"
+                ]
               },
               {
                 "group": "Time",
                 "icon": "clock",
-                "pages": ["app-devs/core-concepts/time"]
+                "pages": [
+                  "app-devs/core-concepts/time"
+                ]
               },
               {
                 "group": "Migrating from v2",
                 "icon": "arrow-up-right-dots",
-                "pages": ["app-devs/migration/overview", "app-devs/migration/api-map"]
+                "pages": [
+                  "app-devs/migration/overview",
+                  "app-devs/migration/api-map"
+                ]
               }
             ]
           },
@@ -194,6 +232,48 @@
         ]
       },
       {
+        "tab": "Mentra Live",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "icon": "bluetooth",
+            "pages": [
+              "mentra-live/overview",
+              "mentra-live/ai-ide-integration",
+              "mentra-live/quickstart",
+              "mentra-live/examples"
+            ]
+          },
+          {
+            "group": "Platform Setup",
+            "icon": "mobile",
+            "pages": [
+              "mentra-live/react-native-expo",
+              "mentra-live/android",
+              "mentra-live/ios"
+            ]
+          },
+          {
+            "group": "Core APIs",
+            "icon": "glasses",
+            "pages": [
+              "mentra-live/api-reference",
+              "mentra-live/audio",
+              "mentra-live/camera-streaming",
+              "mentra-live/hardware"
+            ]
+          },
+          {
+            "group": "Release",
+            "icon": "clipboard-check",
+            "pages": [
+              "mentra-live/troubleshooting",
+              "mentra-live/production-checklist"
+            ]
+          }
+        ]
+      },
+      {
         "tab": "OS Devs",
         "groups": [
           {
@@ -225,7 +305,9 @@
           {
             "group": "Glasses OEMs",
             "icon": "industry",
-            "pages": ["glasses-oems/overview"]
+            "pages": [
+              "glasses-oems/overview"
+            ]
           }
         ]
       },
@@ -234,7 +316,9 @@
         "groups": [
           {
             "group": "Recipes",
-            "pages": ["cookbook/dashboard-note-app"]
+            "pages": [
+              "cookbook/dashboard-note-app"
+            ]
           }
         ]
       }
@@ -252,7 +336,7 @@
       "icon": "discord"
     },
     {
-      "anchor": "SDK Package",
+      "anchor": "App SDK Package",
       "href": "https://www.npmjs.com/package/@mentraos/sdk",
       "icon": "npm"
     }
@@ -275,7 +359,15 @@
     }
   },
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude", "perplexity", "cursor", "vscode"]
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "perplexity",
+      "cursor",
+      "vscode"
+    ]
   },
   "footer": {
     "socials": {

@@ -1,4 +1,4 @@
-package com.mentra.core.stt
+package com.mentra.bluetoothsdk.stt
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -6,7 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.k2fsa.sherpa.onnx.*
-import com.mentra.core.Bridge
+import com.mentra.bluetoothsdk.Bridge
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -122,8 +122,9 @@ class SherpaOnnxTranscriber(private val context: Context) {
             val modelConfig = OnlineModelConfig()
 
             // Detect model type based on available files
-            val ctcModelFile = File(modelDir, "model.int8.onnx")
-            val transducerEncoderFile = File(modelDir, "encoder.onnx")
+            val ctcModelFile = findReadableFile(modelDir, listOf("model.int8.onnx", "model.onnx"))
+            val transducerEncoderFile =
+                    findReadableFile(modelDir, listOf("encoder.onnx", "encoder.int8.onnx"))
 
             when {
                 ctcModelFile.exists() -> {
@@ -143,8 +144,10 @@ class SherpaOnnxTranscriber(private val context: Context) {
                     modelType = "transducer"
                     Bridge.log("Detected transducer model at $modelPath")
 
-                    val decoderFile = File(modelDir, "decoder.onnx")
-                    val joinerFile = File(modelDir, "joiner.onnx")
+                    val decoderFile =
+                            findReadableFile(modelDir, listOf("decoder.onnx", "decoder.int8.onnx"))
+                    val joinerFile =
+                            findReadableFile(modelDir, listOf("joiner.onnx", "joiner.int8.onnx"))
 
                     if (!decoderFile.exists() || !joinerFile.exists()) {
                         throw IllegalStateException(
@@ -222,12 +225,17 @@ class SherpaOnnxTranscriber(private val context: Context) {
         }
     }
 
+    private fun findReadableFile(modelDir: File, candidates: List<String>): File {
+        return candidates.map { File(modelDir, it) }.firstOrNull { file ->
+            file.exists() && file.canRead() && file.length() > 0
+        } ?: File(modelDir, candidates.first())
+    }
+
     /**
      * Feed PCM audio data (16-bit little endian) into the transcriber. This method should be called
      * continuously with short chunks (e.g., 100-300ms).
      *
-     * Note: Audio passed to this method is assumed to have already passed VAD elsewhere, so it's
-     * directly queued for processing without additional VAD checks.
+     * Audio is queued directly; microphone VAD gating is not applied in the SDK.
      */
     fun acceptAudio(pcm16le: ByteArray) {
         if (!running.get()) {
@@ -235,7 +243,6 @@ class SherpaOnnxTranscriber(private val context: Context) {
             return
         }
 
-        // Directly queue the audio data for processing
         if (!pcmQueue.offer(pcm16le.copyOf())) {
             // Queue is full, drop oldest and try again
             pcmQueue.poll()

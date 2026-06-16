@@ -3,6 +3,13 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.mentra.asg_client">
 
+    <permission
+        android:name="com.mentra.asg_client.permission.RECOVERY_TELEMETRY"
+        android:protectionLevel="signature" />
+
+    <uses-permission android:name="com.mentra.recovery.permission.HEARTBEAT" />
+    <uses-permission android:name="com.mentra.recovery.permission.CONTROL" />
+
     <uses-feature
         android:name="android.hardware.telephony"
         android:required="false" />
@@ -66,7 +73,9 @@
     <!-- Application node is not neccessary for libraries -->
     <application
         android:name="com.mentra.asg_client.AsgClientApplication"
-        android:usesCleartextTraffic="true">
+        android:testOnly="false"
+        android:usesCleartextTraffic="true"
+        tools:replace="android:testOnly">
         <!--      android:usesCleartextTraffic="true"-->
         <!--      android:icon="@mipmap/ic_launcher"-->
         <!--      android:label="@string/app_name"-->
@@ -107,6 +116,17 @@
         </receiver>
 
         <receiver
+            android:name="com.mentra.asg_client.receiver.ServiceHeartbeatReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="com.mentra.recovery.permission.HEARTBEAT">
+            <intent-filter>
+                <action android:name="com.mentra.recovery.ACTION_PING" />
+                <action android:name="com.mentra.asg_client.ACTION_HEARTBEAT" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
             android:name="com.mentra.asg_client.audio.I2SAudioBroadcastReceiver"
             android:enabled="true"
             android:exported="true">
@@ -127,6 +147,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- MTK USB UVC (webcam) streaming state -->
+        <receiver
+            android:name="com.mentra.asg_client.receiver.UvcStreamingBroadcastReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.uvc.action.UVC_STREAMING_CHANGED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Debug receiver for testing BES OTA via adb -->
         <receiver
             android:name="com.mentra.asg_client.receiver.DebugBesOtaReceiver"
@@ -137,6 +167,17 @@
             </intent-filter>
         </receiver>
 
+        <!-- Debug receiver for polling BES trace logs into MentraBleTrace via adb -->
+        <receiver
+            android:name="com.mentra.asg_client.receiver.DebugBesTraceReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="com.mentra.DEBUG_BES_TRACE" />
+            </intent-filter>
+        </receiver>
+
         <!-- Debug receiver for testing APK OTA via adb -->
         <receiver
             android:name="com.mentra.asg_client.receiver.DebugApkOtaReceiver"
@@ -144,6 +185,16 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="com.mentra.DEBUG_APK_OTA" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Debug receiver for testing MTK OTA via adb -->
+        <receiver
+            android:name="com.mentra.asg_client.receiver.DebugMtkOtaReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.mentra.DEBUG_MTK_OTA" />
             </intent-filter>
         </receiver>
 
@@ -159,6 +210,16 @@
             </intent-filter>
         </receiver>
 
+        <receiver
+            android:name="com.mentra.asg_client.receiver.RecoveryTelemetryReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="com.mentra.asg_client.permission.RECOVERY_TELEMETRY">
+            <intent-filter>
+                <action android:name="com.mentra.recovery.ACTION_TELEMETRY" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name="com.mentra.asg_client.service.core.AsgClientService"
             android:enabled="true"
@@ -170,7 +231,7 @@
         </service>
 
         <service
-            android:name="com.mentra.asg_client.camera.CameraNeo"
+            android:name="com.mentra.asg_client.camera.CameraNeoService"
             android:enabled="true"
             android:exported="true"
             android:foregroundServiceType="camera|microphone" />
@@ -277,7 +338,8 @@
 
     <queries>
         <package android:name="com.mentra.augmentos" />
-        <package android:name="com.mentra.otaupdater" />
+        <package android:name="com.mentra.recovery" />
+        <package android:name="com.augmentos.otaupdater" />
     </queries>
 
 </manifest>

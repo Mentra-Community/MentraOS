@@ -1,4 +1,4 @@
-package com.mentra.core.controllers
+package com.mentra.bluetoothsdk.controllers
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
@@ -17,10 +17,10 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import androidx.core.content.ContextCompat
-import com.mentra.core.Bridge
-import com.mentra.core.CoreManager
-import com.mentra.core.GlassesStore
-import com.mentra.core.utils.ControllerTypes
+import com.mentra.bluetoothsdk.Bridge
+import com.mentra.bluetoothsdk.DeviceManager
+import com.mentra.bluetoothsdk.DeviceStore
+import com.mentra.bluetoothsdk.utils.ControllerTypes
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -127,7 +127,7 @@ class R1 : ControllerManager() {
         }
 
     // Public ring MAC parsed from advertisement manufacturer data (last 6 bytes), formatted
-    // as "AA:BB:CC:DD:EE:FF". This is what gets published to GlassesStore/controllerMacAddress.
+    // as "AA:BB:CC:DD:EE:FF". This is what gets published to DeviceStore/controllerMacAddress.
     private var ringMacAddress: String?
         get() = prefs.getString("r1_ringMacAddress", null)
         set(value) {
@@ -174,7 +174,7 @@ class R1 : ControllerManager() {
             val old = field
             field = value
             if (value != old && value >= 0) {
-                GlassesStore.apply("glasses", "controllerBatteryLevel", value)
+                DeviceStore.apply("glasses", "controllerBatteryLevel", value)
             }
         }
 
@@ -418,7 +418,7 @@ class R1 : ControllerManager() {
         val connectedName = try { gatt?.device?.name } catch (e: SecurityException) { null }
         if (connectedName != null) {
             extractRingId(connectedName)?.let {
-                GlassesStore.apply("core", "controller_device_name", it)
+                DeviceStore.apply("bluetooth", "controller_device_name", it)
             }
         }
 
@@ -427,9 +427,9 @@ class R1 : ControllerManager() {
             Bridge.log("R1: No ring MAC address found")
             return
         }
-        GlassesStore.apply("glasses", "controllerMacAddress", mac)
-        GlassesStore.apply("glasses", "controllerConnected", true)
-        // GlassesStore.apply("glasses", "controllerFullyBooted", true)
+        DeviceStore.apply("glasses", "controllerMacAddress", mac)
+        DeviceStore.apply("glasses", "controllerConnected", true)
+        // DeviceStore.apply("glasses", "controllerFullyBooted", true)
 
         // tell the ring to connect to the glasses if we have its mac address:
         connectToGlasses()
@@ -437,7 +437,7 @@ class R1 : ControllerManager() {
         // after a second, connect the glasses to the controller if needed:
         CoroutineScope(Dispatchers.Main).launch {
             delay(1000)
-            CoreManager.getInstance().sgc?.connectController()
+            DeviceManager.getInstance().sgc?.connectController()
         }
 
         startHeartbeat()
@@ -453,8 +453,8 @@ class R1 : ControllerManager() {
      * the 3-byte header + MAC. If the ring rejects this raw payload, decode the wrapper.
      */
     private fun connectToGlasses() {
-        // Try GlassesStore first; fall back to cached value in SharedPreferences.
-        val glassesMac = (GlassesStore.get("glasses", "btMacAddress") as? String)
+        // Try DeviceStore first; fall back to cached value in SharedPreferences.
+        val glassesMac = (DeviceStore.get("glasses", "bluetoothMacAddress") as? String)
             ?: prefs.getString("glasses_btMacAddress", null)
         if (glassesMac == null) {
             Bridge.log("R1: connectToGlasses: no glasses MAC")
@@ -505,7 +505,7 @@ class R1 : ControllerManager() {
         val r = object : Runnable {
             override fun run() {
                 mainHandler.postDelayed(this, 30_000L)
-                val isConnected = GlassesStore.get("glasses", "controllerConnected") as? Boolean ?: false
+                val isConnected = DeviceStore.get("glasses", "controllerConnected") as? Boolean ?: false
                 if (!isConnected) return
                 val char = batteryLevelChar
                 if (char != null) {
@@ -599,8 +599,8 @@ class R1 : ControllerManager() {
         readInFlight = false
         ringMacAddress = null
         ringBleAddress = null
-        GlassesStore.apply("glasses", "controllerConnected", false)
-        GlassesStore.apply("glasses", "controllerFullyBooted", false)
+        DeviceStore.apply("glasses", "controllerConnected", false)
+        DeviceStore.apply("glasses", "controllerFullyBooted", false)
     }
 
     // MARK: - GATT Callback
@@ -622,9 +622,9 @@ class R1 : ControllerManager() {
                         mainHandler.post {
                             disconnect()
                             ringBleAddress = null
-                            GlassesStore.apply("glasses", "controllerConnected", false)
-                            GlassesStore.apply("glasses", "controllerFullyBooted", false)
-                            GlassesStore.apply("glasses", "controllerSearching", true)
+                            DeviceStore.apply("glasses", "controllerConnected", false)
+                            DeviceStore.apply("glasses", "controllerFullyBooted", false)
+                            DeviceStore.apply("glasses", "controllerSearching", true)
                             mainHandler.postDelayed({ startScan() }, 1000)
                         }
                         return
@@ -863,7 +863,8 @@ class R1 : ControllerManager() {
     override fun sendJson(jsonOriginal: Map<String, Any>, wakeUp: Boolean, requireAck: Boolean) {}
     override fun requestPhoto(
         requestId: String, appId: String, size: String?, webhookUrl: String?,
-        authToken: String?, compress: String?, flash: Boolean, sound: Boolean
+        authToken: String?, compress: String?, flash: Boolean, save: Boolean, sound: Boolean,
+        exposureTimeNs: Long?, iso: Int?,
     ) {}
     override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {}
     override fun stopVideoRecording(requestId: String) {}
@@ -878,7 +879,13 @@ class R1 : ControllerManager() {
     override fun clearDisplay() {}
     override fun sendTextWall(text: String) {}
     override fun sendDoubleTextWall(top: String, bottom: String) {}
-    override fun displayBitmap(base64ImageData: String): Boolean = false
+    override fun displayBitmap(
+            base64ImageData: String,
+            x: Int?,
+            y: Int?,
+            width: Int?,
+            height: Int?
+    ): Boolean = false
     override fun showDashboard() {}
     override fun setDashboardPosition(height: Int, depth: Int) {}
     override fun setHeadUpAngle(angle: Int) {}
@@ -888,13 +895,13 @@ class R1 : ControllerManager() {
     override fun sendReboot() {}
     override fun sendRgbLedControl(
         requestId: String, packageName: String?, action: String, color: String?,
-        ontime: Int, offtime: Int, count: Int
+        onDurationMs: Int, offDurationMs: Int, count: Int
     ) {}
     override fun requestWifiScan() {}
     override fun sendWifiCredentials(ssid: String, password: String) {}
     override fun forgetWifiNetwork(ssid: String) {}
     override fun sendHotspotState(enabled: Boolean) {}
-    override fun sendOtaStart() {}
+    override fun sendOtaStart(otaVersionUrl: String?) {}
     override fun sendUserEmailToGlasses(email: String) {}
     override fun queryGalleryStatus() {}
     override fun sendGalleryMode() {}

@@ -1,6 +1,36 @@
 // Mock react-native-permissions
 jest.mock("react-native-permissions", () => require("react-native-permissions/mock"))
 
+jest.mock("@mentra/bluetooth-sdk", () => {
+  const {bluetoothSdkMock} = require("./src/test-utils/mockBluetoothSdk")
+  return {
+    __esModule: true,
+    default: bluetoothSdkMock,
+    ...bluetoothSdkMock,
+  }
+})
+
+jest.mock("@mentra/bluetooth-sdk-internal", () => {
+  const {bluetoothSdkMock} = require("./src/test-utils/mockBluetoothSdk")
+  return {
+    __esModule: true,
+    default: bluetoothSdkMock,
+    ...bluetoothSdkMock,
+  }
+})
+
+jest.mock("@/utils/auth/authClient", () => ({
+  __esModule: true,
+  default: {
+    getSession: jest.fn(() => Promise.resolve({is_ok: () => false, is_error: () => true})),
+    getUser: jest.fn(() => Promise.resolve({is_ok: () => false, is_error: () => true})),
+    onAuthStateChange: jest.fn(() => ({is_ok: () => true, value: {unsubscribe: jest.fn()}})),
+    signOut: jest.fn(() => Promise.resolve({is_ok: () => true})),
+    startAutoRefresh: jest.fn(() => Promise.resolve({is_ok: () => true})),
+    stopAutoRefresh: jest.fn(() => Promise.resolve({is_ok: () => true})),
+  },
+}))
+
 // Mock react-native-mmkv
 jest.mock("react-native-mmkv", () => {
   const mockStorage = new Map([
@@ -159,7 +189,7 @@ jest.mock("expo-audio", () => ({
 
 // Mock react-native-nitro-bg-timer for non-native Jest runs
 jest.mock("react-native-nitro-bg-timer", () => ({
-  BgTimer: {
+  BackgroundTimer: {
     setInterval: jest.fn((callback, delay) => setInterval(callback, delay)),
     clearInterval: jest.fn((id) => clearInterval(id)),
     setTimeout: jest.fn((callback, delay) => setTimeout(callback, delay)),
@@ -226,6 +256,7 @@ jest.mock("@mentra/island", () => {
       clearTimeout: jest.fn((id) => clearTimeout(id)),
     },
     useApps: jest.fn(() => appStatusState.apps),
+    useForegroundApp: jest.fn(() => null),
     useAppStatusStore,
     useRefresh: jest.fn(() => appStatusState.refresh),
     useStopAll: jest.fn(() => appStatusState.stopAll),
@@ -252,6 +283,7 @@ jest.mock("@mentra/island", () => {
     },
     devServerBridge: {},
     displayProcessor: {
+      attachToRuntime: jest.fn(),
       processDisplayEvent: jest.fn((event) => ({...event, _processed: true})),
     },
     HardwareCompatibility: {
@@ -284,10 +316,16 @@ jest.mock("@mentra/island", () => {
       getAppStatus: jest.fn(() => null),
       handleRawMessage: jest.fn(),
       initialize: jest.fn(),
+      wireStreamingStatusFanout: jest.fn(),
     },
     localSttFallbackCoordinator: {
       getActiveLanguage: jest.fn(() => null),
       isActive: jest.fn(() => false),
+    },
+    offlineSpeechModelService: {
+      getStatus: jest.fn(() => null),
+      startBackgroundDownloads: jest.fn(),
+      subscribe: jest.fn(() => () => {}),
     },
     micStateCoordinator: {
       cleanup: jest.fn(),
@@ -337,16 +375,6 @@ jest.mock("@/services/WebSocketManager", () => {
   return {
     WebSocketStatus,
     default: new MockWebSocketManager(),
-  }
-})
-
-// Mock Bluetooth SDK native module to avoid native bridge errors
-jest.mock("@mentra/bluetooth-sdk", () => {
-  const {coreModuleMock} = require("./src/test-utils/mockCoreModule")
-  return {
-    __esModule: true,
-    default: coreModuleMock,
-    GlassesStatus: {},
   }
 })
 

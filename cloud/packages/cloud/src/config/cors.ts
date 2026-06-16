@@ -16,7 +16,7 @@ export const CORS_ORIGINS = [
   "http://localhost:8052",
   "https://cloud.augmentos.org",
   "https://dev.augmentos.org",
-  "https://devold.augmentos.org",
+  "https://clouddev.ngrok.app",
   "https://www.augmentos.org",
   "https://augmentos.org",
   "https://augmentos.dev",
@@ -117,7 +117,7 @@ export const CORS_ORIGINS = [
 
   "https://console.mentraglass.cn",
   "https://account.mentraglass.cn",
-  "https://store.mentraglass.cn",
+  "https://apps.mentraglass.cn",
 
   "https://dev-console.mentraglass.cn",
   "https://dev-account.mentraglass.cn",

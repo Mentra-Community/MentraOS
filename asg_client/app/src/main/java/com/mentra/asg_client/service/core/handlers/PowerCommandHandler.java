@@ -2,27 +2,26 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
 import android.util.Log;
-
-import com.mentra.asg_client.SysControl;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
-
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
+import com.mentra.asg_client.service.utils.ServiceConstants;
+import java.util.Set;
 import org.json.JSONObject;
 
-import java.util.Set;
-
 /**
- * Handler for power-related commands (shutdown, reboot).
- * Handles commands sent from the phone to control glasses power state.
+ * Handler for power-related commands (shutdown, reboot). Handles commands sent from the phone to
+ * control glasses power state.
  *
- * Command format: {"type": "shutdown"} or {"type": "reboot"}
+ * <p>Command format: {"type": "shutdown"} or {"type": "reboot"}
  */
 public class PowerCommandHandler implements ICommandHandler {
     private static final String TAG = "PowerCommandHandler";
 
     private static final String CMD_SHUTDOWN = "shutdown";
     private static final String CMD_REBOOT = "reboot";
+    private static final String CMD_SET_SYSTEM_TIME = ServiceConstants.COMMAND_SET_SYSTEM_TIME;
 
     private final Context context;
     private final AsgClientServiceManager serviceManager;
@@ -34,7 +33,7 @@ public class PowerCommandHandler implements ICommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of(CMD_SHUTDOWN, CMD_REBOOT);
+        return Set.of(CMD_SHUTDOWN, CMD_REBOOT, CMD_SET_SYSTEM_TIME);
     }
 
     @Override
@@ -45,6 +44,8 @@ public class PowerCommandHandler implements ICommandHandler {
                     return handleShutdown();
                 case CMD_REBOOT:
                     return handleReboot();
+                case CMD_SET_SYSTEM_TIME:
+                    return handleSetSystemTime(data);
                 default:
                     Log.e(TAG, "Unsupported power command: " + commandType);
                     return false;
@@ -56,15 +57,15 @@ public class PowerCommandHandler implements ICommandHandler {
     }
 
     /**
-     * Handle shutdown command from phone.
-     * Stops any active recording to prevent file corruption, then shuts down.
+     * Handle shutdown command from phone. Stops any active recording to prevent file corruption,
+     * then shuts down.
      */
     private boolean handleShutdown() {
         Log.i(TAG, "🔌 Received shutdown command from phone - initiating device shutdown");
 
         try {
             stopActiveRecording();
-            SysControl.shut(context);
+            SystemControllerFactory.get(context).shutdown();
             return true;
         } catch (Exception e) {
             Log.e(TAG, "❌ Error initiating shutdown", e);
@@ -73,15 +74,15 @@ public class PowerCommandHandler implements ICommandHandler {
     }
 
     /**
-     * Handle reboot command from phone.
-     * Stops any active recording to prevent file corruption, then reboots.
+     * Handle reboot command from phone. Stops any active recording to prevent file corruption, then
+     * reboots.
      */
     private boolean handleReboot() {
         Log.i(TAG, "🔄 Received reboot command from phone - initiating device reboot");
 
         try {
             stopActiveRecording();
-            SysControl.reboot(context);
+            SystemControllerFactory.get(context).reboot();
             return true;
         } catch (Exception e) {
             Log.e(TAG, "❌ Error initiating reboot", e);
@@ -90,9 +91,28 @@ public class PowerCommandHandler implements ICommandHandler {
     }
 
     /**
-     * Stop any active video recording before power state change.
-     * MPEG4 writes its moov atom during MediaRecorder.stop() — if the device powers off
-     * before that, the recorded file is unplayable.
+     * Set glasses system clock from phone (only sent when phone detects clock skew during gallery
+     * sync).
+     */
+    private boolean handleSetSystemTime(JSONObject data) {
+        long timestampMs = data != null ? data.optLong("timestamp_ms", 0L) : 0L;
+        if (timestampMs <= 0L) {
+            Log.w(TAG, "set_system_time ignored: missing or invalid timestamp_ms");
+            return false;
+        }
+        Log.i(TAG, "⏰ Setting system time from phone: " + timestampMs);
+        try {
+            SystemControllerFactory.get(context).setSystemTime(timestampMs);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Error setting system time", e);
+            return false;
+        }
+    }
+
+    /**
+     * Stop any active video recording before power state change. MPEG4 writes its moov atom during
+     * MediaRecorder.stop() — if the device powers off before that, the recorded file is unplayable.
      */
     private void stopActiveRecording() {
         try {
@@ -102,7 +122,9 @@ public class PowerCommandHandler implements ICommandHandler {
 
             MediaCaptureService mediaCaptureService = serviceManager.getMediaCaptureService();
             if (mediaCaptureService != null && mediaCaptureService.isRecordingVideo()) {
-                Log.i(TAG, "🎥 Active video recording detected - stopping before power state change");
+                Log.i(
+                        TAG,
+                        "🎥 Active video recording detected - stopping before power state change");
                 mediaCaptureService.stopVideoRecording();
                 Log.i(TAG, "🎥 Video recording stopped successfully");
             }

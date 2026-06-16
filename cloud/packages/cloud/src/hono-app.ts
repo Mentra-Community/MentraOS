@@ -30,10 +30,12 @@ import {
   incidentLogsApi,
   calendarApi,
   locationApi,
+  navigationApi,
   notificationsApi,
   photoApi,
-  miniappSdkPhotoApi,
   deviceStateApi,
+  v2StreamsApi,
+  v2PhotoApi,
   // SDK APIs (third-party apps)
   sdkVersionApi,
   simpleStorageApi,
@@ -311,11 +313,13 @@ app.route("/api/client/feedback", feedbackApi);
 app.route("/api/incidents", incidentLogsApi);
 app.route("/api/client/calendar", calendarApi);
 app.route("/api/client/location", locationApi);
+app.route("/api/client/navigation", navigationApi);
 app.route("/api/client/notifications", notificationsApi);
 app.route("/api/client/photo", photoApi);
-app.route("/api/client/miniapp-sdk-photo", miniappSdkPhotoApi);
 app.route("/api/client/device/state", deviceStateApi);
 app.route("/api/client/audio/configure", audioConfigApi);
+app.route("/api/v2/client/streams/managed", v2StreamsApi);
+app.route("/api/v2/client/photo", v2PhotoApi);
 
 // ============================================================================
 // SDK API Routes (Hono native)

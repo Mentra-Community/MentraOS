@@ -1,4 +1,5 @@
-import CoreModule from "@mentra/bluetooth-sdk"
+import {type RgbLedControlResponseEvent, type TouchEvent} from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {
   displayProcessor,
   localMiniappRuntime,
@@ -20,7 +21,7 @@ import udp from "@/services/UdpManager"
 import ws from "@/services/WebSocketManager"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {useDisplayStore} from "@/stores/display"
-import {useGlassesStore} from "@/stores/glasses"
+import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
@@ -123,7 +124,7 @@ class SocketComms {
       ssid: wifi.state === "connected" ? wifi.ssid : null,
     }
 
-    const connected = glassesInfo.connected
+    const connected = isGlassesConnected(glassesInfo.connection)
 
     ws.sendText(
       JSON.stringify({
@@ -204,18 +205,6 @@ class SocketComms {
     ws.sendText(jsonString)
   }
 
-  public sendPhotoResponse(requestId: string, photoUrl: string) {
-    const event = {
-      type: "photo_response",
-      requestId: requestId,
-      photoUrl: photoUrl,
-      timestamp: Date.now(),
-    }
-
-    const jsonString = JSON.stringify(event)
-    ws.sendText(jsonString)
-  }
-
   public sendVideoStreamResponse(appId: string, streamUrl: string) {
     const event = {
       type: "video_stream_response",
@@ -228,11 +217,11 @@ class SocketComms {
     ws.sendText(jsonString)
   }
 
-  public sendTouchEvent(event: {device_model: string; gesture_name: string; timestamp: number}) {
+  public sendTouchEvent(event: TouchEvent) {
     const payload = {
       type: "touch_event",
-      device_model: event.device_model,
-      gesture_name: event.gesture_name,
+      device_model: event.deviceModel,
+      gesture_name: event.gestureName,
       timestamp: event.timestamp,
     }
     ws.sendText(JSON.stringify(payload))
@@ -271,18 +260,18 @@ class SocketComms {
     ws.sendText(JSON.stringify(payload))
   }
 
-  public sendRgbLedControlResponse(requestId: string, success: boolean, errorMessage?: string | null) {
-    if (!requestId) {
+  public sendRgbLedControlResponse(event: RgbLedControlResponseEvent) {
+    if (!event.requestId) {
       console.log("SOCKET: Skipping RGB LED control response - missing requestId")
       return
     }
-    const payload: any = {
+    const payload: {type: string; requestId: string; success: boolean; error?: string} = {
       type: "rgb_led_control_response",
-      requestId,
-      success,
+      requestId: event.requestId,
+      success: event.state === "success",
     }
-    if (errorMessage) {
-      payload.error = errorMessage
+    if (event.state === "error") {
+      payload.error = event.errorCode
     }
     ws.sendText(JSON.stringify(payload))
   }
@@ -298,23 +287,14 @@ class SocketComms {
     ws.sendText(jsonString)
   }
 
-  public sendLocalTranscription(transcription: any) {
-    if (!ws.isConnected()) {
-      console.log("Cannot send local transcription: WebSocket not connected")
-      return
-    }
-
-    const text = transcription.text
-    if (!text || text === "") {
-      console.log("Skipping empty transcription result")
-      return
-    }
-
-    const jsonString = JSON.stringify(transcription)
-    ws.sendText(jsonString)
-
-    const isFinal = transcription.isFinal || false
-    console.log(`SOCKET: Sent ${isFinal ? "final" : "partial"} transcription: '${text}'`)
+  /**
+   * @deprecated Local transcripts no longer roundtrip to the cloud. They
+   * flow directly to subscribed local miniapps via LocalMiniappRuntime.
+   * Retained as a no-op only so external callers (if any) don't crash.
+   * Remove call sites and then delete this in a follow-up.
+   */
+  public sendLocalTranscription(_transcription: any) {
+    return
   }
 
   public sendUdpRegister(userIdHash: number) {
@@ -334,6 +314,16 @@ class SocketComms {
     // if (!isChina) {
     //   await livekit.connect()
     // }
+
+    // Resync the cloud's stream-subscription set to whatever's actually
+    // live locally. The cloud retains subscriptions across app
+    // restarts; without this push, a previous session's miniapp subs
+    // (e.g. transcription:auto from a dev miniapp that was killed when
+    // Mentra was force-quit) keep firing — cloud sends
+    // mic_state_change=pcm and fans transcripts that no JSContext is
+    // alive to receive. Common case on cold boot is "[]" which silences
+    // the cloud until a miniapp actually starts.
+    localMiniappRuntime.resyncCloudSubscriptions()
 
     // refresh the mini app list:
     restComms.getApplets()
@@ -448,10 +438,12 @@ class SocketComms {
   }
 
   private async handle_microphone_state_change(msg: any) {
-    // const bypassVad = msg.bypassVad ?? true
-    const bypassVad = true
+    // Phone-side VAD is now driven by LocalSttFallbackCoordinator for
+    // per-utterance offline/online STT switching, so we never want to
+    // bypass it from the cloud side. The cloud's bypassVad hint is ignored.
+    const bypassVad = false
     const requiredDataStrings = msg.requiredData || []
-    console.log(`SOCKET: mic_state_change: requiredData = [${requiredDataStrings}], bypassVad = ${bypassVad}`)
+    // console.log(`SOCKET: mic_state_change: requiredData = [${requiredDataStrings}]`)
     let shouldSendPcmData = false
     let shouldSendTranscript = false
     if (requiredDataStrings.includes("pcm")) {
@@ -477,17 +469,10 @@ class SocketComms {
       }
     }
 
-    // CoreModule.updateCore({
-    //   // should_send_pcm: shouldSendPcmData,
-    //   should_send_lc3: shouldSendPcmData, // online apps always want lc3
-    //   should_send_transcript: shouldSendTranscript,
-    //   bypass_vad: bypassVad,
-    // })
     micStateCoordinator.setCloudRequirements({
       pcm: !!shouldSendPcmData,
       lc3: !!shouldSendPcmData, // online apps always want lc3
       transcript: !!shouldSendTranscript,
-      bypass_vad: !!bypassVad,
     })
   }
 
@@ -505,7 +490,7 @@ class SocketComms {
       processedEvent = msg
     }
 
-    CoreModule.displayEvent(processedEvent)
+    BluetoothSdk.displayEvent(processedEvent)
     const displayEventStr = JSON.stringify(processedEvent)
     useDisplayStore.getState().setDisplayEvent(displayEventStr)
   }
@@ -553,50 +538,99 @@ class SocketComms {
     const size = normalizePhotoSize(msg.size)
     const authToken = typeof msg.authToken === "string" && msg.authToken.length > 0 ? msg.authToken : null
     const compress = normalizePhotoCompression(msg.compress)
-    const flash = msg.flash ?? true
     const sound = msg.sound ?? true
+    const rawExp = msg.exposureTimeNs
+    const exposureTimeNs = typeof rawExp === "number" && Number.isFinite(rawExp) && rawExp > 0 ? rawExp : null
     console.log(
-      `Received photo_request, requestId: ${requestId}, appId: ${appId}, webhookUrl: ${webhookUrl}, size: ${size} authToken: ${authToken} compress: ${compress} flash: ${flash} sound: ${sound}`,
+      `SOCKET: PHOTO PIPELINE [1/6] Received photo_request requestId=${requestId} appId=${appId} webhookUrl=${webhookUrl} size=${size} compress=${compress} sound=${sound} exposureTimeNs=${exposureTimeNs ?? "none"} authToken=${authToken ? "set" : "none"}`,
     )
     if (!requestId || !appId) {
-      console.log("Invalid photo request: missing requestId or appId")
+      console.log(
+        `SOCKET: PHOTO PIPELINE — invalid photo_request (missing requestId=${requestId || "empty"} or appId=${appId || "empty"})`,
+      )
       return
     }
-    // Parameter order: requestId, appId, size, webhookUrl, authToken, compress, flash, sound
-    CoreModule.photoRequest(requestId, appId, size, webhookUrl, authToken, compress, flash, sound)
+    console.log(`SOCKET: PHOTO PIPELINE [2/6] Forwarding to BluetoothSdk.requestPhoto requestId=${requestId}`)
+    void BluetoothSdk.requestPhoto({
+      requestId,
+      appId,
+      size,
+      webhookUrl,
+      authToken,
+      compress,
+      sound,
+      exposureTimeNs,
+    })
+      .then(() => {
+        console.log(`SOCKET: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto resolved requestId=${requestId}`)
+      })
+      .catch((err: unknown) => {
+        console.log(
+          `SOCKET: PHOTO PIPELINE — BluetoothSdk.requestPhoto failed requestId=${requestId}:`,
+          err instanceof Error ? err.message : err,
+        )
+      })
   }
 
   private handle_start_stream(msg: any) {
     const streamUrl = msg.streamUrl
     if (streamUrl) {
-      CoreModule.startStream(msg)
+      void BluetoothSdk.startExternallyManagedStream(msg).catch((error) => {
+        console.warn("SOCKET: start_stream failed:", error)
+      })
     } else {
       console.log("Invalid stream request: missing stream URL")
     }
   }
 
   private handle_stop_stream() {
-    CoreModule.stopStream()
+    void BluetoothSdk.stopStream().catch((error) => {
+      console.warn("SOCKET: stop_stream failed:", error)
+    })
   }
 
   private handle_keep_stream_alive(msg: any) {
     console.log(`SOCKET: Received KEEP_STREAM_ALIVE: ${JSON.stringify(msg)}`)
-    CoreModule.keepStreamAlive(msg)
+    BluetoothSdk.sendExternallyManagedStreamKeepAlive(msg)
   }
 
   private handle_start_video_recording(msg: any) {
     console.log(`SOCKET: Received START_VIDEO_RECORDING: ${JSON.stringify(msg)}`)
     const videoRequestId = msg.requestId || `video_${Date.now()}`
     const save = msg.save !== false
-    const flash = msg.flash ?? true
     const sound = msg.sound ?? true
-    CoreModule.startVideoRecording(videoRequestId, save, flash, sound)
+    // Optional per-recording video settings; when absent the glasses use their
+    // saved button-video settings. Only forward fields that are present.
+    const s = msg.settings ?? {}
+    // Optional auto-stop timer (minutes); 0/absent = record until stopped. Accept it from the
+    // canonical nested location (settings.maxRecordingTimeMinutes, per VideoRecordingSettings) or
+    // the legacy top-level location, preferring nested. `??` (not `||`) preserves an explicit 0.
+    const rawMaxRecordingTimeMinutes = s.maxRecordingTimeMinutes ?? msg.maxRecordingTimeMinutes
+    const maxRecordingTimeMinutes =
+      typeof rawMaxRecordingTimeMinutes === "number" ? rawMaxRecordingTimeMinutes : undefined
+    const settings =
+      s.width != null || s.height != null || s.fps != null || maxRecordingTimeMinutes != null
+        ? {width: s.width, height: s.height, fps: s.fps, maxRecordingTimeMinutes}
+        : undefined
+    BluetoothSdk.startVideoRecording(videoRequestId, save, sound, settings).catch((error) => {
+      console.warn("SOCKET: startVideoRecording failed:", error)
+    })
   }
 
   private handle_stop_video_recording(msg: any) {
-    console.log(`SOCKET: Received STOP_VIDEO_RECORDING: ${JSON.stringify(msg)}`)
     const stopRequestId = msg.requestId || ""
-    CoreModule.stopVideoRecording(stopRequestId)
+    // Upload target supplied at stop (not start) so the auth token is fresh when
+    // the upload runs. Empty webhook = keep the video on device (no upload).
+    const webhookUrl = msg.webhookUrl ?? ""
+    const authToken = typeof msg.authToken === "string" && msg.authToken.length > 0 ? msg.authToken : ""
+    // Don't log the full payload: the auth token is a secret. Log presence, not the value
+    // (mirrors the photo pipeline redaction above).
+    console.log(
+      `SOCKET: Received STOP_VIDEO_RECORDING requestId=${stopRequestId} webhookUrl=${webhookUrl || "none"} authToken=${authToken ? "set" : "none"}`,
+    )
+    BluetoothSdk.stopVideoRecording(stopRequestId, webhookUrl, authToken).catch((error) => {
+      console.warn("SOCKET: stopVideoRecording failed:", error)
+    })
   }
 
   private handle_rgb_led_control(msg: any) {
@@ -610,7 +644,7 @@ class SocketComms {
       return Number.isFinite(coerced) ? coerced : fallback
     }
 
-    CoreModule.rgbLedControl(
+    void BluetoothSdk.rgbLedControl(
       msg.requestId,
       msg.packageName ?? null,
       normalizeRgbLedAction(msg.action),
@@ -618,12 +652,17 @@ class SocketComms {
       coerceNumber(msg.ontime, 1000),
       coerceNumber(msg.offtime, 0),
       coerceNumber(msg.count, 1),
-    )
+    ).catch((err: unknown) => {
+      console.log(
+        `SOCKET: rgb_led_control failed requestId=${msg.requestId}:`,
+        err instanceof Error ? err.message : err,
+      )
+    })
   }
 
   private handle_camera_fov_set(msg: any) {
     const ROI_MAP: Record<string, number> = {center: 0, bottom: 1, top: 2}
-    const fov = typeof msg.fov === "number" ? Math.min(118, Math.max(82, msg.fov)) : 118
+    const fov = typeof msg.fov === "number" ? Math.min(118, Math.max(62, msg.fov)) : 118
     const roiStr: string = msg.roiPosition ?? "center"
     const numericRoi = ROI_MAP[roiStr] ?? 0
     console.log(`SOCKET: camera_fov_set fov=${fov} roi=${roiStr} (${numericRoi})`)
@@ -812,10 +851,11 @@ class SocketComms {
         break
       }
 
-      case "phone_photo_ready":
       case "phone_stream_status":
       case "phone_managed_stream_status":
-        // Forward Phase 5 messages to LocalMiniappRuntime
+        // Forward cloud-1 streaming messages to LocalMiniappRuntime for
+        // any local miniapp that still has a pending cloud request (legacy
+        // path; phone-orchestrated v2 streaming doesn't register one).
         localMiniappRuntime.handleCloudMessage(msg)
         break
 

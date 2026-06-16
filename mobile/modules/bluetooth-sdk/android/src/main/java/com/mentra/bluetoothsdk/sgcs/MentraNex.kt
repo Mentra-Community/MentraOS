@@ -1,7 +1,8 @@
-package com.mentra.core.sgcs
+package com.mentra.bluetoothsdk.sgcs
 
-import com.mentra.core.CoreManager
-import com.mentra.core.GlassesStore
+import com.mentra.bluetoothsdk.BluetoothSdkDefaults
+import com.mentra.bluetoothsdk.DeviceManager
+import com.mentra.bluetoothsdk.DeviceStore
 
 import android.graphics.BitmapFactory
 import android.bluetooth.BluetoothAdapter
@@ -27,7 +28,6 @@ import mentraos.ble.MentraosBle.GlassesToPhone
 import mentraos.ble.MentraosBle.PhoneToGlasses
 import mentraos.ble.MentraosBle.ChargingState
 import mentraos.ble.MentraosBle.BatteryStatus
-import mentraos.ble.MentraosBle.VersionResponse
 import mentraos.ble.MentraosBle.HeadGesture
 import mentraos.ble.MentraosBle.ButtonEvent
 import mentraos.ble.MentraosBle.ImuData
@@ -36,20 +36,20 @@ import mentraos.ble.MentraosBle.HeadUpAngleResponse
 import mentraos.ble.MentraosBle.HeadPosition
 import mentraos.ble.MentraosBle.DeviceInfo
 
-import com.mentra.core.sgcs.SGCManager
-import com.mentra.core.Bridge
-import com.mentra.core.utils.DeviceTypes
-import com.mentra.core.utils.NexProtobufUtils
-import com.mentra.core.utils.NexEventUtils
-import com.mentra.core.utils.NexBluetoothConstants
-import com.mentra.core.utils.NexDisplayConstants
-import com.mentra.core.utils.NexBluetoothPacketTypes
-import com.mentra.core.utils.BitmapJavaUtils
-import com.mentra.core.utils.G1FontLoaderKt
-import com.mentra.core.utils.G1Text
-import com.mentra.core.utils.ConnTypes
+import com.mentra.bluetoothsdk.sgcs.SGCManager
+import com.mentra.bluetoothsdk.Bridge
+import com.mentra.bluetoothsdk.utils.DeviceTypes
+import com.mentra.bluetoothsdk.utils.NexProtobufUtils
+import com.mentra.bluetoothsdk.utils.NexEventUtils
+import com.mentra.bluetoothsdk.utils.NexBluetoothConstants
+import com.mentra.bluetoothsdk.utils.NexDisplayConstants
+import com.mentra.bluetoothsdk.utils.NexBluetoothPacketTypes
+import com.mentra.bluetoothsdk.utils.BitmapJavaUtils
+import com.mentra.bluetoothsdk.utils.G1FontLoaderKt
+import com.mentra.bluetoothsdk.utils.G1Text
+import com.mentra.bluetoothsdk.utils.ConnTypes
 import com.mentra.lc3Lib.Lc3Cpp
-import com.mentra.core.utils.audio.Lc3Player
+import com.mentra.bluetoothsdk.utils.audio.Lc3Player
 
 import java.util.UUID
 import java.util.concurrent.LinkedBlockingQueue
@@ -69,9 +69,15 @@ class MentraNex : SGCManager() {
         private const val MTU_DEFAULT: Int = 23
         
         private const val MAX_CHUNK_SIZE_DEFAULT: Int = 176 // Maximum chunk size for BLE packets
-        private const val DELAY_BETWEEN_CHUNKS_SEND: Long = 10 // Adjust this value as needed
+        private const val DELAY_BETWEEN_CHUNKS_SEND: Long = 5 // Adjust this value as needed
+        // Upper bound on waiting for onCharacteristicWrite. A no-response write's
+        // callback is normally near-instant; this only guards against a callback that
+        // never arrives, so a dropped write can't wedge the send queue forever.
+        private const val WRITE_CALLBACK_TIMEOUT_MS: Long = 10
 
         private const val INITIAL_CONNECTION_DELAY_MS = 350L // Adjust this value as needed
+        // Window to let a queued DisconnectRequest flush to the glasses before we close GATT.
+        private const val DISCONNECT_FLUSH_DELAY_MS = 250L
         private const val MICBEAT_INTERVAL_MS: Long = (1000 * 60) * 30; // micbeat every 30 minutes
 
         private const val MAIN_TASK_HANDLER_CODE_GATT_STATUS_CHANGED: Int = 110
@@ -98,7 +104,10 @@ class MentraNex : SGCManager() {
     private var context: Context? = null
     // private var isDebug: Boolean = true
 
-    private var isLc3AudioEnabled: Boolean = true
+    // Off by default; toggled from Nex Developer Settings via the nex_audio_playback flag.
+    private val isLc3AudioEnabled: Boolean
+        // get() = DeviceStore.get("bluetooth", "nex_audio_playback") as? Boolean ?: false
+        get() = false
     private var lc3AudioPlayer: Lc3Player? = null
 
     private var lc3DecoderPtr: Long = 0
@@ -132,6 +141,7 @@ class MentraNex : SGCManager() {
 
     private var maxChunkSize: Int = MAX_CHUNK_SIZE_DEFAULT // Maximum chunk size for BLE packets
     private var bmpChunkSize: Int = 194 // BMP chunk size
+    private var protobufSeq: Int = 0 // Rolling sequence for fragmented control messages
 
     @Volatile private var isWorkerRunning = false
     // Queue to hold pending requests
@@ -148,8 +158,6 @@ class MentraNex : SGCManager() {
     private var isScanning: Boolean = false
 
     private var protobufVersionPosted: Boolean = false
-
-    private var hasConnectedThisSession: Boolean = false
 
     private var bleScanCallback: ScanCallback? = null
 
@@ -201,14 +209,25 @@ class MentraNex : SGCManager() {
         // isDebug = isDebug(context)
         type = DeviceTypes.NEX
         hasMic = true
-        GlassesStore.apply("glasses", "micEnabled", false)
-        preferredMainDeviceId = CoreManager.getInstance().deviceName
+        DeviceStore.apply("glasses", "micEnabled", false)
+        preferredMainDeviceId = DeviceManager.getInstance().deviceName
         
         // Initialize LC3 audio player
         lc3AudioPlayer = Lc3Player(context)
         lc3AudioPlayer?.init()
         if (isLc3AudioEnabled) {
             lc3AudioPlayer?.startPlay()
+        }
+    }
+
+    /** Start/stop the LC3 player when the nex_audio_playback flag changes. */
+    override fun applyNexAudioPlaybackSetting() {
+        if (isLc3AudioEnabled) {
+            Bridge.log("Nex: LC3 audio playback enabled - starting player")
+            lc3AudioPlayer?.startPlay()
+        } else {
+            Bridge.log("Nex: LC3 audio playback disabled - stopping player")
+            lc3AudioPlayer?.stopPlay()
         }
     }
 
@@ -264,6 +283,17 @@ class MentraNex : SGCManager() {
             }
         }
 
+        /** Bounded wait: returns early if the flag is still set after [timeoutMs]. */
+        @Synchronized
+        fun waitWhileTrue(timeoutMs: Long) {
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (flag) {
+                val remaining = deadline - System.currentTimeMillis()
+                if (remaining <= 0) break
+                (this as Object).wait(remaining)
+            }
+        }
+
         @Synchronized
         fun setTrue() {
             flag = true
@@ -286,11 +316,27 @@ class MentraNex : SGCManager() {
     override fun queryGalleryStatus() { Bridge.log("Nex: queryGalleryStatus operation not supported") }
     override fun sendGalleryMode() { Bridge.log("Nex: sendGalleryMode operation not supported") }
 
+    override fun sendVoiceActivityDetectionSetting() {
+        val enabled =
+            DeviceStore.get("bluetooth", "voice_activity_detection_enabled") as? Boolean
+                ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED
+        Bridge.log("Nex: 🎤 Sending Voice Activity Detection setting to glasses: $enabled")
+
+        if (connectionState != ConnTypes.CONNECTED) {
+            Bridge.log("Nex: Cannot send VAD setting - not connected")
+            return
+        }
+
+        val bytes = NexProtobufUtils.generateVadEnabledRequestCommandBytes(enabled)
+        sendDataSequentially(bytes)
+        Bridge.sendVoiceActivityDetectionStatus(enabled)
+    }
+
     // Version info: Not supported on Nex (uses protobuf for version info)
     override fun requestVersionInfo() { Bridge.log("Nex: requestVersionInfo operation not supported") }
 
     // Camera & Media: Not supported on Nex (No camera)
-    override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, flash: Boolean, sound: Boolean) { Bridge.log("Nex: requestPhoto operation not supported") }
+    override fun requestPhoto(requestId: String, appId: String, size: String, webhookUrl: String?, authToken: String?, compress: String?, flash: Boolean, save: Boolean, sound: Boolean, exposureTimeNs: Long?, iso: Int?) { Bridge.log("Nex: requestPhoto operation not supported") }
     override fun startStream(message: MutableMap<String, Any>) { Bridge.log("Nex: startStream operation not supported") }
     override fun stopStream() { Bridge.log("Nex: stopStream operation not supported") }
     override fun sendStreamKeepAlive(message: MutableMap<String, Any>) { Bridge.log("Nex: sendStreamKeepAlive operation not supported") }
@@ -390,13 +436,13 @@ class MentraNex : SGCManager() {
     }
 
     override fun disconnect() {
-        GlassesStore.apply("glasses", "fullyBooted", false)
-        destroy();
+        DeviceStore.apply("glasses", "fullyBooted", false)
+        destroy()
     }
 
     override fun forget() {
-        GlassesStore.apply("glasses", "fullyBooted", false)
-        destroy();
+        DeviceStore.apply("glasses", "fullyBooted", false)
+        destroy()
     }
 
     override fun cleanup() {
@@ -411,11 +457,10 @@ class MentraNex : SGCManager() {
         Bridge.log("Nex: === SENDING HEAD UP ANGLE COMMAND TO GLASSES ===")
         Bridge.log("Nex: Head Up Angle: $validatedAngle degrees (validated range: 0-60)")
         val cmdBytes = NexProtobufUtils.generateHeadUpAngleConfigCommandBytes(angle)
-        sendDataSequentially(cmdBytes, 10)
+        sendProtobuf(cmdBytes, 10)
     }
 
     override fun getBatteryStatus() {
-        Bridge.log("Nex: Requesting battery status");
         queryBatteryStatus()
     }
 
@@ -431,7 +476,7 @@ class MentraNex : SGCManager() {
         Bridge.log("sendReboot - not supported on Nex")
     }
 
-    override fun sendRgbLedControl(requestId: String, packageName: String?, action: String, color: String?, ontime: Int, offtime: Int, count: Int) {
+    override fun sendRgbLedControl(requestId: String, packageName: String?, action: String, color: String?, onDurationMs: Int, offDurationMs: Int, count: Int) {
         Bridge.log("sendRgbLedControl - not supported on Nex");
         Bridge.sendRgbLedControlResponse(requestId, false, "device_not_supported");
     }
@@ -444,24 +489,31 @@ class MentraNex : SGCManager() {
         // TODO: test this logic. Is it correct? Should we send both or just one?
         Bridge.log("Nex: setBrightness() - level: " + level + "%, autoMode: " + autoMode);
         val brightnessCmdBytes = NexProtobufUtils.generateBrightnessConfigCommandBytes(level)
-        sendDataSequentially(brightnessCmdBytes, 10)
+        sendProtobuf(brightnessCmdBytes, 10)
 
         val autoBrightnessCmdBytes = NexProtobufUtils.generateAutoBrightnessConfigCommandBytes(autoMode)
-        sendDataSequentially(autoBrightnessCmdBytes, 10)
+        sendProtobuf(autoBrightnessCmdBytes, 10)
     }
 
     override fun clearDisplay() { 
         Bridge.log("Nex: clearDisplay() - sending clear display request command bytes");
         val clearDisplayPackets = NexProtobufUtils.generateClearDisplayRequestCommandBytes()
-        sendDataSequentially(clearDisplayPackets, 10)
+        sendProtobuf(clearDisplayPackets, 10)
         // sendTextWall(" ")
         Bridge.log("Nex: clearDisplay() - sent clear display request command bytes");
+    }
+    
+
+    override fun sendText(text: String) {
+        Bridge.log("Nex: sendText() - text: " + text);
+        val textChunks: ByteArray = createTextWallChunksForNex(text)
+        sendProtobuf(textChunks)
     }
 
     override fun sendTextWall(text: String) {
         Bridge.log("Nex: sendTextWall() - text: " + text);
         val textChunks: ByteArray = createTextWallChunksForNex(text)
-        sendDataSequentially(textChunks);
+        sendProtobuf(textChunks)
     }
 
     override fun sendDoubleTextWall(top: String, bottom: String) {
@@ -472,10 +524,16 @@ class MentraNex : SGCManager() {
             bottom?.let { append(it) }
         }
         val textChunks = createTextWallChunksForNex(finalText)
-        sendDataSequentially(textChunks)
+        sendProtobuf(textChunks)
     }
 
-    override fun displayBitmap(base64ImageData: String): Boolean {
+    override fun displayBitmap(
+            base64ImageData: String,
+            x: Int?,
+            y: Int?,
+            width: Int?,
+            height: Int?
+    ): Boolean {
         try {
             val bmpData: ByteArray? = android.util.Base64.decode(base64ImageData, android.util.Base64.DEFAULT)
             if (bmpData == null || bmpData.isEmpty()) {
@@ -501,23 +559,23 @@ class MentraNex : SGCManager() {
         Bridge.log("Nex: setDashboardPosition() - height: " + height + ", depth: " + depth)
         // Send display_height then display_distance; adjust order if Nex firmware requires otherwise.
         val heightBytes = NexProtobufUtils.generateDisplayHeightCommandBytes(height)
-        sendDataSequentially(heightBytes, 10)
+        sendProtobuf(heightBytes, 10)
         val distanceCm = NexProtobufUtils.dashboardDepthToDistanceCm(depth)
         val distanceBytes = NexProtobufUtils.generateDisplayDistanceCommandBytes(distanceCm)
-        sendDataSequentially(distanceBytes, 10)
+        sendProtobuf(distanceBytes, 10)
     }
 
     override fun setDashboardHeightOnly(height: Int) {
         Bridge.log("Nex: setDashboardHeightOnly() - height: $height")
         val heightBytes = NexProtobufUtils.generateDisplayHeightCommandBytes(height)
-        sendDataSequentially(heightBytes, 10)
+        sendProtobuf(heightBytes, 10)
     }
 
     override fun setDashboardDepthOnly(depth: Int) {
         Bridge.log("Nex: setDashboardDepthOnly() - depth: $depth")
         val distanceCm = NexProtobufUtils.dashboardDepthToDistanceCm(depth)
         val distanceBytes = NexProtobufUtils.generateDisplayDistanceCommandBytes(distanceCm)
-        sendDataSequentially(distanceBytes, 10)
+        sendProtobuf(distanceBytes, 10)
     }
 
     override fun ping() {
@@ -696,29 +754,6 @@ class MentraNex : SGCManager() {
                 characteristic: BluetoothGattCharacteristic,
                 status: Int
             ) {
-                Bridge.log("onCharacteristicWrite callback - ")
-                val values = characteristic.value ?: byteArrayOf()
-                
-                if (status == BluetoothGatt.GATT_SUCCESS) {
-                    Bridge.log("[BLE] onCharacteristicWrite: SUCCESS len=${values.size}")
-                    val packetHex = values.joinToString("") { "%02X".format(it) }
-                    Bridge.log("onCharacteristicWrite Values - $packetHex")
-
-                    if (values.isNotEmpty()) {
-                        val packetType = values[0]
-                        val protobufData = values.copyOfRange(1, values.size)
-
-                        if (packetType == NexBluetoothPacketTypes.PACKET_TYPE_PROTOBUF) {
-                            // just for test
-                            decodeProtobufsByWrite(protobufData, packetHex)
-                        }
-                    }
-                } else {
-                    Log.e(TAG, "[BLE] onCharacteristicWrite: FAILED status=$status${if (status == 133) " (GATT_ERROR 133 - likely disconnected mid-write)" else ""}")
-                }
-
-                // clear the waiter
-                Bridge.log("[BLE] onCharacteristicWrite: releasing mainWaiter")
                 mainWaiter.setFalse()
             }
 
@@ -787,9 +822,12 @@ class MentraNex : SGCManager() {
 
     private fun handleMainTaskMessage(msg: Message): Boolean {
         val msgCode = msg.what
-        Bridge.log("Nex: handleMessage msgCode: $msgCode")
-        Bridge.log("Nex: handleMessage obj: ${msg.obj}")
-        
+        // NOTE: do not log here. Every incoming BLE notification (including
+        // ~50 audio packets/sec) is dispatched through this handler on the
+        // main looper, and Bridge.log marshals an event across the RN bridge
+        // to JS. Per-message logging here floods the main thread and backs up
+        // the audio queue when the CPU downclocks at screen-off. (Matches G1,
+        // which does not log per audio packet.)
         when (msgCode) {
             MAIN_TASK_HANDLER_CODE_GATT_STATUS_CHANGED -> {}
             MAIN_TASK_HANDLER_CODE_DISCOVER_SERVICES -> {
@@ -817,7 +855,6 @@ class MentraNex : SGCManager() {
             MAIN_TASK_HANDLER_CODE_HEART_BEAT -> {
                 // Note: Heartbeat is now handled by receiving ping from glasses
                 // This case is kept for backward compatibility but no longer used
-                Bridge.log("Nex: Heartbeat handler called - no longer sending periodic pings")
             }
             else -> { }
         }
@@ -838,9 +875,19 @@ class MentraNex : SGCManager() {
             val writeChar = uartService.getCharacteristic(NexBluetoothConstants.WRITE_CHAR_UUID)
             val notifyChar = uartService.getCharacteristic(NexBluetoothConstants.NOTIFY_CHAR_UUID)
 
-            writeChar?.let { 
+            writeChar?.let {
                 mainWriteChar = it
-                Bridge.log("Nex: glass TX characteristic found")
+                // Write-without-response on the characteristic we actually write
+                // to (the firmware RX char advertises WRITE_WITHOUT_RESP). This
+                // is what unblocks TX from the ~1-packet-per-connection-interval
+                // ATT round-trip — critical when the phone sleeps and the
+                // interval is relaxed. Android defaults a freshly-discovered
+                // characteristic to WRITE_TYPE_DEFAULT (with response), and the
+                // reference is reassigned on every service rediscovery, so set
+                // it here. (Previously this was set on the notify char in
+                // enableNotification(), where it had no effect on writes.)
+                it.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                Bridge.log("Nex: glass TX characteristic found (write type NO_RESPONSE)")
             }
 
             notifyChar?.let {
@@ -871,14 +918,6 @@ class MentraNex : SGCManager() {
                 showHomeScreen() // Turn on the NexGlasses display
                 updateConnectionState()
 
-                if (hasConnectedThisSession) {
-                    Bridge.log("Nex: BLE reconnect detected — showing reconnected banner")
-                    sendTextWall("// MentraOS Reconnected")
-                    mainTaskHandler.postDelayed({ clearDisplay() }, 3000)
-                } else {
-                    hasConnectedThisSession = true
-                }
-
                 // Post protobuf schema version information (only once)
                 if (!protobufVersionPosted) {
                     postProtobufSchemaVersionInfo()
@@ -888,8 +927,15 @@ class MentraNex : SGCManager() {
                 // Query glasses protobuf version from firmware
                 Bridge.log("=== SENDING GLASSES PROTOBUF VERSION REQUEST ===")
                 val versionQueryPacket = NexProtobufUtils.generateVersionRequestCommandBytes()
-                sendDataSequentially(versionQueryPacket, 100)
-                Bridge.log("Sent glasses protobuf version request")
+                if (versionQueryPacket.isNotEmpty()) {
+                    sendProtobuf(versionQueryPacket, 100)
+                    Bridge.log("Sent glasses protobuf version request")
+                } else {
+                    Bridge.log("Skipping version request: schema removed VersionRequest")
+                }
+
+                // Push current glasses-side Voice Activity Detection setting
+                sendVoiceActivityDetectionSetting()
             }
         } else {
             Log.e(TAG, " glass UART service not found")
@@ -903,9 +949,10 @@ class MentraNex : SGCManager() {
         val result = gatt.setCharacteristicNotification(characteristic, true)
         Bridge.log("Nex: PROC_QUEUE - setCharacteristicNotification result: $result")
 
-        // Set write type for the characteristic
-        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-        Bridge.log("Nex: PROC_QUEUE - write type set")
+        // NOTE: write type is NOT set here. This receives the *notify*
+        // characteristic, which the phone never writes to — setting writeType
+        // on it had no effect. The write characteristic (mainWriteChar) is
+        // configured for WRITE_TYPE_NO_RESPONSE at its assignment instead.
 
         // Add delay
         Bridge.log("Nex: PROC_QUEUE - waiting to enable notification...")
@@ -928,15 +975,16 @@ class MentraNex : SGCManager() {
         if (characteristic.uuid == NexBluetoothConstants.NOTIFY_CHAR_UUID) {
             val data = characteristic.value
             val deviceName = mainGlassGatt?.device?.name ?: return
-            val packetHex = data.joinToString("") { "%02X".format(it) }
-            Bridge.log("onCharacteristicChangedHandler len: ${data.size}")
-            Bridge.log("onCharacteristicChangedHandler: $packetHex")
-            
+            // NOTE: this runs on the main looper for every notification, audio
+            // included (~50/sec). Do not log or stringify the whole packet to
+            // hex on this hot path — Bridge.log crosses the RN bridge to JS and
+            // packetHex is O(n) per packet. Both back up the audio queue at
+            // screen-off. packetHex is only needed by the protobuf branch, so
+            // compute it lazily there.
             if (data.isEmpty()) return
-            
+
             val packetType = data[0]
-            Bridge.log("onCharacteristicChangedHandler packetType: ${String.format("%02X ", packetType)}")
-            
+
             when (packetType) {
                 NexBluetoothPacketTypes.PACKET_TYPE_JSON -> {
                     val jsonData = data.copyOfRange(1, data.size)
@@ -944,6 +992,7 @@ class MentraNex : SGCManager() {
                 }
                 NexBluetoothPacketTypes.PACKET_TYPE_PROTOBUF -> {
                     val protobufData = data.copyOfRange(1, data.size)
+                    val packetHex = data.joinToString("") { "%02X".format(it) }
                     decodeProtobufs(protobufData, packetHex)
                 }
                 NexBluetoothPacketTypes.PACKET_TYPE_AUDIO -> {
@@ -960,20 +1009,20 @@ class MentraNex : SGCManager() {
 
                         val lc3Data = data.copyOfRange(2, data.size)
 
-                        Bridge.log("Received LC3 audio packet seq=$sequenceNumber, size=${lc3Data.size}")
+                        // No per-packet log here: this fires ~50x/sec and each
+                        // Bridge.log crosses the RN bridge to JS. (Matches G1.)
 
-                        // Play LC3 audio directly through LC3 player
+                        // Play LC3 audio directly through LC3 player.
+                        // No logging in any branch: this runs per audio packet
+                        // (~50/sec) and Bridge.log crosses the RN bridge to JS.
+                        // With isLc3AudioEnabled hardcoded off, the disabled
+                        // branch would otherwise log on every single packet.
                         if (lc3AudioPlayer != null && isLc3AudioEnabled) {
                             // Use the original packet format that LC3 player expects
                             lc3AudioPlayer?.write(data, 0, data.size)
-                            Bridge.log("Playing LC3 audio directly through LC3 player: ${data.size} bytes")
-                        } else if (!isLc3AudioEnabled) {
-                            Bridge.log("LC3 audio disabled - skipping LC3 audio output")
-                        } else {
-                            Bridge.log("LC3 player not available - skipping LC3 audio output")
                         }
 
-                        CoreManager.getInstance().handleGlassesMicData(lc3Data);
+                        DeviceManager.getInstance().handleGlassesMicData(lc3Data);
 
                         // Still decode for callback compatibility
                         // TODO: (Verify) Commenting because commented in G1
@@ -1015,7 +1064,7 @@ class MentraNex : SGCManager() {
 
         Bridge.log("attemptGattConnection called for device: $deviceName (${device.address})")
 
-        GlassesStore.apply("glasses", "connectionState", ConnTypes.CONNECTING)
+        DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTING)
         Bridge.log("Setting connectionState to CONNECTING. Notifying connectionEvent.")
         // connectionEvent(connectionState)
 
@@ -1054,13 +1103,13 @@ class MentraNex : SGCManager() {
     }
 
     private fun connectToSmartGlasses() {
-        val deviceModelName = CoreManager.getInstance().deviceName
-        val deviceAddress = CoreManager.getInstance().deviceAddress
+        val deviceModelName = DeviceManager.getInstance().deviceName
+        val deviceAddress = DeviceManager.getInstance().deviceAddress
 
         // Register bonding receiver
         Bridge.log("connectToSmartGlasses start")
         Bridge.log("try to ConnectToSmartGlassesing deviceModelName: ${deviceModelName} deviceAddress: ${deviceAddress}")
-        preferredMainDeviceId = CoreManager.getInstance().deviceName
+        preferredMainDeviceId = DeviceManager.getInstance().deviceName
         if (!bluetoothAdapter.isEnabled) {
             return
         }
@@ -1077,7 +1126,7 @@ class MentraNex : SGCManager() {
             else -> {
                 // Start scanning for devices
                 stopScan()
-                GlassesStore.apply("glasses", "connectionState", ConnTypes.SCANNING)
+                DeviceStore.apply("glasses", "connectionState", ConnTypes.SCANNING)
                 // connectionEvent(connectionState) // TODO: Figure out where is connection event defined????
                 startScan()
             }
@@ -1085,6 +1134,21 @@ class MentraNex : SGCManager() {
     }
 
     private fun destroy() {
+        // Tell the glasses this teardown is intentional so they return to the welcome
+        // screen immediately instead of holding the last frame through the firmware's
+        // unexpected-disconnect grace period. Best-effort: if the write can't be sent
+        // or doesn't flush in time, the firmware grace period is the safety net.
+        val canSend = mainGlassGatt != null && mainWriteChar != null && isMainConnected
+        if (!canSend) {
+            performDestroy()
+            return
+        }
+        Bridge.log("Nex: Sending DisconnectRequest before teardown")
+        sendProtobuf(NexProtobufUtils.generateDisconnectRequestCommandBytes(), 100)
+        mainTaskHandler.postDelayed({ performDestroy() }, DISCONNECT_FLUSH_DELAY_MS)
+    }
+
+    private fun performDestroy() {
         Bridge.log("Nex: MentraNexSGC ONDESTROY")
         showHomeScreen()
         isKilled = true
@@ -1136,7 +1200,6 @@ class MentraNex : SGCManager() {
         sendQueue.offer(emptyArray()) // is this needed?
         isWorkerRunning = false
         isMainConnected = false
-        hasConnectedThisSession = false
         Bridge.log("Nex: MentraNexSGC cleanup complete")
     }
 
@@ -1164,7 +1227,7 @@ class MentraNex : SGCManager() {
         Bridge.log("CALL START SCAN - Started scanning for devices...")
 
         // Ensure scanning state is immediately communicated to UI
-        GlassesStore.apply("glasses", "connectionState", ConnTypes.SCANNING)
+        DeviceStore.apply("glasses", "connectionState", ConnTypes.SCANNING)
         // connectionEvent(connectionState)
 
         // Stop the scan after some time (e.g., 10-15s instead of 60 to avoid
@@ -1200,7 +1263,7 @@ class MentraNex : SGCManager() {
             val streamId = "%04X".format(random.nextInt(0x10000)) // 4-digit hex format
             
             val startImageSendingBytes = NexProtobufUtils.generateDisplayImageCommandBytes(streamId, totalChunks, width, height)
-            sendDataSequentially(startImageSendingBytes)
+            sendProtobuf(startImageSendingBytes)
 
             // Send all chunks with proper stream ID parsing
             val chunks = NexProtobufUtils.createBmpChunksForNexGlasses(streamId, bmpData, totalChunks, bmpChunkSize)
@@ -1231,7 +1294,6 @@ class MentraNex : SGCManager() {
         }
         sendSetMicEnabled(true, 10)
         micBeatRunnable = Runnable {
-            Bridge.log("Nex: SENDING MIC BEAT")
             sendSetMicEnabled(shouldUseGlassesMic, 1)
             micBeatHandler.postDelayed(micBeatRunnable!!, MICBEAT_INTERVAL_MS)
         }
@@ -1278,18 +1340,18 @@ class MentraNex : SGCManager() {
 
     private fun updateConnectionState() {
         if (isMainConnected) {
-            GlassesStore.apply("glasses", "connectionState", ConnTypes.CONNECTED)
+            DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTED)
             Bridge.log("Nex: Main glasses connected")
             lastConnectionTimestamp = System.currentTimeMillis()
-            GlassesStore.apply("glasses", "fullyBooted", true)
-            GlassesStore.apply("glasses", "connected", true)
+            DeviceStore.apply("glasses", "fullyBooted", true)
+            DeviceStore.apply("glasses", "connected", true)
             // Removed commented sleep code as it's not needed
             // connectionEvent(it)
         } else {
-            GlassesStore.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
+            DeviceStore.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
             Bridge.log("Nex: No Main glasses connected")
-            GlassesStore.apply("glasses", "fullyBooted", false)
-            GlassesStore.apply("glasses", "connected", false)
+            DeviceStore.apply("glasses", "fullyBooted", false)
+            DeviceStore.apply("glasses", "connected", false)
             // connectionEvent(it)
         }
     }
@@ -1360,9 +1422,8 @@ class MentraNex : SGCManager() {
             when (glassesToPhone.payloadCase) {
                 GlassesToPhone.PayloadCase.BATTERY_STATUS -> {
                     val batteryStatus: BatteryStatus = glassesToPhone.batteryStatus
-                    GlassesStore.apply("glasses", "batteryLevel", batteryStatus.level)
+                    DeviceStore.apply("glasses", "batteryLevel", batteryStatus.level)
                     // EventBus.getDefault().post(BatteryLevelEvent(batteryStatus.level, batteryStatus.charging))
-                    Bridge.log("batteryStatus: $batteryStatus")
                 }
                 GlassesToPhone.PayloadCase.CHARGING_STATE -> {
                     val chargingState: ChargingState = glassesToPhone.chargingState
@@ -1381,11 +1442,6 @@ class MentraNex : SGCManager() {
                 GlassesToPhone.PayloadCase.HEAD_UP_ANGLE_SET -> {
                     val headUpAngleResponse: HeadUpAngleResponse = glassesToPhone.headUpAngleSet
                     Bridge.log("headUpAngleResponse: $headUpAngleResponse")
-                }
-                GlassesToPhone.PayloadCase.PING -> {
-                    lastHeartbeatReceivedTime = System.currentTimeMillis()
-                    Bridge.log("=== RECEIVED PING FROM GLASSES === (Time: $lastHeartbeatReceivedTime)")
-                    sendPongResponse()
                 }
                 GlassesToPhone.PayloadCase.VAD_EVENT -> {
                     // val vadEvent = glassesToPhone.vadEvent
@@ -1429,28 +1485,6 @@ class MentraNex : SGCManager() {
                     // EventBus.getDefault().post(GlassesHeadDownEvent())
                     // EventBus.getDefault().post(GlassesTapOutputEvent(2, isRight, System.currentTimeMillis()))
                 }
-                GlassesToPhone.PayloadCase.VERSION_RESPONSE -> {
-                    val versionResponse: VersionResponse = glassesToPhone.versionResponse
-                    Bridge.log("=== RECEIVED GLASSES PROTOBUF VERSION RESPONSE ===")
-                    Bridge.log("Glasses Protobuf Version: ${versionResponse.version}")
-                    Bridge.log("Message ID: ${versionResponse.msgId}")
-                    GlassesStore.apply("glasses", "protobufVersion", versionResponse.version.toString())
-                    
-                    if (versionResponse.commit.isNotEmpty()) {
-                        Bridge.log("Commit: ${versionResponse.commit}")
-                    }
-                    if (versionResponse.buildDate.isNotEmpty()) {
-                        Bridge.log("Build Date: ${versionResponse.buildDate}")
-                    }
-                    
-                    // Post glasses protobuf version event to update UI
-                    // EventBus.getDefault().post(ProtocolVersionResponseEvent(
-                    //     versionResponse.version,
-                    //     versionResponse.commit,
-                    //     versionResponse.buildDate,
-                    //     versionResponse.msgId
-                    // ))
-                }
                 GlassesToPhone.PayloadCase.PAYLOAD_NOT_SET,
                 null -> {
                     // Do nothing
@@ -1490,38 +1524,6 @@ class MentraNex : SGCManager() {
         sendDataSequentially(missingChunks)
     }
 
-    private fun sendPongResponse() {
-        // Respond to ping from glasses with pong
-        lastHeartbeatReceivedTime = System.currentTimeMillis()
-        Bridge.log("=== SENDING PONG RESPONSE TO GLASSES === (Time: $lastHeartbeatReceivedTime)")
-        
-        val pongPacket = NexProtobufUtils.constructPongResponse()
-
-        // Send the pong response
-        if (pongPacket != null) {
-            sendDataSequentially(pongPacket, 100)
-            Bridge.log("Pong response sent successfully")
-            
-            // Notify mobile app about pong sent
-            lastHeartbeatSentTime = System.currentTimeMillis()
-            NexEventUtils.sendHeartbeatSentEvent(lastHeartbeatSentTime)
-            // EventBus.getDefault().post(HeartbeatSentEvent(timestamp))
-        } else {
-            Log.e(TAG,"Failed to construct pong response packet")
-        }
-
-        // Still query battery periodically (every 10 pings received)
-        if (batteryLevel == -1 || heartbeatCount % 10 == 0) {
-            mainTaskHandler.sendEmptyMessageDelayed(MAIN_TASK_HANDLER_CODE_BATTERY_QUERY, 500)
-        }
-
-        heartbeatCount++
-        
-        // Notify mobile app about heartbeat received
-        NexEventUtils.sendHeartbeatReceivedEvent(lastHeartbeatReceivedTime)
-        // EventBus.getDefault().post(HeartbeatReceivedEvent(lastHeartbeatReceivedTime))
-    }
-
     private fun createTextWallChunksForNex(text: String): ByteArray {
         // Create the PhoneToGlasses using its builder and set the DisplayText
         return NexProtobufUtils.generateDisplayTextCommandBytes(text)
@@ -1531,7 +1533,7 @@ class MentraNex : SGCManager() {
         Bridge.log("Nex: setMicEnabled called with enable: $enable and delay: $delay")
         Bridge.log("Nex: Running set mic enabled: $enable")
         isMicrophoneEnabled = enable // Update the state tracker
-        GlassesStore.apply("glasses", "micEnabled", enable)
+        DeviceStore.apply("glasses", "micEnabled", enable)
 
         micEnableHandler?.postDelayed({
             if (connectionState != ConnTypes.CONNECTED) {
@@ -1540,14 +1542,14 @@ class MentraNex : SGCManager() {
             }
             Bridge.log("Nex: === SENDING MICROPHONE STATE COMMAND TO GLASSES ===")
             val micConfigBytes = NexProtobufUtils.generateMicStateConfigCommandBytes(enable)
-            sendDataSequentially(micConfigBytes, 10) // wait some time to setup the mic
+            sendProtobuf(micConfigBytes, 10) // wait some time to setup the mic
             Bridge.log("Nex: Sent MIC command: ${micConfigBytes.joinToString("") { "%02x".format(it) }}")
         }, delay)
     }
 
     private fun queryBatteryStatus() {
         val batteryQueryPacket = NexProtobufUtils.generateBatteryStateRequestCommandBytes()
-        sendDataSequentially(batteryQueryPacket, 250)
+        sendProtobuf(batteryQueryPacket, 250)
     }
 
     ///// PROCESSING THREAD /////////////////
@@ -1581,6 +1583,51 @@ class MentraNex : SGCManager() {
         startWorkerIfNeeded()
     }
 
+    /**
+     * Frames a serialized protobuf message onto the 0x02 control channel and sends it.
+     *
+     * The message is split into fragments that each fit the negotiated MTU, prefixed with a
+     * 4-byte transport header: [0x02][seq][totalChunks][chunkIndex]. The firmware reassembles
+     * fragments by seq/index before decoding. Single-fragment messages (totalChunks == 1) are
+     * decoded directly by the firmware fast path.
+     *
+     * @param protobufBytes raw serialized PhoneToGlasses bytes (no framing)
+     * @param waitTime optional post-message delay in ms applied after the last fragment (-1 = none)
+     */
+    private fun sendProtobuf(protobufBytes: ByteArray, waitTime: Int = -1) {
+        val headerSize = 4 // [0x02][seq][totalChunks][chunkIndex]
+        val maxFragment = (maxChunkSize - headerSize).coerceAtLeast(1)
+        val totalChunks =
+            if (protobufBytes.isEmpty()) 1 else (protobufBytes.size + maxFragment - 1) / maxFragment
+
+        if (totalChunks > 255) {
+            Log.e(TAG, "Nex: Protobuf message too large to fragment ($totalChunks chunks) - dropping")
+            return
+        }
+
+        val seq = protobufSeq
+        protobufSeq = (protobufSeq + 1) and 0xFF
+
+        val frames = Array(totalChunks) { index ->
+            val start = index * maxFragment
+            val end = minOf(start + maxFragment, protobufBytes.size)
+            val fragLen = end - start
+            val frame = ByteArray(headerSize + fragLen)
+            frame[0] = NexBluetoothPacketTypes.PACKET_TYPE_PROTOBUF
+            frame[1] = seq.toByte()
+            frame[2] = totalChunks.toByte()
+            frame[3] = index.toByte()
+            if (fragLen > 0) {
+                System.arraycopy(protobufBytes, start, frame, headerSize, fragLen)
+            }
+            // Carry the post-message delay on the final fragment only.
+            SendRequest(frame, if (index == totalChunks - 1) waitTime else -1)
+        }
+
+        sendQueue.offer(frames)
+        startWorkerIfNeeded()
+    }
+
     private fun processQueue() {
         // First wait until the services are ready to receive data
         Bridge.log("[BLE] PROC_QUEUE started — waiting for descriptor write (mainServicesWaiter)")
@@ -1597,9 +1644,7 @@ class MentraNex : SGCManager() {
                 mainServicesWaiter.waitWhileTrue()
 
                 // This will block until data is available
-                Bridge.log("[BLE] PROC_QUEUE waiting for data in sendQueue (size=${sendQueue.size})")
                 val requests = sendQueue.take()
-                Bridge.log("[BLE] PROC_QUEUE dequeued ${requests.size} request(s)")
 
                 for (request in requests) {
                     if (isKilled) {
@@ -1616,20 +1661,30 @@ class MentraNex : SGCManager() {
 
                         // Send to main glass
                         val canSend = mainGlassGatt != null && mainWriteChar != null && isMainConnected
-                        Bridge.log("[BLE] PROC_QUEUE send check: gatt=${mainGlassGatt != null} writeChar=${mainWriteChar != null} connected=$isMainConnected → canSend=$canSend len=${request.data.size}")
+                        var writeStarted = false
                         if (canSend) {
                             mainWaiter.setTrue()
                             mainWriteChar?.value = request.data
-                            mainGlassGatt?.writeCharacteristic(mainWriteChar)
-                            lastSendTimestamp = System.currentTimeMillis()
-                            Bridge.log("[BLE] PROC_QUEUE writeCharacteristic issued, waiting for onCharacteristicWrite callback")
+                            // Honor the return value: writeCharacteristic returns false when the
+                            // stack is busy / out of buffers, and in that case no callback fires.
+                            // Only wait for the callback if the write actually started, otherwise
+                            // the waiter would block until the next disconnect.
+                            val issued = mainGlassGatt?.writeCharacteristic(mainWriteChar) ?: false
+                            if (issued) {
+                                writeStarted = true
+                                lastSendTimestamp = System.currentTimeMillis()
+                            } else {
+                                mainWaiter.setFalse()
+                                Log.e(TAG, "[BLE] PROC_QUEUE writeCharacteristic returned false — stack busy, dropping fragment")
+                            }
                         } else {
                             Bridge.log("[BLE] PROC_QUEUE skipping write — not ready, packet dropped")
                         }
 
-                        mainWaiter.waitWhileTrue()
+                        if (writeStarted) {
+                            mainWaiter.waitWhileTrue(WRITE_CALLBACK_TIMEOUT_MS)
+                        }
 
-                        Thread.sleep(DELAY_BETWEEN_CHUNKS_SEND)
 
                         // If the packet asked us to do a delay, then do it
                         if (request.waitTime != -1) {

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+        "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  MentraOS runner cache cleanup launchd unit.
+  Installed by mobile/scripts/setup-runner.sh into
+    ~/Library/LaunchAgents/com.mentra.runner-cleanup.plist
+  with @@HOME_DIR@@ substituted to the absolute path of $HOME.
+
+  Schedule: every Sunday at 03:00 local time.
+  Behavior: runs the cleanup script with tier=all (Tier 1 + Tier 2).
+  If a build is active, the script auto-defers and exits 0.
+-->
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.mentra.runner-cleanup</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/bash</string>
+      <string>@@HOME_DIR@@/mentra/runner-cleanup.sh</string>
+      <string>--tier</string>
+      <string>all</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+      <!-- Sunday = weekday 0 in launchd's StartCalendarInterval scheme. -->
+      <key>Weekday</key><integer>0</integer>
+      <key>Hour</key><integer>3</integer>
+      <key>Minute</key><integer>0</integer>
+    </dict>
+
+    <!-- Run at next opportunity if the Mac was asleep at the scheduled time. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Capture stdout/stderr into the log file the script itself appends to,
+         so we get the launchd-level "ran at this time" markers too. -->
+    <key>StandardOutPath</key>
+    <string>@@HOME_DIR@@/mentra/runner-cleanup.log</string>
+    <key>StandardErrorPath</key>
+    <string>@@HOME_DIR@@/mentra/runner-cleanup.log</string>
+
+    <!-- Nice value: 10 (lower than build processes so cleanup never starves a build). -->
+    <key>Nice</key>
+    <integer>10</integer>
+  </dict>
+</plist>

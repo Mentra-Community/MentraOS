@@ -1,29 +1,35 @@
 import {createIconSet} from "@expo/vector-icons"
+import glyphMap from "@assets/icons/tabler/glyph-map.json"
 import {
   Bell,
   CircleUser,
+  CircleX,
+  Hammer,
+  Wrench,
+  Cog,
   Ellipsis,
+  ExternalLink,
   FileType2,
   Fullscreen,
   Glasses,
+  Grid3X3,
   Info,
   LayoutDashboard,
   Locate,
   Minus,
+  PauseIcon,
+  PlayIcon,
+  PointerIcon,
+  Share,
   Unlink,
   Unplug,
   UserRound,
   Wifi,
   WifiOff,
-  Grid3X3,
-  Share,
-  Cog,
-  ExternalLink,
-  PlayIcon,
-  PauseIcon,
-  PointerIcon,
-  CircleX,
 } from "lucide-react-native"
+// custom icons:
+import {MinimizeIcon, CloseIcon} from "@/components/icons"
+
 import {
   Image,
   ImageStyle,
@@ -36,74 +42,9 @@ import {
   ViewStyle,
 } from "react-native"
 
-import {ShoppingBagIcon, HomeIcon, GridIcon} from "@/components/icons"
+import {GridIcon, HomeIcon, ShoppingBagIcon} from "@/components/icons"
 import {useAppTheme} from "@/contexts/ThemeContext"
 
-export type IconTypes = keyof typeof iconRegistry
-
-type BaseIconProps = {
-  /**
-   * The name of the icon
-   */
-  name: IconTypes
-
-  /**
-   * An optional tint color for the icon
-   */
-  color?: string
-
-  /**
-   * An optional background color for the icon
-   */
-  backgroundColor?: string
-
-  /**
-   * An optional size for the icon. If not provided, the icon will be sized to the icon's resolution.
-   */
-  size?: number
-
-  /**
-   * Style overrides for the icon image
-   */
-  style?: StyleProp<ImageStyle>
-
-  /**
-   * Style overrides for the icon container
-   */
-  containerStyle?: StyleProp<ViewStyle>
-}
-
-type PressableIconProps = Omit<TouchableOpacityProps, "style"> & BaseIconProps
-type IconProps = Omit<ViewProps, "style"> & BaseIconProps
-
-/**
- * A component to render a registered icon.
- * It is wrapped in a <TouchableOpacity />
- * @see [Documentation and Examples]{@link https://docs.infinite.red/ignite-cli/boilerplate/app/components/Icon/}
- * @param {PressableIconProps} props - The props for the `PressableIcon` component.
- * @returns {JSX.Element} The rendered `PressableIcon` component.
- */
-export function PressableIcon(props: PressableIconProps) {
-  const {
-    name,
-    color,
-    // backgroundColor,
-    size,
-    // style: $imageStyleOverride,
-    containerStyle: $containerStyleOverride,
-    ...pressableProps
-  } = props
-
-  const {theme} = useAppTheme()
-
-  return (
-    <TouchableOpacity {...pressableProps} style={$containerStyleOverride}>
-      <Icon name={name} size={size} color={color ?? theme.colors.secondary_foreground} />
-    </TouchableOpacity>
-  )
-}
-
-const glyphMap = require("@assets/icons/tabler/glyph-map.json")
 const TablerIcon = createIconSet(glyphMap, "tablerIcons", "tabler-icons.ttf")
 
 const lucideIcons = {
@@ -121,13 +62,6 @@ const lucideIcons = {
   "layout-dashboard": LayoutDashboard,
   "wifi-off": WifiOff,
   "info": Info,
-  // "house": House,
-  // custom icons:
-  "grid": GridIcon,
-  "shopping-bag": ShoppingBagIcon,
-  "shopping-bag-filled": ShoppingBagIcon,
-  "house": HomeIcon,
-  "house-filled": HomeIcon,
   "ellipsis": Ellipsis,
   "minus": Minus,
   "grid-3x3": Grid3X3,
@@ -138,6 +72,16 @@ const lucideIcons = {
   "pause": PauseIcon,
   "pointer": PointerIcon,
   "circle-x": CircleX,
+  "hammer": Hammer,
+  "wrench": Wrench,
+  // custom icons:
+  "grid": GridIcon,
+  "shopping-bag": ShoppingBagIcon,
+  "shopping-bag-filled": ShoppingBagIcon,
+  "house": HomeIcon,
+  "house-filled": HomeIcon,
+  "minimize": MinimizeIcon,
+  "close": CloseIcon,
 }
 
 const tablerIcons = {
@@ -179,15 +123,58 @@ const tablerIcons = {
   "alert-triangle": 1,
   "plus": 1,
   "search": 1,
+} as const
+
+export const iconRegistry = {
+  ...tablerIcons,
+  ...lucideIcons,
 }
 
-/**
- * A component to render a registered icon.
- * It is wrapped in a <View />, use `PressableIcon` if you want to react to input
- * @see [Documentation and Examples]{@link https://docs.infinite.red/ignite-cli/boilerplate/app/components/Icon/}
- * @param {IconProps} props - The props for the `Icon` component.
- * @returns {JSX.Element} The rendered `Icon` component.
- */
+type TablerIconName = keyof typeof glyphMap
+type LucideIconName = keyof typeof lucideIcons
+type LegacyIconName = keyof typeof tablerIcons
+export type IconTypes = TablerIconName | LucideIconName | LegacyIconName | (string & {})
+
+type BaseIconProps = {
+  /** The name of the icon. */
+  name?: IconTypes
+  /** Legacy prop accepted by existing call sites. It is intentionally ignored here to preserve runtime behavior. */
+  icon?: IconTypes
+  /** An optional tint color for the icon. */
+  color?: string
+  /** An optional background color for the icon. */
+  backgroundColor?: string
+  /** An optional size for the icon. If not provided, the icon will be sized to the icon's resolution. */
+  size?: number
+  /** Style overrides for the icon image. */
+  style?: StyleProp<ImageStyle>
+  /** Style overrides for the icon container. */
+  containerStyle?: StyleProp<ViewStyle>
+}
+
+type PressableIconProps = Omit<TouchableOpacityProps, "style"> & BaseIconProps
+type IconProps = Omit<ViewProps, "style"> & BaseIconProps
+
+export function PressableIcon(props: PressableIconProps) {
+  const {
+    name,
+    color,
+    // backgroundColor,
+    size,
+    // style: $imageStyleOverride,
+    containerStyle: $containerStyleOverride,
+    ...pressableProps
+  } = props
+
+  const {theme} = useAppTheme()
+
+  return (
+    <TouchableOpacity {...pressableProps} style={$containerStyleOverride}>
+      <Icon name={name} size={size} color={color ?? theme.colors.secondary_foreground} />
+    </TouchableOpacity>
+  )
+}
+
 export function Icon(props: IconProps) {
   const {
     name,
@@ -212,9 +199,7 @@ export function Icon(props: IconProps) {
     size !== undefined && {fontSize: size, lineHeight: size, width: size, height: size},
   ]
 
-  // @ts-ignore
-  if (lucideIcons[name]) {
-    // @ts-ignore
+  if (name && isLucideIconName(name)) {
     const IconComponent = lucideIcons[name] as any
 
     return (
@@ -224,7 +209,7 @@ export function Icon(props: IconProps) {
     )
   }
 
-  if (TablerIcon.glyphMap[name]) {
+  if (name && isTablerIconName(name)) {
     return (
       <View {...viewProps} style={[$containerStyleOverride, $iconCenterStyle]}>
         <TablerIcon style={$textStyle} name={name} size={size} color={color} />
@@ -234,24 +219,20 @@ export function Icon(props: IconProps) {
 
   return (
     <View {...viewProps} style={[$containerStyleOverride, $iconCenterStyle]}>
-      <Image style={$imageStyle} source={iconRegistry[name] as any} />
+      <Image style={$imageStyle} source={(iconRegistry as Record<string, any>)[name as string]} />
     </View>
   )
 }
 
-export const iconRegistry = {
-  // included in other font sets (imported automatically):
-  // included here mostly for ide/type hinting purposes:
-  // tabler icons:
-  ...tablerIcons,
-  // lucide-react-native icons:
-  ...lucideIcons,
+function isLucideIconName(name: IconTypes): name is LucideIconName {
+  return name in lucideIcons
 }
 
-const $iconCenterStyle: ViewStyle = {
-  // justifyContent: "center",
-  // alignItems: "center",
+function isTablerIconName(name: IconTypes): name is TablerIconName {
+  return name in glyphMap
 }
+
+const $iconCenterStyle: ViewStyle = {}
 
 const $imageStyleBase: ImageStyle = {
   resizeMode: "contain",

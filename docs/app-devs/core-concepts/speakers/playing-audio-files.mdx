@@ -29,9 +29,8 @@ session.transcription.on((data) => {
 
   const text = data.text.toLowerCase();
 
-  if (text.includes("take photo")) {
-    session.camera.takePhoto();
-    session.speaker.play({ url: "https://example.com/shutter.mp3" });
+  if (text.includes("start timer")) {
+    session.speaker.play({ url: "https://example.com/timer-start.mp3" });
   }
 });
 ```

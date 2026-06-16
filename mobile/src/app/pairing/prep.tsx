@@ -1,6 +1,7 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useRoute} from "@react-navigation/native"
 import {Linking, PermissionsAndroid, Image, Platform, View} from "react-native"
+import type {Permission} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
@@ -13,8 +14,11 @@ import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
+import {CDN_BASE_URL} from "@/constants/appConfig"
 import {useAppStatusStore} from "@mentra/island"
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+
+type BluetoothPermission = Permission | "android.permission.BLUETOOTH" | "android.permission.BLUETOOTH_ADMIN"
 
 export default function PairingPrepScreen() {
   const route = useRoute()
@@ -50,26 +54,18 @@ export default function PairingPrepScreen() {
 
         // Bluetooth permissions only for physical glasses
         if (needsBluetoothPermissions) {
-          const bluetoothPermissions: any[] = []
+          const bluetoothPermissions: BluetoothPermission[] = []
 
           // Bluetooth permissions based on Android version
           if (typeof Platform.Version === "number" && Platform.Version < 31) {
             // For Android 9, 10, and 11 (API 28-30), use legacy Bluetooth permissions
-            bluetoothPermissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH || "android.permission.BLUETOOTH")
-            bluetoothPermissions.push(
-              PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADMIN || "android.permission.BLUETOOTH_ADMIN",
-            )
+            bluetoothPermissions.push("android.permission.BLUETOOTH")
+            bluetoothPermissions.push("android.permission.BLUETOOTH_ADMIN")
           }
           if (typeof Platform.Version === "number" && Platform.Version >= 31) {
             bluetoothPermissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN)
             bluetoothPermissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT)
             bluetoothPermissions.push(PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE)
-
-            // Add NEARBY_DEVICES permission for Android 12+ (API 31+)
-            // Only add if the permission is defined and not null
-            if (PermissionsAndroid.PERMISSIONS.NEARBY_DEVICES != null) {
-              bluetoothPermissions.push(PermissionsAndroid.PERMISSIONS.NEARBY_DEVICES)
-            }
           }
 
           // Request Bluetooth permissions directly
@@ -81,16 +77,7 @@ export default function PairingPrepScreen() {
               bluetoothPermissions.map((p) => `${p} (${typeof p})`),
             )
 
-            // Filter out any null/undefined permissions
-            const validBluetoothPermissions = bluetoothPermissions.filter((permission) => permission != null)
-            console.log("Valid Bluetooth permissions after filtering:", validBluetoothPermissions)
-
-            if (validBluetoothPermissions.length === 0) {
-              console.warn("No valid Bluetooth permissions to request")
-              return
-            }
-
-            const results = await PermissionsAndroid.requestMultiple(validBluetoothPermissions)
+            const results = await PermissionsAndroid.requestMultiple(bluetoothPermissions as Permission[])
             const allGranted = Object.values(results).every((value) => value === PermissionsAndroid.RESULTS.GRANTED)
 
             // Since we now handle NEVER_ASK_AGAIN in requestFeaturePermissions,
@@ -206,13 +193,16 @@ export default function PairingPrepScreen() {
 
     console.log("needsBluetoothPermissions", needsBluetoothPermissions)
 
-    // Stop any running apps from previous sessions to prevent mic race conditions
-    // This is symmetric with the logic in DeviceSettings that stops apps when unpairing
-    await useAppStatusStore.getState().stopAll()
+    // Stop any running apps from previous sessions to prevent mic race conditions.
+    // This is symmetric with the logic in DeviceSettings that stops apps when unpairing.
+    // Fire-and-forget: stopAll() awaits a per-app backend stop call that can take many
+    // seconds (or hang with no internet / NO_ACTIVE_SESSION). We don't need it to finish
+    // before navigating to the scan screen, so don't block pairing on it.
+    void useAppStatusStore.getState().stopAll()
 
     // skip pairing for simulated glasses:
     if (deviceModel.startsWith(DeviceTypes.SIMULATED)) {
-      await CoreModule.connectSimulated()
+      await BluetoothSdk.connectSimulated()
       clearHistoryAndGoHome()
       return
     }
@@ -234,7 +224,7 @@ export default function PairingPrepScreen() {
   }
 
   const MentraLivePairingGuide = () => {
-    const CDN_BASE = "https://mentra-videos-cdn.mentraglass.com/onboarding/mentra-live/light"
+    const CDN_BASE = `${CDN_BASE_URL}/onboarding/mentra-live/light`
     let steps: OnboardingStep[] = [
       {
         name: "power_on_tutorial",

@@ -1,4 +1,4 @@
-package com.mentra.core
+package com.mentra.bluetoothsdk
 
 import android.bluetooth.BluetoothAdapter
 import android.content.BroadcastReceiver
@@ -10,23 +10,26 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import androidx.core.content.ContextCompat
-import com.mentra.core.controllers.ControllerManager
-import com.mentra.core.controllers.R1
-import com.mentra.core.services.ForegroundService
-import com.mentra.core.services.PhoneMic
-import com.mentra.core.sgcs.G1
-import com.mentra.core.sgcs.G2
-import com.mentra.core.sgcs.Mach1
-import com.mentra.core.sgcs.MentraLive
-import com.mentra.core.sgcs.MentraNex
-import com.mentra.core.sgcs.SGCManager
-import com.mentra.core.sgcs.Simulated
-import com.mentra.core.utils.ControllerTypes
-import com.mentra.core.utils.DeviceTypes
-import com.mentra.core.utils.MicMap
-import com.mentra.core.utils.MicTypes
+import com.mentra.bluetoothsdk.controllers.ControllerManager
+import com.mentra.bluetoothsdk.controllers.R1
+import com.mentra.bluetoothsdk.services.ForegroundService
+import com.mentra.bluetoothsdk.services.PhoneMic
+import com.mentra.bluetoothsdk.sgcs.G1
+import com.mentra.bluetoothsdk.sgcs.G2
+import com.mentra.bluetoothsdk.sgcs.Mach1
+import com.mentra.bluetoothsdk.sgcs.MentraLive
+import com.mentra.bluetoothsdk.sgcs.MentraNex
+import com.mentra.bluetoothsdk.sgcs.SGCManager
+import com.mentra.bluetoothsdk.sgcs.Simulated
+import com.mentra.bluetoothsdk.utils.ControllerTypes
+import com.mentra.bluetoothsdk.utils.DeviceTypes
+import com.mentra.bluetoothsdk.utils.MicMap
+import com.mentra.bluetoothsdk.utils.MicTypes
 import com.mentra.lc3Lib.Lc3Cpp
-import com.mentra.core.stt.SherpaOnnxTranscriber
+import com.mentra.bluetoothsdk.stt.SherpaOnnxTranscriber
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.CountDownLatch
@@ -35,15 +38,15 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.jvm.JvmStatic
 
-class CoreManager {
+class DeviceManager {
     companion object {
 
-        @Volatile private var _instance: CoreManager? = null
+        @Volatile private var _instance: DeviceManager? = null
 
         @JvmStatic
-        fun getInstance(): CoreManager {
+        fun getInstance(): DeviceManager {
             return _instance
-                    ?: synchronized(this) { _instance ?: CoreManager().also { _instance = it } }
+                    ?: synchronized(this) { _instance ?: DeviceManager().also { _instance = it } }
         }
     }
 
@@ -73,157 +76,161 @@ class CoreManager {
 
     // settings:
     private var defaultWearable: String
-        get() = GlassesStore.store.get("core", "default_wearable") as? String ?: ""
-        set(value) = GlassesStore.apply("core", "default_wearable", value)
+        get() = DeviceStore.store.get("bluetooth", "default_wearable") as? String ?: ""
+        set(value) = DeviceStore.apply("bluetooth", "default_wearable", value)
 
     private var pendingWearable: String
-        get() = GlassesStore.store.get("core", "pending_wearable") as? String ?: ""
-        set(value) = GlassesStore.apply("core", "pending_wearable", value)
+        get() = DeviceStore.store.get("bluetooth", "pending_wearable") as? String ?: ""
+        set(value) = DeviceStore.apply("bluetooth", "pending_wearable", value)
 
     public var deviceName: String
-        get() = GlassesStore.store.get("core", "device_name") as? String ?: ""
-        set(value) = GlassesStore.apply("core", "device_name", value)
+        get() = DeviceStore.store.get("bluetooth", "device_name") as? String ?: ""
+        set(value) = DeviceStore.apply("bluetooth", "device_name", value)
 
     public var deviceAddress: String
-        get() = GlassesStore.store.get("core", "device_address") as? String ?: ""
-        set(value) = GlassesStore.apply("core", "device_address", value)
+        get() = DeviceStore.store.get("bluetooth", "device_address") as? String ?: ""
+        set(value) = DeviceStore.apply("bluetooth", "device_address", value)
 
     private var defaultController: String
-        get() = GlassesStore.store.get("core", "default_controller") as? String ?: ""
-        set(value) = GlassesStore.apply("core", "default_controller", value)
+        get() = DeviceStore.store.get("bluetooth", "default_controller") as? String ?: ""
+        set(value) = DeviceStore.apply("bluetooth", "default_controller", value)
 
     private var pendingController: String
-        get() = GlassesStore.store.get("core", "pending_controller") as? String ?: ""
-        set(value) = GlassesStore.apply("core", "pending_controller", value)
+        get() = DeviceStore.store.get("bluetooth", "pending_controller") as? String ?: ""
+        set(value) = DeviceStore.apply("bluetooth", "pending_controller", value)
 
     private var controllerDeviceName: String
-        get() = GlassesStore.store.get("core", "controller_device_name") as? String ?: ""
-        set(value) = GlassesStore.apply("core", "controller_device_name", value)
+        get() = DeviceStore.store.get("bluetooth", "controller_device_name") as? String ?: ""
+        set(value) = DeviceStore.apply("bluetooth", "controller_device_name", value)
 
     private var searchingController: Boolean
-        get() = GlassesStore.store.get("core", "searchingController") as? Boolean ?: false
-        set(value) = GlassesStore.apply("core", "searchingController", value)
+        get() = DeviceStore.store.get("bluetooth", "searchingController") as? Boolean ?: false
+        set(value) = DeviceStore.apply("bluetooth", "searchingController", value)
 
     private var screenDisabled: Boolean
-        get() = GlassesStore.store.get("core", "screen_disabled") as? Boolean ?: false
-        set(value) = GlassesStore.apply("core", "screen_disabled", value)
+        get() = DeviceStore.store.get("bluetooth", "screen_disabled") as? Boolean ?: false
+        set(value) = DeviceStore.apply("bluetooth", "screen_disabled", value)
 
     private var preferredMic: String
-        get() = GlassesStore.store.get("core", "preferred_mic") as? String ?: "auto"
-        set(value) = GlassesStore.apply("core", "preferred_mic", value)
+        get() = DeviceStore.store.get("bluetooth", "preferred_mic") as? String ?: "auto"
+        set(value) = DeviceStore.apply("bluetooth", "preferred_mic", value)
 
     private var autoBrightness: Boolean
-        get() = GlassesStore.store.get("core", "auto_brightness") as? Boolean ?: true
-        set(value) = GlassesStore.apply("core", "auto_brightness", value)
+        get() = DeviceStore.store.get("bluetooth", "auto_brightness") as? Boolean ?: true
+        set(value) = DeviceStore.apply("bluetooth", "auto_brightness", value)
 
     private var brightness: Int
-        get() = GlassesStore.store.get("core", "brightness") as? Int ?: 50
-        set(value) = GlassesStore.apply("core", "brightness", value)
+        get() = DeviceStore.store.get("bluetooth", "brightness") as? Int ?: 50
+        set(value) = DeviceStore.apply("bluetooth", "brightness", value)
 
     private var headUpAngle: Int
-        get() = GlassesStore.store.get("core", "head_up_angle") as? Int ?: 30
-        set(value) = GlassesStore.apply("core", "head_up_angle", value)
+        get() = DeviceStore.store.get("bluetooth", "head_up_angle") as? Int ?: 30
+        set(value) = DeviceStore.apply("bluetooth", "head_up_angle", value)
 
     private var sensingEnabled: Boolean
-        get() = GlassesStore.store.get("core", "sensing_enabled") as? Boolean ?: true
-        set(value) = GlassesStore.apply("core", "sensing_enabled", value)
+        get() = DeviceStore.store.get("bluetooth", "sensing_enabled") as? Boolean ?: true
+        set(value) = DeviceStore.apply("bluetooth", "sensing_enabled", value)
 
     public var powerSavingMode: Boolean
-        get() = GlassesStore.store.get("core", "power_saving_mode") as? Boolean ?: false
-        set(value) = GlassesStore.apply("core", "power_saving_mode", value)
+        get() = DeviceStore.store.get("bluetooth", "power_saving_mode") as? Boolean ?: false
+        set(value) = DeviceStore.apply("bluetooth", "power_saving_mode", value)
 
+    // Phone-side VAD gating switch. Default is OFF (VAD runs) so the
+    // coordinator can drive per-utterance offline/online STT switching from
+    // `vad_status` events. Set to `true` only as an emergency kill-switch.
     private var bypassVad: Boolean
-        get() = GlassesStore.store.get("core", "bypass_vad") as? Boolean ?: true
-        set(value) = GlassesStore.apply("core", "bypass_vad", value)
+        get() = DeviceStore.store.get("bluetooth", "bypass_vad") as? Boolean ?: false
+        set(value) = DeviceStore.apply("bluetooth", "bypass_vad", value)
 
     private var offlineCaptionsRunning: Boolean
-        get() = GlassesStore.store.get("core", "offline_captions_running") as? Boolean ?: false
-        set(value) = GlassesStore.apply("core", "offline_captions_running", value)
+        get() = DeviceStore.store.get("bluetooth", "offline_captions_running") as? Boolean ?: false
+        set(value) = DeviceStore.apply("bluetooth", "offline_captions_running", value)
 
     private var localSttFallbackActive: Boolean
-        get() = GlassesStore.store.get("core", "local_stt_fallback_active") as? Boolean ?: false
-        set(value) = GlassesStore.apply("core", "local_stt_fallback_active", value)
+        get() = DeviceStore.store.get("bluetooth", "local_stt_fallback_active") as? Boolean ?: false
+        set(value) = DeviceStore.apply("bluetooth", "local_stt_fallback_active", value)
 
     private var shouldSendPcm: Boolean
-        get() = GlassesStore.store.get("core", "should_send_pcm") as? Boolean ?: false
-        set(value) = GlassesStore.apply("core", "should_send_pcm", value)
+        get() = DeviceStore.store.get("bluetooth", "should_send_pcm") as? Boolean ?: false
+        set(value) = DeviceStore.apply("bluetooth", "should_send_pcm", value)
 
     private var shouldSendLc3: Boolean
-        get() = GlassesStore.store.get("core", "should_send_lc3") as? Boolean ?: false
-        set(value) = GlassesStore.apply("core", "should_send_lc3", value)
+        get() = DeviceStore.store.get("bluetooth", "should_send_lc3") as? Boolean ?: false
+        set(value) = DeviceStore.apply("bluetooth", "should_send_lc3", value)
 
     private var shouldSendTranscript: Boolean
-        get() = GlassesStore.store.get("core", "should_send_transcript") as? Boolean ?: false
-        set(value) = GlassesStore.apply("core", "should_send_transcript", value)
+        get() = DeviceStore.store.get("bluetooth", "should_send_transcript") as? Boolean ?: false
+        set(value) = DeviceStore.apply("bluetooth", "should_send_transcript", value)
 
     private var contextualDashboard: Boolean
-        get() = GlassesStore.store.get("core", "contextual_dashboard") as? Boolean ?: true
-        set(value) = GlassesStore.apply("core", "contextual_dashboard", value)
+        get() = DeviceStore.store.get("bluetooth", "contextual_dashboard") as? Boolean ?: true
+        set(value) = DeviceStore.apply("bluetooth", "contextual_dashboard", value)
 
     private var dashboardHeight: Int
-        get() = (GlassesStore.store.get("core", "dashboard_height") as? Number)?.toInt() ?: 4
-        set(value) = GlassesStore.apply("core", "dashboard_height", value)
+        get() = (DeviceStore.store.get("bluetooth", "dashboard_height") as? Number)?.toInt() ?: 4
+        set(value) = DeviceStore.apply("bluetooth", "dashboard_height", value)
 
     private var dashboardDepth: Int
-        get() = (GlassesStore.store.get("core", "dashboard_depth") as? Number)?.toInt() ?: 2
-        set(value) = GlassesStore.apply("core", "dashboard_depth", value)
+        get() = (DeviceStore.store.get("bluetooth", "dashboard_depth") as? Number)?.toInt() ?: 2
+        set(value) = DeviceStore.apply("bluetooth", "dashboard_depth", value)
 
     private var galleryMode: Boolean
-        get() = GlassesStore.store.get("core", "gallery_mode") as? Boolean ?: false
-        set(value) = GlassesStore.apply("core", "gallery_mode", value)
+        get() = DeviceStore.store.get("bluetooth", "gallery_mode") as? Boolean ?: true
+        set(value) = DeviceStore.apply("bluetooth", "gallery_mode", value)
 
     // state:
     private var searching: Boolean
-        get() = GlassesStore.store.get("core", "searching") as? Boolean ?: false
-        set(value) = GlassesStore.apply("core", "searching", value)
+        get() = DeviceStore.store.get("bluetooth", "searching") as? Boolean ?: false
+        set(value) = DeviceStore.apply("bluetooth", "searching", value)
 
-    private var glassesBtcConnected: Boolean
-        get() = GlassesStore.store.get("glasses", "btcConnected") as? Boolean ?: false
-        set(value) = GlassesStore.apply("glasses", "btcConnected", value)
+    private var glassesBluetoothClassicConnected: Boolean
+        get() = DeviceStore.store.get("glasses", "bluetoothClassicConnected") as? Boolean ?: false
+        set(value) = DeviceStore.apply("glasses", "bluetoothClassicConnected", value)
 
     public var micRanking: MutableList<String>
         get() =
-                (GlassesStore.store.get("core", "micRanking") as? List<*>)
+                (DeviceStore.store.get("bluetooth", "micRanking") as? List<*>)
                         ?.mapNotNull { it as? String }
                         ?.toMutableList()
                         ?: MicMap.map["auto"]?.toMutableList() ?: mutableListOf()
-        set(value) = GlassesStore.apply("core", "micRanking", value)
+        set(value) = DeviceStore.apply("bluetooth", "micRanking", value)
 
     private var shouldSendBootingMessage: Boolean
-        get() = GlassesStore.store.get("core", "shouldSendBootingMessage") as? Boolean ?: true
-        set(value) = GlassesStore.apply("core", "shouldSendBootingMessage", value)
+        get() = DeviceStore.store.get("bluetooth", "shouldSendBootingMessage") as? Boolean ?: true
+        set(value) = DeviceStore.apply("bluetooth", "shouldSendBootingMessage", value)
 
     // Guard against duplicate ready callbacks firing back-to-back.
     private var lastReadyHandledAtMs: Long = 0L
     private var lastReadyHandledKey: String = ""
+    private var lastSystemTimeSyncConnectionKey: String = ""
 
     private var systemMicUnavailable: Boolean
-        get() = GlassesStore.store.get("core", "systemMicUnavailable") as? Boolean ?: false
-        set(value) = GlassesStore.apply("core", "systemMicUnavailable", value)
+        get() = DeviceStore.store.get("bluetooth", "systemMicUnavailable") as? Boolean ?: false
+        set(value) = DeviceStore.apply("bluetooth", "systemMicUnavailable", value)
 
     public var headUp: Boolean
-        get() = GlassesStore.store.get("glasses", "headUp") as? Boolean ?: false
-        set(value) = GlassesStore.apply("glasses", "headUp", value)
+        get() = DeviceStore.store.get("glasses", "headUp") as? Boolean ?: false
+        set(value) = DeviceStore.apply("glasses", "headUp", value)
 
     private var micEnabled: Boolean
-        get() = GlassesStore.store.get("core", "micEnabled") as? Boolean ?: false
-        set(value) = GlassesStore.apply("core", "micEnabled", value)
+        get() = DeviceStore.store.get("bluetooth", "micEnabled") as? Boolean ?: false
+        set(value) = DeviceStore.apply("bluetooth", "micEnabled", value)
 
     private var currentMic: String
-        get() = GlassesStore.store.get("core", "currentMic") as? String ?: ""
-        set(value) = GlassesStore.apply("core", "currentMic", value)
+        get() = DeviceStore.store.get("bluetooth", "currentMic") as? String ?: ""
+        set(value) = DeviceStore.apply("bluetooth", "currentMic", value)
 
     private var searchResults: List<Any>
-        get() = GlassesStore.store.get("core", "searchResults") as? List<Any> ?: emptyList()
-        set(value) = GlassesStore.apply("core", "searchResults", value)
+        get() = DeviceStore.store.get("bluetooth", "searchResults") as? List<Any> ?: emptyList()
+        set(value) = DeviceStore.apply("bluetooth", "searchResults", value)
 
     private var wifiScanResults: List<Any>
-        get() = GlassesStore.store.get("core", "wifiScanResults") as? List<Any> ?: emptyList()
-        set(value) = GlassesStore.apply("core", "wifiScanResults", value)
+        get() = DeviceStore.store.get("bluetooth", "wifiScanResults") as? List<Any> ?: emptyList()
+        set(value) = DeviceStore.apply("bluetooth", "wifiScanResults", value)
 
     private var lastLog: MutableList<String>
-        get() = GlassesStore.store.get("core", "lastLog") as? MutableList<String> ?: mutableListOf()
-        set(value) = GlassesStore.apply("core", "lastLog", value)
+        get() = DeviceStore.store.get("bluetooth", "lastLog") as? MutableList<String> ?: mutableListOf()
+        set(value) = DeviceStore.apply("bluetooth", "lastLog", value)
 
     // LC3 Audio Encoding
     // Audio output format enum
@@ -244,6 +251,7 @@ class CoreManager {
     // VAD
     private val vadBuffer = mutableListOf<ByteArray>()
     private var isSpeaking = false
+    private var vadPolicy: com.mentra.bluetoothsdk.stt.VadGateSpeechPolicy? = null
 
     // STT
     private var transcriber: SherpaOnnxTranscriber? = null
@@ -252,7 +260,7 @@ class CoreManager {
     private val viewStates = mutableListOf<ViewState>()
 
     init {
-        Bridge.log("CoreManager: init()")
+        Bridge.log("DeviceManager: init()")
         initializeViewStates()
         startForegroundService()
         // setupPermissionMonitoring()
@@ -280,6 +288,9 @@ class CoreManager {
         } catch (e: Exception) {
             Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
             transcriber = null
+        } catch (e: LinkageError) {
+            Bridge.log("Failed to initialize SherpaOnnxTranscriber: ${e.message}")
+            transcriber = null
         }
 
         // Initialize LC3 encoder/decoder for unified audio encoding
@@ -292,6 +303,30 @@ class CoreManager {
             Bridge.log("Failed to initialize LC3 encoder/decoder: ${e.message}")
             lc3EncoderPtr = 0
             lc3DecoderPtr = 0
+        }
+
+        // Initialize phone-side Silero VAD. Used by handlePcm to gate audio
+        // fan-out and to drive per-utterance offline/online STT switching
+        // (see LocalSttFallbackCoordinator on the JS side). If a previous
+        // policy somehow exists (re-init on hot reload), stop it first to
+        // release the ONNX session.
+        try {
+            vadPolicy?.stop()
+            val ctx = Bridge.getContext()
+            val policy = com.mentra.bluetoothsdk.stt.VadGateSpeechPolicy(ctx)
+            policy.init(blockSizeSamples = 512)
+            policy.onSpeechStateChanged = { speaking ->
+                isSpeaking = speaking
+                Bridge.sendVoiceActivityDetectionStatus(speaking)
+            }
+            vadPolicy = policy
+            Bridge.log("VadGateSpeechPolicy initialized")
+        } catch (e: Exception) {
+            Bridge.log("Failed to initialize VadGateSpeechPolicy: ${e.message}")
+            vadPolicy = null
+        } catch (e: LinkageError) {
+            Bridge.log("Failed to initialize VadGateSpeechPolicy: ${e.message}")
+            vadPolicy = null
         }
 
         // Mic reinit check every 10 seconds
@@ -308,8 +343,8 @@ class CoreManager {
 
     private fun checkAndReinitGlassesMic() {
         // if the glasses mic is marked as enabled (and the glasses are connected), but our last known lc3 event is from > 5 seconds ago, reinitialize the mic:
-        val glassesMicEnabled = GlassesStore.get("glasses", "micEnabled") as? Boolean ?: false
-        val glassesConnected = GlassesStore.get("glasses", "connected") as? Boolean ?: false
+        val glassesMicEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
+        val glassesConnected = DeviceStore.get("glasses", "connected") as? Boolean ?: false
         if (!glassesMicEnabled || !glassesConnected) {
             return
         }
@@ -598,18 +633,16 @@ class CoreManager {
             var layoutType: String,
             var text: String,
             var data: String?,
-            var animationData: Map<String, Any>?
+            var animationData: Map<String, Any>?,
+            // Optional bitmap_view container position/size (used by G2; ignored by others)
+            var bmpX: Int? = null,
+            var bmpY: Int? = null,
+            var bmpWidth: Int? = null,
+            var bmpHeight: Int? = null
     )
     // MARK: - End Unique
 
     // MARK: - Voice Data Handling
-
-    private fun checkSetVadStatus(speaking: Boolean) {
-        if (speaking != isSpeaking) {
-            isSpeaking = speaking
-            Bridge.sendVadEvent(isSpeaking)
-        }
-    }
 
     private fun convertAndSendMicLc3(pcmData: ByteArray) {
         synchronized(lc3Lock) {
@@ -617,7 +650,7 @@ class CoreManager {
                 Bridge.log("MAN: ERROR - LC3 encoder not initialized but format is LC3")
                 return
             }
-            val lc3FrameSize = (GlassesStore.store.get("core", "lc3_frame_size") as Number).toInt()
+            val lc3FrameSize = (DeviceStore.store.get("bluetooth", "lc3_frame_size") as Number).toInt()
             val lc3Data = Lc3Cpp.encodeLC3(lc3EncoderPtr, pcmData, lc3FrameSize)
             if (lc3Data == null || lc3Data.isEmpty()) {
                 Bridge.log("MAN: ERROR - LC3 encoding returned empty data")
@@ -633,21 +666,6 @@ class CoreManager {
         }
         if (shouldSendLc3) {
             convertAndSendMicLc3(pcmData)
-        }
-    }
-
-    private fun emptyVadBuffer() {
-        while (vadBuffer.isNotEmpty()) {
-            val chunk = vadBuffer.removeAt(0)
-            handleSendingPcm(chunk) // Uses our encoder, not Bridge directly
-        }
-    }
-
-    private fun addToVadBuffer(chunk: ByteArray) {
-        val MAX_BUFFER_SIZE = 20
-        vadBuffer.add(chunk)
-        while (vadBuffer.size > MAX_BUFFER_SIZE) {
-            vadBuffer.removeAt(0)
         }
     }
 
@@ -682,9 +700,17 @@ class CoreManager {
     }
 
     fun handlePcm(pcmData: ByteArray) {
+        // Audio always flows. The previous phone-side Silero VAD gate was a
+        // bandwidth-saver that ate transcripts when the mic delivered frames
+        // not aligned to 512 samples (the case for Android AudioRecord on the
+        // phone internal mic) and was never wired up correctly anyway —
+        // `bypass_vad_for_debugging` was dead, cloud-side `bypass_vad` was
+        // the only knob, and the policy double-VAD'd what the cloud already
+        // VADs server-side. VadGateSpeechPolicy is kept around because
+        // hardware-side VAD events from the glasses route through the same
+        // class to fire `vad_status` (a separate signal the cloud SDK
+        // surfaces as `session.audio.isSpeaking`).
         handleSendingPcm(pcmData)
-
-        // Send PCM to local transcriber (always needs raw PCM)
         if (shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive) {
             transcriber?.acceptAudio(pcmData)
         }
@@ -727,8 +753,8 @@ class CoreManager {
 
             for (micMode in micRanking) {
                 if (micMode == MicTypes.PHONE_INTERNAL ||
-                                micMode == MicTypes.BT_CLASSIC ||
-                                micMode == MicTypes.BT
+                                micMode == MicTypes.BLUETOOTH_CLASSIC ||
+                                micMode == MicTypes.BLUETOOTH
                 ) {
 
                     if (phoneMic?.isRecordingWithMode(micMode) == true) {
@@ -790,8 +816,8 @@ class CoreManager {
             }
 
             if (micMode == MicTypes.PHONE_INTERNAL ||
-                            micMode == MicTypes.BT_CLASSIC ||
-                            micMode == MicTypes.BT
+                            micMode == MicTypes.BLUETOOTH_CLASSIC ||
+                            micMode == MicTypes.BLUETOOTH
             ) {
                 phoneMic?.stopMode(micMode)
             }
@@ -813,7 +839,7 @@ class CoreManager {
     }
 
     fun sendCurrentState() {
-        val hUp = GlassesStore.get("glasses", "headUp") as? Boolean ?: false
+        val hUp = DeviceStore.get("glasses", "headUp") as? Boolean ?: false
         // Bridge.log("MAN: sendCurrentState(): $isHeadUp")
         if (screenDisabled) {
             return
@@ -838,7 +864,7 @@ class CoreManager {
 
         var fullyBooted = sgc?.fullyBooted ?: false
         if (!fullyBooted) {
-            Bridge.log("MAN: CoreManager.sendCurrentState(): sgc not ready")
+            Bridge.log("MAN: DeviceManager.sendCurrentState(): sgc not ready")
             return
         }
 
@@ -861,7 +887,15 @@ class CoreManager {
                 sgc?.sendTextWall("${currentViewState.title}\n\n${currentViewState.text}")
             }
             "bitmap_view" -> {
-                currentViewState.data?.let { data -> sgc?.displayBitmap(data) }
+                currentViewState.data?.let { data ->
+                    sgc?.displayBitmap(
+                            data,
+                            currentViewState.bmpX,
+                            currentViewState.bmpY,
+                            currentViewState.bmpWidth,
+                            currentViewState.bmpHeight
+                    )
+                }
             }
             "clear_view" -> sgc?.clearDisplay()
             else -> Bridge.log("MAN: UNHANDLED LAYOUT_TYPE ${currentViewState.layoutType}")
@@ -1004,6 +1038,7 @@ class CoreManager {
             Bridge.log("MAN: Cleaning up previous sgc type: ${sgc?.type}")
             sgc?.cleanup()
             sgc = null
+            lastSystemTimeSyncConnectionKey = ""
         }
 
         if (sgc != null) {
@@ -1022,15 +1057,27 @@ class CoreManager {
         } else if (wearable.contains(DeviceTypes.NEX)) {
             sgc = MentraNex()
         } else if (wearable.contains(DeviceTypes.MACH1)) {
-            sgc = Mach1()
+            sgc = createOptionalMach1Sgc(DeviceTypes.MACH1)
         } else if (wearable.contains(DeviceTypes.Z100)) {
-            sgc = Mach1() // Z100 uses same hardware/SDK as Mach1
-            sgc?.type = DeviceTypes.Z100 // Override type to Z100
+            sgc = createOptionalMach1Sgc(DeviceTypes.Z100)
         } else if (wearable.contains(DeviceTypes.FRAME)) {
             // sgc = FrameManager()
         }
         // update device model:
-        GlassesStore.apply("glasses", "deviceModel", sgc?.type ?: "")
+        DeviceStore.apply("glasses", "deviceModel", sgc?.type ?: "")
+    }
+
+    private fun createOptionalMach1Sgc(deviceType: String): SGCManager? {
+        return try {
+            Mach1().also { sgc ->
+                if (deviceType == DeviceTypes.Z100) {
+                    sgc.type = DeviceTypes.Z100
+                }
+            }
+        } catch (e: LinkageError) {
+            Bridge.log("Failed to initialize $deviceType support: ${e.message}")
+            null
+        }
     }
 
     fun initController(controllerType: String) {
@@ -1078,8 +1125,24 @@ class CoreManager {
         defaultWearable = sgc?.type ?: ""
         searching = false
 
-        // Apply dashboard position before any boot text so content doesn't jump.
-        sgc?.setDashboardPosition(dashboardHeight, dashboardDepth)
+        syncSystemTimeOnceForConnection(readyKey)
+
+        // re-apply display height/depth after reconnection
+        mainHandler.postDelayed(
+                {
+                    val h =
+                            (DeviceStore.store.get("bluetooth", "dashboard_height") as? Number)
+                                    ?.toInt()
+                                    ?: 4
+                    val rawDepth =
+                            (DeviceStore.store.get("bluetooth", "dashboard_depth") as? Number)
+                                    ?.toInt()
+                                    ?: dashboardDepth // canonical default (2), not 1
+                    val d = rawDepth.coerceIn(1, 4)
+                    sgc?.setDashboardPosition(h, d)
+                },
+                2000
+        )
 
         // Show welcome message on first connect for all display glasses
         if (shouldSendBootingMessage) {
@@ -1114,6 +1177,21 @@ class CoreManager {
         Bridge.saveSetting("device_address", deviceAddress)
     }
 
+    private fun syncSystemTimeOnceForConnection(connectionKey: String) {
+        val activeSgc = sgc ?: return
+        if (activeSgc.type.contains(DeviceTypes.SIMULATED)) {
+            return
+        }
+        if (connectionKey == lastSystemTimeSyncConnectionKey) {
+            return
+        }
+
+        lastSystemTimeSyncConnectionKey = connectionKey
+        val timestampMs = System.currentTimeMillis()
+        Bridge.log("MAN: Syncing glasses system time once for connection: $timestampMs")
+        activeSgc.sendSetSystemTime(timestampMs)
+    }
+
     private fun handleG1Ready() {
         // G1-specific setup (if any needed in the future)
         // Note: G1-specific settings like silent mode, battery status,
@@ -1126,7 +1204,9 @@ class CoreManager {
 
     fun handleDeviceDisconnected() {
         Bridge.log("MAN: Device disconnected")
-        GlassesStore.apply("glasses", "headUp", false)
+        lastSystemTimeSyncConnectionKey = ""
+        DeviceStore.apply("glasses", "headUp", false)
+        DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
     }
 
     fun handleControllerReady() {
@@ -1183,7 +1263,26 @@ class CoreManager {
         val title = parsePlaceholders(layout.getString("title", " "))
         val data = layout["data"] as? String
 
-        var newViewState = ViewState(topText, bottomText, title, layoutType ?: "", text, data, null)
+        // Optional bitmap_view container position/size (forwarded to the SGC; used by G2).
+        val bmpX = (layout["x"] as? Number)?.toInt()
+        val bmpY = (layout["y"] as? Number)?.toInt()
+        val bmpWidth = (layout["width"] as? Number)?.toInt()
+        val bmpHeight = (layout["height"] as? Number)?.toInt()
+
+        var newViewState =
+                ViewState(
+                        topText,
+                        bottomText,
+                        title,
+                        layoutType ?: "",
+                        text,
+                        data,
+                        null,
+                        bmpX,
+                        bmpY,
+                        bmpWidth,
+                        bmpHeight
+                )
 
         val currentState = viewStates[stateIndex]
 
@@ -1205,6 +1304,12 @@ class CoreManager {
         sgc?.showDashboard()
     }
 
+    fun showNotificationsPanel() {
+        CoroutineScope(Dispatchers.Main).launch {
+            sgc?.showNotificationsPanel()
+        }
+    }
+
     fun ping() {
         sgc?.ping()
     }
@@ -1221,6 +1326,7 @@ class CoreManager {
 
     fun startStream(message: MutableMap<String, Any>) {
         Bridge.log("MAN: startStream")
+        message["flash"] = true
         sgc?.startStream(message)
     }
 
@@ -1236,7 +1342,7 @@ class CoreManager {
 
     fun requestWifiScan() {
         Bridge.log("MAN: Requesting wifi scan")
-        GlassesStore.apply("core", "wifiScanResults", emptyList<Any>())
+        DeviceStore.apply("bluetooth", "wifiScanResults", emptyList<Any>())
         sgc?.requestWifiScan()
     }
 
@@ -1260,6 +1366,11 @@ class CoreManager {
         sgc?.sendHotspotState(enabled)
     }
 
+    fun setSystemTime(timestampMs: Long) {
+        Bridge.log("MAN: Setting glasses system time: $timestampMs")
+        sgc?.sendSetSystemTime(timestampMs)
+    }
+
     fun queryGalleryStatus() {
         Bridge.log("MAN: Querying gallery status from glasses")
         sgc?.queryGalleryStatus()
@@ -1269,14 +1380,49 @@ class CoreManager {
      * Send OTA start command to glasses. Called when user approves an update (onboarding or
      * background mode). Triggers glasses to begin download and installation.
      */
-    fun sendOtaStart() {
+    fun sendOtaStart(otaVersionUrl: String? = null) {
         Bridge.log("MAN: 📱 Sending OTA start command to glasses")
-        (sgc as? MentraLive)?.sendOtaStart()
+        (sgc as? MentraLive)?.sendOtaStart(otaVersionUrl)
     }
 
     fun sendOtaQueryStatus() {
         Bridge.log("MAN: 📱 Sending OTA query status command to glasses")
         (sgc as? MentraLive)?.sendOtaQueryStatus()
+    }
+
+    fun sendGalleryMode(requestId: String, enabled: Boolean) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendGalleryMode(requestId, enabled)
+    }
+
+    fun sendButtonPhotoSettings(requestId: String, size: String) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendButtonPhotoSettings(requestId, size)
+    }
+
+    fun sendButtonVideoRecordingSettings(requestId: String, width: Int, height: Int, fps: Int) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendButtonVideoRecordingSettings(requestId, width, height, fps)
+    }
+
+    fun sendButtonCameraLedSetting(requestId: String, enabled: Boolean) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendButtonCameraLedSetting(requestId, enabled)
+    }
+
+    fun sendButtonMaxRecordingTime(requestId: String, minutes: Int) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendButtonMaxRecordingTime(requestId, minutes)
+    }
+
+    fun sendCameraFovSetting(requestId: String, fov: Int, roiPosition: Int) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendCameraFovSetting(requestId, fov, roiPosition)
+    }
+
+    fun retryOtaVersionCheck() {
+        Bridge.log("MAN: ⏰ Retrying glasses OTA version check after clock sync")
+        (sgc as? MentraLive)?.sendOtaRetryVersionCheck()
     }
 
     /**
@@ -1352,27 +1498,47 @@ class CoreManager {
         sgc?.sendReboot()
     }
 
-    fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {
+    fun startVideoRecording(
+            requestId: String,
+            save: Boolean,
+            sound: Boolean,
+            width: Int = 0,
+            height: Int = 0,
+            fps: Int = 0,
+            maxRecordingTimeMinutes: Int = 0,
+    ) {
         Bridge.log(
-                "MAN: onStartVideoRecording: requestId=$requestId, save=$save, flash=$flash, sound=$sound"
+                "MAN: onStartVideoRecording: requestId=$requestId, save=$save, flash=true, sound=$sound, " +
+                        "resolution=${width}x${height}@${fps}fps, maxRecordingTimeMinutes=$maxRecordingTimeMinutes"
         )
-        sgc?.startVideoRecording(requestId, save, flash, sound)
+        sgc?.startVideoRecording(
+                requestId, save, true, sound, width, height, fps, maxRecordingTimeMinutes)
     }
 
-    fun stopVideoRecording(requestId: String) {
-        Bridge.log("MAN: onStopVideoRecording: requestId=$requestId")
-        sgc?.stopVideoRecording(requestId)
+    fun stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?) {
+        Bridge.log(
+                "MAN: onStopVideoRecording: requestId=$requestId, webhook=" +
+                        if (webhookUrl.isNullOrEmpty()) "none" else "set"
+        )
+        sgc?.stopVideoRecording(requestId, webhookUrl, authToken)
     }
 
     fun setMicState() {
         val willSendPcm = shouldSendPcm || shouldSendLc3
         val willSendTranscript = shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive
-        micEnabled = willSendPcm || willSendTranscript
+        val nextEnabled = willSendPcm || willSendTranscript
+        // Tell VAD when the mic is shutting down so it doesn't get stuck in
+        // a stale "speaking" state and keep emitting vad_status=true after
+        // audio stops flowing.
+        if (micEnabled && !nextEnabled) {
+            vadPolicy?.microphoneStateChanged(false)
+        }
+        micEnabled = nextEnabled
         vadBuffer.clear()
         updateMicState()
     }
 
-    fun photoRequest(
+    fun requestPhoto(
             requestId: String,
             appId: String,
             size: String,
@@ -1380,12 +1546,30 @@ class CoreManager {
             authToken: String?,
             compress: String,
             flash: Boolean,
-            sound: Boolean
+            save: Boolean,
+            sound: Boolean,
+            exposureTimeNs: Double? = null,
+            iso: Int? = null,
     ) {
+        val exposureNs: Long? =
+                exposureTimeNs?.takeIf { it.isFinite() && it > 0 }?.let { v ->
+                    when {
+                        v > Long.MAX_VALUE.toDouble() -> Long.MAX_VALUE
+                        else -> v.toLong()
+                    }
+                }
+        val manualIso = if (exposureNs != null) iso?.takeIf { it > 0 } else null
         Bridge.log(
-                "MAN: onPhotoRequest: $requestId, $appId, $size, compress=$compress, flash=$flash, sound=$sound"
+                "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=$requestId appId=$appId size=$size compress=$compress flash=$flash save=$save sound=$sound exposureTimeNs=$exposureNs iso=${manualIso ?: "auto"} sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
-        sgc?.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, sound)
+        val activeSgc = sgc
+        if (activeSgc == null) {
+            Bridge.log(
+                    "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=$requestId"
+            )
+            return
+        }
+        activeSgc.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, save, sound, exposureNs, manualIso)
     }
 
     fun rgbLedControl(
@@ -1393,12 +1577,12 @@ class CoreManager {
             packageName: String?,
             action: String,
             color: String?,
-            ontime: Int,
-            offtime: Int,
+            onDurationMs: Int,
+            offDurationMs: Int,
             count: Int
     ) {
         Bridge.log("MAN: RGB LED control: action=$action, color=$color, requestId=$requestId")
-        sgc?.sendRgbLedControl(requestId, packageName, action, color, ontime, offtime, count)
+        sgc?.sendRgbLedControl(requestId, packageName, action, color, onDurationMs, offDurationMs, count)
     }
 
     fun connectDefault() {
@@ -1507,17 +1691,19 @@ class CoreManager {
         sgc?.clearDisplay()
         sgc?.disconnect()
         sgc = null // Clear the SGC reference after disconnect
+        lastSystemTimeSyncConnectionKey = ""
         searching = false
         micEnabled = false
         updateMicState()
         shouldSendBootingMessage = true // Reset for next first connect
         // clear glasses properties:
-        GlassesStore.apply("glasses", "deviceModel", "")
-        GlassesStore.apply("glasses", "fullyBooted", false)
-        GlassesStore.apply("glasses", "connected", false)
+        DeviceStore.apply("glasses", "deviceModel", "")
+        DeviceStore.apply("glasses", "fullyBooted", false)
+        DeviceStore.apply("glasses", "connected", false)
+        DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
         // disconnect the controller as well:
         searchingController = false
-        GlassesStore.apply("glasses", "controllerConnected", false)
+        DeviceStore.apply("glasses", "controllerConnected", false)
         controller?.disconnect()
         controller = null
     }
@@ -1557,7 +1743,7 @@ class CoreManager {
         controllerDeviceName = ""
         Bridge.saveSetting("controller_device_name", "")
         Bridge.saveSetting("default_controller", "")
-        GlassesStore.apply("glasses", "controllerConnected", false)
+        DeviceStore.apply("glasses", "controllerConnected", false)
     }
 
     fun findCompatibleDevices(deviceModel: String) {
@@ -1585,8 +1771,8 @@ class CoreManager {
     fun stopScan() {
         controller?.stopScan()
         sgc?.stopScan()
-        GlassesStore.apply("core", "searching", false)
-        GlassesStore.apply("core", "searchingController", false)
+        DeviceStore.apply("bluetooth", "searching", false)
+        DeviceStore.apply("bluetooth", "searchingController", false)
     }
 
     // MARK: Cleanup

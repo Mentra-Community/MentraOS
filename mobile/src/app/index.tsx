@@ -15,6 +15,7 @@ import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {SplashVideo} from "@/components/splash/SplashVideo"
+import {APP_STORE_URL, PLAY_STORE_URL} from "@/constants/appConfig"
 import {BgTimer} from "@mentra/island"
 
 // Types
@@ -28,8 +29,6 @@ interface StatusConfig {
 }
 
 // Constants
-const APP_STORE_URL = "https://apps.apple.com/app/id6747363193"
-const PLAY_STORE_URL = "https://play.google.com/store/apps/details?id=com.mentra.mentra"
 const NAVIGATION_DELAY = 300
 const DEEPLINK_DELAY = 1000
 
@@ -114,14 +113,14 @@ export default function InitScreen() {
     if (pendingRoute) {
       setPendingRoute(null)
       // Navigate to home first so the deep link screen has a proper back destination
-      clearHistoryAndGoHome({transition: "fade"})
+      clearHistoryAndGoHome({transition: "none"})
       setTimeout(() => processUrl(pendingRoute), DEEPLINK_DELAY)
       return
     }
 
     await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
     setAnimationDelayed()
-    clearHistoryAndGoHome({transition: "fade"})
+    clearHistoryAndGoHome({transition: "none"})
   }, [user, getPendingRoute, processUrl, clearHistoryAndGoHome, replace, replaceAll, setPendingRoute, setAnimation])
 
   const checkLoggedIn = async (): Promise<void> => {

@@ -5,7 +5,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useApps, useStart} from "@mentra/island"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
-import CoreModule, {ButtonPressEvent} from "@mentra/bluetooth-sdk"
+import BluetoothSdk, {ButtonPressEvent} from "@mentra/bluetooth-sdk"
 
 export function ButtonActions() {
   const applets = useApps()
@@ -85,13 +85,20 @@ export function ButtonActions() {
         return
       }
 
-      // Check if any foreground app is running
-      const activeForegroundApp = applets.find((app) => app.type === "standard" && app.running)
+      // Check if any standard or background app is running. A running background app
+      // (e.g. one that listens for hardware button presses) already receives this event
+      // server-side, so it owns the button. Launching the default app here would also
+      // re-enable gallery mode (camera running), recreating the duplicate native-capture +
+      // SDK requestPhoto() race that GalleryModeSync suppresses. Keep this predicate in sync
+      // with GalleryModeSync.
+      const activeButtonHandlingApp = applets.find(
+        (app) => (app.type === "standard" || app.type === "background") && app.running,
+      )
 
-      if (activeForegroundApp) {
+      if (activeButtonHandlingApp) {
         console.log(
-          "BUTTON_ACTION: Foreground app is running - button event already sent to server for app:",
-          activeForegroundApp.name,
+          "BUTTON_ACTION: App is running - button event already sent to server for app:",
+          activeButtonHandlingApp.name,
         )
         return
       }
@@ -127,7 +134,7 @@ export function ButtonActions() {
       startApplet(targetApp, {skipNavigation: true})
     }
 
-    let sub = CoreModule.addListener("button_press", onButtonPress)
+    let sub = BluetoothSdk.addListener("button_press", onButtonPress)
 
     return () => {
       sub.remove()

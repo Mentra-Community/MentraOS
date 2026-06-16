@@ -10,7 +10,7 @@ In v3, you can query and observe your app's permissions at runtime using `sessio
 
 ```typescript
 // Check a single permission
-const canUseCamera = session.permissions.has("camera");
+const canUseMicrophone = session.permissions.has("microphone");
 
 // Get all permissions
 const all = session.permissions.getAll();
@@ -33,7 +33,6 @@ session.permissions.onUpdate((permissions) => {
 | **MICROPHONE** | Voice input, audio processing | Transcription, audio chunks |
 | **LOCATION** | GPS coordinates | Location tracking |
 | **BACKGROUND_LOCATION** | Location when app inactive | Background tracking |
-| **CAMERA** | Photos, video streaming | Photo capture, RTMP streaming |
 | **CALENDAR** | Calendar events | Event notifications |
 | **READ_NOTIFICATIONS** | Phone notifications | Notification filtering |
 | **POST_NOTIFICATIONS** | Send notifications | Push notifications |
@@ -96,13 +95,9 @@ session.location.onUpdate((data) => { session.logger.info(data.lat, data.lng); }
 session.location.requestUpdate();
 ```
 
-### CAMERA
-
-```typescript
-// These require CAMERA permission:
-const photo = await session.camera.takePhoto();
-await session.camera.startStream({ direct: 'srt://...' });
-```
+<Info>
+For camera, photo, and streaming features, use the first-party [Mentra Live docs](/mentra-live/overview) instead of the cloud Mini App permission model.
+</Info>
 
 ### READ_NOTIFICATIONS
 
@@ -151,7 +146,6 @@ session.phone.calendar.on((data) => {});
 {
   "permissions": [
     { "type": "MICROPHONE", ... },
-    { "type": "CAMERA", ... },
     { "type": "LOCATION", ... }
     // User less likely to install
   ]

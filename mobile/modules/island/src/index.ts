@@ -4,15 +4,63 @@ export {miniappRunningRegistry} from "./services/MiniappRunningRegistry"
 export {
   default as appRegistry,
   normalizeManifestPermissions,
+  normalizeManifestActions,
   buildHardwareRequirements,
   saveLocalAppRunningState,
+  registerDevApp,
+  unregisterDevApp,
+  getDevAppRecords,
+  DEV_APP_PACKAGE_NAME,
+  type DevAppRecord,
 } from "./services/AppRegistry"
 export {default as devServerBridge} from "./services/DevServerBridge"
 export {default as displayProcessor} from "./services/DisplayProcessor"
 export {default as localDisplayManager, type DisplayPayload} from "./services/LocalDisplayManager"
 export {default as localMiniappRuntime, type InstalledMiniappManifest} from "./services/LocalMiniappRuntime"
+export {
+  miniappLauncher,
+  configureLauncher,
+  type LauncherDeps,
+  type LaunchHints,
+  type LaunchResult,
+  type ResolvedBundle,
+} from "./services/MiniappLauncher"
+export {
+  MentraJSRouter,
+  type MentraJSCrustBinding,
+  type OutboundMessagePayload as MentraJSOutboundMessage,
+  type RouterLogger as MentraJSRouterLogger,
+} from "./services/MentraJSRouter"
+export {buildMentraUiShim, type MentraUiShimOptions} from "./services/mentraUiShim"
+export {MentraUIRouter, type MentraUICrustBinding} from "./services/MentraUIRouter"
+export {
+  MentraJSCrashController,
+  type CrashState,
+  type CrashOutcome,
+  type CrashControllerOptions,
+} from "./services/MentraJSCrashController"
+export {
+  redactSecrets,
+  MentraJSLogThrottle,
+  MentraJSLogRingBuffer,
+  type ThrottleOptions,
+} from "./services/MentraJSLogPipeline"
 export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbackCoordinator"
 export {default as micStateCoordinator} from "./services/MicStateCoordinator"
+export {
+  default as sttModelManager,
+  STTModelManager,
+  type LanguageInfo as SttLanguageInfo,
+  type LanguageConfig as SttLanguageConfig,
+  type DownloadProgress as SttDownloadProgress,
+  type ExtractionProgress as SttExtractionProgress,
+} from "./services/STTModelManager"
+export {default as ttsModelManager, TTSModelManager} from "./services/TTSModelManager"
+export {
+  default as offlineSpeechModelService,
+  type DownloadStatus as OfflineModelDownloadStatus,
+  type DownloadStage as OfflineModelDownloadStage,
+} from "./services/OfflineSpeechModelService"
 
 // Runtime config (host-injected adapters)
 export {
@@ -26,6 +74,10 @@ export {
   type SettingsAccessor,
   type StoreAccessor,
   type GlassesSnapshot,
+  type StreamingAdapter,
+  type PhotoAdapter,
+  type InteropAdapter,
+  type InteropAuditEvent,
 } from "./runtime/config"
 
 // Stores
@@ -42,6 +94,8 @@ export {
   useApps,
   useStart,
   useStop,
+  useSetForeground,
+  useClearForeground,
   useRefresh,
   useStopAll,
   useInstall,
@@ -50,11 +104,9 @@ export {
   useActiveBackgroundApps,
   useBackgroundApps,
   useActiveForegroundApp,
+  useForegroundApp,
   useActiveBackgroundAppsCount,
   useLocalMiniApps,
-  useForegroundMiniApp,
-  useSetForeground,
-  useClearForeground,
   type IslandHostHooks,
   type StartOptions,
   type OrderMap,

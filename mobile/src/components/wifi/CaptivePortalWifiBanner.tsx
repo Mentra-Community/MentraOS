@@ -19,8 +19,8 @@ export function CaptivePortalWifiBanner() {
     <View
       className="rounded-xl border px-3 py-3"
       style={{
-        backgroundColor: theme.colors.warningPink,
-        borderColor: theme.colors.warningPinkBorder,
+        backgroundColor: theme.colors.palette.warningPink,
+        borderColor: theme.colors.palette.warningPinkBorder,
       }}>
       <Text className="text-base font-semibold text-text mb-1" tx="wifi:captivePortalTitle" />
       <Text className="text-sm text-text-dim leading-5" tx="wifi:captivePortalMessage" />

@@ -202,8 +202,7 @@ const $primaryButton: ThemedStyle<ViewStyle> = () => ({
   // Using default Button styles from Ignite theme
 })
 
-const $pressedButton: ThemedStyle<ViewStyle> = ({colors}) => ({
-  backgroundColor: colors.buttonPressed,
+const $pressedButton: ThemedStyle<ViewStyle> = () => ({
   opacity: 0.9,
 })
 

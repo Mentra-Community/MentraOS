@@ -61,15 +61,18 @@ describe("otaStatus store field", () => {
 
 describe("wifiStatusKnown reset on disconnect", () => {
   it("resets wifiStatusKnown when connected becomes false", () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true, wifi: {state: "connected", ssid: "TestNetwork"}})
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      wifi: {state: "connected", ssid: "TestNetwork"},
+    })
     expect(useGlassesStore.getState().wifiStatusKnown).toBe(true)
 
-    useGlassesStore.getState().setGlassesInfo({connected: false})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
     expect(useGlassesStore.getState().wifiStatusKnown).toBe(false)
   })
 
   it("sets wifiStatusKnown when wifi info arrives while connected", () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     useGlassesStore.getState().setGlassesInfo({wifiConnected: true, wifiSsid: "TestNetwork"})
     expect(useGlassesStore.getState().wifiStatusKnown).toBe(true)
     expect(useGlassesStore.getState().wifi).toEqual({state: "connected", ssid: "TestNetwork"})
@@ -82,7 +85,7 @@ describe("wifiStatusKnown reset on disconnect", () => {
 
   it("keeps local IP optional for connected WiFi status", () => {
     useGlassesStore.getState().setGlassesInfo({
-      connected: true,
+      connection: {state: "connected", fullyBooted: true},
       wifiConnected: true,
       wifiSsid: "Mentra",
     })

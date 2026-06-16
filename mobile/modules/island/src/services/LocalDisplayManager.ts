@@ -19,8 +19,6 @@
  * is off.
  */
 
-import CoreModule from "@mentra/bluetooth-sdk"
-
 import displayProcessor from "./DisplayProcessor"
 import {getRuntimeHooks} from "../runtime/config"
 import {BgTimer} from "../utils/timers"
@@ -153,6 +151,14 @@ class LocalDisplayManager {
     // Drop stale throttle pending for the old core — new core starts clean.
     if (prevCore) {
       this.pendingThrottledByApp.delete(prevCore)
+    }
+
+    // No core app means no saved frame to restore on the next unmount.
+    // Without this, the previous core's last frame can flicker back onto
+    // the glasses when the user-initiated clear is followed by an
+    // onUnmount that still finds a populated coreAppDisplay.
+    if (packageName === null) {
+      this.coreAppDisplay = null
     }
   }
 
@@ -347,7 +353,9 @@ class LocalDisplayManager {
     const rawEvent: Record<string, unknown> = {
       view: payload.view ?? "main",
       layout: payload.layout,
-      durationMs: payload.durationMs,
+    }
+    if (payload.durationMs !== undefined) {
+      rawEvent.durationMs = payload.durationMs
     }
     const expiresAt = payload.durationMs ? this.now() + payload.durationMs : null
     this.sendToNative(packageName, rawEvent, expiresAt)
@@ -373,7 +381,12 @@ class LocalDisplayManager {
     }
 
     try {
-      CoreModule.displayEvent(processedEvent)
+      const sendDisplayEvent = getRuntimeHooks().sendDisplayEvent
+      if (sendDisplayEvent) {
+        void Promise.resolve(sendDisplayEvent(processedEvent)).catch((err) => {
+          console.error(`${LOG_TAG}: native display failed:`, err)
+        })
+      }
       getRuntimeHooks().setDisplayEvent?.(JSON.stringify(processedEvent))
     } catch (err) {
       console.error(`${LOG_TAG}: native display failed:`, err)

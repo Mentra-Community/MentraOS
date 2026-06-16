@@ -8,6 +8,7 @@ import org.json.JSONObject;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * Utility class for building gallery status information.
@@ -24,8 +25,19 @@ public class GalleryStatusHelper {
      * @throws JSONException if JSON building fails
      */
     public static JSONObject buildGalleryStatus(FileManager fileManager) throws JSONException {
+        return buildGalleryStatus(fileManager, metadata -> true);
+    }
+
+    /**
+     * Build gallery status with an optional per-file filter (e.g. exclude in-flight videos).
+     */
+    public static JSONObject buildGalleryStatus(
+            FileManager fileManager, Predicate<FileManager.FileMetadata> includeFile) throws JSONException {
         if (fileManager == null) {
             throw new IllegalArgumentException("FileManager cannot be null");
+        }
+        if (includeFile == null) {
+            includeFile = metadata -> true;
         }
 
         // Get all files using FileManager
@@ -39,6 +51,10 @@ public class GalleryStatusHelper {
         Set<String> countedCaptures = new HashSet<>();
 
         for (FileManager.FileMetadata metadata : allFiles) {
+            if (!includeFile.test(metadata)) {
+                continue;
+            }
+
             String fileName = metadata.getFileName();
             totalSize += metadata.getFileSize();
 

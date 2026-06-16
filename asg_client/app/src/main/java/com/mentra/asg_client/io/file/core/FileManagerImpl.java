@@ -317,6 +317,13 @@ public class FileManagerImpl implements FileManager {
         if (items != null) {
             for (File item : items) {
                 if (item.isFile()) {
+                    // Skip transient *.partial sidecars (e.g. imu.jsonl.partial). These are in-flight
+                    // or retained-on-error recovery files; they must never be counted or advertised
+                    // for Wi-Fi sync, where unknown leaf names are treated as primary capture files.
+                    if (item.getName().endsWith(".partial")) {
+                        Log.d(TAG, "⏭️ Skipping .partial file from listing: " + item.getAbsolutePath());
+                        continue;
+                    }
                     // Add file to metadata list
                     String mimeType = new MimeTypeRegistry().getMimeType(item.getName());
                     String relativePath = getRelativePath(rootDir, item);
@@ -333,6 +340,12 @@ public class FileManagerImpl implements FileManager {
 
                     Log.d(TAG, "📄 Found file: " + relativePath + " (" + item.length() + " bytes)");
                 } else if (item.isDirectory()) {
+                    // Skip the transient holding area for SDK no-save photos — those files are
+                    // mid-upload and must never appear in gallery counts or Wi-Fi sync listings.
+                    if (FileManager.SDK_PENDING_DIR_NAME.equals(item.getName())) {
+                        Log.d(TAG, "⏭️ Skipping SDK pending dir from listing: " + item.getAbsolutePath());
+                        continue;
+                    }
                     // Recursively scan subdirectory
                     Log.d(TAG, "📁 Scanning subdirectory: " + item.getName());
                     fileCount += collectFilesRecursively(item, rootDir, packageName, metadataList);

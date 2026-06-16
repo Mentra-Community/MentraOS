@@ -1,6 +1,6 @@
 //
 //  ObservableStore.swift
-//  Core
+//  BluetoothSdk
 //
 //  Observable state management with immediate event emission
 //
@@ -9,15 +9,15 @@ import Foundation
 
 @MainActor
 class ObservableStore {
-    private nonisolated(unsafe) var values: [String: Any] = [:]
+    private var values: [String: Any] = [:]
     private var onEmit: ((String, [String: Any]) -> Void)?
     private var listeners: [String: (String, [String: Any]) -> Void] = [:]
 
-    nonisolated static let coreCategory = "core"
-    private nonisolated static let legacyBluetoothCategory = "bluetooth"
+    nonisolated static let bluetoothCategory = "bluetooth"
+    private nonisolated static let legacyCoreCategory = "core"
 
     nonisolated static func normalizeCategory(_ category: String) -> String {
-        category == legacyBluetoothCategory ? coreCategory : category
+        category == legacyCoreCategory ? bluetoothCategory : category
     }
 
     func configure(onEmit: @escaping (String, [String: Any]) -> Void) {
@@ -54,8 +54,14 @@ class ObservableStore {
         }
     }
 
-    nonisolated func get(_ category: String, _ key: String) -> Any? {
+    func get(_ category: String, _ key: String) -> Any? {
         values["\(Self.normalizeCategory(category)).\(key)"]
+    }
+
+    func wouldSkipSet(_ category: String, _ key: String, _ value: Any) -> Bool {
+        let fullKey = "\(Self.normalizeCategory(category)).\(key)"
+        guard let oldValue = values[fullKey] else { return false }
+        return areEqual(oldValue, value)
     }
 
     func getCategory(_ category: String) -> [String: Any] {

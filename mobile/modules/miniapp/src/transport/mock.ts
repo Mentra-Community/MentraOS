@@ -109,7 +109,7 @@ export class MockTransport implements Transport {
         // Anything that has a requestId expects a REQUEST_RESULT. Reply with a
         // synthetic empty success so app code that awaits the promise resolves.
         if (envelope.requestId) {
-          this.deliverSyntheticResult(envelope.requestId, type ?? "<unknown>")
+          this.deliverSyntheticResult(envelope.requestId, type ?? "<unknown>", payload)
         }
         return
     }
@@ -151,8 +151,12 @@ export class MockTransport implements Transport {
     queueMicrotask(() => this.messageHandler?.(serializeEnvelope(envelope)))
   }
 
-  private deliverSyntheticResult(requestId: string, requestType: string): void {
-    const data = syntheticDataFor(requestType)
+  private deliverSyntheticResult(
+    requestId: string,
+    requestType: string,
+    requestPayload: Record<string, unknown>,
+  ): void {
+    const data = syntheticDataFor(requestId, requestType, requestPayload)
     const responsePayload = {
       type: MiniappResponseType.REQUEST_RESULT,
       ok: true,
@@ -165,7 +169,7 @@ export class MockTransport implements Transport {
 
   private log(...args: unknown[]): void {
     if (this.silent) return
-    // eslint-disable-next-line no-console
+
     console.log(LOG_PREFIX, ...args)
   }
 }
@@ -174,8 +178,28 @@ export class MockTransport implements Transport {
  * Synthetic payload for an unrecognized request that nonetheless awaits a
  * REQUEST_RESULT. Returns enough shape to satisfy callers without crashing.
  */
-function syntheticDataFor(requestType: string): unknown {
+function syntheticDataFor(requestId: string, requestType: string, requestPayload: Record<string, unknown>): unknown {
   switch (requestType) {
+    case MiniappRequestType.CAMERA_FOV: {
+      const presetFov =
+        requestPayload.preset === "narrow"
+          ? 82
+          : requestPayload.preset === "wide"
+          ? 118
+          : requestPayload.preset === "standard"
+          ? 102
+          : undefined
+      const fov = typeof requestPayload.fov === "number" ? requestPayload.fov : presetFov ?? 102
+      const roi = requestPayload.roiPosition
+      const roiPosition = roi === "bottom" ? "bottom" : roi === "top" ? "top" : "center"
+      return {
+        requestId,
+        fov,
+        roiPosition,
+        timestamp: Date.now(),
+      }
+    }
+
     case MiniappRequestType.PHOTO:
       // 1×1 transparent PNG so consumers that try to render don't 404.
       return {
@@ -184,8 +208,13 @@ function syntheticDataFor(requestType: string): unknown {
         requestId: "mock-photo",
       }
 
+    case MiniappRequestType.RGB_LED:
+      return {type: "rgb_led_control_response", state: "success", requestId}
+
     case MiniappRequestType.LOCATION_POLL:
-      return {lat: 0, lng: 0, accuracy: 0, timestamp: Date.now()}
+      // San Francisco fallback — using 0,0 puts dev sessions in the
+      // Atlantic, which makes maps/navigation unusable in the WebView.
+      return {lat: 37.7956, lng: -122.3933, accuracy: 0, timestamp: Date.now()}
 
     case MiniappRequestType.STORAGE_GET:
       return {value: null}

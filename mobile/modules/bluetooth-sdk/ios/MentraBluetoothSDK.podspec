@@ -37,7 +37,9 @@ Pod::Spec.new do |s|
   }
 
   # iOS frameworks required by Bluetooth SDK
-  s.frameworks = 'AVFoundation', 'CoreBluetooth', 'UIKit', 'CoreGraphics'
+  ios_frameworks = ['AVFoundation', 'CoreBluetooth', 'UIKit', 'CoreGraphics']
+  ios_frameworks << 'Network' if include_expo_adapter
+  s.frameworks = ios_frameworks
 
   # System libraries required by MentraOS
   s.library = 'bz2'
@@ -45,8 +47,6 @@ Pod::Spec.new do |s|
   # Vendored frameworks
   s.vendored_frameworks = 'Packages/SherpaOnnx/sherpa-onnx.xcframework'
 
-  # Resources (model files)
-  s.resources = 'Packages/VAD/Silero/Model/*.onnx'
   s.resource_bundles = {
     'BluetoothSDKPrivacy' => ['Source/PrivacyInfo.xcprivacy']
   }
@@ -55,11 +55,16 @@ Pod::Spec.new do |s|
     "Source/**/*.{h,m,mm,swift,hpp,cpp,c}",
     "Packages/CoreObjC/**/*.{h,m,mm,hpp,cpp,c}",
     "Packages/SherpaOnnx/SherpaOnnx.swift",
-    "Packages/SherpaOnnx/sherpa-onnx.xcframework/Headers/**/*.{h,hpp}",
+    "Packages/SherpaOnnx/sherpa-onnx.xcframework/ios-arm64/Headers/**/*.{h,hpp}",
     "Packages/VAD/**/*.swift",
+    "Packages/SherpaOnnx/sherpa-onnx.xcframework/Headers/**/*.{h,hpp}",
     "Packages/libbz2/shim.h"
   ]
-  native_source_files << "BluetoothSdkModule.swift" if include_expo_adapter
+  native_source_files.concat([
+    "BluetoothSdkModule.swift",
+    "LocalPhotoUploadServer.swift",
+    "MentraPhotoReceiverModule.swift"
+  ]) if include_expo_adapter
   s.source_files = native_source_files
 
   # Explicitly mark C++ headers and internal headers as private to prevent exposure in public interface
@@ -67,7 +72,7 @@ Pod::Spec.new do |s|
     "Packages/CoreObjC/lc3_cpp.h",
     "Packages/CoreObjC/mdct_neon.h",
     "Packages/CoreObjC/ltpf_neon.h",
-    "Packages/SherpaOnnx/sherpa-onnx.xcframework/Headers/sherpa-onnx/c-api/cxx-api.h",
+    "Packages/SherpaOnnx/sherpa-onnx.xcframework/ios-arm64/Headers/sherpa-onnx/c-api/cxx-api.h",
     "Packages/libbz2/shim.h",
     "Source/Bridging-Header.h"
   ]

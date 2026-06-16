@@ -8,12 +8,16 @@
 @MainActor
 class Simulated: SGCManager {
     init() {
-        GlassesStore.shared.apply("glasses", "fullyBooted", true)
-        GlassesStore.shared.apply("glasses", "connected", true)
-        GlassesStore.shared.apply("glasses", "connectionState", ConnTypes.CONNECTED)
-        GlassesStore.shared.apply("glasses", "micEnabled", false)
-        GlassesStore.shared.apply("glasses", "vadEnabled", false)
-        GlassesStore.shared.apply("glasses", "btcConnected", false)
+        DeviceStore.shared.apply("glasses", "fullyBooted", true)
+        DeviceStore.shared.apply("glasses", "connected", true)
+        DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.CONNECTED)
+        DeviceStore.shared.apply("glasses", "micEnabled", false)
+        DeviceStore.shared.apply(
+            "glasses",
+            "voiceActivityDetectionEnabled",
+            BluetoothSdkDefaults.voiceActivityDetectionEnabled
+        )
+        DeviceStore.shared.apply("glasses", "bluetoothClassicConnected", false)
     }
 
     // MARK: - Device Information
@@ -28,7 +32,7 @@ class Simulated: SGCManager {
     var androidVersion: String = ""
     var otaVersionUrl: String = ""
     var firmwareVersion: String = ""
-    var btMacAddress: String = ""
+    var bluetoothMacAddress: String = ""
     var serialNumber: String = ""
     var style: String = ""
     var color: String = ""
@@ -76,7 +80,7 @@ class Simulated: SGCManager {
 
     // MARK: - Camera & Media
 
-    func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?, compress _: String?, flash _: Bool, sound _: Bool) {
+    func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?, compress _: String?, flash _: Bool, save _: Bool, sound _: Bool, exposureTimeNs _: Double?, iso _: Int?) {
         Bridge.log("requestPhoto")
     }
 
@@ -130,15 +134,19 @@ class Simulated: SGCManager {
         Bridge.log("clearDisplay")
     }
 
-    func sendTextWall(_: String) {
+    func sendText(_ text: String) async {
+        await sendTextWall(text)
+    }
+
+    func sendTextWall(_: String) async {
         Bridge.log("sendTextWall")
     }
 
-    func sendDoubleTextWall(_: String, _: String) {
+    func sendDoubleTextWall(_: String, _: String) async {
         Bridge.log("sendDoubleTextWall")
     }
 
-    func displayBitmap(base64ImageData _: String) async -> Bool {
+    func displayBitmap(base64ImageData _: String, x _: Int32?, y _: Int32?, width _: Int32?, height _: Int32?) async -> Bool {
         Bridge.log("displayBitmap")
         return false
     }
@@ -177,7 +185,7 @@ class Simulated: SGCManager {
         Bridge.log("sendReboot - not supported on Simulated")
     }
 
-    func sendRgbLedControl(requestId: String, packageName _: String?, action _: String, color _: String?, ontime _: Int, offtime _: Int, count _: Int) {
+    func sendRgbLedControl(requestId: String, packageName _: String?, action _: String, color _: String?, onDurationMs _: Int, offDurationMs _: Int, count _: Int) {
         Bridge.log("sendRgbLedControl - not supported on Simulated")
         Bridge.sendRgbLedControlResponse(requestId: requestId, success: false, error: "device_not_supported")
     }
@@ -243,7 +251,7 @@ class Simulated: SGCManager {
         Bridge.log("sendUserEmailToGlasses: \(email)")
     }
 
-    func sendOtaStart() {
+    func sendOtaStart(otaVersionUrl: String?) {
         Bridge.log("sendOtaStart")
     }
 

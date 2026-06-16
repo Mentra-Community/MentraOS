@@ -1,6 +1,6 @@
-import CoreModule, {WifiSearchResult} from "@mentra/bluetooth-sdk"
+import BluetoothSdk, {WifiSearchResult} from "@mentra/bluetooth-sdk"
 import {useFocusEffect} from "expo-router"
-import {useCallback, useEffect, useMemo, useRef, useState} from "react"
+import {useCallback, useEffect, useMemo, useState} from "react"
 import {ActivityIndicator, ScrollView, TouchableOpacity, View} from "react-native"
 import Toast from "react-native-toast-message"
 
@@ -18,8 +18,6 @@ import {useGlassesStore} from "@/stores/glasses"
 import showAlert from "@/utils/AlertUtils"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 import {translate} from "@/i18n"
-import {BgTimer} from "@mentra/island"
-import {useCoreStore} from "@/stores/core"
 
 export default function WifiScanScreen() {
   const {theme} = useAppTheme()
@@ -27,15 +25,11 @@ export default function WifiScanScreen() {
   const [networks, setNetworks] = useState<WifiSearchResult[]>([])
   const [savedNetworks, setSavedNetworks] = useState<string[]>([])
   const [isScanning, setIsScanning] = useState(true)
-  const scanTimeoutRef = useRef<number | null>(null)
-  const currentScanSessionRef = useRef<number>(Date.now())
-  const receivedResultsForSessionRef = useRef<boolean>(false)
   const connectedWifi = useGlassesStore((state) => (state.wifi.state === "connected" ? state.wifi : null))
   const connectedWifiSsid = connectedWifi?.ssid
   const {push, goBack, getPreviousRoute, incPreventBack, decPreventBack, setAndroidBackFn} =
     useNavigationStore.getState()
   const pushPrevious = usePushPrevious()
-  const wifiScanResults: WifiSearchResult[] = useCoreStore((state) => state.wifiScanResults)
 
   const refreshSavedNetworks = useCallback(() => {
     const savedCredentials = WifiCredentialsService.getAllCredentials()
@@ -82,64 +76,25 @@ export default function WifiScanScreen() {
     startScan()
   }, [refreshSavedNetworks])
 
-  useEffect(() => {
-    const handleWifiScanResults = (scanResults: WifiSearchResult[]) => {
-      if (scanResults.length === 0) {
-        return
-      }
-
-      let processedNetworks = scanResults?.map((network: any) => ({
-        ssid: network.ssid || "",
-        requiresPassword: network.requiresPassword !== false,
-        signalStrength: network.signalStrength || -100,
-      }))
-
-      if (scanTimeoutRef.current) {
-        BgTimer.clearTimeout(scanTimeoutRef.current)
-        scanTimeoutRef.current = null
-      }
-
-      setNetworks(processedNetworks)
-
-      receivedResultsForSessionRef.current = true
-      setIsScanning(false)
-    }
-
-    handleWifiScanResults(wifiScanResults)
-
-    return () => {
-      if (scanTimeoutRef.current) {
-        BgTimer.clearTimeout(scanTimeoutRef.current)
-        scanTimeoutRef.current = null
-      }
-    }
-  }, [wifiScanResults])
-
   const startScan = async () => {
     console.log("WIFI_SCAN: ========= STARTING NEW WIFI SCAN =========")
     setIsScanning(true)
     setNetworks([])
-    currentScanSessionRef.current = Date.now()
-    receivedResultsForSessionRef.current = false
-
-    if (scanTimeoutRef.current) {
-      BgTimer.clearTimeout(scanTimeoutRef.current)
-    }
-
-    scanTimeoutRef.current = BgTimer.setTimeout(() => {
-      console.log("WIFI_SCAN: SCAN TIMEOUT - RETRYING...")
-      scanTimeoutRef.current = null
-    }, 15000)
 
     try {
-      await CoreModule.requestWifiScan()
-      console.log("WIFI_SCAN: WiFi scan request sent successfully")
+      const scanResults = await BluetoothSdk.requestWifiScan()
+      console.log(`WIFI_SCAN: Received ${scanResults.length} WiFi scan results`)
+      setNetworks(
+        scanResults.map((network) => ({
+          ssid: network.ssid || "",
+          requiresPassword: network.requiresPassword !== false,
+          signalStrength: network.signalStrength || -100,
+          frequency: network.frequency,
+        })),
+      )
+      setIsScanning(false)
     } catch (error) {
       console.error("WIFI_SCAN: Error scanning for WiFi networks:", error)
-      if (scanTimeoutRef.current) {
-        BgTimer.clearTimeout(scanTimeoutRef.current)
-        scanTimeoutRef.current = null
-      }
       setIsScanning(false)
       Toast.show({
         type: "error",
@@ -164,7 +119,7 @@ export default function WifiScanScreen() {
             onPress: async () => {
               try {
                 console.log(`WIFI_SCAN: Forgetting network: ${selectedNetwork.ssid}`)
-                await CoreModule.forgetWifiNetwork(selectedNetwork.ssid)
+                await BluetoothSdk.forgetWifiNetwork(selectedNetwork.ssid)
                 // Also remove from local saved credentials
                 WifiCredentialsService.removeCredentials(selectedNetwork.ssid)
                 setSavedNetworks((prev) => prev.filter((ssid) => ssid !== selectedNetwork.ssid))

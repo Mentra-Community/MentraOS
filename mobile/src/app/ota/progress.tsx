@@ -1,5 +1,5 @@
-import CoreModule from "@mentra/bluetooth-sdk"
-import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
 import {useCallback, useEffect, useRef, useState} from "react"
 import {View, ActivityIndicator} from "react-native"
 
@@ -21,10 +21,11 @@ import {Screen, Header, Button, Text, Icon} from "@/components/ignite"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
-import {useGlassesStore} from "@/stores/glasses"
+import {getAsgOtaVersionUrl} from "@/effects/OtaUpdateChecker"
+import {isGlassesConnected, selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {getOtaErrorMessage, shouldShowChangeWifiForOtaDownloadFailure} from "@/utils/otaErrorMapping"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import { useNavigationStore } from "@/stores/navigation"
+import {useNavigationStore} from "@/stores/navigation"
 
 function isTerminalForWatchdog(d: DisplayState): boolean {
   return d === "complete" || d === "failed" || d === "restarting"
@@ -74,7 +75,7 @@ function hasRecoveringOtaReply(otaStatus: OtaStatus | null, otaProgress: OtaProg
 export default function OtaProgressScreen() {
   const {theme} = useAppTheme()
   const {replace, push} = useNavigationStore.getState()
-  const connected = useGlassesStore((s) => s.connected)
+  const connected = useGlassesStore(selectGlassesConnected)
   const otaStatus = useGlassesStore((s) => s.otaStatus)
   const otaProgress = useGlassesStore((s) => s.otaProgress)
 
@@ -249,7 +250,7 @@ export default function OtaProgressScreen() {
     return deriveDisplayState({
       otaStatus: s.otaStatus,
       otaProgress: s.otaProgress,
-      connected: s.connected,
+      connected: isGlassesConnected(s.connection),
       errorMsg: errorMsgRef.current,
       sawReconnectEdge: sawReconnectEdgeRef.current,
     })
@@ -292,7 +293,7 @@ export default function OtaProgressScreen() {
     }, GLOBAL_OTA_TIMEOUT_MS)
   }, [clearPerStepTimers, computeDisplayStateNow])
 
-  const sendOtaStartRef = useRef<() => Promise<void>>(async () => {})
+  const sendOtaStartRef = useRef<(retryAlreadyCounted?: boolean) => Promise<void>>(async () => {})
 
   const armAckAndStuckWatchdogsOnly = useCallback(() => {
     clearRetryTimeout()
@@ -308,7 +309,7 @@ export default function OtaProgressScreen() {
         console.log(
           `[OTA_PROGRESS] watchdog: no ack in ${RETRY_INTERVAL_MS}ms, retrying ota_start (attempt ${retryCountRef.current})`,
         )
-        void CoreModule.sendOtaStart()
+        void sendOtaStartRef.current(true)
           .then(() => {
             armAckAndStuckWatchdogsOnly()
           })
@@ -334,18 +335,23 @@ export default function OtaProgressScreen() {
     }, DOWNLOAD_STUCK_TIMEOUT_MS)
   }, [clearRetryTimeout, clearStuckTimeout, computeDisplayStateNow])
 
-  const sendOtaStartWithWatchdogs = useCallback(async () => {
+  const sendOtaStartWithWatchdogs = useCallback(async (retryAlreadyCounted = false) => {
     maybeStartGlobalTimeout()
     hasReceivedAckRef.current = false
     armAckAndStuckWatchdogsOnly()
     try {
-      await CoreModule.sendOtaStart()
+      const glassesState = useGlassesStore.getState()
+      const otaVersionUrl = getAsgOtaVersionUrl(glassesState.otaVersionUrl, glassesState.buildNumber)
+      console.log(`[OTA_PROGRESS] sending ota_start with manifest URL: ${otaVersionUrl}`)
+      await BluetoothSdk.sendOtaStart(otaVersionUrl)
     } catch (err) {
       console.warn("[OTA_PROGRESS] sendOtaStart threw", err)
       clearRetryTimeout()
       clearStuckTimeout()
       if (retryCountRef.current < MAX_RETRIES - 1) {
-        retryCountRef.current += 1
+        if (!retryAlreadyCounted) {
+          retryCountRef.current += 1
+        }
         retryTimeoutRef.current = setTimeout(() => {
           retryTimeoutRef.current = null
           void sendOtaStartRef.current()
@@ -447,20 +453,20 @@ export default function OtaProgressScreen() {
 
     if (becameConnected) {
       console.log("[OTA_PROGRESS] connect-edge: reconnected, sending ota_query_status")
-      void CoreModule.sendOtaQueryStatus()
+      void BluetoothSdk.sendOtaQueryStatus()
       armQueryReplyFallback("reconnect")
       return
     }
 
     // Initial mount (prev === current === true). If no session yet, kick off ota_start.
-    // Also treat a background-prefetch status (empty sessionId) as "no session" so we
-    // send ota_start and convert the prefetch into a phone-initiated install.
+    // Older glasses may expose a background-prefetch status with an empty sessionId;
+    // treat it as no session so ota_start still begins an explicit install.
     const isBackgroundPrefetch = !!storeSnapshot.otaStatus && storeSnapshot.otaStatus.sessionId === ""
     const noSessionYet = (!storeSnapshot.otaStatus && !storeSnapshot.otaProgress) || isBackgroundPrefetch
     if (noSessionYet) {
       console.log(
         isBackgroundPrefetch
-          ? "[OTA_PROGRESS] initial mount, background prefetch in progress (no sessionId), sending ota_start to convert to install"
+          ? "[OTA_PROGRESS] initial mount, legacy background prefetch status (no sessionId), sending ota_start"
           : "[OTA_PROGRESS] initial mount, no session in store, sending ota_start",
       )
       retryCountRef.current = 0
@@ -470,7 +476,7 @@ export default function OtaProgressScreen() {
       void sendOtaStartWithWatchdogs()
     } else {
       console.log("[OTA_PROGRESS] initial mount, session exists, sending ota_query_status")
-      void CoreModule.sendOtaQueryStatus()
+      void BluetoothSdk.sendOtaQueryStatus()
       armQueryReplyFallback("initial-mount")
     }
   }, [connected, sendOtaStartWithWatchdogs, clearPostApkDelay, armQueryReplyFallback])
@@ -493,7 +499,7 @@ export default function OtaProgressScreen() {
       clearProgressTimeout()
       onFirstActivity()
       onFirstNonZeroProgress()
-      void CoreModule.sendOtaQueryStatus()
+      void BluetoothSdk.sendOtaQueryStatus()
       useGlassesStore.getState().setMtkUpdatedThisSession(true)
     }
     GlobalEventEmitter.on("ota_start_ack", handleAck)
@@ -508,9 +514,9 @@ export default function OtaProgressScreen() {
   useEffect(() => {
     const active = connected && (displayState === "starting" || displayState === "updating")
     if (active) {
-      void CoreModule.ping().catch(() => {})
+      void BluetoothSdk.ping().catch(() => {})
       pingIntervalRef.current = setInterval(() => {
-        void CoreModule.ping().catch(() => {})
+        void BluetoothSdk.ping().catch(() => {})
       }, PING_INTERVAL_MS)
       return () => {
         clearPingInterval()

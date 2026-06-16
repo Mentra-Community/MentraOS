@@ -2,7 +2,7 @@ import {AppletInterface} from "@/../../cloud/packages/types/src"
 import axios, {AxiosInstance, AxiosRequestConfig} from "axios"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
-import CoreModule, {PhotoResponseEvent} from "@mentra/bluetooth-sdk"
+import BluetoothSdk, {PhotoResponseEvent} from "@mentra/bluetooth-sdk-internal"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {useConnectionStore} from "@/stores/connection"
 import {WebSocketStatus} from "@/services/ws-types"
@@ -48,9 +48,9 @@ class RestComms {
       }`,
     )
 
-    // Sync to native GlassesStore (and persist to SharedPreferences in CoreModule when bridge runs)
+    // Sync to native DeviceStore (and persist to SharedPreferences in BluetoothSdkModule when bridge runs)
     const value = token ?? ""
-    const updateResult = CoreModule.updateCore({core_token: value})
+    const updateResult = BluetoothSdk.updateBluetoothSettings({core_token: value})
     if (updateResult != null && typeof (updateResult as Promise<void>).then === "function") {
       ;(updateResult as Promise<void>).catch(() => {})
     }
@@ -671,7 +671,7 @@ class RestComms {
         ? {
             type: data.type,
             requestId: data.requestId,
-            photoUrl: data.photoUrl,
+            photoUrl: data.uploadUrl,
             timestamp: data.timestamp,
             success: true,
           }

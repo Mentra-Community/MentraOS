@@ -1,5 +1,5 @@
 import {ScrollView, View} from "react-native"
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
 import {Header, Screen} from "@/components/ignite"
 import ToggleSetting from "@/components/settings/ToggleSetting"
@@ -11,12 +11,13 @@ import {RouteButton} from "@/components/ui/RouteButton"
 export default function SuperSettingsScreen() {
   const {goBack} = useNavigationStore.getState()
   const [superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
+  const [useNativeDashboard, setUseNativeDashboard] = useSetting(SETTINGS.use_native_dashboard.key)
   const [debugNavigationHistoryEnabled, setDebugNavigationHistoryEnabled] = useSetting(
     SETTINGS.debug_navigation_history.key,
   )
   const [debugCoreStatusBarEnabled, setDebugCoreStatusBarEnabled] = useSetting(SETTINGS.debug_core_status_bar.key)
+  const [iosAppSwitcherBottomSwipe, setIosAppSwitcherBottomSwipe] = useSetting(SETTINGS.ios_app_switcher_bottom_swipe.key)
   const {push} = useNavigationStore.getState()
-
   return (
     <Screen preset="fixed">
       <Header title="Super Settings" leftIcon="chevron-left" onLeftPress={() => goBack()} />
@@ -42,11 +43,23 @@ export default function SuperSettingsScreen() {
               value={debugCoreStatusBarEnabled}
               onValueChange={(value) => setDebugCoreStatusBarEnabled(value)}
             />
+
+            <ToggleSetting
+              label="Use Native G2 Dashboard"
+              value={useNativeDashboard}
+              onValueChange={(value) => setUseNativeDashboard(value)}
+            />
+
+            <ToggleSetting
+              label="Enable iOS App Switcher Bottom Swipe"
+              value={iosAppSwitcherBottomSwipe}
+              onValueChange={(value) => setIosAppSwitcherBottomSwipe(value)}
+            />
           </Group>
 
           <Group title="Debug">
-            <RouteButton label="dbg1()" onPress={() => CoreModule.dbg1()} />
-            <RouteButton label="dbg2()" onPress={() => CoreModule.dbg2()} />
+            <RouteButton label="dbg1()" onPress={() => BluetoothSdk.dbg1()} />
+            <RouteButton label="dbg2()" onPress={() => BluetoothSdk.dbg2()} />
             <RouteButton label="Stress Test (Jetsam)" onPress={() => push("/miniapps/settings/stress-test")} />
           </Group>
 

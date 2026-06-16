@@ -2,10 +2,12 @@
 
 SDK for building MentraOS local miniapps — static web apps that run inside the MentraOS phone app's WebView and talk to smart glasses via a typed session API.
 
-> Companion package: **[`@mentra/miniapp-cli`](../miniapp-cli/README.md)** — `mentra-miniapp` CLI (`dev`, `release`, `pack`, `manifest`, `permission`, `hardware`, `schema`). Per-command docs live there.
+> Developing this SDK or running the in-repo example from a fresh clone? Start at the **[SDK developer guide](../../../sdk/README.md)** (setup, build loop, doc map).
+> Per-module deep dives (return shapes, events, error codes): **[`sdk/docs/`](../../../sdk/docs/README.md)**.
+> Companion package: **[`@mentra/miniapp-cli`](../../../sdk/miniapp-cli/README.md)** — `mentra-miniapp` CLI (`dev`, `release`, `pack`, `manifest`, `permission`, `hardware`, `schema`). Per-command docs live there.
 > Scaffolder: `bunx create-mentra-miniapp my-app`.
-> Reference miniapp: [`sdk/example-miniapp/`](../example-miniapp).
-> High-level walkthrough: [`agents/miniapp-sdk-overview.md`](../../agents/miniapp-sdk-overview.md).
+> Reference miniapp: [`sdk/example-miniapp/`](../../../sdk/example-miniapp).
+> High-level walkthrough: [`agents/miniapp-sdk-overview.md`](../../../agents/miniapp-sdk-overview.md).
 
 ## Install
 
@@ -105,7 +107,7 @@ All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: 
 | Module                        | Methods                                                                                                                                  |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `session.display`             | `showTextWall`, `showDoubleTextWall`, `showReferenceCard`, `showDashboardCard`, `showBitmapView`, `clearView`                            |
-| `session.speaker`             | `play({audioUrl})`, `speak(text, {voice_id?, …})` (cloud TTS), `stop()`, `onStateChange(handler)`                                        |
+| `session.speaker`             | `play({audioUrl})`, `speak(text, {voice_id?, …})` (offline TTS when available, cloud fallback), `stop()`, `onStateChange(handler)`       |
 | `session.mic`                 | `onAudioChunk(handler)`, `onVoiceActivity(handler)`, `stop()`, `hasPermission`                                                           |
 | `session.transcription`       | `on(handler)`, `forLanguage(lang \| [langs], handler)`, `configure({languageHints, vocabulary, diarization})`, `stop()`, `hasPermission` |
 | `session.translation`         | `forLanguagePair(from, to, handler)`, `stop()`, `hasPermission`                                                                          |
@@ -117,14 +119,22 @@ All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: 
 | `session.phone.calendar`      | `on(handler)`, `stop()`, `hasPermission`                                                                                                 |
 | `session.phone`               | `onBattery(handler)`                                                                                                                     |
 | `session.system`              | `share(opts)`, `openUrl(url)`, `copyToClipboard(text)`, `download(opts)`                                                                 |
-| `session.camera`              | `takePhoto({size?, compress?, sound?, saveToGallery?})`, `setFov({horizontal, vertical})`, `hasPermission`                               |
-| `session.led`                 | `turnOn({color?, ontime?, offtime?, count?})`, `turnOff()`, `blink(color, ontime, offtime, count)`, `solid(color, duration)`             |
+| `session.camera`              | `takePhoto({size?, compress?, sound?, saveToGallery?})`, `setFov({fov, roiPosition?} \| {preset})`, `hasPermission`                     |
+| `session.led`                 | `turnOn({color?, ontime?, offtime?, count?})`, `turnOff()`, `blink(color, ontime, offtime, count)`, `solid(color, duration)` — resolve after the glasses acknowledge the RGB command |
 | `session.permissions`         | `has(type)`, `getAll()`, `onUpdate(handler)`, `onPermissionError(handler)`                                                               |
 | `session.storage`             | `get(key)`, `set(key, value)`, `delete(key)`, `list()` — strings only, scoped to `(userId, packageName)`                                 |
-| `session.stream`              | `startUnmanaged({streamUrl})`, `startManaged({restreamDestinations?})`, `stop(streamId?)`                                                |
+| `session.stream`              | `startUnmanaged({streamUrl, video?, audio?, sound?})`, `startManaged({restreamDestinations?, video?, audio?, sound?})`, `stop(streamId?)` — start resolves with `{streamId, status, resolvedConfig?}` after glasses report the publisher is streaming; managed starts also return playback URLs; stop is idempotent for an already-stopped stream |
 | `session.dashboard`           | `setContent(mode, content)` — **noop in v1**, prints a one-time `console.warn`. Cloud DashboardManager owns rendering.                   |
 
 `session.events` is **internal**. It exposes `subscribe(rawStreamType, handler)` only as a forward-compat escape hatch for new event types not yet wrapped on a domain module — prefer the typed module surface.
+
+### Camera FOV
+
+`await session.camera.setFov({fov, roiPosition})` applies camera FOV/ROI on the glasses and resolves with `CameraFovResult` after the ASG client reports the setting was applied to camera hardware after the restart cooldown. `roiPosition` accepts `"center"`, `"bottom"`, or `"top"` and defaults to `"center"`. You can also call `setFov({preset: "narrow" | "standard" | "wide"})`; presets map to 82, 102, and 118 degrees with center ROI. The call requires `CAMERA` in `miniapp.json` because it controls glasses camera hardware, and rejects with `MiniappRequestError` if the host cannot apply the setting, the glasses only persist it without hardware application, or the glasses report an error.
+
+### Camera Photos
+
+`await session.camera.takePhoto(...)` resolves only after the photo is delivered through the phone/cloud upload path. The result includes `{requestId, photoUrl, mimeType, size}`. Glasses-side or phone-relay failures such as `CAMERA_BUSY`, `BATTERY_LOW`, storage errors, or fallback upload failures reject before upload polling completes; intermediate `photo_status` progress and request acceptance alone do not resolve the miniapp photo promise.
 
 ### Transcription language convention
 
@@ -179,7 +189,7 @@ The CLI validates the manifest on every `dev`, `release`, and `pack`. Run `mentr
 
 ## CLI
 
-The author-facing CLI lives in a sibling package: **[`@mentra/miniapp-cli`](../miniapp-cli/README.md)** (binary: `mentra-miniapp`). Full per-command docs there. Quick map:
+The author-facing CLI lives in a sibling package: **[`@mentra/miniapp-cli`](../../../sdk/miniapp-cli/README.md)** (binary: `mentra-miniapp`). Full per-command docs there. Quick map:
 
 | Command                                                        | Purpose                                                      |
 | -------------------------------------------------------------- | ------------------------------------------------------------ |
@@ -191,7 +201,7 @@ The author-facing CLI lives in a sibling package: **[`@mentra/miniapp-cli`](../m
 | `mentra-miniapp hardware list \| add \| remove [TYPE] [LEVEL]` | Object-verb manifest edits for hardware requirements         |
 | `mentra-miniapp schema print`                                  | Print the canonical `miniapp.json` JSON Schema               |
 
-See [the CLI README](../miniapp-cli/README.md) for flags, semantics, and the `mentra-miniapp://` URL schemes the QR codes encode.
+See [the CLI README](../../../sdk/miniapp-cli/README.md) for flags, semantics, and the `miniapp://` URL schemes the QR codes encode.
 
 ## Host-injected globals — `window.MentraOS`
 
@@ -214,7 +224,7 @@ Use `getMentraOSGlobals()` (exported from the package) to read it with the right
 Auto-selected by `createTransport(options)`:
 
 - **`PostMessageTransport`** — used inside the MentraOS WebView. `window.ReactNativeWebView.postMessage` outbound, `window` `message` listener inbound.
-- **`LocalSocketTransport`** — fallback for laptop browsers. Default endpoint `ws://127.0.0.1:8765`. The phone-side server it talks to is Phase 4 — the in-laptop-browser dev story is currently broken; see the overview doc for status.
+- **`LocalSocketTransport`** — fallback for laptop browsers. Default endpoint `ws://127.0.0.1:8765`. The in-laptop-browser dev story is currently broken; see the overview doc for status.
 
 Both are exported for advanced uses (forced transport, tests). `MockTransport` is also exported for unit tests.
 
@@ -235,13 +245,13 @@ Smart-glasses miniapps are **always-on services**. The webview is a UI on top of
 
 **Rule:** user-facing glasses logic lives in a session-scoped controller, instantiated once at module init. React pages read controller-driven state via a store (Zustand recommended) and call imperative methods on the controller for user-triggered actions. They do **not** subscribe to `session.*` directly.
 
-See [`sdk/example-miniapp/src/controller/GlassesController.ts`](../example-miniapp/src/controller/GlassesController.ts) for a worked reference.
+See [`sdk/example-miniapp/src/controller/GlassesController.ts`](../../../sdk/example-miniapp/src/background/controllers/GlassesController.ts) for a worked reference.
 
 **Tester pages exception:** `pages/tester/*` are diagnostic surfaces — by design they inline-subscribe to `session.*` and tear down on unmount. This is the only place where that pattern is acceptable.
 
 ## File map
 
 - Runtime: [`src/{session,protocol,envelope,globals}.ts`](./src/), [`src/modules/`](./src/modules/), [`src/transport/`](./src/transport/), [`src/react/`](./src/react/)
-- CLI: [`../miniapp-cli/src/`](../miniapp-cli/src/)
-- Scaffolder: [`../create-mentra-miniapp/`](../create-mentra-miniapp/)
-- Reference miniapp: [`../example-miniapp/`](../example-miniapp/)
+- CLI: [`../miniapp-cli/src/`](../../../sdk/miniapp-cli/src/)
+- Scaffolder: [`../create-mentra-miniapp/`](../../../sdk/create-mentra-miniapp/)
+- Reference miniapp: [`../example-miniapp/`](../../../sdk/example-miniapp/)

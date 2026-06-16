@@ -144,6 +144,55 @@ The MentraOS app injects `window.MentraOS` into the WebView before content loads
 
 Every message is a `{payload, requestId?}` envelope, JSON over the chosen transport. `requestId` correlates request ↔ response for methods that return a value. The SDK constants (`MiniappRequestType`, `MiniappResponseType`, `MiniappStreamType`, `MiniappErrorCode`) live in `@mentra/miniapp/protocol` and are re-exported. Full enum listing in `sdk/miniapp/src/protocol.ts`.
 
+#### Request/response across the bridge
+
+Two interaction patterns share the bus:
+
+- **Broadcast** — fire-and-forget. `mentra.send(channel, payload)` (UI) and `session.ui.send(channel, payload)` (background). Subscribe with `mentra.on` / `session.ui.on`. Either direction.
+- **RPC** — request/response. `await mentra.request(channel, payload, options?)` on the UI side; one handler per channel on the background side via `session.ui.handle(channel, (payload, ctx?) => result)`. UI → background only.
+
+A channel is declared as RPC by wrapping its payload type in `Rpc<Req, Res>` in the per-miniapp `shared/channels.ts` registry:
+
+```ts
+import type {Rpc} from "@mentra/miniapp/ui"
+
+export interface Channels {
+  // Broadcast — used by mentra.send / session.ui.on
+  "captions:live-transcript": {text: string}
+
+  // RPC — used by mentra.request / session.ui.handle
+  "places:autocomplete": Rpc<{query: string}, PlaceSuggestion[]>
+}
+```
+
+Using the wrong API for a channel is a compile-time error (`mentra.send("places:autocomplete", …)` rejects).
+
+**Errors.** `mentra.request` throws when the handler throws. The error is a plain `Error` with `name === "MentraRpcError"` and `cause?.code` if the handler set one (`throw Object.assign(new Error("…"), {cause: {code: "BAD_INPUT"}})`). Distinguish by `err.name`, not `instanceof` — these errors are constructed in the WebView's bare runtime scope. Timeouts throw an `Error` with `name === "MentraRpcTimeoutError"`; AbortSignal aborts throw a DOM-standard `AbortError`.
+
+**Cancellation.** Pass `{signal}` to `mentra.request`. When the signal aborts, the helper sends a cancel frame; the background handler's `ctx.signal` aborts (handlers can pass it to `fetch(url, {signal})` to short-circuit a slow REST call). The caller's promise rejects with `AbortError`.
+
+**`useRpc`.** A React hook bundles three ergonomic wins:
+- Auto-aborts every in-flight call on unmount.
+- The returned callable has an `.abort()` method for the keystroke-debounce-cancel pattern (per-keystroke autocomplete cancels the prior request automatically).
+- Stable identity across renders so it's safe in `useEffect` deps.
+
+```tsx
+const autocomplete = useRpc<Channels, "places:autocomplete">("places:autocomplete")
+useEffect(() => {
+  if (!query) return
+  autocomplete.abort()  // cancel the previous keystroke's request
+  autocomplete({query}).then(setSuggestions).catch(() => {})
+}, [query])
+```
+
+**Single handler per channel.** `session.ui.handle("foo", h)` throws synchronously if a handler is already registered for that channel — clarifies ownership. Returns a deregister fn the controller stores like other unsubs.
+
+**Streams ≠ RPC.** If a domain wants "start observing X, push updates until stopped", that's a regular channel (`mentra.send("watch-x:start")` on the UI side; background subscribes internally and pushes `mentra.send("watch-x:event", ...)` from the controller). Don't reach for RPC for streams.
+
+**No default timeout.** Pass `{timeout: 5000}` per call if you need a deadline. The failure mode it would guard (background never replies) only happens when the session is already dead — at which point the timeout is papering over a real bug, not catching a useful condition.
+
+**Worked example:** `sdk/example-miniapp/src/background/controllers/TesterController.ts` uses `session.ui.handle("tester:invoke", ...)` to dispatch arbitrary `session[iface][method](...)` calls; the tester UI pages call `mentra.request("tester:invoke", ...)` via the `useTester().invoke(method, args)` convenience.
+
 Two transports, auto-selected:
 
 - **`PostMessageTransport`** — used when the miniapp runs inside the MentraOS WebView. Uses `window.ReactNativeWebView.postMessage` outbound and a `window`-level `message` listener inbound.
@@ -167,7 +216,7 @@ bun dev                              # starts dev server + prints QR
 1. Reads + validates `miniapp.json` (hard-fails on bad permissions/hardware types so you don't have to debug it on the phone).
 2. Spawns `bun run --hot server.ts` in the project (the template ships a tiny Bun.serve that serves `index.html`, `miniapp.json`, `icon.png`, and any assets under `public/`).
 3. Polls localhost until the server is reachable.
-4. Detects the LAN IP, builds a `mentra-miniapp://dev?url=…&name=…&package=…` URL, prints a terminal QR + the raw URL.
+4. Detects the LAN IP, builds a `miniapp://dev?url=…&name=…&package=…` URL, prints a terminal QR + the raw URL.
 5. Watches for LAN-IP changes (Wi-Fi switch) and reprints the QR.
 
 You scan the QR from **MentraOS app → Settings → Developer settings → Mini App Development → Scan Mini App QR Code**. Phone loads your dev URL into a WebView, injects `window.MentraOS`, the SDK's `PostMessageTransport` connects, you're live with hot reload.

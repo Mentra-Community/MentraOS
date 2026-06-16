@@ -1,12 +1,17 @@
-package com.mentra.core
+package com.mentra.bluetoothsdk
 
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import com.mentra.core.utils.ControllerTypes
-import com.mentra.core.utils.PhoneAudioMonitor
+import com.mentra.bluetoothsdk.utils.ControllerTypes
+import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
 import java.util.Collections
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MentraBluetoothSdk private constructor(
     context: Context,
@@ -15,24 +20,56 @@ class MentraBluetoothSdk private constructor(
 ) : AutoCloseable {
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val deviceManager: CoreManager
+    private val deviceManager: DeviceManager
     private val listeners =
         Collections.synchronizedSet(mutableSetOf<MentraBluetoothSdkListener>())
+    private val analytics = BluetoothSdkAnalytics(appContext, config.analytics)
     private val discoveredDeviceNames = mutableSetOf<String>()
     private val bridgeEventSinkId: String
     private val storeListenerId: String
     private var suppressDefaultDeviceEvents = false
+    private val streamKeepAliveLock = Any()
+    private var activeStreamKeepAlive: ActiveStreamKeepAlive? = null
+    private val pendingPhotoRequests = ConcurrentHashMap<String, PendingResponse<PhotoResponseEvent>>()
+    private val pendingVideoRecordingRequests =
+        ConcurrentHashMap<String, PendingVideoRecordingRequest>()
+    private val pendingRgbLedRequests = ConcurrentHashMap<String, PendingResponse<RgbLedControlResponseEvent>>()
+    private val pendingSettingsRequests = ConcurrentHashMap<String, PendingResponse<SettingsAckEvent>>()
+    private val pendingStreamStarts = ConcurrentHashMap<String, PendingResponse<StreamStatusEvent>>()
+    private val oneShotLock = Any()
+    private var pendingGalleryStatus: PendingResponse<GalleryStatusEvent>? = null
+    private var pendingOtaQuery: PendingResponse<OtaQueryResult>? = null
+    private var pendingOtaStart: PendingResponse<OtaStartAckEvent>? = null
+    private var pendingStreamStop: PendingStreamStop? = null
+    private var pendingWifiScan: PendingWifiScan? = null
+    private var pendingWifiStatus: PendingWifiStatusRequest? = null
+    private var pendingHotspotStatus: PendingHotspotStatusRequest? = null
+    private var pendingVersionInfo: PendingResponse<VersionInfoResult>? = null
 
     init {
         listeners.add(listener)
         Bridge.initialize(appContext)
-        deviceManager = CoreManager.getInstance()
+        deviceManager = DeviceManager.getInstance()
         bridgeEventSinkId = Bridge.addEventSink { eventName, data -> dispatchBridgeEvent(eventName, data) }
-        storeListenerId = GlassesStore.store.addListener { category, changes -> dispatchStoreUpdate(category, changes) }
+        // Baseline the analytics connection state before subscribing to the store:
+        // store updates invoke listeners synchronously on the updating thread, so a
+        // connected status observed before the baseline would be reported as a fresh
+        // bluetooth_sdk_glasses_connected transition.
+        analytics.initializeGlassesStatus(getRawGlassesStatus())
+        storeListenerId = DeviceStore.store.addListener { category, changes -> dispatchStoreUpdate(category, changes) }
+        analytics.captureStarted()
     }
 
     companion object {
         private val DEFAULT_DEVICE_KEYS = setOf("default_wearable", "device_name", "device_address")
+        private val SCAN_STATE_KEYS = setOf("searching", "searchingController", "searchResults")
+        private const val DEFAULT_SCAN_TIMEOUT_MS = 15_000L
+        private const val DEFAULT_REQUEST_TIMEOUT_MS = 15_000L
+        private const val VIDEO_UPLOAD_STOP_TIMEOUT_MS = 10 * 60 * 1000L
+        private const val STREAM_START_TIMEOUT_MS = 30_000L
+        private const val STREAM_STOP_TIMEOUT_MS = 15_000L
+        private const val DEFAULT_STREAM_KEEP_ALIVE_INTERVAL_SECONDS = 5
+        private const val MAX_MISSED_STREAM_KEEP_ALIVE_ACKS = 3
 
         @JvmStatic
         fun create(
@@ -48,6 +85,88 @@ class MentraBluetoothSdk private constructor(
         ): MentraBluetoothSdk = MentraBluetoothSdk(context, config, listener)
     }
 
+    private data class ActiveStreamKeepAlive(
+        val streamId: String,
+        val intervalMs: Long,
+        var pendingAckId: String? = null,
+        var missedAckCount: Int = 0,
+        var nextTick: Runnable? = null,
+        // Missed-ACK counting only begins once the stream is confirmed live/coming up, so a
+        // slow startup (glasses can't ACK until they reach starting/streaming) can't trip a
+        // false keep-alive timeout before the stream is ever up.
+        var armed: Boolean = false,
+    )
+
+    private data class PendingStreamStop(
+        val streamId: String?,
+        val pending: PendingResponse<StreamStatusEvent>,
+    )
+
+    private data class PendingVideoRecordingRequest(
+        val expectedStatus: String,
+        val pending: PendingResponse<VideoRecordingStatusEvent>,
+        val waitForUpload: Boolean = false,
+        var stoppedEvent: VideoRecordingStatusEvent? = null,
+        var uploadSucceeded: Boolean = false,
+    )
+
+    private data class PendingWifiScan(
+        val pending: PendingResponse<List<WifiScanResult>>,
+    )
+
+    private data class PendingWifiStatusRequest(
+        val operation: WifiStatusOperation,
+        val ssid: String,
+        val pending: PendingResponse<WifiStatusEvent>,
+    )
+
+    private enum class WifiStatusOperation {
+        CONNECT,
+        FORGET,
+    }
+
+    private data class PendingHotspotStatusRequest(
+        val enabled: Boolean,
+        val pending: PendingResponse<HotspotStatusEvent>,
+    )
+
+    private class PendingResponse<T>(
+        private val operation: String,
+    ) {
+        private val latch = CountDownLatch(1)
+        private val completed = AtomicBoolean(false)
+        @Volatile private var result: T? = null
+        @Volatile private var error: Throwable? = null
+
+        fun resolve(value: T) {
+            if (completed.compareAndSet(false, true)) {
+                result = value
+                latch.countDown()
+            }
+        }
+
+        fun reject(error: Throwable) {
+            if (completed.compareAndSet(false, true)) {
+                this.error = error
+                latch.countDown()
+            }
+        }
+
+        fun await(timeoutMs: Long = DEFAULT_REQUEST_TIMEOUT_MS): T {
+            if (!latch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
+                throw BluetoothException(
+                    "request_timeout",
+                    "$operation timed out waiting for glasses response.",
+                )
+            }
+            error?.let { throw it }
+            return result ?: throw BluetoothException(
+                "empty_response",
+                "$operation completed without a response payload.",
+            )
+        }
+    }
+
     fun addListener(listener: MentraBluetoothSdkListener) {
         listeners.add(listener)
     }
@@ -56,13 +175,34 @@ class MentraBluetoothSdk private constructor(
         listeners.remove(listener)
     }
 
-    fun getGlassesStatus(): GlassesStatus =
-        GlassesStatus.fromMap(GlassesStore.store.getCategory("glasses"))
+    fun getState(): MentraBluetoothState =
+        MentraBluetoothState.from(getRawGlassesStatus(), getRawBluetoothStatus())
 
-    fun getBluetoothStatus(): BluetoothStatus =
-        BluetoothStatus.fromMap(GlassesStore.store.getCategory(ObservableStore.CORE_CATEGORY))
+    fun getGlasses(): GlassesRuntimeState =
+        getState().glasses
+
+    fun getSdkState(): PhoneSdkRuntimeState =
+        getState().sdk
+
+    fun getScanState(): BluetoothScanState =
+        getState().scan
+
+    internal fun getRawGlassesStatus(): GlassesStatus =
+        GlassesStatus.fromMap(DeviceStore.store.getCategory("glasses"))
+
+    internal fun getRawBluetoothStatus(): BluetoothStatus =
+        BluetoothStatus.fromMap(DeviceStore.store.getCategory(ObservableStore.BLUETOOTH_CATEGORY))
 
     fun getDefaultDevice(): Device? = currentDefaultDevice()
+
+    private fun requireGlassesConnected(operation: String) {
+        if (!getRawGlassesStatus().connected) {
+            throw BluetoothException(
+                "glasses_not_connected",
+                "Cannot $operation because glasses are not connected.",
+            )
+        }
+    }
 
     fun setDefaultDevice(device: Device?) {
         if (device == null) {
@@ -71,9 +211,9 @@ class MentraBluetoothSdk private constructor(
         }
         suppressDefaultDeviceEvents = true
         try {
-            GlassesStore.apply(ObservableStore.CORE_CATEGORY, "default_wearable", device.model.deviceType)
-            GlassesStore.apply(ObservableStore.CORE_CATEGORY, "device_name", device.name)
-            GlassesStore.apply(ObservableStore.CORE_CATEGORY, "device_address", device.address ?: "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "default_wearable", device.model.deviceType)
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", device.name)
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_address", device.address ?: "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -83,9 +223,9 @@ class MentraBluetoothSdk private constructor(
     fun clearDefaultDevice() {
         suppressDefaultDeviceEvents = true
         try {
-            GlassesStore.apply(ObservableStore.CORE_CATEGORY, "default_wearable", "")
-            GlassesStore.apply(ObservableStore.CORE_CATEGORY, "device_name", "")
-            GlassesStore.apply(ObservableStore.CORE_CATEGORY, "device_address", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "default_wearable", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_address", "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -97,14 +237,92 @@ class MentraBluetoothSdk private constructor(
             requireBluetoothReady("scan for glasses")
         }
         discoveredDeviceNames.clear()
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "searching", true)
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "searching", true)
         deviceManager.findCompatibleDevices(model.deviceType)
     }
 
     fun stopScan() {
+        stopScan(ScanStopReason.CANCELLED)
+    }
+
+    private fun stopScan(reason: ScanStopReason) {
         deviceManager.stopScan()
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "searching", false)
-        dispatchToListeners { it.onScanStopped(ScanStopReason.CANCELLED) }
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "searching", false)
+        dispatchToListeners { it.onScanStopped(reason) }
+    }
+
+    fun scan(
+        model: DeviceModel,
+        onResults: (List<Device>) -> Unit,
+    ): ScanSession = scan(model, DEFAULT_SCAN_TIMEOUT_MS, onResults)
+
+    fun scan(
+        model: DeviceModel,
+        timeoutMs: Long,
+        onResults: (List<Device>) -> Unit,
+    ): ScanSession =
+        scan(
+            model = model,
+            callback =
+                object : MentraBluetoothScanCallback() {
+                    override fun onResults(devices: List<Device>) {
+                        onResults(devices)
+                    }
+                },
+            timeoutMs = timeoutMs,
+        )
+
+    @JvmOverloads
+    fun scan(
+        model: DeviceModel,
+        callback: ScanCallback,
+        timeoutMs: Long = DEFAULT_SCAN_TIMEOUT_MS,
+    ): ScanSession {
+        val normalizedTimeoutMs = if (timeoutMs > 0) timeoutMs else DEFAULT_SCAN_TIMEOUT_MS
+        val latestResults = mutableListOf<Device>()
+        lateinit var timeoutRunnable: Runnable
+        lateinit var session: ScanSession
+        val finished = AtomicBoolean(false)
+
+        fun emitResults(devices: List<Device>) {
+            latestResults.clear()
+            latestResults.addAll(devices)
+            callback.onResults(latestResults.toList())
+        }
+
+        val scanListener =
+            object : MentraBluetoothSdkCallback() {
+                override fun onScanChanged(scan: BluetoothScanState) {
+                    emitResults(scan.devices.filter { it.model == model })
+                }
+            }
+
+        fun finish(reason: ScanStopReason) {
+            if (!finished.compareAndSet(false, true)) return
+            removeListener(scanListener)
+            mainHandler.removeCallbacks(timeoutRunnable)
+            session.markStopped()
+            stopScan(reason)
+            callback.onComplete(latestResults.toList())
+        }
+
+        timeoutRunnable = Runnable { finish(ScanStopReason.COMPLETED) }
+        session = ScanSession { finish(ScanStopReason.CANCELLED) }
+        addListener(scanListener)
+
+        try {
+            emitResults(emptyList())
+            startScan(model)
+            emitResults(getRawBluetoothStatus().searchResults.filter { it.model == model })
+            mainHandler.postDelayed(timeoutRunnable, normalizedTimeoutMs)
+            return session
+        } catch (error: Throwable) {
+            removeListener(scanListener)
+            mainHandler.removeCallbacks(timeoutRunnable)
+            session.markStopped()
+            callback.onError(error.toBluetoothError("scan_failed"))
+            throw error
+        }
     }
 
     @JvmOverloads
@@ -123,7 +341,7 @@ class MentraBluetoothSdk private constructor(
         if (options.saveAsDefault && !isController) {
             setDefaultDevice(device)
         }
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "pending_wearable", device.model.deviceType)
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_wearable", device.model.deviceType)
         deviceManager.connectByName(device.name)
     }
 
@@ -148,7 +366,7 @@ class MentraBluetoothSdk private constructor(
         deviceManager.disconnect()
     }
 
-    fun connectSimulated() {
+    internal fun connectSimulated() {
         deviceManager.connectSimulated()
     }
 
@@ -160,11 +378,16 @@ class MentraBluetoothSdk private constructor(
         deviceManager.forget()
     }
 
+    @JvmOverloads
+    fun displayText(text: String, x: Int = 0, y: Int = 0, size: Int = 24) {
+        displayText(DisplayTextRequest(text = text, x = x, y = y, size = size))
+    }
+
     fun displayText(request: DisplayTextRequest) {
         deviceManager.displayText(request.toMap())
     }
 
-    fun displayEvent(request: DisplayEventRequest) {
+    internal fun displayEvent(request: DisplayEventRequest) {
         deviceManager.displayEvent(request.toMap())
     }
 
@@ -176,77 +399,167 @@ class MentraBluetoothSdk private constructor(
         deviceManager.showDashboard()
     }
 
-    @JvmOverloads
-    fun setBrightness(level: Int, autoMode: Boolean? = null) {
-        autoMode?.let { GlassesStore.apply(ObservableStore.CORE_CATEGORY, "auto_brightness", it) }
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "brightness", level)
+    internal fun setBrightness(level: Int, autoMode: Boolean? = null) {
+        autoMode?.let { DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "auto_brightness", it) }
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "brightness", level)
     }
 
-    fun setAutoBrightness(enabled: Boolean) {
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "auto_brightness", enabled)
+    internal fun setAutoBrightness(enabled: Boolean) {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "auto_brightness", enabled)
+    }
+
+    fun setDashboardPosition(height: Int, depth: Int) {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "dashboard_height", height)
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "dashboard_depth", depth)
     }
 
     fun setDashboardPosition(request: DashboardPositionRequest) {
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "dashboard_height", request.height)
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "dashboard_depth", request.depth)
+        setDashboardPosition(height = request.height, depth = request.depth)
     }
 
-    fun setDashboardMenu(items: List<DashboardMenuItem>) {
-        GlassesStore.apply(
-            ObservableStore.CORE_CATEGORY,
+    internal fun setDashboardMenu(items: List<DashboardMenuItem>) {
+        DeviceStore.apply(
+            ObservableStore.BLUETOOTH_CATEGORY,
             "menu_apps",
             items.map { it.toMap() },
         )
     }
 
-    fun setHeadUpAngle(angleDegrees: Int) {
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "head_up_angle", angleDegrees)
-    }
-
-    fun setScreenDisabled(disabled: Boolean) {
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "screen_disabled", disabled)
-    }
-
-    fun setGalleryMode(mode: GalleryMode) {
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "gallery_mode", mode == GalleryMode.AUTO)
-    }
-
-    fun setButtonPhotoSettings(settings: ButtonPhotoSettings) {
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "button_photo_size", settings.size.value)
-    }
-
-    fun setButtonVideoRecordingSettings(settings: ButtonVideoRecordingSettings) {
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "button_video_width", settings.width)
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "button_video_height", settings.height)
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "button_video_fps", settings.fps)
-    }
-
-    fun setButtonCameraLed(enabled: Boolean) {
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "button_camera_led", enabled)
-    }
-
-    fun setButtonMaxRecordingTime(minutes: Int) {
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "button_max_recording_time", minutes)
-    }
-
-    fun setCameraFov(fov: CameraFov) {
-        GlassesStore.apply(
-            ObservableStore.CORE_CATEGORY,
-            "camera_fov",
-            mapOf("fov" to fov.fov, "roi_position" to fov.roiPosition),
+    internal fun setCalendarEvents(events: List<CalendarEvent>) {
+        DeviceStore.apply(
+            ObservableStore.BLUETOOTH_CATEGORY,
+            "calendar_events",
+            events.map { it.toMap() },
         )
     }
 
-    fun setMicState(config: MicConfig) {
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "should_send_pcm", config.sendPcmData)
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "should_send_lc3", config.sendLc3Data)
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "should_send_transcript", config.sendTranscript)
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "bypass_vad", config.bypassVad)
+    fun setHeadUpAngle(angleDegrees: Int) {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "head_up_angle", angleDegrees)
+    }
+
+    fun setScreenDisabled(disabled: Boolean) {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "screen_disabled", disabled)
+    }
+
+    fun setGalleryModeEnabled(enabled: Boolean): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "gallery_mode",
+            updateStore = { _ -> DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "gallery_mode", enabled) },
+            send = { requestId -> deviceManager.sendGalleryMode(requestId, enabled) },
+        )
+
+    private fun performSettingsCommand(
+        setting: String,
+        updateStore: (SettingsAckEvent) -> Unit,
+        send: (String) -> Unit,
+    ): SettingsAckEvent {
+        val requestId = "settings-$setting-${UUID.randomUUID()}"
+        val pending = PendingResponse<SettingsAckEvent>("set $setting")
+        pendingSettingsRequests[requestId] = pending
+        try {
+            send(requestId)
+            val ack = pending.await()
+            updateStore(ack)
+            return ack
+        } finally {
+            pendingSettingsRequests.remove(requestId, pending)
+        }
+    }
+
+    fun setVoiceActivityDetectionEnabled(enabled: Boolean) {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "voice_activity_detection_enabled", enabled)
+    }
+
+    fun setButtonPhotoSettings(size: ButtonPhotoSize): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "button_photo",
+            updateStore = { _ -> DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", size.value) },
+            send = { requestId -> deviceManager.sendButtonPhotoSettings(requestId, size.value) },
+        )
+
+    fun setButtonPhotoSettings(settings: ButtonPhotoSettings): SettingsAckEvent =
+        setButtonPhotoSettings(size = settings.size)
+
+    fun setButtonVideoRecordingSettings(width: Int, height: Int, fps: Int): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "button_video_recording",
+            updateStore = { _ ->
+                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_width", width)
+                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_height", height)
+                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_video_fps", fps)
+            },
+            send = { requestId ->
+                deviceManager.sendButtonVideoRecordingSettings(requestId, width, height, fps)
+            },
+        )
+
+    fun setButtonVideoRecordingSettings(settings: ButtonVideoRecordingSettings): SettingsAckEvent =
+        setButtonVideoRecordingSettings(width = settings.width, height = settings.height, fps = settings.fps)
+
+    fun setButtonCameraLed(enabled: Boolean): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "button_camera_led",
+            updateStore = { _ -> DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_camera_led", enabled) },
+            send = { requestId -> deviceManager.sendButtonCameraLedSetting(requestId, enabled) },
+        )
+
+    fun setButtonMaxRecordingTime(minutes: Int): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "button_max_recording_time",
+            updateStore = { _ ->
+                DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_max_recording_time", minutes)
+            },
+            send = { requestId -> deviceManager.sendButtonMaxRecordingTime(requestId, minutes) },
+        )
+
+    fun setCameraFov(fov: CameraFov): CameraFovResult {
+        val ack = performSettingsCommand(
+            setting = "camera_fov",
+            updateStore = { _ -> },
+            send = { requestId -> deviceManager.sendCameraFovSetting(requestId, fov.fov, fov.roiPosition.value) },
+        )
+        val result = CameraFovResult.fromAck(ack, fov)
+        DeviceStore.set(
+            ObservableStore.BLUETOOTH_CATEGORY,
+            "camera_fov",
+            mapOf("fov" to result.fov, "roi_position" to result.roiPosition.value),
+        )
+        return result
+    }
+
+    fun setMicState(
+        enabled: Boolean,
+        useGlassesMic: Boolean = true,
+        sendTranscript: Boolean = false,
+        sendLc3Data: Boolean = false,
+    ) {
+        if (enabled) {
+            DeviceStore.apply(
+                ObservableStore.BLUETOOTH_CATEGORY,
+                "preferred_mic",
+                if (useGlassesMic) MicPreference.GLASSES.value else MicPreference.PHONE.value,
+            )
+        }
+        applyMicState(
+            sendPcmData = enabled,
+            sendTranscript = enabled && sendTranscript,
+            sendLc3Data = enabled && sendLc3Data,
+        )
+    }
+
+    private fun applyMicState(
+        sendPcmData: Boolean,
+        sendTranscript: Boolean,
+        sendLc3Data: Boolean,
+    ) {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "should_send_pcm", sendPcmData)
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "should_send_lc3", sendLc3Data)
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "should_send_transcript", sendTranscript)
         deviceManager.setMicState()
     }
 
     fun setPreferredMic(preferredMic: MicPreference) {
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "preferred_mic", preferredMic.value)
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "preferred_mic", preferredMic.value)
     }
 
     fun setOwnAppAudioPlaying(playing: Boolean) {
@@ -261,110 +574,409 @@ class MentraBluetoothSdk private constructor(
         return GlassesMediaVolumeSetResult.fromMap(deviceManager.setGlassesMediaVolumeBlocking(level))
     }
 
-    fun requestWifiScan() {
-        deviceManager.requestWifiScan()
+    fun requestWifiScan(): List<WifiScanResult> {
+        val pending = PendingResponse<List<WifiScanResult>>("WiFi scan request")
+        synchronized(oneShotLock) {
+            if (pendingWifiScan != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "A WiFi scan is already waiting for a glasses response.",
+                )
+            }
+            pendingWifiScan = PendingWifiScan(pending)
+        }
+        try {
+            deviceManager.requestWifiScan()
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingWifiScan?.pending === pending) {
+                    pendingWifiScan = null
+                }
+            }
+        }
     }
 
-    fun sendWifiCredentials(ssid: String, password: String) {
-        deviceManager.sendWifiCredentials(ssid, password)
+    fun sendWifiCredentials(ssid: String, password: String): WifiStatusEvent {
+        val pending = PendingResponse<WifiStatusEvent>("WiFi connect request")
+        synchronized(oneShotLock) {
+            if (pendingWifiStatus != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "A WiFi status command is already waiting for a glasses response.",
+                )
+            }
+            pendingWifiStatus = PendingWifiStatusRequest(WifiStatusOperation.CONNECT, ssid, pending)
+        }
+        try {
+            deviceManager.sendWifiCredentials(ssid, password)
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingWifiStatus?.pending === pending) {
+                    pendingWifiStatus = null
+                }
+            }
+        }
     }
 
-    fun forgetWifiNetwork(ssid: String) {
-        deviceManager.forgetWifiNetwork(ssid)
+    fun forgetWifiNetwork(ssid: String): WifiStatusEvent {
+        val pending = PendingResponse<WifiStatusEvent>("WiFi forget request")
+        synchronized(oneShotLock) {
+            if (pendingWifiStatus != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "A WiFi status command is already waiting for a glasses response.",
+                )
+            }
+            pendingWifiStatus = PendingWifiStatusRequest(WifiStatusOperation.FORGET, ssid, pending)
+        }
+        try {
+            deviceManager.forgetWifiNetwork(ssid)
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingWifiStatus?.pending === pending) {
+                    pendingWifiStatus = null
+                }
+            }
+        }
     }
 
-    fun setHotspotState(enabled: Boolean) {
-        deviceManager.setHotspotState(enabled)
+    fun setHotspotState(enabled: Boolean): HotspotStatusEvent {
+        val pending = PendingResponse<HotspotStatusEvent>("hotspot ${if (enabled) "enable" else "disable"} request")
+        synchronized(oneShotLock) {
+            if (pendingHotspotStatus != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "A hotspot command is already waiting for a glasses response.",
+                )
+            }
+            pendingHotspotStatus = PendingHotspotStatusRequest(enabled, pending)
+        }
+        try {
+            deviceManager.setHotspotState(enabled)
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingHotspotStatus?.pending === pending) {
+                    pendingHotspotStatus = null
+                }
+            }
+        }
     }
 
-    fun requestPhoto(request: PhotoRequest) {
-        deviceManager.photoRequest(
-            request.requestId,
-            request.appId,
-            request.size.value,
-            request.webhookUrl,
-            request.authToken,
-            request.compress.value,
-            request.flash,
-            request.sound,
+    fun setSystemTime(timestampMs: Long) {
+        deviceManager.setSystemTime(timestampMs)
+    }
+
+    fun requestPhoto(request: PhotoRequest): PhotoResponseEvent {
+        Bridge.log(
+            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=${request.requestId} appId=${request.appId}"
         )
+        val pending = PendingResponse<PhotoResponseEvent>("photo request ${request.requestId}")
+        pendingPhotoRequests[request.requestId] = pending
+        try {
+            deviceManager.requestPhoto(
+                request.requestId,
+                request.appId,
+                request.size.value,
+                request.webhookUrl,
+                request.authToken,
+                request.compress.value,
+                request.flash,
+                request.save,
+                request.sound,
+                request.exposureTimeNs,
+                request.iso,
+            )
+            return pending.await()
+        } finally {
+            pendingPhotoRequests.remove(request.requestId, pending)
+        }
     }
 
-    fun queryGalleryStatus() {
-        deviceManager.queryGalleryStatus()
+    fun queryGalleryStatus(): GalleryStatusEvent {
+        val pending = PendingResponse<GalleryStatusEvent>("gallery status query")
+        synchronized(oneShotLock) {
+            if (pendingGalleryStatus != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "A gallery status query is already waiting for a glasses response.",
+                )
+            }
+            pendingGalleryStatus = pending
+        }
+        try {
+            deviceManager.queryGalleryStatus()
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingGalleryStatus === pending) {
+                    pendingGalleryStatus = null
+                }
+            }
+        }
     }
 
-    fun startStream(request: StreamRequest) {
-        deviceManager.startStream(request.toMap().toMutableMap())
+    fun startStream(request: StreamRequest): StreamStatusEvent {
+        val message = request.toMap().toMutableMap()
+        val streamId = (message["streamId"] as? String)?.takeIf { it.isNotBlank() }
+                ?: "sdk-${UUID.randomUUID()}"
+        message["streamId"] = streamId
+        val pending = PendingResponse<StreamStatusEvent>("start stream $streamId")
+        pendingStreamStarts[streamId] = pending
+        stopStreamKeepAliveMonitor()
+        try {
+            deviceManager.startStream(message)
+            val event = pending.await(STREAM_START_TIMEOUT_MS)
+            if (request.keepAlive && !request.isExternallyManagedKeepAlive()) {
+                startStreamKeepAliveMonitor(streamId, request.keepAliveIntervalSeconds)
+            }
+            return event
+        } finally {
+            pendingStreamStarts.remove(streamId, pending)
+        }
     }
 
-    fun keepStreamAlive(request: StreamKeepAliveRequest) {
+    internal fun sendExternallyManagedStreamKeepAlive(request: StreamKeepAliveRequest) {
         deviceManager.keepStreamAlive(request.toMap().toMutableMap())
     }
 
-    fun rgbLedControl(request: RgbLedRequest) {
-        deviceManager.rgbLedControl(
-            request.requestId,
-            request.packageName,
-            request.action.value,
-            request.color?.value,
-            request.ontime,
-            request.offtime,
-            request.count,
-        )
+    fun rgbLedControl(request: RgbLedRequest): RgbLedControlResponseEvent {
+        val pending = PendingResponse<RgbLedControlResponseEvent>("RGB LED command ${request.requestId}")
+        pendingRgbLedRequests[request.requestId] = pending
+        try {
+            deviceManager.rgbLedControl(
+                request.requestId,
+                request.packageName,
+                request.action.value,
+                request.color?.value,
+                request.onDurationMs,
+                request.offDurationMs,
+                request.count,
+            )
+            return pending.await()
+        } finally {
+            pendingRgbLedRequests.remove(request.requestId, pending)
+        }
     }
 
-    fun stopStream() {
-        deviceManager.stopStream()
+    fun stopStream(): StreamStatusEvent {
+        val pending = PendingResponse<StreamStatusEvent>("stop stream")
+        val targetStreamId = synchronized(streamKeepAliveLock) {
+            activeStreamKeepAlive?.streamId
+        }
+        synchronized(oneShotLock) {
+            if (pendingStreamStop != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "A stream stop command is already waiting for a glasses response.",
+                )
+            }
+            pendingStreamStop = PendingStreamStop(targetStreamId, pending)
+        }
+        stopStreamKeepAliveMonitor()
+        try {
+            deviceManager.stopStream()
+            return pending.await(STREAM_STOP_TIMEOUT_MS)
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingStreamStop?.pending === pending) {
+                    pendingStreamStop = null
+                }
+            }
+        }
     }
 
-    fun startVideoRecording(request: VideoRecordingRequest) {
-        deviceManager.startVideoRecording(request.requestId, request.save, request.flash, request.sound)
+    fun startVideoRecording(request: VideoRecordingRequest): VideoRecordingStatusEvent {
+        require(request.requestId.isNotBlank()) { "requestId is required to start video recording." }
+        requireGlassesConnected("start video recording")
+        val pending = PendingResponse<VideoRecordingStatusEvent>("start video recording")
+        val pendingRequest = PendingVideoRecordingRequest("recording_started", pending)
+        if (pendingVideoRecordingRequests.putIfAbsent(request.requestId, pendingRequest) != null) {
+            throw BluetoothException(
+                "request_in_flight",
+                "A video recording command is already waiting for requestId ${request.requestId}.",
+            )
+        }
+        try {
+            deviceManager.startVideoRecording(
+                    request.requestId,
+                    request.save,
+                    request.sound,
+                    request.width,
+                    request.height,
+                    request.fps,
+                    request.maxRecordingTimeMinutes,
+            )
+            return pending.await()
+        } finally {
+            pendingVideoRecordingRequests.remove(request.requestId, pendingRequest)
+        }
     }
 
-    fun stopVideoRecording(requestId: String) {
-        deviceManager.stopVideoRecording(requestId)
+    @JvmOverloads
+    fun stopVideoRecording(
+            requestId: String,
+            webhookUrl: String? = null,
+            authToken: String? = null,
+    ): VideoRecordingStatusEvent {
+        require(requestId.isNotBlank()) { "requestId is required to stop video recording." }
+        requireGlassesConnected("stop video recording")
+        val pending = PendingResponse<VideoRecordingStatusEvent>("stop video recording")
+        val waitForUpload = !webhookUrl.isNullOrBlank()
+        val pendingRequest =
+            PendingVideoRecordingRequest(
+                expectedStatus = "recording_stopped",
+                pending = pending,
+                waitForUpload = waitForUpload,
+            )
+        if (pendingVideoRecordingRequests.putIfAbsent(requestId, pendingRequest) != null) {
+            throw BluetoothException(
+                "request_in_flight",
+                "A video recording command is already waiting for requestId $requestId.",
+            )
+        }
+        try {
+            deviceManager.stopVideoRecording(requestId, webhookUrl, authToken)
+            val timeoutMs =
+                if (waitForUpload) VIDEO_UPLOAD_STOP_TIMEOUT_MS else DEFAULT_REQUEST_TIMEOUT_MS
+            return pending.await(timeoutMs)
+        } finally {
+            pendingVideoRecordingRequests.remove(requestId, pendingRequest)
+        }
     }
 
-    fun requestVersionInfo() {
-        deviceManager.requestVersionInfo()
+    fun requestVersionInfo(): VersionInfoResult {
+        val pending = PendingResponse<VersionInfoResult>("version info request")
+        synchronized(oneShotLock) {
+            if (pendingVersionInfo != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "A version info request is already waiting for a glasses response.",
+                )
+            }
+            pendingVersionInfo = pending
+        }
+        try {
+            deviceManager.requestVersionInfo()
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingVersionInfo === pending) {
+                    pendingVersionInfo = null
+                }
+            }
+        }
     }
 
-    fun sendOtaStart() {
-        deviceManager.sendOtaStart()
+    /** Ask connected Mentra Live glasses to check/report OTA availability and status. */
+    fun checkForOtaUpdate(): OtaQueryResult =
+        performOtaQuery("OTA status query") {
+            deviceManager.sendOtaQueryStatus()
+        }
+
+    private fun performOtaQuery(
+        operation: String,
+        sendRequest: () -> Unit,
+    ): OtaQueryResult {
+        val pending = PendingResponse<OtaQueryResult>(operation)
+        synchronized(oneShotLock) {
+            if (pendingOtaQuery != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "An OTA status query is already waiting for a glasses response.",
+                )
+            }
+            pendingOtaQuery = pending
+        }
+        try {
+            sendRequest()
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingOtaQuery === pending) {
+                    pendingOtaQuery = null
+                }
+            }
+        }
     }
 
-    fun sendOtaQueryStatus() {
-        deviceManager.sendOtaQueryStatus()
+    /** Start the OTA flow after your app has presented the available update to the user. */
+    fun startOtaUpdate(otaVersionUrl: String? = null): OtaStartAckEvent {
+        val pending = PendingResponse<OtaStartAckEvent>("OTA start command")
+        synchronized(oneShotLock) {
+            if (pendingOtaStart != null) {
+                throw BluetoothException(
+                    "request_in_flight",
+                    "An OTA start command is already waiting for a glasses response.",
+                )
+            }
+            pendingOtaStart = pending
+        }
+        try {
+            deviceManager.sendOtaStart(otaVersionUrl)
+            return pending.await()
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingOtaStart === pending) {
+                    pendingOtaStart = null
+                }
+            }
+        }
     }
 
-    fun sendShutdown() {
+    /** Re-run the glasses-side OTA version check, mainly after correcting clock skew/TLS failures. */
+    fun retryOtaVersionCheck(): OtaQueryResult =
+        performOtaQuery("OTA version retry") {
+            deviceManager.retryOtaVersionCheck()
+        }
+
+    internal fun sendOtaStart(otaVersionUrl: String? = null): OtaStartAckEvent =
+        startOtaUpdate(otaVersionUrl)
+
+    internal fun sendOtaQueryStatus(): OtaQueryResult = checkForOtaUpdate()
+
+    internal fun sendShutdown() {
         deviceManager.sendShutdown()
     }
 
-    fun sendReboot() {
+    internal fun sendReboot() {
         deviceManager.sendReboot()
     }
 
-    fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {
+    internal fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {
         deviceManager.sendIncidentId(incidentId, apiBaseUrl)
     }
 
     override fun close() {
+        stopStreamKeepAliveMonitor()
         Bridge.removeEventSink(bridgeEventSinkId)
-        GlassesStore.store.removeListener(storeListenerId)
+        DeviceStore.store.removeListener(storeListenerId)
+        analytics.shutdown()
         listeners.clear()
     }
 
     private fun dispatchStoreUpdate(category: String, changes: Map<String, Any>) {
         when (ObservableStore.normalizeCategory(category)) {
-            "glasses" ->
+            "glasses" -> {
+                analytics.observeGlassesStatus(getRawGlassesStatus())
+                val state = getState()
                 dispatchToListeners {
-                    it.onGlassesStatusChanged(GlassesStatusUpdate.fromMap(glassesStatusChanges(changes)))
+                    it.onStateChanged(state)
+                    it.onGlassesChanged(state.glasses)
                 }
-            ObservableStore.CORE_CATEGORY -> {
+            }
+            ObservableStore.BLUETOOTH_CATEGORY -> {
+                val state = getState()
+                val scanChanged = changes.keys.any { it in SCAN_STATE_KEYS }
                 dispatchToListeners {
-                    it.onBluetoothStatusChanged(BluetoothStatusUpdate.fromMap(changes))
+                    it.onStateChanged(state)
+                    it.onSdkStateChanged(state.sdk)
+                    if (scanChanged) {
+                        it.onScanChanged(state.scan)
+                    }
                 }
                 if (!suppressDefaultDeviceEvents && changes.keys.any { it in DEFAULT_DEVICE_KEYS }) {
                     dispatchDefaultDeviceChanged()
@@ -374,35 +986,13 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    private fun glassesStatusChanges(changes: Map<String, Any>): Map<String, Any> {
-        var merged = changes
-
-        if (changes.keys.any { it in setOf("wifiConnected", "wifiSsid", "wifiLocalIp", "wifiCaptivePortal") }) {
-            merged =
-                merged +
-                    mapOf(
-                        "wifiConnected" to ((GlassesStore.get("glasses", "wifiConnected") as? Boolean) ?: false),
-                        "wifiSsid" to ((GlassesStore.get("glasses", "wifiSsid") as? String) ?: ""),
-                        "wifiLocalIp" to ((GlassesStore.get("glasses", "wifiLocalIp") as? String) ?: ""),
-                        "wifiCaptivePortal" to ((GlassesStore.get("glasses", "wifiCaptivePortal") as? Boolean) ?: false),
-                    )
-        }
-
-        if (changes.containsKey("signalStrengthUpdatedAt") && !changes.containsKey("signalStrength")) {
-            val signalStrength = (GlassesStore.get("glasses", "signalStrength") as? Number)?.toInt() ?: -1
-            merged = merged + ("signalStrength" to signalStrength)
-        }
-
-        return merged
-    }
-
     private fun dispatchDefaultDeviceChanged() {
         val defaultDevice = currentDefaultDevice()
         dispatchToListeners { it.onDefaultDeviceChanged(defaultDevice) }
     }
 
     private fun currentDefaultDevice(): Device? {
-        val core = GlassesStore.store.getCategory(ObservableStore.CORE_CATEGORY)
+        val core = DeviceStore.store.getCategory(ObservableStore.BLUETOOTH_CATEGORY)
         val model = core["default_wearable"] as? String ?: return null
         val name = core["device_name"] as? String ?: return null
         if (model.isBlank() || name.isBlank()) return null
@@ -440,11 +1030,18 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
+    private fun Throwable.toBluetoothError(defaultCode: String): BluetoothError =
+        if (this is BluetoothException) {
+            BluetoothError(code, message ?: code, this)
+        } else {
+            BluetoothError(defaultCode, message ?: toString(), this)
+        }
+
     private fun dispatchDiscoveredDevices(rawSearchResults: Any?) {
         val results = rawSearchResults as? List<*> ?: return
         results.forEach { rawResult ->
             val result = rawResult as? Map<*, *> ?: return@forEach
-            val name = result["deviceName"] as? String ?: result["name"] as? String ?: return@forEach
+            val name = result["name"] as? String ?: return@forEach
             if (!discoveredDeviceNames.add(name)) return@forEach
             val values =
                 result.entries.mapNotNull { (key, value) ->
@@ -476,6 +1073,26 @@ class MentraBluetoothSdk private constructor(
                 }
             }
             "head_up" -> dispatchToListeners { it.onHeadUpChanged(data["up"] as? Boolean ?: false) }
+            "voice_activity_detection_status" ->
+                dispatchToListeners {
+                    it.onVoiceActivityDetectionStatus(
+                        VoiceActivityDetectionStatusEvent(
+                            voiceActivityDetectionEnabled =
+                                data["voiceActivityDetectionEnabled"] as? Boolean
+                                    ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED,
+                            values = data,
+                        )
+                    )
+                }
+            "speaking_status" ->
+                dispatchToListeners {
+                    it.onSpeakingStatus(
+                        SpeakingStatusEvent(
+                            speaking = data["speaking"] as? Boolean ?: false,
+                            values = data,
+                        )
+                    )
+                }
             "battery_status" ->
                 dispatchToListeners {
                     it.onBatteryStatus(
@@ -486,18 +1103,120 @@ class MentraBluetoothSdk private constructor(
                         )
                     )
                 }
-            "wifi_status_change" -> dispatchToListeners { it.onWifiStatusChanged(WifiStatusEvent(data)) }
-            "hotspot_status_change" -> dispatchToListeners { it.onHotspotStatusChanged(HotspotStatusEvent(data)) }
-            "hotspot_error" -> dispatchToListeners { it.onHotspotError(HotspotErrorEvent(data)) }
-            "gallery_status" -> dispatchToListeners { it.onGalleryStatus(GalleryStatusEvent(data)) }
-            "photo_response" -> dispatchToListeners { it.onPhotoResponse(PhotoResponseEvent(data)) }
-            "stream_status" -> dispatchToListeners { it.onStreamStatus(StreamStatusEvent(data)) }
-            "keep_alive_ack" -> dispatchToListeners { it.onKeepAliveAck(KeepAliveAckEvent(data)) }
-            "mic_pcm" -> (data["pcm"] as? ByteArray)?.let { frame ->
-                dispatchToListeners { it.onMicPcm(frame) }
+            "wifi_status_change" -> {
+                val event = WifiStatusEvent(data)
+                handleWifiStatusForRequests(event)
+                dispatchToListeners { it.onWifiStatusChanged(event) }
             }
-            "mic_lc3" -> (data["lc3"] as? ByteArray)?.let { frame ->
-                dispatchToListeners { it.onMicLc3(frame) }
+            "wifi_scan_result" -> {
+                val networks =
+                    (data["networks"] as? List<*>)
+                        ?.mapNotNull { (it as? Map<*, *>)?.stringKeyedMap() }
+                        ?.map(WifiScanResult::fromMap)
+                        ?: emptyList()
+                val hasCompletionFlag =
+                    data.containsKey("scanComplete") || data.containsKey("scan_complete")
+                val scanComplete =
+                    (data["scanComplete"] as? Boolean) ?: (data["scan_complete"] as? Boolean) ?: false
+                if (scanComplete || !hasCompletionFlag) {
+                    handleWifiScanResultsForRequests(networks)
+                }
+                dispatchToListeners { it.onRawEvent(eventName, data) }
+            }
+            "hotspot_status_change" -> {
+                val event = HotspotStatusEvent(data)
+                handleHotspotStatusForRequests(event)
+                dispatchToListeners { it.onHotspotStatusChanged(event) }
+            }
+            "hotspot_error" -> {
+                val event = HotspotErrorEvent(data)
+                handleHotspotErrorForRequests(event)
+                dispatchToListeners { it.onHotspotError(event) }
+            }
+            "gallery_status" -> {
+                val event = GalleryStatusEvent(data)
+                synchronized(oneShotLock) {
+                    pendingGalleryStatus?.resolve(event)
+                }
+                dispatchToListeners { it.onGalleryStatus(event) }
+            }
+            "photo_response" -> {
+                val event = PhotoResponseEvent(data)
+                handlePhotoResponseForRequests(event)
+                dispatchToListeners { it.onPhotoResponse(event) }
+            }
+            "photo_status" -> dispatchToListeners { it.onPhotoStatus(PhotoStatusEvent(data)) }
+            "video_recording_status" -> {
+                val event = VideoRecordingStatusEvent(data)
+                handleVideoRecordingStatusForRequests(event)
+                dispatchToListeners { it.onVideoRecordingStatus(event) }
+            }
+            "media_success", "media_error" -> {
+                val event = MediaUploadEvent(data)
+                handleMediaUploadForRequests(event)
+                dispatchToListeners { it.onMediaUpload(event) }
+            }
+            "rgb_led_control_response" -> {
+                val event = RgbLedControlResponseEvent(data)
+                handleRgbLedResponseForRequests(event)
+                dispatchToListeners { it.onRgbLedControlResponse(event) }
+            }
+            "stream_status" -> {
+                val event = StreamStatusEvent(data)
+                handleStreamStatusForRequests(event)
+                handleStreamStatusForKeepAlive(event.status)
+                dispatchToListeners { it.onStreamStatus(event) }
+            }
+            "keep_alive_ack" -> {
+                val event = KeepAliveAckEvent(data)
+                if (!handleStreamKeepAliveAck(event)) {
+                    dispatchToListeners { it.onKeepAliveAck(event) }
+                }
+            }
+            "ota_update_available" -> {
+                val resultValues = data + mapOf("type" to "ota_update_available")
+                synchronized(oneShotLock) {
+                    pendingOtaQuery?.resolve(OtaQueryResult(resultValues))
+                }
+                dispatchToListeners { it.onOtaUpdateAvailable(OtaUpdateAvailableEvent.fromMap(resultValues)) }
+            }
+            "ota_start_ack" -> {
+                val event = OtaStartAckEvent.fromMap(data + mapOf("type" to "ota_start_ack"))
+                synchronized(oneShotLock) {
+                    pendingOtaStart?.resolve(event)
+                }
+                dispatchToListeners { it.onOtaStartAck(event) }
+            }
+            "ota_status" -> {
+                val resultValues = data + mapOf("type" to "ota_status")
+                synchronized(oneShotLock) {
+                    pendingOtaQuery?.resolve(OtaQueryResult(resultValues))
+                }
+                dispatchToListeners { it.onOtaStatus(OtaStatusEvent.fromMap(resultValues)) }
+            }
+            "settings_ack" -> {
+                val event = SettingsAckEvent(data)
+                handleSettingsAckForRequests(event)
+                dispatchToListeners { it.onSettingsAck(event) }
+            }
+            "version_info" -> {
+                val event = VersionInfoResult.fromMap(data)
+                synchronized(oneShotLock) {
+                    pendingVersionInfo?.resolve(event)
+                }
+                dispatchToListeners { it.onVersionInfo(event) }
+            }
+            "mic_pcm" -> {
+                val event = MicPcmEvent(data)
+                if (event.pcm.isNotEmpty()) {
+                    dispatchToListeners { it.onMicPcm(event) }
+                }
+            }
+            "mic_lc3" -> {
+                val event = MicLc3Event(data)
+                if (event.lc3.isNotEmpty()) {
+                    dispatchToListeners { it.onMicLc3(event) }
+                }
             }
             "local_transcription" ->
                 dispatchToListeners {
@@ -539,6 +1258,352 @@ class MentraBluetoothSdk private constructor(
             mainHandler.post(deliver)
         } else {
             deliver()
+        }
+    }
+
+    private fun startStreamKeepAliveMonitor(streamId: String, requestedIntervalSeconds: Int) {
+        val intervalSeconds =
+                requestedIntervalSeconds.takeIf { it > 0 } ?: DEFAULT_STREAM_KEEP_ALIVE_INTERVAL_SECONDS
+        val tracker = ActiveStreamKeepAlive(
+                streamId = streamId,
+                intervalMs = intervalSeconds * 1_000L,
+        )
+        synchronized(streamKeepAliveLock) {
+            activeStreamKeepAlive = tracker
+        }
+        sendNextStreamKeepAlive(tracker)
+    }
+
+    private fun stopStreamKeepAliveMonitor() {
+        val tracker =
+                synchronized(streamKeepAliveLock) {
+                    val current = activeStreamKeepAlive
+                    activeStreamKeepAlive = null
+                    current
+                }
+        tracker?.nextTick?.let { mainHandler.removeCallbacks(it) }
+    }
+
+    private fun handleStreamStatusForRequests(event: StreamStatusEvent) {
+        val startMatch = matchingStreamStart(event)
+        if (startMatch != null) {
+            val (streamId, pending) = startMatch
+            when (event.state) {
+                StreamState.STREAMING -> {
+                    pendingStreamStarts.remove(streamId, pending)
+                    pending.resolve(event)
+                }
+                StreamState.ERROR,
+                StreamState.RECONNECT_FAILED,
+                StreamState.STOPPED -> {
+                    pendingStreamStarts.remove(streamId, pending)
+                    pending.reject(streamStatusException(event, "stream_start_failed"))
+                }
+                else -> Unit
+            }
+        }
+
+        val stop = synchronized(oneShotLock) { pendingStreamStop }
+        if (stop != null && streamStatusMatches(event, stop.streamId)) {
+            when {
+                isAlreadyStoppedStreamStatus(event) -> {
+                    synchronized(oneShotLock) {
+                        if (pendingStreamStop === stop) {
+                            pendingStreamStop = null
+                        }
+                    }
+                    stop.pending.resolve(stoppedStreamEvent(event, stop.streamId))
+                }
+                event.state == StreamState.ERROR || event.state == StreamState.RECONNECT_FAILED -> {
+                    synchronized(oneShotLock) {
+                        if (pendingStreamStop === stop) {
+                            pendingStreamStop = null
+                        }
+                    }
+                    stop.pending.reject(streamStatusException(event, "stream_stop_failed"))
+                }
+                else -> Unit
+            }
+        }
+    }
+
+    private fun matchingStreamStart(event: StreamStatusEvent): Pair<String, PendingResponse<StreamStatusEvent>>? {
+        val streamId = event.streamId
+        if (!streamId.isNullOrBlank()) {
+            val pending = pendingStreamStarts[streamId] ?: return null
+            return streamId to pending
+        }
+        if (pendingStreamStarts.size == 1) {
+            val entry = pendingStreamStarts.entries.first()
+            return entry.key to entry.value
+        }
+        return null
+    }
+
+    private fun streamStatusMatches(event: StreamStatusEvent, streamId: String?): Boolean =
+        streamId.isNullOrBlank() || event.streamId.isNullOrBlank() || event.streamId == streamId
+
+    private fun isAlreadyStoppedStreamStatus(event: StreamStatusEvent): Boolean {
+        if (event.state == StreamState.STOPPED) {
+            return true
+        }
+        val details = (event.status as? StreamStatus.Error)?.errorDetails?.lowercase()
+        return details in setOf("not_streaming", "already_stopped", "not streaming")
+    }
+
+    private fun stoppedStreamEvent(event: StreamStatusEvent, streamId: String?): StreamStatusEvent =
+        StreamStatusEvent(
+            StreamStatus.Lifecycle(
+                state = StreamState.STOPPED,
+                streamId = event.streamId ?: streamId,
+                timestamp = event.status.timestamp ?: System.currentTimeMillis(),
+                resolvedConfig = event.resolvedConfig,
+            )
+        )
+
+    private fun streamStatusException(event: StreamStatusEvent, code: String): BluetoothException {
+        val details = (event.status as? StreamStatus.Error)?.errorDetails
+            ?: "Stream status ${event.state.value}"
+        return BluetoothException(code, details)
+    }
+
+    private fun handlePhotoResponseForRequests(event: PhotoResponseEvent) {
+        val pending = pendingPhotoRequests[event.requestId] ?: return
+        when (val response = event.response) {
+            is PhotoResponse.Success -> pending.resolve(event)
+            is PhotoResponse.Error ->
+                pending.reject(
+                    BluetoothException(
+                        response.errorCode ?: "photo_request_failed",
+                        response.errorMessage,
+                    )
+                )
+        }
+    }
+
+    private fun handleVideoRecordingStatusForRequests(event: VideoRecordingStatusEvent) {
+        val request = pendingVideoRecordingRequests[event.requestId] ?: return
+        if (event.success) {
+            if (event.status == request.expectedStatus) {
+                if (request.waitForUpload) {
+                    request.stoppedEvent = event
+                    if (request.uploadSucceeded) {
+                        request.pending.resolve(event)
+                    }
+                } else {
+                    request.pending.resolve(event)
+                }
+            }
+        } else {
+            request.pending.reject(
+                BluetoothException(
+                    event.status.ifBlank { "video_recording_failed" },
+                    event.details ?: "Video recording command failed.",
+                )
+            )
+        }
+    }
+
+    private fun handleMediaUploadForRequests(event: MediaUploadEvent) {
+        if (!event.isVideo) return
+        val request = pendingVideoRecordingRequests[event.requestId] ?: return
+        if (!request.waitForUpload) return
+        if (event.isSuccess) {
+            val stoppedEvent = request.stoppedEvent
+            if (stoppedEvent != null) {
+                request.pending.resolve(stoppedEvent)
+            } else {
+                request.uploadSucceeded = true
+            }
+        } else {
+            request.pending.reject(
+                BluetoothException(
+                    "video_upload_failed",
+                    event.errorMessage ?: "Video upload failed.",
+                )
+            )
+        }
+    }
+
+    private fun handleRgbLedResponseForRequests(event: RgbLedControlResponseEvent) {
+        val pending = pendingRgbLedRequests[event.requestId] ?: return
+        if (event.state == "success") {
+            pending.resolve(event)
+        } else {
+            pending.reject(
+                BluetoothException(
+                    event.errorCode ?: "rgb_led_control_failed",
+                    event.errorCode ?: "RGB LED command failed.",
+                )
+            )
+        }
+    }
+
+    private fun handleSettingsAckForRequests(event: SettingsAckEvent) {
+        val pending = pendingSettingsRequests[event.requestId] ?: return
+        if (isFailureStatus(event.status)) {
+            pending.reject(
+                BluetoothException(
+                    event.errorCode ?: "${event.setting.ifBlank { "settings" }}_failed",
+                    event.errorMessage ?: "Settings command ${event.setting.ifBlank { event.requestId }} failed.",
+                )
+            )
+        } else {
+            pending.resolve(event)
+        }
+    }
+
+    private fun isFailureStatus(status: String): Boolean =
+        status.lowercase() in setOf("error", "failed", "failure", "rejected")
+
+    private fun handleWifiScanResultsForRequests(results: List<WifiScanResult>) {
+        val request = synchronized(oneShotLock) { pendingWifiScan } ?: return
+        synchronized(oneShotLock) {
+            if (pendingWifiScan === request) {
+                pendingWifiScan = null
+            }
+        }
+        request.pending.resolve(results)
+    }
+
+    private fun handleWifiStatusForRequests(event: WifiStatusEvent) {
+        val request = synchronized(oneShotLock) { pendingWifiStatus } ?: return
+        if (!wifiStatusMatches(event.status, request)) return
+        synchronized(oneShotLock) {
+            if (pendingWifiStatus === request) {
+                pendingWifiStatus = null
+            }
+        }
+        request.pending.resolve(event)
+    }
+
+    private fun wifiStatusMatches(status: WifiStatus, request: PendingWifiStatusRequest): Boolean =
+        when (request.operation) {
+            WifiStatusOperation.CONNECT ->
+                status is WifiStatus.Connected && status.ssid == request.ssid
+            WifiStatusOperation.FORGET ->
+                status == WifiStatus.Disconnected || (status is WifiStatus.Connected && status.ssid != request.ssid)
+        }
+
+    private fun handleHotspotStatusForRequests(event: HotspotStatusEvent) {
+        val request = synchronized(oneShotLock) { pendingHotspotStatus } ?: return
+        if (!hotspotStatusMatches(event.status, request.enabled)) return
+        synchronized(oneShotLock) {
+            if (pendingHotspotStatus === request) {
+                pendingHotspotStatus = null
+            }
+        }
+        request.pending.resolve(event)
+    }
+
+    private fun hotspotStatusMatches(status: HotspotStatus, enabled: Boolean): Boolean =
+        if (enabled) {
+            status is HotspotStatus.Enabled
+        } else {
+            status == HotspotStatus.Disabled
+        }
+
+    private fun handleHotspotErrorForRequests(event: HotspotErrorEvent) {
+        val request = synchronized(oneShotLock) { pendingHotspotStatus } ?: return
+        synchronized(oneShotLock) {
+            if (pendingHotspotStatus === request) {
+                pendingHotspotStatus = null
+            }
+        }
+        request.pending.reject(
+            BluetoothException(
+                "hotspot_command_failed",
+                event.message ?: "Hotspot command failed.",
+            )
+        )
+    }
+
+    private fun sendNextStreamKeepAlive(tracker: ActiveStreamKeepAlive) {
+        var timeoutEvent: StreamStatusEvent? = null
+        var request: StreamKeepAliveRequest? = null
+
+        synchronized(streamKeepAliveLock) {
+            if (activeStreamKeepAlive !== tracker) {
+                return
+            }
+
+            if (tracker.armed && tracker.pendingAckId != null) {
+                tracker.missedAckCount += 1
+                if (tracker.missedAckCount >= MAX_MISSED_STREAM_KEEP_ALIVE_ACKS) {
+                    activeStreamKeepAlive = null
+                    tracker.nextTick?.let { mainHandler.removeCallbacks(it) }
+                    timeoutEvent =
+                            StreamStatusEvent(
+                                    StreamStatus.Error(
+                                            streamId = tracker.streamId,
+                                            errorDetails =
+                                                    "Stream keep-alive timed out after ${tracker.missedAckCount} missed ACKs",
+                                            timestamp = System.currentTimeMillis(),
+                                            resolvedConfig = null,
+                                    )
+                            )
+                    return@synchronized
+                }
+            }
+
+            val ackId = "ack-${System.currentTimeMillis()}"
+            tracker.pendingAckId = ackId
+            request = StreamKeepAliveRequest(streamId = tracker.streamId, ackId = ackId)
+            val nextTick = Runnable { sendNextStreamKeepAlive(tracker) }
+            tracker.nextTick = nextTick
+            mainHandler.postDelayed(nextTick, tracker.intervalMs)
+        }
+
+        timeoutEvent?.let { event ->
+            dispatchToListeners { it.onStreamStatus(event) }
+            stopStreamKeepAliveMonitor()
+            deviceManager.stopStream()
+            return
+        }
+
+        request?.let { keepAlive ->
+            deviceManager.keepStreamAlive(keepAlive.toMap().toMutableMap())
+        }
+    }
+
+    private fun handleStreamKeepAliveAck(event: KeepAliveAckEvent): Boolean {
+        synchronized(streamKeepAliveLock) {
+            val tracker = activeStreamKeepAlive ?: return false
+            if (event.streamId != tracker.streamId || event.ackId != tracker.pendingAckId) {
+                return false
+            }
+            tracker.pendingAckId = null
+            tracker.missedAckCount = 0
+            return true
+        }
+    }
+
+    private fun handleStreamStatusForKeepAlive(status: StreamStatus) {
+        val streamId = status.streamId
+        val activeStreamId = synchronized(streamKeepAliveLock) { activeStreamKeepAlive?.streamId }
+        if (streamId == null || activeStreamId != streamId) {
+            return
+        }
+        when (status.state) {
+            StreamState.STOPPED,
+            StreamState.STOPPING,
+            StreamState.ERROR,
+            StreamState.RECONNECT_FAILED -> stopStreamKeepAliveMonitor()
+            // A non-terminal status means the stream is live or coming up and the glasses can
+            // now ACK; arm the missed-ACK detector from here so a slow startup before the first
+            // ACK can't trip a false keep-alive timeout. On the arming transition, drop any
+            // pre-arm bookkeeping so a stale unacked id (sent before the glasses could ACK)
+            // can't immediately count as a miss.
+            else ->
+                    synchronized(streamKeepAliveLock) {
+                        activeStreamKeepAlive?.let {
+                            if (it.streamId == streamId && !it.armed) {
+                                it.armed = true
+                                it.pendingAckId = null
+                                it.missedAckCount = 0
+                            }
+                        }
+                    }
         }
     }
 }

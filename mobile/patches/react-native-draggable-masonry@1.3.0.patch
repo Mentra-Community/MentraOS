@@ -3,7 +3,7 @@ index cacb84dbd769c001852547c720696ff2772cbdca..86a91158ceb7772df7eaa34f806148f4
 --- a/src/DraggableMasonryList.tsx
 +++ b/src/DraggableMasonryList.tsx
 @@ -606,7 +606,18 @@ function DraggableMasonryList<T extends MasonryItemType>({
- 
+
      // --- Drag Handlers ---
      const handleDragStart = useCallback((id: string) => {
 -        if (!sortEnabled) return;
@@ -19,17 +19,33 @@ index cacb84dbd769c001852547c720696ff2772cbdca..86a91158ceb7772df7eaa34f806148f4
 +        if (packageName?.includes("@empty")) {
 +            return;
 +        }
- 
+
          setActiveDragId(id);
          isDraggingShared.value = true;
 diff --git a/src/MasonryItem.tsx b/src/MasonryItem.tsx
-index e4bbf4c488c5406be4222d7b76fae950bc2ce162..3f5a067e59cbdb1e492e55b615bbf442c0863bb4 100644
+index e4bbf4c488c5406be4222d7b76fae950bc2ce162..5bb31b96556055403dbd599e3dc9ec94e160bc12 100644
 --- a/src/MasonryItem.tsx
 +++ b/src/MasonryItem.tsx
-@@ -238,6 +238,13 @@ const MasonryItemComponent = ({
+@@ -27,6 +27,7 @@ interface MasonryItemProps {
+     dragStartScrollY: SharedValue<number>;
+     // New props
+     sortEnabled: boolean;
++    swapMode?: boolean;
+     dragActivationDelay: number;
+     activationAnimationDuration: number;
+     dropAnimationDuration: number;
+@@ -96,6 +97,7 @@ const MasonryItemComponent = ({
+             return () => clearTimeout(timer);
+         } else {
+             isMounted.value = true;
++            return undefined;
+         }
+     }, []);
+
+@@ -238,6 +240,13 @@ const MasonryItemComponent = ({
              runOnJS(onDragEnd)(id);
          });
- 
+
 +    const longPressGesture = Gesture.Pan()
 +        .enabled(!sortEnabled)
 +        .activateAfterLongPress(dragActivationDelay)
@@ -37,19 +53,19 @@ index e4bbf4c488c5406be4222d7b76fae950bc2ce162..3f5a067e59cbdb1e492e55b615bbf442
 +            runOnJS(onDragStart)(id);
 +        });
 +    const composedGesture = Gesture.Simultaneous(panGesture, longPressGesture);
- 
+
      // レイアウトアニメーション用のスタイル（外側のラッパー）
      const wrapperStyle = useAnimatedStyle(() => {
-@@ -296,7 +303,7 @@ const MasonryItemComponent = ({
+@@ -296,7 +305,7 @@ const MasonryItemComponent = ({
      const exitingAnimation = itemExiting;
- 
+
      return (
 -        <GestureDetector gesture={panGesture}>
 +        <GestureDetector gesture={composedGesture}>
              {/* 外側: 位置とentering/exitingアニメーション */}
              <Animated.View
                  style={wrapperStyle}
-@@ -336,6 +343,9 @@ const arePropsEqual = (prev: MasonryItemProps, next: MasonryItemProps) => {
+@@ -336,6 +345,9 @@ const arePropsEqual = (prev: MasonryItemProps, next: MasonryItemProps) => {
      if (prev.isNewItem !== next.isNewItem) {
          return false;
      }
@@ -58,4 +74,4 @@ index e4bbf4c488c5406be4222d7b76fae950bc2ce162..3f5a067e59cbdb1e492e55b615bbf442
 +    }
      return true;
  };
- 
+

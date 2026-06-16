@@ -35,7 +35,7 @@ const en = {
     model: "Model",
     deviceId: "Device ID",
     serialNumber: "Serial number",
-    btMacAddress: "MAC address",
+    bluetoothMacAddress: "MAC address",
     buildNumber: "Build number",
     firmwareVersion: "Firmware version",
     appVersion: "App version",
@@ -297,6 +297,20 @@ const en = {
     captivePortalTitle: "Sign-in WiFi detected",
     captivePortalMessage:
       "This network needs a browser sign-in (common on flights, hotels, and cafés). Mentra Live cannot open that page, so many features will not work. Use your home WiFi or phone hotspot instead.",
+    errors: {
+      bluetoothPoweredOffTitle: "Bluetooth is turned off.",
+      bluetoothPoweredOffDescription: "Turn on phone Bluetooth, then try again.",
+      bluetoothPermissionTitle: "Bluetooth permission is needed.",
+      bluetoothPermissionDescription: "Allow Bluetooth permission, then try again.",
+      bluetoothUnsupportedTitle: "Bluetooth is not supported.",
+      bluetoothUnsupportedDescription: "This phone does not support Bluetooth.",
+      connectionInProgressTitle: "Connection already in progress.",
+      connectionInProgressDescription: "Wait for the current Wi-Fi connection attempt to finish.",
+      glassesNoResponseTitle: "The glasses did not respond.",
+      glassesNoResponseDescription: "Make sure they are nearby, then try again.",
+      connectionFailedTitle: "Failed to connect to the network.",
+      connectionFailedDescription: "Please check your password and try again.",
+    },
   },
   ota: {
     checkingForUpdates: "Checking for updates",
@@ -465,8 +479,6 @@ const en = {
     phoneHeadset: "Phone / Headset",
     glasses: "Glasses",
     appearance: "Appearance",
-    bypassVAD: "Bypass VAD for Debugging",
-    bypassVADSubtitle: "Bypass the VAD (Voice Activity Detection).",
     enforceLocalTranscription: "Enforce Local Transcription",
     enforceLocalTranscriptionSubtitle: "Transcribe audio locally instead of in the cloud.",
     sensingLabel: "Enable Sensors",
@@ -484,6 +496,7 @@ const en = {
     profileSettings: "Profile",
     privacySettings: "Permissions and Privacy",
     transcriptionSettings: "Transcription",
+    speechSettings: "Speech",
     notificationsSettings: "Notifications",
     notificationsDescription:
       "Control which apps can send notifications to Mentra. When enabled, notifications from these apps will be available to Mentra.",
@@ -512,18 +525,21 @@ const en = {
     glassesMenuApps: "Menu Mini Apps",
     cameraSettings: "Camera Settings",
     cameraSettingsDescription: "Configure photo and video resolution for button capture",
-    cameraRestartBanner: "Camera will take a few seconds to restart.",
+    cameraRestartBanner: "Updating FOV. Please wait 10 seconds before taking a photo or video.",
     cameraFovRoiTitle: "Camera field of view",
     cameraFovRoiExplanation:
-      "FOV sets how wide the camera sees (82–118°). Values below 118° use ROI crop: the image is cropped to that angle, and ROI position (Center, Bottom, Top) chooses where the crop is taken from. 118° uses the full sensor with no crop.",
+      "FOV sets how wide the camera sees (62–118°). Values below 118° use ROI crop: the image is cropped to that angle, and ROI position (Center, Bottom, Top) chooses where the crop is taken from. 118° uses the full sensor with no crop.",
     postProcessing: "Post Processing",
     postProcessingSubtitle: "Improves photo and video quality. Sync may take longer.",
     positionSettings: "Display position",
+    screenSettings: "Screen settings",
     screenDescription: "Adjust depth and height of the display content.",
     glassesWifiSettings: "Wi-Fi Networks",
     glassesWifiDescription: "Configure WiFi settings for your smart glasses.",
     wifiUnavailable: "Connect a pair of glasses that support WiFi to access WiFi settings.",
+    debugSettings: "Debug settings",
     developerSettings: "Developer settings",
+    miniappDeveloperSettings: "Miniapp Developer Settings",
     disconnectGlasses: "Disconnect Glasses",
     forgetGlasses: "Unpair glasses",
     forgetGlassesConfirm:
@@ -546,6 +562,8 @@ const en = {
     contextualDashboardSubtitle: "Show a summary of your phone notifications when you look up.",
     metricSystemLabel: "Use Metric System",
     metricSystemSubtitle: "Metric System (°C) or Imperial System (°F).",
+    twelveHourTimeLabel: "Use 12-Hour Time",
+    twelveHourTimeSubtitle: "Use a 12-hour time format (AM/PM) instead of a 24-hour time format",
     adjustHeadAngleLabel: "Adjust Head-Up Angle",
     adjustHeadAngleSubtitle: "Adjust the angle at which the contextual dashboard appears when you look up.",
     reconnectOnAppForeground: "Reconnect on App Foreground",
@@ -577,7 +595,7 @@ const en = {
     androidBlur: "Blur effects",
     androidInnerShadow: "Inner shadow",
   },
-  devSettings: {
+  debugSettings: {
     debugConsole: "Debug Console",
     debugConsoleSubtitle: "Enable the debug console.",
     miniappScanTitle: "Scan Mini App QR",
@@ -593,8 +611,9 @@ const en = {
     miniappScanPermissionDeniedBody: "Please enable camera access in Settings to scan QR codes.",
     miniappScanCheckingPermission: "Checking camera permission\u2026",
     miniappScanInvalidQrTitle: "Invalid QR",
-    miniappScanInvalidQrBody: "Expected a mentra-miniapp:// or http:// URL",
+    miniappScanInvalidQrBody: "Expected a miniapp:// or http:// URL",
     miniappScanInvalidQrNoUrl: "No URL found in QR code",
+    miniappScanLoading: "Loading mini app…",
     miniappUrlTitle: "Load Mini App from URL",
     miniappUrlGroupTitle: "Dev Server URL",
     miniappUrlLabel: "URL",
@@ -614,6 +633,11 @@ const en = {
     miniappDevLoadUrlSubtitle: "Enter a dev server URL to load a mini app",
     miniappDevScanLabel: "Scan Mini App QR Code",
     miniappDevScanSubtitle: "Scan a QR code from your dev server",
+  },
+  miniappDevSettings: {
+    title: "Miniapp Dev",
+    miniappDevMode: "Miniapp Dev Mode",
+    miniappDevModeSubtitle: "Enable miniapp dev mode",
   },
   transcription: {
     downloadModelToEnableLocalTranscription: "Download a model to enable local transcription",
@@ -715,6 +739,8 @@ const en = {
     invalidEmail: "Please enter a valid email address",
     forgotPasswordTitle: "Forgot Password",
     forgotPasswordSubtitle: "Enter your email address and we'll send you a link to reset your password.",
+    forgotPasswordCodeSubtitle:
+      "Enter your email address and we'll send you a verification code to reset your password.",
     sendResetEmail: "Send Reset Email",
     resetEmailSent: "Reset Email Sent",
     checkEmailForReset: "Please check your email for the password reset link",
@@ -722,6 +748,9 @@ const en = {
     backToLogin: "Back to Log In",
     resetPasswordTitle: "Reset Password",
     resetPasswordSubtitle: "Enter your new password below",
+    resetPasswordCodeSubtitle: "Enter the verification code sent to your email and choose a new password.",
+    verificationCode: "Verification Code",
+    verificationCodePlaceholder: "Enter 6-digit code",
     resetPassword: "Reset Password",
     passwordResetSuccess: "Password Reset Successful",
     redirectingToLogin: "Redirecting to login...",
@@ -814,7 +843,7 @@ const en = {
     screenshotFeedbackMessage:
       "Our in-app feedback captures device logs, glasses state, and more. This is more useful for fixing issues than sending a screenshot through TestFlight. Please use the in-app feedback instead!",
     warning: "Warning",
-    developerSettingsWarning: "These settings may break the app. Use at your own risk.",
+    debugSettingsWarning: "These settings may break the app. Use at your own risk.",
     optOutOfBeta: "Opt Out of Beta",
   },
   errors: {
@@ -994,7 +1023,7 @@ const en = {
     store: "MiniApp Store",
     notify: "Notifications",
     feedback: "Give Feedback",
-    lmaInstaller: "Local Store",
+    lmaInstaller: "Dev Tools",
     lmaLoader: "Side Loader",
   },
   appInfo: {
@@ -1023,10 +1052,10 @@ const en = {
     miniAppLoader: "Miniapp loader",
     loadMiniApp: "Load miniapp",
   },
-  dev: {
-    developerMode: "Developer mode",
-    developerModeEnabled: "Developer mode enabled!",
-    developerModeMoreTaps: "{{number}} more taps to enable developer mode",
+  debug: {
+    debugMode: "Debug mode",
+    debugModeEnabled: "Debug mode enabled!",
+    debugModeMoreTaps: "{{number}} more taps to enable debug mode",
     superMode: "Super mode",
     superModeActivated: "Super mode activated! 🚀",
     superModeDeactivated: "Super mode deactivated",
@@ -1047,3 +1076,8 @@ const en = {
 
 export default en
 export type Translations = typeof en
+export type TranslationResource = DeepPartial<Translations> & Record<string, unknown>
+
+type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K]
+}

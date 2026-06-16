@@ -1,27 +1,82 @@
 /**
  * @fileoverview StreamModule -- video streaming from glasses.
  *
- * Deferred in v1 Phases 1-4 (noop). Phase 5 wires these to cloud streaming
- * extensions via the __phone__ subscriber path.
+ * Wires to cloud streaming extensions via the __phone__ subscriber path.
  */
 
 import {MiniappRequestType} from "../protocol"
 import {MiniappSession} from "../session"
 
+export interface StreamVideoConfig {
+  width?: number
+  height?: number
+  bitrate?: number
+  fps?: number
+}
+
+export interface StreamAudioConfig {
+  bitrate?: number
+  sampleRate?: number
+  echoCancellation?: boolean
+  noiseSuppression?: boolean
+}
+
+export interface StreamResolvedConfig {
+  transport?: "rtmp" | "srt" | "whip"
+  video?: {
+    width: number
+    height: number
+    captureWidth?: number
+    captureHeight?: number
+    bitrate: number
+    fps: number
+  }
+  audio?: {
+    bitrate?: number
+    sampleRate?: number
+    echoCancellation?: boolean
+    noiseSuppression?: boolean
+  }
+}
+
 export interface StartUnmanagedOptions {
   streamUrl: string
-  video?: boolean
-  audio?: boolean
+  video?: StreamVideoConfig
+  audio?: StreamAudioConfig
+  /** Play glasses-side stream start/stop sounds. Defaults to true. */
+  sound?: boolean
+}
+
+/**
+ * Restream destination. The full stream key is part of the URL (e.g.
+ * `rtmp://yt.com/live/STREAM-KEY`). `name` is a human label that surfaces
+ * in dashboards but doesn't affect routing.
+ */
+export interface RestreamDestination {
+  url: string
+  name?: string
 }
 
 export interface StartManagedOptions {
-  restreamDestinations?: string[]
+  /** Bare URL strings or {url, name?} objects; mix freely. */
+  restreamDestinations?: Array<string | RestreamDestination>
+  video?: StreamVideoConfig
+  audio?: StreamAudioConfig
+  /** Play glasses-side stream start/stop sounds. Defaults to true. */
+  sound?: boolean
 }
 
-export interface ManagedStreamResult {
+export interface StreamPublisherStartResult {
   streamId: string
-  hlsUrl?: string
-  dashUrl?: string
+  status: string
+  resolvedConfig?: StreamResolvedConfig
+}
+
+export interface ManagedStreamResult extends StreamPublisherStartResult {
+  /** Cloudflare live input UID — useful for building hosted-player URLs. */
+  liveInputId: string
+  hlsUrl: string
+  dashUrl: string
   webrtcUrl?: string
 }
 
@@ -34,22 +89,24 @@ export interface StreamStatus {
 export class StreamModule {
   constructor(private readonly session: MiniappSession) {}
 
-  async startUnmanaged(options: StartUnmanagedOptions): Promise<string> {
-    const result = await this.session.sendRequest<{streamId: string}>({
+  async startUnmanaged(options: StartUnmanagedOptions): Promise<StreamPublisherStartResult> {
+    return this.session.sendRequest<StreamPublisherStartResult>({
       type: MiniappRequestType.STREAM_START,
       streamUrl: options.streamUrl,
-      video: options.video ?? true,
-      audio: options.audio ?? true,
+      video: options.video,
+      audio: options.audio,
+      sound: options.sound ?? true,
     })
-    return result?.streamId ?? ""
   }
 
   async startManaged(options: StartManagedOptions = {}): Promise<ManagedStreamResult> {
-    const result = await this.session.sendRequest<ManagedStreamResult>({
+    return this.session.sendRequest<ManagedStreamResult>({
       type: MiniappRequestType.MANAGED_STREAM_START,
       restreamDestinations: options.restreamDestinations,
+      video: options.video,
+      audio: options.audio,
+      sound: options.sound ?? true,
     })
-    return result ?? {streamId: ""}
   }
 
   async stop(streamId?: string): Promise<void> {

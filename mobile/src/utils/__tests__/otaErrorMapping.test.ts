@@ -1,4 +1,4 @@
-import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk"
+import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
 import {OtaProgressMessages} from "@/app/ota/otaProgressTimeouts"
 
@@ -35,6 +35,12 @@ describe("getOtaErrorMessage", () => {
     expect(getOtaErrorMessage("no_internet")).toBe("Glasses WiFi has no internet connection")
   })
 
+  it("maps clock_skew to time-sync message", () => {
+    expect(getOtaErrorMessage("clock_skew")).toBe(
+      "Glasses clock is wrong — syncing time from your phone, then retrying update check",
+    )
+  })
+
   it("maps ssl_error to connection message", () => {
     expect(getOtaErrorMessage("ssl_error")).toBe("Secure connection failed — try a different WiFi network")
   })
@@ -52,6 +58,12 @@ describe("getOtaErrorMessage", () => {
   it("maps firmware_verify_failed to verify message", () => {
     expect(getOtaErrorMessage("firmware_verify_failed")).toBe(
       "Firmware verification failed — please try again or contact support",
+    )
+  })
+
+  it("maps apk_verify_failed to verify message", () => {
+    expect(getOtaErrorMessage("apk_verify_failed")).toBe(
+      "Update verification failed — please try again or contact support",
     )
   })
 

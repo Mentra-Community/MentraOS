@@ -1,4 +1,4 @@
-package com.mentra.core.utils
+package com.mentra.bluetoothsdk.utils
 
 object DeviceTypes {
     const val SIMULATED = "Simulated Glasses"
@@ -28,17 +28,17 @@ object ConnTypes {
 object MicTypes {
     const val PHONE_INTERNAL = "phone"
     const val GLASSES_CUSTOM = "glasses"
-    const val BT_CLASSIC = "btclassic"
-    const val BT = "bt"
-    val ALL = arrayOf(PHONE_INTERNAL, GLASSES_CUSTOM, BT_CLASSIC, BT)
+    const val BLUETOOTH_CLASSIC = "bluetoothClassic"
+    const val BLUETOOTH = "bluetooth"
+    val ALL = arrayOf(PHONE_INTERNAL, GLASSES_CUSTOM, BLUETOOTH_CLASSIC, BLUETOOTH)
 }
 
 // convert to kotlin:
 object MicMap {
     val map: Map<String, List<String>> = mapOf(
-        "auto" to listOf(MicTypes.GLASSES_CUSTOM, MicTypes.PHONE_INTERNAL, MicTypes.BT, MicTypes.BT_CLASSIC),
+        "auto" to listOf(MicTypes.GLASSES_CUSTOM, MicTypes.PHONE_INTERNAL, MicTypes.BLUETOOTH, MicTypes.BLUETOOTH_CLASSIC),
         "glasses" to listOf(MicTypes.GLASSES_CUSTOM),
         "phone" to listOf(MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM),
-        "bluetooth" to listOf(MicTypes.BT, MicTypes.BT_CLASSIC, MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM),
+        "bluetooth" to listOf(MicTypes.BLUETOOTH, MicTypes.BLUETOOTH_CLASSIC, MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM),
     )
 }

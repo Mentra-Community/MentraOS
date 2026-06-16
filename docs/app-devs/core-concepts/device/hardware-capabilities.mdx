@@ -21,12 +21,6 @@ const app = new MiniAppServer({
 app.onSession((session: MentraSession) => {
   const caps = session.device.capabilities;
 
-  if (caps?.hasCamera) {
-    session.camera.onStreamStatus((status) => {
-      session.logger.info("Camera stream:", status);
-    });
-  }
-
   if (caps?.hasDisplay) {
     session.display.showTextWall("Welcome!");
   }
@@ -83,7 +77,7 @@ interface Capabilities {
 | Flag | Description |
 |------|-------------|
 | `hasDisplay` | The device has a screen for showing content |
-| `hasCamera` | The device can capture photos or video |
+| `hasCamera` | The device reports camera hardware. Use the standalone Bluetooth SDK for camera, photo, and streaming features. |
 | `hasMicrophone` | The device has audio input |
 | `hasSpeaker` | The device can play audio |
 | `hasButton` | The device has physical buttons or touch controls |
@@ -160,6 +154,10 @@ app.onSession((session: MentraSession) => {
 });
 ```
 
+<Info>
+Camera hardware details are useful for understanding device capability, but camera capture and streaming workflows are documented in the [Bluetooth SDK docs](/mentra-live/camera-streaming).
+</Info>
+
 ### LED details
 
 ```typescript
@@ -201,11 +199,6 @@ app.onSession((session: MentraSession) => {
     session.speaker.speak("App started");
   }
 
-  // Camera features only on camera-equipped glasses
-  if (caps?.hasCamera) {
-    enablePhotoFeatures(session);
-  }
-
   // Transcription works on all glasses with a microphone
   if (caps?.hasMicrophone) {
     session.transcription.on((data) => {
@@ -215,12 +208,6 @@ app.onSession((session: MentraSession) => {
     });
   }
 });
-
-function enablePhotoFeatures(session: MentraSession) {
-  session.camera.onStreamStatus((status) => {
-    session.logger.info("Camera stream status:", status);
-  });
-}
 
 await app.start();
 ```
@@ -232,12 +219,12 @@ Capabilities may be `null` if the connection handshake has not completed. Always
 ```typescript
 app.onSession((session: MentraSession) => {
   // Safe: uses optional chaining
-  if (session.device.capabilities?.hasCamera) {
-    session.camera.takePhoto();
+  if (session.device.capabilities?.hasDisplay) {
+    session.display.showTextWall("Ready");
   }
 
   // Unsafe: will throw if capabilities is null
-  // if (session.device.capabilities.hasCamera) { ... }
+  // if (session.device.capabilities.hasDisplay) { ... }
 });
 ```
 
@@ -270,17 +257,16 @@ app.onSession((session: MentraSession) => {
   const caps = session.device.capabilities;
 
   // Set up initial features
-  if (caps?.hasCamera) {
-    enablePhotoFeatures(session);
+  if (caps?.hasDisplay) {
+    session.display.showTextWall("Ready");
   }
 
   // Listen for changes
   session.device.onCapabilitiesChange((updatedCaps) => {
     session.logger.info("Device capabilities changed");
 
-    if (updatedCaps.hasCamera && !caps?.hasCamera) {
-      session.logger.info("Camera became available");
-      enablePhotoFeatures(session);
+    if (updatedCaps.hasDisplay && !caps?.hasDisplay) {
+      session.display.showTextWall("Display became available");
     }
   });
 });
@@ -288,16 +274,16 @@ app.onSession((session: MentraSession) => {
 
 ## Best Practices
 
-**Always check before using hardware features.** Calling a camera method on glasses without a camera will not work. Check the flag first.
+**Always check before using hardware features.** Calling display methods on glasses without a display will not work. Check the flag first.
 
 ```typescript
 // Good
-if (session.device.capabilities?.hasCamera) {
-  session.camera.takePhoto();
+if (session.device.capabilities?.hasDisplay) {
+  session.display.showTextWall("Ready");
 }
 
 // Bad: may fail silently or throw
-session.camera.takePhoto();
+session.display.showTextWall("Ready");
 ```
 
 **Provide fallbacks.** If your app needs to display information, fall back to audio when no display is available.

@@ -1,6 +1,6 @@
 import {EventEmitter} from "events"
 
-import {AuthenticationClient} from "authing-js-sdk"
+import {AuthenticationClient, EmailScene} from "authing-js-sdk"
 import type {AuthenticationClientOptions, User} from "authing-js-sdk"
 import {Result, result as Res, AsyncResult} from "typesafe-ts"
 
@@ -312,8 +312,16 @@ export class AuthingWrapperClient extends AuthClient {
     this.authing.logout()
   }
 
-  public resetPasswordForEmail(_email: string): AsyncResult<any, Error> {
-    return Res.error_async(new Error("Method not implemented"))
+  public resetPasswordForEmail(email: string): AsyncResult<void, Error> {
+    return Res.try_async(async () => {
+      await this.authing.sendEmail(email, EmailScene.ResetPassword)
+    })
+  }
+
+  public resetPasswordByCode(email: string, code: string, newPassword: string): AsyncResult<void, Error> {
+    return Res.try_async(async () => {
+      await this.authing.resetPasswordByEmailCode(email, code, newPassword)
+    })
   }
 
   public updateUserPassword(_password: string): AsyncResult<void, Error> {

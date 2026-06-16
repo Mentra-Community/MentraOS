@@ -13,7 +13,7 @@ The current Android entrypoint is `BluetoothSdkModule.kt`, which is an Expo modu
 - Calls `Bridge.initialize(context) { eventName, data -> sendEvent(eventName, data) }`.
 - Creates `DeviceManager.getInstance()` after `Bridge` has a context.
 - Configures `DeviceStore.store.configure` so `"glasses"` updates become `glasses_status` events and `"bluetooth"` updates become `bluetooth_status` events.
-- Exposes Expo functions such as `update`, `findCompatibleDevices`, `connectByName`, `connectDefault`, `disconnect`, `displayText`, media commands, Wi-Fi commands, OTA commands, and microphone/STT commands.
+- Exposes Expo functions such as `update`, scan/connect helpers, `connectDefault`, `disconnect`, `displayText`, media commands, Wi-Fi commands, version commands, and microphone/STT commands.
 
 The real hardware lifecycle lives under the Expo module:
 
@@ -30,6 +30,8 @@ This structure is good internal machinery, but not a good public SDK boundary.
 Create a public facade in `com.mentra.bluetoothsdk`:
 
 ```kotlin
+import java.util.concurrent.CompletableFuture
+
 class MentraBluetoothSdk private constructor(
     context: Context,
     config: MentraBluetoothSdkConfig,
@@ -54,58 +56,51 @@ class MentraBluetoothSdk private constructor(
     fun connect(device: MentraDiscoveredDevice)
     fun connectByName(model: MentraDeviceModel, deviceName: String)
     fun connectDefault()
-    fun connectSimulated()
     fun disconnect()
     fun forget()
 
     fun displayText(request: MentraDisplayTextRequest)
-    fun displayEvent(request: MentraDisplayEventRequest)
     fun clearDisplay()
     fun showDashboard()
 
-    @JvmOverloads fun setBrightness(level: Int, autoMode: Boolean? = null)
-    fun setAutoBrightness(enabled: Boolean)
     fun setDashboardPosition(request: MentraDashboardPositionRequest)
-    fun setDashboardMenu(items: List<MentraDashboardMenuItem>)
     fun setHeadUpAngle(angleDegrees: Int)
     fun setScreenDisabled(disabled: Boolean)
-    fun setGalleryMode(mode: MentraGalleryMode)
-    fun setButtonPhotoSettings(settings: MentraButtonPhotoSettings)
-    fun setButtonVideoRecordingSettings(settings: MentraButtonVideoRecordingSettings)
-    fun setButtonCameraLed(enabled: Boolean)
-    fun setButtonMaxRecordingTime(minutes: Int)
-    fun setCameraFov(fov: MentraCameraFov)
+    fun setGalleryModeEnabled(enabled: Boolean): CompletableFuture<MentraSettingsAckEvent>
+    fun setButtonPhotoSettings(settings: MentraButtonPhotoSettings): CompletableFuture<MentraSettingsAckEvent>
+    fun setButtonVideoRecordingSettings(settings: MentraButtonVideoRecordingSettings): CompletableFuture<MentraSettingsAckEvent>
+    fun setButtonCameraLed(enabled: Boolean): CompletableFuture<MentraSettingsAckEvent>
+    fun setButtonMaxRecordingTime(minutes: Int): CompletableFuture<MentraSettingsAckEvent>
+    fun setCameraFov(fov: MentraCameraFov): CompletableFuture<MentraCameraFovResult>
 
     fun setMicState(config: MentraMicConfig)
     fun setPreferredMic(preferredMic: MentraMicPreference)
     fun setOwnAppAudioPlaying(playing: Boolean)
-    fun getGlassesMediaVolume(): MentraGlassesMediaVolumeGetResult
-    fun setGlassesMediaVolume(level: Int): MentraGlassesMediaVolumeSetResult
+    fun getGlassesMediaVolume(): CompletableFuture<MentraGlassesMediaVolumeGetResult>
+    fun setGlassesMediaVolume(level: Int): CompletableFuture<MentraGlassesMediaVolumeSetResult>
 
-    fun requestWifiScan()
-    fun sendWifiCredentials(ssid: String, password: String)
-    fun forgetWifiNetwork(ssid: String)
-    fun setHotspotState(enabled: Boolean)
+    fun requestWifiScan(): CompletableFuture<List<MentraWifiScanResult>>
+    fun sendWifiCredentials(ssid: String, password: String): CompletableFuture<MentraWifiStatusEvent>
+    fun forgetWifiNetwork(ssid: String): CompletableFuture<MentraWifiStatusEvent>
+    fun setHotspotState(enabled: Boolean): CompletableFuture<MentraHotspotStatusEvent>
 
-    fun requestPhoto(request: MentraPhotoRequest)
-    fun queryGalleryStatus()
+    fun requestPhoto(request: MentraPhotoRequest): CompletableFuture<MentraPhotoResponseEvent>
+    fun queryGalleryStatus(): CompletableFuture<MentraGalleryStatusEvent>
     fun startStream(request: MentraStreamRequest)
-    fun keepStreamAlive(request: MentraStreamKeepAliveRequest)
     fun stopStream()
-    fun startVideoRecording(request: MentraVideoRecordingRequest)
-    fun stopVideoRecording(requestId: String)
+    fun startVideoRecording(request: MentraVideoRecordingRequest): CompletableFuture<MentraVideoRecordingStatusEvent>
+    fun stopVideoRecording(requestId: String): CompletableFuture<MentraVideoRecordingStatusEvent>
+    fun rgbLedControl(request: MentraRgbLedRequest): CompletableFuture<MentraRgbLedControlResponseEvent>
 
-    fun requestVersionInfo()
-    fun sendOtaStart()
-    fun sendShutdown()
-    fun sendReboot()
-    fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null)
+    fun requestVersionInfo(): CompletableFuture<MentraVersionInfoResult>
 
     override fun close()
 }
 ```
 
-The core API should be Java-friendly. Avoid requiring coroutines, Flow, or AndroidX lifecycle owners in the base artifact. A later `mentra-bluetooth-sdk-ktx` artifact can add suspend functions and Flow wrappers.
+Request/response methods complete from correlated ASG response events and complete exceptionally when the glasses report explicit failure or the response times out. This keeps slow operations such as FOV camera restarts and Wi-Fi connection attempts off the Android main thread while preserving a Java-friendly base artifact.
+
+The core API should be Java-friendly. Avoid requiring coroutines, Flow, or AndroidX lifecycle owners in the base artifact. A later `mentra-bluetooth-sdk-ktx` artifact can add suspend functions and Flow wrappers over the `CompletableFuture` methods.
 
 ## Capability Shape
 
@@ -114,15 +109,15 @@ The facade can be implemented as one class initially, but the customer-facing do
 Base v1 should include:
 
 - Initialization, cleanup, permission helpers, scan, connect, disconnect, forget, default-device handling, and status snapshots.
-- Display primitives: display text, display events/images as supported, clear display, and show dashboard.
-- Core hardware settings: brightness, auto brightness, dashboard height/depth/menu, head-up angle, screen disable, gallery mode, button/camera settings, preferred mic, mic routing, and own-app-audio state.
+- Display primitives: display text, clear display, and show dashboard.
+- Core hardware settings: brightness, auto brightness, dashboard height/depth, head-up angle, screen disable, gallery mode, button/camera settings, preferred mic, mic routing, and own-app-audio state.
 - Common device events: status, discovered devices, button/touch/head-up, battery, Wi-Fi status, logs, and errors.
 
 Advanced or capability-gated APIs should include:
 
 - Camera/gallery commands and media transfer state.
 - RTMP/video streaming and saved video recording.
-- OTA, shutdown, reboot, and version/diagnostic commands.
+- Version info commands. MentraOS-only OTA, shutdown, reboot, incident, and diagnostic commands stay behind the adapter boundary.
 - Local STT, VAD/model management, and raw mic frame delivery.
 - Controller pairing and RGB LED controls.
 
@@ -167,8 +162,8 @@ Add typed public models before exposing the facade:
 - `MentraDiscoveredDevice`: `model`, `name`, optional `address`, optional `rssi`.
 - `MentraGlassesStatus`: current snapshot of connected, fully booted, battery, charging, model, firmware, serial, Wi-Fi, hotspot, head-up, controller, and signal state.
 - `MentraBluetoothStatus`: current snapshot of searching, mic, current mic, search results, Wi-Fi scan results, permission availability, and audio availability.
-- `MentraDisplayTextRequest`, `MentraDisplayEventRequest`, `MentraDashboardPositionRequest`, `MentraDashboardMenuItem`, `MentraPhotoRequest`, `MentraStreamRequest`, `MentraStreamKeepAliveRequest`, `MentraVideoRecordingRequest`, `MentraMicConfig`, `MentraBluetoothError`.
-- Settings models/enums for values currently routed through `DeviceStore.apply()`: `MentraGalleryMode`, `MentraButtonPhotoSettings`, `MentraButtonPhotoSize`, `MentraButtonVideoRecordingSettings`, `MentraCameraFov`, and `MentraMicPreference`.
+- `MentraDisplayTextRequest`, `MentraDisplayEventRequest`, `MentraDashboardPositionRequest`, `MentraDashboardMenuItem`, `MentraPhotoRequest`, `MentraStreamRequest`, `MentraVideoRecordingRequest`, `MentraMicConfig`, `MentraBluetoothError`.
+- Settings models/enums for values currently routed through `DeviceStore.apply()`: `MentraButtonPhotoSettings`, `MentraButtonPhotoSize`, `MentraButtonVideoRecordingSettings`, `MentraCameraFov`, and `MentraMicPreference`.
 - Typed value enums should reflect device-specific capability boundaries rather than raw string payloads: `MentraPhotoSize` includes `FULL` for app-requested uploads, `MentraButtonPhotoSize` intentionally does not; `MentraPhotoCompression` is `NONE` / `MEDIUM` / `HEAVY`; `MentraRgbLedAction` and `MentraRgbLedColor` represent the Mentra Live/K900 RGB ring surface; stream request fields are typed while the actual streaming protocol is selected from the URL prefix.
 
 For Java ergonomics, models with many optional fields should have builders instead of huge constructors.
@@ -184,7 +179,7 @@ This two-store setup can remain internally, but it should not become the public 
 
 The target boundary is:
 
-- Public SDK callers use typed methods such as `setBrightness`, `setPreferredMic`, `startScan`, `connect`, `displayText`, and `setMicState`.
+- Public SDK callers use typed methods such as `setPreferredMic`, `startScan`, `connect`, `displayText`, and `setMicState`.
 - Public SDK callers receive typed callbacks such as `onGlassesStatusChanged`, `onBluetoothStatusChanged`, `onDeviceDiscovered`, and `onButtonPress`.
 - All hardware side effects currently hidden inside `DeviceStore.apply()` should have a typed public or adapter-only entrypoint before MentraOS removes blob sync.
 - `DeviceStore` remains an implementation detail behind `MentraBluetoothSdk`.
@@ -278,6 +273,6 @@ Current implementation status:
 ## Open Questions
 
 - Whether the first version should expose controller pairing publicly or keep it as an advanced/internal API.
-- Whether media, streaming, OTA, and local transcription should ship in the base SDK facade or be grouped behind capability interfaces.
+- Whether media, streaming, and local transcription should ship in the base SDK facade or be grouped behind capability interfaces.
 - Whether callbacks should always be main-thread or configurable through `Executor`.
 - Whether we want a Kotlin `Flow` wrapper in v1 or as a later `-ktx` package.
