@@ -50,7 +50,7 @@ const addListener: BluetoothSdkPublicModule["addListener"] = (eventName, listene
 }
 
 const startOtaUpdate: BluetoothSdkPublicModule["startOtaUpdate"] = () => {
-  return PrivateBluetoothSdkModule.startOtaUpdate(PrivateBluetoothSdkModule.getOtaVersionUrl())
+  return PrivateBluetoothSdkModule.startOtaUpdate()
 }
 
 export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
