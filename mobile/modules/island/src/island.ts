@@ -8,7 +8,8 @@
  * named exports in `index.ts` during the migration. The flat exports (and the
  * `BluetoothSdk` passthrough) stay until every screen has moved onto `island.*`.
  */
-import {configure, start, stop} from "./runtime/bootstrap"
+import {configure, start as bootstrapStart, stop as bootstrapStop} from "./runtime/bootstrap"
+import {cloudClientService} from "./services/CloudClientService"
 import {glasses} from "./facades/glasses"
 import {displayMirror} from "./facades/displayMirror"
 import {speech} from "./facades/speech"
@@ -28,8 +29,19 @@ import {useSettingsStore} from "./stores/settings"
 export const toolkit = {
   /** Front door — hand island auth + config, then start/stop the runtime. */
   configure,
-  start,
-  stop,
+  /** Start the runtime: mark started + construct/connect the cloud client. */
+  async start() {
+    await bootstrapStart()
+    // Construct + connect the cloud client so the documented configure()+start()
+    // lifecycle yields a live toolkit.session. Idempotent — the Mentra app's
+    // explicit cloudClient.init() is then a no-op.
+    cloudClientService.init()
+  },
+  /** Stop the runtime: tear down the cloud client + mark stopped. */
+  async stop() {
+    cloudClientService.stop()
+    await bootstrapStop()
+  },
   glasses,
   speech,
   /** Cloud (cloud-v2) live-session status + account ops — island owns the client. */

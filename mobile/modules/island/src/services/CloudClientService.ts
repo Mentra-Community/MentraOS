@@ -458,12 +458,12 @@ export const cloudClientService = {
   },
 
   /**
-   * Tear down + rebuild with freshly-resolved endpoints (the dev "Cloud V2"
-   * override, applied without an app rebuild). Pass new endpoints to switch
-   * URLs; omit to rebuild with the current config.
+   * Tear down + rebuild. Pass new endpoints to switch URLs; pass `null` to CLEAR
+   * a prior override and fall back to the boot config (so cleared/default cloud
+   * URLs don't keep reconnecting to a stale override); omit to keep the current.
    */
-  reconnect(endpoints?: {core: string; runtime: string}): void {
-    if (endpoints) endpointsOverride = endpoints
+  reconnect(endpoints?: {core: string; runtime: string} | null): void {
+    if (endpoints !== undefined) endpointsOverride = endpoints
     try {
       client?.runtime.close()
     } catch (err) {
@@ -505,6 +505,22 @@ export const cloudClientService = {
       token,
       expiresAt: normalizeExpiresAt(expiresAt),
     }
+  },
+
+  /** Tear down the client + connection (the toolkit.stop() lifecycle). */
+  stop(): void {
+    try {
+      client?.runtime.close()
+    } catch (err) {
+      console.warn(`${LOG_TAG}: stop close() failed: ${(err as Error)?.message ?? err}`)
+    }
+    clearRuntimeEventSubscriptions()
+    const wasConnected = connected
+    client = null
+    localDevRuntimeToken = null
+    connected = false
+    resetRuntimeStatus()
+    if (wasConnected) notifyConnectionListeners(false)
   },
 
   /** Device-side managed photo (cloud-v2): presign now, deliver bytes, await ready. */

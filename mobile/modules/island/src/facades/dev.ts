@@ -24,7 +24,9 @@ function applyCloudUrlReconnect(): void {
   if (typeof core === "string" && core.trim() && typeof runtime === "string" && runtime.trim()) {
     cloudClientService.reconnect({core: core.trim(), runtime: runtime.trim()})
   } else {
-    cloudClientService.reconnect()
+    // No explicit override → CLEAR any stale override and fall back to the
+    // boot-resolved config (don't keep reconnecting to a previously-set URL).
+    cloudClientService.reconnect(null)
   }
 }
 
