@@ -86,6 +86,48 @@ export function TableRow({
  * so a misnamed iface/method or a bad arg shape surfaces in the UI
  * instead of disappearing into a console log nobody reads.
  */
+/**
+ * Live invoke status: shows "running…" the instant a button is tapped, then the
+ * latency on success, or on failure the code + the exact pipeline stage and
+ * transport that broke. Fast-feedback surface — a dev sees where a request is
+ * and where it died without digging through logs.
+ */
+export function StatusRow({status}: {status: import("../../hooks/useTester").InvokeStatus}) {
+  if (status.phase === "idle") return null
+  if (status.phase === "running") {
+    return (
+      <div className="mb-2 rounded-xl border border-border bg-card p-3">
+        <div className="flex items-center gap-2 text-sm">
+          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
+          <span className="font-mono text-[12px]">{status.method}() running…</span>
+        </div>
+      </div>
+    )
+  }
+  if (status.phase === "ok") {
+    return (
+      <div className="mb-2 rounded-xl border border-green-600 bg-green-600/10 p-3 text-green-700">
+        <div className="font-mono text-[12px]">✅ {status.method}() ok · {status.ms}ms</div>
+      </div>
+    )
+  }
+  const tags = [status.code, status.stage && `stage:${status.stage}`, status.transport && `via:${status.transport}`]
+    .filter(Boolean)
+    .join("  ")
+  return (
+    <div className="mb-2 rounded-xl border border-destructive bg-destructive/10 p-3 text-destructive">
+      <div className="mb-1 flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wider">
+        <span className="text-base">❌</span>
+        <span>
+          {status.method}() failed · {status.ms}ms
+        </span>
+      </div>
+      {tags && <div className="mb-1 font-mono text-[11px] opacity-80">{tags}</div>}
+      <div className="break-all font-mono text-[12px]">{status.message}</div>
+    </div>
+  )
+}
+
 export function ErrorRow({event}: {event: import("../../../shared/types").TesterEventPayload | null}) {
   if (!event) return null
   const payload = event.payload as {method?: string; message?: string} | null

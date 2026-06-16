@@ -31,7 +31,8 @@ class AudioPlaybackService {
   private audioStopDebounceTimer: number | null = null
   // Original glasses media volume captured before we bump it for A2DP playback.
   private glassesVolumeRestoreLevel: number | null = null
-  private static readonly AUDIO_STOP_DEBOUNCE_MS = 500
+  private static readonly AUDIO_STOP_DEBOUNCE_MS = 1500
+  private static readonly A2DP_TAIL_DRAIN_MS = 900
   /** If glasses report step volume at or below this, bump to FLOOR before A2DP playback. */
   private static readonly GLASSES_VOLUME_LOW_THRESHOLD = 2
   private static readonly GLASSES_VOLUME_FLOOR = 9
@@ -82,11 +83,41 @@ class AudioPlaybackService {
     return this.player
   }
 
+  private async getGlassesMediaVolumeWithTiming() {
+    const startedAt = Date.now()
+    try {
+      const result = await BluetoothSdk.getGlassesMediaVolume()
+      console.log(`AUDIO: Glasses media volume read completed in ${Date.now() - startedAt}ms`)
+      return result
+    } catch (error) {
+      console.warn(
+        `AUDIO: Glasses media volume read failed after ${Date.now() - startedAt}ms:`,
+        error instanceof Error ? error.message : String(error),
+      )
+      throw error
+    }
+  }
+
+  private async setGlassesMediaVolumeWithTiming(level: number) {
+    const startedAt = Date.now()
+    try {
+      const result = await BluetoothSdk.setGlassesMediaVolume(level)
+      console.log(`AUDIO: Glasses media volume set(${level}) completed in ${Date.now() - startedAt}ms`)
+      return result
+    } catch (error) {
+      console.warn(
+        `AUDIO: Glasses media volume set(${level}) failed after ${Date.now() - startedAt}ms:`,
+        error instanceof Error ? error.message : String(error),
+      )
+      throw error
+    }
+  }
+
   /**
    * Mentra Live: raise glasses media volume over BLE when it is very low so A2DP prompts are audible.
    * Fail-open on unsupported devices, timeouts, or errors.
    */
-  private async ensureGlassesMediaVolumeForA2dp(): Promise<void> {
+  private async ensureGlassesMediaVolumeForA2dp(playback: PlaybackState): Promise<void> {
     if (this.glassesVolumeRestoreLevel !== null) {
       console.log(
         `AUDIO: Keeping bumped glasses media volume at ${AudioPlaybackService.GLASSES_VOLUME_FLOOR} during ongoing playback`,
@@ -95,7 +126,7 @@ class AudioPlaybackService {
     }
 
     try {
-      const raw = await BluetoothSdk.getGlassesMediaVolume()
+      const raw = await this.getGlassesMediaVolumeWithTiming()
       const level = Number(raw.level)
       const statusCode = Number(raw.statusCode)
       if (!Number.isFinite(level)) {
@@ -107,9 +138,18 @@ class AudioPlaybackService {
       if (level > AudioPlaybackService.GLASSES_VOLUME_LOW_THRESHOLD) {
         return
       }
+      if (this.currentPlayback !== playback || playback.completed) {
+        console.log("AUDIO: Skipping glasses volume bump; playback already ended")
+        return
+      }
       console.log(`AUDIO: Raising glasses media volume (was ${level})`)
-      await BluetoothSdk.setGlassesMediaVolume(AudioPlaybackService.GLASSES_VOLUME_FLOOR)
-      this.glassesVolumeRestoreLevel = level
+      await this.setGlassesMediaVolumeWithTiming(AudioPlaybackService.GLASSES_VOLUME_FLOOR)
+      if (this.currentPlayback === playback && !playback.completed) {
+        this.glassesVolumeRestoreLevel = level
+      } else {
+        console.log("AUDIO: Restoring glasses volume immediately; playback ended during volume bump")
+        await this.setGlassesMediaVolumeWithTiming(level)
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.warn("AUDIO: Skipping glasses volume bump:", msg)
@@ -127,13 +167,28 @@ class AudioPlaybackService {
 
     try {
       console.log(`AUDIO: Restoring glasses media volume to ${restoreLevel}`)
-      await BluetoothSdk.setGlassesMediaVolume(restoreLevel)
+      await this.setGlassesMediaVolumeWithTiming(restoreLevel)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.warn(`AUDIO: Failed to restore glasses volume to ${restoreLevel}:`, msg)
     } finally {
       this.glassesVolumeRestoreLevel = null
     }
+  }
+
+  private pauseFinishedPlayerAfterTail(playback: PlaybackState): void {
+    BgTimer.setTimeout(() => {
+      if (this.currentPlayback) return
+      if (!this.player) return
+      try {
+        this.player.pause()
+        console.log(
+          `AUDIO: Paused finished player for ${playback.requestId} after ${AudioPlaybackService.A2DP_TAIL_DRAIN_MS}ms tail drain`,
+        )
+      } catch (e) {
+        console.warn("AUDIO: Error pausing player after tail drain:", e)
+      }
+    }, AudioPlaybackService.A2DP_TAIL_DRAIN_MS)
   }
 
   /**
@@ -152,8 +207,6 @@ class AudioPlaybackService {
       // Ensure audio mode is configured for background playback
       await this.ensureAudioModeConfigured()
 
-      await this.ensureGlassesMediaVolumeForA2dp()
-
       // Stop current playback if any (notify previous callback)
       if (stopOtherAudio && this.currentPlayback && !this.currentPlayback.completed) {
         console.log(`AUDIO: Interrupting current playback for new request`)
@@ -167,18 +220,25 @@ class AudioPlaybackService {
       player.volume = Math.max(0, Math.min(1, volume))
 
       // Store the new playback state
-      this.currentPlayback = {
+      const playback: PlaybackState = {
         requestId,
         appId,
         startTime: Date.now(),
         completed: false,
         onComplete,
       }
+      this.currentPlayback = playback
 
       // Replace the source and play
       // Using replace() reuses the existing ExoPlayer/AudioTrack instead of creating new ones
       player.replace({uri: audioUrl})
       player.play()
+
+      // Mentra Live volume reads can block up to 5s when the glasses don't
+      // answer. Do not put that in front of playback; guard it against late
+      // completion so a stale volume response cannot bump after this request is
+      // already over.
+      void this.ensureGlassesMediaVolumeForA2dp(playback)
 
       // Notify native that our app is playing audio
       // Used to suspend LC3 mic during audio playback to avoid MCU overload
@@ -248,14 +308,10 @@ class AudioPlaybackService {
       console.log(`AUDIO: Playback finished for ${playback.requestId}, duration: ${durationMs}ms`)
       playback.completed = true
 
-      // Pause the player to prevent Android ExoPlayer from looping/replaying
-      if (this.player) {
-        try {
-          this.player.pause()
-        } catch (e) {
-          console.warn("AUDIO: Error pausing player after finish:", e)
-        }
-      }
+      // ExoPlayer can report finished before an A2DP sink has audibly drained
+      // the last buffered audio. Pausing immediately can clip the tail on
+      // Mentra Live; defer cleanup unless another playback has started.
+      this.pauseFinishedPlayerAfterTail(playback)
 
       playback.onComplete(playback.requestId, true, null, durationMs)
       this.currentPlayback = null

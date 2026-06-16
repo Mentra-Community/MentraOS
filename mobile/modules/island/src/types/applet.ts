@@ -105,6 +105,7 @@ export interface ClientApp extends AppletInterface {
   needsPcm?: boolean
   needsTranscript?: boolean
   devUrl?: string
+  devPort?: number
   isMiniappDev?: boolean
   /** Manifest-declared actions (for session.miniapps.list + invoke gating). */
   actions?: DeclaredAction[]
