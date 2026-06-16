@@ -77,6 +77,11 @@ export {
   type ConnectButtonAction,
 } from "./services/ConnectionCoordinator"
 
+// The namespaced OEM-facing toolkit API (the "(A) host API"). Additive — grows one
+// facade at a time alongside the flat exports below. See ./island.
+export {island} from "./island"
+export type {WifiSearchResult} from "./facades/glassesWifi"
+
 // Bluetooth SDK passthrough — the full @mentra/bluetooth-sdk surface re-exported
 // so the app reaches the SDK through island instead of importing it directly.
 // This is the escape hatch for what no island facade models yet (OTA, raw device

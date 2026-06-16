@@ -249,6 +249,17 @@ jest.mock("@mentra/island", () => {
 
   return {
     __esModule: true,
+    // The namespaced (A) host API. Mirrors the real `island` object; facades are
+    // jest.fn()s so screen tests can assert delegation without native btsdk.
+    island: {
+      glasses: {
+        wifi: {
+          scan: jest.fn(() => Promise.resolve([])),
+          connect: jest.fn(() => Promise.resolve()),
+          forget: jest.fn(() => Promise.resolve()),
+        },
+      },
+    },
     BgTimer: {
       setInterval: jest.fn((callback, delay) => setInterval(callback, delay)),
       clearInterval: jest.fn((id) => clearInterval(id)),
