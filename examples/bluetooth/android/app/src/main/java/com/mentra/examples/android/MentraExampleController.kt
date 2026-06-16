@@ -236,7 +236,7 @@ data class MentraExampleState(
     val videoPreviewUrl: String? = null,
     val videoRecording: Boolean = false,
     val photoCompression: String = "none",
-    val photoSize: String = "full", // "full" = max detail; SDK 0.1.12 uses FULL; 0.1.13 renames to MAX
+    val photoSize: String = "max",
     val scanMode: Boolean = false,
     val scanAeDivisor: Int = 3,
     val scanIsoCap: Int = 800,
@@ -531,7 +531,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 if (enabled) {
                     ButtonPhotoSettings(size = ButtonPhotoSize.MAX)
                 } else {
-                    ButtonPhotoSettings(size = ButtonPhotoSize.fromValue(state.photoSize))
+                    ButtonPhotoSettings(size = buttonPhotoSizeToSdk(state.photoSize))
                 }
             withContext(Dispatchers.IO) { mentraBluetoothSdk.setButtonPhotoSettings(settings) }
         }
@@ -729,9 +729,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         return PhotoRequest(
             requestId = requestId,
             appId = appId,
-            // SDK 0.1.12 exposes PhotoSize.FULL for max resolution; the UI uses "max" as the label.
-            // When 0.1.13 lands with PhotoSize.MAX, replace FULL with fromValue(state.photoSize).
-            size = if (state.photoSize == "max") PhotoSize.FULL else PhotoSize.fromValue(state.photoSize),
+            size = photoSizeToSdk(state.photoSize),
             webhookUrl = webhookUrl,
             compress = PhotoCompression.fromValue(state.photoCompression),
             sound = true,
@@ -2891,9 +2889,23 @@ fun rgbLedColorFor(color: String): RgbLedColor =
 fun disconnectedGlassesStatus(status: GlassesRuntimeState?): GlassesRuntimeState? =
     status?.let { GlassesRuntimeState.Disconnected() }
 
-// SDK 0.1.12 exposes PhotoSize as SMALL/MEDIUM/LARGE/FULL; keep labels aligned with
-// those enum names until the Maven pin moves to 0.1.13 (LOW/MEDIUM/HIGH/MAX).
-val photoSizeOptions = listOf("small", "medium", "large", "full")
+// UI tier names match the 0.1.13 SDK (LOW/MEDIUM/HIGH/MAX).
+// This helper maps them to 0.1.12 Maven enum values (SMALL/MEDIUM/LARGE/FULL).
+fun photoSizeToSdk(size: String): PhotoSize = when (size) {
+    "low" -> PhotoSize.SMALL
+    "high" -> PhotoSize.LARGE
+    "max" -> PhotoSize.FULL
+    else -> PhotoSize.MEDIUM
+}
+
+fun buttonPhotoSizeToSdk(size: String): ButtonPhotoSize = when (size) {
+    "low" -> ButtonPhotoSize.SMALL
+    "high" -> ButtonPhotoSize.LARGE
+    "max" -> ButtonPhotoSize.MAX
+    else -> ButtonPhotoSize.MEDIUM
+}
+
+val photoSizeOptions = listOf("low", "medium", "high", "max")
 val photoCompressionOptions = listOf("none", "medium", "heavy")
 
 fun roiPositionLabel(roiPosition: Int): String =
@@ -2962,7 +2974,7 @@ val photo = mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
       requestId = requestId,
       appId = "com.mentra.bluetoothsdk.example.android",
-      size = PhotoSize.${size.uppercase(Locale.US)},
+      size = PhotoSize.${when(size) { "low" -> "SMALL"; "high" -> "LARGE"; "max" -> "FULL"; else -> "MEDIUM" }},
       webhookUrl = uploadUrl,
       compress = PhotoCompression.${compression.uppercase(Locale.US)},
       sound = true,

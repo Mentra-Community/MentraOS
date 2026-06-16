@@ -4,9 +4,11 @@ import MentraBluetoothSDK
 import SwiftUI
 import UIKit
 
-// SDK 0.1.12 `PhotoSize` ships the small/medium/large/full tiers. The low|medium|high|max
-// rename lands in 0.1.13; until the SwiftPM pin is bumped, use the published cases here.
-private let photoSizeOptions: [PhotoSize] = [.small, .medium, .large, .full]
+// Map new-tier display names (low|medium|high|max) to SDK 0.1.12 enum values
+// (small/medium/large/full). Remove this mapping when the SwiftPM pin moves to 0.1.13.
+private let photoSizeOptions: [(display: String, size: PhotoSize)] = [
+    ("low", .small), ("medium", .medium), ("high", .large), ("max", .full),
+]
 private let photoCompressionOptions: [PhotoCompression] = [.none, .medium, .heavy]
 
 private enum CameraCaptureMode {
@@ -552,15 +554,15 @@ struct CameraScreen: View {
             VStack(alignment: .leading, spacing: 10) {
                 if captureMode == .photo {
                     CameraOptionGroup(label: "photo size") {
-                        ForEach(photoSizeOptions, id: \.rawValue) { size in
+                        ForEach(photoSizeOptions, id: \.display) { option in
                             CameraOptionChip(
-                                value: size.rawValue,
-                                highlight: !model.scanMode && model.photoSize == size
+                                value: option.display,
+                                highlight: !model.scanMode && model.photoSize == option.size
                             )
                             .opacity(model.scanMode ? 0.45 : 1)
                             .onTapGesture {
                                 guard !model.scanMode else { return }
-                                model.setPhotoSize(size)
+                                model.setPhotoSize(option.size)
                             }
                         }
                     }
